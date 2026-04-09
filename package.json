@@ -1,0 +1,56 @@
+{
+  "name": "pi-agent-browser",
+  "version": "0.1.0",
+  "description": "Native pi integration for agent-browser",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "agent-browser",
+    "browser-automation"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fitchmultz/pi-agent-browser.git"
+  },
+  "homepage": "https://github.com/fitchmultz/pi-agent-browser",
+  "bugs": {
+    "url": "https://github.com/fitchmultz/pi-agent-browser/issues"
+  },
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "files": [
+    "extensions",
+    "skills",
+    "README.md",
+    "CHANGELOG.md",
+    "AGENTS.md",
+    "docs"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/agent-browser/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.66.1",
+    "@sinclair/typebox": "^0.34.49",
+    "@types/node": "^25.5.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
+    "verify": "npm run typecheck && npm run test"
+  }
+}

@@ -11,6 +11,23 @@ Related docs:
 
 Ship the thinnest useful native `pi` integration for `agent-browser`.
 
+## Current status
+
+Already in place:
+- package scaffold
+- native `agent_browser` tool
+- direct `--json` subprocess execution
+- optional stdin support
+- implicit-session convenience
+- inline screenshot attachment support
+- local typecheck and unit tests
+- legacy-skill suppression via official pi hooks
+
+Next focus:
+- harden edge cases without overengineering
+- refine docs
+- keep validating behavior through real `pi` + `tmux` runs, including global-install-like flows
+
 ## V1 target
 
 Ship:
@@ -64,8 +81,8 @@ Behavior:
 
 Implement:
 - one implicit active session per `pi` session
-- auto-generated implicit session names
-- cleanup only for extension-owned implicit sessions
+- implicit session names derived from the official `pi` session id
+- deterministic reuse across restart/resume
 - no attempt to make browser runtime state branch-replayable
 
 ## Phase 5 — result shaping
@@ -108,7 +125,7 @@ Validate at minimum:
 - screenshot image attachment
 - implicit session reuse
 - explicit `--session` passthrough
-- implicit-session cleanup on shutdown
+- restart + `/resume` behavior with the current extension code
 
 ## Acceptance criteria
 

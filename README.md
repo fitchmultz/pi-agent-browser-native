@@ -4,7 +4,9 @@ Native `pi` integration for [`agent-browser`](https://agent-browser.dev/).
 
 ## Status
 
-Planning and design.
+Early working scaffold.
+
+The package scaffold, native `agent_browser` tool, local typecheck/test setup, and project-local development entrypoint are in place.
 
 ## Goal
 
@@ -16,6 +18,7 @@ Expose `agent-browser` to `pi` as a native tool so agents can automate the brows
 - **Latest-version only**: no backward-compatibility support or shims for older `agent-browser` versions
 - **Thin wrapper**: stay close to upstream `agent-browser` instead of re-implementing its CLI
 - **Agent-invoked first**: the main UX is the agent calling the tool directly, like `read` or `write`
+- **Global-install first**: package behavior matters more than repo-local development wiring
 
 Upstream install/docs:
 - https://agent-browser.dev/
@@ -37,6 +40,21 @@ A native `pi` integration can improve on the current skill by adding:
 - web research
 - driving web UIs for ChatGPT, Grok, Gemini, and Claude
 - isolated authenticated browser sessions and cloned profiles
+
+## Local development
+
+1. Install `agent-browser` separately via the upstream project.
+2. Run `npm install`.
+3. Launch `pi` from this repository root.
+4. Prompt the agent to use `agent_browser`.
+
+This repo also ships a project-local skill override so environments with the older bash-based `agent-browser` skill installed still prefer the native tool here.
+
+Example prompt:
+
+```text
+Use the agent_browser tool to open https://example.com and then take an interactive snapshot.
+```
 
 ## Docs
 

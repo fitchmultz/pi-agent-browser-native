@@ -89,8 +89,13 @@ The extension should:
 ### Content
 
 Primary content should be:
-- a concise text summary
+- useful result text for the model, not just a status line
 - an image attachment when relevant
+
+Examples:
+- `snapshot` should include the actual snapshot text
+- `tab list` should include a readable tab summary
+- `screenshot` should include the saved-path summary plus the inline image attachment when available
 
 ### Details
 
@@ -132,8 +137,9 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 ## Session behavior
 
 - maintain one implicit active session per `pi` session for the common path
+- derive that implicit session from the official `pi` session id
 - respect explicit upstream `--session` with minimal interference
-- only auto-close extension-owned implicit sessions on shutdown in v1
+- favor deterministic reuse across restart/resume instead of auto-closing the implicit session in v1
 
 ## Non-goals
 

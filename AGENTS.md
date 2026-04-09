@@ -10,11 +10,16 @@ Dedicated `pi` integration of `agent-browser` as a native tool.
 - Do **not** add backwards-compatibility shims for older upstream versions.
 - Keep the integration thin and close to upstream `agent-browser` behavior.
 - The primary UX is the agent invoking the native tool directly, not a slash-command-heavy manual workflow.
+- Do **not** overengineer or solve hypothetical problems that do not exist in observed behavior.
+- Thoroughly check official `pi` docs/examples/source behavior before inventing bespoke integration patterns. Prefer an official `pi` mechanism whenever one exists.
+- If the environment also has the older bash-based `agent-browser` skill installed, do **not** let it become the primary path when this native extension is available.
+- Prioritize the global install path first. Most users will install this extension globally, not as a project-local extension.
 
 ## Documentation placement
 
 - Put user-facing product docs in `README.md` and `docs/`.
 - Put agent-specific operational notes, workflows, and testing procedures in this `AGENTS.md`.
+- Write documents as complete documents, not iterative logs, unless the document is explicitly meant to be iterative such as `CHANGELOG.md`.
 
 ## Preferred testing workflow
 
@@ -35,6 +40,7 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 - Prefer `tmux send-keys ... Enter` for prompt submission.
 - Capture larger pane ranges when debugging: `tmux capture-pane -p -S -300 -t <session>:0.0`.
 - Clean up tmux sessions after testing.
+- Do not overfit testing to `example.com`; use it for smoke checks only, then validate against additional realistic pages and flows.
 
 ## Current testing focus
 

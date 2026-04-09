@@ -9,6 +9,8 @@ Related docs:
 
 Build this as a **thin `pi` extension/package** that exposes `agent-browser` as one native tool while keeping upstream `agent-browser` as the source of truth.
 
+The package install path is the primary product path. Repo-local `.pi/` wiring exists for development, but package-manifest behavior matters more.
+
 ## Chosen shape
 
 ### One primary tool
@@ -44,7 +46,7 @@ That means:
 
 ### Default
 
-If the caller does not provide `--session`, the extension should use an implicit session name derived from the current `pi` session.
+If the caller does not provide `--session`, the extension should use an implicit session name derived from the current `pi` session id.
 
 Why:
 - works out of the box
@@ -58,13 +60,25 @@ If the caller provides `--session`, `--profile`, `--cdp`, or similar upstream fl
 ### Ownership
 
 Safe v1 rule:
-- implicit auto-generated sessions are extension-owned
+- implicit auto-generated sessions are extension-managed convenience sessions
 - explicit/user-managed sessions are not auto-managed by default
+- v1 favors deterministic reuse over automatic shutdown cleanup, so the same `pi` session can reconnect to the same implicit browser session after restart/resume
 
 ### Launch flags
 
 `agent-browser` startup flags are sticky once a session is already running.
 The extension should surface that clearly and avoid hidden restart behavior in v1.
+
+## Coexisting with the legacy bash skill
+
+Some environments already have the older bash-based `agent-browser` skill installed.
+This repository should not let that become the primary path when the native extension is available.
+
+Use official `pi` mechanisms:
+- shipped package skill guidance for installed-package environments
+- project-local skill override for repo development
+- explicit `before_agent_start` guidance reinforcing that preference
+- tool-call guards that redirect legacy skill reads and block direct `agent-browser` bash usage when the native tool should be used
 
 ## Responsibility split
 
