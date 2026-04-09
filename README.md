@@ -80,6 +80,8 @@ Validated workflow examples:
 
 - open a page and snapshot it
 - click a link and confirm the destination title
+- use an explicit `--session` across multiple tool calls
+- use an explicit `--profile` and verify persisted browser storage across restarts
 - run `batch` with JSON via `stdin`
 - run `eval --stdin`
 - take a screenshot with inline attachment support
