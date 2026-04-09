@@ -30,6 +30,7 @@ A native `pi` integration can improve on the current skill by adding:
 
 - structured tool calls instead of shell strings
 - parsed results instead of bash stdout
+- compact model-facing snapshot shaping with full raw spill files for oversized pages
 - inline screenshots and artifacts
 - lightweight session convenience inside `pi`
 - a better base for serious browser automation

@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -135,4 +136,45 @@ test("buildToolPresentation formats batch output for the model", async () => {
 	assert.match((presentation.content[0] as { text: string }).text, /open https:\/\/developer.mozilla.org/);
 	assert.match((presentation.content[0] as { text: string }).text, /MDN Web Docs/);
 	assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
+});
+
+test("buildToolPresentation compacts oversized snapshots and spills the raw snapshot to a temp file", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 90 }, (_, index) => [
+			`e${index + 1}`,
+			{ name: index % 3 === 0 ? `Actionable control ${index + 1}` : "", role: index % 5 === 0 ? "button" : "generic" },
+		]),
+	);
+	const snapshot = Array.from({ length: 120 }, (_, index) => {
+		const ref = `e${index + 1}`;
+		return `- generic \"Large snapshot row ${index + 1} with lots of repeated visible text that should not all stay inline\" [ref=${ref}] clickable [onclick]`;
+	}).join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "https://example.com/huge",
+				refs,
+				snapshot,
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.match((presentation.content[0] as { text: string }).text, /Compact snapshot view/);
+	assert.match((presentation.content[0] as { text: string }).text, /Key refs:/);
+	assert.match((presentation.content[0] as { text: string }).text, /Full raw snapshot:/);
+	assert.match(presentation.summary, /Snapshot: 90 refs on https:\/\/example.com\/huge \(compact\)/);
+	assert.equal(typeof presentation.fullOutputPath, "string");
+	assert.equal((presentation.data as { compacted: boolean }).compacted, true);
+
+	const spillPath = presentation.fullOutputPath;
+	assert.ok(spillPath);
+	const spillText = await readFile(spillPath, "utf8");
+	assert.match(spillText, /Large snapshot row 120/);
+	assert.match(spillText, /Actionable control 1/);
+	await rm(spillPath, { force: true });
 });

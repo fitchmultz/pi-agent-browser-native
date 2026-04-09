@@ -99,9 +99,11 @@ The extension should:
 Primary content should be:
 - useful result text for the model, not just a status line
 - an image attachment when relevant
+- browser-aware compacting for oversized snapshots so the model gets a concise actionable view before raw page noise
 
 Examples:
-- `snapshot` should include the actual snapshot text
+- small `snapshot` results should include the actual snapshot text
+- oversized `snapshot` results should switch to a compact view that preserves the key structure, high-value refs, and a path to the spilled full raw snapshot
 - `tab list` should include a readable tab summary
 - `screenshot` should include the saved-path summary plus the inline image attachment when available
 
@@ -125,13 +127,15 @@ Recommended details:
 }
 ```
 
+For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a temp JSON spill file with the full upstream snapshot payload.
+
 ## High-value result rendering
 
 "Rendering" here means how results appear inside `pi`, not embedding a browser UI.
 
 Worth doing in v1:
 - screenshots → inline image attachment
-- snapshots → origin + ref count + compact preview
+- snapshots → origin + ref count + compact preview, with full raw snapshot spill files when the inline result would otherwise be too large
 - tab lists → compact summary/table
 - stream status → enabled/connected/port summary
 
