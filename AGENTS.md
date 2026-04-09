@@ -12,7 +12,6 @@ Dedicated `pi` integration of `agent-browser` as a native tool.
 - The primary UX is the agent invoking the native tool directly, not a slash-command-heavy manual workflow.
 - Do **not** overengineer or solve hypothetical problems that do not exist in observed behavior.
 - Thoroughly check official `pi` docs/examples/source behavior before inventing bespoke integration patterns. Prefer an official `pi` mechanism whenever one exists.
-- If the environment also has the older bash-based `agent-browser` skill installed, do **not** let it become the primary path when this native extension is available.
 - Prioritize the global install path first. Most users will install this extension globally, not as a project-local extension.
 
 ## Documentation placement

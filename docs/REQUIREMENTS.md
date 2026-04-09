@@ -47,13 +47,11 @@ Define the product requirements and constraints for `pi-agent-browser`.
 - Most users will install this extension globally rather than as a project-local extension.
 - Repo-local `.pi/` wiring is for development convenience and should not drive the product design.
 
-### Legacy skill coexistence
+### Native-tool preference
 
-- Some environments already have the older bash-based `agent-browser` skill installed.
-- When this native extension is available, that legacy skill should not be the preferred path for browser automation.
+- When this native extension is available, the native `agent_browser` tool should be the preferred path for browser automation.
 - Keep the handling simple and global-install-friendly.
-- Do not rely on package skill overrides as the primary answer if they do not reliably win precedence.
-- If needed, users can disable or remove the legacy global skill.
+- Do not rely on package skill overrides as the primary answer.
 
 ### Documentation standard
 

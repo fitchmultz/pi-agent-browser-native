@@ -78,16 +78,13 @@ The extension should surface that clearly and avoid hidden restart behavior in v
 
 That means explicit startup-scoping flags like `--profile`, `--session-name`, and `--cdp` should remain explicit upstream choices instead of being wrapped in extra hidden restart or cloning logic.
 
-## Coexisting with the legacy bash skill
-
-Some environments already have the older bash-based `agent-browser` skill installed.
+## Preferring the native tool
 
 Keep the handling simple:
 - prefer the native tool through extension guidance and tool-call guards
-- do not rely on package skill overrides to win precedence
-- if a user-scoped legacy skill still causes confusion in practice, let the user disable or remove it globally
+- do not rely on package skill overrides as the primary solution
 
-Observed behavior on this machine: user-scoped legacy skills can beat package-provided skills on precedence, so shipping a skill override is not a reliable primary solution.
+This keeps the product centered on native tool usage instead of auxiliary skill wiring.
 
 ## Responsibility split
 
