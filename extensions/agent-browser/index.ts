@@ -109,11 +109,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		name: "agent_browser",
 		label: "Agent Browser",
 		description:
-			"Run exact agent-browser CLI arguments without bash. The wrapper injects --json automatically, supports optional stdin, and can reuse an implicit browser session for the current pi session.",
+			"Browse and interact with websites using agent-browser. Use this for web research, reading live docs, opening pages, taking snapshots or screenshots, clicking links, filling forms, extracting page content, and authenticated/profile-based browser work.",
 		promptSnippet:
-			"Run exact agent-browser CLI arguments without shell quoting, with optional stdin support and automatic JSON parsing.",
+			"Browse websites, read live docs, click and fill pages, extract browser content, take screenshots, and automate real web workflows.",
 		promptGuidelines: [
-			"Use this tool instead of bash when driving agent-browser.",
+			"Use this tool whenever the task requires a real browser or live web content.",
+			"Prefer this tool over bash for opening sites, reading docs on the web, clicking, filling, screenshots, eval, and batch workflows.",
 			"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
 			"Use stdin for commands like eval --stdin and batch instead of shell heredocs.",
 			"Let the implicit session handle the common path unless you explicitly need upstream flags like --session, --profile, or --cdp.",

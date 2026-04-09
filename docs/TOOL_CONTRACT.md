@@ -22,6 +22,8 @@ This keeps the integration:
 
 It also keeps the main UX where it belongs: the agent invokes the tool directly instead of relying on bash or a large manual command surface.
 
+The tool guidance should be written for task discovery first, not wrapper implementation first. That means the description should emphasize browser use cases like web research, reading live docs, clicking, filling, screenshots, extraction, and authenticated/profile-based workflows. Low-level wrapper details like `stdin` and exact CLI args belong in the schema and guidelines, not the lead description.
+
 ## Parameters
 
 ```json
