@@ -17,3 +17,4 @@
 - implicit `piab-*` sessions are now best-effort closed on `pi` shutdown and get an idle timeout so abandoned background daemons do not accumulate as easily
 - tightened tool guidance so agents avoid falling back to osascript or other generic browser-driving bash commands when the native tool should be used
 - taught the tool a clearer browser operating playbook so agents do not need to rediscover core `open` / `snapshot -i` / auth / tab-management patterns from `--help` on routine tasks
+- refined the authenticated-content playbook to prefer `--profile Default` plus an explicit `--session` for personal feeds/dashboards, with `--auto-connect` as fallback rather than the first move
