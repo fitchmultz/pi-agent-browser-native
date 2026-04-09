@@ -24,6 +24,8 @@ It also keeps the main UX where it belongs: the agent invokes the tool directly 
 
 The tool guidance should be written for task discovery first, not wrapper implementation first. That means the description should emphasize browser use cases like web research, reading live docs, clicking, filling, screenshots, extraction, and authenticated/profile-based workflows. Low-level wrapper details like `stdin` and exact CLI args belong in the schema and guidelines, not the lead description.
 
+The tool also needs an operating playbook, not just a capability list. The model should not have to rediscover basics each session. Guidance should explicitly encode the normal browser workflow (`open` -> `snapshot -i` -> interact -> re-snapshot), the authenticated-content workflow (`--auto-connect` or `--profile Default` with an explicit `--session`), and the preferred recovery path when a profile session opens on the wrong tab (`tab list` / `tab <n>` / `wait` / `snapshot -i`).
+
 ## Parameters
 
 ```json
@@ -86,6 +88,7 @@ The extension should:
 - handle observed JSON result shapes, including the array returned by `batch --json`
 - allow plain-text fallback for inspection commands like `--help` and `--version`
 - discourage exploratory inspection calls unless the user explicitly asks or debugging requires them
+- deflect normal-task `--help` inspection back into the standard browser workflow instead of letting the model relearn the tool from scratch each session
 - surface stderr and non-zero exits clearly
 - attach images when the result points to a screenshot-like artifact
 

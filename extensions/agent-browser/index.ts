@@ -64,6 +64,25 @@ function shouldAllowLegacyAgentBrowserBash(prompt: string): boolean {
 	].some((needle) => lowered.includes(needle));
 }
 
+function shouldAllowAgentBrowserInspection(prompt: string): boolean {
+	const lowered = prompt.toLowerCase();
+	return [
+		"agent_browser --help",
+		"agent-browser --help",
+		"agent_browser --version",
+		"agent-browser --version",
+		"tool guidance",
+		"tool contract",
+		"tool description",
+		"documentation",
+		"docs",
+		"debug the browser integration",
+		"debug agent_browser",
+		"why isn't agent_browser",
+		"why is agent_browser",
+	].some((needle) => lowered.includes(needle));
+}
+
 function looksLikeDirectAgentBrowserBash(command: string): boolean {
 	return /(^|[\s;&|])(npx\s+)?agent-browser(\s|$)/.test(command);
 }
@@ -76,9 +95,21 @@ function isPlainTextInspectionArgs(args: string[]): boolean {
 	return args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-V");
 }
 
+function buildInspectionDeflectionMessage(): string {
+	return [
+		"Do not inspect agent_browser help for a normal browser task.",
+		"Use the workflow directly:",
+		"1. open the target URL",
+		"2. snapshot -i",
+		"3. interact using refs and re-snapshot after navigation or major DOM changes",
+		"For authenticated or user-specific content like feeds, inboxes, dashboards, or accounts, start with an authenticated strategy such as --auto-connect or --profile Default together with an explicit --session.",
+	].join("\n");
+}
+
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	let allowLegacyAgentBrowserBash = false;
+	let allowAgentBrowserInspection = false;
 	let implicitSessionName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
 	let implicitSessionCwd = process.cwd();
 
@@ -105,10 +136,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event) => {
 		allowLegacyAgentBrowserBash = shouldAllowLegacyAgentBrowserBash(event.prompt);
+		allowAgentBrowserInspection = shouldAllowAgentBrowserInspection(event.prompt);
 		return {
 			systemPrompt:
 				event.systemPrompt +
-				"\n\nProject rule: when browser automation is needed, prefer the native `agent_browser` tool. Ignore legacy bash-based `agent-browser` skills by default. Do not read `~/.agents/skills/agent-browser/SKILL.md` and do not run direct `agent-browser` bash commands unless the user explicitly asks to inspect or discuss that legacy skill or bash workflow.",
+				"\n\nProject rule: when browser automation is needed, prefer the native `agent_browser` tool. Ignore legacy bash-based `agent-browser` skills by default. Do not read `~/.agents/skills/agent-browser/SKILL.md` and do not run direct `agent-browser` bash commands unless the user explicitly asks to inspect or discuss that legacy skill or bash workflow.\n\nBrowser operating playbook:\n- Standard workflow: open the page, then snapshot -i, then interact via refs, then re-snapshot after navigation or major DOM changes.\n- For user-specific or authenticated content like feeds, inboxes, dashboards, and accounts, start with an authenticated browser strategy instead of public browsing. Prefer `--auto-connect` or `--profile Default` together with an explicit `--session`.\n- When using startup-scoped flags like `--profile`, `--session-name`, or `--cdp`, put them on the first command for that session and keep using the same explicit `--session`.\n- If a profile session lands on the wrong page or tab, use `tab list`, `tab <n>`, `wait`, and `snapshot -i` before trying unrelated debugging.\n- Do not use `agent_browser --help` for normal browsing tasks.",
 		};
 	});
 
@@ -135,8 +167,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			"Browse websites, read live docs, click and fill pages, extract browser content, take screenshots, and automate real web workflows.",
 		promptGuidelines: [
 			"Use this tool whenever the task requires a real browser or live web content.",
+			"Standard workflow: open the page, snapshot -i, interact using refs, and re-snapshot after navigation or major DOM changes.",
+			"For authenticated or user-specific content like feeds, inboxes, dashboards, and accounts, start with an authenticated strategy such as --auto-connect or --profile Default together with an explicit --session.",
+			"When using --profile, --session-name, or --cdp, put them on the first command for that session and keep using the same explicit --session.",
+			"If a profile session lands on the wrong page or tab, use tab list / tab <n> / wait / snapshot -i before unrelated debugging.",
 			"Prefer this tool over bash for opening sites, reading docs on the web, clicking, filling, screenshots, eval, and batch workflows.",
-			"Do not call --help, profiles, or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.",
+			"Do not call --help or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.",
 			"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when this tool can do the job.",
 			"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
 			"Use stdin for commands like eval --stdin and batch instead of shell heredocs.",
@@ -144,6 +180,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		],
 		parameters: AGENT_BROWSER_PARAMS,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			if (!allowAgentBrowserInspection && isPlainTextInspectionArgs(params.args)) {
+				const errorText = buildInspectionDeflectionMessage();
+				return {
+					content: [{ type: "text", text: errorText }],
+					details: { args: params.args, inspectionBlocked: true },
+					isError: true,
+				};
+			}
+
 			const validationError = validateToolArgs(params.args);
 			if (validationError) {
 				return {
