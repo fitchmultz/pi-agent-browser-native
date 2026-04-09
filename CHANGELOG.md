@@ -8,6 +8,7 @@
 - thin implicit-session support for the common path
 - lightweight extension-level guards to keep direct bash `agent-browser` usage from becoming the primary path
 - plain-text fallback for native `agent_browser --help` and `--version` inspection
+- support for observed `batch --json` array output
 - local TypeScript typecheck and unit-test setup
 - concise product and implementation docs
 

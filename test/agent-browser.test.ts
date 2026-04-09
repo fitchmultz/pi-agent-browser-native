@@ -54,6 +54,19 @@ test("parseAgentBrowserEnvelope reports invalid JSON clearly", () => {
 	assert.match(parsed.parseError ?? "", /invalid JSON/i);
 });
 
+test("parseAgentBrowserEnvelope accepts batch JSON arrays", () => {
+	const parsed = parseAgentBrowserEnvelope(
+		JSON.stringify([
+			{ command: ["open", "https://developer.mozilla.org"], success: true, result: { title: "MDN Web Docs" } },
+			{ command: ["get", "title"], success: true, result: { title: "MDN Web Docs" } },
+		]),
+	);
+
+	assert.equal(parsed.parseError, undefined);
+	assert.equal(Array.isArray(parsed.envelope?.data), true);
+	assert.equal(parsed.envelope?.success, true);
+});
+
 test("buildToolPresentation formats snapshot output for the model", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "snapshot" },
@@ -75,4 +88,23 @@ test("buildToolPresentation formats snapshot output for the model", async () => 
 	assert.match((presentation.content[0] as { text: string }).text, /Origin: https:\/\/example.com\//);
 	assert.match((presentation.content[0] as { text: string }).text, /Refs: 2/);
 	assert.match(presentation.summary, /Snapshot: 2 refs/);
+});
+
+test("buildToolPresentation formats batch output for the model", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [
+				{ command: ["open", "https://developer.mozilla.org"], success: true, result: { title: "MDN Web Docs" } },
+				{ command: ["get", "title"], success: true, result: { title: "MDN Web Docs" } },
+			],
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.match((presentation.content[0] as { text: string }).text, /open https:\/\/developer.mozilla.org/);
+	assert.match((presentation.content[0] as { text: string }).text, /MDN Web Docs/);
+	assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
 });

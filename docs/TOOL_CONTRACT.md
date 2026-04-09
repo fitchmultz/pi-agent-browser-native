@@ -81,6 +81,8 @@ The extension should:
 - inject `--json`
 - invoke `agent-browser` directly, not through a shell
 - parse JSON output into tool details
+- handle observed JSON result shapes, including the array returned by `batch --json`
+- allow plain-text fallback for inspection commands like `--help` and `--version`
 - surface stderr and non-zero exits clearly
 - attach images when the result points to a screenshot-like artifact
 

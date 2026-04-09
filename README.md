@@ -76,6 +76,15 @@ Example prompt:
 Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
 ```
 
+Validated workflow examples:
+
+- open a page and snapshot it
+- click a link and confirm the destination title
+- run `batch` with JSON via `stdin`
+- run `eval --stdin`
+- take a screenshot with inline attachment support
+- inspect `agent_browser --help` and `--version`
+
 ## Docs
 
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — product requirements and constraints

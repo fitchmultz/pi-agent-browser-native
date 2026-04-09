@@ -18,6 +18,13 @@ export interface AgentBrowserEnvelope {
 	success?: boolean;
 }
 
+export interface AgentBrowserBatchResult {
+	command?: string[];
+	error?: unknown;
+	result?: unknown;
+	success?: boolean;
+}
+
 export interface ToolPresentation {
 	content: Array<{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }>;
 	imagePath?: string;
@@ -86,7 +93,22 @@ function getScreenshotSummary(data: Record<string, unknown>): string | undefined
 	return typeof data.path === "string" ? `Saved image: ${data.path}` : undefined;
 }
 
+function formatBatchContent(data: AgentBrowserBatchResult[]): string {
+	return data
+		.map((item, index) => {
+			const command = Array.isArray(item.command) ? item.command.join(" ") : `step-${index + 1}`;
+			if (item.success === false) {
+				return `${command}\nError: ${stringifyUnknown(item.error)}`;
+			}
+			return `${command}\n${stringifyUnknown(item.result)}`;
+		})
+		.join("\n\n");
+}
+
 function formatContentText(commandInfo: CommandInfo, data: unknown): string {
+	if (Array.isArray(data) && commandInfo.command === "batch") {
+		return formatBatchContent(data as AgentBrowserBatchResult[]);
+	}
 	if (typeof data === "string") {
 		return data;
 	}
@@ -130,6 +152,10 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 }
 
 function formatSummary(commandInfo: CommandInfo, data: unknown): string {
+	if (Array.isArray(data) && commandInfo.command === "batch") {
+		const successCount = data.filter((item) => isRecord(item) && item.success !== false).length;
+		return `Batch: ${successCount}/${data.length} succeeded`;
+	}
 	if (isRecord(data)) {
 		if (commandInfo.command === "snapshot") {
 			const origin = typeof data.origin === "string" ? data.origin : "page";
@@ -167,7 +193,10 @@ export function parseAgentBrowserEnvelope(stdout: string): { envelope?: AgentBro
 	}
 
 	try {
-		const parsed = JSON.parse(trimmed) as AgentBrowserEnvelope;
+		const parsed = JSON.parse(trimmed) as AgentBrowserEnvelope | AgentBrowserBatchResult[];
+		if (Array.isArray(parsed)) {
+			return { envelope: { success: parsed.every((item) => !isRecord(item) || item.success !== false), data: parsed } };
+		}
 		if (!isRecord(parsed)) {
 			return { parseError: "agent-browser returned JSON, but it was not an object envelope." };
 		}
