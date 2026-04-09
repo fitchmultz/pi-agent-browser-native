@@ -18,4 +18,4 @@
 - tightened tool guidance so agents avoid falling back to osascript or other generic browser-driving bash commands when the native tool should be used
 - taught the tool a clearer browser operating playbook so agents do not need to rediscover core `open` / `snapshot -i` / auth / tab-management patterns from `--help` on routine tasks
 - refined the authenticated-content playbook to prefer `--profile Default` on the first browser call while reusing the extension-managed implicit session for normal personal feeds/dashboards; this avoids stale cross-run browser state from fixed explicit session names
-- refined read-only feed guidance so agents prefer reading the first timeline item directly from the current snapshot instead of clicking into media/detail routes unless the snapshot lacks the needed text
+- refined read-only browsing guidance so agents prefer answering from the current page state before navigating into media/detail routes unless the current view lacks the needed information
