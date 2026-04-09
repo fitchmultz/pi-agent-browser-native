@@ -24,9 +24,9 @@ Already in place:
 - legacy-skill suppression via official pi hooks
 
 Next focus:
-- harden edge cases without overengineering
+- harden only observed edge cases
 - refine docs
-- keep validating behavior through real `pi` + `tmux` runs, including global-install-like flows
+- keep validating behavior through real `pi` + `tmux` runs, including installed-package flows
 
 ## V1 target
 

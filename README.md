@@ -68,7 +68,7 @@ The native tool exposed to the agent is named `agent_browser`.
 3. Launch `pi` from this repository root.
 4. Prompt the agent to use `agent_browser`.
 
-This repo also ships a project-local skill override so environments with the older bash-based `agent-browser` skill installed still prefer the native tool here.
+This repo also ships companion skill guidance. In installed environments where an older user-scoped bash-based `agent-browser` skill is also present, the extension still enforces preference for the native `agent_browser` tool through official `pi` hooks.
 
 Example prompt:
 

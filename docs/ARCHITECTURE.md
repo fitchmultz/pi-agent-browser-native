@@ -75,10 +75,12 @@ Some environments already have the older bash-based `agent-browser` skill instal
 This repository should not let that become the primary path when the native extension is available.
 
 Use official `pi` mechanisms:
-- shipped package skill guidance for installed-package environments
+- shipped package skill guidance
 - project-local skill override for repo development
 - explicit `before_agent_start` guidance reinforcing that preference
 - tool-call guards that redirect legacy skill reads and block direct `agent-browser` bash usage when the native tool should be used
+
+Observed behavior on this machine: an installed package skill can still lose to a user-scoped legacy skill on precedence, so the extension hooks are the real enforcement layer for global/project installs.
 
 ## Responsibility split
 
