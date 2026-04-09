@@ -59,15 +59,24 @@ If the caller provides `--session`, `--profile`, `--cdp`, or similar upstream fl
 
 ### Ownership
 
-Safe v1 rule:
+V1 ownership rule:
 - implicit auto-generated sessions are extension-managed convenience sessions
 - explicit/user-managed sessions are not auto-managed by default
-- v1 favors deterministic reuse over automatic shutdown cleanup, so the same `pi` session can reconnect to the same implicit browser session after restart/resume
+- implicit sessions should be reusable during an active `pi` session, but should still be cleaned up predictably
+
+Practical policy:
+- on normal `pi` shutdown, best-effort close the implicit session
+- also set an idle timeout on implicit sessions so abandoned daemons self-clean after inactivity
+- leave explicit upstream sessions like `--session`, `--profile`, `--session-name`, and `--cdp` alone unless the caller closes them explicitly
+
+This is primarily about ownership clarity and avoiding surprise, not adding a heavy safety wrapper. If the extension invented the session, the extension should clean it up. If the caller explicitly chose the upstream session model, the extension should stay out of the way.
 
 ### Launch flags
 
 `agent-browser` startup flags are sticky once a session is already running.
 The extension should surface that clearly and avoid hidden restart behavior in v1.
+
+That means explicit startup-scoping flags like `--profile`, `--session-name`, and `--cdp` should remain explicit upstream choices instead of being wrapped in extra hidden restart or cloning logic.
 
 ## Coexisting with the legacy bash skill
 

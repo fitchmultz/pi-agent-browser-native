@@ -39,7 +39,7 @@ A native `pi` integration can improve on the current skill by adding:
 - UI testing and exploratory QA
 - web research
 - driving web UIs for ChatGPT, Grok, Gemini, and Claude
-- isolated authenticated browser sessions and cloned profiles
+- authenticated browser sessions and persistent profiles
 
 ## Install and try
 
@@ -87,8 +87,10 @@ Validated workflow examples:
 - take a screenshot with inline attachment support
 - inspect `agent_browser --help` and `--version`
 
-Current caution:
-- passing `--profile` uses that profile directly; this extension does not clone or isolate real browser profiles for you
+Current cautions:
+- passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
+- implicit `piab-*` sessions are extension-managed convenience sessions; they are best-effort closed on `pi` shutdown and also get an idle timeout to reduce stale background daemons
+- explicit upstream sessions like `--session`, `--profile`, `--session-name`, and `--cdp` are treated as user-managed and are not auto-closed by the extension
 
 ## Docs
 

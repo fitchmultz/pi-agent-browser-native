@@ -14,3 +14,5 @@
 
 ### Changed
 - removed the shipped skill override after observing that user-scoped legacy skills can still win precedence; the simpler path is to rely on extension hooks and let users disable the old global skill if needed
+- implicit `piab-*` sessions are now best-effort closed on `pi` shutdown and get an idle timeout so abandoned background daemons do not accumulate as easily
+- tightened tool guidance so agents avoid falling back to osascript or other generic browser-driving bash commands when the native tool should be used

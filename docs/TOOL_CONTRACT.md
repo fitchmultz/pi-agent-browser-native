@@ -144,8 +144,11 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - maintain one implicit active session per `pi` session for the common path
 - derive that implicit session from the official `pi` session id
 - respect explicit upstream `--session` with minimal interference
-- favor deterministic reuse across restart/resume instead of auto-closing the implicit session in v1
-- pass explicit `--profile` straight through to upstream `agent-browser`; no profile cloning or isolation layer is added in v1
+- treat the implicit session as extension-managed convenience state
+- on normal `pi` shutdown, best-effort close the implicit session
+- set an idle timeout on implicit sessions so abandoned daemons eventually self-clean
+- treat explicit upstream session choices like `--session`, `--profile`, `--session-name`, and `--cdp` as user-managed
+- pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
 
 ## Non-goals
 

@@ -7,6 +7,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { env as processEnv } from "node:process";
 
 export interface ProcessRunResult {
 	aborted: boolean;
@@ -19,10 +20,11 @@ export interface ProcessRunResult {
 export async function runAgentBrowserProcess(options: {
 	args: string[];
 	cwd: string;
+	env?: NodeJS.ProcessEnv;
 	signal?: AbortSignal;
 	stdin?: string;
 }): Promise<ProcessRunResult> {
-	const { args, cwd, signal, stdin } = options;
+	const { args, cwd, env, signal, stdin } = options;
 
 	return await new Promise<ProcessRunResult>((resolve) => {
 		let aborted = false;
@@ -43,6 +45,7 @@ export async function runAgentBrowserProcess(options: {
 
 		const child = spawn("agent-browser", args, {
 			cwd,
+			env: { ...processEnv, ...env },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 

@@ -18,6 +18,9 @@ import {
 	validateToolArgs,
 } from "./lib/runtime.js";
 
+const IMPLICIT_SESSION_IDLE_TIMEOUT_MS = "900000";
+const IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
+
 const AGENT_BROWSER_PARAMS = Type.Object({
 	args: Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
 		description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators.",
@@ -77,9 +80,27 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	let allowLegacyAgentBrowserBash = false;
 	let implicitSessionName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
+	let implicitSessionCwd = process.cwd();
 
 	pi.on("session_start", async (_event, ctx) => {
 		implicitSessionName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
+		implicitSessionCwd = ctx.cwd;
+	});
+
+	pi.on("session_shutdown", async () => {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), IMPLICIT_SESSION_CLOSE_TIMEOUT_MS);
+		try {
+			await runAgentBrowserProcess({
+				args: ["--session", implicitSessionName, "close"],
+				cwd: implicitSessionCwd,
+				signal: controller.signal,
+			});
+		} catch {
+			// Best-effort cleanup only.
+		} finally {
+			clearTimeout(timer);
+		}
 	});
 
 	pi.on("before_agent_start", async (event) => {
@@ -116,6 +137,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			"Use this tool whenever the task requires a real browser or live web content.",
 			"Prefer this tool over bash for opening sites, reading docs on the web, clicking, filling, screenshots, eval, and batch workflows.",
 			"Do not call --help, profiles, or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.",
+			"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when this tool can do the job.",
 			"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
 			"Use stdin for commands like eval --stdin and batch instead of shell heredocs.",
 			"Let the implicit session handle the common path unless you explicitly need upstream flags like --session, --profile, or --cdp.",
@@ -148,6 +170,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const processResult = await runAgentBrowserProcess({
 				args: executionPlan.effectiveArgs,
 				cwd: ctx.cwd,
+				env: executionPlan.usedImplicitSession
+					? { AGENT_BROWSER_IDLE_TIMEOUT_MS: IMPLICIT_SESSION_IDLE_TIMEOUT_MS }
+					: undefined,
 				signal,
 				stdin: params.stdin,
 			});
