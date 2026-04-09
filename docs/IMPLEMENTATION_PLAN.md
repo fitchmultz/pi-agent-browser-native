@@ -21,7 +21,7 @@ Already in place:
 - implicit-session convenience
 - inline screenshot attachment support
 - local typecheck and unit tests
-- legacy-skill suppression via official pi hooks
+- lightweight legacy-skill suppression via official pi hooks
 
 Next focus:
 - harden only observed edge cases

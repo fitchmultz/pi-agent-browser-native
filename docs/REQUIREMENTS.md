@@ -50,8 +50,10 @@ Define the product requirements and constraints for `pi-agent-browser`.
 ### Legacy skill coexistence
 
 - Some environments already have the older bash-based `agent-browser` skill installed.
-- When this native extension is available, that legacy skill must not become the primary path for browser automation.
-- Any mitigation for that problem should work for the global-install path, not only local repo testing.
+- When this native extension is available, that legacy skill should not be the preferred path for browser automation.
+- Keep the handling simple and global-install-friendly.
+- Do not rely on package skill overrides as the primary answer if they do not reliably win precedence.
+- If needed, users can disable or remove the legacy global skill.
 
 ### Documentation standard
 
@@ -86,6 +88,7 @@ The design should comfortably support workflows such as:
 - The wrapper should stay thin, with upstream `agent-browser` remaining the source of truth for command semantics.
 - User-facing docs belong in `README.md` and `docs/`.
 - Agent workflow and testing procedures belong in `AGENTS.md`.
+- Keep mitigations for legacy-skill coexistence simple; do not add extra moving parts unless observed behavior justifies them.
 
 ## Open design questions
 

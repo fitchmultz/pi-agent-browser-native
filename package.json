@@ -23,7 +23,6 @@
   },
   "files": [
     "extensions",
-    "skills",
     "README.md",
     "CHANGELOG.md",
     "AGENTS.md",
@@ -32,9 +31,6 @@
   "pi": {
     "extensions": [
       "./extensions/agent-browser/index.ts"
-    ],
-    "skills": [
-      "./skills"
     ]
   },
   "peerDependencies": {

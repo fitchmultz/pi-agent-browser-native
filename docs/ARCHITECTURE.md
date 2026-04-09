@@ -72,15 +72,13 @@ The extension should surface that clearly and avoid hidden restart behavior in v
 ## Coexisting with the legacy bash skill
 
 Some environments already have the older bash-based `agent-browser` skill installed.
-This repository should not let that become the primary path when the native extension is available.
 
-Use official `pi` mechanisms:
-- shipped package skill guidance
-- project-local skill override for repo development
-- explicit `before_agent_start` guidance reinforcing that preference
-- tool-call guards that redirect legacy skill reads and block direct `agent-browser` bash usage when the native tool should be used
+Keep the handling simple:
+- prefer the native tool through extension guidance and tool-call guards
+- do not rely on package skill overrides to win precedence
+- if a user-scoped legacy skill still causes confusion in practice, let the user disable or remove it globally
 
-Observed behavior on this machine: an installed package skill can still lose to a user-scoped legacy skill on precedence, so the extension hooks are the real enforcement layer for global/project installs.
+Observed behavior on this machine: user-scoped legacy skills can beat package-provided skills on precedence, so shipping a skill override is not a reliable primary solution.
 
 ## Responsibility split
 

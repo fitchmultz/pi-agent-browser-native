@@ -6,8 +6,6 @@
  * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
  */
 
-import { fileURLToPath } from "node:url";
-
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
@@ -71,13 +69,11 @@ function isHarmlessAgentBrowserInspectionCommand(command: string): boolean {
 	return /(command\s+-v|which)\s+agent-browser\b/.test(command) || /(^|\s)agent-browser\s+--(help|version)\b/.test(command);
 }
 
-function isLegacyAgentBrowserSkillPath(path: string): boolean {
-	const normalized = path.replace(/\\/g, "/");
-	return normalized.endsWith("/.agents/skills/agent-browser/SKILL.md");
+function isPlainTextInspectionArgs(args: string[]): boolean {
+	return args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-V");
 }
 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
-	const bundledSkillPath = fileURLToPath(new URL("../../skills/agent-browser/SKILL.md", import.meta.url));
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	let allowLegacyAgentBrowserBash = false;
 	let implicitSessionName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
@@ -96,11 +92,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_call", async (event) => {
-		if (isToolCallEventType("read", event) && isLegacyAgentBrowserSkillPath(event.input.path)) {
-			event.input.path = bundledSkillPath;
-			return;
-		}
-
 		if (
 			isToolCallEventType("bash", event) &&
 			!allowLegacyAgentBrowserBash &&
@@ -173,12 +164,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			const parsed = parseAgentBrowserEnvelope(processResult.stdout);
-			const envelopeSuccess = parsed.envelope?.success !== false;
 			const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
-			const parseSucceeded = parsed.parseError === undefined;
+			const plainTextInspection = isPlainTextInspectionArgs(params.args) && processSucceeded && parsed.parseError !== undefined;
+			const envelopeSuccess = plainTextInspection ? true : parsed.envelope?.success !== false;
+			const parseSucceeded = plainTextInspection || parsed.parseError === undefined;
 			const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
 
 			const errorText = (() => {
+				if (plainTextInspection) return undefined;
 				if (parsed.parseError) return parsed.parseError;
 				if (processResult.aborted) return "agent-browser was aborted.";
 				if (processResult.spawnError) return processResult.spawnError.message;
@@ -193,12 +186,18 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				return undefined;
 			})();
 
-			const presentation = await buildToolPresentation({
-				commandInfo: executionPlan.commandInfo,
-				cwd: ctx.cwd,
-				envelope: parsed.envelope,
-				errorText,
-			});
+			const presentation = plainTextInspection
+				? {
+					content: [{ type: "text" as const, text: processResult.stdout.trim() }],
+					imagePath: undefined,
+					summary: `${params.args.join(" ")} completed`,
+				  }
+				: await buildToolPresentation({
+						commandInfo: executionPlan.commandInfo,
+						cwd: ctx.cwd,
+						envelope: parsed.envelope,
+						errorText,
+				  });
 
 			return {
 				content: presentation.content,
