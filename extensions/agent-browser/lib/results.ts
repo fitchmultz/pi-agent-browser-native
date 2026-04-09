@@ -207,6 +207,29 @@ export function parseAgentBrowserEnvelope(stdout: string): { envelope?: AgentBro
 	}
 }
 
+export function getAgentBrowserErrorText(options: {
+	aborted: boolean;
+	envelope?: AgentBrowserEnvelope;
+	exitCode: number;
+	parseError?: string;
+	plainTextInspection: boolean;
+	spawnError?: Error;
+	stderr: string;
+}): string | undefined {
+	const { aborted, envelope, exitCode, parseError, plainTextInspection, spawnError, stderr } = options;
+	if (plainTextInspection) return undefined;
+	if (parseError) return parseError;
+	if (aborted) return "agent-browser was aborted.";
+	if (spawnError) return spawnError.message;
+	if (envelope?.success === false) {
+		return typeof envelope.error === "string" ? envelope.error : JSON.stringify(envelope.error, null, 2);
+	}
+	if (exitCode !== 0) {
+		return stderr.trim() || `agent-browser exited with code ${exitCode}.`;
+	}
+	return undefined;
+}
+
 export async function buildToolPresentation(options: {
 	commandInfo: CommandInfo;
 	cwd: string;

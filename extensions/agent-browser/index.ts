@@ -10,7 +10,7 @@ import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-
 import { Type } from "@sinclair/typebox";
 
 import { runAgentBrowserProcess } from "./lib/process.js";
-import { buildToolPresentation, parseAgentBrowserEnvelope } from "./lib/results.js";
+import { buildToolPresentation, getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "./lib/results.js";
 import {
 	buildExecutionPlan,
 	createEphemeralSessionSeed,
@@ -245,21 +245,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const parseSucceeded = plainTextInspection || parsed.parseError === undefined;
 			const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
 
-			const errorText = (() => {
-				if (plainTextInspection) return undefined;
-				if (parsed.parseError) return parsed.parseError;
-				if (processResult.aborted) return "agent-browser was aborted.";
-				if (processResult.spawnError) return processResult.spawnError.message;
-				if (processResult.exitCode !== 0) {
-					return processResult.stderr.trim() || `agent-browser exited with code ${processResult.exitCode}.`;
-				}
-				if (parsed.envelope?.success === false) {
-					return typeof parsed.envelope.error === "string"
-						? parsed.envelope.error
-						: JSON.stringify(parsed.envelope.error, null, 2);
-				}
-				return undefined;
-			})();
+			const errorText = getAgentBrowserErrorText({
+				aborted: processResult.aborted,
+				envelope: parsed.envelope,
+				exitCode: processResult.exitCode,
+				parseError: parsed.parseError,
+				plainTextInspection,
+				spawnError: processResult.spawnError,
+				stderr: processResult.stderr,
+			});
 
 			const presentation = plainTextInspection
 				? {

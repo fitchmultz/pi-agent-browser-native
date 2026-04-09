@@ -9,7 +9,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildToolPresentation, parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results.js";
+import {
+	buildToolPresentation,
+	getAgentBrowserErrorText,
+	parseAgentBrowserEnvelope,
+} from "../extensions/agent-browser/lib/results.js";
 import { buildExecutionPlan, createImplicitSessionName, parseCommandInfo } from "../extensions/agent-browser/lib/runtime.js";
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
@@ -65,6 +69,30 @@ test("parseAgentBrowserEnvelope accepts batch JSON arrays", () => {
 	assert.equal(parsed.parseError, undefined);
 	assert.equal(Array.isArray(parsed.envelope?.data), true);
 	assert.equal(parsed.envelope?.success, true);
+});
+
+test("getAgentBrowserErrorText prefers envelope errors over generic exit codes", () => {
+	const errorText = getAgentBrowserErrorText({
+		aborted: false,
+		envelope: { success: false, error: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+	});
+
+	assert.equal(errorText, "Navigation failed: net::ERR_BLOCKED_BY_CLIENT");
+});
+
+test("getAgentBrowserErrorText falls back to generic exit codes when no envelope error exists", () => {
+	const errorText = getAgentBrowserErrorText({
+		aborted: false,
+		envelope: { success: true, data: null },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+	});
+
+	assert.equal(errorText, "agent-browser exited with code 1.");
 });
 
 test("buildToolPresentation formats snapshot output for the model", async () => {
