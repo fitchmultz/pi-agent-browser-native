@@ -85,6 +85,7 @@ The extension should:
 - parse JSON output into tool details
 - handle observed JSON result shapes, including the array returned by `batch --json`
 - allow plain-text fallback for inspection commands like `--help` and `--version`
+- discourage exploratory inspection calls unless the user explicitly asks or debugging requires them
 - surface stderr and non-zero exits clearly
 - attach images when the result points to a screenshot-like artifact
 
@@ -144,6 +145,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - derive that implicit session from the official `pi` session id
 - respect explicit upstream `--session` with minimal interference
 - favor deterministic reuse across restart/resume instead of auto-closing the implicit session in v1
+- pass explicit `--profile` straight through to upstream `agent-browser`; no profile cloning or isolation layer is added in v1
 
 ## Non-goals
 

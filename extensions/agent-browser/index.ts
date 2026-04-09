@@ -115,6 +115,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use this tool whenever the task requires a real browser or live web content.",
 			"Prefer this tool over bash for opening sites, reading docs on the web, clicking, filling, screenshots, eval, and batch workflows.",
+			"Do not call --help, profiles, or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.",
 			"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
 			"Use stdin for commands like eval --stdin and batch instead of shell heredocs.",
 			"Let the implicit session handle the common path unless you explicitly need upstream flags like --session, --profile, or --cdp.",

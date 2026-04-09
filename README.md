@@ -87,6 +87,9 @@ Validated workflow examples:
 - take a screenshot with inline attachment support
 - inspect `agent_browser --help` and `--version`
 
+Current caution:
+- passing `--profile` uses that profile directly; this extension does not clone or isolate real browser profiles for you
+
 ## Docs
 
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — product requirements and constraints
