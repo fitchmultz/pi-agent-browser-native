@@ -100,10 +100,11 @@ Primary content should be:
 - useful result text for the model, not just a status line
 - an image attachment when relevant
 - browser-aware compacting for oversized snapshots so the model gets a concise actionable view before raw page noise
+- compact snapshots should be main-content-first: prefer the primary content block and nearby sections over top-of-page chrome, ads, or unrelated sidebars when those can be distinguished from the snapshot tree
 
 Examples:
 - small `snapshot` results should include the actual snapshot text
-- oversized `snapshot` results should switch to a compact view that preserves the key structure, high-value refs, and a path to the spilled full raw snapshot
+- oversized `snapshot` results should switch to a compact view that preserves the primary content, nearby sections, high-value refs, and a path to the spilled full raw snapshot
 - `tab list` should include a readable tab summary
 - `screenshot` should include the saved-path summary plus the inline image attachment when available
 
@@ -135,7 +136,7 @@ For oversized snapshots, details should switch to a compact metadata object and 
 
 Worth doing in v1:
 - screenshots → inline image attachment
-- snapshots → origin + ref count + compact preview, with full raw snapshot spill files when the inline result would otherwise be too large
+- snapshots → origin + ref count + main-content-first compact preview, with full raw snapshot spill files when the inline result would otherwise be too large
 - tab lists → compact summary/table
 - stream status → enabled/connected/port summary
 

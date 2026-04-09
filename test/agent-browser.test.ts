@@ -178,3 +178,57 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 	assert.match(spillText, /Actionable control 1/);
 	await rm(spillPath, { force: true });
 });
+
+test("buildToolPresentation prefers main content sections over top-of-page chrome in compact snapshots", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 90 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e1") return [id, { name: "Skip to main content", role: "link" }];
+			if (id === "e2") return [id, { name: "AD", role: "link" }];
+			if (id === "e3") return [id, { name: "JavaScript", role: "heading" }];
+			if (id === "e4") return [id, { name: "Beginner's tutorials", role: "region" }];
+			if (id === "e5") return [id, { name: "Intermediate", role: "region" }];
+			if (id === "e6") return [id, { name: "Reference", role: "region" }];
+			return [id, { name: `Content item ${index + 1}`, role: index % 6 === 0 ? "link" : "generic" }];
+		}),
+	);
+	const snapshot = [
+		'- link "Skip to main content" [ref=e1]',
+		'- link "AD" [ref=e2]',
+		'- heading "JavaScript" [level=1, ref=e3]',
+		...Array.from({ length: 18 }, (_, index) => `- link "Overview topic ${index + 1}" [ref=e${index + 10}]`),
+		'- region "Beginner\'s tutorials" [ref=e4]',
+		'  - link "Your first website: Adding interactivity" [ref=e40]',
+		'  - link "Dynamic scripting with JavaScript" [ref=e41]',
+		'- region "Intermediate" [ref=e5]',
+		'  - link "Asynchronous JavaScript" [ref=e42]',
+		'  - link "Client-side web APIs" [ref=e43]',
+		'- region "Reference" [ref=e6]',
+		...Array.from({ length: 70 }, (_, index) => `  - link "Reference entry ${index + 1}" [ref=e${index + 50}]`),
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "https://example.com/docs/javascript",
+				refs,
+				snapshot,
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Primary content:/);
+	assert.match(text, /heading "JavaScript"/);
+	assert.match(text, /Additional sections:/);
+	assert.match(text, /region "Beginner's tutorials"/);
+	assert.doesNotMatch(text, /Skip to main content/);
+	assert.doesNotMatch(text, /^- AD$/m);
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
