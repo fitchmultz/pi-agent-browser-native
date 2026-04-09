@@ -41,6 +41,26 @@ A native `pi` integration can improve on the current skill by adding:
 - driving web UIs for ChatGPT, Grok, Gemini, and Claude
 - isolated authenticated browser sessions and cloned profiles
 
+## Install and try
+
+Today, the practical install path is from a local checkout.
+
+1. Install `agent-browser` separately.
+2. Clone this repository.
+3. Install the package into `pi` globally:
+
+```bash
+pi install /absolute/path/to/pi-agent-browser
+```
+
+To try it without installing permanently:
+
+```bash
+pi -e /absolute/path/to/pi-agent-browser
+```
+
+The native tool exposed to the agent is named `agent_browser`.
+
 ## Local development
 
 1. Install `agent-browser` separately via the upstream project.
@@ -53,7 +73,7 @@ This repo also ships a project-local skill override so environments with the old
 Example prompt:
 
 ```text
-Use the agent_browser tool to open https://example.com and then take an interactive snapshot.
+Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
 ```
 
 ## Docs
