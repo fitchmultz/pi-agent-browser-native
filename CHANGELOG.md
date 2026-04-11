@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- startup-scoped flags like `--profile`, `--session-name`, and `--cdp` now fail clearly when reused against an already-active implicit session instead of silently relying on upstream to ignore them
+- prompt-based bash/help allowances are now derived from the current user prompt instead of mutable extension-global booleans, and the inspection allowance only triggers for tool-specific requests
+- oversized subprocess stdout is now bounded in memory and spilled to private temp files before JSON parsing, reducing unbounded buffering risk without breaking large snapshot handling
+- snapshot spill files now live under private temp directories with restrictive permissions and are cleaned up on shutdown
+- failed upstream envelopes now synthesize clearer fallback error text when no simple top-level `error` string is present
+- package/release verification now has a documented maintainer workflow, a tarball verifier script, a tracked repo-local `.pi` development shim, and a published tarball that excludes agent-only or superseded docs while including `LICENSE`
+
 ## 0.1.0 - 2026-04-09
 
 ### Added

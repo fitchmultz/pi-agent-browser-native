@@ -6,7 +6,7 @@ Native `pi` integration for [`agent-browser`](https://agent-browser.dev/).
 
 Early working scaffold.
 
-The package scaffold, native `agent_browser` tool, local typecheck/test setup, and project-local development entrypoint are in place.
+The package scaffold, native `agent_browser` tool, local typecheck/test setup, tracked repo-local development entrypoint, and release/package verification workflow are in place.
 
 ## Goal
 
@@ -45,17 +45,31 @@ A native `pi` integration can improve on the current skill by adding:
 
 ## Install and try
 
-Today, the practical install path is from a local checkout.
+The product direction is package-first. Prefer the package source once a release exists, while keeping the local-checkout flow for current development and pre-release validation.
 
-1. Install `agent-browser` separately.
-2. Clone this repository.
-3. Install the package into `pi` globally:
+### Preferred package install
+
+Install `agent-browser` separately, then install this package into `pi`:
+
+```bash
+pi install npm:pi-agent-browser
+```
+
+To try a published package without installing it permanently:
+
+```bash
+pi -e npm:pi-agent-browser
+```
+
+### Current practical local-checkout flow
+
+Until you are using a published package release, install from a checkout:
 
 ```bash
 pi install /absolute/path/to/pi-agent-browser
 ```
 
-To try it without installing permanently:
+Or try it for one session only:
 
 ```bash
 pi -e /absolute/path/to/pi-agent-browser
@@ -64,6 +78,8 @@ pi -e /absolute/path/to/pi-agent-browser
 The native tool exposed to the agent is named `agent_browser`.
 
 ## Local development
+
+This repository now tracks `.pi/extensions/agent-browser.ts` as a thin development entrypoint that re-exports the real extension from `extensions/agent-browser/index.ts`. That keeps repo-root `pi` launches working without changing the published package layout.
 
 1. Install `agent-browser` separately via the upstream project.
 2. Run `npm install`.
@@ -89,7 +105,8 @@ Validated workflow examples:
 
 Current cautions:
 - passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
-- implicit `piab-*` sessions are extension-managed convenience sessions; they are best-effort closed on `pi` shutdown and also get an idle timeout to reduce stale background daemons
+- startup-scoped flags like `--profile`, `--session-name`, and `--cdp` are for the first command that launches a session; if the implicit session is already active, the extension returns a validation error instead of silently letting upstream ignore those flags
+- implicit `piab-*` sessions are extension-managed convenience sessions; they are best-effort closed on `pi` shutdown, get an idle timeout to reduce stale background daemons, and clean up private temp spill artifacts on shutdown
 - explicit upstream sessions like `--session`, `--profile`, `--session-name`, and `--cdp` are treated as user-managed and are not auto-closed by the extension
 
 ## Docs
@@ -97,7 +114,7 @@ Current cautions:
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — product requirements and constraints
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — current architecture decision
 - [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) — proposed v1 tool shape
-- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — staged implementation plan
+- [`docs/RELEASE.md`](docs/RELEASE.md) — maintainer release and package verification workflow
 
 ## Documentation rule
 

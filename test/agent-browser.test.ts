@@ -1,21 +1,30 @@
 /**
  * Purpose: Verify the thin planning and formatting helpers that power the pi-agent-browser extension.
- * Responsibilities: Assert deterministic implicit session naming, argument injection behavior, command parsing, and high-value result formatting.
- * Scope: Pure unit coverage for helper logic only; interactive pi/tmux validation remains the primary end-to-end test path.
+ * Responsibilities: Assert deterministic implicit session naming, argument injection behavior, prompt-derived policy logic, bounded process capture, and high-value result formatting.
+ * Scope: Focused unit coverage for helper logic only; interactive pi/tmux validation remains the primary end-to-end test path.
  * Usage: Run with `npm test` or as part of `npm run verify`.
  * Invariants/Assumptions: These tests intentionally cover the stable thin-wrapper behavior rather than the full upstream agent-browser feature surface.
  */
 
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildToolPresentation,
 	getAgentBrowserErrorText,
 	parseAgentBrowserEnvelope,
 } from "../extensions/agent-browser/lib/results.js";
-import { buildExecutionPlan, createImplicitSessionName, parseCommandInfo } from "../extensions/agent-browser/lib/runtime.js";
+import {
+	buildExecutionPlan,
+	buildPromptPolicy,
+	createImplicitSessionName,
+	getLatestUserPrompt,
+	parseCommandInfo,
+} from "../extensions/agent-browser/lib/runtime.js";
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const sessionId = "12345678-1234-5678-9abc-def012345678";
@@ -29,6 +38,7 @@ test("createImplicitSessionName is stable for a persisted pi session", () => {
 
 test("buildExecutionPlan injects --json and the implicit session when needed", () => {
 	const plan = buildExecutionPlan(["open", "https://example.com"], {
+		implicitSessionActive: false,
 		implicitSessionName: "piab-demo-123",
 		useActiveSession: true,
 	});
@@ -36,10 +46,12 @@ test("buildExecutionPlan injects --json and the implicit session when needed", (
 	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "piab-demo-123", "open", "https://example.com"]);
 	assert.equal(plan.sessionName, "piab-demo-123");
 	assert.equal(plan.usedImplicitSession, true);
+	assert.equal(plan.validationError, undefined);
 });
 
 test("buildExecutionPlan respects explicit upstream sessions", () => {
 	const plan = buildExecutionPlan(["--session", "custom", "snapshot", "-i"], {
+		implicitSessionActive: true,
 		implicitSessionName: "piab-demo-123",
 		useActiveSession: true,
 	});
@@ -49,18 +61,63 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	assert.equal(plan.usedImplicitSession, false);
 });
 
+test("buildExecutionPlan blocks startup-scoped flags from silently reusing an active implicit session", () => {
+	for (const args of [
+		["--profile", "Default", "open", "https://example.com"],
+		["--session-name", "saved-auth", "open", "https://example.com"],
+		["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"],
+	] as const) {
+		const plan = buildExecutionPlan([...args], {
+			implicitSessionActive: true,
+			implicitSessionName: "piab-demo-123",
+			useActiveSession: true,
+		});
+
+		assert.match(plan.validationError ?? "", /startup-scoped flags/i);
+		assert.equal(plan.startupScopedFlags.length, 1);
+		assert.equal(plan.startupScopedFlags[0], args[0]);
+		assert.equal(plan.usedImplicitSession, false);
+	}
+});
+
+test("buildPromptPolicy and getLatestUserPrompt derive policy from prompt text without globals", () => {
+	const prompt = getLatestUserPrompt([
+		{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Not relevant" }] } },
+		{ type: "message", message: { role: "user", content: [{ type: "text", text: "Please debug the browser integration via bash." }] } },
+	]);
+	const policy = buildPromptPolicy(prompt);
+
+	assert.equal(prompt, "Please debug the browser integration via bash.");
+	assert.equal(policy.allowAgentBrowserInspection, true);
+	assert.equal(policy.allowLegacyAgentBrowserBash, true);
+});
+
+test("buildPromptPolicy does not allow inspection for generic docs prompts unrelated to agent-browser", () => {
+	const policy = buildPromptPolicy("Please review the repo docs and summarize the architecture.");
+
+	assert.equal(policy.allowAgentBrowserInspection, false);
+	assert.equal(policy.allowLegacyAgentBrowserBash, false);
+});
+
+test("buildPromptPolicy allows explicit tool-specific inspection requests without opening generic docs bypasses", () => {
+	const policy = buildPromptPolicy("Show me the agent-browser docs and explain agent-browser --help output.");
+
+	assert.equal(policy.allowAgentBrowserInspection, true);
+	assert.equal(policy.allowLegacyAgentBrowserBash, true);
+});
+
 test("parseCommandInfo skips global flags with values", () => {
 	const commandInfo = parseCommandInfo(["--session", "named", "--profile", "./profile", "tab", "list"]);
 	assert.deepEqual(commandInfo, { command: "tab", subcommand: "list" });
 });
 
-test("parseAgentBrowserEnvelope reports invalid JSON clearly", () => {
-	const parsed = parseAgentBrowserEnvelope("not-json");
+test("parseAgentBrowserEnvelope reports invalid JSON clearly", async () => {
+	const parsed = await parseAgentBrowserEnvelope("not-json");
 	assert.match(parsed.parseError ?? "", /invalid JSON/i);
 });
 
-test("parseAgentBrowserEnvelope accepts batch JSON arrays", () => {
-	const parsed = parseAgentBrowserEnvelope(
+test("parseAgentBrowserEnvelope accepts batch JSON arrays", async () => {
+	const parsed = await parseAgentBrowserEnvelope(
 		JSON.stringify([
 			{ command: ["open", "https://developer.mozilla.org"], success: true, result: { title: "MDN Web Docs" } },
 			{ command: ["get", "title"], success: true, result: { title: "MDN Web Docs" } },
@@ -82,6 +139,38 @@ test("getAgentBrowserErrorText prefers envelope errors over generic exit codes",
 	});
 
 	assert.equal(errorText, "Navigation failed: net::ERR_BLOCKED_BY_CLIENT");
+});
+
+test("getAgentBrowserErrorText extracts nested envelope error messages", () => {
+	const errorText = getAgentBrowserErrorText({
+		aborted: false,
+		envelope: { success: false, error: { details: { message: "Profile directory is locked" } } },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+	});
+
+	assert.equal(errorText, "Profile directory is locked");
+});
+
+test("getAgentBrowserErrorText falls back to stderr or a generic message when a failed envelope has no simple error field", () => {
+	const stderrFallback = getAgentBrowserErrorText({
+		aborted: false,
+		envelope: { success: false, data: { title: "Wrong page" } },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "Navigation failed upstream",
+	});
+	const genericFallback = getAgentBrowserErrorText({
+		aborted: false,
+		envelope: { success: false, data: { title: "Wrong page" } },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+	});
+
+	assert.equal(stderrFallback, "Navigation failed upstream");
+	assert.equal(genericFallback, "agent-browser reported failure (exit code 1)");
 });
 
 test("getAgentBrowserErrorText falls back to generic exit codes when no envelope error exists", () => {
@@ -138,7 +227,7 @@ test("buildToolPresentation formats batch output for the model", async () => {
 	assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
 });
 
-test("buildToolPresentation compacts oversized snapshots and spills the raw snapshot to a temp file", async () => {
+test("buildToolPresentation compacts oversized snapshots and spills the raw snapshot to a private temp file", async () => {
 	const refs = Object.fromEntries(
 		Array.from({ length: 90 }, (_, index) => [
 			`e${index + 1}`,
@@ -174,8 +263,12 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 	const spillPath = presentation.fullOutputPath;
 	assert.ok(spillPath);
 	const spillText = await readFile(spillPath, "utf8");
+	const spillStats = await stat(spillPath);
+	const spillDirStats = await stat(dirname(spillPath));
 	assert.match(spillText, /Large snapshot row 120/);
 	assert.match(spillText, /Actionable control 1/);
+	assert.equal(spillStats.mode & 0o777, 0o600);
+	assert.equal(spillDirStats.mode & 0o777, 0o700);
 	await rm(spillPath, { force: true });
 });
 
@@ -230,5 +323,58 @@ test("buildToolPresentation prefers main content sections over top-of-page chrom
 
 	if (presentation.fullOutputPath) {
 		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
+test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnvelope still sees the full payload", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
+	const bigSnapshotRows = Array.from({ length: 7_000 }, (_, index) => {
+		const ref = `e${index + 1}`;
+		return `- generic \"Large process snapshot row ${index + 1} that forces stdout spilling without losing parseability\" [ref=${ref}] clickable [onclick]`;
+	}).join("\\n");
+	const refsLiteral = Array.from({ length: 80 }, (_, index) => `e${index + 1}: { name: "Action ${index + 1}", role: "button" }`).join(",");
+	await writeFile(
+		fakeAgentBrowserPath,
+		`#!/usr/bin/env node
+const envelope = {
+  success: true,
+  data: {
+    origin: "https://example.com/process-large",
+    refs: {${refsLiteral}},
+    snapshot: ${JSON.stringify(bigSnapshotRows)}
+  }
+};
+process.stdout.write(JSON.stringify(envelope));
+`,
+		"utf8",
+	);
+	await chmod(fakeAgentBrowserPath, 0o755);
+
+	try {
+		const processResult = await runAgentBrowserProcess({
+			args: ["snapshot", "-i"],
+			cwd: tempDir,
+			env: { PATH: `${tempDir}:${process.env.PATH ?? ""}` },
+		});
+
+		assert.equal(processResult.exitCode, 0);
+		assert.equal(typeof processResult.stdoutSpillPath, "string");
+		assert.ok(processResult.stdout.length < bigSnapshotRows.length);
+
+		const parsed = await parseAgentBrowserEnvelope({
+			stdout: processResult.stdout,
+			stdoutPath: processResult.stdoutSpillPath,
+		});
+		assert.equal(parsed.parseError, undefined);
+		assert.equal(parsed.envelope?.success, true);
+		const snapshotData = parsed.envelope?.data as { snapshot?: string } | undefined;
+		assert.match(snapshotData?.snapshot ?? "", /Large process snapshot row 7000/);
+
+		if (processResult.stdoutSpillPath) {
+			await rm(processResult.stdoutSpillPath, { force: true });
+		}
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
 	}
 });

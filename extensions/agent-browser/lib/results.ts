@@ -6,13 +6,12 @@
  * Invariants/Assumptions: Upstream `agent-browser --json` responses follow the `{ success, data, error }` envelope shape observed on the local development machine.
  */
 
-import { randomBytes } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import type { CommandInfo } from "./runtime.js";
 import { getImageMimeType } from "./runtime.js";
+import { writeSecureTempFile } from "./temp.js";
 
 const SNAPSHOT_INLINE_MAX_CHARS = 6_000;
 const SNAPSHOT_INLINE_MAX_LINES = 80;
@@ -608,9 +607,11 @@ function shouldCompactSnapshot(rawText: string, data: Record<string, unknown>): 
 }
 
 async function writeSnapshotSpillFile(data: Record<string, unknown>): Promise<string> {
-	const path = join(tmpdir(), `${SNAPSHOT_SPILL_FILE_PREFIX}-${randomBytes(8).toString("hex")}.json`);
-	await writeFile(path, JSON.stringify(data, null, 2), "utf8");
-	return path;
+	return await writeSecureTempFile({
+		content: JSON.stringify(data, null, 2),
+		prefix: SNAPSHOT_SPILL_FILE_PREFIX,
+		suffix: ".json",
+	});
 }
 
 async function buildSnapshotPresentation(data: Record<string, unknown>): Promise<ToolPresentation> {
@@ -781,7 +782,54 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	return stringifyUnknown(data);
 }
 
-export function parseAgentBrowserEnvelope(stdout: string): { envelope?: AgentBrowserEnvelope; parseError?: string } {
+async function readEnvelopeSource(options: { stdout: string; stdoutPath?: string }): Promise<string> {
+	if (!options.stdoutPath) {
+		return options.stdout;
+	}
+
+	try {
+		return await readFile(options.stdoutPath, "utf8");
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`agent-browser output spill file could not be read: ${message}`);
+	}
+}
+
+function extractEnvelopeErrorText(error: unknown): string | undefined {
+	if (typeof error === "string") {
+		return error.trim() || undefined;
+	}
+	if (typeof error === "number" || typeof error === "boolean") {
+		return String(error);
+	}
+	if (Array.isArray(error)) {
+		const parts = error.map((item) => extractEnvelopeErrorText(item) ?? stringifyUnknown(item)).filter((item) => item.length > 0);
+		return parts.length > 0 ? parts.join("\n") : undefined;
+	}
+	if (!isRecord(error)) {
+		return error == null ? undefined : stringifyUnknown(error);
+	}
+
+	for (const key of ["message", "error", "details", "cause", "stderr"] as const) {
+		const value = extractEnvelopeErrorText(error[key]);
+		if (value) return value;
+	}
+
+	const fallback = stringifyUnknown(error).trim();
+	return fallback.length > 0 && fallback !== "{}" ? fallback : undefined;
+}
+
+export async function parseAgentBrowserEnvelope(options: string | { stdout: string; stdoutPath?: string }): Promise<{
+	envelope?: AgentBrowserEnvelope;
+	parseError?: string;
+}> {
+	let stdout: string;
+	try {
+		stdout = typeof options === "string" ? options : await readEnvelopeSource(options);
+	} catch (error) {
+		return { parseError: error instanceof Error ? error.message : String(error) };
+	}
+
 	const trimmed = stdout.trim();
 	if (trimmed.length === 0) {
 		return { parseError: "agent-browser returned no JSON output." };
@@ -817,7 +865,7 @@ export function getAgentBrowserErrorText(options: {
 	if (aborted) return "agent-browser was aborted.";
 	if (spawnError) return spawnError.message;
 	if (envelope?.success === false) {
-		return typeof envelope.error === "string" ? envelope.error : JSON.stringify(envelope.error, null, 2);
+		return extractEnvelopeErrorText(envelope.error) ?? (stderr.trim() || `agent-browser reported failure${exitCode !== 0 ? ` (exit code ${exitCode})` : "."}`);
 	}
 	if (exitCode !== 0) {
 		return stderr.trim() || `agent-browser exited with code ${exitCode}.`;

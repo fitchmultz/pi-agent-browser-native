@@ -128,7 +128,7 @@ Recommended details:
 }
 ```
 
-For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a temp JSON spill file with the full upstream snapshot payload.
+For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private temp JSON spill file with the full upstream snapshot payload.
 
 ## High-value result rendering
 
@@ -155,8 +155,10 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - treat the implicit session as extension-managed convenience state
 - on normal `pi` shutdown, best-effort close the implicit session
 - set an idle timeout on implicit sessions so abandoned daemons eventually self-clean
+- clean up private temp spill artifacts owned by the implicit session on shutdown
 - treat explicit upstream session choices like `--session`, `--profile`, `--session-name`, and `--cdp` as user-managed
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
+- if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active, return a validation error instead of silently relying on upstream to ignore them
 
 ## Non-goals
 

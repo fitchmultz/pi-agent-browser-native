@@ -25,8 +25,11 @@
     "extensions",
     "README.md",
     "CHANGELOG.md",
-    "AGENTS.md",
-    "docs"
+    "LICENSE",
+    "docs/ARCHITECTURE.md",
+    "docs/RELEASE.md",
+    "docs/REQUIREMENTS.md",
+    "docs/TOOL_CONTRACT.md"
   ],
   "pi": {
     "extensions": [
@@ -47,6 +50,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
-    "verify": "npm run typecheck && npm run test"
+    "pack:dry-run": "npm pack --json --dry-run",
+    "verify": "npm run typecheck && npm run test",
+    "verify:package": "node ./scripts/verify-package.mjs",
+    "verify:release": "npm run verify && npm run verify:package"
   }
 }

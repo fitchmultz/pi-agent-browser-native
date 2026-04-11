@@ -6,6 +6,8 @@
  * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
  */
 
+import { rm } from "node:fs/promises";
+
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
@@ -13,10 +15,13 @@ import { runAgentBrowserProcess } from "./lib/process.js";
 import { buildToolPresentation, getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "./lib/results.js";
 import {
 	buildExecutionPlan,
+	buildPromptPolicy,
 	createEphemeralSessionSeed,
 	createImplicitSessionName,
+	getLatestUserPrompt,
 	validateToolArgs,
 } from "./lib/runtime.js";
+import { cleanupSecureTempArtifacts } from "./lib/temp.js";
 
 const IMPLICIT_SESSION_IDLE_TIMEOUT_MS = "900000";
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
@@ -50,37 +55,6 @@ function buildInvocationPreview(effectiveArgs: string[]): string {
 	return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
 }
 
-function shouldAllowLegacyAgentBrowserBash(prompt: string): boolean {
-	const lowered = prompt.toLowerCase();
-	return [
-		"bash workflow",
-		"use bash",
-		"via bash",
-		"npx agent-browser",
-		"agent-browser --help",
-		"agent-browser --version",
-	].some((needle) => lowered.includes(needle));
-}
-
-function shouldAllowAgentBrowserInspection(prompt: string): boolean {
-	const lowered = prompt.toLowerCase();
-	return [
-		"agent_browser --help",
-		"agent-browser --help",
-		"agent_browser --version",
-		"agent-browser --version",
-		"tool guidance",
-		"tool contract",
-		"tool description",
-		"documentation",
-		"docs",
-		"debug the browser integration",
-		"debug agent_browser",
-		"why isn't agent_browser",
-		"why is agent_browser",
-	].some((needle) => lowered.includes(needle));
-}
-
 function looksLikeDirectAgentBrowserBash(command: string): boolean {
 	return /(^|[\s;&|])(npx\s+)?agent-browser(\s|$)/.test(command);
 }
@@ -106,17 +80,18 @@ function buildInspectionDeflectionMessage(): string {
 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
-	let allowLegacyAgentBrowserBash = false;
-	let allowAgentBrowserInspection = false;
+	let implicitSessionActive = false;
 	let implicitSessionName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
 	let implicitSessionCwd = process.cwd();
 
 	pi.on("session_start", async (_event, ctx) => {
+		implicitSessionActive = false;
 		implicitSessionName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
 		implicitSessionCwd = ctx.cwd;
 	});
 
 	pi.on("session_shutdown", async () => {
+		implicitSessionActive = false;
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), IMPLICIT_SESSION_CLOSE_TIMEOUT_MS);
 		try {
@@ -129,12 +104,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			// Best-effort cleanup only.
 		} finally {
 			clearTimeout(timer);
+			await cleanupSecureTempArtifacts();
 		}
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		allowLegacyAgentBrowserBash = shouldAllowLegacyAgentBrowserBash(event.prompt);
-		allowAgentBrowserInspection = shouldAllowAgentBrowserInspection(event.prompt);
 		return {
 			systemPrompt:
 				event.systemPrompt +
@@ -142,10 +116,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		};
 	});
 
-	pi.on("tool_call", async (event) => {
+	pi.on("tool_call", async (event, ctx) => {
+		const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 		if (
 			isToolCallEventType("bash", event) &&
-			!allowLegacyAgentBrowserBash &&
+			!promptPolicy.allowLegacyAgentBrowserBash &&
 			looksLikeDirectAgentBrowserBash(event.input.command) &&
 			!isHarmlessAgentBrowserInspectionCommand(event.input.command)
 		) {
@@ -183,7 +158,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		],
 		parameters: AGENT_BROWSER_PARAMS,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			if (!allowAgentBrowserInspection && isPlainTextInspectionArgs(params.args)) {
+			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
+			if (!promptPolicy.allowAgentBrowserInspection && isPlainTextInspectionArgs(params.args)) {
 				const errorText = buildInspectionDeflectionMessage();
 				return {
 					content: [{ type: "text", text: errorText }],
@@ -202,9 +178,22 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			const executionPlan = buildExecutionPlan(params.args, {
+				implicitSessionActive,
 				implicitSessionName,
 				useActiveSession: params.useActiveSession ?? true,
 			});
+
+			if (executionPlan.validationError) {
+				return {
+					content: [{ type: "text", text: executionPlan.validationError }],
+					details: {
+						args: params.args,
+						startupScopedFlags: executionPlan.startupScopedFlags,
+						validationError: executionPlan.validationError,
+					},
+					isError: true,
+				};
+			}
 
 			onUpdate?.({
 				content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(executionPlan.effectiveArgs)}` }],
@@ -225,6 +214,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				stdin: params.stdin,
 			});
 
+			if (executionPlan.usedImplicitSession && !processResult.aborted && !processResult.spawnError) {
+				implicitSessionActive = executionPlan.commandInfo.command !== "close";
+			}
+
 			if (processResult.spawnError?.message.includes("ENOENT")) {
 				const errorText = buildMissingBinaryMessage();
 				return {
@@ -238,57 +231,67 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			const parsed = parseAgentBrowserEnvelope(processResult.stdout);
-			const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
-			const plainTextInspection = isPlainTextInspectionArgs(params.args) && processSucceeded && parsed.parseError !== undefined;
-			const envelopeSuccess = plainTextInspection ? true : parsed.envelope?.success !== false;
-			const parseSucceeded = plainTextInspection || parsed.parseError === undefined;
-			const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
+			try {
+				const parsed = await parseAgentBrowserEnvelope({
+					stdout: processResult.stdout,
+					stdoutPath: processResult.stdoutSpillPath,
+				});
+				const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
+				const plainTextInspection = isPlainTextInspectionArgs(params.args) && processSucceeded && parsed.parseError !== undefined;
+				const envelopeSuccess = plainTextInspection ? true : parsed.envelope?.success !== false;
+				const parseSucceeded = plainTextInspection || parsed.parseError === undefined;
+				const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
 
-			const errorText = getAgentBrowserErrorText({
-				aborted: processResult.aborted,
-				envelope: parsed.envelope,
-				exitCode: processResult.exitCode,
-				parseError: parsed.parseError,
-				plainTextInspection,
-				spawnError: processResult.spawnError,
-				stderr: processResult.stderr,
-			});
-
-			const presentation = plainTextInspection
-				? {
-					content: [{ type: "text" as const, text: processResult.stdout.trim() }],
-					imagePath: undefined,
-					summary: `${params.args.join(" ")} completed`,
-				  }
-				: await buildToolPresentation({
-						commandInfo: executionPlan.commandInfo,
-						cwd: ctx.cwd,
-						envelope: parsed.envelope,
-						errorText,
-				  });
-
-			return {
-				content: presentation.content,
-				details: {
-					args: params.args,
-					command: executionPlan.commandInfo.command,
-					subcommand: executionPlan.commandInfo.subcommand,
-					data: presentation.data,
-					error: parsed.envelope?.error,
-					effectiveArgs: executionPlan.effectiveArgs,
+				const errorText = getAgentBrowserErrorText({
+					aborted: processResult.aborted,
+					envelope: parsed.envelope,
 					exitCode: processResult.exitCode,
-					fullOutputPath: presentation.fullOutputPath,
-					imagePath: presentation.imagePath,
 					parseError: parsed.parseError,
-					sessionName: executionPlan.sessionName,
-					stderr: processResult.stderr || undefined,
-					stdout: parseSucceeded ? undefined : processResult.stdout,
-					summary: presentation.summary,
-					usedImplicitSession: executionPlan.usedImplicitSession,
-				},
-				isError: !succeeded,
-			};
+					plainTextInspection,
+					spawnError: processResult.spawnError,
+					stderr: processResult.stderr,
+				});
+
+				const presentation = plainTextInspection
+					? {
+						content: [{ type: "text" as const, text: processResult.stdout.trim() }],
+						imagePath: undefined,
+						summary: `${params.args.join(" ")} completed`,
+					  }
+					: await buildToolPresentation({
+							commandInfo: executionPlan.commandInfo,
+							cwd: ctx.cwd,
+							envelope: parsed.envelope,
+							errorText,
+					  });
+
+				return {
+					content: presentation.content,
+					details: {
+						args: params.args,
+						command: executionPlan.commandInfo.command,
+						subcommand: executionPlan.commandInfo.subcommand,
+						data: presentation.data,
+						error: parsed.envelope?.error,
+						effectiveArgs: executionPlan.effectiveArgs,
+						exitCode: processResult.exitCode,
+						fullOutputPath: presentation.fullOutputPath,
+						imagePath: presentation.imagePath,
+						parseError: parsed.parseError,
+						sessionName: executionPlan.sessionName,
+						startupScopedFlags: executionPlan.startupScopedFlags,
+						stderr: processResult.stderr || undefined,
+						stdout: parseSucceeded ? undefined : processResult.stdout,
+						summary: presentation.summary,
+						usedImplicitSession: executionPlan.usedImplicitSession,
+					},
+					isError: !succeeded,
+				};
+			} finally {
+				if (processResult.stdoutSpillPath) {
+					await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
+				}
+			}
 		},
 	});
 }

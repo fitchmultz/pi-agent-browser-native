@@ -9,7 +9,7 @@ Related docs:
 
 Build this as a **thin `pi` extension/package** that exposes `agent-browser` as one native tool while keeping upstream `agent-browser` as the source of truth.
 
-The package install path is the primary product path. Repo-local `.pi/` wiring exists for development, but package-manifest behavior matters more.
+The package install path is the primary product path. Repo-local `.pi/` wiring exists only as a thin tracked development shim, while package-manifest behavior and packaged contents matter more.
 
 ## Chosen shape
 
@@ -42,6 +42,19 @@ That means:
 - no manual user orchestration as the main workflow
 - any future slash commands should be minimal and secondary
 
+### Package layout versus repo-local development
+
+The published package should load from the `pi` manifest in `package.json`.
+
+Repo-local development should use one thin tracked shim at `.pi/extensions/agent-browser.ts` that re-exports `extensions/agent-browser/index.ts`.
+
+Why:
+- keeps repo-root `pi` launches working during development
+- avoids making local `.pi/` wiring the product contract
+- keeps the published tarball focused on the package manifest, extension code, canonical docs, and license
+
+The published package should exclude agent-only and superseded repo materials such as `AGENTS.md`, `docs/v1-tool-contract.md`, `docs/native-integration-design.md`, and other internal planning notes.
+
 ## Session model
 
 ### Default
@@ -67,6 +80,7 @@ V1 ownership rule:
 Practical policy:
 - on normal `pi` shutdown, best-effort close the implicit session
 - also set an idle timeout on implicit sessions so abandoned daemons self-clean after inactivity
+- clean up private temp spill artifacts owned by the implicit session on shutdown
 - leave explicit upstream sessions like `--session`, `--profile`, `--session-name`, and `--cdp` alone unless the caller closes them explicitly
 
 This is primarily about ownership clarity and avoiding surprise, not adding a heavy safety wrapper. If the extension invented the session, the extension should clean it up. If the caller explicitly chose the upstream session model, the extension should stay out of the way.
@@ -77,6 +91,8 @@ This is primarily about ownership clarity and avoiding surprise, not adding a he
 The extension should surface that clearly and avoid hidden restart behavior in v1.
 
 That means explicit startup-scoping flags like `--profile`, `--session-name`, and `--cdp` should remain explicit upstream choices instead of being wrapped in extra hidden restart or cloning logic.
+
+If the implicit session is already active and one of those startup-scoped flags appears again, the extension should fail clearly instead of silently sending a command shape that upstream would ignore.
 
 ## Preferring the native tool
 

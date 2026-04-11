@@ -4,7 +4,7 @@ Related docs:
 - [`../README.md`](../README.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
-- [`../AGENTS.md`](../AGENTS.md)
+- [`RELEASE.md`](RELEASE.md)
 
 ## Purpose
 
@@ -43,9 +43,12 @@ Define the product requirements and constraints for `pi-agent-browser`.
 
 ### Install priority
 
-- Prioritize the global install path first.
+- Prioritize the package install path first.
+- User-facing install docs should lead with `pi install npm:pi-agent-browser` and `pi -e npm:pi-agent-browser` once releases exist.
+- Keep the current local-checkout path documented as the practical pre-release and development flow.
 - Most users will install this extension globally rather than as a project-local extension.
-- Repo-local `.pi/` wiring is for development convenience and should not drive the product design.
+- Repo-local `.pi/` wiring is for development convenience only and should not drive the product design.
+- The tracked repo-local development entrypoint should stay a thin re-export, not a second implementation path.
 
 ### Native-tool preference
 
@@ -60,14 +63,17 @@ Define the product requirements and constraints for `pi-agent-browser`.
 - Someone opening the repo should quickly understand the goal, purpose, install model, and usage.
 - Documents should read as complete documents, not iterative logs, unless they are explicitly meant to be iterative, such as a changelog.
 - Requirements, expectations, and durable rules from user conversations should be reflected in the appropriate docs.
+- Published package contents should include the canonical user-facing docs plus `LICENSE`.
+- Published package contents should exclude agent-only and superseded docs such as `AGENTS.md`, `docs/v1-tool-contract.md`, and `docs/native-integration-design.md`.
 
 ### Testing guidance
 
 - The primary confidence path is a real `pi` session driven in `tmux`.
-- Launch `pi` from the repository root for local development so project-local resources load.
+- Launch `pi` from the repository root for local development so the tracked `.pi` development entrypoint loads.
 - Prefer full `pi` restart over `/reload` when validating extension changes.
 - Use `/resume` when needed after restart.
 - Keep testing broader than a single smoke site like `example.com`.
+- Maintain a concrete release/package verification workflow in `docs/RELEASE.md` and matching repository scripts.
 
 ## Representative use cases
 
@@ -84,8 +90,8 @@ The design should comfortably support workflows such as:
 - Package-manifest behavior matters more than repo-local development wiring.
 - The extension should use official `pi` hooks and package resources where possible.
 - The wrapper should stay thin, with upstream `agent-browser` remaining the source of truth for command semantics.
-- User-facing docs belong in `README.md` and `docs/`.
-- Agent workflow and testing procedures belong in `AGENTS.md`.
+- User-facing docs belong in `README.md` and the canonical published files under `docs/`.
+- Agent workflow and deeper testing procedures can stay in `AGENTS.md`, but published docs must not depend on that file being present.
 - Keep mitigations for legacy-skill coexistence simple; do not add extra moving parts unless observed behavior justifies them.
 
 ## Open design questions
