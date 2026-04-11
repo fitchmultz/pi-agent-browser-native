@@ -104,7 +104,7 @@ This keeps the product centered on native tool usage instead of auxiliary skill 
 
 ## Responsibility split
 
-### `pi-agent-browser` owns
+### `pi-agent-browser-native` owns
 
 - tool registration and schema
 - subprocess execution and JSON parsing

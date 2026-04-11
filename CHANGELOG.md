@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 - 2026-04-11
+
+### Changed
+- renamed the public GitHub repository to `pi-agent-browser-native` so the repo name, npm package name, install docs, and package metadata all align
+- updated package metadata and install guidance to use the new GitHub source path `https://github.com/fitchmultz/pi-agent-browser-native`
+- switched the local global pi install from the repo checkout path to the published npm package `pi-agent-browser-native`
+
 ## 0.1.1 - 2026-04-11
 
 ### Changed

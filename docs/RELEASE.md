@@ -8,7 +8,7 @@ Related docs:
 
 ## Purpose
 
-Provide one concrete maintainer workflow for validating repo state, package contents, and install guidance before publishing `pi-agent-browser`.
+Provide one concrete maintainer workflow for validating repo state, package contents, and install guidance before publishing `pi-agent-browser-native`.
 
 ## Pre-release checks
 

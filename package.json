@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Native pi integration for agent-browser",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
@@ -15,11 +15,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fitchmultz/pi-agent-browser.git"
+    "url": "git+https://github.com/fitchmultz/pi-agent-browser-native.git"
   },
-  "homepage": "https://github.com/fitchmultz/pi-agent-browser#readme",
+  "homepage": "https://github.com/fitchmultz/pi-agent-browser-native#readme",
   "bugs": {
-    "url": "https://github.com/fitchmultz/pi-agent-browser/issues"
+    "url": "https://github.com/fitchmultz/pi-agent-browser-native/issues"
   },
   "engines": {
     "node": ">=20.6.0"

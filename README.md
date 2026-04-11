@@ -1,4 +1,4 @@
-# pi-agent-browser
+# pi-agent-browser-native
 
 Native `pi` integration for [`agent-browser`](https://agent-browser.dev/).
 
@@ -66,13 +66,13 @@ pi -e npm:pi-agent-browser-native
 For the source install path, prefer the repository URL:
 
 ```bash
-pi install https://github.com/fitchmultz/pi-agent-browser
+pi install https://github.com/fitchmultz/pi-agent-browser-native
 ```
 
 To try the GitHub source without installing it permanently:
 
 ```bash
-pi -e https://github.com/fitchmultz/pi-agent-browser
+pi -e https://github.com/fitchmultz/pi-agent-browser-native
 ```
 
 ### Current practical local-checkout flow
@@ -80,13 +80,13 @@ pi -e https://github.com/fitchmultz/pi-agent-browser
 Until you are using a published package release, install from a checkout:
 
 ```bash
-pi install /absolute/path/to/pi-agent-browser
+pi install /absolute/path/to/pi-agent-browser-native
 ```
 
 Or try it for one session only:
 
 ```bash
-pi -e /absolute/path/to/pi-agent-browser
+pi -e /absolute/path/to/pi-agent-browser-native
 ```
 
 The native tool exposed to the agent is named `agent_browser`.
