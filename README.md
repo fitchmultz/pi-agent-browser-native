@@ -52,13 +52,27 @@ The product direction is package-first. Prefer the package source once a release
 Install `agent-browser` separately, then install this package into `pi`:
 
 ```bash
-pi install npm:pi-agent-browser
+pi install npm:pi-agent-browser-native
 ```
 
 To try a published package without installing it permanently:
 
 ```bash
-pi -e npm:pi-agent-browser
+pi -e npm:pi-agent-browser-native
+```
+
+### GitHub install
+
+For the source install path, prefer the repository URL:
+
+```bash
+pi install https://github.com/fitchmultz/pi-agent-browser
+```
+
+To try the GitHub source without installing it permanently:
+
+```bash
+pi -e https://github.com/fitchmultz/pi-agent-browser
 ```
 
 ### Current practical local-checkout flow

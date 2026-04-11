@@ -44,7 +44,8 @@ Define the product requirements and constraints for `pi-agent-browser`.
 ### Install priority
 
 - Prioritize the package install path first.
-- User-facing install docs should lead with `pi install npm:pi-agent-browser` and `pi -e npm:pi-agent-browser` once releases exist.
+- User-facing install docs should lead with `pi install npm:pi-agent-browser-native` and `pi -e npm:pi-agent-browser-native` once releases exist.
+- User-facing install docs should also include the GitHub source path `pi install https://github.com/fitchmultz/pi-agent-browser`.
 - Keep the current local-checkout path documented as the practical pre-release and development flow.
 - Most users will install this extension globally rather than as a project-local extension.
 - Repo-local `.pi/` wiring is for development convenience only and should not drive the product design.

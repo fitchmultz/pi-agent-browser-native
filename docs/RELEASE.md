@@ -69,8 +69,8 @@ Use the agent_browser tool to open https://react.dev and then take an interactiv
 After publishing a release, validate the package-first install path explicitly:
 
 ```bash
-pi install npm:pi-agent-browser@<version>
-pi -e npm:pi-agent-browser@<version>
+pi install npm:pi-agent-browser-native@<version>
+pi -e npm:pi-agent-browser-native@<version>
 ```
 
 Then confirm `pi` exposes the native `agent_browser` tool and that a basic `open` + `snapshot -i` flow works.

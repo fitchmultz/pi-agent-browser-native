@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 - 2026-04-11
 
 ### Changed
 - startup-scoped flags like `--profile`, `--session-name`, and `--cdp` now fail clearly when reused against an already-active implicit session instead of silently relying on upstream to ignore them
@@ -9,6 +9,7 @@
 - snapshot spill files now live under private temp directories with restrictive permissions and are cleaned up on shutdown
 - failed upstream envelopes now synthesize clearer fallback error text when no simple top-level `error` string is present
 - package/release verification now has a documented maintainer workflow, a tarball verifier script, a tracked repo-local `.pi` development shim, and a published tarball that excludes agent-only or superseded docs while including `LICENSE`
+- npm publish prep now uses the available package name `pi-agent-browser-native`, adds author and gallery-friendly keywords, and updates README install guidance to show npm first and GitHub second
 
 ## 0.1.0 - 2026-04-09
 
