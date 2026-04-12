@@ -1,12 +1,12 @@
 /**
  * Purpose: Turn upstream agent-browser JSON output into pi-friendly tool content and details.
- * Responsibilities: Parse the upstream JSON envelope, format content text for the model, derive concise summaries, compact oversized snapshot output into a browser-aware preview, and attach inline image artifacts when the result points to an image file.
+ * Responsibilities: Parse the upstream JSON envelope, format content text for the model, derive concise summaries, compact oversized snapshot output into a browser-aware preview, bound snapshot spill artifacts under the secure temp budget, and attach inline image artifacts when the result points to a reasonably sized image file.
  * Scope: Output shaping only; subprocess execution and pi tool registration live elsewhere.
  * Usage: Imported by the extension entrypoint after the upstream command has finished executing.
  * Invariants/Assumptions: Upstream `agent-browser --json` responses follow the `{ success, data, error }` envelope shape observed on the local development machine.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import type { CommandInfo } from "./runtime.js";
@@ -14,6 +14,8 @@ import { getImageMimeType } from "./runtime.js";
 import { writeSecureTempFile } from "./temp.js";
 
 const SNAPSHOT_INLINE_MAX_CHARS = 6_000;
+const INLINE_IMAGE_MAX_BYTES_ENV = "PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES";
+const DEFAULT_INLINE_IMAGE_MAX_BYTES = 5 * 1_024 * 1_024;
 const SNAPSHOT_INLINE_MAX_LINES = 80;
 const SNAPSHOT_INLINE_MAX_REFS = 60;
 const SNAPSHOT_PRIMARY_PREVIEW_LINES = 10;
@@ -153,6 +155,33 @@ function stringifyUnknown(value: unknown): string {
 	} catch {
 		return String(value);
 	}
+}
+
+function parsePositiveInteger(rawValue: string | undefined): number | undefined {
+	if (typeof rawValue !== "string") return undefined;
+	const normalizedValue = rawValue.trim();
+	if (!/^\d+$/.test(normalizedValue)) return undefined;
+	const parsedValue = Number(normalizedValue);
+	if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) return undefined;
+	return parsedValue;
+}
+
+function getInlineImageMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+	return parsePositiveInteger(env[INLINE_IMAGE_MAX_BYTES_ENV]) ?? DEFAULT_INLINE_IMAGE_MAX_BYTES;
+}
+
+function formatByteCount(bytes: number): string {
+	if (bytes < 1_024) return `${bytes} B`;
+	if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KiB`;
+	return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
+}
+
+function appendPresentationNotice(presentation: ToolPresentation, message: string): void {
+	const existingText = presentation.content[0]?.type === "text" ? presentation.content[0].text : "";
+	presentation.content[0] = {
+		type: "text",
+		text: existingText.length > 0 ? `${existingText}\n\n${message}` : message,
+	};
 }
 
 function getSnapshotText(data: Record<string, unknown>): string | undefined {
@@ -625,7 +654,14 @@ async function buildSnapshotPresentation(data: Record<string, unknown>): Promise
 		};
 	}
 
-	const fullOutputPath = await writeSnapshotSpillFile(data);
+	let fullOutputPath: string | undefined;
+	let spillErrorText: string | undefined;
+	try {
+		fullOutputPath = await writeSnapshotSpillFile(data);
+	} catch (error) {
+		spillErrorText = error instanceof Error ? error.message : String(error);
+	}
+
 	const refEntries = getSnapshotRefEntries(data);
 	const roleCounts = getSnapshotRoleCounts(refEntries);
 	const roleCountsText = formatRoleCounts(roleCounts);
@@ -672,7 +708,9 @@ async function buildSnapshotPresentation(data: Record<string, unknown>): Promise
 		`Refs: ${refEntries.length}`,
 		...(roleCountsText ? [`Roles: ${roleCountsText}`] : []),
 		"",
-		`Compact snapshot view. Full raw snapshot: ${fullOutputPath}`,
+		fullOutputPath
+			? `Compact snapshot view. Full raw snapshot: ${fullOutputPath}`
+			: `Compact snapshot view. Full raw snapshot unavailable: ${spillErrorText ?? "temp spill file could not be created."}`,
 	];
 
 	if (fallbackPreview) {
@@ -682,7 +720,9 @@ async function buildSnapshotPresentation(data: Record<string, unknown>): Promise
 			...(fallbackPreview.lines.length > 0 ? fallbackPreview.lines : ["(no interactive elements)"]),
 		);
 		if (fallbackPreview.omittedCount > 0) {
-			lines.push(`- ... (${fallbackPreview.omittedCount} additional snapshot lines omitted; use the spill file for everything)`);
+			lines.push(
+				`- ... (${fallbackPreview.omittedCount} additional snapshot lines omitted; ${fullOutputPath ? "use the spill file for everything" : "the full raw snapshot was omitted"})`,
+			);
 		}
 	} else {
 		lines.push("", "Primary content:", ...(primaryPreview?.lines ?? ["(no interactive elements)"]));
@@ -707,7 +747,9 @@ async function buildSnapshotPresentation(data: Record<string, unknown>): Promise
 		lines.push("", "Other refs:", ...otherRefEntries.map(formatCompactRef));
 	}
 	if (omittedOtherRefs > 0) {
-		lines.push(`- ... (${omittedOtherRefs} additional refs in the full snapshot file)`);
+		lines.push(
+			`- ... (${omittedOtherRefs} additional refs ${fullOutputPath ? "in the full snapshot file" : "were omitted with the full raw snapshot"})`,
+		);
 	}
 
 	return {
@@ -716,6 +758,7 @@ async function buildSnapshotPresentation(data: Record<string, unknown>): Promise
 			compacted: true,
 			fullOutputPath,
 			origin,
+			spillError: spillErrorText,
 			previewRefIds: [...previewRefIds],
 			previewSections: [
 				...(primarySegment
@@ -861,9 +904,9 @@ export function getAgentBrowserErrorText(options: {
 }): string | undefined {
 	const { aborted, envelope, exitCode, parseError, plainTextInspection, spawnError, stderr } = options;
 	if (plainTextInspection) return undefined;
-	if (parseError) return parseError;
 	if (aborted) return "agent-browser was aborted.";
 	if (spawnError) return spawnError.message;
+	if (parseError) return parseError;
 	if (envelope?.success === false) {
 		return extractEnvelopeErrorText(envelope.error) ?? (stderr.trim() || `agent-browser reported failure${exitCode !== 0 ? ` (exit code ${exitCode})` : "."}`);
 	}
@@ -909,16 +952,24 @@ export async function buildToolPresentation(options: {
 	}
 
 	try {
+		const fileStats = await stat(imagePath);
+		const inlineImageMaxBytes = getInlineImageMaxBytes();
+		if (fileStats.size > inlineImageMaxBytes) {
+			appendPresentationNotice(
+				presentation,
+				`Image attachment skipped: ${formatByteCount(fileStats.size)} exceeds the inline limit of ${formatByteCount(inlineImageMaxBytes)}.`,
+			);
+			presentation.imagePath = imagePath;
+			return presentation;
+		}
+
 		const file = await readFile(imagePath);
 		presentation.content.push({ type: "image", data: file.toString("base64"), mimeType });
 		presentation.imagePath = imagePath;
 		return presentation;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		presentation.content[0] = {
-			type: "text",
-			text: `${presentation.content[0]?.type === "text" ? presentation.content[0].text : ""}\n\nImage attachment failed: ${message}`,
-		};
+		appendPresentationNotice(presentation, `Image attachment failed: ${message}`);
 		presentation.imagePath = imagePath;
 		return presentation;
 	}

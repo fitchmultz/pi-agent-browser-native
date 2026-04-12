@@ -1,26 +1,115 @@
 /**
  * Purpose: Create private temporary files for the pi-agent-browser extension without leaking artifacts broadly on disk.
- * Responsibilities: Maintain a process-private temp root, prune stale temp roots from prior runs, create securely permissioned temp files, and best-effort clean the current run's temp root on process exit.
+ * Responsibilities: Maintain a process-private temp root, stamp explicit ownership markers, enforce an aggregate temp-artifact disk budget, create securely permissioned temp files, prune explicitly owned stale temp roots from prior runs, and best-effort clean all owned roots on process exit.
  * Scope: Temporary artifact lifecycle only; callers decide what data to write and when to delete long-lived references.
  * Usage: Imported by result/process helpers when they need secure spill files instead of world-readable shared tmp paths.
- * Invariants/Assumptions: Temp artifacts live under the OS temp directory, the active run uses a dedicated 0700 directory, and files are created with exclusive 0600 permissions.
+ * Invariants/Assumptions: Temp artifacts live under the OS temp directory, each active run uses a dedicated 0700 directory, files are created with exclusive 0600 permissions, and stale pruning only touches roots with an explicit pi-agent-browser ownership marker.
  */
 
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, open, readdir, rm, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
+import { chmod, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const TEMP_ROOT_PREFIX = "pi-agent-browser-";
+const TEMP_ROOT_MARKER_FILE_NAME = ".pi-agent-browser-owner.json";
+const TEMP_ROOT_MARKER_KIND = "pi-agent-browser-temp-root";
+const TEMP_ROOT_MARKER_VERSION = 1;
 const STALE_TEMP_ROOT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const TEMP_ROOT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES";
+const DEFAULT_TEMP_ROOT_MAX_BYTES = 32 * 1_024 * 1_024;
+
+interface TempRootOwnershipRecord {
+	createdAtMs: number;
+	kind: string;
+	ownerUid?: number;
+	version: number;
+}
 
 let sessionTempRootPromise: Promise<string> | undefined;
 let exitCleanupRegistered = false;
+let tempMutationQueue = Promise.resolve();
+const ownedTempRoots = new Set<string>();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function getCurrentProcessUid(): number | undefined {
+	return typeof process.getuid === "function" ? process.getuid() : undefined;
+}
+
+function parsePositiveInteger(rawValue: string | undefined): number | undefined {
+	if (typeof rawValue !== "string") return undefined;
+	const normalizedValue = rawValue.trim();
+	if (!/^\d+$/.test(normalizedValue)) return undefined;
+	const parsedValue = Number(normalizedValue);
+	if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) return undefined;
+	return parsedValue;
+}
+
+function isTempRootOwnershipRecord(value: unknown): value is TempRootOwnershipRecord {
+	if (!isRecord(value)) return false;
+	if (value.kind !== TEMP_ROOT_MARKER_KIND || value.version !== TEMP_ROOT_MARKER_VERSION) return false;
+	if (typeof value.createdAtMs !== "number" || !Number.isFinite(value.createdAtMs) || value.createdAtMs <= 0) return false;
+	return value.ownerUid === undefined || typeof value.ownerUid === "number";
+}
+
+function getTempArtifactByteLength(content: string | Uint8Array): number {
+	return typeof content === "string" ? Buffer.byteLength(content) : content.byteLength;
+}
+
+function enqueueTempMutation<T>(task: () => Promise<T>): Promise<T> {
+	const nextTask = tempMutationQueue.then(task, task);
+	tempMutationQueue = nextTask.then(
+		() => undefined,
+		() => undefined,
+	);
+	return nextTask;
+}
+
+async function getTempRootArtifactBytes(tempRoot: string): Promise<number> {
+	const entries = await readdir(tempRoot, { withFileTypes: true }).catch(() => []);
+	let totalBytes = 0;
+	for (const entry of entries) {
+		if (!entry.isFile() || entry.name === TEMP_ROOT_MARKER_FILE_NAME) continue;
+		const path = join(tempRoot, entry.name);
+		const stats = await stat(path).catch(() => undefined);
+		if (stats?.isFile()) {
+			totalBytes += stats.size;
+		}
+	}
+	return totalBytes;
+}
+
+async function readTempRootOwnershipMarker(tempRoot: string): Promise<TempRootOwnershipRecord | undefined> {
+	try {
+		const markerText = await readFile(join(tempRoot, TEMP_ROOT_MARKER_FILE_NAME), "utf8");
+		const parsed = JSON.parse(markerText) as unknown;
+		return isTempRootOwnershipRecord(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export async function writeSecureTempRootOwnershipMarker(tempRoot: string, createdAtMs = Date.now()): Promise<string> {
+	const markerPath = join(tempRoot, TEMP_ROOT_MARKER_FILE_NAME);
+	const markerRecord: TempRootOwnershipRecord = {
+		createdAtMs,
+		kind: TEMP_ROOT_MARKER_KIND,
+		ownerUid: getCurrentProcessUid(),
+		version: TEMP_ROOT_MARKER_VERSION,
+	};
+	await writeFile(markerPath, JSON.stringify(markerRecord, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+	await chmod(markerPath, 0o600).catch(() => undefined);
+	return markerPath;
+}
 
 async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise<void> {
 	const entries = await readdir(tmpdir(), { withFileTypes: true }).catch(() => []);
 	const cutoffTime = Date.now() - STALE_TEMP_ROOT_MAX_AGE_MS;
+	const currentUid = getCurrentProcessUid();
 
 	await Promise.all(
 		entries
@@ -28,30 +117,60 @@ async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise
 			.map(async (entry) => {
 				const path = join(tmpdir(), entry.name);
 				if (path === currentTempRoot) return;
+
+				const ownershipMarker = await readTempRootOwnershipMarker(path);
+				if (!ownershipMarker) return;
+				if (
+					currentUid !== undefined &&
+					ownershipMarker.ownerUid !== undefined &&
+					ownershipMarker.ownerUid !== currentUid
+				) {
+					return;
+				}
+
 				const stats = await stat(path).catch(() => undefined);
-				if (!stats || stats.mtimeMs >= cutoffTime) return;
+				if (!stats?.isDirectory() || stats.mtimeMs >= cutoffTime) return;
 				await rm(path, { force: true, recursive: true }).catch(() => undefined);
 			}),
 	);
 }
 
-function registerExitCleanup(tempRoot: string): void {
+function registerExitCleanup(): void {
 	if (exitCleanupRegistered) return;
 	exitCleanupRegistered = true;
 	process.once("exit", () => {
-		try {
-			rmSync(tempRoot, { force: true, recursive: true });
-		} catch {
-			// Best-effort cleanup only.
+		for (const tempRoot of ownedTempRoots) {
+			try {
+				rmSync(tempRoot, { force: true, recursive: true });
+			} catch {
+				// Best-effort cleanup only.
+			}
 		}
 	});
 }
 
+export function getSecureTempRootMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+	return parsePositiveInteger(env[TEMP_ROOT_MAX_BYTES_ENV]) ?? DEFAULT_TEMP_ROOT_MAX_BYTES;
+}
+
+async function assertSecureTempRootBudget(tempRoot: string, additionalBytes: number): Promise<void> {
+	if (additionalBytes <= 0) return;
+	const currentBytes = await getTempRootArtifactBytes(tempRoot);
+	const maxBytes = getSecureTempRootMaxBytes();
+	const nextBytes = currentBytes + additionalBytes;
+	if (nextBytes > maxBytes) {
+		throw new Error(`pi-agent-browser temp spill budget exceeded (${nextBytes} bytes > ${maxBytes} byte limit).`);
+	}
+}
+
 export async function cleanupSecureTempArtifacts(): Promise<void> {
-	const tempRoot = await sessionTempRootPromise?.catch(() => undefined);
-	sessionTempRootPromise = undefined;
-	if (!tempRoot) return;
-	await rm(tempRoot, { force: true, recursive: true }).catch(() => undefined);
+	await enqueueTempMutation(async () => {
+		const tempRoot = await sessionTempRootPromise?.catch(() => undefined);
+		sessionTempRootPromise = undefined;
+		if (!tempRoot) return;
+		ownedTempRoots.delete(tempRoot);
+		await rm(tempRoot, { force: true, recursive: true }).catch(() => undefined);
+	});
 }
 
 async function getSessionTempRoot(): Promise<string> {
@@ -60,7 +179,9 @@ async function getSessionTempRoot(): Promise<string> {
 			await pruneStaleTempRoots(undefined);
 			const tempRoot = await mkdtemp(join(tmpdir(), TEMP_ROOT_PREFIX));
 			await chmod(tempRoot, 0o700).catch(() => undefined);
-			registerExitCleanup(tempRoot);
+			await writeSecureTempRootOwnershipMarker(tempRoot);
+			ownedTempRoots.add(tempRoot);
+			registerExitCleanup();
 			return tempRoot;
 		})();
 	}
@@ -77,6 +198,18 @@ export async function openSecureTempFile(prefix: string, suffix: string): Promis
 	return { fileHandle, path };
 }
 
+export async function writeSecureTempChunk(options: {
+	content: string | Uint8Array;
+	fileHandle: Awaited<ReturnType<typeof open>>;
+	path: string;
+}): Promise<void> {
+	const { content, fileHandle, path } = options;
+	await enqueueTempMutation(async () => {
+		await assertSecureTempRootBudget(dirname(path), getTempArtifactByteLength(content));
+		await fileHandle.writeFile(content);
+	});
+}
+
 export async function writeSecureTempFile(options: {
 	content: string | Uint8Array;
 	prefix: string;
@@ -85,9 +218,19 @@ export async function writeSecureTempFile(options: {
 	const { content, prefix, suffix } = options;
 	const { fileHandle, path } = await openSecureTempFile(prefix, suffix);
 	try {
-		await fileHandle.writeFile(content);
+		await writeSecureTempChunk({ content, fileHandle, path });
+	} catch (error) {
+		await rm(path, { force: true }).catch(() => undefined);
+		throw error;
 	} finally {
 		await fileHandle.close();
 	}
 	return path;
+}
+
+export async function getSecureTempDebugState(): Promise<{ currentTempRoot?: string; ownedTempRoots: string[] }> {
+	return {
+		currentTempRoot: await sessionTempRootPromise?.catch(() => undefined),
+		ownedTempRoots: [...ownedTempRoots].sort(),
+	};
 }

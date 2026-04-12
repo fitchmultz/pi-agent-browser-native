@@ -1,6 +1,6 @@
 /**
  * Purpose: Execute the upstream agent-browser binary for the pi-agent-browser extension.
- * Responsibilities: Spawn the agent-browser subprocess without a shell, forward a curated environment surface, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file, and honor abort signals.
+ * Responsibilities: Spawn the agent-browser subprocess without a shell, forward a curated environment surface, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
  * Scope: Process execution only; argument planning, output formatting, and pi tool registration live elsewhere.
  * Usage: Called by the extension tool after argument validation and session planning are complete.
  * Invariants/Assumptions: The binary name is always `agent-browser`, the wrapper never shells out, and callers handle semantic success/error interpretation.
@@ -9,7 +9,7 @@
 import { spawn } from "node:child_process";
 import { env as processEnv } from "node:process";
 
-import { openSecureTempFile } from "./temp.js";
+import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
 const MAX_BUFFERED_STDOUT_BYTES = 512 * 1_024;
 const MAX_BUFFERED_STDERR_CHARS = 32_000;
@@ -134,6 +134,7 @@ export async function runAgentBrowserProcess(options: {
 
 		const queueStdoutChunk = (buffer: Buffer) => {
 			stdoutTail = appendTail(stdoutTail, buffer.toString("utf8"), MAX_BUFFERED_STDOUT_TAIL_CHARS);
+			if (stdoutSpillError) return;
 			if (!stdoutSpillPath && stdoutBufferedBytes + buffer.length <= MAX_BUFFERED_STDOUT_BYTES) {
 				stdoutBuffers.push(buffer);
 				stdoutBufferedBytes += buffer.length;
@@ -142,17 +143,22 @@ export async function runAgentBrowserProcess(options: {
 
 			pendingStdoutWrite = pendingStdoutWrite
 				.then(async () => {
-					if (!stdoutSpillHandle) {
+					if (stdoutSpillError) return;
+					if (!stdoutSpillHandle || !stdoutSpillPath) {
 						const tempFile = await openSecureTempFile(PROCESS_STDOUT_SPILL_FILE_PREFIX, ".json");
 						stdoutSpillHandle = tempFile.fileHandle;
 						stdoutSpillPath = tempFile.path;
 						if (stdoutBuffers.length > 0) {
-							await stdoutSpillHandle.writeFile(Buffer.concat(stdoutBuffers));
+							await writeSecureTempChunk({
+								content: Buffer.concat(stdoutBuffers),
+								fileHandle: stdoutSpillHandle,
+								path: stdoutSpillPath,
+							});
 							stdoutBuffers = [];
 							stdoutBufferedBytes = 0;
 						}
 					}
-					await stdoutSpillHandle.writeFile(buffer);
+					await writeSecureTempChunk({ content: buffer, fileHandle: stdoutSpillHandle, path: stdoutSpillPath });
 				})
 				.catch((error) => {
 					stdoutSpillError = error instanceof Error ? error : new Error(String(error));
