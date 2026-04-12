@@ -1,6 +1,6 @@
 /**
  * Purpose: Execute the upstream agent-browser binary for the pi-agent-browser extension.
- * Responsibilities: Spawn the agent-browser subprocess without a shell, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file, and honor abort signals.
+ * Responsibilities: Spawn the agent-browser subprocess without a shell, forward a curated environment surface, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file, and honor abort signals.
  * Scope: Process execution only; argument planning, output formatting, and pi tool registration live elsewhere.
  * Usage: Called by the extension tool after argument validation and session planning are complete.
  * Invariants/Assumptions: The binary name is always `agent-browser`, the wrapper never shells out, and callers handle semantic success/error interpretation.
@@ -15,6 +15,57 @@ const MAX_BUFFERED_STDOUT_BYTES = 512 * 1_024;
 const MAX_BUFFERED_STDERR_CHARS = 32_000;
 const MAX_BUFFERED_STDOUT_TAIL_CHARS = 32_000;
 const PROCESS_STDOUT_SPILL_FILE_PREFIX = "process-stdout";
+const httpProxyEnvName = "http_proxy";
+const httpsProxyEnvName = "https_proxy";
+const allProxyEnvName = "all_proxy";
+const noProxyEnvName = "no_proxy";
+const INHERITED_ENV_NAMES = new Set([
+	"ALL_PROXY",
+	"APPDATA",
+	"CI",
+	"COLORTERM",
+	"COMSPEC",
+	"DBUS_SESSION_BUS_ADDRESS",
+	"DISPLAY",
+	"FORCE_COLOR",
+	"HOME",
+	"HOMEDRIVE",
+	"HOMEPATH",
+	"HTTPS_PROXY",
+	"HTTP_PROXY",
+	"LANG",
+	"LC_ALL",
+	"LC_CTYPE",
+	"LOCALAPPDATA",
+	"LOGNAME",
+	"NO_COLOR",
+	"NO_PROXY",
+	"NODE_EXTRA_CA_CERTS",
+	"NODE_TLS_REJECT_UNAUTHORIZED",
+	"OS",
+	"PATH",
+	"PATHEXT",
+	"PWD",
+	"SHELL",
+	"SSL_CERT_DIR",
+	"SSL_CERT_FILE",
+	"SYSTEMROOT",
+	"TEMP",
+	"TERM",
+	"TMP",
+	"TMPDIR",
+	"TZ",
+	"USER",
+	"USERNAME",
+	"USERPROFILE",
+	"WAYLAND_DISPLAY",
+	"XAUTHORITY",
+	httpProxyEnvName,
+	httpsProxyEnvName,
+	allProxyEnvName,
+	noProxyEnvName,
+]);
+const INHERITED_ENV_PREFIXES = ["AGENT_BROWSER_", "AI_GATEWAY_", "XDG_"] as const;
 
 export interface ProcessRunResult {
 	aborted: boolean;
@@ -28,6 +79,34 @@ export interface ProcessRunResult {
 function appendTail(text: string, addition: string, maxChars: number): string {
 	const combined = text + addition;
 	return combined.length <= maxChars ? combined : combined.slice(combined.length - maxChars);
+}
+
+export function buildAgentBrowserProcessEnv(
+	baseEnv: NodeJS.ProcessEnv = processEnv,
+	overrides: NodeJS.ProcessEnv | undefined = undefined,
+): NodeJS.ProcessEnv {
+	const childEnv: NodeJS.ProcessEnv = {};
+	for (const [name, value] of Object.entries(baseEnv)) {
+		if (
+			value !== undefined &&
+			(INHERITED_ENV_NAMES.has(name) || INHERITED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)))
+		) {
+			childEnv[name] = value;
+		}
+	}
+
+	if (!overrides) {
+		return childEnv;
+	}
+
+	for (const [name, value] of Object.entries(overrides)) {
+		if (value === undefined) {
+			delete childEnv[name];
+		} else {
+			childEnv[name] = value;
+		}
+	}
+	return childEnv;
 }
 
 export async function runAgentBrowserProcess(options: {
@@ -106,7 +185,7 @@ export async function runAgentBrowserProcess(options: {
 
 		const child = spawn("agent-browser", args, {
 			cwd,
-			env: { ...processEnv, ...env },
+			env: buildAgentBrowserProcessEnv(processEnv, env),
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 

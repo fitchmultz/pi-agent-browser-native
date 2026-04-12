@@ -1,7 +1,7 @@
 /**
- * Purpose: Verify the thin planning and formatting helpers that power the pi-agent-browser extension.
- * Responsibilities: Assert deterministic implicit session naming, argument injection behavior, prompt-derived policy logic, bounded process capture, and high-value result formatting.
- * Scope: Focused unit coverage for helper logic only; interactive pi/tmux validation remains the primary end-to-end test path.
+ * Purpose: Verify the thin planning helpers, subprocess wrapper, and high-risk entrypoint lifecycle behavior that power the pi-agent-browser extension.
+ * Responsibilities: Assert deterministic implicit session naming, argument injection behavior, prompt-derived policy logic, bounded process capture, curated subprocess env forwarding, entrypoint session-state transitions, and high-value result formatting.
+ * Scope: Focused automated coverage for stable thin-wrapper behavior; interactive pi/tmux validation remains the primary end-to-end test path.
  * Usage: Run with `npm test` or as part of `npm run verify`.
  * Invariants/Assumptions: These tests intentionally cover the stable thin-wrapper behavior rather than the full upstream agent-browser feature surface.
  */
@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import agentBrowserExtension from "../extensions/agent-browser/index.js";
 import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildToolPresentation,
@@ -22,10 +23,129 @@ import {
 	buildExecutionPlan,
 	buildPromptPolicy,
 	createImplicitSessionName,
+	getImplicitSessionCloseTimeoutMs,
+	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
 	hasUsableBraveApiKey,
 	parseCommandInfo,
+	resolveImplicitSessionActiveState,
 } from "../extensions/agent-browser/lib/runtime.js";
+
+const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
+
+function buildUserBranch(prompt = ""): unknown[] {
+	return prompt.length === 0
+		? []
+		: [{ type: "message", message: { role: "user", content: [{ type: "text", text: prompt }] } }];
+}
+
+function createExtensionHarness(options: { cwd: string; prompt?: string }) {
+	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
+	let registeredTool:
+		| {
+				execute: (
+					toolCallId: string,
+					params: { args: string[]; stdin?: string; useActiveSession?: boolean },
+					signal: AbortSignal,
+					onUpdate: ((update: unknown) => void) | undefined,
+					ctx: unknown,
+				) => Promise<unknown>;
+		  }
+		| undefined;
+
+	agentBrowserExtension({
+		on(event, handler) {
+			const existingHandlers = handlers.get(event) ?? [];
+			existingHandlers.push(handler as (...args: unknown[]) => unknown);
+			handlers.set(event, existingHandlers);
+		},
+		registerTool(tool) {
+			registeredTool = tool as typeof registeredTool;
+		},
+	} as Parameters<typeof agentBrowserExtension>[0]);
+
+	assert.ok(registeredTool, "expected the extension to register the agent_browser tool");
+
+	const ctx = {
+		cwd: options.cwd,
+		sessionManager: {
+			getBranch: () => buildUserBranch(options.prompt),
+			getSessionId: () => TEST_SESSION_ID,
+		},
+	} as const;
+
+	return { ctx, handlers, tool: registeredTool };
+}
+
+async function runExtensionEvent(
+	handlers: Map<string, Array<(...args: unknown[]) => unknown>>,
+	eventName: string,
+	...args: unknown[]
+): Promise<void> {
+	for (const handler of handlers.get(eventName) ?? []) {
+		await handler(...args);
+	}
+}
+
+async function executeRegisteredTool(
+	tool: NonNullable<ReturnType<typeof createExtensionHarness>["tool"]>,
+	ctx: ReturnType<typeof createExtensionHarness>["ctx"],
+	params: { args: string[]; stdin?: string; useActiveSession?: boolean },
+) {
+	return (await tool.execute("test-tool-call", params, new AbortController().signal, undefined, ctx)) as {
+		content: Array<{ type: string; text?: string }>;
+		details?: Record<string, unknown>;
+		isError?: boolean;
+	};
+}
+
+async function withPatchedEnv<T>(patch: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
+	const previousValues = new Map<string, string | undefined>();
+	for (const [name, value] of Object.entries(patch)) {
+		previousValues.set(name, process.env[name]);
+		if (value === undefined) {
+			delete process.env[name];
+		} else {
+			process.env[name] = value;
+		}
+	}
+
+	try {
+		return await run();
+	} finally {
+		for (const [name, value] of previousValues) {
+			if (value === undefined) {
+				delete process.env[name];
+			} else {
+				process.env[name] = value;
+			}
+		}
+	}
+}
+
+async function writeFakeAgentBrowserBinary(tempDir: string, scriptBody: string): Promise<string> {
+	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
+	await writeFile(fakeAgentBrowserPath, `#!/usr/bin/env node\n${scriptBody}\n`, "utf8");
+	await chmod(fakeAgentBrowserPath, 0o755);
+	return fakeAgentBrowserPath;
+}
+
+async function readInvocationLog(logPath: string): Promise<Array<{ args: string[]; idleTimeout?: string | null }>> {
+	try {
+		const text = await readFile(logPath, "utf8");
+		return text
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0)
+			.map((line) => JSON.parse(line) as { args: string[]; idleTimeout?: string | null });
+	} catch (error) {
+		const errorWithCode = error as NodeJS.ErrnoException;
+		if (errorWithCode.code === "ENOENT") {
+			return [];
+		}
+		throw error;
+	}
+}
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const sessionId = "12345678-1234-5678-9abc-def012345678";
@@ -42,6 +162,39 @@ test("hasUsableBraveApiKey only accepts non-empty values", () => {
 	assert.equal(hasUsableBraveApiKey(""), false);
 	assert.equal(hasUsableBraveApiKey("   \n\t  "), false);
 	assert.equal(hasUsableBraveApiKey("demo-key"), true);
+});
+
+test("implicit session timeout helpers prefer explicit overrides and safe defaults", () => {
+	assert.equal(
+		getImplicitSessionIdleTimeoutMs({
+			AGENT_BROWSER_IDLE_TIMEOUT_MS: "2100",
+			PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS: "1200",
+		}),
+		"1200",
+	);
+	assert.equal(getImplicitSessionIdleTimeoutMs({ AGENT_BROWSER_IDLE_TIMEOUT_MS: "2100" }), "2100");
+	assert.equal(getImplicitSessionIdleTimeoutMs({ PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS: "invalid" }), "900000");
+	assert.equal(getImplicitSessionCloseTimeoutMs({ PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS: "250" }), 250);
+	assert.equal(getImplicitSessionCloseTimeoutMs({ PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS: "invalid" }), 5_000);
+});
+
+test("resolveImplicitSessionActiveState only promotes successful sessions and keeps active sessions until close succeeds", () => {
+	assert.equal(
+		resolveImplicitSessionActiveState({ command: "open", priorActive: false, succeeded: false, usedImplicitSession: true }),
+		false,
+	);
+	assert.equal(
+		resolveImplicitSessionActiveState({ command: "open", priorActive: false, succeeded: true, usedImplicitSession: true }),
+		true,
+	);
+	assert.equal(
+		resolveImplicitSessionActiveState({ command: "open", priorActive: true, succeeded: false, usedImplicitSession: true }),
+		true,
+	);
+	assert.equal(
+		resolveImplicitSessionActiveState({ command: "close", priorActive: true, succeeded: true, usedImplicitSession: true }),
+		false,
+	);
 });
 
 test("buildExecutionPlan injects --json and the implicit session when needed", () => {
@@ -382,6 +535,170 @@ process.stdout.write(JSON.stringify(envelope));
 		if (processResult.stdoutSpillPath) {
 			await rm(processResult.stdoutSpillPath, { force: true });
 		}
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess forwards a curated environment instead of the full parent env", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const envelope = {
+  success: true,
+  data: {
+    secret: process.env.PI_AGENT_BROWSER_TEST_SECRET ?? null,
+    lang: process.env.LANG ?? null,
+    agentBrowserSession: process.env.AGENT_BROWSER_SESSION ?? null,
+    idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null,
+    pathStartsWithTemp: (process.env.PATH ?? "").startsWith(${JSON.stringify(tempDir)})
+  }
+};
+process.stdout.write(JSON.stringify(envelope));`,
+	);
+
+	try {
+		await withPatchedEnv(
+			{
+				AGENT_BROWSER_SESSION: "from-parent",
+				LANG: "en_US.UTF-8",
+				PI_AGENT_BROWSER_TEST_SECRET: "should-not-leak",
+			},
+			async () => {
+				const processResult = await runAgentBrowserProcess({
+					args: ["session"],
+					cwd: tempDir,
+					env: {
+						AGENT_BROWSER_IDLE_TIMEOUT_MS: "1234",
+						PATH: `${tempDir}:${basePath}`,
+					},
+				});
+
+				assert.equal(processResult.exitCode, 0);
+				const parsed = await parseAgentBrowserEnvelope(processResult.stdout);
+				assert.equal(parsed.parseError, undefined);
+				const data = parsed.envelope?.data as {
+					agentBrowserSession: string | null;
+					idleTimeout: string | null;
+					lang: string | null;
+					pathStartsWithTemp: boolean;
+					secret: string | null;
+				};
+				assert.equal(data.secret, null);
+				assert.equal(data.lang, "en_US.UTF-8");
+				assert.equal(data.agentBrowserSession, "from-parent");
+				assert.equal(data.idleTimeout, "1234");
+				assert.equal(data.pathStartsWithTemp, true);
+			},
+		);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test(
+	"agentBrowserExtension only blocks startup-scoped flags after a successful implicit launch and resets after close",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+		const logPath = join(tempDir, "invocations.log");
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null }) + "\\n");
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: "Example Domain", url: args[args.length - 1], idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null } };
+process.stdout.write(JSON.stringify(envelope));`,
+		);
+
+		try {
+			await withPatchedEnv(
+				{
+					PATH: `${tempDir}:${basePath}`,
+					PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS: "1234",
+				},
+				async () => {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+					const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["open", "https://example.com"],
+					});
+					assert.equal(firstOpen.isError, false);
+					assert.equal((firstOpen.details?.data as { idleTimeout?: string } | undefined)?.idleTimeout, "1234");
+
+					const afterFirstOpen = await readInvocationLog(logPath);
+					assert.equal(afterFirstOpen.length, 1);
+					assert.equal(afterFirstOpen[0]?.args.includes("--session"), true);
+					assert.equal(afterFirstOpen[0]?.idleTimeout, "1234");
+
+					const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--profile", "Default", "open", "https://example.com/profile"],
+					});
+					assert.equal(blocked.isError, true);
+					assert.match(String(blocked.details?.validationError ?? ""), /startup-scoped flags/i);
+					assert.equal((await readInvocationLog(logPath)).length, 1);
+
+					const closeResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+					assert.equal(closeResult.isError, false);
+					assert.equal((await readInvocationLog(logPath)).length, 2);
+
+					const reopened = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--profile", "Default", "open", "https://example.com/profile"],
+					});
+					assert.equal(reopened.isError, false);
+
+					const finalInvocations = await readInvocationLog(logPath);
+					assert.equal(finalInvocations.length, 3);
+					assert.equal(finalInvocations[2]?.args.includes("--profile"), true);
+				},
+			);
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+test("agentBrowserExtension does not mark a failed first implicit command as active", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const shouldFail = args.includes("https://fail.example");
+process.stdout.write(JSON.stringify(shouldFail ? { success: false, error: "intentional failure" } : { success: true, data: { title: "Recovered" } }));
+process.exit(shouldFail ? 1 : 0);`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const failedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://fail.example"],
+			});
+			assert.equal(failedOpen.isError, true);
+			assert.equal((await readInvocationLog(logPath)).length, 1);
+
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/recovered"],
+			});
+			assert.equal(followUp.isError, false);
+			assert.equal(followUp.details?.validationError, undefined);
+			assert.equal((followUp.details?.effectiveArgs as string[] | undefined)?.includes("--profile"), true);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 2);
+			assert.equal(invocations[1]?.args.includes("--profile"), true);
+		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

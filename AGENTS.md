@@ -27,10 +27,12 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 ### Rules
 
 - For local checkout validation, launch `pi --no-extensions -e .` from this repository root so only the checkout copy loads, even if the package is installed globally.
+- For code changes, isolated `pi` agent sessions that load this local checkout are a pre-commit requirement; validate behavior there before commit/push.
 - For installed-package validation, run plain `pi` and confirm the globally installed package loads without any repo-local `.pi/extensions/` shim.
 - Use `tmux` via bash commands.
 - Do **not** use the pi interactive shell extension for this workflow.
 - Drive `pi` like a real user by sending prompts normally.
+- When testing against other isolated `pi` sessions, feel free to ask those agents for candid feedback on the tool UX and behavior, including whether it feels clunky, uninformative, or slower without clear gain.
 - After extension changes, `/reload` is the minimum, but a full close-and-relaunch of `pi` is preferred for higher confidence.
 - If continuing the same conversation after restart, use `/resume` or an explicit session path/id.
 - Resumed sessions should reflect the updated extension code after restart.

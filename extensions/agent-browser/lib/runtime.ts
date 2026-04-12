@@ -1,6 +1,6 @@
 /**
  * Purpose: Build safe, deterministic agent-browser invocations for the pi-agent-browser extension.
- * Responsibilities: Validate raw tool arguments, derive implicit session names from the pi session identity, detect explicit session usage, and build the effective CLI argument list passed to the upstream agent-browser binary.
+ * Responsibilities: Validate raw tool arguments, derive implicit session names from the pi session identity, resolve implicit-session timeout/state helpers, detect explicit session usage, and build the effective CLI argument list passed to the upstream agent-browser binary.
  * Scope: Pure runtime-planning helpers only; no subprocess execution or filesystem access lives here.
  * Usage: Imported by the extension entrypoint and unit tests before spawning the upstream CLI.
  * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, and only injects `--json` plus an implicit `--session` when appropriate.
@@ -11,6 +11,11 @@ import { basename } from "node:path";
 
 const STARTUP_SCOPED_FLAGS = ["--cdp", "--profile", "--session-name"] as const;
 const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
+const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
+const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
+const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
+const DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
 const INSPECTION_ALLOW_PATTERNS = [
 	/\bagent[_ -]?browser\s+--(?:help|version)\b/i,
 	/\bagent[_ -]?browser\b.*\b(?:help|version|docs?|documentation|tool contract|tool guidance|tool description)\b/i,
@@ -80,6 +85,44 @@ export interface PromptPolicy {
 
 export function hasUsableBraveApiKey(apiKey: string | null | undefined = process.env[BRAVE_API_KEY_ENV]): boolean {
 	return typeof apiKey === "string" && apiKey.trim().length > 0;
+}
+
+function parseTimeoutMs(rawValue: string | undefined, minimumValue: number): number | undefined {
+	if (typeof rawValue !== "string") return undefined;
+	const normalizedValue = rawValue.trim();
+	if (!/^\d+$/.test(normalizedValue)) return undefined;
+	const parsedValue = Number(normalizedValue);
+	if (!Number.isSafeInteger(parsedValue) || parsedValue < minimumValue) {
+		return undefined;
+	}
+	return parsedValue;
+}
+
+export function getImplicitSessionIdleTimeoutMs(env: NodeJS.ProcessEnv = process.env): string {
+	return String(
+		parseTimeoutMs(env[IMPLICIT_SESSION_IDLE_TIMEOUT_ENV], 0) ??
+			parseTimeoutMs(env[AGENT_BROWSER_IDLE_TIMEOUT_ENV], 0) ??
+			DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS,
+	);
+}
+
+export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+	return parseTimeoutMs(env[IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV], 0) ?? DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS;
+}
+
+export function resolveImplicitSessionActiveState(options: {
+	command?: string;
+	priorActive: boolean;
+	succeeded: boolean;
+	usedImplicitSession: boolean;
+}): boolean {
+	const { command, priorActive, succeeded, usedImplicitSession } = options;
+	if (!usedImplicitSession) return priorActive;
+	if (command === "close") {
+		return succeeded ? false : priorActive;
+	}
+	if (!command) return priorActive;
+	return priorActive || succeeded;
 }
 
 export function createEphemeralSessionSeed(): string {

@@ -18,14 +18,14 @@ import {
 	buildPromptPolicy,
 	createEphemeralSessionSeed,
 	createImplicitSessionName,
+	getImplicitSessionCloseTimeoutMs,
+	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
 	hasUsableBraveApiKey,
+	resolveImplicitSessionActiveState,
 	validateToolArgs,
 } from "./lib/runtime.js";
 import { cleanupSecureTempArtifacts } from "./lib/temp.js";
-
-const IMPLICIT_SESSION_IDLE_TIMEOUT_MS = "900000";
-const IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
 
 const AGENT_BROWSER_PARAMS = Type.Object({
 	args: Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
@@ -87,6 +87,8 @@ function buildBraveSearchGuidance(hasBraveApiKey: boolean): string {
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	const braveSearchGuidance = buildBraveSearchGuidance(hasUsableBraveApiKey());
+	const implicitSessionIdleTimeoutMs = getImplicitSessionIdleTimeoutMs();
+	const implicitSessionCloseTimeoutMs = getImplicitSessionCloseTimeoutMs();
 	let implicitSessionActive = false;
 	let implicitSessionName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
 	let implicitSessionCwd = process.cwd();
@@ -100,7 +102,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		implicitSessionActive = false;
 		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), IMPLICIT_SESSION_CLOSE_TIMEOUT_MS);
+		const timer = setTimeout(() => controller.abort(), implicitSessionCloseTimeoutMs);
 		try {
 			await runAgentBrowserProcess({
 				args: ["--session", implicitSessionName, "close"],
@@ -221,15 +223,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				args: executionPlan.effectiveArgs,
 				cwd: ctx.cwd,
 				env: executionPlan.usedImplicitSession
-					? { AGENT_BROWSER_IDLE_TIMEOUT_MS: IMPLICIT_SESSION_IDLE_TIMEOUT_MS }
+					? { AGENT_BROWSER_IDLE_TIMEOUT_MS: implicitSessionIdleTimeoutMs }
 					: undefined,
 				signal,
 				stdin: params.stdin,
 			});
-
-			if (executionPlan.usedImplicitSession && !processResult.aborted && !processResult.spawnError) {
-				implicitSessionActive = executionPlan.commandInfo.command !== "close";
-			}
 
 			if (processResult.spawnError?.message.includes("ENOENT")) {
 				const errorText = buildMissingBinaryMessage();
@@ -254,6 +252,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				const envelopeSuccess = plainTextInspection ? true : parsed.envelope?.success !== false;
 				const parseSucceeded = plainTextInspection || parsed.parseError === undefined;
 				const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
+
+				implicitSessionActive = resolveImplicitSessionActiveState({
+					command: executionPlan.commandInfo.command,
+					priorActive: implicitSessionActive,
+					succeeded,
+					usedImplicitSession: executionPlan.usedImplicitSession,
+				});
 
 				const errorText = getAgentBrowserErrorText({
 					aborted: processResult.aborted,
