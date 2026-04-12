@@ -19,6 +19,7 @@ import {
 	createEphemeralSessionSeed,
 	createImplicitSessionName,
 	getLatestUserPrompt,
+	hasUsableBraveApiKey,
 	validateToolArgs,
 } from "./lib/runtime.js";
 import { cleanupSecureTempArtifacts } from "./lib/temp.js";
@@ -78,8 +79,14 @@ function buildInspectionDeflectionMessage(): string {
 	].join("\n");
 }
 
+function buildBraveSearchGuidance(hasBraveApiKey: boolean): string {
+	if (!hasBraveApiKey) return "";
+	return "\n- A non-empty `BRAVE_API_KEY` is available in the current environment. For web search or URL discovery, prefer the Brave Search API via `bash`/`curl` to find the destination URL, then open that URL with `agent_browser` instead of using browser automation to drive Google or another search engine results page. If the Brave request fails, fall back to the normal workflow.";
+}
+
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
+	const braveSearchGuidance = buildBraveSearchGuidance(hasUsableBraveApiKey());
 	let implicitSessionActive = false;
 	let implicitSessionName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
 	let implicitSessionCwd = process.cwd();
@@ -112,7 +119,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		return {
 			systemPrompt:
 				event.systemPrompt +
-				"\n\nProject rule: when browser automation is needed, prefer the native `agent_browser` tool. Do not run direct `agent-browser` bash commands unless the user explicitly asks for a bash-oriented workflow or browser-integration debugging.\n\nBrowser operating playbook:\n- Standard workflow: open the page, then snapshot -i, then interact via refs, then re-snapshot after navigation or major DOM changes.\n- For user-specific or authenticated content like feeds, inboxes, dashboards, and accounts, start with an authenticated browser strategy instead of public browsing. Prefer `--profile Default` on the first browser call and let the current implicit session carry continuity. Use `--auto-connect` only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.\n- Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.\n- When using startup-scoped flags like `--profile`, `--session-name`, or `--cdp`, put them on the first command for that session. If you intentionally use an explicit `--session`, keep using that same explicit session for follow-ups.\n- If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an `open` call returns blocked, blank, or otherwise unexpected results, use `tab list`, `tab <n>`, and `snapshot -i` to recover state before retrying different URLs or fallback strategies. Only use `wait` with an explicit argument like milliseconds, `--load`, `--url`, `--fn`, or `--text`.\n- For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.\n- For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or `eval --stdin` on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.\n- When using `eval --stdin`, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics.\n- When using `eval --stdin` for extraction, return the value you want instead of relying on `console.log` as the primary result channel.\n- Do not use `agent_browser --help` for normal browsing tasks.",
+				"\n\nProject rule: when browser automation is needed, prefer the native `agent_browser` tool. Do not run direct `agent-browser` bash commands unless the user explicitly asks for a bash-oriented workflow or browser-integration debugging.\n\nBrowser operating playbook:\n- Standard workflow: open the page, then snapshot -i, then interact via refs, then re-snapshot after navigation or major DOM changes.\n- For user-specific or authenticated content like feeds, inboxes, dashboards, and accounts, start with an authenticated browser strategy instead of public browsing. Prefer `--profile Default` on the first browser call and let the current implicit session carry continuity. Use `--auto-connect` only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.\n- Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.\n- When using startup-scoped flags like `--profile`, `--session-name`, or `--cdp`, put them on the first command for that session. If you intentionally use an explicit `--session`, keep using that same explicit session for follow-ups.\n- If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an `open` call returns blocked, blank, or otherwise unexpected results, use `tab list`, `tab <n>`, and `snapshot -i` to recover state before retrying different URLs or fallback strategies. Only use `wait` with an explicit argument like milliseconds, `--load`, `--url`, `--fn`, or `--text`.\n- For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.\n- For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or `eval --stdin` on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.\n- When using `eval --stdin`, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics.\n- When using `eval --stdin` for extraction, return the value you want instead of relying on `console.log` as the primary result channel.\n- Do not use `agent_browser --help` for normal browsing tasks." +
+				braveSearchGuidance,
 		};
 	});
 
@@ -141,6 +149,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use this tool whenever the task requires a real browser or live web content.",
 			"Standard workflow: open the page, snapshot -i, interact using refs, and re-snapshot after navigation or major DOM changes.",
+			...(braveSearchGuidance
+				? [
+					"When a non-empty BRAVE_API_KEY is available in the current environment, prefer the Brave Search API via bash/curl to discover specific destination URLs, then open the chosen URL with agent_browser instead of browsing a search engine results page just to find the target.",
+				  ]
+				: []),
 			"For authenticated or user-specific content like feeds, inboxes, dashboards, and accounts, prefer --profile Default on the first browser call and let the implicit session carry continuity. Use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.",
 			"Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.",
 			"When using --profile, --session-name, or --cdp, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",

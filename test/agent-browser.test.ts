@@ -23,6 +23,7 @@ import {
 	buildPromptPolicy,
 	createImplicitSessionName,
 	getLatestUserPrompt,
+	hasUsableBraveApiKey,
 	parseCommandInfo,
 } from "../extensions/agent-browser/lib/runtime.js";
 
@@ -34,6 +35,13 @@ test("createImplicitSessionName is stable for a persisted pi session", () => {
 
 	assert.equal(one, two);
 	assert.equal(one, "piab-pi-agent-browser-123456781234");
+});
+
+test("hasUsableBraveApiKey only accepts non-empty values", () => {
+	assert.equal(hasUsableBraveApiKey(null), false);
+	assert.equal(hasUsableBraveApiKey(""), false);
+	assert.equal(hasUsableBraveApiKey("   \n\t  "), false);
+	assert.equal(hasUsableBraveApiKey("demo-key"), true);
 });
 
 test("buildExecutionPlan injects --json and the implicit session when needed", () => {

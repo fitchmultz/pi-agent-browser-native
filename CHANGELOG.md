@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3 - 2026-04-12
+
+### Changed
+- when `BRAVE_API_KEY` is present and non-empty, the extension now tells agents to prefer the Brave Search API via `bash`/`curl` for URL discovery and then open the chosen destination with `agent_browser` instead of driving a search engine results page in the browser
+- when `BRAVE_API_KEY` is absent, the extension behavior remains unchanged
+- added a small runtime helper and unit coverage for the `BRAVE_API_KEY` gate so the change stays explicit and minimal
+
 ## 0.1.2 - 2026-04-11
 
 ### Changed

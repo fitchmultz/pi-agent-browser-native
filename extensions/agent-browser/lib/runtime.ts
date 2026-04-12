@@ -10,6 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
 const STARTUP_SCOPED_FLAGS = ["--cdp", "--profile", "--session-name"] as const;
+const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 const INSPECTION_ALLOW_PATTERNS = [
 	/\bagent[_ -]?browser\s+--(?:help|version)\b/i,
 	/\bagent[_ -]?browser\b.*\b(?:help|version|docs?|documentation|tool contract|tool guidance|tool description)\b/i,
@@ -75,6 +76,10 @@ export interface ExecutionPlan {
 export interface PromptPolicy {
 	allowAgentBrowserInspection: boolean;
 	allowLegacyAgentBrowserBash: boolean;
+}
+
+export function hasUsableBraveApiKey(apiKey: string | null | undefined = process.env[BRAVE_API_KEY_ENV]): boolean {
+	return typeof apiKey === "string" && apiKey.trim().length > 0;
 }
 
 export function createEphemeralSessionSeed(): string {
