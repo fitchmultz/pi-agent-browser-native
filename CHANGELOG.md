@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5 - 2026-04-12
+
+### Changed
+- pinned the transitive `basic-ftp` dependency to `5.2.2` via `overrides` so local development and GitHub install flows no longer pull the vulnerable `5.2.1` version through `@mariozechner/pi-coding-agent`
+- kept the 0.1.4 startup fix and metadata updates intact while clearing the audit failure that surfaced during release verification
+
 ## 0.1.4 - 2026-04-12
 
 ### Changed
