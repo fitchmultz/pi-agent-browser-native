@@ -1,9 +1,9 @@
 /**
  * Purpose: Build safe, deterministic agent-browser invocations for the pi-agent-browser extension.
- * Responsibilities: Validate raw tool arguments, derive implicit session names from the pi session identity, resolve implicit-session timeout/state helpers, detect explicit session usage, and build the effective CLI argument list passed to the upstream agent-browser binary.
+ * Responsibilities: Validate raw tool arguments, derive extension-managed session names from the pi session identity, resolve managed-session timeout/state helpers, detect explicit session usage, and build the effective CLI argument list passed to the upstream agent-browser binary.
  * Scope: Pure runtime-planning helpers only; no subprocess execution or filesystem access lives here.
  * Usage: Imported by the extension entrypoint and unit tests before spawning the upstream CLI.
- * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, and only injects `--json` plus an implicit `--session` when appropriate.
+ * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, and only injects `--json` plus an extension-managed `--session` when appropriate.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -67,11 +67,18 @@ export interface SessionRecoveryHint {
 export interface ExecutionPlan {
 	commandInfo: CommandInfo;
 	effectiveArgs: string[];
+	managedSessionName?: string;
 	recoveryHint?: SessionRecoveryHint;
 	sessionName?: string;
 	startupScopedFlags: string[];
 	usedImplicitSession: boolean;
 	validationError?: string;
+}
+
+export interface ManagedSessionState {
+	active: boolean;
+	replacedSessionName?: string;
+	sessionName: string;
 }
 
 export interface PromptPolicy {
@@ -105,19 +112,28 @@ export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = proces
 	return parseTimeoutMs(env[IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV], 0) ?? DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS;
 }
 
-export function resolveImplicitSessionActiveState(options: {
+export function resolveManagedSessionState(options: {
 	command?: string;
+	managedSessionName?: string;
 	priorActive: boolean;
+	priorSessionName: string;
 	succeeded: boolean;
-	usedImplicitSession: boolean;
-}): boolean {
-	const { command, priorActive, succeeded, usedImplicitSession } = options;
-	if (!usedImplicitSession) return priorActive;
-	if (command === "close") {
-		return succeeded ? false : priorActive;
+}): ManagedSessionState {
+	const { command, managedSessionName, priorActive, priorSessionName, succeeded } = options;
+	if (!managedSessionName) {
+		return { active: priorActive, sessionName: priorSessionName };
 	}
-	if (!command) return priorActive;
-	return priorActive || succeeded;
+	if (command === "close" && managedSessionName === priorSessionName) {
+		return { active: succeeded ? false : priorActive, sessionName: priorSessionName };
+	}
+	if (!succeeded) {
+		return { active: priorActive, sessionName: priorSessionName };
+	}
+	return {
+		active: true,
+		replacedSessionName: priorActive && priorSessionName !== managedSessionName ? priorSessionName : undefined,
+		sessionName: managedSessionName,
+	};
 }
 
 export function createEphemeralSessionSeed(): string {
@@ -142,6 +158,14 @@ export function createImplicitSessionName(
 
 	const digest = createHash("sha256").update(`ephemeral:${cwd}:${ephemeralSeed}`).digest("hex").slice(0, 12);
 	return `piab-${slug}-${digest}`;
+}
+
+export function createFreshSessionName(baseSessionName: string, ephemeralSeed: string, ordinal: number): string {
+	const suffix = createHash("sha256")
+		.update(`fresh:${baseSessionName}:${ephemeralSeed}:${ordinal}`)
+		.digest("hex")
+		.slice(0, 10);
+	return `${baseSessionName}-fresh-${suffix}`;
 }
 
 export function validateToolArgs(args: string[]): string | undefined {
@@ -213,35 +237,48 @@ export function getLatestUserPrompt(branch: unknown[]): string {
 
 export function buildExecutionPlan(
 	args: string[],
-	options: { implicitSessionActive: boolean; implicitSessionName: string; sessionMode: SessionMode },
+	options: {
+		freshSessionName: string;
+		managedSessionActive: boolean;
+		managedSessionName: string;
+		sessionMode: SessionMode;
+	},
 ): ExecutionPlan {
 	const commandInfo = parseCommandInfo(args);
 	const explicitSessionName = extractExplicitSessionName(args);
 	const startupScopedFlags = getStartupScopedFlags(args);
 	const effectiveArgs = args.includes("--json") ? [] : ["--json"];
+	const shouldCreateFreshManagedSession =
+		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && commandInfo.command !== "close";
+	let managedSessionName: string | undefined;
 	let recoveryHint: SessionRecoveryHint | undefined;
 	let sessionName = explicitSessionName;
 	let usedImplicitSession = false;
 	let validationError: string | undefined;
 
 	if (!explicitSessionName && options.sessionMode === "auto") {
-		if (options.implicitSessionActive && startupScopedFlags.length > 0) {
+		if (options.managedSessionActive && startupScopedFlags.length > 0) {
 			recoveryHint = {
 				exampleArgs: args,
 				exampleParams: { args, sessionMode: "fresh" },
 				reason:
-					"Startup-scoped flags like --profile, --session-name, and --cdp need a fresh upstream launch once the implicit session is already active.",
+					"Startup-scoped flags like --profile, --session-name, and --cdp need a fresh upstream launch once the extension-managed session is already active.",
 				recommendedSessionMode: "fresh",
 			};
 			validationError = [
-				`The current implicit agent-browser session is already running, so startup-scoped flags ${startupScopedFlags.join(", ")} would be ignored by upstream agent-browser.`,
+				`The current extension-managed agent-browser session is already running, so startup-scoped flags ${startupScopedFlags.join(", ")} would be ignored by upstream agent-browser.`,
 				"Retry this call with `sessionMode: \"fresh\"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.",
 			].join(" ");
 		} else {
-			effectiveArgs.push("--session", options.implicitSessionName);
-			sessionName = options.implicitSessionName;
+			effectiveArgs.push("--session", options.managedSessionName);
+			managedSessionName = options.managedSessionName;
+			sessionName = options.managedSessionName;
 			usedImplicitSession = true;
 		}
+	} else if (shouldCreateFreshManagedSession) {
+		effectiveArgs.push("--session", options.freshSessionName);
+		managedSessionName = options.freshSessionName;
+		sessionName = options.freshSessionName;
 	}
 
 	effectiveArgs.push(...args);
@@ -249,6 +286,7 @@ export function buildExecutionPlan(
 	return {
 		commandInfo,
 		effectiveArgs,
+		managedSessionName,
 		recoveryHint,
 		sessionName,
 		startupScopedFlags,

@@ -1,6 +1,6 @@
 /**
  * Purpose: Register the native agent_browser tool for pi so agents can invoke agent-browser without going through bash.
- * Responsibilities: Define the tool schema, inject thin wrapper behavior around the upstream CLI, manage implicit session convenience, and return pi-friendly content/details.
+ * Responsibilities: Define the tool schema, inject thin wrapper behavior around the upstream CLI, manage extension-owned browser session convenience, and return pi-friendly content/details.
  * Scope: Native tool registration and orchestration only; the wrapper intentionally stays close to the upstream agent-browser CLI.
  * Usage: Loaded by pi through the package manifest in this package, or explicitly via `pi --no-extensions -e .` during local checkout development.
  * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
@@ -17,12 +17,13 @@ import {
 	buildExecutionPlan,
 	buildPromptPolicy,
 	createEphemeralSessionSeed,
+	createFreshSessionName,
 	createImplicitSessionName,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
 	hasUsableBraveApiKey,
-	resolveImplicitSessionActiveState,
+	resolveManagedSessionState,
 	validateToolArgs,
 } from "./lib/runtime.js";
 import { cleanupSecureTempArtifacts } from "./lib/temp.js";
@@ -38,7 +39,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 	sessionMode: Type.Optional(
 		Type.Union([Type.Literal("auto"), Type.Literal("fresh")], {
 			description:
-				"Session handling mode. `auto` reuses the implicit pi-scoped session when possible. `fresh` skips the implicit session so startup-scoped flags like --profile, --session-name, or --cdp can launch a fresh upstream session.",
+				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so startup-scoped flags like --profile, --session-name, or --cdp apply and later auto calls follow the new browser.",
 			default: DEFAULT_SESSION_MODE,
 		}),
 	),
@@ -46,7 +47,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 const PROJECT_RULE_PROMPT =
 	"Project rule: when browser automation is needed, prefer the native `agent_browser` tool. Do not run direct `agent-browser` bash commands unless the user explicitly asks for a bash-oriented workflow or browser-integration debugging.";
 const QUICK_START_GUIDELINES = [
-	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin; sessionMode=fresh starts a fresh upstream launch when you need new --profile, --session-name, or --cdp state.",
+	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin; sessionMode=fresh switches the extension-managed session to a fresh upstream launch when you need new --profile, --session-name, or --cdp state.",
 	"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }; after navigation, use { args: [\"click\", \"@e2\"] } then { args: [\"snapshot\", \"-i\"] }.",
 	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, and { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }.",
 ] as const;
@@ -57,7 +58,7 @@ const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"For authenticated or user-specific content like feeds, inboxes, dashboards, and accounts, prefer --profile Default on the first browser call and let the implicit session carry continuity. Use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.",
 	"Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.",
 	"When using --profile, --session-name, or --cdp, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
-	"If you already used the implicit session and now need startup-scoped flags like --profile, --session-name, or --cdp, retry with sessionMode set to fresh or pass an explicit --session for the new launch.",
+	"If you already used the implicit session and now need startup-scoped flags like --profile, --session-name, or --cdp, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.",
 	"If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <n> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load, --url, --fn, or --text.",
 	"For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.",
 	"For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.",
@@ -71,8 +72,8 @@ const TOOL_PROMPT_GUIDELINES_SUFFIX = [
 	"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when this tool can do the job.",
 	"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
 	"Use stdin for commands like eval --stdin and batch instead of shell heredocs.",
-	"Let the implicit session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, or --cdp.",
-	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug launch without inventing a fixed explicit session name.",
+	"Let the extension-managed session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, or --cdp.",
+	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
 ] as const;
 
 function buildMissingBinaryMessage(): string {
@@ -208,6 +209,22 @@ function buildToolPromptGuidelines(hasBraveApiKey: boolean): string[] {
 	];
 }
 
+async function closeManagedSession(options: { cwd: string; sessionName: string; timeoutMs: number }): Promise<void> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+	try {
+		await runAgentBrowserProcess({
+			args: ["--session", options.sessionName, "close"],
+			cwd: options.cwd,
+			signal: controller.signal,
+		});
+	} catch {
+		// Best-effort cleanup only.
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	const hasBraveApiKey = hasUsableBraveApiKey();
@@ -215,32 +232,28 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const toolPromptGuidelines = buildToolPromptGuidelines(hasBraveApiKey);
 	const implicitSessionIdleTimeoutMs = getImplicitSessionIdleTimeoutMs();
 	const implicitSessionCloseTimeoutMs = getImplicitSessionCloseTimeoutMs();
-	let implicitSessionActive = false;
-	let implicitSessionName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
-	let implicitSessionCwd = process.cwd();
+	let managedSessionActive = false;
+	let managedSessionBaseName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
+	let managedSessionName = managedSessionBaseName;
+	let managedSessionCwd = process.cwd();
+	let freshSessionOrdinal = 0;
 
 	pi.on("session_start", async (_event, ctx) => {
-		implicitSessionActive = false;
-		implicitSessionName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
-		implicitSessionCwd = ctx.cwd;
+		managedSessionActive = false;
+		managedSessionBaseName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
+		managedSessionName = managedSessionBaseName;
+		managedSessionCwd = ctx.cwd;
+		freshSessionOrdinal = 0;
 	});
 
 	pi.on("session_shutdown", async () => {
-		implicitSessionActive = false;
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), implicitSessionCloseTimeoutMs);
-		try {
-			await runAgentBrowserProcess({
-				args: ["--session", implicitSessionName, "close"],
-				cwd: implicitSessionCwd,
-				signal: controller.signal,
-			});
-		} catch {
-			// Best-effort cleanup only.
-		} finally {
-			clearTimeout(timer);
-			await cleanupSecureTempArtifacts();
-		}
+		managedSessionActive = false;
+		await closeManagedSession({
+			cwd: managedSessionCwd,
+			sessionName: managedSessionName,
+			timeoutMs: implicitSessionCloseTimeoutMs,
+		});
+		await cleanupSecureTempArtifacts();
 	});
 
 	pi.on("before_agent_start", async (event) => {
@@ -284,11 +297,16 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			const sessionMode = params.sessionMode ?? DEFAULT_SESSION_MODE;
+			const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
 			const executionPlan = buildExecutionPlan(params.args, {
-				implicitSessionActive,
-				implicitSessionName,
+				freshSessionName,
+				managedSessionActive,
+				managedSessionName,
 				sessionMode,
 			});
+			if (executionPlan.managedSessionName === freshSessionName) {
+				freshSessionOrdinal += 1;
+			}
 
 			if (executionPlan.validationError) {
 				return {
@@ -317,9 +335,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const processResult = await runAgentBrowserProcess({
 				args: executionPlan.effectiveArgs,
 				cwd: ctx.cwd,
-				env: executionPlan.usedImplicitSession
-					? { AGENT_BROWSER_IDLE_TIMEOUT_MS: implicitSessionIdleTimeoutMs }
-					: undefined,
+				env: executionPlan.managedSessionName ? { AGENT_BROWSER_IDLE_TIMEOUT_MS: implicitSessionIdleTimeoutMs } : undefined,
 				signal,
 				stdin: params.stdin,
 			});
@@ -365,12 +381,27 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 				}
 
-				implicitSessionActive = resolveImplicitSessionActiveState({
+				const priorManagedSessionCwd = managedSessionCwd;
+				const managedSessionState = resolveManagedSessionState({
 					command: executionPlan.commandInfo.command,
-					priorActive: implicitSessionActive,
+					managedSessionName: executionPlan.managedSessionName,
+					priorActive: managedSessionActive,
+					priorSessionName: managedSessionName,
 					succeeded,
-					usedImplicitSession: executionPlan.usedImplicitSession,
 				});
+				const replacedManagedSessionName = managedSessionState.replacedSessionName;
+				managedSessionActive = managedSessionState.active;
+				managedSessionName = managedSessionState.sessionName;
+				if (executionPlan.managedSessionName && succeeded) {
+					managedSessionCwd = ctx.cwd;
+				}
+				if (replacedManagedSessionName) {
+					await closeManagedSession({
+						cwd: priorManagedSessionCwd,
+						sessionName: replacedManagedSessionName,
+						timeoutMs: implicitSessionCloseTimeoutMs,
+					});
+				}
 
 				const errorText = getAgentBrowserErrorText({
 					aborted: processResult.aborted,

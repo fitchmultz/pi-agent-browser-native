@@ -74,16 +74,17 @@ Register `agent_browser` with:
 - `sessionMode?: "auto" | "fresh"`
 
 Behavior:
-- `sessionMode: "auto"` uses the implicit session when appropriate
-- `sessionMode: "fresh"` skips the implicit session for a fresh upstream launch
+- `sessionMode: "auto"` uses the current extension-managed session when appropriate
+- `sessionMode: "fresh"` rotates that managed session to a fresh upstream launch unless the caller already provided `--session`
 - preserve explicit upstream session flags
 
 ## Phase 4 — lightweight session tracking
 
 Implement:
-- one implicit active session per `pi` session
-- implicit session names derived from the official `pi` session id
-- deterministic reuse across restart/resume
+- one extension-managed active session per `pi` session
+- implicit base session names derived from the official `pi` session id
+- unnamed fresh launches become the new managed session for later default calls
+- deterministic reuse across restart/resume for the base implicit session
 - no attempt to make browser runtime state branch-replayable
 
 ## Phase 5 — result shaping

@@ -91,8 +91,8 @@ The native tool exposed to the agent is named `agent_browser`.
 
 The primary session control parameter is `sessionMode`:
 
-- `"auto"` (default) reuses the implicit `pi`-scoped session when possible
-- `"fresh"` skips that implicit session so startup-scoped flags like `--profile`, `--session-name`, and `--cdp` can launch a fresh upstream session
+- `"auto"` (default) reuses the extension-managed `pi`-scoped session when possible
+- `"fresh"` switches that managed session to a fresh upstream launch so startup-scoped flags like `--profile`, `--session-name`, and `--cdp` apply and later auto calls follow the new browser
 
 ## Agent quick start
 
@@ -101,8 +101,8 @@ The primary session control parameter is `sessionMode`:
 - `args` — exact CLI args after `agent-browser`
 - `stdin` — raw stdin only for `batch` and `eval --stdin`
 - `sessionMode`
-  - `"auto"` — default, reuse the implicit `pi`-scoped session
-  - `"fresh"` — skip the implicit session for a new profile/debug launch
+  - `"auto"` — default, reuse the extension-managed `pi`-scoped session
+  - `"fresh"` — switch that managed session to a new profile/debug launch
 
 ### Common call shapes
 
@@ -138,7 +138,9 @@ Start a fresh profiled launch after you already used the implicit session:
 { "args": ["--profile", "Default", "open", "https://example.com/account"], "sessionMode": "fresh" }
 ```
 
-Name a new upstream session explicitly when you want to keep reusing it:
+After a successful unnamed fresh launch, later `sessionMode: "auto"` calls follow that new browser automatically.
+
+Name a new upstream session explicitly when you want to keep reusing it yourself:
 
 ```json
 { "args": ["--session", "auth-flow", "open", "https://example.com"] }
@@ -187,7 +189,8 @@ Current cautions:
 - passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
 - startup-scoped flags like `--profile`, `--session-name`, and `--cdp` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
 - implicit `piab-*` sessions are extension-managed convenience sessions; they are best-effort closed on `pi` shutdown, get an idle timeout to reduce stale background daemons, and clean up private temp spill artifacts on shutdown
-- explicit upstream sessions like `--session`, `--profile`, `--session-name`, and `--cdp` are treated as user-managed and are not auto-closed by the extension
+- `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
+- explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension
 
 ### Switching from public browsing to a fresh profile/debug launch
 
@@ -204,6 +207,8 @@ Use `sessionMode: "fresh"` for that transition instead of relying on the implici
   "sessionMode": "fresh"
 }
 ```
+
+After that call succeeds, later default `sessionMode: "auto"` calls continue in the new fresh browser.
 
 If you want to name the new upstream session yourself, pass an explicit session instead:
 

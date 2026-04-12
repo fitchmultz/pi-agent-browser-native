@@ -70,20 +70,22 @@ Why:
 
 If the caller provides `--session`, `--profile`, `--cdp`, or similar upstream flags, the extension should respect them with minimal interference.
 
-The tool should also expose a first-class `sessionMode: "fresh"` escape hatch so agents can intentionally skip the implicit session and launch a fresh upstream session without inventing a fixed explicit session name.
+The tool should also expose a first-class `sessionMode: "fresh"` escape hatch so agents can intentionally rotate the extension-managed session to a fresh upstream launch without inventing a fixed explicit session name.
 
 ### Ownership
 
 V1 ownership rule:
 - implicit auto-generated sessions are extension-managed convenience sessions
+- unnamed `sessionMode: "fresh"` launches rotate that extension-managed session to a new upstream browser
 - explicit/user-managed sessions are not auto-managed by default
-- implicit sessions should be reusable during an active `pi` session, but should still be cleaned up predictably
+- extension-managed sessions should be reusable during an active `pi` session, but should still be cleaned up predictably
 
 Practical policy:
-- on normal `pi` shutdown, best-effort close the implicit session
-- also set an idle timeout on implicit sessions so abandoned daemons self-clean after inactivity
-- clean up private temp spill artifacts owned by the implicit session on shutdown
-- leave explicit upstream sessions like `--session`, `--profile`, `--session-name`, and `--cdp` alone unless the caller closes them explicitly
+- on normal `pi` shutdown, best-effort close the current extension-managed session
+- also set an idle timeout on extension-managed sessions so abandoned daemons self-clean after inactivity
+- clean up private temp spill artifacts owned by the extension-managed session on shutdown
+- if an unnamed fresh launch replaces an active extension-managed session, best-effort close the old managed session after the switch succeeds
+- leave explicit caller-provided `--session` choices alone unless the caller closes them explicitly
 
 This is primarily about ownership clarity and avoiding surprise, not adding a heavy safety wrapper. If the extension invented the session, the extension should clean it up. If the caller explicitly chose the upstream session model, the extension should stay out of the way.
 
@@ -97,6 +99,8 @@ That means explicit startup-scoping flags like `--profile`, `--session-name`, an
 If the implicit session is already active and one of those startup-scoped flags appears again while `sessionMode` is still `"auto"`, the extension should fail clearly instead of silently sending a command shape that upstream would ignore.
 
 That failure should include a structured recovery hint pointing to `sessionMode: "fresh"` as the first-line fix, while still allowing an explicit `--session` when the caller wants to name the new upstream session.
+
+A successful unnamed `sessionMode: "fresh"` launch should become the new extension-managed session so later default calls follow that browser instead of silently snapping back to the older managed session.
 
 ## Preferring the native tool
 

@@ -29,13 +29,14 @@ import {
 import {
 	buildExecutionPlan,
 	buildPromptPolicy,
+	createFreshSessionName,
 	createImplicitSessionName,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
 	hasUsableBraveApiKey,
 	parseCommandInfo,
-	resolveImplicitSessionActiveState,
+	resolveManagedSessionState,
 } from "../extensions/agent-browser/lib/runtime.js";
 
 const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
@@ -204,22 +205,46 @@ test("implicit session timeout helpers prefer explicit overrides and safe defaul
 	assert.equal(getImplicitSessionCloseTimeoutMs({ PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS: "invalid" }), 5_000);
 });
 
-test("resolveImplicitSessionActiveState only promotes successful sessions and keeps active sessions until close succeeds", () => {
-	assert.equal(
-		resolveImplicitSessionActiveState({ command: "open", priorActive: false, succeeded: false, usedImplicitSession: true }),
-		false,
+test("resolveManagedSessionState only adopts successful managed sessions and identifies replaced sessions", () => {
+	assert.deepEqual(
+		resolveManagedSessionState({
+			command: "open",
+			managedSessionName: "piab-demo-123",
+			priorActive: false,
+			priorSessionName: "piab-demo-123",
+			succeeded: false,
+		}),
+		{ active: false, sessionName: "piab-demo-123" },
 	);
-	assert.equal(
-		resolveImplicitSessionActiveState({ command: "open", priorActive: false, succeeded: true, usedImplicitSession: true }),
-		true,
+	assert.deepEqual(
+		resolveManagedSessionState({
+			command: "open",
+			managedSessionName: "piab-demo-123",
+			priorActive: false,
+			priorSessionName: "piab-demo-123",
+			succeeded: true,
+		}),
+		{ active: true, sessionName: "piab-demo-123", replacedSessionName: undefined },
 	);
-	assert.equal(
-		resolveImplicitSessionActiveState({ command: "open", priorActive: true, succeeded: false, usedImplicitSession: true }),
-		true,
+	assert.deepEqual(
+		resolveManagedSessionState({
+			command: "open",
+			managedSessionName: "piab-demo-123-fresh",
+			priorActive: true,
+			priorSessionName: "piab-demo-123",
+			succeeded: true,
+		}),
+		{ active: true, sessionName: "piab-demo-123-fresh", replacedSessionName: "piab-demo-123" },
 	);
-	assert.equal(
-		resolveImplicitSessionActiveState({ command: "close", priorActive: true, succeeded: true, usedImplicitSession: true }),
-		false,
+	assert.deepEqual(
+		resolveManagedSessionState({
+			command: "close",
+			managedSessionName: "piab-demo-123-fresh",
+			priorActive: true,
+			priorSessionName: "piab-demo-123-fresh",
+			succeeded: true,
+		}),
+		{ active: false, sessionName: "piab-demo-123-fresh" },
 	);
 });
 
@@ -288,12 +313,14 @@ test("writeSecureTempFile enforces the aggregate temp-root disk budget", { concu
 
 test("buildExecutionPlan injects --json and the implicit session when needed", () => {
 	const plan = buildExecutionPlan(["open", "https://example.com"], {
-		implicitSessionActive: false,
-		implicitSessionName: "piab-demo-123",
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
 		sessionMode: "auto",
 	});
 
 	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "piab-demo-123", "open", "https://example.com"]);
+	assert.equal(plan.managedSessionName, "piab-demo-123");
 	assert.equal(plan.sessionName, "piab-demo-123");
 	assert.equal(plan.usedImplicitSession, true);
 	assert.equal(plan.validationError, undefined);
@@ -301,12 +328,14 @@ test("buildExecutionPlan injects --json and the implicit session when needed", (
 
 test("buildExecutionPlan respects explicit upstream sessions", () => {
 	const plan = buildExecutionPlan(["--session", "custom", "snapshot", "-i"], {
-		implicitSessionActive: true,
-		implicitSessionName: "piab-demo-123",
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
 		sessionMode: "auto",
 	});
 
 	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "custom", "snapshot", "-i"]);
+	assert.equal(plan.managedSessionName, undefined);
 	assert.equal(plan.sessionName, "custom");
 	assert.equal(plan.usedImplicitSession, false);
 });
@@ -318,8 +347,9 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"],
 	] as const) {
 		const plan = buildExecutionPlan([...args], {
-			implicitSessionActive: true,
-			implicitSessionName: "piab-demo-123",
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
 			sessionMode: "auto",
 		});
 
@@ -332,17 +362,20 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 	}
 });
 
-test("buildExecutionPlan allows startup-scoped flags with fresh session mode", () => {
+test("buildExecutionPlan assigns a new managed session for fresh session mode", () => {
 	const args = ["--profile", "Default", "open", "https://example.com/profile"];
+	const freshSessionName = createFreshSessionName("piab-demo-123", "seed", 1);
 	const plan = buildExecutionPlan(args, {
-		implicitSessionActive: true,
-		implicitSessionName: "piab-demo-123",
+		freshSessionName,
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
 		sessionMode: "fresh",
 	});
 
 	assert.equal(plan.validationError, undefined);
 	assert.equal(plan.usedImplicitSession, false);
-	assert.deepEqual(plan.effectiveArgs, ["--json", ...args]);
+	assert.equal(plan.managedSessionName, freshSessionName);
+	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", freshSessionName, ...args]);
 	assert.equal(plan.recoveryHint, undefined);
 });
 
@@ -1238,7 +1271,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 	},
 );
 
-test("agentBrowserExtension supports switching from an active implicit session to a fresh profile launch", { concurrency: false }, async () => {
+test("agentBrowserExtension rotates the managed session to a fresh profile launch and reuses it on follow-up auto calls", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -1246,12 +1279,15 @@ test("agentBrowserExtension supports switching from an active implicit session t
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { title: args.includes("--profile") ? "Profiled" : "Public", url: args[args.length - 1] } }));`,
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null }) + "\\n");
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: args.includes("--profile") ? "Profiled" : "Public", url: args[args.length - 1], idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null } };
+process.stdout.write(JSON.stringify(envelope));`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS: "1234" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -1259,6 +1295,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: args.include
 				args: ["open", "https://example.com"],
 			});
 			assert.equal(firstOpen.isError, false);
+			const firstSessionName = firstOpen.details?.sessionName;
+			assert.equal(typeof firstSessionName, "string");
 
 			const profiledOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--profile", "Default", "open", "https://example.com/profile"],
@@ -1267,13 +1305,38 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: args.include
 			assert.equal(profiledOpen.isError, false);
 			assert.equal(profiledOpen.details?.sessionMode, "fresh");
 			assert.equal(profiledOpen.details?.usedImplicitSession, false);
-			assert.equal((profiledOpen.details?.effectiveArgs as string[] | undefined)?.includes("--session"), false);
+			const freshSessionName = profiledOpen.details?.sessionName;
+			assert.equal(typeof freshSessionName, "string");
+			assert.notEqual(freshSessionName, firstSessionName);
+			assert.equal(
+				((profiledOpen.details?.effectiveArgs as string[] | undefined) ?? []).includes(String(freshSessionName)),
+				true,
+			);
+
+			const followUpSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["snapshot", "-i"],
+			});
+			assert.equal(followUpSnapshot.isError, false);
+			assert.equal(followUpSnapshot.details?.sessionName, freshSessionName);
+			assert.equal(followUpSnapshot.details?.usedImplicitSession, true);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 2);
-			assert.equal(invocations[0]?.args.includes("--session"), true);
-			assert.equal(invocations[1]?.args.includes("--profile"), true);
-			assert.equal(invocations[1]?.args.includes("--session"), false);
+			assert.equal(invocations.length, 4);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", String(firstSessionName), "open", "https://example.com"]);
+			assert.equal(invocations[0]?.idleTimeout, "1234");
+			assert.deepEqual(invocations[1]?.args, [
+				"--json",
+				"--session",
+				String(freshSessionName),
+				"--profile",
+				"Default",
+				"open",
+				"https://example.com/profile",
+			]);
+			assert.equal(invocations[1]?.idleTimeout, "1234");
+			assert.deepEqual(invocations[2]?.args, ["--session", String(firstSessionName), "close"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", String(freshSessionName), "snapshot", "-i"]);
+			assert.equal(invocations[3]?.idleTimeout, "1234");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

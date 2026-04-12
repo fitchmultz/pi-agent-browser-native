@@ -77,8 +77,8 @@ Examples:
 
 Behavior:
 - if `args` already include `--session`, upstream session choice wins
-- `"auto"` prepends the implicit active session when appropriate
-- `"fresh"` skips the implicit session so startup-scoped flags like `--profile`, `--session-name`, or `--cdp` can launch a fresh upstream session
+- `"auto"` prepends the current extension-managed active session when appropriate
+- `"fresh"` rotates that managed session to a fresh upstream launch so startup-scoped flags like `--profile`, `--session-name`, or `--cdp` apply and later default calls follow the new browser
 
 Recommended use:
 - use `"auto"` for the common browse/snapshot/click flow inside one `pi` session
@@ -157,14 +157,16 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 
 ## Session behavior
 
-- maintain one implicit active session per `pi` session for the common path
-- derive that implicit session from the official `pi` session id
+- maintain one extension-managed active session per `pi` session for the common path
+- derive the base implicit session name from the official `pi` session id
 - respect explicit upstream `--session` with minimal interference
-- treat the implicit session as extension-managed convenience state
-- on normal `pi` shutdown, best-effort close the implicit session
-- set an idle timeout on implicit sessions so abandoned daemons eventually self-clean
-- clean up private temp spill artifacts owned by the implicit session on shutdown
-- treat explicit upstream session choices like `--session`, `--profile`, `--session-name`, and `--cdp` as user-managed
+- treat the extension-managed session as convenience state owned by the wrapper
+- on normal `pi` shutdown, best-effort close the current extension-managed session
+- set an idle timeout on extension-managed sessions so abandoned daemons eventually self-clean
+- clean up private temp spill artifacts owned by the extension-managed session on shutdown
+- when an unnamed `sessionMode: "fresh"` launch succeeds, make it the new extension-managed session so later default calls keep using it
+- if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds
+- treat explicit caller-provided `--session` choices as user-managed
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
 - if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active while `sessionMode` is `"auto"`, return a validation error with a structured recovery hint that recommends `sessionMode: "fresh"`
 
