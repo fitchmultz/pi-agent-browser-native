@@ -31,7 +31,7 @@ npm run verify:release
 - no repo-local `.pi/extensions/agent-browser.ts` autoload shim is present
 - `LICENSE` exists in the repo and the packed tarball
 - canonical published docs are present
-- extension source files are present
+- extension source files are present, including the split result-rendering modules required by the published facade
 - agent-only and superseded docs are absent from the tarball
 
 Current forbidden packed files include:
