@@ -69,11 +69,13 @@ For the source install path, prefer the repository URL:
 pi install https://github.com/fitchmultz/pi-agent-browser-native
 ```
 
-To try the GitHub source without installing it permanently:
+To try the GitHub source without installing it permanently, isolate that temporary source extension from your normal installed package set:
 
 ```bash
-pi -e https://github.com/fitchmultz/pi-agent-browser-native
+pi --no-extensions -e https://github.com/fitchmultz/pi-agent-browser-native
 ```
+
+This avoids duplicate `agent_browser` registrations when you already have `pi-agent-browser-native` installed globally.
 
 ### Current practical local-checkout flow
 
