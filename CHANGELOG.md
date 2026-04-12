@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.6 - 2026-04-12
+
+### Changed
+- hardened the implicit browser-session lifecycle so failed first launches no longer mark the convenience session active, startup-scoped flags behave correctly across launches and closes, and the highest-risk entrypoint paths now have direct automated and isolated-`pi` coverage
+- added explicit temp-root ownership markers, aggregate spill-file disk budgeting, inline image size limits, and graceful fallback behavior when large snapshot or stdout artifacts exceed temp budgets
+- consolidated the shared browser operating playbook across the injected system prompt and tool prompt guidance while adding direct extension-hook coverage for prompt injection, bash blocking, and session resets
+- split the old result-rendering god module into focused envelope, presentation, shared, and snapshot modules, and made snapshot compaction fall back to a resilient outline mode when upstream raw snapshot formatting is unfamiliar
+- refactored the release-package verification script into smaller testable helpers, preserved the retired autoload-shim guard, and aligned the tarball gate with the split result-rendering module layout
+
 ## 0.1.5 - 2026-04-12
 
 ### Changed
