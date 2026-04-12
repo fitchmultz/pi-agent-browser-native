@@ -27,21 +27,29 @@ import {
 } from "./lib/runtime.js";
 import { cleanupSecureTempArtifacts } from "./lib/temp.js";
 
+const DEFAULT_SESSION_MODE = "auto" as const;
+
 const AGENT_BROWSER_PARAMS = Type.Object({
 	args: Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
 		description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators.",
 		minItems: 1,
 	}),
 	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content for commands like eval --stdin or batch." })),
-	useActiveSession: Type.Optional(
-		Type.Boolean({
-			description: "When true and no explicit --session is present, inject the implicit session for this pi session.",
-			default: true,
+	sessionMode: Type.Optional(
+		Type.Union([Type.Literal("auto"), Type.Literal("fresh")], {
+			description:
+				"Session handling mode. `auto` reuses the implicit pi-scoped session when possible. `fresh` skips the implicit session so startup-scoped flags like --profile, --session-name, or --cdp can launch a fresh upstream session.",
+			default: DEFAULT_SESSION_MODE,
 		}),
 	),
 });
 const PROJECT_RULE_PROMPT =
 	"Project rule: when browser automation is needed, prefer the native `agent_browser` tool. Do not run direct `agent-browser` bash commands unless the user explicitly asks for a bash-oriented workflow or browser-integration debugging.";
+const QUICK_START_GUIDELINES = [
+	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin; sessionMode=fresh starts a fresh upstream launch when you need new --profile, --session-name, or --cdp state.",
+	"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }; after navigation, use { args: [\"click\", \"@e2\"] } then { args: [\"snapshot\", \"-i\"] }.",
+	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, and { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }.",
+] as const;
 const BRAVE_SEARCH_PROMPT_GUIDELINE =
 	"When a non-empty BRAVE_API_KEY is available in the current environment, prefer the Brave Search API via bash/curl to discover specific destination URLs, then open the chosen URL with agent_browser instead of browsing a search engine results page just to find the target.";
 const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
@@ -49,6 +57,7 @@ const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"For authenticated or user-specific content like feeds, inboxes, dashboards, and accounts, prefer --profile Default on the first browser call and let the implicit session carry continuity. Use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.",
 	"Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.",
 	"When using --profile, --session-name, or --cdp, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
+	"If you already used the implicit session and now need startup-scoped flags like --profile, --session-name, or --cdp, retry with sessionMode set to fresh or pass an explicit --session for the new launch.",
 	"If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <n> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load, --url, --fn, or --text.",
 	"For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.",
 	"For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.",
@@ -62,7 +71,8 @@ const TOOL_PROMPT_GUIDELINES_SUFFIX = [
 	"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when this tool can do the job.",
 	"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
 	"Use stdin for commands like eval --stdin and batch instead of shell heredocs.",
-	"Let the implicit session handle the common path unless you explicitly need upstream flags like --session, --profile, or --cdp.",
+	"Let the implicit session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, or --cdp.",
+	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug launch without inventing a fixed explicit session name.",
 ] as const;
 
 function buildMissingBinaryMessage(): string {
@@ -92,15 +102,81 @@ function isPlainTextInspectionArgs(args: string[]): boolean {
 	return args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-V");
 }
 
-function buildInspectionDeflectionMessage(): string {
-	return [
-		"Do not inspect agent_browser help for a normal browser task.",
-		"Use the workflow directly:",
-		"1. open the target URL",
-		"2. snapshot -i",
-		"3. interact using refs and re-snapshot after navigation or major DOM changes",
-		"For authenticated or user-specific content like feeds, inboxes, dashboards, or accounts, start with an authenticated strategy such as --profile Default on the first browser call and let the implicit session carry continuity. Use --auto-connect only if profile-based reuse is unavailable.",
-	].join("\n");
+const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
+
+interface NavigationSummary {
+	title?: string;
+	url?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {
+	return (
+		command !== undefined &&
+		NAVIGATION_SUMMARY_COMMANDS.has(command) &&
+		(!isRecord(data) || (typeof data.title !== "string" && typeof data.url !== "string"))
+	);
+}
+
+function extractStringResultField(data: unknown, fieldName: "title" | "url"): string | undefined {
+	if (typeof data === "string") {
+		const text = data.trim();
+		return text.length > 0 ? text : undefined;
+	}
+	if (!isRecord(data) || typeof data[fieldName] !== "string") {
+		return undefined;
+	}
+	const text = data[fieldName].trim();
+	return text.length > 0 ? text : undefined;
+}
+
+async function collectNavigationSummary(options: {
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<NavigationSummary | undefined> {
+	const { cwd, sessionName, signal } = options;
+	if (!sessionName) return undefined;
+
+	const readField = async (fieldName: "title" | "url"): Promise<string | undefined> => {
+		const processResult = await runAgentBrowserProcess({
+			args: ["--json", "--session", sessionName, "get", fieldName],
+			cwd,
+			signal,
+		});
+		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
+			return undefined;
+		}
+		const parsed = await parseAgentBrowserEnvelope({
+			stdout: processResult.stdout,
+			stdoutPath: processResult.stdoutSpillPath,
+		});
+		try {
+			if (parsed.parseError || parsed.envelope?.success === false) {
+				return undefined;
+			}
+			return extractStringResultField(parsed.envelope?.data, fieldName);
+		} finally {
+			if (processResult.stdoutSpillPath) {
+				await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
+			}
+		}
+	};
+
+	const title = await readField("title");
+	const url = await readField("url");
+	if (!title && !url) return undefined;
+	return { title, url };
+}
+
+function mergeNavigationSummaryIntoData(data: unknown, navigationSummary: NavigationSummary): unknown {
+	if (isRecord(data)) {
+		return { ...data, navigationSummary };
+	}
+	return { navigationSummary, result: data };
 }
 
 function buildSharedBrowserPlaybookGuidelines(hasBraveApiKey: boolean): string[] {
@@ -115,6 +191,9 @@ function buildBrowserSystemPromptAppendix(hasBraveApiKey: boolean): string {
 	return [
 		PROJECT_RULE_PROMPT,
 		"",
+		"Quick start:",
+		...QUICK_START_GUIDELINES.map((guideline) => `- ${guideline}`),
+		"",
 		"Browser operating playbook:",
 		...buildSharedBrowserPlaybookGuidelines(hasBraveApiKey).map((guideline) => `- ${guideline}`),
 	].join("\n");
@@ -123,6 +202,7 @@ function buildBrowserSystemPromptAppendix(hasBraveApiKey: boolean): string {
 function buildToolPromptGuidelines(hasBraveApiKey: boolean): string[] {
 	return [
 		...TOOL_PROMPT_GUIDELINES_PREFIX,
+		...QUICK_START_GUIDELINES,
 		...buildSharedBrowserPlaybookGuidelines(hasBraveApiKey),
 		...TOOL_PROMPT_GUIDELINES_SUFFIX,
 	];
@@ -194,16 +274,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		promptGuidelines: toolPromptGuidelines,
 		parameters: AGENT_BROWSER_PARAMS,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
-			if (!promptPolicy.allowAgentBrowserInspection && isPlainTextInspectionArgs(params.args)) {
-				const errorText = buildInspectionDeflectionMessage();
-				return {
-					content: [{ type: "text", text: errorText }],
-					details: { args: params.args, inspectionBlocked: true },
-					isError: true,
-				};
-			}
-
 			const validationError = validateToolArgs(params.args);
 			if (validationError) {
 				return {
@@ -213,10 +283,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				};
 			}
 
+			const sessionMode = params.sessionMode ?? DEFAULT_SESSION_MODE;
 			const executionPlan = buildExecutionPlan(params.args, {
 				implicitSessionActive,
 				implicitSessionName,
-				useActiveSession: params.useActiveSession ?? true,
+				sessionMode,
 			});
 
 			if (executionPlan.validationError) {
@@ -224,6 +295,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					content: [{ type: "text", text: executionPlan.validationError }],
 					details: {
 						args: params.args,
+						sessionMode,
+						sessionRecoveryHint: executionPlan.recoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,
 						validationError: executionPlan.validationError,
 					},
@@ -235,6 +308,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(executionPlan.effectiveArgs)}` }],
 				details: {
 					effectiveArgs: executionPlan.effectiveArgs,
+					sessionMode,
 					sessionName: executionPlan.sessionName,
 					usedImplicitSession: executionPlan.usedImplicitSession,
 				},
@@ -257,6 +331,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					details: {
 						args: params.args,
 						effectiveArgs: executionPlan.effectiveArgs,
+						sessionMode,
 						spawnError: processResult.spawnError.message,
 					},
 					isError: true,
@@ -268,11 +343,27 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					stdout: processResult.stdout,
 					stdoutPath: processResult.stdoutSpillPath,
 				});
+				let presentationEnvelope = parsed.envelope;
 				const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
 				const plainTextInspection = isPlainTextInspectionArgs(params.args) && processSucceeded && parsed.parseError !== undefined;
 				const envelopeSuccess = plainTextInspection ? true : parsed.envelope?.success !== false;
 				const parseSucceeded = plainTextInspection || parsed.parseError === undefined;
 				const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
+
+				let navigationSummary: NavigationSummary | undefined;
+				if (succeeded && shouldCaptureNavigationSummary(executionPlan.commandInfo.command, parsed.envelope?.data)) {
+					navigationSummary = await collectNavigationSummary({
+						cwd: ctx.cwd,
+						sessionName: executionPlan.sessionName,
+						signal,
+					});
+					if (navigationSummary && presentationEnvelope) {
+						presentationEnvelope = {
+							...presentationEnvelope,
+							data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary),
+						};
+					}
+				}
 
 				implicitSessionActive = resolveImplicitSessionActiveState({
 					command: executionPlan.commandInfo.command,
@@ -300,7 +391,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					: await buildToolPresentation({
 							commandInfo: executionPlan.commandInfo,
 							cwd: ctx.cwd,
-							envelope: parsed.envelope,
+							envelope: presentationEnvelope,
 							errorText,
 					  });
 
@@ -308,16 +399,22 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					content: presentation.content,
 					details: {
 						args: params.args,
+						batchSteps: presentation.batchSteps,
 						command: executionPlan.commandInfo.command,
 						subcommand: executionPlan.commandInfo.subcommand,
 						data: presentation.data,
 						error: parsed.envelope?.error,
+						navigationSummary,
 						effectiveArgs: executionPlan.effectiveArgs,
 						exitCode: processResult.exitCode,
 						fullOutputPath: presentation.fullOutputPath,
+						fullOutputPaths: presentation.fullOutputPaths,
 						imagePath: presentation.imagePath,
+						imagePaths: presentation.imagePaths,
 						parseError: parsed.parseError,
+						sessionMode,
 						sessionName: executionPlan.sessionName,
+						sessionRecoveryHint: executionPlan.recoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,
 						stderr: processResult.stderr || undefined,
 						stdout: parseSucceeded ? undefined : processResult.stdout,

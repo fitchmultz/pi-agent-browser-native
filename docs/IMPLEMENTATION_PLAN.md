@@ -71,10 +71,11 @@ Implement a small wrapper that:
 Register `agent_browser` with:
 - `args: string[]`
 - `stdin?: string`
-- `useActiveSession?: boolean`
+- `sessionMode?: "auto" | "fresh"`
 
 Behavior:
-- inject implicit session only when appropriate
+- `sessionMode: "auto"` uses the implicit session when appropriate
+- `sessionMode: "fresh"` skips the implicit session for a fresh upstream launch
 - preserve explicit upstream session flags
 
 ## Phase 4 — lightweight session tracking

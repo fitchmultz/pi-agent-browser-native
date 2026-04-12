@@ -19,11 +19,28 @@ export interface AgentBrowserBatchResult {
 	success?: boolean;
 }
 
+export interface BatchStepPresentationDetails {
+	command?: string[];
+	commandText: string;
+	data?: unknown;
+	fullOutputPath?: string;
+	fullOutputPaths?: string[];
+	imagePath?: string;
+	imagePaths?: string[];
+	index: number;
+	success: boolean;
+	summary: string;
+	text: string;
+}
+
 export interface ToolPresentation {
+	batchSteps?: BatchStepPresentationDetails[];
 	content: Array<{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }>;
 	data?: unknown;
 	fullOutputPath?: string;
+	fullOutputPaths?: string[];
 	imagePath?: string;
+	imagePaths?: string[];
 	summary: string;
 }
 

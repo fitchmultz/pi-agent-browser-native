@@ -59,16 +59,18 @@ The published package should exclude agent-only and superseded repo materials su
 
 ### Default
 
-If the caller does not provide `--session`, the extension should use an implicit session name derived from the current `pi` session id.
+If the caller does not provide `--session`, the extension should default to `sessionMode: "auto"` and use an implicit session name derived from the current `pi` session id.
 
 Why:
 - works out of the box
 - gives continuity across calls
 - avoids forcing the agent to invent session names for basic browsing
 
-### Explicit upstream sessions
+### Explicit upstream sessions and fresh launches
 
 If the caller provides `--session`, `--profile`, `--cdp`, or similar upstream flags, the extension should respect them with minimal interference.
+
+The tool should also expose a first-class `sessionMode: "fresh"` escape hatch so agents can intentionally skip the implicit session and launch a fresh upstream session without inventing a fixed explicit session name.
 
 ### Ownership
 
@@ -92,7 +94,9 @@ The extension should surface that clearly and avoid hidden restart behavior in v
 
 That means explicit startup-scoping flags like `--profile`, `--session-name`, and `--cdp` should remain explicit upstream choices instead of being wrapped in extra hidden restart or cloning logic.
 
-If the implicit session is already active and one of those startup-scoped flags appears again, the extension should fail clearly instead of silently sending a command shape that upstream would ignore.
+If the implicit session is already active and one of those startup-scoped flags appears again while `sessionMode` is still `"auto"`, the extension should fail clearly instead of silently sending a command shape that upstream would ignore.
+
+That failure should include a structured recovery hint pointing to `sessionMode: "fresh"` as the first-line fix, while still allowing an explicit `--session` when the caller wants to name the new upstream session.
 
 ## Preferring the native tool
 

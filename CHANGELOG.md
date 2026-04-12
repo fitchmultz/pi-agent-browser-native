@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 - 2026-04-12
+
+### Changed
+- `batch` now reuses the richer standalone renderers, so batched snapshots keep the compact main-content-first view and batched screenshots keep inline image attachments instead of degrading to raw JSON-ish text
+- the tool schema now uses `sessionMode: "auto" | "fresh"` instead of the old implicit-session boolean so agents have a first-class way to request a fresh profiled/debug launch, and blocked startup-scoped reuse errors now include structured recovery hints
+- plain-text inspection commands like `agent_browser --help` and `--version` are now always allowed, removing the old prompt-dependent inspection gate and making the inspection contract local and predictable
+- navigation actions like `click`, `dblclick`, `back`, `forward`, and `reload` now include lightweight post-action title/url summaries when the wrapper can address the active session, reducing guess-and-check follow-up snapshots
+- compact snapshot rendering is leaner by default: fewer additional sections, fewer refs, smaller role summaries, and the raw spill path now stays in `details.fullOutputPath` instead of dominating the visible snapshot body
+- README and injected tool guidance now include a compact agent quick start with the core call shapes for `open` + `snapshot`, `click` + re-snapshot, `batch`, `eval --stdin`, and fresh profiled launches
+
+### Migration notes
+- replace any use of `useActiveSession` with `sessionMode`
+- use `sessionMode: "fresh"` when you need a new `--profile`, `--session-name`, or `--cdp` launch after the implicit session is already active
+
 ## 0.1.6 - 2026-04-12
 
 ### Changed

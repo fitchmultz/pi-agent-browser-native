@@ -9,9 +9,17 @@
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import type { CommandInfo } from "../runtime.js";
+import { parseCommandInfo, type CommandInfo } from "../runtime.js";
 import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary } from "./snapshot.js";
-import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, type ToolPresentation, isRecord, parsePositiveInteger, stringifyUnknown } from "./shared.js";
+import {
+	type AgentBrowserBatchResult,
+	type AgentBrowserEnvelope,
+	type BatchStepPresentationDetails,
+	type ToolPresentation,
+	isRecord,
+	parsePositiveInteger,
+	stringifyUnknown,
+} from "./shared.js";
 
 const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
 	".gif": "image/gif",
@@ -23,6 +31,13 @@ const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
 
 const INLINE_IMAGE_MAX_BYTES_ENV = "PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES";
 const DEFAULT_INLINE_IMAGE_MAX_BYTES = 5 * 1_024 * 1_024;
+const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
+const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
+
+interface NavigationSummary {
+	title?: string;
+	url?: string;
+}
 
 function getImageMimeType(filePath: string): string | undefined {
 	const extension = filePath.toLowerCase().slice(filePath.lastIndexOf("."));
@@ -90,16 +105,198 @@ function getScreenshotSummary(data: Record<string, unknown>): string | undefined
 	return typeof data.path === "string" ? `Saved image: ${data.path}` : undefined;
 }
 
-function formatBatchContent(data: AgentBrowserBatchResult[]): string {
-	return data
-		.map((item, index) => {
-			const command = Array.isArray(item.command) ? item.command.join(" ") : `step-${index + 1}`;
-			if (item.success === false) {
-				return `${command}\nError: ${stringifyUnknown(item.error)}`;
-			}
-			return `${command}\n${stringifyUnknown(item.result)}`;
-		})
+function isNavigationObservableCommand(command: string | undefined): boolean {
+	return command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(command);
+}
+
+function isNavigationSummary(value: unknown): value is NavigationSummary {
+	return isRecord(value) && (typeof value.title === "string" || typeof value.url === "string");
+}
+
+function getNavigationSummary(data: Record<string, unknown>): NavigationSummary | undefined {
+	const candidate = data[NAVIGATION_SUMMARY_FIELD];
+	return isNavigationSummary(candidate) ? candidate : undefined;
+}
+
+function formatNavigationSummary(summary: NavigationSummary): string | undefined {
+	const title = typeof summary.title === "string" && summary.title.trim().length > 0 ? summary.title.trim() : undefined;
+	const url = typeof summary.url === "string" && summary.url.trim().length > 0 ? summary.url.trim() : undefined;
+	if (!title && !url) return undefined;
+	if (title && url) return `${title}\n${url}`;
+	return title ?? url;
+}
+
+function stripNavigationSummary(data: Record<string, unknown>): Record<string, unknown> {
+	const { [NAVIGATION_SUMMARY_FIELD]: _navigationSummary, ...rest } = data;
+	return rest;
+}
+
+function formatNavigationActionResult(data: Record<string, unknown>): string | undefined {
+	const actionData = stripNavigationSummary(data);
+	const lines: string[] = [];
+	if (typeof actionData.clicked === "string" || typeof actionData.clicked === "boolean") {
+		lines.push(`Clicked: ${String(actionData.clicked)}`);
+	}
+	if (typeof actionData.href === "string") {
+		lines.push(`Href: ${actionData.href}`);
+	}
+	if (typeof actionData.navigated === "boolean") {
+		lines.push(`Navigated: ${actionData.navigated}`);
+	}
+	if (lines.length > 0) {
+		return lines.join("\n");
+	}
+
+	const actionText = stringifyUnknown(actionData).trim();
+	if (actionText.length === 0 || actionText === "{}") {
+		return undefined;
+	}
+	return actionText;
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function getPresentationText(presentation: ToolPresentation): string {
+	return presentation.content
+		.filter((part): part is Extract<ToolPresentation["content"][number], { type: "text" }> => part.type === "text")
+		.map((part) => part.text.trim())
+		.filter((text) => text.length > 0)
 		.join("\n\n");
+}
+
+function getPresentationImages(presentation: ToolPresentation): Array<Extract<ToolPresentation["content"][number], { type: "image" }>> {
+	return presentation.content.filter(
+		(part): part is Extract<ToolPresentation["content"][number], { type: "image" }> => part.type === "image",
+	);
+}
+
+function getPresentationPaths(options: {
+	primaryPath?: string;
+	secondaryPaths?: string[];
+}): string[] {
+	return options.secondaryPaths ?? (options.primaryPath ? [options.primaryPath] : []);
+}
+
+function formatBatchStepCommand(command: string[] | undefined, index: number): string {
+	return command && command.length > 0 ? command.join(" ") : `step-${index + 1}`;
+}
+
+function formatBatchStepError(error: unknown): string {
+	const errorText = stringifyUnknown(error).trim();
+	return errorText.length > 0 ? `Error: ${errorText}` : "Error: batch step failed.";
+}
+
+async function buildBatchStepPresentation(options: {
+	cwd: string;
+	index: number;
+	item: AgentBrowserBatchResult;
+}): Promise<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> {
+	const { cwd, index, item } = options;
+	const command = isStringArray(item.command) ? item.command : undefined;
+	const commandText = formatBatchStepCommand(command, index);
+
+	if (item.success === false) {
+		const errorText = formatBatchStepError(item.error);
+		const presentation: ToolPresentation = {
+			content: [{ type: "text", text: errorText }],
+			summary: errorText,
+		};
+		return {
+			details: {
+				command,
+				commandText,
+				data: item.error,
+				index,
+				success: false,
+				summary: errorText,
+				text: errorText,
+			},
+			presentation,
+		};
+	}
+
+	const presentation = await buildToolPresentation({
+		commandInfo: parseCommandInfo(command ?? []),
+		cwd,
+		envelope: { data: item.result, success: true },
+	});
+	const fullOutputPaths = getPresentationPaths({
+		primaryPath: presentation.fullOutputPath,
+		secondaryPaths: presentation.fullOutputPaths,
+	});
+	const imagePaths = getPresentationPaths({
+		primaryPath: presentation.imagePath,
+		secondaryPaths: presentation.imagePaths,
+	});
+	const text = getPresentationText(presentation) || presentation.summary;
+
+	return {
+		details: {
+			command,
+			commandText,
+			data: presentation.data,
+			fullOutputPath: fullOutputPaths[0],
+			fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
+			imagePath: imagePaths[0],
+			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+			index,
+			success: true,
+			summary: presentation.summary,
+			text,
+		},
+		presentation,
+	};
+}
+
+async function buildBatchPresentation(options: {
+	cwd: string;
+	data: AgentBrowserBatchResult[];
+	summary: string;
+}): Promise<ToolPresentation> {
+	const { cwd, data, summary } = options;
+	const steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> = [];
+	for (const [index, item] of data.entries()) {
+		steps.push(await buildBatchStepPresentation({ cwd, index, item }));
+	}
+
+	const images = steps.flatMap((step) => getPresentationImages(step.presentation));
+	const fullOutputPaths = steps.flatMap((step) => getPresentationPaths({
+		primaryPath: step.presentation.fullOutputPath,
+		secondaryPaths: step.presentation.fullOutputPaths,
+	}));
+	const imagePaths = steps.flatMap((step) => getPresentationPaths({
+		primaryPath: step.presentation.imagePath,
+		secondaryPaths: step.presentation.imagePaths,
+	}));
+	const text =
+		steps.length === 0
+			? "(no batch steps)"
+			: steps
+				.map(({ details, presentation }) => {
+					const inlineImageCount = getPresentationImages(presentation).length;
+					const lines = [`Step ${details.index + 1} — ${details.commandText}`];
+					if (details.text.length > 0) {
+						lines.push(details.text);
+					}
+					if (inlineImageCount > 0) {
+						lines.push(`(${inlineImageCount} inline image attachment${inlineImageCount === 1 ? "" : "s"} below)`);
+					}
+					return lines.join("\n");
+				})
+				.join("\n\n");
+
+	return {
+		batchSteps: steps.map((step) => step.details),
+		content: [{ type: "text", text }, ...images],
+		data,
+		fullOutputPath: fullOutputPaths[0],
+		fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
+		imagePath: imagePaths[0],
+		imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+		summary,
+	};
 }
 
 function formatSummary(commandInfo: CommandInfo, data: unknown): string {
@@ -108,6 +305,13 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 		return `Batch: ${successCount}/${data.length} succeeded`;
 	}
 	if (isRecord(data)) {
+		const navigationSummary = getNavigationSummary(data);
+		if (navigationSummary && isNavigationObservableCommand(commandInfo.command)) {
+			const navigationText = formatNavigationSummary(navigationSummary);
+			if (navigationText) {
+				return `${commandInfo.command ?? "navigation"} → ${navigationText.split("\n", 1)[0] ?? navigationText}`;
+			}
+		}
 		if (commandInfo.command === "snapshot") {
 			return formatSnapshotSummary(data);
 		}
@@ -136,9 +340,6 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 }
 
 function formatContentText(commandInfo: CommandInfo, data: unknown): string {
-	if (Array.isArray(data) && commandInfo.command === "batch") {
-		return formatBatchContent(data as AgentBrowserBatchResult[]);
-	}
 	if (typeof data === "string") {
 		return data;
 	}
@@ -147,6 +348,15 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	}
 	if (!isRecord(data)) {
 		return stringifyUnknown(data);
+	}
+
+	const navigationSummary = getNavigationSummary(data);
+	if (navigationSummary && isNavigationObservableCommand(commandInfo.command)) {
+		const navigationText = formatNavigationSummary(navigationSummary);
+		if (navigationText) {
+			const actionText = formatNavigationActionResult(data);
+			return actionText ? `${actionText}\n\nCurrent page:\n${navigationText}` : `Current page:\n${navigationText}`;
+		}
 	}
 
 	if (commandInfo.command === "snapshot") {
@@ -232,13 +442,15 @@ export async function buildToolPresentation(options: {
 	const data = envelope?.data;
 	const summary = formatSummary(commandInfo, data);
 	const presentation =
-		commandInfo.command === "snapshot" && isRecord(data)
-			? await buildSnapshotPresentation(data)
-			: {
-					content: [{ type: "text" as const, text: formatContentText(commandInfo, data) }],
-					data,
-					summary,
-			  };
+		commandInfo.command === "batch" && Array.isArray(data)
+			? await buildBatchPresentation({ cwd, data: data as AgentBrowserBatchResult[], summary })
+			: commandInfo.command === "snapshot" && isRecord(data)
+				? await buildSnapshotPresentation(data)
+				: {
+						content: [{ type: "text" as const, text: formatContentText(commandInfo, data) }],
+						data,
+						summary,
+				  };
 
 	const imagePath = extractImagePath(cwd, data);
 	if (!imagePath) {

@@ -16,13 +16,6 @@ const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDL
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
 const DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
-const INSPECTION_ALLOW_PATTERNS = [
-	/\bagent[_ -]?browser\s+--(?:help|version)\b/i,
-	/\bagent[_ -]?browser\b.*\b(?:help|version|docs?|documentation|tool contract|tool guidance|tool description)\b/i,
-	/\b(?:help|version|docs?|documentation|tool contract|tool guidance|tool description)\b.*\bagent[_ -]?browser\b/i,
-	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
-	/\bwhy\s+(?:isn't|is not|doesn't|does not)\b.*\b(?:agent[_ -]?browser|agent_browser)\b/i,
-];
 const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\b(?:bash-oriented workflow|bash workflow)\b/i,
 	/\b(?:use|via|through|with)\s+bash\b/i,
@@ -62,9 +55,19 @@ export interface CommandInfo {
 	subcommand?: string;
 }
 
+export type SessionMode = "auto" | "fresh";
+
+export interface SessionRecoveryHint {
+	exampleArgs: string[];
+	exampleParams: { args: string[]; sessionMode: "fresh" };
+	reason: string;
+	recommendedSessionMode: "fresh";
+}
+
 export interface ExecutionPlan {
 	commandInfo: CommandInfo;
 	effectiveArgs: string[];
+	recoveryHint?: SessionRecoveryHint;
 	sessionName?: string;
 	startupScopedFlags: string[];
 	usedImplicitSession: boolean;
@@ -72,7 +75,6 @@ export interface ExecutionPlan {
 }
 
 export interface PromptPolicy {
-	allowAgentBrowserInspection: boolean;
 	allowLegacyAgentBrowserBash: boolean;
 }
 
@@ -177,7 +179,6 @@ export function getStartupScopedFlags(args: string[]): string[] {
 
 export function buildPromptPolicy(prompt: string): PromptPolicy {
 	return {
-		allowAgentBrowserInspection: INSPECTION_ALLOW_PATTERNS.some((pattern) => pattern.test(prompt)),
 		allowLegacyAgentBrowserBash: LEGACY_BASH_ALLOW_PATTERNS.some((pattern) => pattern.test(prompt)),
 	};
 }
@@ -212,21 +213,29 @@ export function getLatestUserPrompt(branch: unknown[]): string {
 
 export function buildExecutionPlan(
 	args: string[],
-	options: { implicitSessionActive: boolean; implicitSessionName: string; useActiveSession: boolean },
+	options: { implicitSessionActive: boolean; implicitSessionName: string; sessionMode: SessionMode },
 ): ExecutionPlan {
 	const commandInfo = parseCommandInfo(args);
 	const explicitSessionName = extractExplicitSessionName(args);
 	const startupScopedFlags = getStartupScopedFlags(args);
 	const effectiveArgs = args.includes("--json") ? [] : ["--json"];
+	let recoveryHint: SessionRecoveryHint | undefined;
 	let sessionName = explicitSessionName;
 	let usedImplicitSession = false;
 	let validationError: string | undefined;
 
-	if (!explicitSessionName && options.useActiveSession) {
+	if (!explicitSessionName && options.sessionMode === "auto") {
 		if (options.implicitSessionActive && startupScopedFlags.length > 0) {
+			recoveryHint = {
+				exampleArgs: args,
+				exampleParams: { args, sessionMode: "fresh" },
+				reason:
+					"Startup-scoped flags like --profile, --session-name, and --cdp need a fresh upstream launch once the implicit session is already active.",
+				recommendedSessionMode: "fresh",
+			};
 			validationError = [
 				`The current implicit agent-browser session is already running, so startup-scoped flags ${startupScopedFlags.join(", ")} would be ignored by upstream agent-browser.`,
-				"Reuse the existing implicit session without those flags, or start a fresh upstream session explicitly with `--session ...` (or `useActiveSession: false`) for a new launch.",
+				"Retry this call with `sessionMode: \"fresh\"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.",
 			].join(" ");
 		} else {
 			effectiveArgs.push("--session", options.implicitSessionName);
@@ -240,6 +249,7 @@ export function buildExecutionPlan(
 	return {
 		commandInfo,
 		effectiveArgs,
+		recoveryHint,
 		sessionName,
 		startupScopedFlags,
 		usedImplicitSession,

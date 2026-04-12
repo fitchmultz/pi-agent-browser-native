@@ -87,6 +87,67 @@ This avoids duplicate `agent_browser` registrations if you also have the publish
 
 The native tool exposed to the agent is named `agent_browser`.
 
+The primary session control parameter is `sessionMode`:
+
+- `"auto"` (default) reuses the implicit `pi`-scoped session when possible
+- `"fresh"` skips that implicit session so startup-scoped flags like `--profile`, `--session-name`, and `--cdp` can launch a fresh upstream session
+
+## Agent quick start
+
+### Mental model
+
+- `args` — exact CLI args after `agent-browser`
+- `stdin` — raw stdin only for `batch` and `eval --stdin`
+- `sessionMode`
+  - `"auto"` — default, reuse the implicit `pi`-scoped session
+  - `"fresh"` — skip the implicit session for a new profile/debug launch
+
+### Common call shapes
+
+Open a page, then take an interactive snapshot:
+
+```json
+{ "args": ["open", "https://example.com"] }
+{ "args": ["snapshot", "-i"] }
+```
+
+Click a ref, then re-snapshot after navigation or a major DOM change:
+
+```json
+{ "args": ["click", "@e2"] }
+{ "args": ["snapshot", "-i"] }
+```
+
+Run a multi-step browser flow in one tool call:
+
+```json
+{ "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
+```
+
+Evaluate page JavaScript via stdin:
+
+```json
+{ "args": ["eval", "--stdin"], "stdin": "document.title" }
+```
+
+Start a fresh profiled launch after you already used the implicit session:
+
+```json
+{ "args": ["--profile", "Default", "open", "https://example.com/account"], "sessionMode": "fresh" }
+```
+
+Name a new upstream session explicitly when you want to keep reusing it:
+
+```json
+{ "args": ["--session", "auth-flow", "open", "https://example.com"] }
+```
+
+### First useful prompt in a fresh `pi` session
+
+```text
+Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
+```
+
 ## Local development
 
 Do not track or rely on a repo-local `.pi/extensions/agent-browser.ts` autoload shim for this package. When the package is also installed globally, that creates a duplicate `agent_browser` registration and blocks `pi` startup from this working directory.
@@ -116,13 +177,39 @@ Validated workflow examples:
 - run `batch` with JSON via `stdin`
 - run `eval --stdin`
 - take a screenshot with inline attachment support
-- inspect `agent_browser --help` and `--version`
+- inspect `agent_browser --help` and `--version` via the tool's plain-text inspection fallback
+
+Inspection commands like `agent_browser --help` and `--version` are always supported. They return plain text and are useful for debugging or capability checks, but they are not required for normal browsing workflows.
 
 Current cautions:
 - passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
-- startup-scoped flags like `--profile`, `--session-name`, and `--cdp` are for the first command that launches a session; if the implicit session is already active, the extension returns a validation error instead of silently letting upstream ignore those flags
+- startup-scoped flags like `--profile`, `--session-name`, and `--cdp` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
 - implicit `piab-*` sessions are extension-managed convenience sessions; they are best-effort closed on `pi` shutdown, get an idle timeout to reduce stale background daemons, and clean up private temp spill artifacts on shutdown
 - explicit upstream sessions like `--session`, `--profile`, `--session-name`, and `--cdp` are treated as user-managed and are not auto-closed by the extension
+
+### Switching from public browsing to a fresh profile/debug launch
+
+A common agent workflow is:
+
+1. browse a public page with the default implicit session
+2. then switch to a fresh authenticated/profile/debug launch
+
+Use `sessionMode: "fresh"` for that transition instead of relying on the implicit session:
+
+```json
+{
+  "args": ["--profile", "Default", "open", "https://example.com/account"],
+  "sessionMode": "fresh"
+}
+```
+
+If you want to name the new upstream session yourself, pass an explicit session instead:
+
+```json
+{
+  "args": ["--session", "auth-flow", "--profile", "Default", "open", "https://example.com/account"]
+}
+```
 
 ## Docs
 

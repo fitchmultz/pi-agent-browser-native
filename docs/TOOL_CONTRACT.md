@@ -32,7 +32,7 @@ The tool also needs an operating playbook, not just a capability list. The model
 {
   "args": ["open", "https://example.com"],
   "stdin": "optional raw stdin content",
-  "useActiveSession": true
+  "sessionMode": "auto"
 }
 ```
 
@@ -69,15 +69,20 @@ Examples:
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
 ```
 
-### `useActiveSession`
+### `sessionMode`
 
-- type: `boolean`
+- type: `"auto" | "fresh"`
 - optional
-- default: `true`
+- default: `"auto"`
 
 Behavior:
 - if `args` already include `--session`, upstream session choice wins
-- otherwise the extension prepends its implicit active session when `useActiveSession` is `true`
+- `"auto"` prepends the implicit active session when appropriate
+- `"fresh"` skips the implicit session so startup-scoped flags like `--profile`, `--session-name`, or `--cdp` can launch a fresh upstream session
+
+Recommended use:
+- use `"auto"` for the common browse/snapshot/click flow inside one `pi` session
+- use `"fresh"` when switching from an already-active implicit session to a new profile/debug/auth launch without inventing a fixed explicit session name
 
 ## Wrapper behavior
 
@@ -87,8 +92,8 @@ The extension should:
 - parse JSON output into tool details
 - handle observed JSON result shapes, including the array returned by `batch --json`
 - allow plain-text fallback for inspection commands like `--help` and `--version`
-- discourage exploratory inspection calls unless the user explicitly asks or debugging requires them
-- deflect normal-task `--help` inspection back into the standard browser workflow instead of letting the model relearn the tool from scratch each session
+- support those inspection commands unconditionally so the tool contract stays local and predictable
+- still describe normal browser workflows in guidance so models do not overuse inspection for routine tasks
 - surface stderr and non-zero exits clearly
 - attach images when the result points to a screenshot-like artifact
 
@@ -104,7 +109,8 @@ Primary content should be:
 
 Examples:
 - small `snapshot` results should include the actual snapshot text
-- oversized `snapshot` results should switch to a compact view that preserves the primary content, nearby sections, high-value refs, and a path to the spilled full raw snapshot
+- oversized `snapshot` results should switch to a compact view that preserves the primary content, nearby sections, and a trimmed set of high-value refs, while exposing the full raw snapshot path via `details.fullOutputPath`
+- successful navigation actions like `click`, `back`, `forward`, and `reload` should include a lightweight post-action title/url summary when the wrapper can address the active session
 - `tab list` should include a readable tab summary
 - `screenshot` should include the saved-path summary plus the inline image attachment when available
 
@@ -116,6 +122,7 @@ Recommended details:
 {
   "args": ["snapshot", "-i"],
   "effectiveArgs": ["--session", "pi-abc123", "--json", "snapshot", "-i"],
+  "sessionMode": "auto",
   "sessionName": "pi-abc123",
   "usedImplicitSession": true,
   "data": {
@@ -136,7 +143,8 @@ For oversized snapshots, details should switch to a compact metadata object and 
 
 Worth doing in v1:
 - screenshots → inline image attachment
-- snapshots → origin + ref count + main-content-first compact preview, with full raw snapshot spill files when the inline result would otherwise be too large
+- snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path kept in `details.fullOutputPath` when the inline result would otherwise be too large
+- navigation actions like `click`, `back`, `forward`, and `reload` → lightweight post-action title/url summary when available
 - tab lists → compact summary/table
 - stream status → enabled/connected/port summary
 
@@ -158,7 +166,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - clean up private temp spill artifacts owned by the implicit session on shutdown
 - treat explicit upstream session choices like `--session`, `--profile`, `--session-name`, and `--cdp` as user-managed
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
-- if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active, return a validation error instead of silently relying on upstream to ignore them
+- if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active while `sessionMode` is `"auto"`, return a validation error with a structured recovery hint that recommends `sessionMode: "fresh"`
 
 ## Non-goals
 

@@ -12,11 +12,13 @@ import { type ToolPresentation, compareRefIds, countLines, isRecord, normalizeWh
 const SNAPSHOT_INLINE_MAX_CHARS = 6_000;
 const SNAPSHOT_INLINE_MAX_LINES = 80;
 const SNAPSHOT_INLINE_MAX_REFS = 60;
-const SNAPSHOT_PRIMARY_PREVIEW_LINES = 10;
-const SNAPSHOT_SECTION_PREVIEW_LINES = 4;
-const SNAPSHOT_MAX_ADDITIONAL_SECTIONS = 5;
-const SNAPSHOT_KEY_REF_MAX_LINES = 20;
-const SNAPSHOT_OTHER_REF_MAX_LINES = 12;
+const SNAPSHOT_PRIMARY_PREVIEW_LINES = 8;
+const SNAPSHOT_SECTION_PREVIEW_LINES = 2;
+const SNAPSHOT_MAX_ADDITIONAL_SECTIONS = 2;
+const SNAPSHOT_KEY_REF_MAX_LINES = 8;
+const SNAPSHOT_OTHER_REF_MAX_LINES = 4;
+const SNAPSHOT_ROLE_COUNT_MAX_ENTRIES = 4;
+const SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES = 12;
 const SNAPSHOT_NAME_MAX_CHARS = 96;
 const SNAPSHOT_LINE_MAX_CHARS = 140;
 const SNAPSHOT_SPILL_FILE_PREFIX = "pi-agent-browser-snapshot";
@@ -165,7 +167,12 @@ function formatRoleCounts(roleCounts: Record<string, number>): string | undefine
 		if (right[1] !== left[1]) return right[1] - left[1];
 		return getRolePriority(left[0]) - getRolePriority(right[0]);
 	});
-	return ordered.map(([role, count]) => `${role} ${count}`).join(", ");
+	const visibleEntries = ordered.slice(0, SNAPSHOT_ROLE_COUNT_MAX_ENTRIES).map(([role, count]) => `${role} ${count}`);
+	const omittedEntries = Math.max(0, ordered.length - visibleEntries.length);
+	if (omittedEntries > 0) {
+		visibleEntries.push(`+${omittedEntries} more`);
+	}
+	return visibleEntries.join(", ");
 }
 
 function parseSnapshotLines(snapshot: string): SnapshotLine[] {
@@ -373,10 +380,10 @@ function buildSegmentPreview(segment: SnapshotSegment, maxLines: number): Snapsh
 
 function buildFallbackSnapshotOutline(snapshotLines: SnapshotLine[]): SnapshotPreview {
 	const selected = new Set<number>();
-	for (let index = 0; index < snapshotLines.length && selected.size < 6; index += 1) {
+	for (let index = 0; index < snapshotLines.length && selected.size < 4; index += 1) {
 		if (!isNoiseSnapshotLine(snapshotLines[index])) selected.add(index);
 	}
-	for (let index = 0; index < snapshotLines.length && selected.size < 18; index += 1) {
+	for (let index = 0; index < snapshotLines.length && selected.size < SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES; index += 1) {
 		const line = snapshotLines[index];
 		if (isNoiseSnapshotLine(line)) continue;
 		if (SNAPSHOT_SIGNAL_ROLES.has(line.role) || line.ref || line.name.length > 0) {
@@ -385,7 +392,7 @@ function buildFallbackSnapshotOutline(snapshotLines: SnapshotLine[]): SnapshotPr
 	}
 	const chosenLines = [...selected]
 		.sort((left, right) => left - right)
-		.slice(0, 18)
+		.slice(0, SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES)
 		.map((index) => snapshotLines[index]);
 	return {
 		omittedCount: Math.max(0, snapshotLines.length - chosenLines.length),
@@ -508,6 +515,8 @@ export async function buildSnapshotPresentation(data: Record<string, unknown>): 
 	const snapshotSegments = useStructuredPreview ? buildSnapshotSegments(snapshotLines) : [];
 	const primarySegment = useStructuredPreview ? choosePrimarySegment(snapshotSegments) : undefined;
 	const additionalSegments = useStructuredPreview ? chooseAdditionalSegments(snapshotSegments, primarySegment) : [];
+	const additionalSegmentCount = useStructuredPreview && primarySegment ? Math.max(0, snapshotSegments.length - 1) : 0;
+	const omittedAdditionalSectionCount = Math.max(0, additionalSegmentCount - additionalSegments.length);
 	const primaryPreview = primarySegment ? buildSegmentPreview(primarySegment, SNAPSHOT_PRIMARY_PREVIEW_LINES) : undefined;
 	const additionalPreviews = additionalSegments
 		.map((segment) => ({
@@ -548,11 +557,9 @@ export async function buildSnapshotPresentation(data: Record<string, unknown>): 
 	const lines: string[] = [
 		`Origin: ${origin}`,
 		`Refs: ${refEntries.length}`,
-		...(roleCountsText ? [`Roles: ${roleCountsText}`] : []),
+		...(roleCountsText ? [`Top roles: ${roleCountsText}`] : []),
 		"",
-		fullOutputPath
-			? `Compact snapshot view. Full raw snapshot: ${fullOutputPath}`
-			: `Compact snapshot view. Full raw snapshot unavailable: ${spillErrorText ?? "temp spill file could not be created."}`,
+		"Compact snapshot view.",
 	];
 
 	if (fallbackPreview) {
@@ -581,6 +588,9 @@ export async function buildSnapshotPresentation(data: Record<string, unknown>): 
 					lines.push(`- ... (${preview.omittedCount} more lines in this section)`);
 				}
 			});
+			if (omittedAdditionalSectionCount > 0) {
+				lines.push(`- ... (${omittedAdditionalSectionCount} more sections omitted)`);
+			}
 		}
 	}
 
@@ -589,10 +599,15 @@ export async function buildSnapshotPresentation(data: Record<string, unknown>): 
 		lines.push("", "Other refs:", ...otherRefEntries.map(formatCompactRef));
 	}
 	if (omittedOtherRefs > 0) {
-		lines.push(
-			`- ... (${omittedOtherRefs} additional refs ${fullOutputPath ? "in the full snapshot file" : "were omitted with the full raw snapshot"})`,
-		);
+		lines.push(`- ... (${omittedOtherRefs} additional refs omitted)`);
 	}
+
+	lines.push(
+		"",
+		fullOutputPath
+			? "Full raw snapshot path is available in details.fullOutputPath."
+			: `Full raw snapshot unavailable: ${spillErrorText ?? "temp spill file could not be created."}`,
+	);
 
 	return {
 		content: [{ type: "text", text: lines.join("\n") }],
@@ -603,6 +618,7 @@ export async function buildSnapshotPresentation(data: Record<string, unknown>): 
 			previewMode: fallbackPreview ? "outline" : "structured",
 			spillError: spillErrorText,
 			previewRefIds: [...previewRefIds],
+			additionalSectionsOmitted: omittedAdditionalSectionCount,
 			previewSections: [
 				...(primarySegment
 					? [

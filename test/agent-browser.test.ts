@@ -53,7 +53,7 @@ function createExtensionHarness(options: { cwd: string; prompt?: string }) {
 				description: string;
 				execute: (
 					toolCallId: string,
-					params: { args: string[]; stdin?: string; useActiveSession?: boolean },
+					params: { args: string[]; sessionMode?: "auto" | "fresh"; stdin?: string },
 					signal: AbortSignal,
 					onUpdate: ((update: unknown) => void) | undefined,
 					ctx: unknown,
@@ -116,7 +116,7 @@ async function runExtensionEventResults<T>(
 async function executeRegisteredTool(
 	tool: NonNullable<ReturnType<typeof createExtensionHarness>["tool"]>,
 	ctx: ReturnType<typeof createExtensionHarness>["ctx"],
-	params: { args: string[]; stdin?: string; useActiveSession?: boolean },
+	params: { args: string[]; sessionMode?: "auto" | "fresh"; stdin?: string },
 ) {
 	return (await tool.execute("test-tool-call", params, new AbortController().signal, undefined, ctx)) as {
 		content: Array<{ type: string; text?: string }>;
@@ -290,7 +290,7 @@ test("buildExecutionPlan injects --json and the implicit session when needed", (
 	const plan = buildExecutionPlan(["open", "https://example.com"], {
 		implicitSessionActive: false,
 		implicitSessionName: "piab-demo-123",
-		useActiveSession: true,
+		sessionMode: "auto",
 	});
 
 	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "piab-demo-123", "open", "https://example.com"]);
@@ -303,7 +303,7 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	const plan = buildExecutionPlan(["--session", "custom", "snapshot", "-i"], {
 		implicitSessionActive: true,
 		implicitSessionName: "piab-demo-123",
-		useActiveSession: true,
+		sessionMode: "auto",
 	});
 
 	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "custom", "snapshot", "-i"]);
@@ -320,17 +320,33 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		const plan = buildExecutionPlan([...args], {
 			implicitSessionActive: true,
 			implicitSessionName: "piab-demo-123",
-			useActiveSession: true,
+			sessionMode: "auto",
 		});
 
 		assert.match(plan.validationError ?? "", /startup-scoped flags/i);
 		assert.equal(plan.startupScopedFlags.length, 1);
 		assert.equal(plan.startupScopedFlags[0], args[0]);
 		assert.equal(plan.usedImplicitSession, false);
+		assert.equal(plan.recoveryHint?.recommendedSessionMode, "fresh");
+		assert.deepEqual(plan.recoveryHint?.exampleParams, { args: [...args], sessionMode: "fresh" });
 	}
 });
 
-test("buildPromptPolicy and getLatestUserPrompt derive policy from prompt text without globals", () => {
+test("buildExecutionPlan allows startup-scoped flags with fresh session mode", () => {
+	const args = ["--profile", "Default", "open", "https://example.com/profile"];
+	const plan = buildExecutionPlan(args, {
+		implicitSessionActive: true,
+		implicitSessionName: "piab-demo-123",
+		sessionMode: "fresh",
+	});
+
+	assert.equal(plan.validationError, undefined);
+	assert.equal(plan.usedImplicitSession, false);
+	assert.deepEqual(plan.effectiveArgs, ["--json", ...args]);
+	assert.equal(plan.recoveryHint, undefined);
+});
+
+test("buildPromptPolicy and getLatestUserPrompt derive legacy bash policy from prompt text without globals", () => {
 	const prompt = getLatestUserPrompt([
 		{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Not relevant" }] } },
 		{ type: "message", message: { role: "user", content: [{ type: "text", text: "Please debug the browser integration via bash." }] } },
@@ -338,21 +354,18 @@ test("buildPromptPolicy and getLatestUserPrompt derive policy from prompt text w
 	const policy = buildPromptPolicy(prompt);
 
 	assert.equal(prompt, "Please debug the browser integration via bash.");
-	assert.equal(policy.allowAgentBrowserInspection, true);
 	assert.equal(policy.allowLegacyAgentBrowserBash, true);
 });
 
-test("buildPromptPolicy does not allow inspection for generic docs prompts unrelated to agent-browser", () => {
+test("buildPromptPolicy does not allow legacy bash for generic docs prompts unrelated to agent-browser", () => {
 	const policy = buildPromptPolicy("Please review the repo docs and summarize the architecture.");
 
-	assert.equal(policy.allowAgentBrowserInspection, false);
 	assert.equal(policy.allowLegacyAgentBrowserBash, false);
 });
 
-test("buildPromptPolicy allows explicit tool-specific inspection requests without opening generic docs bypasses", () => {
+test("buildPromptPolicy allows explicit tool-specific legacy bash inspection requests", () => {
 	const policy = buildPromptPolicy("Show me the agent-browser docs and explain agent-browser --help output.");
 
-	assert.equal(policy.allowAgentBrowserInspection, true);
 	assert.equal(policy.allowLegacyAgentBrowserBash, true);
 });
 
@@ -365,6 +378,9 @@ test("agentBrowserExtension registers shared browser guidance across hooks and t
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
 
 		const sharedGuidelineFragments = [
+			"Quick start mental model: args are the exact agent-browser CLI args after the binary",
+			"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }",
+			"Common advanced calls: { args: [\"batch\"]",
 			"Standard workflow: open the page, snapshot -i, interact using refs",
 			"When a non-empty BRAVE_API_KEY is available in the current environment",
 			"Do not invent fixed explicit session names for routine tasks.",
@@ -388,7 +404,9 @@ test("agentBrowserExtension registers shared browser guidance across hooks and t
 		assert.equal(typeof beforeAgentStart?.systemPrompt, "string");
 		assert.equal(beforeAgentStart?.systemPrompt.includes("Base system prompt"), true);
 		assert.equal(beforeAgentStart?.systemPrompt.includes("Project rule: when browser automation is needed"), true);
+		assert.equal(beforeAgentStart?.systemPrompt.includes("Quick start:"), true);
 		assert.equal(beforeAgentStart?.systemPrompt.includes("Browser operating playbook:"), true);
+		assert.equal(beforeAgentStart?.systemPrompt.split("Quick start:").length - 1, 1);
 		assert.equal(beforeAgentStart?.systemPrompt.split("Browser operating playbook:").length - 1, 1);
 		for (const fragment of sharedGuidelineFragments) {
 			assert.equal(beforeAgentStart?.systemPrompt.includes(fragment), true);
@@ -423,6 +441,30 @@ test("agentBrowserExtension blocks direct agent-browser bash unless the prompt e
 		debugHarness.ctx,
 	);
 	assert.deepEqual(debugAllowed, []);
+});
+
+test("agentBrowserExtension allows plain-text inspection commands regardless of prompt wording", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write("agent-browser 9.9.9\\n");`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Open a page and summarize it." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--version"],
+			});
+
+			assert.equal(result.isError, false);
+			assert.equal(result.content[0]?.type, "text");
+			assert.match((result.content[0] as { text: string }).text, /agent-browser 9\.9\.9/);
+			assert.equal(result.details?.inspectionBlocked, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
 });
 
 test("parseCommandInfo skips global flags with values", () => {
@@ -540,6 +582,32 @@ test("buildToolPresentation formats snapshot output for the model", async () => 
 	assert.match(presentation.summary, /Snapshot: 2 refs/);
 });
 
+test("buildToolPresentation enriches click results with a current-page navigation summary", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "click" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				clicked: true,
+				href: "https://example.com/docs",
+				navigationSummary: {
+					title: "Destination Docs",
+					url: "https://example.com/docs",
+				},
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.match((presentation.content[0] as { text: string }).text, /Clicked: true/);
+	assert.match((presentation.content[0] as { text: string }).text, /Href: https:\/\/example.com\/docs/);
+	assert.match((presentation.content[0] as { text: string }).text, /Current page:/);
+	assert.match((presentation.content[0] as { text: string }).text, /Destination Docs/);
+	assert.match((presentation.content[0] as { text: string }).text, /https:\/\/example.com\/docs/);
+	assert.match(presentation.summary, /click → Destination Docs/);
+});
+
 test("buildToolPresentation formats batch output for the model", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "batch" },
@@ -554,9 +622,98 @@ test("buildToolPresentation formats batch output for the model", async () => {
 	});
 
 	assert.equal(presentation.content[0]?.type, "text");
-	assert.match((presentation.content[0] as { text: string }).text, /open https:\/\/developer.mozilla.org/);
+	assert.match((presentation.content[0] as { text: string }).text, /Step 1 — open https:\/\/developer.mozilla.org/);
 	assert.match((presentation.content[0] as { text: string }).text, /MDN Web Docs/);
+	assert.equal(Array.isArray(presentation.data), true);
+	assert.equal(presentation.batchSteps?.length, 2);
+	assert.equal(presentation.batchSteps?.[0]?.commandText, "open https://developer.mozilla.org");
 	assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
+});
+
+test("buildToolPresentation reuses standalone inline screenshot rendering inside batch output", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-image-"));
+	const imagePath = join(tempDir, "batched.png");
+	await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+	try {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: tempDir,
+			envelope: {
+				success: true,
+				data: [
+					{
+						command: ["open", "https://example.com"],
+						result: { title: "Example Domain", url: "https://example.com/" },
+						success: true,
+					},
+					{ command: ["screenshot"], result: { path: "batched.png" }, success: true },
+				],
+			},
+		});
+
+		const text = (presentation.content[0] as { text: string }).text;
+		assert.match(text, /Step 1 — open https:\/\/example.com/);
+		assert.match(text, /Example Domain/);
+		assert.match(text, /Step 2 — screenshot/);
+		assert.match(text, /Saved image: batched.png/);
+		assert.match(text, /1 inline image attachment below/);
+		assert.equal(presentation.content[1]?.type, "image");
+		assert.equal(presentation.imagePath, imagePath);
+		assert.deepEqual(presentation.imagePaths, [imagePath]);
+		assert.equal(presentation.batchSteps?.[1]?.imagePath, imagePath);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation reuses compact snapshot rendering inside batch output", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 90 }, (_, index) => [
+			`e${index + 1}`,
+			{ name: index % 3 === 0 ? `Actionable control ${index + 1}` : "", role: index % 5 === 0 ? "button" : "generic" },
+		]),
+	);
+	const snapshot = Array.from({ length: 120 }, (_, index) => {
+		const ref = `e${index + 1}`;
+		return `- generic \"Large batched snapshot row ${index + 1} that should compact inside batch output\" [ref=${ref}] clickable [onclick]`;
+	}).join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [
+				{
+					command: ["snapshot", "-i"],
+					result: {
+						origin: "https://example.com/batched-huge",
+						refs,
+						snapshot,
+					},
+					success: true,
+				},
+			],
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Step 1 — snapshot -i/);
+	assert.match(text, /Compact snapshot view/);
+	assert.match(text, /Key refs:/);
+	assert.match(text, /details\.fullOutputPath/);
+	assert.equal(typeof presentation.fullOutputPath, "string");
+	assert.equal(presentation.batchSteps?.length, 1);
+	assert.equal(typeof presentation.batchSteps?.[0]?.fullOutputPath, "string");
+	assert.match(presentation.batchSteps?.[0]?.text ?? "", /Compact snapshot view/);
+
+	const spillPath = presentation.batchSteps?.[0]?.fullOutputPath;
+	assert.ok(spillPath);
+	assert.doesNotMatch(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	if (spillPath) {
+		await rm(spillPath, { force: true });
+	}
 });
 
 test("buildToolPresentation compacts oversized snapshots and spills the raw snapshot to a private temp file", async () => {
@@ -585,15 +742,17 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 	});
 
 	assert.equal(presentation.content[0]?.type, "text");
-	assert.match((presentation.content[0] as { text: string }).text, /Compact snapshot view/);
-	assert.match((presentation.content[0] as { text: string }).text, /Key refs:/);
-	assert.match((presentation.content[0] as { text: string }).text, /Full raw snapshot:/);
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Compact snapshot view/);
+	assert.match(text, /Key refs:/);
+	assert.match(text, /details\.fullOutputPath/);
 	assert.match(presentation.summary, /Snapshot: 90 refs on https:\/\/example.com\/huge \(compact\)/);
 	assert.equal(typeof presentation.fullOutputPath, "string");
 	assert.equal((presentation.data as { compacted: boolean }).compacted, true);
 
 	const spillPath = presentation.fullOutputPath;
 	assert.ok(spillPath);
+	assert.doesNotMatch(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	const spillText = await readFile(spillPath, "utf8");
 	const spillStats = await stat(spillPath);
 	const spillDirStats = await stat(dirname(spillPath));
@@ -737,6 +896,94 @@ test("buildToolPresentation skips oversized inline image attachments", { concurr
 			assert.equal(presentation.content[0]?.type, "text");
 			assert.match((presentation.content[0] as { text: string }).text, /Image attachment skipped:/);
 			assert.equal(presentation.imagePath, imagePath);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves rich batch rendering and inline screenshot attachments", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const imagePath = join(tempDir, "batched.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify([
+  { command: ["open", "https://example.com"], success: true, result: { title: "Example Domain", url: "https://example.com/" } },
+  { command: ["screenshot"], success: true, result: { path: "batched.png" } }
+]));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch"], stdin: "[]" });
+			assert.equal(result.isError, false);
+			assert.equal(result.content[0]?.type, "text");
+			assert.equal(result.content[1]?.type, "image");
+			assert.match((result.content[0] as { text: string }).text, /Step 2 — screenshot/);
+			assert.match((result.content[0] as { text: string }).text, /1 inline image attachment below/);
+			assert.equal((result.details?.imagePath as string | undefined)?.endsWith("batched.png"), true);
+			assert.deepEqual(result.details?.imagePaths, [imagePath]);
+			assert.equal(Array.isArray(result.details?.batchSteps), true);
+			assert.equal((result.details?.batchSteps as Array<{ imagePath?: string }>)[1]?.imagePath, imagePath);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension enriches click results with a post-navigation title and url summary", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: true, href: "https://example.com/docs" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: "Destination Docs" }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: "https://example.com/docs" }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: {} }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "click", "@e2"],
+			});
+			assert.equal(result.isError, false);
+			assert.equal(result.content[0]?.type, "text");
+			assert.match((result.content[0] as { text: string }).text, /Clicked: true/);
+			assert.match((result.content[0] as { text: string }).text, /Href: https:\/\/example.com\/docs/);
+			assert.match((result.content[0] as { text: string }).text, /Current page:/);
+			assert.match((result.content[0] as { text: string }).text, /Destination Docs/);
+			assert.equal(
+				(result.details?.navigationSummary as { title?: string; url?: string } | undefined)?.title,
+				"Destination Docs",
+			);
+			assert.equal(
+				(result.details?.navigationSummary as { title?: string; url?: string } | undefined)?.url,
+				"https://example.com/docs",
+			);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 3);
+			assert.equal(invocations[0]?.args.includes("click"), true);
+			assert.equal(invocations[1]?.args.includes("title"), true);
+			assert.equal(invocations[2]?.args.includes("url"), true);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -964,6 +1211,11 @@ process.stdout.write(JSON.stringify(envelope));`,
 					});
 					assert.equal(blocked.isError, true);
 					assert.match(String(blocked.details?.validationError ?? ""), /startup-scoped flags/i);
+					assert.equal(blocked.details?.sessionMode, "auto");
+					assert.equal(
+						(blocked.details?.sessionRecoveryHint as { recommendedSessionMode?: string } | undefined)?.recommendedSessionMode,
+						"fresh",
+					);
 					assert.equal((await readInvocationLog(logPath)).length, 1);
 
 					const closeResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
@@ -985,6 +1237,48 @@ process.stdout.write(JSON.stringify(envelope));`,
 		}
 	},
 );
+
+test("agentBrowserExtension supports switching from an active implicit session to a fresh profile launch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: args.includes("--profile") ? "Profiled" : "Public", url: args[args.length - 1] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com"],
+			});
+			assert.equal(firstOpen.isError, false);
+
+			const profiledOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/profile"],
+				sessionMode: "fresh",
+			});
+			assert.equal(profiledOpen.isError, false);
+			assert.equal(profiledOpen.details?.sessionMode, "fresh");
+			assert.equal(profiledOpen.details?.usedImplicitSession, false);
+			assert.equal((profiledOpen.details?.effectiveArgs as string[] | undefined)?.includes("--session"), false);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 2);
+			assert.equal(invocations[0]?.args.includes("--session"), true);
+			assert.equal(invocations[1]?.args.includes("--profile"), true);
+			assert.equal(invocations[1]?.args.includes("--session"), false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
 
 test("agentBrowserExtension does not mark a failed first implicit command as active", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
