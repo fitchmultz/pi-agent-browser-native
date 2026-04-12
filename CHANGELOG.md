@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 - 2026-04-12
+
+### Fixed
+- the GitHub source trial docs now use `pi --no-extensions -e https://github.com/fitchmultz/pi-agent-browser-native` so published-package users do not hit duplicate `agent_browser` registration conflicts during source-path testing
+- successful unnamed `sessionMode: "fresh"` launches now rotate the extension-managed session to the new browser, and later default `sessionMode: "auto"` calls keep following that fresh session instead of silently snapping back to the older one
+- mixed-success `batch` failures now preserve per-step rendering, include the first failing step in the visible output and structured details, and still mark the overall tool call as an error so agents can recover from partial progress
+- implicit `piab-*` session names now include a stable cwd hash in addition to the `pi` session id so same-named checkouts and worktrees no longer collide onto the same browser session
+- value-taking flags like `--session`, `--profile`, `--session-name`, and `--cdp` now fail locally with direct validation errors when the value is missing or replaced by another flag, instead of producing confusing downstream JSON parse failures
+- the bash guard now catches wrapped `agent-browser` invocations such as `env agent-browser ...`, `npx --yes agent-browser ...`, `pnpm dlx agent-browser ...`, `yarn dlx agent-browser ...`, `bunx agent-browser ...`, and absolute-path execution, reducing accidental bypasses of the native-tool path
+
 ## 0.2.0 - 2026-04-12
 
 ### Changed
