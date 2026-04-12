@@ -158,7 +158,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 ## Session behavior
 
 - maintain one extension-managed active session per `pi` session for the common path
-- derive the base implicit session name from the official `pi` session id
+- derive the base implicit session name from the official `pi` session id plus a cwd hash so same-named checkouts do not collide
 - respect explicit upstream `--session` with minimal interference
 - treat the extension-managed session as convenience state owned by the wrapper
 - on normal `pi` shutdown, best-effort close the current extension-managed session

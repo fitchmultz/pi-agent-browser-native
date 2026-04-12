@@ -49,6 +49,8 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
 ]);
 const SHELL_OPERATOR_TOKENS = new Set(["&&", "||", "|", ";", ">", ">>", "<"]);
 const MAX_PROJECT_SLUG_LENGTH = 24;
+const SESSION_NAME_CWD_HASH_LENGTH = 8;
+const SESSION_NAME_SESSION_ID_LENGTH = 12;
 
 export interface CommandInfo {
 	command?: string;
@@ -140,6 +142,10 @@ export function createEphemeralSessionSeed(): string {
 	return randomUUID();
 }
 
+function createCwdHash(cwd: string): string {
+	return createHash("sha256").update(`cwd:${cwd}`).digest("hex").slice(0, SESSION_NAME_CWD_HASH_LENGTH);
+}
+
 export function createImplicitSessionName(
 	sessionId: string | undefined,
 	cwd: string,
@@ -151,13 +157,17 @@ export function createImplicitSessionName(
 			.replace(/[^a-z0-9]+/g, "-")
 			.replace(/^-+|-+$/g, "")
 			.slice(0, MAX_PROJECT_SLUG_LENGTH) || "project";
-	const stableSessionId = sessionId?.replace(/-/g, "").slice(0, 12);
+	const cwdHash = createCwdHash(cwd);
+	const stableSessionId = sessionId?.replace(/-/g, "").slice(0, SESSION_NAME_SESSION_ID_LENGTH);
 	if (stableSessionId && stableSessionId.length > 0) {
-		return `piab-${slug}-${stableSessionId}`;
+		return `piab-${slug}-${stableSessionId}-${cwdHash}`;
 	}
 
-	const digest = createHash("sha256").update(`ephemeral:${cwd}:${ephemeralSeed}`).digest("hex").slice(0, 12);
-	return `piab-${slug}-${digest}`;
+	const digest = createHash("sha256")
+		.update(`ephemeral:${cwd}:${ephemeralSeed}`)
+		.digest("hex")
+		.slice(0, SESSION_NAME_SESSION_ID_LENGTH);
+	return `piab-${slug}-${digest}-${cwdHash}`;
 }
 
 export function createFreshSessionName(baseSessionName: string, ephemeralSeed: string, ordinal: number): string {

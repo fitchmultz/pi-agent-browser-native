@@ -59,7 +59,7 @@ The published package should exclude agent-only and superseded repo materials su
 
 ### Default
 
-If the caller does not provide `--session`, the extension should default to `sessionMode: "auto"` and use an implicit session name derived from the current `pi` session id.
+If the caller does not provide `--session`, the extension should default to `sessionMode: "auto"` and use an implicit session name derived from the current `pi` session id plus a hash of the absolute cwd.
 
 Why:
 - works out of the box

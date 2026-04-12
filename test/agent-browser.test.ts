@@ -181,7 +181,17 @@ test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const two = createImplicitSessionName(sessionId, cwd, "ignored-b");
 
 	assert.equal(one, two);
-	assert.equal(one, "piab-pi-agent-browser-123456781234");
+	assert.match(one, /^piab-pi-agent-browser-123456781234-[a-f0-9]{8}$/);
+});
+
+test("createImplicitSessionName includes cwd isolation for same-named checkouts", () => {
+	const sessionId = "12345678-1234-5678-9abc-def012345678";
+	const one = createImplicitSessionName(sessionId, "/tmp/foo/app", "ignored-a");
+	const two = createImplicitSessionName(sessionId, "/tmp/bar/app", "ignored-b");
+
+	assert.notEqual(one, two);
+	assert.match(one, /^piab-app-123456781234-[a-f0-9]{8}$/);
+	assert.match(two, /^piab-app-123456781234-[a-f0-9]{8}$/);
 });
 
 test("hasUsableBraveApiKey only accepts non-empty values", () => {

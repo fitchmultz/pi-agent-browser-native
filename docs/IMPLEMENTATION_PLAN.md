@@ -82,7 +82,7 @@ Behavior:
 
 Implement:
 - one extension-managed active session per `pi` session
-- implicit base session names derived from the official `pi` session id
+- implicit base session names derived from the official `pi` session id plus a cwd hash for checkout/worktree isolation
 - unnamed fresh launches become the new managed session for later default calls
 - deterministic reuse across restart/resume for the base implicit session
 - no attempt to make browser runtime state branch-replayable
