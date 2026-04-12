@@ -50,6 +50,7 @@ function createExtensionHarness(options: { cwd: string; prompt?: string }) {
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 	let registeredTool:
 		| {
+				description: string;
 				execute: (
 					toolCallId: string,
 					params: { args: string[]; stdin?: string; useActiveSession?: boolean },
@@ -57,6 +58,9 @@ function createExtensionHarness(options: { cwd: string; prompt?: string }) {
 					onUpdate: ((update: unknown) => void) | undefined,
 					ctx: unknown,
 				) => Promise<unknown>;
+				name: string;
+				promptGuidelines: string[];
+				promptSnippet: string;
 		  }
 		| undefined;
 
@@ -92,6 +96,21 @@ async function runExtensionEvent(
 	for (const handler of handlers.get(eventName) ?? []) {
 		await handler(...args);
 	}
+}
+
+async function runExtensionEventResults<T>(
+	handlers: Map<string, Array<(...args: unknown[]) => unknown>>,
+	eventName: string,
+	...args: unknown[]
+): Promise<T[]> {
+	const results: T[] = [];
+	for (const handler of handlers.get(eventName) ?? []) {
+		const result = await handler(...args);
+		if (result !== undefined) {
+			results.push(result as T);
+		}
+	}
+	return results;
 }
 
 async function executeRegisteredTool(
@@ -335,6 +354,75 @@ test("buildPromptPolicy allows explicit tool-specific inspection requests withou
 
 	assert.equal(policy.allowAgentBrowserInspection, true);
 	assert.equal(policy.allowLegacyAgentBrowserBash, true);
+});
+
+test("agentBrowserExtension registers shared browser guidance across hooks and tool metadata", async () => {
+	await withPatchedEnv({ BRAVE_API_KEY: "demo-key" }, async () => {
+		const harness = createExtensionHarness({ cwd: process.cwd() });
+		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "tool_call"]);
+		assert.equal(harness.tool.name, "agent_browser");
+		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
+		assert.match(harness.tool.promptSnippet, /real web workflows/);
+
+		const sharedGuidelineFragments = [
+			"Standard workflow: open the page, snapshot -i, interact using refs",
+			"When a non-empty BRAVE_API_KEY is available in the current environment",
+			"Do not invent fixed explicit session names for routine tasks.",
+			"When using eval --stdin for extraction, return the value you want",
+			"Do not call --help or other exploratory inspection commands unless the user explicitly asks",
+		];
+		for (const fragment of sharedGuidelineFragments) {
+			assert.equal(harness.tool.promptGuidelines.some((guideline) => guideline.includes(fragment)), true);
+		}
+		assert.equal(
+			harness.tool.promptGuidelines.filter((guideline) => guideline.includes("Do not invent fixed explicit session names")).length,
+			1,
+		);
+
+		const [beforeAgentStart] = await runExtensionEventResults<{ systemPrompt: string }>(
+			harness.handlers,
+			"before_agent_start",
+			{ systemPrompt: "Base system prompt" },
+			harness.ctx,
+		);
+		assert.equal(typeof beforeAgentStart?.systemPrompt, "string");
+		assert.equal(beforeAgentStart?.systemPrompt.includes("Base system prompt"), true);
+		assert.equal(beforeAgentStart?.systemPrompt.includes("Project rule: when browser automation is needed"), true);
+		assert.equal(beforeAgentStart?.systemPrompt.includes("Browser operating playbook:"), true);
+		assert.equal(beforeAgentStart?.systemPrompt.split("Browser operating playbook:").length - 1, 1);
+		for (const fragment of sharedGuidelineFragments) {
+			assert.equal(beforeAgentStart?.systemPrompt.includes(fragment), true);
+		}
+	});
+});
+
+test("agentBrowserExtension blocks direct agent-browser bash unless the prompt explicitly allows it", async () => {
+	const defaultHarness = createExtensionHarness({ cwd: process.cwd(), prompt: "Open a page and summarize it." });
+	const [blocked] = await runExtensionEventResults<{ block: boolean; reason?: string }>(
+		defaultHarness.handlers,
+		"tool_call",
+		{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
+		defaultHarness.ctx,
+	);
+	assert.equal(blocked?.block, true);
+	assert.match(blocked?.reason ?? "", /Use the native agent_browser tool instead of bash/i);
+
+	const inspectionAllowed = await runExtensionEventResults(
+		defaultHarness.handlers,
+		"tool_call",
+		{ toolName: "bash", input: { command: "which agent-browser" } },
+		defaultHarness.ctx,
+	);
+	assert.deepEqual(inspectionAllowed, []);
+
+	const debugHarness = createExtensionHarness({ cwd: process.cwd(), prompt: "Please debug the browser integration via bash." });
+	const debugAllowed = await runExtensionEventResults(
+		debugHarness.handlers,
+		"tool_call",
+		{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
+		debugHarness.ctx,
+	);
+	assert.deepEqual(debugAllowed, []);
 });
 
 test("parseCommandInfo skips global flags with values", () => {
@@ -755,6 +843,45 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.pathStartsWithTemp, true);
 			},
 		);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension resets implicit session state on session_start", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { url: args[args.length - 1] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/first"],
+			});
+			assert.equal(firstOpen.isError, false);
+
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const profiledOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/profiled"],
+			});
+			assert.equal(profiledOpen.isError, false);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 2);
+			assert.equal(invocations[0]?.args.includes("--session"), true);
+			assert.equal(invocations[1]?.args.includes("--profile"), true);
+		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
