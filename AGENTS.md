@@ -28,6 +28,8 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 
 - For local checkout validation, launch `pi --no-extensions -e .` from this repository root so only the checkout copy loads, even if the package is installed globally.
 - For code changes, isolated `pi` agent sessions that load this local checkout are a pre-commit requirement; validate behavior there before commit/push.
+- Pre-commit validation should exercise the local checkout code, because those changes are not published yet.
+- For post-publish installed-package validation, update the real globally installed package and run plain `pi` so verification exercises the published artifact rather than the local checkout.
 - For installed-package validation, run plain `pi` and confirm the globally installed package loads without any repo-local `.pi/extensions/` shim.
 - Use `tmux` via bash commands.
 - Do **not** use the pi interactive shell extension for this workflow.
