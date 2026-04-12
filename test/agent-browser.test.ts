@@ -491,16 +491,24 @@ test("agentBrowserExtension registers shared browser guidance across hooks and t
 	});
 });
 
-test("agentBrowserExtension blocks direct agent-browser bash unless the prompt explicitly allows it", async () => {
+test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless the prompt explicitly allows it", async () => {
 	const defaultHarness = createExtensionHarness({ cwd: process.cwd(), prompt: "Open a page and summarize it." });
-	const [blocked] = await runExtensionEventResults<{ block: boolean; reason?: string }>(
-		defaultHarness.handlers,
-		"tool_call",
-		{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
-		defaultHarness.ctx,
-	);
-	assert.equal(blocked?.block, true);
-	assert.match(blocked?.reason ?? "", /Use the native agent_browser tool instead of bash/i);
+	for (const command of [
+		"agent-browser open https://example.com",
+		"env agent-browser --version",
+		"npx --yes agent-browser open https://example.com",
+		"pnpm dlx agent-browser open https://example.com",
+		"/opt/homebrew/bin/agent-browser open https://example.com",
+	]) {
+		const [blocked] = await runExtensionEventResults<{ block: boolean; reason?: string }>(
+			defaultHarness.handlers,
+			"tool_call",
+			{ toolName: "bash", input: { command } },
+			defaultHarness.ctx,
+		);
+		assert.equal(blocked?.block, true, command);
+		assert.match(blocked?.reason ?? "", /Use the native agent_browser tool instead of bash/i);
+	}
 
 	const inspectionAllowed = await runExtensionEventResults(
 		defaultHarness.handlers,
@@ -514,7 +522,7 @@ test("agentBrowserExtension blocks direct agent-browser bash unless the prompt e
 	const debugAllowed = await runExtensionEventResults(
 		debugHarness.handlers,
 		"tool_call",
-		{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
+		{ toolName: "bash", input: { command: "npx --yes agent-browser open https://example.com" } },
 		debugHarness.ctx,
 	);
 	assert.deepEqual(debugAllowed, []);

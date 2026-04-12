@@ -91,12 +91,19 @@ function buildInvocationPreview(effectiveArgs: string[]): string {
 	return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
 }
 
+const AGENT_BROWSER_BASH_PREFIX = String.raw`(?:env(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+)*\s+)?(?:(?:npx|bunx)(?:\s+-[^\s;&|]+|\s+--[^\s;&|]+(?:=[^\s;&|]+)?)*\s+|(?:pnpm|yarn)\s+dlx(?:\s+-[^\s;&|]+|\s+--[^\s;&|]+(?:=[^\s;&|]+)?)*\s+)?`;
+const AGENT_BROWSER_BASH_EXECUTABLE = String.raw`(?:[.~]|\.\.?|\/)?(?:[^\s;&|]+\/)?agent-browser`;
+const DIRECT_AGENT_BROWSER_BASH_PATTERN = new RegExp(
+	String.raw`(^|[\s;&|])${AGENT_BROWSER_BASH_PREFIX}${AGENT_BROWSER_BASH_EXECUTABLE}(?=\s|$)`,
+);
+const HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN = /(command\s+-v|which|type\s+-P)\s+agent-browser\b/;
+
 function looksLikeDirectAgentBrowserBash(command: string): boolean {
-	return /(^|[\s;&|])(npx\s+)?agent-browser(\s|$)/.test(command);
+	return DIRECT_AGENT_BROWSER_BASH_PATTERN.test(command);
 }
 
 function isHarmlessAgentBrowserInspectionCommand(command: string): boolean {
-	return /(command\s+-v|which)\s+agent-browser\b/.test(command) || /(^|\s)agent-browser\s+--(help|version)\b/.test(command);
+	return HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN.test(command);
 }
 
 function isPlainTextInspectionArgs(args: string[]): boolean {
