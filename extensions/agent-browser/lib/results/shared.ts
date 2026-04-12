@@ -33,7 +33,15 @@ export interface BatchStepPresentationDetails {
 	text: string;
 }
 
+export interface BatchFailurePresentationDetails {
+	failedStep: BatchStepPresentationDetails;
+	failureCount: number;
+	successCount: number;
+	totalCount: number;
+}
+
 export interface ToolPresentation {
+	batchFailure?: BatchFailurePresentationDetails;
 	batchSteps?: BatchStepPresentationDetails[];
 	content: Array<{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }>;
 	data?: unknown;

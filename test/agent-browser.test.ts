@@ -579,6 +579,24 @@ test("getAgentBrowserErrorText falls back to generic exit codes when no envelope
 	assert.equal(errorText, "agent-browser exited with code 1.");
 });
 
+test("getAgentBrowserErrorText defers mixed batch failures to batch rendering", () => {
+	const errorText = getAgentBrowserErrorText({
+		aborted: false,
+		envelope: {
+			success: false,
+			data: [
+				{ command: ["open", "https://example.com"], result: { title: "Example Domain" }, success: true },
+				{ command: ["click", "@zzz"], error: "Unknown ref: zzz", success: false },
+			],
+		},
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+	});
+
+	assert.equal(errorText, undefined);
+});
+
 test("getAgentBrowserErrorText prefers spill/write failures over downstream parse errors", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,
@@ -661,6 +679,34 @@ test("buildToolPresentation formats batch output for the model", async () => {
 	assert.equal(presentation.batchSteps?.length, 2);
 	assert.equal(presentation.batchSteps?.[0]?.commandText, "open https://developer.mozilla.org");
 	assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
+});
+
+test("buildToolPresentation preserves partial batch results when a later step fails", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: false,
+			data: [
+				{ command: ["open", "https://example.com"], success: true, result: { title: "Example Domain", url: "https://example.com/" } },
+				{ command: ["click", "@zzz"], success: false, error: "Unknown ref: zzz" },
+			],
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.match((presentation.content[0] as { text: string }).text, /Batch failed: 1\/2 succeeded/);
+	assert.match((presentation.content[0] as { text: string }).text, /First failing step: 2 — click @zzz/);
+	assert.match((presentation.content[0] as { text: string }).text, /Step 1 — open https:\/\/example.com \(succeeded\)/);
+	assert.match((presentation.content[0] as { text: string }).text, /Example Domain/);
+	assert.match((presentation.content[0] as { text: string }).text, /Step 2 — click @zzz \(failed\)/);
+	assert.match((presentation.content[0] as { text: string }).text, /Error: Unknown ref: zzz/);
+	assert.equal(presentation.batchFailure?.failedStep.index, 1);
+	assert.equal(presentation.batchFailure?.failedStep.commandText, "click @zzz");
+	assert.equal(presentation.batchFailure?.failureCount, 1);
+	assert.equal(presentation.batchFailure?.successCount, 1);
+	assert.equal(presentation.batchFailure?.totalCount, 2);
+	assert.match(presentation.summary, /Batch failed: 1\/2 succeeded/);
 });
 
 test("buildToolPresentation reuses standalone inline screenshot rendering inside batch output", async () => {
@@ -963,6 +1009,48 @@ test("agentBrowserExtension preserves rich batch rendering and inline screenshot
 			assert.deepEqual(result.details?.imagePaths, [imagePath]);
 			assert.equal(Array.isArray(result.details?.batchSteps), true);
 			assert.equal((result.details?.batchSteps as Array<{ imagePath?: string }>)[1]?.imagePath, imagePath);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves mixed batch failure rendering while still marking the tool call as an error", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify([
+  { command: ["open", "https://example.com"], success: true, result: { title: "Example Domain", url: "https://example.com/" } },
+  { command: ["click", "@zzz"], success: false, error: "Unknown ref: zzz" }
+]));
+process.exitCode = 1;`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch"], stdin: "[]" });
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.type, "text");
+			assert.match((result.content[0] as { text: string }).text, /Batch failed: 1\/2 succeeded/);
+			assert.match((result.content[0] as { text: string }).text, /First failing step: 2 — click @zzz/);
+			assert.match((result.content[0] as { text: string }).text, /Step 1 — open https:\/\/example.com \(succeeded\)/);
+			assert.match((result.content[0] as { text: string }).text, /Example Domain/);
+			assert.match((result.content[0] as { text: string }).text, /Step 2 — click @zzz \(failed\)/);
+			assert.match((result.content[0] as { text: string }).text, /Error: Unknown ref: zzz/);
+			assert.equal((result.details?.summary as string | undefined)?.includes("Batch failed: 1/2 succeeded"), true);
+			assert.equal((result.details?.exitCode as number | undefined) ?? 0, 1);
+			assert.equal((result.details?.batchFailure as { failedStep?: { index?: number; commandText?: string } } | undefined)?.failedStep?.index, 1);
+			assert.equal(
+				(result.details?.batchFailure as { failedStep?: { index?: number; commandText?: string } } | undefined)?.failedStep
+					?.commandText,
+				"click @zzz",
+			);
+			assert.equal(Array.isArray(result.details?.batchSteps), true);
+			assert.equal((result.details?.stderr as string | undefined) ?? "", "");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

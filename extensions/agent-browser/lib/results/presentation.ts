@@ -14,6 +14,7 @@ import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary
 import {
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
+	type BatchFailurePresentationDetails,
 	type BatchStepPresentationDetails,
 	type ToolPresentation,
 	isRecord,
@@ -188,6 +189,20 @@ function formatBatchStepError(error: unknown): string {
 	return errorText.length > 0 ? `Error: ${errorText}` : "Error: batch step failed.";
 }
 
+function getBatchFailureDetails(steps: Array<{ details: BatchStepPresentationDetails }>): BatchFailurePresentationDetails | undefined {
+	const failedSteps = steps.filter((step) => step.details.success === false);
+	if (failedSteps.length === 0) {
+		return undefined;
+	}
+	const successCount = steps.length - failedSteps.length;
+	return {
+		failedStep: failedSteps[0].details,
+		failureCount: failedSteps.length,
+		successCount,
+		totalCount: steps.length,
+	};
+}
+
 async function buildBatchStepPresentation(options: {
 	cwd: string;
 	index: number;
@@ -261,6 +276,7 @@ async function buildBatchPresentation(options: {
 		steps.push(await buildBatchStepPresentation({ cwd, index, item }));
 	}
 
+	const batchFailure = getBatchFailureDetails(steps);
 	const images = steps.flatMap((step) => getPresentationImages(step.presentation));
 	const fullOutputPaths = steps.flatMap((step) => getPresentationPaths({
 		primaryPath: step.presentation.fullOutputPath,
@@ -270,13 +286,14 @@ async function buildBatchPresentation(options: {
 		primaryPath: step.presentation.imagePath,
 		secondaryPaths: step.presentation.imagePaths,
 	}));
-	const text =
+	const stepText =
 		steps.length === 0
 			? "(no batch steps)"
 			: steps
 				.map(({ details, presentation }) => {
 					const inlineImageCount = getPresentationImages(presentation).length;
-					const lines = [`Step ${details.index + 1} — ${details.commandText}`];
+					const status = details.success ? "succeeded" : "failed";
+					const lines = [`Step ${details.index + 1} — ${details.commandText} (${status})`];
 					if (details.text.length > 0) {
 						lines.push(details.text);
 					}
@@ -286,8 +303,20 @@ async function buildBatchPresentation(options: {
 					return lines.join("\n");
 				})
 				.join("\n\n");
+	const failureHeader =
+		batchFailure === undefined
+			? undefined
+			: [
+					summary,
+					`First failing step: ${batchFailure.failedStep.index + 1} — ${batchFailure.failedStep.commandText}`,
+					batchFailure.failureCount > 1
+						? `${batchFailure.failureCount} steps failed. See the per-step results below.`
+						: "See the per-step results below.",
+				].join("\n");
+	const text = failureHeader ? `${failureHeader}\n\n${stepText}` : stepText;
 
 	return {
+		batchFailure,
 		batchSteps: steps.map((step) => step.details),
 		content: [{ type: "text", text }, ...images],
 		data,
@@ -302,7 +331,7 @@ async function buildBatchPresentation(options: {
 function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 	if (Array.isArray(data) && commandInfo.command === "batch") {
 		const successCount = data.filter((item) => isRecord(item) && item.success !== false).length;
-		return `Batch: ${successCount}/${data.length} succeeded`;
+		return successCount === data.length ? `Batch: ${successCount}/${data.length} succeeded` : `Batch failed: ${successCount}/${data.length} succeeded`;
 	}
 	if (isRecord(data)) {
 		const navigationSummary = getNavigationSummary(data);

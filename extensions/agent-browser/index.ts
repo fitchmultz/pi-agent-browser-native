@@ -430,6 +430,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					content: presentation.content,
 					details: {
 						args: params.args,
+						batchFailure: presentation.batchFailure,
 						batchSteps: presentation.batchSteps,
 						command: executionPlan.commandInfo.command,
 						subcommand: executionPlan.commandInfo.subcommand,

@@ -10,6 +10,10 @@ import { readFile } from "node:fs/promises";
 
 import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, isRecord, stringifyUnknown } from "./shared.js";
 
+function hasStructuredBatchStepFailure(data: unknown): data is AgentBrowserBatchResult[] {
+	return Array.isArray(data) && data.some((item) => isRecord(item) && item.success === false);
+}
+
 async function readEnvelopeSource(options: { stdout: string; stdoutPath?: string }): Promise<string> {
 	if (!options.stdoutPath) {
 		return options.stdout;
@@ -93,6 +97,9 @@ export function getAgentBrowserErrorText(options: {
 	if (spawnError) return spawnError.message;
 	if (parseError) return parseError;
 	if (envelope?.success === false) {
+		if (hasStructuredBatchStepFailure(envelope.data) && envelope.error === undefined) {
+			return undefined;
+		}
 		return extractEnvelopeErrorText(envelope.error) ?? (stderr.trim() || `agent-browser reported failure${exitCode !== 0 ? ` (exit code ${exitCode})` : "."}`);
 	}
 	if (exitCode !== 0) {
