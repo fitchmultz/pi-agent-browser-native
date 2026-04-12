@@ -1,0 +1,102 @@
+/**
+ * Purpose: Parse upstream agent-browser output and turn failure envelopes into actionable error text.
+ * Responsibilities: Read inline or spilled stdout, parse observed JSON envelope shapes, normalize batch arrays, and extract the most useful error text from nested upstream failures.
+ * Scope: Envelope parsing and error derivation only; content rendering and snapshot compaction live in separate modules.
+ * Usage: Imported by the public `lib/results.ts` facade and by tests through that facade.
+ * Invariants/Assumptions: Upstream `agent-browser --json` responses follow the observed `{ success, data, error }` envelope shape or the array shape returned by `batch --json`.
+ */
+
+import { readFile } from "node:fs/promises";
+
+import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, isRecord, stringifyUnknown } from "./shared.js";
+
+async function readEnvelopeSource(options: { stdout: string; stdoutPath?: string }): Promise<string> {
+	if (!options.stdoutPath) {
+		return options.stdout;
+	}
+
+	try {
+		return await readFile(options.stdoutPath, "utf8");
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`agent-browser output spill file could not be read: ${message}`);
+	}
+}
+
+function extractEnvelopeErrorText(error: unknown): string | undefined {
+	if (typeof error === "string") {
+		return error.trim() || undefined;
+	}
+	if (typeof error === "number" || typeof error === "boolean") {
+		return String(error);
+	}
+	if (Array.isArray(error)) {
+		const parts = error.map((item) => extractEnvelopeErrorText(item) ?? stringifyUnknown(item)).filter((item) => item.length > 0);
+		return parts.length > 0 ? parts.join("\n") : undefined;
+	}
+	if (!isRecord(error)) {
+		return error == null ? undefined : stringifyUnknown(error);
+	}
+
+	for (const key of ["message", "error", "details", "cause", "stderr"] as const) {
+		const value = extractEnvelopeErrorText(error[key]);
+		if (value) return value;
+	}
+
+	const fallback = stringifyUnknown(error).trim();
+	return fallback.length > 0 && fallback !== "{}" ? fallback : undefined;
+}
+
+export async function parseAgentBrowserEnvelope(options: string | { stdout: string; stdoutPath?: string }): Promise<{
+	envelope?: AgentBrowserEnvelope;
+	parseError?: string;
+}> {
+	let stdout: string;
+	try {
+		stdout = typeof options === "string" ? options : await readEnvelopeSource(options);
+	} catch (error) {
+		return { parseError: error instanceof Error ? error.message : String(error) };
+	}
+
+	const trimmed = stdout.trim();
+	if (trimmed.length === 0) {
+		return { parseError: "agent-browser returned no JSON output." };
+	}
+
+	try {
+		const parsed = JSON.parse(trimmed) as AgentBrowserEnvelope | AgentBrowserBatchResult[];
+		if (Array.isArray(parsed)) {
+			return { envelope: { success: parsed.every((item) => !isRecord(item) || item.success !== false), data: parsed } };
+		}
+		if (!isRecord(parsed)) {
+			return { parseError: "agent-browser returned JSON, but it was not an object envelope." };
+		}
+		return { envelope: parsed };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { parseError: `agent-browser returned invalid JSON: ${message}` };
+	}
+}
+
+export function getAgentBrowserErrorText(options: {
+	aborted: boolean;
+	envelope?: AgentBrowserEnvelope;
+	exitCode: number;
+	parseError?: string;
+	plainTextInspection: boolean;
+	spawnError?: Error;
+	stderr: string;
+}): string | undefined {
+	const { aborted, envelope, exitCode, parseError, plainTextInspection, spawnError, stderr } = options;
+	if (plainTextInspection) return undefined;
+	if (aborted) return "agent-browser was aborted.";
+	if (spawnError) return spawnError.message;
+	if (parseError) return parseError;
+	if (envelope?.success === false) {
+		return extractEnvelopeErrorText(envelope.error) ?? (stderr.trim() || `agent-browser reported failure${exitCode !== 0 ? ` (exit code ${exitCode})` : "."}`);
+	}
+	if (exitCode !== 0) {
+		return stderr.trim() || `agent-browser exited with code ${exitCode}.`;
+	}
+	return undefined;
+}

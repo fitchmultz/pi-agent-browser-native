@@ -652,6 +652,39 @@ test("buildToolPresentation prefers main content sections over top-of-page chrom
 	assert.match(text, /region "Beginner's tutorials"/);
 	assert.doesNotMatch(text, /Skip to main content/);
 	assert.doesNotMatch(text, /^- AD$/m);
+	assert.equal((presentation.data as { previewMode?: string }).previewMode, "structured");
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
+test("buildToolPresentation falls back to an outline when the raw snapshot format is unfamiliar", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 90 }, (_, index) => [`e${index + 1}`, { name: `Action ${index + 1}`, role: "button" }]),
+	);
+	const snapshot = Array.from({ length: 120 }, (_, index) => `node e${index + 1}: Action ${index + 1} -> click target`).join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "https://example.com/unfamiliar",
+				refs,
+				snapshot,
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Compact outline:/);
+	assert.doesNotMatch(text, /Primary content:/);
+	assert.match(text, /node e1: Action 1 -> click target/);
+	assert.match(text, /Key refs:/);
+	assert.match(text, /Action 1/);
+	assert.equal((presentation.data as { previewMode?: string }).previewMode, "outline");
 
 	if (presentation.fullOutputPath) {
 		await rm(presentation.fullOutputPath, { force: true });

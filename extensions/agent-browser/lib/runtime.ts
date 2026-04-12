@@ -55,13 +55,6 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
 	"--port",
 ]);
 const SHELL_OPERATOR_TOKENS = new Set(["&&", "||", "|", ";", ">", ">>", "<"]);
-const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
-	".gif": "image/gif",
-	".jpeg": "image/jpeg",
-	".jpg": "image/jpeg",
-	".png": "image/png",
-	".webp": "image/webp",
-};
 const MAX_PROJECT_SLUG_LENGTH = 24;
 
 export interface CommandInfo {
@@ -278,7 +271,3 @@ export function parseCommandInfo(args: string[]): CommandInfo {
 	return { command: commands[0], subcommand: commands[1] };
 }
 
-export function getImageMimeType(filePath: string): string | undefined {
-	const extension = filePath.toLowerCase().slice(filePath.lastIndexOf("."));
-	return IMAGE_EXTENSION_TO_MIME_TYPE[extension];
-}
