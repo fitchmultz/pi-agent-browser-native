@@ -313,6 +313,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					content: [{ type: "text", text: executionPlan.validationError }],
 					details: {
 						args: params.args,
+						invalidValueFlag: executionPlan.invalidValueFlag,
 						sessionMode,
 						sessionRecoveryHint: executionPlan.recoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,

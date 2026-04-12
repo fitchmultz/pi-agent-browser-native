@@ -350,6 +350,40 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	assert.equal(plan.usedImplicitSession, false);
 });
 
+test("buildExecutionPlan rejects missing values for value-taking flags before parsing commands", () => {
+	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"]] as const) {
+		const plan = buildExecutionPlan([...args], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: false,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+
+		assert.match(plan.validationError ?? "", /requires a value/i);
+		assert.equal(plan.invalidValueFlag?.flag, args[0]);
+		assert.equal(plan.invalidValueFlag?.reason, "missing-value");
+		assert.deepEqual(plan.commandInfo, {});
+		assert.equal(plan.sessionName, undefined);
+		assert.equal(plan.usedImplicitSession, false);
+	}
+});
+
+test("buildExecutionPlan rejects value-taking flags followed by another flag", () => {
+	const plan = buildExecutionPlan(["--session", "--profile", "Default", "open", "https://example.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+
+	assert.match(plan.validationError ?? "", /received `--profile`/i);
+	assert.equal(plan.invalidValueFlag?.flag, "--session");
+	assert.equal(plan.invalidValueFlag?.reason, "unexpected-flag");
+	assert.equal(plan.invalidValueFlag?.receivedToken, "--profile");
+	assert.deepEqual(plan.commandInfo, {});
+	assert.equal(plan.usedImplicitSession, false);
+});
+
 test("buildExecutionPlan blocks startup-scoped flags from silently reusing an active implicit session", () => {
 	for (const args of [
 		["--profile", "Default", "open", "https://example.com"],
@@ -504,6 +538,45 @@ test("agentBrowserExtension allows plain-text inspection commands regardless of 
 			assert.equal(result.content[0]?.type, "text");
 			assert.match((result.content[0] as { text: string }).text, /agent-browser 9\.9\.9/);
 			assert.equal(result.details?.inspectionBlocked, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rejects dangling value-taking flags before spawning agent-browser", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { args } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session"],
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.type, "text");
+			assert.match((result.content[0] as { text: string }).text, /requires a value immediately after it/i);
+			assert.equal(
+				(result.details?.invalidValueFlag as { flag?: string; reason?: string } | undefined)?.flag,
+				"--session",
+			);
+			assert.equal(
+				(result.details?.invalidValueFlag as { flag?: string; reason?: string } | undefined)?.reason,
+				"missing-value",
+			);
+			assert.deepEqual(await readInvocationLog(logPath), []);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -66,9 +66,17 @@ export interface SessionRecoveryHint {
 	recommendedSessionMode: "fresh";
 }
 
+export interface InvalidValueFlagDetails {
+	flag: string;
+	index: number;
+	reason: "missing-value" | "unexpected-flag";
+	receivedToken?: string;
+}
+
 export interface ExecutionPlan {
 	commandInfo: CommandInfo;
 	effectiveArgs: string[];
+	invalidValueFlag?: InvalidValueFlagDetails;
 	managedSessionName?: string;
 	recoveryHint?: SessionRecoveryHint;
 	sessionName?: string;
@@ -191,6 +199,54 @@ export function validateToolArgs(args: string[]): string | undefined {
 	return undefined;
 }
 
+function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {
+	for (const [index, token] of args.entries()) {
+		if (!token.startsWith("-")) {
+			continue;
+		}
+		const normalizedToken = token.split("=", 1)[0] ?? token;
+		if (!GLOBAL_FLAGS_WITH_VALUES.has(normalizedToken)) {
+			continue;
+		}
+		if (token.includes("=")) {
+			const value = token.slice(token.indexOf("=") + 1).trim();
+			if (value.length === 0) {
+				return {
+					flag: normalizedToken,
+					index,
+					reason: "missing-value",
+				};
+			}
+			continue;
+		}
+		const receivedToken = args[index + 1];
+		if (receivedToken === undefined) {
+			return {
+				flag: normalizedToken,
+				index,
+				reason: "missing-value",
+			};
+		}
+		if (receivedToken.startsWith("-")) {
+			return {
+				flag: normalizedToken,
+				index,
+				reason: "unexpected-flag",
+				receivedToken,
+			};
+		}
+		continue;
+	}
+	return undefined;
+}
+
+function formatInvalidValueFlagError(details: InvalidValueFlagDetails): string {
+	if (details.reason === "unexpected-flag" && details.receivedToken) {
+		return `Flag \`${details.flag}\` requires a value, but received \`${details.receivedToken}\` instead. Pass a non-flag value immediately after \`${details.flag}\`.`;
+	}
+	return `Flag \`${details.flag}\` requires a value immediately after it. Pass a non-flag token like \`${details.flag} demo\`.`;
+}
+
 function hasFlagToken(args: string[], flag: string): boolean {
 	return args.some((token) => token === flag || token.startsWith(`${flag}=`));
 }
@@ -254,10 +310,22 @@ export function buildExecutionPlan(
 		sessionMode: SessionMode;
 	},
 ): ExecutionPlan {
+	const effectiveArgs = args.includes("--json") ? [] : ["--json"];
+	const invalidValueFlag = getInvalidValueFlagDetails(args);
+	if (invalidValueFlag) {
+		return {
+			commandInfo: {},
+			effectiveArgs,
+			invalidValueFlag,
+			startupScopedFlags: [],
+			usedImplicitSession: false,
+			validationError: formatInvalidValueFlagError(invalidValueFlag),
+		};
+	}
+
 	const commandInfo = parseCommandInfo(args);
 	const explicitSessionName = extractExplicitSessionName(args);
 	const startupScopedFlags = getStartupScopedFlags(args);
-	const effectiveArgs = args.includes("--json") ? [] : ["--json"];
 	const shouldCreateFreshManagedSession =
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && commandInfo.command !== "close";
 	let managedSessionName: string | undefined;
