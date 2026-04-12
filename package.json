@@ -1,7 +1,7 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.1.3",
-  "description": "Native pi integration for agent-browser",
+  "version": "0.1.4",
+  "description": "pi extension that exposes agent-browser as a native tool for browser automation",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
   "keywords": [
@@ -10,7 +10,9 @@
     "pi-extension",
     "extension",
     "agent-browser",
-    "browser-automation"
+    "browser-automation",
+    "typescript",
+    "npm-package"
   ],
   "license": "MIT",
   "repository": {

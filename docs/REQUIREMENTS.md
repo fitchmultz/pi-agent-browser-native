@@ -48,8 +48,8 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - User-facing install docs should also include the GitHub source path `pi install https://github.com/fitchmultz/pi-agent-browser-native`.
 - Keep the current local-checkout path documented as the practical pre-release and development flow.
 - Most users will install this extension globally rather than as a project-local extension.
-- Repo-local `.pi/` wiring is for development convenience only and should not drive the product design.
-- The tracked repo-local development entrypoint should stay a thin re-export, not a second implementation path.
+- Local checkout development should use explicit CLI loading such as `pi --no-extensions -e .` or `pi --no-extensions -e /absolute/path/to/pi-agent-browser-native`.
+- Do **not** rely on repo-local `.pi/extensions/` auto-discovery for this package, because it conflicts with the global installed-package path.
 
 ### Native-tool preference
 
@@ -70,7 +70,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 ### Testing guidance
 
 - The primary confidence path is a real `pi` session driven in `tmux`.
-- Launch `pi` from the repository root for local development so the tracked `.pi` development entrypoint loads.
+- For local checkout validation, launch `pi --no-extensions -e .` from the repository root so only the checkout copy loads.
 - Prefer full `pi` restart over `/reload` when validating extension changes.
 - Use `/resume` when needed after restart.
 - Keep testing broader than a single smoke site like `example.com`.

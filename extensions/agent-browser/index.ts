@@ -2,7 +2,7 @@
  * Purpose: Register the native agent_browser tool for pi so agents can invoke agent-browser without going through bash.
  * Responsibilities: Define the tool schema, inject thin wrapper behavior around the upstream CLI, manage implicit session convenience, and return pi-friendly content/details.
  * Scope: Native tool registration and orchestration only; the wrapper intentionally stays close to the upstream agent-browser CLI.
- * Usage: Loaded by pi through the package manifest or the local `.pi/extensions/agent-browser.ts` development entrypoint.
+ * Usage: Loaded by pi through the package manifest in this package, or explicitly via `pi --no-extensions -e .` during local checkout development.
  * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
  */
 

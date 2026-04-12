@@ -6,7 +6,7 @@ Native `pi` integration for [`agent-browser`](https://agent-browser.dev/).
 
 Early working scaffold.
 
-The package scaffold, native `agent_browser` tool, local typecheck/test setup, tracked repo-local development entrypoint, and release/package verification workflow are in place.
+The package scaffold, native `agent_browser` tool, local typecheck/test setup, and release/package verification workflow are in place.
 
 ## Goal
 
@@ -77,27 +77,28 @@ pi -e https://github.com/fitchmultz/pi-agent-browser-native
 
 ### Current practical local-checkout flow
 
-Until you are using a published package release, install from a checkout:
+Until you are using a published package release, prefer an explicit checkout-only run instead of installing the checkout into your normal `pi` package set:
 
 ```bash
-pi install /absolute/path/to/pi-agent-browser-native
+pi --no-extensions -e /absolute/path/to/pi-agent-browser-native
 ```
 
-Or try it for one session only:
-
-```bash
-pi -e /absolute/path/to/pi-agent-browser-native
-```
+This avoids duplicate `agent_browser` registrations if you also have the published package installed globally.
 
 The native tool exposed to the agent is named `agent_browser`.
 
 ## Local development
 
-This repository now tracks `.pi/extensions/agent-browser.ts` as a thin development entrypoint that re-exports the real extension from `extensions/agent-browser/index.ts`. That keeps repo-root `pi` launches working without changing the published package layout.
+Do not track or rely on a repo-local `.pi/extensions/agent-browser.ts` autoload shim for this package. When the package is also installed globally, that creates a duplicate `agent_browser` registration and blocks `pi` startup from this working directory.
 
 1. Install `agent-browser` separately via the upstream project.
 2. Run `npm install`.
-3. Launch `pi` from this repository root.
+3. Launch `pi` from this repository root with only the checkout extension loaded:
+
+```bash
+pi --no-extensions -e .
+```
+
 4. Prompt the agent to use `agent_browser`.
 
 Example prompt:

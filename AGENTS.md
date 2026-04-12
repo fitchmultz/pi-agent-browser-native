@@ -26,7 +26,8 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 
 ### Rules
 
-- Launch `pi` from this repository root so project-local extensions load.
+- For local checkout validation, launch `pi --no-extensions -e .` from this repository root so only the checkout copy loads, even if the package is installed globally.
+- For installed-package validation, run plain `pi` and confirm the globally installed package loads without any repo-local `.pi/extensions/` shim.
 - Use `tmux` via bash commands.
 - Do **not** use the pi interactive shell extension for this workflow.
 - Drive `pi` like a real user by sending prompts normally.

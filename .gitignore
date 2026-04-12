@@ -1,7 +1,4 @@
 node_modules/
 .DS_Store
-.pi/*
-!.pi/extensions/
-.pi/extensions/*
-!.pi/extensions/agent-browser.ts
+.pi/
 *.tgz

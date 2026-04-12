@@ -28,7 +28,7 @@ npm run verify:release
 
 `npm run verify:package` confirms that:
 
-- the tracked repo-local development entrypoint exists at `.pi/extensions/agent-browser.ts`
+- no repo-local `.pi/extensions/agent-browser.ts` autoload shim is present
 - `LICENSE` exists in the repo and the packed tarball
 - canonical published docs are present
 - extension source files are present
@@ -51,11 +51,11 @@ node scripts/verify-package.mjs --list-files
 
 ## Local development validation
 
-Before publishing, also validate the repo-local development path:
+Before publishing, also validate the explicit local-checkout path:
 
 1. Install `agent-browser` separately.
-2. Launch `pi` from this repository root.
-3. Confirm the tracked `.pi/extensions/agent-browser.ts` shim loads the current extension code.
+2. Launch `pi --no-extensions -e .` from this repository root.
+3. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
 4. Run a smoke prompt that exercises `agent_browser`.
 
 Example prompt:
@@ -81,6 +81,6 @@ Before publishing:
 
 - update `CHANGELOG.md`
 - confirm README install guidance still leads with the package-first flow
-- confirm local-checkout instructions still work for pre-release validation
+- confirm the explicit local-checkout instructions still work for pre-release validation
 - rerun `npm run verify:release`
 - publish only after the tarball contents match expectations

@@ -9,7 +9,7 @@ Related docs:
 
 Build this as a **thin `pi` extension/package** that exposes `agent-browser` as one native tool while keeping upstream `agent-browser` as the source of truth.
 
-The package install path is the primary product path. Repo-local `.pi/` wiring exists only as a thin tracked development shim, while package-manifest behavior and packaged contents matter more.
+The package install path is the primary product path. Local checkout development should use explicit CLI loading, while package-manifest behavior and packaged contents matter more.
 
 ## Chosen shape
 
@@ -42,15 +42,15 @@ That means:
 - no manual user orchestration as the main workflow
 - any future slash commands should be minimal and secondary
 
-### Package layout versus repo-local development
+### Package layout versus local checkout development
 
 The published package should load from the `pi` manifest in `package.json`.
 
-Repo-local development should use one thin tracked shim at `.pi/extensions/agent-browser.ts` that re-exports `extensions/agent-browser/index.ts`.
+Local checkout development should use explicit CLI loading such as `pi --no-extensions -e .` from the repository root instead of repo-local `.pi/extensions/` auto-discovery.
 
 Why:
-- keeps repo-root `pi` launches working during development
-- avoids making local `.pi/` wiring the product contract
+- avoids duplicate `agent_browser` registrations when the package is also installed globally
+- keeps the product contract centered on the package manifest instead of repo-local autoload wiring
 - keeps the published tarball focused on the package manifest, extension code, canonical docs, and license
 
 The published package should exclude agent-only and superseded repo materials such as `AGENTS.md`, `docs/v1-tool-contract.md`, `docs/native-integration-design.md`, and other internal planning notes.

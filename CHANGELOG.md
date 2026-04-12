@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 - 2026-04-12
+
+### Changed
+- removed the tracked repo-local `.pi/extensions/agent-browser.ts` autoload shim because it conflicts with the globally installed package and blocks `pi` startup from this repository root
+- local checkout validation now uses explicit CLI loading with `pi --no-extensions -e .` instead of repo-local `.pi/extensions/` auto-discovery
+- aligned the package description and keywords with the GitHub repository metadata used for your other public `pi` extensions
+
 ## 0.1.3 - 2026-04-12
 
 ### Changed
