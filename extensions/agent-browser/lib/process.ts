@@ -65,7 +65,7 @@ const INHERITED_ENV_NAMES = new Set([
 	allProxyEnvName,
 	noProxyEnvName,
 ]);
-const INHERITED_ENV_PREFIXES = ["AGENT_BROWSER_", "AI_GATEWAY_", "XDG_"] as const;
+const INHERITED_ENV_PREFIXES = ["AI_GATEWAY_", "XDG_"] as const;
 
 export interface ProcessRunResult {
 	aborted: boolean;

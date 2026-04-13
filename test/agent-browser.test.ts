@@ -36,7 +36,10 @@ import {
 	getLatestUserPrompt,
 	hasUsableBraveApiKey,
 	parseCommandInfo,
+	redactInvocationArgs,
+	restoreManagedSessionStateFromBranch,
 	resolveManagedSessionState,
+	shouldAppendBrowserSystemPrompt,
 } from "../extensions/agent-browser/lib/runtime.js";
 
 const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
@@ -47,7 +50,18 @@ function buildUserBranch(prompt = ""): unknown[] {
 		: [{ type: "message", message: { role: "user", content: [{ type: "text", text: prompt }] } }];
 }
 
-function createExtensionHarness(options: { cwd: string; prompt?: string }) {
+function createToolBranchEntry(options: { details: Record<string, unknown>; isError?: boolean }): unknown {
+	return {
+		type: "message",
+		message: {
+			isError: options.isError,
+			details: options.details,
+			toolName: "agent_browser",
+		},
+	};
+}
+
+function createExtensionHarness(options: { branch?: unknown[]; cwd: string; prompt?: string }) {
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 	let registeredTool:
 		| {
@@ -78,10 +92,11 @@ function createExtensionHarness(options: { cwd: string; prompt?: string }) {
 
 	assert.ok(registeredTool, "expected the extension to register the agent_browser tool");
 
+	const branch = options.branch ?? buildUserBranch(options.prompt);
 	const ctx = {
 		cwd: options.cwd,
 		sessionManager: {
-			getBranch: () => buildUserBranch(options.prompt),
+			getBranch: () => branch,
 			getSessionId: () => TEST_SESSION_ID,
 		},
 	} as const;
@@ -258,6 +273,60 @@ test("resolveManagedSessionState only adopts successful managed sessions and ide
 	);
 });
 
+test("restoreManagedSessionStateFromBranch ignores inspection entries and reconstructs the latest managed session", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["--version"],
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--profile", "Default", "open", "https://example.com/profile"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["snapshot", "-i"],
+					command: "snapshot",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.deepEqual(restored, {
+		active: true,
+		freshSessionOrdinal: 1,
+		replacedSessionName: undefined,
+		sessionName: "piab-demo-123-fresh-aaa",
+	});
+});
+
 test("secure temp cleanup can recreate and track a later temp root", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 
@@ -348,6 +417,22 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	assert.equal(plan.managedSessionName, undefined);
 	assert.equal(plan.sessionName, "custom");
 	assert.equal(plan.usedImplicitSession, false);
+});
+
+test("buildExecutionPlan keeps inspection commands stateless", () => {
+	const plan = buildExecutionPlan(["--version"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+
+	assert.equal(plan.plainTextInspection, true);
+	assert.deepEqual(plan.effectiveArgs, ["--version"]);
+	assert.equal(plan.managedSessionName, undefined);
+	assert.equal(plan.sessionName, undefined);
+	assert.equal(plan.usedImplicitSession, false);
+	assert.equal(plan.validationError, undefined);
 });
 
 test("buildExecutionPlan rejects missing values for value-taking flags before parsing commands", () => {
@@ -446,7 +531,26 @@ test("buildPromptPolicy allows explicit tool-specific legacy bash inspection req
 	assert.equal(policy.allowLegacyAgentBrowserBash, true);
 });
 
-test("agentBrowserExtension registers shared browser guidance across hooks and tool metadata", async () => {
+test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
+	assert.deepEqual(redactInvocationArgs(["--headers", '{"Authorization":"Bearer demo"}', "open", "https://user:pass@example.com/path?token=abc&ok=1#access_token=xyz"]), [
+		"--headers",
+		"[REDACTED]",
+		"open",
+		"https://%5BREDACTED%5D:%5BREDACTED%5D@example.com/path?token=%5BREDACTED%5D&ok=1#access_token=%5BREDACTED%5D",
+	]);
+	assert.deepEqual(redactInvocationArgs(["--proxy=http://user:pass@proxy.example:8080", "open", "https://example.com"]), [
+		"--proxy=[REDACTED]",
+		"open",
+		"https://example.com/",
+	]);
+});
+
+test("shouldAppendBrowserSystemPrompt only targets clearly browser-oriented prompts", () => {
+	assert.equal(shouldAppendBrowserSystemPrompt("Open https://example.com and take a snapshot."), true);
+	assert.equal(shouldAppendBrowserSystemPrompt("Please review the repository architecture."), false);
+});
+
+test("agentBrowserExtension keeps the full browser playbook in tool metadata and only injects a minimal browser prompt when relevant", async () => {
 	await withPatchedEnv({ BRAVE_API_KEY: "demo-key" }, async () => {
 		const harness = createExtensionHarness({ cwd: process.cwd() });
 		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "tool_call"]);
@@ -467,27 +571,26 @@ test("agentBrowserExtension registers shared browser guidance across hooks and t
 		for (const fragment of sharedGuidelineFragments) {
 			assert.equal(harness.tool.promptGuidelines.some((guideline) => guideline.includes(fragment)), true);
 		}
-		assert.equal(
-			harness.tool.promptGuidelines.filter((guideline) => guideline.includes("Do not invent fixed explicit session names")).length,
-			1,
-		);
 
-		const [beforeAgentStart] = await runExtensionEventResults<{ systemPrompt: string }>(
+		const [genericTurn] = await runExtensionEventResults<{ systemPrompt: string }>(
 			harness.handlers,
 			"before_agent_start",
-			{ systemPrompt: "Base system prompt" },
+			{ prompt: "Please review the repository architecture.", systemPrompt: "Base system prompt" },
 			harness.ctx,
 		);
-		assert.equal(typeof beforeAgentStart?.systemPrompt, "string");
-		assert.equal(beforeAgentStart?.systemPrompt.includes("Base system prompt"), true);
-		assert.equal(beforeAgentStart?.systemPrompt.includes("Project rule: when browser automation is needed"), true);
-		assert.equal(beforeAgentStart?.systemPrompt.includes("Quick start:"), true);
-		assert.equal(beforeAgentStart?.systemPrompt.includes("Browser operating playbook:"), true);
-		assert.equal(beforeAgentStart?.systemPrompt.split("Quick start:").length - 1, 1);
-		assert.equal(beforeAgentStart?.systemPrompt.split("Browser operating playbook:").length - 1, 1);
-		for (const fragment of sharedGuidelineFragments) {
-			assert.equal(beforeAgentStart?.systemPrompt.includes(fragment), true);
-		}
+		assert.equal(genericTurn, undefined);
+
+		const [browserTurn] = await runExtensionEventResults<{ systemPrompt: string }>(
+			harness.handlers,
+			"before_agent_start",
+			{ prompt: "Open https://example.com and take a snapshot.", systemPrompt: "Base system prompt" },
+			harness.ctx,
+		);
+		assert.equal(typeof browserTurn?.systemPrompt, "string");
+		assert.equal(browserTurn?.systemPrompt.includes("Base system prompt"), true);
+		assert.equal(browserTurn?.systemPrompt.includes("Project rule: when browser automation is needed"), true);
+		assert.equal(browserTurn?.systemPrompt.includes("Quick start:"), false);
+		assert.equal(browserTurn?.systemPrompt.includes("Browser operating playbook:"), false);
 	});
 });
 
@@ -528,10 +631,17 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 	assert.deepEqual(debugAllowed, []);
 });
 
-test("agentBrowserExtension allows plain-text inspection commands regardless of prompt wording", { concurrency: false }, async () => {
+test("agentBrowserExtension keeps successful plain-text inspection stateless and machine-readable", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write("agent-browser 9.9.9\\n");`);
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write("agent-browser 9.9.9\\n");`,
+	);
 
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
@@ -545,7 +655,51 @@ test("agentBrowserExtension allows plain-text inspection commands regardless of 
 			assert.equal(result.isError, false);
 			assert.equal(result.content[0]?.type, "text");
 			assert.match((result.content[0] as { text: string }).text, /agent-browser 9\.9\.9/);
-			assert.equal(result.details?.inspectionBlocked, undefined);
+			assert.equal(result.details?.inspection, true);
+			assert.equal(result.details?.stdout, "agent-browser 9.9.9");
+			assert.equal(result.details?.parseError, undefined);
+			assert.equal(result.details?.sessionName, undefined);
+			assert.equal(result.details?.usedImplicitSession, undefined);
+			assert.deepEqual(await readInvocationLog(logPath), [{ args: ["--version"] }]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension redacts sensitive args in updates and persisted details", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write(JSON.stringify({ success: true, data: { title: "ok" } }));`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const updates: unknown[] = [];
+			const result = (await harness.tool.execute(
+				"test-tool-call",
+				{ args: ["--headers", '{"Authorization":"Bearer s3cr3t-demo"}', "open", "https://user:pass@example.com/?token=abc"] },
+				new AbortController().signal,
+				(update) => updates.push(update),
+				harness.ctx,
+			)) as { details?: Record<string, unknown>; isError?: boolean };
+
+			assert.equal(result.isError, false);
+			assert.equal(Array.isArray(updates), true);
+			const update = updates[0] as { content?: Array<{ text?: string }>; details?: Record<string, unknown> } | undefined;
+			assert.match(update?.content?.[0]?.text ?? "", /\[REDACTED\]/);
+			assert.doesNotMatch(update?.content?.[0]?.text ?? "", /s3cr3t-demo/);
+			assert.doesNotMatch(update?.content?.[0]?.text ?? "", /user:pass/);
+			assert.deepEqual(result.details?.args, [
+				"--headers",
+				"[REDACTED]",
+				"open",
+				"https://%5BREDACTED%5D:%5BREDACTED%5D@example.com/?token=%5BREDACTED%5D",
+			]);
+			assert.equal(JSON.stringify(result.details?.effectiveArgs).includes("s3cr3t-demo"), false);
+			assert.equal(JSON.stringify(result.details?.effectiveArgs).includes("user:pass"), false);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1330,7 +1484,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				};
 				assert.equal(data.secret, null);
 				assert.equal(data.lang, "en_US.UTF-8");
-				assert.equal(data.agentBrowserSession, "from-parent");
+				assert.equal(data.agentBrowserSession, null);
 				assert.equal(data.idleTimeout, "1234");
 				assert.equal(data.pathStartsWithTemp, true);
 			},
@@ -1340,7 +1494,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 	}
 });
 
-test("agentBrowserExtension resets implicit session state on session_start", { concurrency: false }, async () => {
+test("agentBrowserExtension reconstructs managed session state on session_start and keeps startup-scoped flags blocked after resume", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -1349,30 +1503,37 @@ test("agentBrowserExtension resets implicit session state on session_start", { c
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { url: args[args.length - 1] } }));`,
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { url: args[args.length - 1] } };
+process.stdout.write(JSON.stringify(envelope));`,
 	);
 
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const firstHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
 
-			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const firstOpen = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, {
 				args: ["open", "https://example.com/first"],
 			});
 			assert.equal(firstOpen.isError, false);
 
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const resumedBranch = [
+				createToolBranchEntry({
+					details: firstOpen.details ?? {},
+					isError: firstOpen.isError,
+				}),
+			];
+			const resumedHarness = createExtensionHarness({ branch: resumedBranch, cwd: tempDir });
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
 
-			const profiledOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const blocked = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
 				args: ["--profile", "Default", "open", "https://example.com/profiled"],
 			});
-			assert.equal(profiledOpen.isError, false);
-
-			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 2);
-			assert.equal(invocations[0]?.args.includes("--session"), true);
-			assert.equal(invocations[1]?.args.includes("--profile"), true);
+			assert.equal(blocked.isError, true);
+			assert.match(String(blocked.details?.validationError ?? ""), /startup-scoped flags/i);
+			assert.equal((await readInvocationLog(logPath)).length, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1450,7 +1611,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 	},
 );
 
-test("agentBrowserExtension rotates the managed session to a fresh profile launch and reuses it on follow-up auto calls", { concurrency: false }, async () => {
+test("agentBrowserExtension restores the rotated fresh managed session across resume and reuses it on follow-up auto calls", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -1467,17 +1628,17 @@ process.stdout.write(JSON.stringify(envelope));`,
 
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS: "1234" }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const firstHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
 
-			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const firstOpen = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, {
 				args: ["open", "https://example.com"],
 			});
 			assert.equal(firstOpen.isError, false);
 			const firstSessionName = firstOpen.details?.sessionName;
 			assert.equal(typeof firstSessionName, "string");
 
-			const profiledOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const profiledOpen = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, {
 				args: ["--profile", "Default", "open", "https://example.com/profile"],
 				sessionMode: "fresh",
 			});
@@ -1492,7 +1653,16 @@ process.stdout.write(JSON.stringify(envelope));`,
 				true,
 			);
 
-			const followUpSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({ details: firstOpen.details ?? {}, isError: firstOpen.isError }),
+					createToolBranchEntry({ details: profiledOpen.details ?? {}, isError: profiledOpen.isError }),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const followUpSnapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
 				args: ["snapshot", "-i"],
 			});
 			assert.equal(followUpSnapshot.isError, false);

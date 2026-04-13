@@ -181,16 +181,17 @@ Validated workflow examples:
 - run `batch` with JSON via `stdin`
 - run `eval --stdin`
 - take a screenshot with inline attachment support
-- inspect `agent_browser --help` and `--version` via the tool's plain-text inspection fallback
+- inspect `agent_browser --help` and `--version` via the tool's stateless plain-text inspection fallback
 
-Inspection commands like `agent_browser --help` and `--version` are always supported. They return plain text and are useful for debugging or capability checks, but they are not required for normal browsing workflows.
+Inspection commands like `agent_browser --help` and `--version` are always supported. They return plain text, are useful for debugging or capability checks, and stay stateless: the extension does not inject its implicit session for them and they do not consume the managed-session slot needed for a later `--profile`, `--session-name`, or `--cdp` launch.
 
 Current cautions:
 - passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
 - startup-scoped flags like `--profile`, `--session-name`, and `--cdp` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
-- implicit `piab-*` sessions are extension-managed convenience sessions; they are best-effort closed on `pi` shutdown, get an idle timeout to reduce stale background daemons, and clean up private temp spill artifacts on shutdown
+- implicit `piab-*` sessions are extension-managed convenience sessions; they are best-effort closed on `pi` shutdown, get an idle timeout to reduce stale background daemons, clean up private temp spill artifacts on shutdown, and are reconstructed from persisted tool details on resume/reload so later default calls keep following the active managed browser
 - `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
 - explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension
+- tool progress/details redact sensitive invocation values such as `--headers`, proxy credentials, and auth-bearing URL parameters before echoing them back into Pi
 
 ### Switching from public browsing to a fresh profile/debug launch
 

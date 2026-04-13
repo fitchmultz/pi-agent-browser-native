@@ -121,7 +121,8 @@ Recommended details:
 ```json
 {
   "args": ["snapshot", "-i"],
-  "effectiveArgs": ["--session", "pi-abc123", "--json", "snapshot", "-i"],
+  "effectiveArgs": ["--json", "--session", "pi-abc123", "snapshot", "-i"],
+  "command": "snapshot",
   "sessionMode": "auto",
   "sessionName": "pi-abc123",
   "usedImplicitSession": true,
@@ -131,9 +132,20 @@ Recommended details:
       "e1": { "name": "Example Domain", "role": "heading" }
     },
     "snapshot": "- heading \"Example Domain\" [level=1, ref=e1]"
-  }
+  },
+  "summary": "Snapshot: 1 refs on https://example.com/"
 }
 ```
+
+Additional structured fields can appear when relevant:
+- `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
+- `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
+- `imagePath` / `imagePaths` for screenshots and batched image outputs
+- `fullOutputPath` / `fullOutputPaths` when large snapshot output is compacted and spilled to a private temp file
+- `sessionRecoveryHint` when startup-scoped flags need `sessionMode: "fresh"`
+- `inspection: true` plus `stdout` for successful plain-text inspection commands like `--help` and `--version`
+
+When the tool echoes `args` or `effectiveArgs` back into Pi, sensitive values such as `--headers`, proxy credentials, and auth-bearing URL parameters should be redacted first.
 
 For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private temp JSON spill file with the full upstream snapshot payload.
 
@@ -164,10 +176,12 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - on normal `pi` shutdown, best-effort close the current extension-managed session
 - set an idle timeout on extension-managed sessions so abandoned daemons eventually self-clean
 - clean up private temp spill artifacts owned by the extension-managed session on shutdown
+- reconstruct the current extension-managed session from persisted tool details on resume/reload so later default calls keep following the active managed browser
 - when an unnamed `sessionMode: "fresh"` launch succeeds, make it the new extension-managed session so later default calls keep using it
 - if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds
 - treat explicit caller-provided `--session` choices as user-managed
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
+- treat successful plain-text inspection commands like `--help` and `--version` as stateless: do not inject the implicit managed session and do not let those calls claim the managed-session slot
 - if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active while `sessionMode` is `"auto"`, return a validation error with a structured recovery hint that recommends `sessionMode: "fresh"`
 
 ## Non-goals

@@ -1,9 +1,9 @@
 /**
- * Purpose: Build safe, deterministic agent-browser invocations for the pi-agent-browser extension.
- * Responsibilities: Validate raw tool arguments, derive extension-managed session names from the pi session identity, resolve managed-session timeout/state helpers, detect explicit session usage, and build the effective CLI argument list passed to the upstream agent-browser binary.
+ * Purpose: Build safe, deterministic agent-browser invocations and persisted session state for the pi-agent-browser extension.
+ * Responsibilities: Validate raw tool arguments, derive extension-managed session names from the pi session identity, restore managed-session state from persisted tool details, redact sensitive invocation text, classify browser-oriented prompts, and build the effective CLI argument list passed to the upstream agent-browser binary.
  * Scope: Pure runtime-planning helpers only; no subprocess execution or filesystem access lives here.
  * Usage: Imported by the extension entrypoint and unit tests before spawning the upstream CLI.
- * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, and only injects `--json` plus an extension-managed `--session` when appropriate.
+ * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, keeps plain-text inspection stateless, and only injects `--json` plus an extension-managed `--session` when appropriate.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -23,6 +23,14 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\bagent-browser\s+--(?:help|version)\b/i,
 	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
 ];
+const BROWSER_PROMPT_PATTERNS = [
+	/https?:\/\/\S+/i,
+	/\b(?:agent[_ -]?browser|browser automation|browser|browse|click|dashboard|eval\s+--stdin|feed|fill|form|inbox|login|navigate|navigation|open|page|screenshot|site|snapshot|tab\s+list|timeline|url|web(?:site| page)?)\b/i,
+];
+const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
+const SENSITIVE_VALUE_FLAGS = new Set(["--headers", "--proxy"]);
+const SENSITIVE_QUERY_PARAM_PATTERN =
+	/^(?:access(?:_|-)token|api(?:_|-)key|auth|authorization|bearer|client(?:_|-)secret|code|cookie|id(?:_|-)token|key|pass(?:word)?|refresh(?:_|-)token|secret|session(?:_|-)id|sig(?:nature)?|token)$/i;
 
 const GLOBAL_FLAGS_WITH_VALUES = new Set([
 	"--session",
@@ -78,6 +86,7 @@ export interface ExecutionPlan {
 	effectiveArgs: string[];
 	invalidValueFlag?: InvalidValueFlagDetails;
 	managedSessionName?: string;
+	plainTextInspection: boolean;
 	recoveryHint?: SessionRecoveryHint;
 	sessionName?: string;
 	startupScopedFlags: string[];
@@ -91,8 +100,114 @@ export interface ManagedSessionState {
 	sessionName: string;
 }
 
+export interface RestoredManagedSessionState extends ManagedSessionState {
+	freshSessionOrdinal: number;
+}
+
 export interface PromptPolicy {
 	allowLegacyAgentBrowserBash: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function shouldRedactQueryParam(name: string): boolean {
+	return SENSITIVE_QUERY_PARAM_PATTERN.test(name);
+}
+
+function redactUrlToken(token: string): string {
+	let parsed: URL;
+	try {
+		parsed = new URL(token);
+	} catch {
+		return token;
+	}
+
+	if (!["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
+		return token;
+	}
+
+	if (parsed.username.length > 0) {
+		parsed.username = "[REDACTED]";
+	}
+	if (parsed.password.length > 0) {
+		parsed.password = "[REDACTED]";
+	}
+
+	for (const [name] of parsed.searchParams) {
+		if (shouldRedactQueryParam(name)) {
+			parsed.searchParams.set(name, "[REDACTED]");
+		}
+	}
+
+	const hashText = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
+	if (hashText.includes("=")) {
+		const hashParams = new URLSearchParams(hashText);
+		let mutated = false;
+		for (const [name] of hashParams) {
+			if (shouldRedactQueryParam(name)) {
+				hashParams.set(name, "[REDACTED]");
+				mutated = true;
+			}
+		}
+		if (mutated) {
+			parsed.hash = `#${hashParams.toString()}`;
+		}
+	}
+
+	return parsed.toString();
+}
+
+function redactFlagValue(flag: string, value: string): string {
+	if (SENSITIVE_VALUE_FLAGS.has(flag)) {
+		return "[REDACTED]";
+	}
+	return redactUrlToken(value);
+}
+
+export function redactInvocationArgs(args: string[]): string[] {
+	const redacted: string[] = [];
+	let pendingValueFlag: string | undefined;
+
+	for (const token of args) {
+		if (pendingValueFlag) {
+			redacted.push(redactFlagValue(pendingValueFlag, token));
+			pendingValueFlag = undefined;
+			continue;
+		}
+
+		const normalizedToken = token.split("=", 1)[0] ?? token;
+		if (SENSITIVE_VALUE_FLAGS.has(normalizedToken)) {
+			if (token.includes("=")) {
+				redacted.push(`${normalizedToken}=[REDACTED]`);
+			} else {
+				redacted.push(token);
+				pendingValueFlag = normalizedToken;
+			}
+			continue;
+		}
+
+		redacted.push(redactUrlToken(token));
+	}
+
+	return redacted;
+}
+
+export function shouldAppendBrowserSystemPrompt(prompt: string): boolean {
+	const normalizedPrompt = prompt.trim();
+	if (normalizedPrompt.length === 0) {
+		return false;
+	}
+	return BROWSER_PROMPT_PATTERNS.some((pattern) => pattern.test(normalizedPrompt));
+}
+
+export function isPlainTextInspectionArgs(args: string[]): boolean {
+	return args.some((token) => INSPECTION_FLAGS.has(token));
 }
 
 export function hasUsableBraveApiKey(apiKey: string | null | undefined = process.env[BRAVE_API_KEY_ENV]): boolean {
@@ -143,6 +258,64 @@ export function resolveManagedSessionState(options: {
 		active: true,
 		replacedSessionName: priorActive && priorSessionName !== managedSessionName ? priorSessionName : undefined,
 		sessionName: managedSessionName,
+	};
+}
+
+export function restoreManagedSessionStateFromBranch(
+	branch: unknown[],
+	fallbackSessionName: string,
+): RestoredManagedSessionState {
+	let restoredState: ManagedSessionState = {
+		active: false,
+		sessionName: fallbackSessionName,
+	};
+	let freshSessionOrdinal = 0;
+
+	for (const entry of branch) {
+		if (!isRecord(entry) || entry.type !== "message") {
+			continue;
+		}
+		const message = isRecord(entry.message) ? entry.message : undefined;
+		if (!message || message.toolName !== "agent_browser") {
+			continue;
+		}
+		const details = isRecord(message.details) ? message.details : undefined;
+		if (!details) {
+			continue;
+		}
+		const args = isStringArray(details.args) ? details.args : [];
+		if (isPlainTextInspectionArgs(args)) {
+			continue;
+		}
+
+		const explicitSessionName = extractExplicitSessionName(args);
+		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
+		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
+		const usedImplicitSession = details.usedImplicitSession === true;
+		const managedSessionName = !explicitSessionName && sessionName && (usedImplicitSession || sessionMode === "fresh") ? sessionName : undefined;
+		if (!managedSessionName) {
+			continue;
+		}
+
+		const messageIsError = typeof message.isError === "boolean" ? message.isError : undefined;
+		const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
+		const succeeded = messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
+		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
+		restoredState = resolveManagedSessionState({
+			command,
+			managedSessionName,
+			priorActive: restoredState.active,
+			priorSessionName: restoredState.sessionName,
+			succeeded,
+		});
+		if (succeeded && sessionMode === "fresh") {
+			freshSessionOrdinal += 1;
+		}
+	}
+
+	return {
+		...restoredState,
+		freshSessionOrdinal,
 	};
 }
 
@@ -310,22 +483,34 @@ export function buildExecutionPlan(
 		sessionMode: SessionMode;
 	},
 ): ExecutionPlan {
-	const effectiveArgs = args.includes("--json") ? [] : ["--json"];
 	const invalidValueFlag = getInvalidValueFlagDetails(args);
+	const startupScopedFlags = getStartupScopedFlags(args);
+	const plainTextInspection = isPlainTextInspectionArgs(args);
+	const commandInfo = parseCommandInfo(args);
+	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
 	if (invalidValueFlag) {
 		return {
 			commandInfo: {},
 			effectiveArgs,
 			invalidValueFlag,
+			plainTextInspection: false,
 			startupScopedFlags: [],
 			usedImplicitSession: false,
 			validationError: formatInvalidValueFlagError(invalidValueFlag),
 		};
 	}
 
-	const commandInfo = parseCommandInfo(args);
+	if (plainTextInspection) {
+		return {
+			commandInfo,
+			effectiveArgs,
+			plainTextInspection,
+			startupScopedFlags,
+			usedImplicitSession: false,
+		};
+	}
+
 	const explicitSessionName = extractExplicitSessionName(args);
-	const startupScopedFlags = getStartupScopedFlags(args);
 	const shouldCreateFreshManagedSession =
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && commandInfo.command !== "close";
 	let managedSessionName: string | undefined;
@@ -365,6 +550,7 @@ export function buildExecutionPlan(
 		commandInfo,
 		effectiveArgs,
 		managedSessionName,
+		plainTextInspection,
 		recoveryHint,
 		sessionName,
 		startupScopedFlags,
@@ -396,4 +582,3 @@ export function parseCommandInfo(args: string[]): CommandInfo {
 
 	return { command: commands[0], subcommand: commands[1] };
 }
-
