@@ -57,12 +57,20 @@ Before publishing, also validate the explicit local-checkout path:
 2. Launch `pi --no-extensions -e .` from this repository root.
 3. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
 4. Run a smoke prompt that exercises `agent_browser`.
+5. Validate managed-session continuity with both `/reload` and a full restart + `/resume`.
 
-Example prompt:
+Example smoke prompt:
 
 ```text
 Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
 ```
+
+Recommended lifecycle follow-up:
+
+1. Open a page with the implicit managed session and confirm the title.
+2. Run `/reload`, then ask for `snapshot -i` and confirm the same page is still active.
+3. Exit `pi`, relaunch it against the same session file or use `/resume`, then ask for `snapshot -i` again and confirm the same page is still active.
+4. Open a large page that compacts its snapshot output and confirm `details.fullOutputPath` still exists after the restart/resume flow.
 
 ## Post-publish install validation
 
@@ -73,7 +81,7 @@ pi install npm:pi-agent-browser-native@<version>
 pi -e npm:pi-agent-browser-native@<version>
 ```
 
-Then confirm `pi` exposes the native `agent_browser` tool and that a basic `open` + `snapshot -i` flow works.
+Then confirm `pi` exposes the native `agent_browser` tool, that a basic `open` + `snapshot -i` flow works, and that `/reload` plus restart/`/resume` keep following the same implicit managed browser session.
 
 ## Release notes checklist
 
@@ -83,4 +91,5 @@ Before publishing:
 - confirm README install guidance still leads with the package-first flow
 - confirm the explicit local-checkout instructions still work for pre-release validation
 - rerun `npm run verify:release`
+- manually exercise `/reload` and full restart + `/resume` continuity in local checkout validation
 - publish only after the tarball contents match expectations

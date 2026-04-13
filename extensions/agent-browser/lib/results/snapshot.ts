@@ -6,7 +6,7 @@
  * Invariants/Assumptions: Snapshot compaction should stay helpful even if upstream snapshot text formatting shifts, so structured parsing is best-effort and always has a resilient raw-outline fallback.
  */
 
-import { writeSecureTempFile } from "../temp.js";
+import { type PersistentSessionArtifactStore, writePersistentSessionArtifactFile, writeSecureTempFile } from "../temp.js";
 import { type ToolPresentation, compareRefIds, countLines, isRecord, normalizeWhitespace, truncateText } from "./shared.js";
 
 const SNAPSHOT_INLINE_MAX_CHARS = 6_000;
@@ -463,12 +463,18 @@ function canUseStructuredSnapshotPreview(snapshotLines: SnapshotLine[], refEntri
 	);
 }
 
-async function writeSnapshotSpillFile(data: Record<string, unknown>): Promise<string> {
-	return await writeSecureTempFile({
+async function writeSnapshotSpillFile(
+	data: Record<string, unknown>,
+	persistentArtifactStore: PersistentSessionArtifactStore | undefined,
+): Promise<string> {
+	const options = {
 		content: JSON.stringify(data, null, 2),
 		prefix: SNAPSHOT_SPILL_FILE_PREFIX,
 		suffix: ".json",
-	});
+	};
+	return persistentArtifactStore
+		? await writePersistentSessionArtifactFile({ ...options, store: persistentArtifactStore })
+		: await writeSecureTempFile(options);
 }
 
 export function formatSnapshotSummary(data: Record<string, unknown>): string {
@@ -487,7 +493,10 @@ export function formatRawSnapshotText(data: Record<string, unknown>): string {
 	return `Origin: ${origin}\nRefs: ${refs}\n\n${snapshot}`;
 }
 
-export async function buildSnapshotPresentation(data: Record<string, unknown>): Promise<ToolPresentation> {
+export async function buildSnapshotPresentation(
+	data: Record<string, unknown>,
+	persistentArtifactStore: PersistentSessionArtifactStore | undefined = undefined,
+): Promise<ToolPresentation> {
 	const summary = formatSnapshotSummary(data);
 	const rawText = formatRawSnapshotText(data);
 	if (!shouldCompactSnapshot(rawText, data)) {
@@ -501,7 +510,7 @@ export async function buildSnapshotPresentation(data: Record<string, unknown>): 
 	let fullOutputPath: string | undefined;
 	let spillErrorText: string | undefined;
 	try {
-		fullOutputPath = await writeSnapshotSpillFile(data);
+		fullOutputPath = await writeSnapshotSpillFile(data, persistentArtifactStore);
 	} catch (error) {
 		spillErrorText = error instanceof Error ? error.message : String(error);
 	}

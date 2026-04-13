@@ -10,6 +10,7 @@ import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { parseCommandInfo, type CommandInfo } from "../runtime.js";
+import { type PersistentSessionArtifactStore } from "../temp.js";
 import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary } from "./snapshot.js";
 import {
 	type AgentBrowserBatchResult,
@@ -104,6 +105,63 @@ function getPageSummary(data: Record<string, unknown>): string | undefined {
 
 function getScreenshotSummary(data: Record<string, unknown>): string | undefined {
 	return typeof data.path === "string" ? `Saved image: ${data.path}` : undefined;
+}
+
+function getScalarExtractionResult(data: Record<string, unknown>): string | undefined {
+	const { result } = data;
+	if (typeof result === "string") {
+		return result.trim().length > 0 ? result : undefined;
+	}
+	if (typeof result === "number" || typeof result === "boolean") {
+		return String(result);
+	}
+	return undefined;
+}
+
+function getExtractionOrigin(data: Record<string, unknown>): string | undefined {
+	if (typeof data.origin === "string" && data.origin.trim().length > 0) {
+		return data.origin.trim();
+	}
+	if (typeof data.url === "string" && data.url.trim().length > 0) {
+		return data.url.trim();
+	}
+	return undefined;
+}
+
+function formatGetSummaryLabel(subcommand: string | undefined): string {
+	if (!subcommand) {
+		return "Get result";
+	}
+	if (subcommand.toLowerCase() === "url") {
+		return "URL";
+	}
+	return `${subcommand.slice(0, 1).toUpperCase()}${subcommand.slice(1)}`;
+}
+
+function formatExtractionSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
+	const scalarResult = getScalarExtractionResult(data);
+	if (!scalarResult) {
+		return undefined;
+	}
+	if (commandInfo.command === "get") {
+		return `${formatGetSummaryLabel(commandInfo.subcommand)}: ${scalarResult.split("\n", 1)[0] ?? scalarResult}`;
+	}
+	if (commandInfo.command === "eval") {
+		return `Eval result: ${scalarResult.split("\n", 1)[0] ?? scalarResult}`;
+	}
+	return undefined;
+}
+
+function formatExtractionText(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
+	if (commandInfo.command !== "get" && commandInfo.command !== "eval") {
+		return undefined;
+	}
+	const scalarResult = getScalarExtractionResult(data);
+	if (!scalarResult) {
+		return undefined;
+	}
+	const origin = getExtractionOrigin(data);
+	return origin && origin !== scalarResult ? `${scalarResult}\n\nOrigin: ${origin}` : scalarResult;
 }
 
 function isNavigationObservableCommand(command: string | undefined): boolean {
@@ -207,8 +265,9 @@ async function buildBatchStepPresentation(options: {
 	cwd: string;
 	index: number;
 	item: AgentBrowserBatchResult;
+	persistentArtifactStore?: PersistentSessionArtifactStore;
 }): Promise<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> {
-	const { cwd, index, item } = options;
+	const { cwd, index, item, persistentArtifactStore } = options;
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const commandText = formatBatchStepCommand(command, index);
 
@@ -236,6 +295,7 @@ async function buildBatchStepPresentation(options: {
 		commandInfo: parseCommandInfo(command ?? []),
 		cwd,
 		envelope: { data: item.result, success: true },
+		persistentArtifactStore,
 	});
 	const fullOutputPaths = getPresentationPaths({
 		primaryPath: presentation.fullOutputPath,
@@ -268,12 +328,28 @@ async function buildBatchStepPresentation(options: {
 async function buildBatchPresentation(options: {
 	cwd: string;
 	data: AgentBrowserBatchResult[];
+	persistentArtifactStore?: PersistentSessionArtifactStore;
 	summary: string;
 }): Promise<ToolPresentation> {
-	const { cwd, data, summary } = options;
+	const { cwd, data, persistentArtifactStore, summary } = options;
 	const steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> = [];
+	const protectedPersistentPaths: string[] = [];
 	for (const [index, item] of data.entries()) {
-		steps.push(await buildBatchStepPresentation({ cwd, index, item }));
+		const step = await buildBatchStepPresentation({
+			cwd,
+			index,
+			item,
+			persistentArtifactStore: persistentArtifactStore
+				? { ...persistentArtifactStore, protectedPaths: protectedPersistentPaths }
+				: undefined,
+		});
+		steps.push(step);
+		protectedPersistentPaths.push(
+			...getPresentationPaths({
+				primaryPath: step.presentation.fullOutputPath,
+				secondaryPaths: step.presentation.fullOutputPaths,
+			}),
+		);
 	}
 
 	const batchFailure = getBatchFailureDetails(steps);
@@ -354,6 +430,10 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 		if (commandInfo.command === "screenshot" && typeof data.path === "string") {
 			return `Screenshot saved: ${data.path}`;
 		}
+		const extractionSummary = formatExtractionSummary(commandInfo, data);
+		if (extractionSummary) {
+			return extractionSummary;
+		}
 		const pageSummary = getPageSummary(data);
 		if (pageSummary) {
 			return pageSummary.split("\n", 1)[0] ?? "agent-browser result";
@@ -402,6 +482,11 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	if (commandInfo.command === "screenshot") {
 		const screenshotSummary = getScreenshotSummary(data);
 		if (screenshotSummary) return screenshotSummary;
+	}
+
+	const extractionText = formatExtractionText(commandInfo, data);
+	if (extractionText) {
+		return extractionText;
 	}
 
 	const pageSummary = getPageSummary(data);
@@ -459,8 +544,9 @@ export async function buildToolPresentation(options: {
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
 	errorText?: string;
+	persistentArtifactStore?: PersistentSessionArtifactStore;
 }): Promise<ToolPresentation> {
-	const { commandInfo, cwd, envelope, errorText } = options;
+	const { commandInfo, cwd, envelope, errorText, persistentArtifactStore } = options;
 	if (errorText) {
 		return {
 			content: [{ type: "text", text: errorText }],
@@ -472,9 +558,9 @@ export async function buildToolPresentation(options: {
 	const summary = formatSummary(commandInfo, data);
 	const presentation =
 		commandInfo.command === "batch" && Array.isArray(data)
-			? await buildBatchPresentation({ cwd, data: data as AgentBrowserBatchResult[], summary })
+			? await buildBatchPresentation({ cwd, data: data as AgentBrowserBatchResult[], persistentArtifactStore, summary })
 			: commandInfo.command === "snapshot" && isRecord(data)
-				? await buildSnapshotPresentation(data)
+				? await buildSnapshotPresentation(data, persistentArtifactStore)
 				: {
 						content: [{ type: "text" as const, text: formatContentText(commandInfo, data) }],
 						data,
