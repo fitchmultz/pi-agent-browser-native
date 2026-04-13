@@ -7,7 +7,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { env as processEnv } from "node:process";
+import { chmod, mkdir } from "node:fs/promises";
+import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
@@ -15,6 +16,8 @@ const MAX_BUFFERED_STDOUT_BYTES = 512 * 1_024;
 const MAX_BUFFERED_STDERR_CHARS = 32_000;
 const MAX_BUFFERED_STDOUT_TAIL_CHARS = 32_000;
 const PROCESS_STDOUT_SPILL_FILE_PREFIX = "process-stdout";
+const AGENT_BROWSER_SOCKET_DIR_ENV = "AGENT_BROWSER_SOCKET_DIR";
+const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
 const httpProxyEnvName = "http_proxy";
 const httpsProxyEnvName = "https_proxy";
 const allProxyEnvName = "all_proxy";
@@ -81,6 +84,26 @@ function appendTail(text: string, addition: string, maxChars: number): string {
 	return combined.length <= maxChars ? combined : combined.slice(combined.length - maxChars);
 }
 
+export function getAgentBrowserSocketDir(
+	platform: NodeJS.Platform = processPlatform,
+	uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
+): string | undefined {
+	if (platform === "win32") {
+		return undefined;
+	}
+	return `${DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX}${typeof uid === "number" ? `-${uid}` : ""}`;
+}
+
+async function ensureAgentBrowserSocketDir(socketDir: string): Promise<boolean> {
+	try {
+		await mkdir(socketDir, { recursive: true, mode: 0o700 });
+		await chmod(socketDir, 0o700).catch(() => undefined);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export function buildAgentBrowserProcessEnv(
 	baseEnv: NodeJS.ProcessEnv = processEnv,
 	overrides: NodeJS.ProcessEnv | undefined = undefined,
@@ -117,6 +140,11 @@ export async function runAgentBrowserProcess(options: {
 	stdin?: string;
 }): Promise<ProcessRunResult> {
 	const { args, cwd, env, signal, stdin } = options;
+	let effectiveEnv = env;
+	const requestedSocketDir = env?.[AGENT_BROWSER_SOCKET_DIR_ENV] ?? getAgentBrowserSocketDir();
+	if (requestedSocketDir && (await ensureAgentBrowserSocketDir(requestedSocketDir))) {
+		effectiveEnv = { ...env, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };
+	}
 
 	return await new Promise<ProcessRunResult>((resolve) => {
 		let aborted = false;
@@ -191,7 +219,7 @@ export async function runAgentBrowserProcess(options: {
 
 		const child = spawn("agent-browser", args, {
 			cwd,
-			env: buildAgentBrowserProcessEnv(processEnv, env),
+			env: buildAgentBrowserProcessEnv(processEnv, effectiveEnv),
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 

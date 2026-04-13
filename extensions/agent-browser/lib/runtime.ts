@@ -768,8 +768,11 @@ export function chooseOpenResultTabCorrection(options: {
 }
 
 export function parseCommandInfo(args: string[]): CommandInfo {
-	const commands: string[] = [];
+	const commandTokens = extractCommandTokens(args);
+	return { command: commandTokens[0], subcommand: commandTokens[1] };
+}
 
+export function extractCommandTokens(args: string[]): string[] {
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
 		if (token.startsWith("--session=")) {
@@ -782,11 +785,7 @@ export function parseCommandInfo(args: string[]): CommandInfo {
 			}
 			continue;
 		}
-		commands.push(token);
-		if (commands.length === 2) {
-			break;
-		}
+		return args.slice(index);
 	}
-
-	return { command: commands[0], subcommand: commands[1] };
+	return [];
 }

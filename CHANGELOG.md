@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.4 - 2026-04-13
+
+### Fixed
+- wrapper-spawned local Unix `agent-browser` runs now use a short private socket directory under `/tmp`, so extension-generated session names no longer fail the upstream Unix socket-path length limit in longer cwd/session-name combinations
+- once the wrapper knows which tab a session should stay on, later active-tab commands like `click` and `snapshot -i` now best-effort pin that same tab inside the same upstream invocation instead of letting reconnect drift send the action to a restored/background tab
+- persisted `sessionTabTarget` state now survives `/reload` / `/resume` for both managed and explicit sessions, so the reconnect-time tab pinning behavior can continue after restart/resume flows
+- README, requirements, architecture notes, and tool-contract docs now describe the socket-path mitigation and the follow-up-command tab-pinning behavior
+
 ## 0.2.3 - 2026-04-13
 
 ### Fixed

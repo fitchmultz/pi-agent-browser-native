@@ -98,6 +98,8 @@ The design should comfortably support workflows such as:
 - Keep mitigations for legacy-skill coexistence simple; do not add extra moving parts unless observed behavior justifies them.
 - Prefer narrow, evidence-backed compatibility mitigations over broad stealth layers when a specific upstream site starts rejecting the default headless launch fingerprint.
 - Preserve the page that a profiled `open` just navigated to; if restored profile tabs steal focus during launch, the wrapper should best-effort switch back to the returned page URL before handing control back to the agent.
+- Once a tab target is known for a session, later active-tab commands should best-effort pin that same tab inside the same upstream invocation when reconnect drift would otherwise land on a restored/background tab.
+- On local Unix launches, extension-generated session names should not fail just because the upstream default socket path is too long; the wrapper should choose a shorter socket directory when needed.
 
 ## Open design questions
 

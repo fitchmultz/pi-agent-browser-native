@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import agentBrowserExtension from "../extensions/agent-browser/index.js";
-import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
+import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildToolPresentation,
 	getAgentBrowserErrorText,
@@ -32,6 +32,7 @@ import {
 	chooseOpenResultTabCorrection,
 	createFreshSessionName,
 	createImplicitSessionName,
+	extractCommandTokens,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
@@ -183,14 +184,14 @@ async function writeFakeAgentBrowserBinary(tempDir: string, scriptBody: string):
 	return fakeAgentBrowserPath;
 }
 
-async function readInvocationLog(logPath: string): Promise<Array<{ args: string[]; idleTimeout?: string | null }>> {
+async function readInvocationLog(logPath: string): Promise<Array<{ args: string[]; idleTimeout?: string | null; socketDir?: string | null; stdin?: string | null }>> {
 	try {
 		const text = await readFile(logPath, "utf8");
 		return text
 			.split("\n")
 			.map((line) => line.trim())
 			.filter((line) => line.length > 0)
-			.map((line) => JSON.parse(line) as { args: string[]; idleTimeout?: string | null });
+			.map((line) => JSON.parse(line) as { args: string[]; idleTimeout?: string | null; socketDir?: string | null; stdin?: string | null });
 	} catch (error) {
 		const errorWithCode = error as NodeJS.ErrnoException;
 		if (errorWithCode.code === "ENOENT") {
@@ -218,6 +219,12 @@ test("createImplicitSessionName includes cwd isolation for same-named checkouts"
 	assert.notEqual(one, two);
 	assert.match(one, /^piab-app-123456781234-[a-f0-9]{8}$/);
 	assert.match(two, /^piab-app-123456781234-[a-f0-9]{8}$/);
+});
+
+test("getAgentBrowserSocketDir uses a short user-specific unix socket directory and skips windows", () => {
+	assert.equal(getAgentBrowserSocketDir("darwin", 501), "/tmp/piab-501");
+	assert.equal(getAgentBrowserSocketDir("linux", 1000), "/tmp/piab-1000");
+	assert.equal(getAgentBrowserSocketDir("win32", undefined), undefined);
 });
 
 test("hasUsableBraveApiKey only accepts non-empty values", () => {
@@ -892,6 +899,21 @@ test("parseCommandInfo treats compatibility and launch flag values as non-comman
 		"https://example.com",
 	]);
 	assert.deepEqual(commandInfo, { command: "open", subcommand: "https://example.com" });
+});
+
+test("extractCommandTokens strips wrapper-level global flags and keeps the command tail intact", () => {
+	assert.deepEqual(extractCommandTokens(["--session", "named", "snapshot", "-i"]), ["snapshot", "-i"]);
+	assert.deepEqual(
+		extractCommandTokens([
+			"--session",
+			"named",
+			"--user-agent",
+			"Mozilla/5.0",
+			"click",
+			"@e9",
+		]),
+		["click", "@e9"],
+	);
 });
 
 test("chooseOpenResultTabCorrection targets the navigated tab without disturbing already-correct active tabs", () => {
@@ -1777,6 +1799,116 @@ if (args.includes("tab") && args.includes("list")) {
 	}
 });
 
+test("agentBrowserExtension pins the intended tab inside a follow-up command when reconnect drift would otherwise steal focus", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const exampleSite = { title: "Example Domain", url: "https://example.com/" };
+const gemini = { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" };
+if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  let active = gemini;
+  const results = steps.map((step) => {
+    const [command, ...rest] = step;
+    if (command === "tab") {
+      active = rest[0] === "0" ? exampleSite : gemini;
+      return { command: step, success: true, result: active };
+    }
+    if (command === "click") {
+      return { command: step, success: true, result: { clicked: rest[0] } };
+    }
+    if (command === "get" && rest[0] === "title") {
+      return { command: step, success: true, result: active.title };
+    }
+    if (command === "get" && rest[0] === "url") {
+      return { command: step, success: true, result: active.url };
+    }
+    return { command: step, success: true, result: active };
+  });
+  process.stdout.write(JSON.stringify(results));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { index: 0, title: exampleSite.title, url: exampleSite.url, active: false },
+    { index: 2, title: gemini.title, url: gemini.url, active: true }
+  ] } }));
+} else if (args.includes("tab") && args.includes("0")) {
+  process.stdout.write(JSON.stringify({ success: true, data: exampleSite }));
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: exampleSite }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.indexOf("click") + 1] } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: gemini.title }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: gemini.url }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: gemini }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const initialOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "--profile", "Default", "open", "https://example.com"],
+			});
+			assert.equal(initialOpen.isError, false, JSON.stringify(initialOpen));
+
+			const clickedSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "click", "@e9"],
+			});
+			assert.equal(clickedSelector.isError, false);
+			assert.equal(
+				(clickedSelector.details?.navigationSummary as { title?: string } | undefined)?.title,
+				"Example Domain",
+			);
+			assert.equal(
+				(clickedSelector.details?.navigationSummary as { url?: string } | undefined)?.url,
+				"https://example.com/",
+			);
+			assert.deepEqual(clickedSelector.details?.sessionTabCorrection, {
+				selectedIndex: 0,
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
+			assert.match((clickedSelector.content[0] as { text: string }).text, /Current page:/);
+			assert.match((clickedSelector.content[0] as { text: string }).text, /Example Domain/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 5);
+			assert.deepEqual(invocations[0]?.args, [
+				"--json",
+				"--session",
+				"named",
+				"--profile",
+				"Default",
+				"open",
+				"https://example.com",
+			]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "0"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[4]?.stdin ?? "[]")), [
+				["tab", "0"],
+				["click", "@e9"],
+				["get", "title"],
+				["get", "url"],
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnvelope still sees the full payload", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
@@ -1870,6 +2002,7 @@ test("runAgentBrowserProcess forwards a curated environment instead of the full 
     lang: process.env.LANG ?? null,
     agentBrowserSession: process.env.AGENT_BROWSER_SESSION ?? null,
     idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null,
+    socketDir: process.env.AGENT_BROWSER_SOCKET_DIR ?? null,
     pathStartsWithTemp: (process.env.PATH ?? "").startsWith(${JSON.stringify(tempDir)})
   }
 };
@@ -1880,6 +2013,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 		await withPatchedEnv(
 			{
 				AGENT_BROWSER_SESSION: "from-parent",
+				AGENT_BROWSER_SOCKET_DIR: "/tmp/from-parent-should-not-leak",
 				LANG: "en_US.UTF-8",
 				PI_AGENT_BROWSER_TEST_SECRET: "should-not-leak",
 			},
@@ -1902,11 +2036,16 @@ process.stdout.write(JSON.stringify(envelope));`,
 					lang: string | null;
 					pathStartsWithTemp: boolean;
 					secret: string | null;
+					socketDir: string | null;
 				};
 				assert.equal(data.secret, null);
 				assert.equal(data.lang, "en_US.UTF-8");
 				assert.equal(data.agentBrowserSession, null);
 				assert.equal(data.idleTimeout, "1234");
+				assert.equal(data.socketDir, getAgentBrowserSocketDir());
+				if (data.socketDir) {
+					assert.equal((await stat(data.socketDir)).isDirectory(), true);
+				}
 				assert.equal(data.pathStartsWithTemp, true);
 			},
 		);
@@ -2149,7 +2288,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 			assert.equal(followUpSnapshot.details?.usedImplicitSession, true);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 5);
+			assert.equal(invocations.length, 6);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", String(firstSessionName), "open", "https://example.com"]);
 			assert.equal(invocations[0]?.idleTimeout, "1234");
 			assert.deepEqual(invocations[1]?.args, [
@@ -2164,8 +2303,98 @@ process.stdout.write(JSON.stringify(envelope));`,
 			assert.equal(invocations[1]?.idleTimeout, "1234");
 			assert.deepEqual(invocations[2]?.args, ["--json", "--session", String(freshSessionName), "tab", "list"]);
 			assert.deepEqual(invocations[3]?.args, ["--session", String(firstSessionName), "close"]);
-			assert.deepEqual(invocations[4]?.args, ["--json", "--session", String(freshSessionName), "snapshot", "-i"]);
-			assert.equal(invocations[4]?.idleTimeout, "1234");
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", String(freshSessionName), "tab", "list"]);
+			assert.deepEqual(invocations[5]?.args, ["--json", "--session", String(freshSessionName), "snapshot", "-i"]);
+			assert.equal(invocations[5]?.idleTimeout, "1234");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension restores pinned tab targets across resume for explicit sessions", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const exampleSite = { title: "Example Domain", url: "https://example.com/" };
+const gemini = { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" };
+if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  let active = gemini;
+  const results = steps.map((step) => {
+    const [command, ...rest] = step;
+    if (command === "tab") {
+      active = rest[0] === "0" ? exampleSite : gemini;
+      return { command: step, success: true, result: active };
+    }
+    if (command === "snapshot") {
+      return {
+        command: step,
+        success: true,
+        result: {
+          origin: active.url,
+          refs: { e1: { name: active.title, role: "heading" } },
+          snapshot: '- heading "' + active.title + '" [level=1, ref=e1]',
+        },
+      };
+    }
+    return { command: step, success: true, result: active };
+  });
+  process.stdout.write(JSON.stringify(results));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { index: 0, title: exampleSite.title, url: exampleSite.url, active: false },
+    { index: 2, title: gemini.title, url: gemini.url, active: true }
+  ] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: gemini.url,
+    refs: { e1: { name: gemini.title, role: "heading" } },
+    snapshot: '- heading "Google Gemini" [level=1, ref=e1]'
+  } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "--profile", "Default", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const snapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "snapshot", "-i"],
+			});
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.deepEqual(snapshot.details?.sessionTabCorrection, {
+				selectedIndex: 0,
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
+			assert.match((snapshot.content[0] as { text: string }).text, /Example Domain/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 2);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [["tab", "0"], ["snapshot", "-i"]]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
