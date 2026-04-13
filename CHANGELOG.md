@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.2 - 2026-04-12
+
+### Fixed
+- plain-text inspection commands like `agent_browser --help` and `--version` now stay stateless: they no longer claim the implicit managed session or leave behind ambiguous `parseError` details on success
+- extension-managed session ownership is now reconstructed from persisted tool details on resume/reload while still preserving cwd-hash isolation across same-named checkouts and worktrees
+- echoed tool updates/details now redact sensitive invocation values and structured secret-bearing fields instead of replaying headers, proxy credentials, cookies, or auth-bearing URL params back into `pi`
+- the subprocess wrapper no longer forwards ambient parent-shell `AGENT_BROWSER_*` state into child runs, reducing surprising hidden configuration leaks from the caller environment
+- browser-specific system-prompt injection is now minimal and only added for clearly browser-oriented turns, while the full playbook stays in tool metadata where it belongs
+- published docs and changelog notes now match the current result/details contract, resume behavior, prompt behavior, and release workflow
+
 ## 0.2.1 - 2026-04-12
 
 ### Fixed
