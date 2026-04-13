@@ -23,7 +23,12 @@ import {
 	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
 	hasUsableBraveApiKey,
+	redactInvocationArgs,
+	redactSensitiveText,
+	redactSensitiveValue,
+	restoreManagedSessionStateFromBranch,
 	resolveManagedSessionState,
+	shouldAppendBrowserSystemPrompt,
 	validateToolArgs,
 } from "./lib/runtime.js";
 import { cleanupSecureTempArtifacts } from "./lib/temp.js";
@@ -104,10 +109,6 @@ function looksLikeDirectAgentBrowserBash(command: string): boolean {
 
 function isHarmlessAgentBrowserInspectionCommand(command: string): boolean {
 	return HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN.test(command);
-}
-
-function isPlainTextInspectionArgs(args: string[]): boolean {
-	return args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-V");
 }
 
 const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
@@ -195,18 +196,6 @@ function buildSharedBrowserPlaybookGuidelines(hasBraveApiKey: boolean): string[]
 	];
 }
 
-function buildBrowserSystemPromptAppendix(hasBraveApiKey: boolean): string {
-	return [
-		PROJECT_RULE_PROMPT,
-		"",
-		"Quick start:",
-		...QUICK_START_GUIDELINES.map((guideline) => `- ${guideline}`),
-		"",
-		"Browser operating playbook:",
-		...buildSharedBrowserPlaybookGuidelines(hasBraveApiKey).map((guideline) => `- ${guideline}`),
-	].join("\n");
-}
-
 function buildToolPromptGuidelines(hasBraveApiKey: boolean): string[] {
 	return [
 		...TOOL_PROMPT_GUIDELINES_PREFIX,
@@ -214,6 +203,30 @@ function buildToolPromptGuidelines(hasBraveApiKey: boolean): string[] {
 		...buildSharedBrowserPlaybookGuidelines(hasBraveApiKey),
 		...TOOL_PROMPT_GUIDELINES_SUFFIX,
 	];
+}
+
+function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean): Record<string, unknown> {
+	return sessionName ? { sessionName, usedImplicitSession } : {};
+}
+
+function redactRecoveryHint(recoveryHint: {
+	exampleArgs: string[];
+	exampleParams: { args: string[]; sessionMode: "fresh" };
+	reason: string;
+	recommendedSessionMode: "fresh";
+} | undefined): typeof recoveryHint {
+	if (!recoveryHint) {
+		return undefined;
+	}
+	const exampleArgs = redactInvocationArgs(recoveryHint.exampleArgs);
+	return {
+		...recoveryHint,
+		exampleArgs,
+		exampleParams: {
+			...recoveryHint.exampleParams,
+			args: exampleArgs,
+		},
+	};
 }
 
 async function closeManagedSession(options: { cwd: string; sessionName: string; timeoutMs: number }): Promise<void> {
@@ -235,7 +248,6 @@ async function closeManagedSession(options: { cwd: string; sessionName: string; 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	const hasBraveApiKey = hasUsableBraveApiKey();
-	const browserSystemPromptAppendix = buildBrowserSystemPromptAppendix(hasBraveApiKey);
 	const toolPromptGuidelines = buildToolPromptGuidelines(hasBraveApiKey);
 	const implicitSessionIdleTimeoutMs = getImplicitSessionIdleTimeoutMs();
 	const implicitSessionCloseTimeoutMs = getImplicitSessionCloseTimeoutMs();
@@ -246,26 +258,32 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let freshSessionOrdinal = 0;
 
 	pi.on("session_start", async (_event, ctx) => {
-		managedSessionActive = false;
 		managedSessionBaseName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
-		managedSessionName = managedSessionBaseName;
+		const restoredState = restoreManagedSessionStateFromBranch(ctx.sessionManager.getBranch(), managedSessionBaseName);
+		managedSessionActive = restoredState.active;
+		managedSessionName = restoredState.sessionName;
 		managedSessionCwd = ctx.cwd;
-		freshSessionOrdinal = 0;
+		freshSessionOrdinal = restoredState.freshSessionOrdinal;
 	});
 
 	pi.on("session_shutdown", async () => {
+		if (managedSessionActive) {
+			await closeManagedSession({
+				cwd: managedSessionCwd,
+				sessionName: managedSessionName,
+				timeoutMs: implicitSessionCloseTimeoutMs,
+			});
+		}
 		managedSessionActive = false;
-		await closeManagedSession({
-			cwd: managedSessionCwd,
-			sessionName: managedSessionName,
-			timeoutMs: implicitSessionCloseTimeoutMs,
-		});
 		await cleanupSecureTempArtifacts();
 	});
 
 	pi.on("before_agent_start", async (event) => {
+		if (!shouldAppendBrowserSystemPrompt(event.prompt)) {
+			return undefined;
+		}
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n${browserSystemPromptAppendix}`,
+			systemPrompt: `${event.systemPrompt}\n\n${PROJECT_RULE_PROMPT}`,
 		};
 	});
 
@@ -294,11 +312,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		promptGuidelines: toolPromptGuidelines,
 		parameters: AGENT_BROWSER_PARAMS,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const redactedArgs = redactInvocationArgs(params.args);
 			const validationError = validateToolArgs(params.args);
 			if (validationError) {
 				return {
 					content: [{ type: "text", text: validationError }],
-					details: { args: params.args, validationError },
+					details: { args: redactedArgs, validationError },
 					isError: true,
 				};
 			}
@@ -311,6 +330,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				managedSessionName,
 				sessionMode,
 			});
+			const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
+			const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
 			if (executionPlan.managedSessionName === freshSessionName) {
 				freshSessionOrdinal += 1;
 			}
@@ -319,10 +340,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				return {
 					content: [{ type: "text", text: executionPlan.validationError }],
 					details: {
-						args: params.args,
+						args: redactedArgs,
 						invalidValueFlag: executionPlan.invalidValueFlag,
 						sessionMode,
-						sessionRecoveryHint: executionPlan.recoveryHint,
+						sessionRecoveryHint: redactedRecoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,
 						validationError: executionPlan.validationError,
 					},
@@ -331,12 +352,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			onUpdate?.({
-				content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(executionPlan.effectiveArgs)}` }],
+				content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(redactedEffectiveArgs)}` }],
 				details: {
-					effectiveArgs: executionPlan.effectiveArgs,
+					effectiveArgs: redactedEffectiveArgs,
 					sessionMode,
-					sessionName: executionPlan.sessionName,
-					usedImplicitSession: executionPlan.usedImplicitSession,
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 				},
 			});
 
@@ -353,8 +373,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				return {
 					content: [{ type: "text", text: errorText }],
 					details: {
-						args: params.args,
-						effectiveArgs: executionPlan.effectiveArgs,
+						args: redactedArgs,
+						effectiveArgs: redactedEffectiveArgs,
 						sessionMode,
 						spawnError: processResult.spawnError.message,
 					},
@@ -369,10 +389,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				});
 				let presentationEnvelope = parsed.envelope;
 				const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
-				const plainTextInspection = isPlainTextInspectionArgs(params.args) && processSucceeded && parsed.parseError !== undefined;
-				const envelopeSuccess = plainTextInspection ? true : parsed.envelope?.success !== false;
+				const plainTextInspection = executionPlan.plainTextInspection && processSucceeded;
 				const parseSucceeded = plainTextInspection || parsed.parseError === undefined;
+				const envelopeSuccess = plainTextInspection ? true : parsed.envelope?.success !== false;
 				const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
+				const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
 
 				let navigationSummary: NavigationSummary | undefined;
 				if (succeeded && shouldCaptureNavigationSummary(executionPlan.commandInfo.command, parsed.envelope?.data)) {
@@ -423,9 +444,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 				const presentation = plainTextInspection
 					? {
-						content: [{ type: "text" as const, text: processResult.stdout.trim() }],
+						batchFailure: undefined,
+						batchSteps: undefined,
+						content: [{ type: "text" as const, text: inspectionText ?? "" }],
+						data: undefined,
+						fullOutputPath: undefined,
+						fullOutputPaths: undefined,
 						imagePath: undefined,
-						summary: `${params.args.join(" ")} completed`,
+						imagePaths: undefined,
+						summary: `${redactedArgs.join(" ")} completed`,
 					  }
 					: await buildToolPresentation({
 							commandInfo: executionPlan.commandInfo,
@@ -433,33 +460,40 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							envelope: presentationEnvelope,
 							errorText,
 					  });
+				const redactedContent = presentation.content.map((item) =>
+					item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,
+				);
 
 				return {
-					content: presentation.content,
+					content: redactedContent,
 					details: {
-						args: params.args,
-						batchFailure: presentation.batchFailure,
-						batchSteps: presentation.batchSteps,
+						args: redactedArgs,
+						batchFailure: redactSensitiveValue(presentation.batchFailure),
+						batchSteps: redactSensitiveValue(presentation.batchSteps),
 						command: executionPlan.commandInfo.command,
 						subcommand: executionPlan.commandInfo.subcommand,
-						data: presentation.data,
-						error: parsed.envelope?.error,
-						navigationSummary,
-						effectiveArgs: executionPlan.effectiveArgs,
+						data: redactSensitiveValue(presentation.data),
+						error: plainTextInspection ? undefined : redactSensitiveValue(parsed.envelope?.error),
+						inspection: plainTextInspection || undefined,
+						navigationSummary: redactSensitiveValue(navigationSummary),
+						effectiveArgs: redactedEffectiveArgs,
 						exitCode: processResult.exitCode,
 						fullOutputPath: presentation.fullOutputPath,
 						fullOutputPaths: presentation.fullOutputPaths,
 						imagePath: presentation.imagePath,
 						imagePaths: presentation.imagePaths,
-						parseError: parsed.parseError,
+						parseError: plainTextInspection ? undefined : parsed.parseError,
 						sessionMode,
-						sessionName: executionPlan.sessionName,
-						sessionRecoveryHint: executionPlan.recoveryHint,
+						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+						sessionRecoveryHint: redactedRecoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,
-						stderr: processResult.stderr || undefined,
-						stdout: parseSucceeded ? undefined : processResult.stdout,
-						summary: presentation.summary,
-						usedImplicitSession: executionPlan.usedImplicitSession,
+						stderr: processResult.stderr ? redactSensitiveText(processResult.stderr) : undefined,
+						stdout: plainTextInspection
+							? redactSensitiveText(inspectionText ?? "")
+							: parseSucceeded
+								? undefined
+								: redactSensitiveText(processResult.stdout),
+						summary: redactSensitiveText(presentation.summary),
 					},
 					isError: !succeeded,
 				};

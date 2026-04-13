@@ -13,6 +13,9 @@ Dedicated `pi` integration of `agent-browser` as a native tool.
 - Do **not** overengineer or solve hypothetical problems that do not exist in observed behavior.
 - Thoroughly check official `pi` docs/examples/source behavior before inventing bespoke integration patterns. Prefer an official `pi` mechanism whenever one exists.
 - Prioritize the global install path first. Most users will install this extension globally, not as a project-local extension.
+- For this repository, assume a single operator model: no human and no other agent is making changes here besides you.
+- Do **not** use subagents for this repository.
+- Treat every lingering scratch file, temp artifact, browser session, tmux session, or other side effect related to this repository as your responsibility to clean up.
 
 ## Documentation placement
 
@@ -34,7 +37,7 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 - Use `tmux` via bash commands.
 - Do **not** use the pi interactive shell extension for this workflow.
 - Drive `pi` like a real user by sending prompts normally.
-- When testing against other isolated `pi` sessions, feel free to ask those agents for candid feedback on the tool UX and behavior, including whether it feels clunky, uninformative, or slower without clear gain.
+- Do **not** delegate testing or review to other agents or isolated `pi` sessions for this repository.
 - After extension changes, `/reload` is the minimum, but a full close-and-relaunch of `pi` is preferred for higher confidence.
 - If continuing the same conversation after restart, use `/resume` or an explicit session path/id.
 - Resumed sessions should reflect the updated extension code after restart.
@@ -44,6 +47,7 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 - Prefer `tmux send-keys ... Enter` for prompt submission.
 - Capture larger pane ranges when debugging: `tmux capture-pane -p -S -300 -t <session>:0.0`.
 - Clean up tmux sessions after testing.
+- Before ending a turn, sweep for and remove repo-local scratch files, project-scoped temp artifacts, and lingering browser sessions created during the work unless the user explicitly asked to keep them.
 - Do not overfit testing to `example.com`; use it for smoke checks only, then validate against additional realistic pages and flows.
 
 ## Current testing focus

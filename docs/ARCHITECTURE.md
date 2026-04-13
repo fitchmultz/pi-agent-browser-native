@@ -84,6 +84,7 @@ Practical policy:
 - on normal `pi` shutdown, best-effort close the current extension-managed session
 - also set an idle timeout on extension-managed sessions so abandoned daemons self-clean after inactivity
 - clean up private temp spill artifacts owned by the extension-managed session on shutdown
+- reconstruct the current extension-managed session from persisted tool details on resume/reload so later default calls keep following the active managed browser
 - if an unnamed fresh launch replaces an active extension-managed session, best-effort close the old managed session after the switch succeeds
 - leave explicit caller-provided `--session` choices alone unless the caller closes them explicitly
 

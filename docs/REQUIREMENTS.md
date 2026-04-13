@@ -84,7 +84,7 @@ The design should comfortably support workflows such as:
 - web research
 - using browser UIs for other LLMs such as ChatGPT, Grok, Gemini, and Claude
 - isolated authenticated browser sessions
-- cloned-profile workflows similar to the patterns used in `pi-oracle`
+- upstream profile/debug workflows without adding a local profile-cloning layer in this package
 
 ## Implications for the implementation
 
