@@ -87,6 +87,7 @@ Practical policy:
 - reconstruct the current extension-managed session from persisted tool details on resume/reload so later default calls keep following the active managed browser
 - if an unnamed fresh launch replaces an active extension-managed session, best-effort close the old managed session after the switch succeeds
 - leave explicit caller-provided `--session` choices alone unless the caller closes them explicitly
+- after profiled `open` / `goto` / `navigate` calls, verify the active tab still matches the returned page URL and best-effort switch back when restored profile tabs steal focus
 
 This is primarily about ownership clarity and avoiding surprise, not adding a heavy safety wrapper. If the extension invented the session, the extension should own its lifecycle without breaking reload/resume semantics. If the caller explicitly chose the upstream session model, the extension should stay out of the way.
 
@@ -96,6 +97,8 @@ This is primarily about ownership clarity and avoiding surprise, not adding a he
 The extension should surface that clearly and avoid hidden restart behavior in v1.
 
 That means explicit startup-scoping flags like `--profile`, `--session-name`, and `--cdp` should remain explicit upstream choices instead of being wrapped in extra hidden restart or cloning logic.
+
+The wrapper may still apply narrow compatibility normalizations when observed behavior justifies them and the result remains thin, local, and opt-out. For example, if a specific site starts rejecting the default local headless Chrome user agent while the same flow works with a normal Chrome UA, the extension may inject a domain-specific fallback UA only when the caller did not already choose `--user-agent`, `--headed`, `--cdp`, `--auto-connect`, or a provider-backed launch.
 
 If the implicit session is already active and one of those startup-scoped flags appears again while `sessionMode` is still `"auto"`, the extension should fail clearly instead of silently sending a command shape that upstream would ignore.
 

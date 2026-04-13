@@ -16,6 +16,7 @@ import { buildToolPresentation, getAgentBrowserErrorText, parseAgentBrowserEnvel
 import {
 	buildExecutionPlan,
 	buildPromptPolicy,
+	chooseOpenResultTabCorrection,
 	createEphemeralSessionSeed,
 	createFreshSessionName,
 	createImplicitSessionName,
@@ -30,6 +31,8 @@ import {
 	resolveManagedSessionState,
 	shouldAppendBrowserSystemPrompt,
 	validateToolArgs,
+	type CompatibilityWorkaround,
+	type OpenResultTabCorrection,
 } from "./lib/runtime.js";
 import { cleanupSecureTempArtifacts, type PersistentSessionArtifactStore } from "./lib/temp.js";
 
@@ -311,41 +314,53 @@ function extractStringResultField(data: unknown, fieldName: "title" | "url"): st
 	return text.length > 0 ? text : undefined;
 }
 
+async function runSessionCommandData(options: {
+	args: string[];
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<unknown | undefined> {
+	const { args, cwd, sessionName, signal } = options;
+	if (!sessionName) return undefined;
+
+	const processResult = await runAgentBrowserProcess({
+		args: ["--json", "--session", sessionName, ...args],
+		cwd,
+		signal,
+	});
+	if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
+		return undefined;
+	}
+	const parsed = await parseAgentBrowserEnvelope({
+		stdout: processResult.stdout,
+		stdoutPath: processResult.stdoutSpillPath,
+	});
+	try {
+		if (parsed.parseError || parsed.envelope?.success === false) {
+			return undefined;
+		}
+		return parsed.envelope?.data;
+	} finally {
+		if (processResult.stdoutSpillPath) {
+			await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
+		}
+	}
+}
+
 async function collectNavigationSummary(options: {
 	cwd: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<NavigationSummary | undefined> {
 	const { cwd, sessionName, signal } = options;
-	if (!sessionName) return undefined;
-
-	const readField = async (fieldName: "title" | "url"): Promise<string | undefined> => {
-		const processResult = await runAgentBrowserProcess({
-			args: ["--json", "--session", sessionName, "get", fieldName],
-			cwd,
-			signal,
-		});
-		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
-			return undefined;
-		}
-		const parsed = await parseAgentBrowserEnvelope({
-			stdout: processResult.stdout,
-			stdoutPath: processResult.stdoutSpillPath,
-		});
-		try {
-			if (parsed.parseError || parsed.envelope?.success === false) {
-				return undefined;
-			}
-			return extractStringResultField(parsed.envelope?.data, fieldName);
-		} finally {
-			if (processResult.stdoutSpillPath) {
-				await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
-			}
-		}
-	};
-
-	const title = await readField("title");
-	const url = await readField("url");
+	const title = extractStringResultField(
+		await runSessionCommandData({ args: ["get", "title"], cwd, sessionName, signal }),
+		"title",
+	);
+	const url = extractStringResultField(
+		await runSessionCommandData({ args: ["get", "url"], cwd, sessionName, signal }),
+		"url",
+	);
 	if (!title && !url) return undefined;
 	return { title, url };
 }
@@ -355,6 +370,43 @@ function mergeNavigationSummaryIntoData(data: unknown, navigationSummary: Naviga
 		return { ...data, navigationSummary };
 	}
 	return { navigationSummary, result: data };
+}
+
+async function collectOpenResultTabCorrection(options: {
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+	targetTitle?: string;
+	targetUrl?: string;
+}): Promise<OpenResultTabCorrection | undefined> {
+	const { cwd, sessionName, signal, targetTitle, targetUrl } = options;
+	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, sessionName, signal });
+	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) {
+		return undefined;
+	}
+	const tabs = tabData.tabs.filter(isRecord).map((tab) => ({
+		active: tab.active === true,
+		index: typeof tab.index === "number" ? tab.index : undefined,
+		title: typeof tab.title === "string" ? tab.title : undefined,
+		url: typeof tab.url === "string" ? tab.url : undefined,
+	}));
+	return chooseOpenResultTabCorrection({ tabs, targetTitle, targetUrl });
+}
+
+async function applyOpenResultTabCorrection(options: {
+	correction: OpenResultTabCorrection;
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<OpenResultTabCorrection | undefined> {
+	const { correction, cwd, sessionName, signal } = options;
+	const result = await runSessionCommandData({
+		args: ["tab", String(correction.selectedIndex)],
+		cwd,
+		sessionName,
+		signal,
+	});
+	return result === undefined ? undefined : correction;
 }
 
 function buildSharedBrowserPlaybookGuidelines(hasBraveApiKey: boolean): string[] {
@@ -510,6 +562,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			});
 			const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
 			const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
+			const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
 			if (executionPlan.managedSessionName === freshSessionName) {
 				freshSessionOrdinal += 1;
 			}
@@ -532,6 +585,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			onUpdate?.({
 				content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(redactedEffectiveArgs)}` }],
 				details: {
+					compatibilityWorkaround,
 					effectiveArgs: redactedEffectiveArgs,
 					sessionMode,
 					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
@@ -552,6 +606,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					content: [{ type: "text", text: errorText }],
 					details: {
 						args: redactedArgs,
+						compatibilityWorkaround,
 						effectiveArgs: redactedEffectiveArgs,
 						sessionMode,
 						spawnError: processResult.spawnError.message,
@@ -585,6 +640,34 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							...presentationEnvelope,
 							data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary),
 						};
+					}
+				}
+
+				let openResultTabCorrection: OpenResultTabCorrection | undefined;
+				if (
+					succeeded &&
+					executionPlan.sessionName &&
+					params.args.some((token) => token === "--profile" || token.startsWith("--profile=")) &&
+					(executionPlan.commandInfo.command === "goto" ||
+						executionPlan.commandInfo.command === "navigate" ||
+						executionPlan.commandInfo.command === "open")
+				) {
+					const targetTitle = extractStringResultField(parsed.envelope?.data, "title");
+					const targetUrl = extractStringResultField(parsed.envelope?.data, "url");
+					const plannedTabCorrection = await collectOpenResultTabCorrection({
+						cwd: ctx.cwd,
+						sessionName: executionPlan.sessionName,
+						signal,
+						targetTitle,
+						targetUrl,
+					});
+					if (plannedTabCorrection) {
+						openResultTabCorrection = await applyOpenResultTabCorrection({
+							correction: plannedTabCorrection,
+							cwd: ctx.cwd,
+							sessionName: executionPlan.sessionName,
+							signal,
+						});
 					}
 				}
 
@@ -650,11 +733,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						batchFailure: redactSensitiveValue(presentation.batchFailure),
 						batchSteps: redactSensitiveValue(presentation.batchSteps),
 						command: executionPlan.commandInfo.command,
+						compatibilityWorkaround,
 						subcommand: executionPlan.commandInfo.subcommand,
 						data: redactSensitiveValue(presentation.data),
 						error: plainTextInspection ? undefined : redactSensitiveValue(parsed.envelope?.error),
 						inspection: plainTextInspection || undefined,
 						navigationSummary: redactSensitiveValue(navigationSummary),
+						openResultTabCorrection: redactSensitiveValue(openResultTabCorrection),
 						effectiveArgs: redactedEffectiveArgs,
 						exitCode: processResult.exitCode,
 						fullOutputPath: presentation.fullOutputPath,

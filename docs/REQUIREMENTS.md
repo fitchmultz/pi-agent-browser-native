@@ -85,6 +85,7 @@ The design should comfortably support workflows such as:
 - web research
 - using browser UIs for other LLMs such as ChatGPT, Grok, Gemini, and Claude
 - isolated authenticated browser sessions
+- headless authenticated ChatGPT/OpenAI browsing without forcing `--headed` or `--auto-connect`
 - upstream profile/debug workflows without adding a local profile-cloning layer in this package
 
 ## Implications for the implementation
@@ -95,6 +96,8 @@ The design should comfortably support workflows such as:
 - User-facing docs belong in `README.md` and the canonical published files under `docs/`.
 - Agent workflow and deeper testing procedures can stay in `AGENTS.md`, but published docs must not depend on that file being present.
 - Keep mitigations for legacy-skill coexistence simple; do not add extra moving parts unless observed behavior justifies them.
+- Prefer narrow, evidence-backed compatibility mitigations over broad stealth layers when a specific upstream site starts rejecting the default headless launch fingerprint.
+- Preserve the page that a profiled `open` just navigated to; if restored profile tabs steal focus during launch, the wrapper should best-effort switch back to the returned page URL before handing control back to the agent.
 
 ## Open design questions
 

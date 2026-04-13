@@ -10,6 +10,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
 const STARTUP_SCOPED_FLAGS = ["--cdp", "--profile", "--session-name"] as const;
+const OPEN_COMMANDS = new Set(["goto", "navigate", "open"]);
+const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.openai.com", "chatgpt.com"]);
 const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
@@ -57,7 +59,21 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
 	"--color-scheme",
 	"--device",
 	"--port",
+	"--args",
+	"--user-agent",
+	"--allowed-domains",
+	"--action-policy",
+	"--confirm-actions",
+	"--max-output",
+	"--model",
 ]);
+const DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM: Partial<Record<NodeJS.Platform, string>> = {
+	darwin: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+	linux: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+	win32: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+};
+const FALLBACK_HEADLESS_COMPAT_USER_AGENT =
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 const SHELL_OPERATOR_TOKENS = new Set(["&&", "||", "|", ";", ">", ">>", "<"]);
 const MAX_PROJECT_SLUG_LENGTH = 24;
 const SESSION_NAME_CWD_HASH_LENGTH = 8;
@@ -84,8 +100,20 @@ export interface InvalidValueFlagDetails {
 	receivedToken?: string;
 }
 
+export interface CompatibilityWorkaround {
+	id: "chatgpt-headless-user-agent";
+	reason: string;
+}
+
+export interface OpenResultTabCorrection {
+	selectedIndex: number;
+	targetTitle?: string;
+	targetUrl: string;
+}
+
 export interface ExecutionPlan {
 	commandInfo: CommandInfo;
+	compatibilityWorkaround?: CompatibilityWorkaround;
 	effectiveArgs: string[];
 	invalidValueFlag?: InvalidValueFlagDetails;
 	managedSessionName?: string;
@@ -467,6 +495,96 @@ function hasFlagToken(args: string[], flag: string): boolean {
 	return args.some((token) => token === flag || token.startsWith(`${flag}=`));
 }
 
+function getFlagValue(args: string[], flag: string): string | undefined {
+	for (const [index, token] of args.entries()) {
+		if (token === flag) {
+			return args[index + 1];
+		}
+		if (token.startsWith(`${flag}=`)) {
+			return token.slice(flag.length + 1);
+		}
+	}
+	return undefined;
+}
+
+function isBooleanFlagEnabled(args: string[], flag: string): boolean {
+	for (const [index, token] of args.entries()) {
+		if (token === flag) {
+			const nextToken = args[index + 1]?.trim().toLowerCase();
+			if (nextToken === "false") {
+				return false;
+			}
+			return true;
+		}
+		if (token.startsWith(`${flag}=`)) {
+			return token.slice(flag.length + 1).trim().toLowerCase() !== "false";
+		}
+	}
+	return false;
+}
+
+function normalizeComparableUrl(url: string): string | undefined {
+	const normalizedUrl = url.trim();
+	if (normalizedUrl.length === 0) {
+		return undefined;
+	}
+	try {
+		const parsedUrl = new URL(normalizedUrl);
+		parsedUrl.hash = "";
+		return parsedUrl.toString();
+	} catch {
+		return undefined;
+	}
+}
+
+function parseComparableNavigationUrl(url: string): URL | undefined {
+	try {
+		return new URL(url);
+	} catch {
+		try {
+			return new URL(`https://${url}`);
+		} catch {
+			return undefined;
+		}
+	}
+}
+
+function getDefaultHeadlessCompatUserAgent(platform: NodeJS.Platform = process.platform): string {
+	return DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM[platform] ?? FALLBACK_HEADLESS_COMPAT_USER_AGENT;
+}
+
+function getCompatibilityWorkaround(args: string[], commandInfo: CommandInfo): CompatibilityWorkaround | undefined {
+	if (!commandInfo.command || !OPEN_COMMANDS.has(commandInfo.command) || !commandInfo.subcommand) {
+		return undefined;
+	}
+	if (hasFlagToken(args, "--user-agent")) {
+		return undefined;
+	}
+	if (isBooleanFlagEnabled(args, "--headed")) {
+		return undefined;
+	}
+	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p") || hasFlagToken(args, "--auto-connect")) {
+		return undefined;
+	}
+	const engine = getFlagValue(args, "--engine");
+	if (engine && engine !== "chrome") {
+		return undefined;
+	}
+	const parsedTargetUrl = parseComparableNavigationUrl(commandInfo.subcommand);
+	if (!parsedTargetUrl || !["http:", "https:"].includes(parsedTargetUrl.protocol)) {
+		return undefined;
+	}
+	const hostname = parsedTargetUrl.hostname.toLowerCase();
+	if (!OPENAI_HEADLESS_COMPAT_HOSTS.has(hostname)) {
+		return undefined;
+	}
+	return {
+		id: "chatgpt-headless-user-agent",
+		reason:
+			"OpenAI web properties currently challenge the default headless Chrome user agent; inject a normal Chrome user agent to preserve the default headless workflow without requiring headed mode or auto-connect.",
+	};
+}
+
 export function extractExplicitSessionName(args: string[]): string | undefined {
 	for (const [index, token] of args.entries()) {
 		if (token === "--session") {
@@ -556,6 +674,7 @@ export function buildExecutionPlan(
 	const explicitSessionName = extractExplicitSessionName(args);
 	const shouldCreateFreshManagedSession =
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && commandInfo.command !== "close";
+	const compatibilityWorkaround = getCompatibilityWorkaround(args, commandInfo);
 	let managedSessionName: string | undefined;
 	let recoveryHint: SessionRecoveryHint | undefined;
 	let sessionName = explicitSessionName;
@@ -587,10 +706,14 @@ export function buildExecutionPlan(
 		sessionName = options.freshSessionName;
 	}
 
+	if (compatibilityWorkaround) {
+		effectiveArgs.push("--user-agent", getDefaultHeadlessCompatUserAgent());
+	}
 	effectiveArgs.push(...args);
 
 	return {
 		commandInfo,
+		compatibilityWorkaround,
 		effectiveArgs,
 		managedSessionName,
 		plainTextInspection,
@@ -600,6 +723,48 @@ export function buildExecutionPlan(
 		usedImplicitSession,
 		validationError,
 	};
+}
+
+export function chooseOpenResultTabCorrection(options: {
+	activeTabIndex?: number;
+	tabs: Array<{ active?: boolean; index?: number; title?: string; url?: string }>;
+	targetTitle?: string;
+	targetUrl?: string;
+}): OpenResultTabCorrection | undefined {
+	const normalizedTargetUrl =
+		typeof options.targetUrl === "string" ? normalizeComparableUrl(options.targetUrl) : undefined;
+	if (!normalizedTargetUrl) {
+		return undefined;
+	}
+
+	const tabsWithIndices = options.tabs.map((tab, index) => ({
+		...tab,
+		index: typeof tab.index === "number" ? tab.index : index,
+	}));
+	const activeTab =
+		tabsWithIndices.find((tab) => tab.active === true) ??
+		(typeof options.activeTabIndex === "number" ? tabsWithIndices.find((tab) => tab.index === options.activeTabIndex) : undefined);
+	if (activeTab && normalizeComparableUrl(activeTab.url ?? "") === normalizedTargetUrl) {
+		return undefined;
+	}
+
+	const matchingTabs = tabsWithIndices.filter((tab) => normalizeComparableUrl(tab.url ?? "") === normalizedTargetUrl);
+	if (matchingTabs.length === 0) {
+		return undefined;
+	}
+	const trimmedTargetTitle = typeof options.targetTitle === "string" ? options.targetTitle.trim() : "";
+	const titledMatch =
+		trimmedTargetTitle.length === 0
+			? undefined
+			: matchingTabs.find((tab) => typeof tab.title === "string" && tab.title.trim() === trimmedTargetTitle);
+	const selectedTab = titledMatch ?? matchingTabs[0];
+	return selectedTab.index === undefined
+		? undefined
+		: {
+			selectedIndex: selectedTab.index,
+			targetTitle: trimmedTargetTitle.length > 0 ? trimmedTargetTitle : undefined,
+			targetUrl: normalizedTargetUrl,
+		};
 }
 
 export function parseCommandInfo(args: string[]): CommandInfo {

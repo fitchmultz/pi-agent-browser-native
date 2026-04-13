@@ -178,6 +178,7 @@ Validated workflow examples:
 - click a link and confirm the destination title
 - use an explicit `--session` across multiple tool calls
 - use an explicit `--profile` and verify persisted browser storage across restarts
+- open `chatgpt.com` headlessly with `--profile Default` without forcing `--headed` or `--auto-connect`
 - verify `/reload` and full restart + `/resume` keep following the same implicit managed browser session
 - run `batch` with JSON via `stdin`
 - run `eval --stdin`
@@ -191,7 +192,10 @@ Current cautions:
 - startup-scoped flags like `--profile`, `--session-name`, and `--cdp` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
 - implicit `piab-*` sessions are extension-managed convenience sessions; they stay alive across `pi` shutdown/reload so later default calls can keep following the active managed browser on `/reload` or `/resume`, rely on the configured idle timeout to reduce stale background daemons, store persisted-session large snapshot spill files under a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` survives reload/resume without unbounded growth, and still clean up process-private temp spill artifacts on shutdown
 - `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
+- for direct headless local Chrome launches to `chatgpt.com` and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
+- after profiled `open` calls, the extension best-effort re-selects the tab that matches the returned page URL when restored profile tabs steal focus during launch
 - explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension
+- explicit caller-provided `--user-agent` values win over the ChatGPT/OpenAI compatibility workaround
 - tool progress/details redact sensitive invocation values such as `--headers`, proxy credentials, and auth-bearing URL parameters before echoing them back into Pi
 
 ### Switching from public browsing to a fresh profile/debug launch

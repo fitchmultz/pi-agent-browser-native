@@ -182,8 +182,10 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds
 - treat explicit caller-provided `--session` choices as user-managed
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
+- after profiled `open` / `goto` / `navigate`, if upstream leaves a restored profile tab active instead of the page that was just opened, best-effort switch back to the tab whose URL matches the returned open result before returning control to the agent
 - treat successful plain-text inspection commands like `--help` and `--version` as stateless: do not inject the implicit managed session and do not let those calls claim the managed-session slot
 - if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active while `sessionMode` is `"auto"`, return a validation error with a structured recovery hint that recommends `sessionMode: "fresh"`
+- for direct headless local Chrome launches to `chatgpt.com` / `chat.openai.com`, allow a narrow compatibility fallback that injects a normal Chrome `--user-agent` only when the caller did not explicitly provide one and did not choose `--headed`, `--cdp`, `--auto-connect`, or a provider-backed launch
 
 ## Non-goals
 

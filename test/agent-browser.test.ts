@@ -29,6 +29,7 @@ import {
 import {
 	buildExecutionPlan,
 	buildPromptPolicy,
+	chooseOpenResultTabCorrection,
 	createFreshSessionName,
 	createImplicitSessionName,
 	getImplicitSessionCloseTimeoutMs,
@@ -542,6 +543,47 @@ test("buildExecutionPlan assigns a new managed session for fresh session mode", 
 	assert.equal(plan.recoveryHint, undefined);
 });
 
+test("buildExecutionPlan injects the ChatGPT headless compatibility user-agent only when needed", () => {
+	const plan = buildExecutionPlan(["--profile", "Default", "open", "https://chatgpt.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(plan.compatibilityWorkaround?.id, "chatgpt-headless-user-agent");
+	const userAgentFlagIndex = plan.effectiveArgs.indexOf("--user-agent");
+	assert.ok(userAgentFlagIndex >= 0);
+	assert.match(plan.effectiveArgs[userAgentFlagIndex + 1] ?? "", /Chrome\/146\.0\.0\.0/);
+	assert.doesNotMatch(plan.effectiveArgs[userAgentFlagIndex + 1] ?? "", /HeadlessChrome/);
+
+	const callerProvidedUserAgentPlan = buildExecutionPlan(
+		[
+			"--profile",
+			"Default",
+			"--user-agent",
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+			"open",
+			"https://chatgpt.com",
+		],
+		{
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: false,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		},
+	);
+	assert.equal(callerProvidedUserAgentPlan.compatibilityWorkaround, undefined);
+	assert.equal(callerProvidedUserAgentPlan.effectiveArgs.filter((token) => token === "--user-agent").length, 1);
+
+	const headedPlan = buildExecutionPlan(["--profile", "Default", "--headed", "open", "https://chatgpt.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(headedPlan.compatibilityWorkaround, undefined);
+});
+
 test("buildPromptPolicy and getLatestUserPrompt derive legacy bash policy from prompt text without globals", () => {
 	const prompt = getLatestUserPrompt([
 		{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Not relevant" }] } },
@@ -838,6 +880,40 @@ process.stdout.write(JSON.stringify({ success: true, data: { args } }));`,
 test("parseCommandInfo skips global flags with values", () => {
 	const commandInfo = parseCommandInfo(["--session", "named", "--profile", "./profile", "tab", "list"]);
 	assert.deepEqual(commandInfo, { command: "tab", subcommand: "list" });
+});
+
+test("parseCommandInfo treats compatibility and launch flag values as non-command tokens", () => {
+	const commandInfo = parseCommandInfo([
+		"--user-agent",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+		"--args",
+		"--disable-gpu,--lang=en-US",
+		"open",
+		"https://example.com",
+	]);
+	assert.deepEqual(commandInfo, { command: "open", subcommand: "https://example.com" });
+});
+
+test("chooseOpenResultTabCorrection targets the navigated tab without disturbing already-correct active tabs", () => {
+	assert.deepEqual(
+		chooseOpenResultTabCorrection({
+			tabs: [
+				{ active: false, index: 0, title: "Example Domain", url: "https://example.com/" },
+				{ active: true, index: 1, title: "Grok", url: "https://grok.com/" },
+			],
+			targetTitle: "Example Domain",
+			targetUrl: "https://example.com",
+		}),
+		{ selectedIndex: 0, targetTitle: "Example Domain", targetUrl: "https://example.com/" },
+	);
+	assert.equal(
+		chooseOpenResultTabCorrection({
+			tabs: [{ active: true, index: 0, title: "Example Domain", url: "https://example.com/" }],
+			targetTitle: "Example Domain",
+			targetUrl: "https://example.com/",
+		}),
+		undefined,
+	);
 });
 
 test("parseAgentBrowserEnvelope reports invalid JSON clearly", async () => {
@@ -1646,6 +1722,61 @@ if (args.includes("click")) {
 	}
 });
 
+test("agentBrowserExtension re-selects the navigated tab after profiled opens when restored tabs steal focus", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { index: 0, title: "Example Domain", url: "https://example.com/", active: false },
+    { index: 1, title: "Grok", url: "https://grok.com/", active: true }
+  ] } }));
+} else if (args.includes("tab") && args.includes("0")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { index: 0, title: "Example Domain", url: "https://example.com/" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: "https://example.com/" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "--profile", "Default", "open", "https://example.com"],
+			});
+			assert.equal(result.isError, false);
+			assert.deepEqual(result.details?.openResultTabCorrection, {
+				selectedIndex: 0,
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 3);
+			assert.deepEqual(invocations[0]?.args, [
+				"--json",
+				"--session",
+				"named",
+				"--profile",
+				"Default",
+				"open",
+				"https://example.com",
+			]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "0"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnvelope still sees the full payload", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
@@ -1874,9 +2005,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { url: args[args.leng
 			assert.equal((profiledOpen.details?.effectiveArgs as string[] | undefined)?.includes("--profile"), true);
 			assert.notEqual(profiledOpen.details?.sessionName, firstSessionName);
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 2);
+			assert.equal(invocations.length, 3);
 			assert.equal(invocations[1]?.args.includes("--profile"), true);
 			assert.equal(invocations[1]?.args.includes(String(firstSessionName)), false);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", String(profiledOpen.details?.sessionName), "tab", "list"]);
 		});
 	} finally {
 		await rm(firstParent, { force: true, recursive: true });
@@ -1946,8 +2078,9 @@ process.stdout.write(JSON.stringify(envelope));`,
 					assert.equal(reopened.isError, false);
 
 					const finalInvocations = await readInvocationLog(logPath);
-					assert.equal(finalInvocations.length, 3);
+					assert.equal(finalInvocations.length, 4);
 					assert.equal(finalInvocations[2]?.args.includes("--profile"), true);
+					assert.deepEqual(finalInvocations[3]?.args, ["--json", "--session", String(reopened.details?.sessionName), "tab", "list"]);
 				},
 			);
 		} finally {
@@ -2016,7 +2149,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 			assert.equal(followUpSnapshot.details?.usedImplicitSession, true);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 4);
+			assert.equal(invocations.length, 5);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", String(firstSessionName), "open", "https://example.com"]);
 			assert.equal(invocations[0]?.idleTimeout, "1234");
 			assert.deepEqual(invocations[1]?.args, [
@@ -2029,9 +2162,10 @@ process.stdout.write(JSON.stringify(envelope));`,
 				"https://example.com/profile",
 			]);
 			assert.equal(invocations[1]?.idleTimeout, "1234");
-			assert.deepEqual(invocations[2]?.args, ["--session", String(firstSessionName), "close"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", String(freshSessionName), "snapshot", "-i"]);
-			assert.equal(invocations[3]?.idleTimeout, "1234");
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", String(freshSessionName), "tab", "list"]);
+			assert.deepEqual(invocations[3]?.args, ["--session", String(firstSessionName), "close"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", String(freshSessionName), "snapshot", "-i"]);
+			assert.equal(invocations[4]?.idleTimeout, "1234");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -2071,8 +2205,9 @@ process.exit(shouldFail ? 1 : 0);`,
 			assert.equal((followUp.details?.effectiveArgs as string[] | undefined)?.includes("--profile"), true);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 2);
+			assert.equal(invocations.length, 3);
 			assert.equal(invocations[1]?.args.includes("--profile"), true);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", String(followUp.details?.sessionName), "tab", "list"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

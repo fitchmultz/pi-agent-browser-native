@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3 - 2026-04-13
+
+### Fixed
+- direct headless local Chrome launches to `chatgpt.com` and `chat.openai.com` now inject a normal Chrome user agent when the caller did not explicitly choose one, keeping authenticated ChatGPT/OpenAI browsing working without forcing `--headed` or `--auto-connect`
+- profiled `open` / `goto` / `navigate` calls now best-effort switch back to the page that was just opened when restored profile tabs steal focus during launch, reducing confusing cross-tab drift in profile-backed sessions
+- command parsing now treats additional value-taking global flags like `--user-agent`, `--args`, `--allowed-domains`, `--action-policy`, and related launch options as launch metadata instead of accidentally parsing their values as subcommands
+- README, requirements, architecture notes, and tool-contract docs now describe the new headless ChatGPT/OpenAI compatibility behavior and the profiled-tab focus recovery path
+
 ## 0.2.2 - 2026-04-12
 
 ### Fixed
