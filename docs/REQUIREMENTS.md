@@ -71,7 +71,8 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 
 - The primary confidence path is a real `pi` session driven in `tmux`.
 - For local checkout validation, launch `pi --no-extensions -e .` from the repository root so only the checkout copy loads.
-- Prefer full `pi` restart over `/reload` when validating extension changes.
+- Validate both `/reload` and a full `pi` restart with `/resume` when changes touch managed-session continuity, reload behavior, or persisted artifact paths.
+- Prefer full `pi` restart over `/reload` when validating extension changes beyond a quick reload smoke check.
 - Use `/resume` when needed after restart.
 - Keep testing broader than a single smoke site like `example.com`.
 - Maintain a concrete release/package verification workflow in `docs/RELEASE.md` and matching repository scripts.

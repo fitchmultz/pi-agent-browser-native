@@ -141,13 +141,13 @@ Additional structured fields can appear when relevant:
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `imagePath` / `imagePaths` for screenshots and batched image outputs
-- `fullOutputPath` / `fullOutputPaths` when large snapshot output is compacted and spilled to a private temp file
+- `fullOutputPath` / `fullOutputPaths` when large snapshot output is compacted and spilled to a private file; persisted sessions keep that path under a private session-scoped artifact directory so it survives reload/resume
 - `sessionRecoveryHint` when startup-scoped flags need `sessionMode: "fresh"`
 - `inspection: true` plus `stdout` for successful plain-text inspection commands like `--help` and `--version`
 
 When the tool echoes `args` or `effectiveArgs` back into Pi, sensitive values such as `--headers`, proxy credentials, and auth-bearing URL parameters should be redacted first.
 
-For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private temp JSON spill file with the full upstream snapshot payload.
+For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private JSON spill file with the full upstream snapshot payload. Persisted sessions should keep that spill file under a private session-scoped artifact directory so the path remains usable after reload/restart.
 
 ## High-value result rendering
 
@@ -156,6 +156,7 @@ For oversized snapshots, details should switch to a compact metadata object and 
 Worth doing in v1:
 - screenshots → inline image attachment
 - snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path kept in `details.fullOutputPath` when the inline result would otherwise be too large
+- extraction-style commands like `eval --stdin` and `get title` → scalar-first text with lightweight origin context when available
 - navigation actions like `click`, `back`, `forward`, and `reload` → lightweight post-action title/url summary when available
 - tab lists → compact summary/table
 - stream status → enabled/connected/port summary
@@ -173,9 +174,9 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - derive the base implicit session name from the official `pi` session id plus a cwd hash so same-named checkouts do not collide
 - respect explicit upstream `--session` with minimal interference
 - treat the extension-managed session as convenience state owned by the wrapper
-- on normal `pi` shutdown, best-effort close the current extension-managed session
+- preserve the current extension-managed session across normal `pi` shutdown/reload so persisted sessions can keep following the live browser on `/reload` or `/resume`
 - set an idle timeout on extension-managed sessions so abandoned daemons eventually self-clean
-- clean up private temp spill artifacts owned by the extension-managed session on shutdown
+- clean up process-private temp spill artifacts on shutdown, while keeping persisted-session snapshot spill files in a private session-scoped artifact directory so `details.fullOutputPath` survives reload/restart
 - reconstruct the current extension-managed session from persisted tool details on resume/reload so later default calls keep following the active managed browser
 - when an unnamed `sessionMode: "fresh"` launch succeeds, make it the new extension-managed session so later default calls keep using it
 - if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds

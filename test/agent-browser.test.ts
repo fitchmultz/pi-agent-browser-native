@@ -62,7 +62,13 @@ function createToolBranchEntry(options: { details: Record<string, unknown>; isEr
 	};
 }
 
-function createExtensionHarness(options: { branch?: unknown[]; cwd: string; prompt?: string }) {
+function createExtensionHarness(options: {
+	branch?: unknown[];
+	cwd: string;
+	prompt?: string;
+	sessionDir?: string;
+	sessionFile?: string;
+}) {
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 	let registeredTool:
 		| {
@@ -94,10 +100,13 @@ function createExtensionHarness(options: { branch?: unknown[]; cwd: string; prom
 	assert.ok(registeredTool, "expected the extension to register the agent_browser tool");
 
 	const branch = options.branch ?? buildUserBranch(options.prompt);
+	const sessionDir = options.sessionDir ?? (options.sessionFile ? dirname(options.sessionFile) : undefined);
 	const ctx = {
 		cwd: options.cwd,
 		sessionManager: {
 			getBranch: () => branch,
+			getSessionDir: () => sessionDir,
+			getSessionFile: () => options.sessionFile,
 			getSessionId: () => TEST_SESSION_ID,
 		},
 	} as const;
@@ -675,6 +684,21 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 	);
 	assert.deepEqual(inspectionAllowed, []);
 
+	for (const command of [
+		"echo agent-browser",
+		"grep agent-browser README.md",
+		"printf '%s\\n' agent-browser",
+		"echo ok && grep agent-browser README.md",
+	]) {
+		const innocuousResults = await runExtensionEventResults(
+			defaultHarness.handlers,
+			"tool_call",
+			{ toolName: "bash", input: { command } },
+			defaultHarness.ctx,
+		);
+		assert.deepEqual(innocuousResults, [], command);
+	}
+
 	const debugHarness = createExtensionHarness({ cwd: process.cwd(), prompt: "Please debug the browser integration via bash." });
 	const debugAllowed = await runExtensionEventResults(
 		debugHarness.handlers,
@@ -963,6 +987,38 @@ test("buildToolPresentation enriches click results with a current-page navigatio
 	assert.match(presentation.summary, /click → Destination Docs/);
 });
 
+test("buildToolPresentation formats scalar extraction results for eval and get commands", async () => {
+	const evalPresentation = await buildToolPresentation({
+		commandInfo: { command: "eval", subcommand: "--stdin" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "https://example.com/",
+				result: "Example Domain",
+			},
+		},
+	});
+	assert.equal(evalPresentation.content[0]?.type, "text");
+	assert.equal((evalPresentation.content[0] as { text: string }).text, "Example Domain\n\nOrigin: https://example.com/");
+	assert.equal(evalPresentation.summary, "Eval result: Example Domain");
+
+	const getPresentation = await buildToolPresentation({
+		commandInfo: { command: "get", subcommand: "title" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "https://example.com/",
+				result: "Example Domain",
+			},
+		},
+	});
+	assert.equal(getPresentation.content[0]?.type, "text");
+	assert.equal((getPresentation.content[0] as { text: string }).text, "Example Domain\n\nOrigin: https://example.com/");
+	assert.equal(getPresentation.summary, "Title: Example Domain");
+});
+
 test("buildToolPresentation formats batch output for the model", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "batch" },
@@ -1146,6 +1202,45 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 	await rm(spillPath, { force: true });
 });
 
+test("buildToolPresentation keeps compact snapshot spill files in the persisted session artifact directory when available", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-store-"));
+	const refs = Object.fromEntries(
+		Array.from({ length: 90 }, (_, index) => [
+			`e${index + 1}`,
+			{ name: index % 3 === 0 ? `Persisted control ${index + 1}` : "", role: index % 5 === 0 ? "button" : "generic" },
+		]),
+	);
+	const snapshot = Array.from({ length: 120 }, (_, index) => `- generic \"Persisted snapshot row ${index + 1}\" [ref=e${index + 1}] clickable [onclick]`).join("\n");
+
+	try {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "https://example.com/persisted",
+					refs,
+					snapshot,
+				},
+			},
+			persistentArtifactStore: { sessionDir, sessionId: TEST_SESSION_ID },
+		});
+
+		const spillPath = presentation.fullOutputPath;
+		assert.equal(typeof spillPath, "string");
+		assert.equal(spillPath?.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
+		await cleanupSecureTempArtifacts();
+		assert.match(await readFile(String(spillPath), "utf8"), /Persisted snapshot row 120/);
+		assert.equal((await stat(String(spillPath))).mode & 0o777, 0o600);
+		assert.equal((await stat(dirname(String(spillPath)))).mode & 0o777, 0o700);
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(sessionDir, { force: true, recursive: true });
+	}
+});
+
 test("buildToolPresentation prefers main content sections over top-of-page chrome in compact snapshots", async () => {
 	const refs = Object.fromEntries(
 		Array.from({ length: 90 }, (_, index) => {
@@ -1282,6 +1377,43 @@ test("buildToolPresentation skips oversized inline image attachments", { concurr
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension persists compact snapshot spill files for persisted sessions across shutdown cleanup", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-"));
+	const sessionFile = join(sessionDir, "session.jsonl");
+	const basePath = process.env.PATH ?? "";
+	const refs = Object.fromEntries(
+		Array.from({ length: 90 }, (_, index) => [
+			`e${index + 1}`,
+			{ name: index % 3 === 0 ? `Extension persisted control ${index + 1}` : "", role: index % 5 === 0 ? "button" : "generic" },
+		]),
+	);
+	const snapshot = Array.from({ length: 120 }, (_, index) => `- generic \"Extension persisted snapshot row ${index + 1}\" [ref=e${index + 1}] clickable [onclick]`).join("\n");
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: true, data: ${JSON.stringify({ origin: "https://example.com/persisted-extension", refs, snapshot })} }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionDir, sessionFile });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(result.isError, false);
+			const spillPath = result.details?.fullOutputPath as string | undefined;
+			assert.equal(typeof spillPath, "string");
+			assert.equal(spillPath?.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
+			await runExtensionEvent(harness.handlers, "session_shutdown");
+			assert.match(await readFile(String(spillPath), "utf8"), /Extension persisted snapshot row 120/);
+		});
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(tempDir, { force: true, recursive: true });
+		await rm(sessionDir, { force: true, recursive: true });
 	}
 });
 
@@ -1577,6 +1709,8 @@ process.stdout.write(JSON.stringify(envelope));`,
 				args: ["open", "https://example.com/first"],
 			});
 			assert.equal(firstOpen.isError, false);
+			await runExtensionEvent(firstHarness.handlers, "session_shutdown");
+			assert.equal((await readInvocationLog(logPath)).length, 1);
 
 			const resumedBranch = [
 				createToolBranchEntry({
@@ -1764,6 +1898,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				((profiledOpen.details?.effectiveArgs as string[] | undefined) ?? []).includes(String(freshSessionName)),
 				true,
 			);
+			await runExtensionEvent(firstHarness.handlers, "session_shutdown");
 
 			const resumedHarness = createExtensionHarness({
 				branch: [

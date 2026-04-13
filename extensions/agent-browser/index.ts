@@ -31,7 +31,7 @@ import {
 	shouldAppendBrowserSystemPrompt,
 	validateToolArgs,
 } from "./lib/runtime.js";
-import { cleanupSecureTempArtifacts } from "./lib/temp.js";
+import { cleanupSecureTempArtifacts, type PersistentSessionArtifactStore } from "./lib/temp.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
 
@@ -98,8 +98,9 @@ function buildInvocationPreview(effectiveArgs: string[]): string {
 
 const AGENT_BROWSER_BASH_PREFIX = String.raw`(?:env(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+)*\s+)?(?:(?:npx|bunx)(?:\s+-[^\s;&|]+|\s+--[^\s;&|]+(?:=[^\s;&|]+)?)*\s+|(?:pnpm|yarn)\s+dlx(?:\s+-[^\s;&|]+|\s+--[^\s;&|]+(?:=[^\s;&|]+)?)*\s+)?`;
 const AGENT_BROWSER_BASH_EXECUTABLE = String.raw`(?:[.~]|\.\.?|\/)?(?:[^\s;&|]+\/)?agent-browser`;
+const SHELL_COMMAND_SEGMENT_START_PATTERN = String.raw`(?:^\s*|(?:&&|\|\||[;&|])\s*)`;
 const DIRECT_AGENT_BROWSER_BASH_PATTERN = new RegExp(
-	String.raw`(^|[\s;&|])${AGENT_BROWSER_BASH_PREFIX}${AGENT_BROWSER_BASH_EXECUTABLE}(?=\s|$)`,
+	String.raw`${SHELL_COMMAND_SEGMENT_START_PATTERN}${AGENT_BROWSER_BASH_PREFIX}${AGENT_BROWSER_BASH_EXECUTABLE}(?=\s|$)`,
 );
 const HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN = /(command\s+-v|which|type\s+-P)\s+agent-browser\b/;
 
@@ -209,6 +210,22 @@ function buildSessionDetailFields(sessionName: string | undefined, usedImplicitS
 	return sessionName ? { sessionName, usedImplicitSession } : {};
 }
 
+function getPersistentSessionArtifactStore(ctx: {
+	sessionManager: {
+		getSessionDir?: () => string;
+		getSessionFile?: () => string | undefined;
+		getSessionId: () => string | undefined;
+	};
+}): PersistentSessionArtifactStore | undefined {
+	const sessionFile = typeof ctx.sessionManager.getSessionFile === "function" ? ctx.sessionManager.getSessionFile() : undefined;
+	const sessionDir = typeof ctx.sessionManager.getSessionDir === "function" ? ctx.sessionManager.getSessionDir() : undefined;
+	const sessionId = ctx.sessionManager.getSessionId();
+	if (!sessionFile || !sessionDir || !sessionId) {
+		return undefined;
+	}
+	return { sessionDir, sessionId };
+}
+
 function redactRecoveryHint(recoveryHint: {
 	exampleArgs: string[];
 	exampleParams: { args: string[]; sessionMode: "fresh" };
@@ -267,13 +284,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
-		if (managedSessionActive) {
-			await closeManagedSession({
-				cwd: managedSessionCwd,
-				sessionName: managedSessionName,
-				timeoutMs: implicitSessionCloseTimeoutMs,
-			});
-		}
 		managedSessionActive = false;
 		await cleanupSecureTempArtifacts();
 	});
@@ -459,6 +469,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							cwd: ctx.cwd,
 							envelope: presentationEnvelope,
 							errorText,
+							persistentArtifactStore: getPersistentSessionArtifactStore(ctx),
 					  });
 				const redactedContent = presentation.content.map((item) =>
 					item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,

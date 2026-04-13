@@ -1,14 +1,14 @@
 /**
- * Purpose: Create private temporary files for the pi-agent-browser extension without leaking artifacts broadly on disk.
- * Responsibilities: Maintain a process-private temp root, stamp explicit ownership markers, enforce an aggregate temp-artifact disk budget, create securely permissioned temp files, prune explicitly owned stale temp roots from prior runs, and best-effort clean all owned roots on process exit.
- * Scope: Temporary artifact lifecycle only; callers decide what data to write and when to delete long-lived references.
+ * Purpose: Create private temporary and persisted spill files for the pi-agent-browser extension without leaking artifacts broadly on disk.
+ * Responsibilities: Maintain a process-private temp root, stamp explicit ownership markers, enforce an aggregate temp-artifact disk budget, create securely permissioned temp files, create session-scoped persisted spill files for resumable sessions, prune explicitly owned stale temp roots from prior runs, and best-effort clean all owned roots on process exit.
+ * Scope: Artifact lifecycle helpers only; callers decide what data to write and when to delete or retain long-lived references.
  * Usage: Imported by result/process helpers when they need secure spill files instead of world-readable shared tmp paths.
- * Invariants/Assumptions: Temp artifacts live under the OS temp directory, each active run uses a dedicated 0700 directory, files are created with exclusive 0600 permissions, and stale pruning only touches roots with an explicit pi-agent-browser ownership marker.
+ * Invariants/Assumptions: Temp artifacts live under the OS temp directory, each active run uses a dedicated 0700 directory, files are created with exclusive 0600 permissions, session-scoped persisted artifacts stay under the pi session directory, and stale pruning only touches roots with an explicit pi-agent-browser ownership marker.
  */
 
 import { randomBytes } from "node:crypto";
 import { rmSync } from "node:fs";
-import { chmod, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -19,6 +19,12 @@ const TEMP_ROOT_MARKER_VERSION = 1;
 const STALE_TEMP_ROOT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const TEMP_ROOT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES";
 const DEFAULT_TEMP_ROOT_MAX_BYTES = 32 * 1_024 * 1_024;
+const SESSION_ARTIFACTS_ROOT_DIR_NAME = ".pi-agent-browser-artifacts";
+
+export interface PersistentSessionArtifactStore {
+	sessionDir: string;
+	sessionId: string;
+}
 
 interface TempRootOwnershipRecord {
 	createdAtMs: number;
@@ -173,6 +179,16 @@ export async function cleanupSecureTempArtifacts(): Promise<void> {
 	});
 }
 
+async function ensurePersistentSessionArtifactDir(store: PersistentSessionArtifactStore): Promise<string> {
+	const rootDir = join(store.sessionDir, SESSION_ARTIFACTS_ROOT_DIR_NAME);
+	const sessionDir = join(rootDir, store.sessionId);
+	await mkdir(rootDir, { recursive: true, mode: 0o700 });
+	await chmod(rootDir, 0o700).catch(() => undefined);
+	await mkdir(sessionDir, { recursive: true, mode: 0o700 });
+	await chmod(sessionDir, 0o700).catch(() => undefined);
+	return sessionDir;
+}
+
 async function getSessionTempRoot(): Promise<string> {
 	if (!sessionTempRootPromise) {
 		sessionTempRootPromise = (async () => {
@@ -224,6 +240,27 @@ export async function writeSecureTempFile(options: {
 		throw error;
 	} finally {
 		await fileHandle.close();
+	}
+	return path;
+}
+
+export async function writePersistentSessionArtifactFile(options: {
+	content: string | Uint8Array;
+	prefix: string;
+	store: PersistentSessionArtifactStore;
+	suffix: string;
+}): Promise<string> {
+	const { content, prefix, store, suffix } = options;
+	const artifactDir = await ensurePersistentSessionArtifactDir(store);
+	const path = join(artifactDir, `${prefix}-${randomBytes(8).toString("hex")}${suffix}`);
+	const fileHandle = await open(path, "wx", 0o600);
+	try {
+		await fileHandle.writeFile(content);
+	} catch (error) {
+		await rm(path, { force: true }).catch(() => undefined);
+		throw error;
+	} finally {
+		await fileHandle.close().catch(() => undefined);
 	}
 	return path;
 }

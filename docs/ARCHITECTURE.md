@@ -78,17 +78,17 @@ V1 ownership rule:
 - implicit auto-generated sessions are extension-managed convenience sessions
 - unnamed `sessionMode: "fresh"` launches rotate that extension-managed session to a new upstream browser
 - explicit/user-managed sessions are not auto-managed by default
-- extension-managed sessions should be reusable during an active `pi` session, but should still be cleaned up predictably
+- extension-managed sessions should be reusable during an active `pi` session and across `/reload` / `/resume`, while still being cleaned up predictably
 
 Practical policy:
-- on normal `pi` shutdown, best-effort close the current extension-managed session
-- also set an idle timeout on extension-managed sessions so abandoned daemons self-clean after inactivity
-- clean up private temp spill artifacts owned by the extension-managed session on shutdown
+- preserve the current extension-managed session across normal `pi` shutdown/reload so persisted sessions can keep following the live browser after `/reload` or `/resume`
+- set an idle timeout on extension-managed sessions so abandoned daemons self-clean after inactivity
+- clean up process-private temp spill artifacts on shutdown, but keep persisted-session snapshot spill files in a private session-scoped artifact directory so `details.fullOutputPath` stays usable after reload/resume
 - reconstruct the current extension-managed session from persisted tool details on resume/reload so later default calls keep following the active managed browser
 - if an unnamed fresh launch replaces an active extension-managed session, best-effort close the old managed session after the switch succeeds
 - leave explicit caller-provided `--session` choices alone unless the caller closes them explicitly
 
-This is primarily about ownership clarity and avoiding surprise, not adding a heavy safety wrapper. If the extension invented the session, the extension should clean it up. If the caller explicitly chose the upstream session model, the extension should stay out of the way.
+This is primarily about ownership clarity and avoiding surprise, not adding a heavy safety wrapper. If the extension invented the session, the extension should own its lifecycle without breaking reload/resume semantics. If the caller explicitly chose the upstream session model, the extension should stay out of the way.
 
 ### Launch flags
 
