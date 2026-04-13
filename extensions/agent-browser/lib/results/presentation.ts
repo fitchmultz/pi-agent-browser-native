@@ -333,8 +333,23 @@ async function buildBatchPresentation(options: {
 }): Promise<ToolPresentation> {
 	const { cwd, data, persistentArtifactStore, summary } = options;
 	const steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> = [];
+	const protectedPersistentPaths: string[] = [];
 	for (const [index, item] of data.entries()) {
-		steps.push(await buildBatchStepPresentation({ cwd, index, item, persistentArtifactStore }));
+		const step = await buildBatchStepPresentation({
+			cwd,
+			index,
+			item,
+			persistentArtifactStore: persistentArtifactStore
+				? { ...persistentArtifactStore, protectedPaths: protectedPersistentPaths }
+				: undefined,
+		});
+		steps.push(step);
+		protectedPersistentPaths.push(
+			...getPresentationPaths({
+				primaryPath: step.presentation.fullOutputPath,
+				secondaryPaths: step.presentation.fullOutputPaths,
+			}),
+		);
 	}
 
 	const batchFailure = getBatchFailureDetails(steps);

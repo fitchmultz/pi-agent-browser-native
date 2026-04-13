@@ -662,7 +662,11 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 	for (const command of [
 		"agent-browser open https://example.com",
 		"FOO=bar agent-browser --version",
+		"FOO=\"bar baz\" agent-browser --version",
 		"PATH=/tmp:$PATH agent-browser open https://example.com",
+		"echo ready\nagent-browser open https://example.com",
+		"which agent-browser && agent-browser open https://example.com",
+		"cat <<'EOF'\nwhich agent-browser\nEOF\nagent-browser open https://example.com",
 		"env agent-browser --version",
 		"npx --yes agent-browser open https://example.com",
 		"pnpm dlx agent-browser open https://example.com",
@@ -691,6 +695,7 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 		"grep agent-browser README.md",
 		"printf '%s\\n' agent-browser",
 		"echo ok && grep agent-browser README.md",
+		"cat <<'EOF'\nagent-browser open https://example.com\nEOF",
 	]) {
 		const innocuousResults = await runExtensionEventResults(
 			defaultHarness.handlers,
@@ -1283,6 +1288,51 @@ test("buildToolPresentation evicts the oldest persisted snapshot spill files whe
 			assert.equal(typeof secondPresentation.fullOutputPath, "string");
 			assert.equal(await readFile(String(firstPresentation.fullOutputPath), "utf8").then(() => true, () => false), false);
 			assert.match(await readFile(String(secondPresentation.fullOutputPath), "utf8"), /second snapshot row 120/);
+		});
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(sessionDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation keeps earlier batch snapshot spill paths live when a later persisted spill exceeds the budget", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-batch-budget-"));
+	const refs = Object.fromEntries(
+		Array.from({ length: 90 }, (_, index) => [
+			`e${index + 1}`,
+			{ name: index % 3 === 0 ? `Batch control ${index + 1}` : "", role: index % 5 === 0 ? "button" : "generic" },
+		]),
+	);
+	const buildSnapshotData = (label: string) => ({
+		origin: `https://example.com/${label}`,
+		refs,
+		snapshot: Array.from({ length: 120 }, (_, index) => `- generic \"${label} batch snapshot row ${index + 1}\" [ref=e${index + 1}] clickable [onclick]`).join("\n"),
+	});
+	const firstData = buildSnapshotData("first");
+	const secondData = buildSnapshotData("second");
+	const budgetBytes = Buffer.byteLength(JSON.stringify(firstData, null, 2)) + 512;
+
+	try {
+		await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: String(budgetBytes) }, async () => {
+			const presentation = await buildToolPresentation({
+				commandInfo: { command: "batch" },
+				cwd: process.cwd(),
+				envelope: {
+					success: true,
+					data: [
+						{ command: ["snapshot", "-i"], result: firstData, success: true },
+						{ command: ["snapshot", "-i"], result: secondData, success: true },
+					],
+				},
+				persistentArtifactStore: { sessionDir, sessionId: TEST_SESSION_ID },
+			});
+			const firstPath = presentation.batchSteps?.[0]?.fullOutputPath;
+			const secondPath = presentation.batchSteps?.[1]?.fullOutputPath;
+			assert.equal(typeof firstPath, "string");
+			assert.equal(secondPath, undefined);
+			assert.match(await readFile(String(firstPath), "utf8"), /first batch snapshot row 120/);
+			assert.match(presentation.batchSteps?.[1]?.text ?? "", /persisted spill budget exceeded/i);
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();

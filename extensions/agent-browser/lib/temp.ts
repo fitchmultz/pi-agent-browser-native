@@ -24,6 +24,7 @@ const DEFAULT_SESSION_ARTIFACT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACTS_ROOT_DIR_NAME = ".pi-agent-browser-artifacts";
 
 export interface PersistentSessionArtifactStore {
+	protectedPaths?: readonly string[];
 	sessionDir: string;
 	sessionId: string;
 }
@@ -200,7 +201,11 @@ async function ensurePersistentSessionArtifactDir(store: PersistentSessionArtifa
 	return sessionDir;
 }
 
-async function prunePersistentSessionArtifactsToBudget(sessionArtifactDir: string, additionalBytes: number): Promise<void> {
+async function prunePersistentSessionArtifactsToBudget(
+	sessionArtifactDir: string,
+	additionalBytes: number,
+	protectedPaths: ReadonlySet<string>,
+): Promise<void> {
 	if (additionalBytes <= 0) return;
 	const maxBytes = getPersistentSessionArtifactMaxBytes();
 	let files = await listArtifactFiles(sessionArtifactDir);
@@ -210,6 +215,9 @@ async function prunePersistentSessionArtifactsToBudget(sessionArtifactDir: strin
 	}
 	files = files.sort((left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path));
 	for (const file of files) {
+		if (protectedPaths.has(file.path)) {
+			continue;
+		}
 		await rm(file.path, { force: true }).catch(() => undefined);
 		totalBytes -= file.size;
 		if (totalBytes + additionalBytes <= maxBytes) {
@@ -283,7 +291,11 @@ export async function writePersistentSessionArtifactFile(options: {
 	const { content, prefix, store, suffix } = options;
 	return await enqueueTempMutation(async () => {
 		const artifactDir = await ensurePersistentSessionArtifactDir(store);
-		await prunePersistentSessionArtifactsToBudget(artifactDir, getTempArtifactByteLength(content));
+		await prunePersistentSessionArtifactsToBudget(
+			artifactDir,
+			getTempArtifactByteLength(content),
+			new Set((store.protectedPaths ?? []).filter((path) => dirname(path) === artifactDir)),
+		);
 		const path = join(artifactDir, `${prefix}-${randomBytes(8).toString("hex")}${suffix}`);
 		const fileHandle = await open(path, "wx", 0o600);
 		try {
