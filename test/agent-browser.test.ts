@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -37,6 +37,7 @@ import {
 	hasUsableBraveApiKey,
 	parseCommandInfo,
 	redactInvocationArgs,
+	redactSensitiveValue,
 	restoreManagedSessionStateFromBranch,
 	resolveManagedSessionState,
 	shouldAppendBrowserSystemPrompt,
@@ -327,6 +328,30 @@ test("restoreManagedSessionStateFromBranch ignores inspection entries and recons
 	});
 });
 
+test("restoreManagedSessionStateFromBranch keeps cwd isolation by ignoring sessions from a different base name", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-other-checkout-123456781234-abcd1234",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.deepEqual(restored, {
+		active: false,
+		freshSessionOrdinal: 0,
+		sessionName: "piab-demo-123",
+	});
+});
+
 test("secure temp cleanup can recreate and track a later temp root", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 
@@ -538,6 +563,10 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"open",
 		"https://%5BREDACTED%5D:%5BREDACTED%5D@example.com/path?token=%5BREDACTED%5D&ok=1#access_token=%5BREDACTED%5D",
 	]);
+	assert.deepEqual(redactInvocationArgs(["open", "https://example.com/path?apiKey=abc&refreshToken=def&ok=1"]), [
+		"open",
+		"https://example.com/path?apiKey=%5BREDACTED%5D&refreshToken=%5BREDACTED%5D&ok=1",
+	]);
 	assert.deepEqual(redactInvocationArgs(["--proxy=http://user:pass@proxy.example:8080", "open", "https://example.com"]), [
 		"--proxy=[REDACTED]",
 		"open",
@@ -545,8 +574,33 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	]);
 });
 
+test("redactSensitiveValue masks obvious secret-bearing object keys", () => {
+	assert.deepEqual(
+		redactSensitiveValue({
+			apiKey: "abc",
+			nested: {
+				authorization: "Bearer demo",
+				ok: "https://example.com/?ok=1&token=abc",
+				"set-cookie": "sid=abc",
+			},
+			status: { code: "ERR_BLOCKED_BY_CLIENT", key: "Enter" },
+		}),
+		{
+			apiKey: "[REDACTED]",
+			nested: {
+				authorization: "[REDACTED]",
+				ok: "https://example.com/?ok=1&token=%5BREDACTED%5D",
+				"set-cookie": "[REDACTED]",
+			},
+			status: { code: "ERR_BLOCKED_BY_CLIENT", key: "Enter" },
+		},
+	);
+});
+
 test("shouldAppendBrowserSystemPrompt only targets clearly browser-oriented prompts", () => {
 	assert.equal(shouldAppendBrowserSystemPrompt("Open https://example.com and take a snapshot."), true);
+	assert.equal(shouldAppendBrowserSystemPrompt("Please review browser compatibility docs."), false);
+	assert.equal(shouldAppendBrowserSystemPrompt("Summarize the article at https://example.com/blog/post for the changelog."), false);
 	assert.equal(shouldAppendBrowserSystemPrompt("Please review the repository architecture."), false);
 });
 
@@ -670,7 +724,10 @@ process.stdout.write("agent-browser 9.9.9\\n");`,
 test("agentBrowserExtension redacts sensitive args in updates and persisted details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write(JSON.stringify({ success: true, data: { title: "ok" } }));`);
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: "https://user:pass@example.com/?token=abc" } }));`,
+	);
 
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
@@ -684,7 +741,7 @@ test("agentBrowserExtension redacts sensitive args in updates and persisted deta
 				new AbortController().signal,
 				(update) => updates.push(update),
 				harness.ctx,
-			)) as { details?: Record<string, unknown>; isError?: boolean };
+			)) as { content: Array<{ type: string; text?: string }>; details?: Record<string, unknown>; isError?: boolean };
 
 			assert.equal(result.isError, false);
 			assert.equal(Array.isArray(updates), true);
@@ -700,6 +757,8 @@ test("agentBrowserExtension redacts sensitive args in updates and persisted deta
 			]);
 			assert.equal(JSON.stringify(result.details?.effectiveArgs).includes("s3cr3t-demo"), false);
 			assert.equal(JSON.stringify(result.details?.effectiveArgs).includes("user:pass"), false);
+			assert.equal(JSON.stringify(result.details?.data).includes("user:pass"), false);
+			assert.equal(JSON.stringify(result.content).includes("user:pass"), false);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1282,7 +1341,7 @@ process.exitCode = 1;`,
 			assert.equal(result.content[0]?.type, "text");
 			assert.match((result.content[0] as { text: string }).text, /Batch failed: 1\/2 succeeded/);
 			assert.match((result.content[0] as { text: string }).text, /First failing step: 2 — click @zzz/);
-			assert.match((result.content[0] as { text: string }).text, /Step 1 — open https:\/\/example.com \(succeeded\)/);
+			assert.match((result.content[0] as { text: string }).text, /Step 1 — open https:\/\/example.com\/? \(succeeded\)/);
 			assert.match((result.content[0] as { text: string }).text, /Example Domain/);
 			assert.match((result.content[0] as { text: string }).text, /Step 2 — click @zzz \(failed\)/);
 			assert.match((result.content[0] as { text: string }).text, /Error: Unknown ref: zzz/);
@@ -1537,6 +1596,59 @@ process.stdout.write(JSON.stringify(envelope));`,
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not restore a managed session from a different cwd/worktree on resume", { concurrency: false }, async () => {
+	const firstParent = await mkdtemp(join(tmpdir(), "pi-agent-browser-first-"));
+	const secondParent = await mkdtemp(join(tmpdir(), "pi-agent-browser-second-"));
+	const firstDir = join(firstParent, "checkout");
+	const secondDir = join(secondParent, "checkout");
+	const binDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bin-"));
+	const logPath = join(binDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await mkdir(firstDir, { recursive: true });
+	await mkdir(secondDir, { recursive: true });
+	await writeFakeAgentBrowserBinary(
+		binDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { url: args[args.length - 1] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${binDir}:${basePath}` }, async () => {
+			const firstHarness = createExtensionHarness({ cwd: firstDir });
+			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
+			const firstOpen = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, {
+				args: ["open", "https://example.com/first"],
+			});
+			assert.equal(firstOpen.isError, false);
+			const firstSessionName = firstOpen.details?.sessionName;
+			assert.equal(typeof firstSessionName, "string");
+
+			const resumedHarness = createExtensionHarness({
+				branch: [createToolBranchEntry({ details: firstOpen.details ?? {}, isError: firstOpen.isError })],
+				cwd: secondDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const profiledOpen = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/profiled"],
+			});
+			assert.equal(profiledOpen.isError, false);
+			assert.equal((profiledOpen.details?.effectiveArgs as string[] | undefined)?.includes("--profile"), true);
+			assert.notEqual(profiledOpen.details?.sessionName, firstSessionName);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 2);
+			assert.equal(invocations[1]?.args.includes("--profile"), true);
+			assert.equal(invocations[1]?.args.includes(String(firstSessionName)), false);
+		});
+	} finally {
+		await rm(firstParent, { force: true, recursive: true });
+		await rm(secondParent, { force: true, recursive: true });
+		await rm(binDir, { force: true, recursive: true });
 	}
 });
 

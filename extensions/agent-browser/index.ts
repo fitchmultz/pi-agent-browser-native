@@ -24,6 +24,8 @@ import {
 	getLatestUserPrompt,
 	hasUsableBraveApiKey,
 	redactInvocationArgs,
+	redactSensitiveText,
+	redactSensitiveValue,
 	restoreManagedSessionStateFromBranch,
 	resolveManagedSessionState,
 	shouldAppendBrowserSystemPrompt,
@@ -458,19 +460,22 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							envelope: presentationEnvelope,
 							errorText,
 					  });
+				const redactedContent = presentation.content.map((item) =>
+					item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,
+				);
 
 				return {
-					content: presentation.content,
+					content: redactedContent,
 					details: {
 						args: redactedArgs,
-						batchFailure: presentation.batchFailure,
-						batchSteps: presentation.batchSteps,
+						batchFailure: redactSensitiveValue(presentation.batchFailure),
+						batchSteps: redactSensitiveValue(presentation.batchSteps),
 						command: executionPlan.commandInfo.command,
 						subcommand: executionPlan.commandInfo.subcommand,
-						data: presentation.data,
-						error: plainTextInspection ? undefined : parsed.envelope?.error,
+						data: redactSensitiveValue(presentation.data),
+						error: plainTextInspection ? undefined : redactSensitiveValue(parsed.envelope?.error),
 						inspection: plainTextInspection || undefined,
-						navigationSummary,
+						navigationSummary: redactSensitiveValue(navigationSummary),
 						effectiveArgs: redactedEffectiveArgs,
 						exitCode: processResult.exitCode,
 						fullOutputPath: presentation.fullOutputPath,
@@ -482,9 +487,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 						sessionRecoveryHint: redactedRecoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,
-						stderr: processResult.stderr || undefined,
-						stdout: plainTextInspection ? inspectionText : parseSucceeded ? undefined : processResult.stdout,
-						summary: presentation.summary,
+						stderr: processResult.stderr ? redactSensitiveText(processResult.stderr) : undefined,
+						stdout: plainTextInspection
+							? redactSensitiveText(inspectionText ?? "")
+							: parseSucceeded
+								? undefined
+								: redactSensitiveText(processResult.stdout),
+						summary: redactSensitiveText(presentation.summary),
 					},
 					isError: !succeeded,
 				};

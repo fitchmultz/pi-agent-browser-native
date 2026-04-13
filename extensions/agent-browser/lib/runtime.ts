@@ -24,13 +24,16 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
 ];
 const BROWSER_PROMPT_PATTERNS = [
-	/https?:\/\/\S+/i,
-	/\b(?:agent[_ -]?browser|browser automation|browser|browse|click|dashboard|eval\s+--stdin|feed|fill|form|inbox|login|navigate|navigation|open|page|screenshot|site|snapshot|tab\s+list|timeline|url|web(?:site| page)?)\b/i,
+	/\b(?:agent[_ -]?browser|browser automation|eval\s+--stdin|screenshot|snapshot|tab\s+list)\b/i,
+	/\bbrowser\b.*\b(?:automation|click|fill|navigate|open|page|screenshot|site|snapshot|tab|url|visit|web(?:site| page)?)\b/i,
+	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
 ];
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--headers", "--proxy"]);
 const SENSITIVE_QUERY_PARAM_PATTERN =
-	/^(?:access(?:_|-)token|api(?:_|-)key|auth|authorization|bearer|client(?:_|-)secret|code|cookie|id(?:_|-)token|key|pass(?:word)?|refresh(?:_|-)token|secret|session(?:_|-)id|sig(?:nature)?|token)$/i;
+	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth|authorization|bearer|client(?:_|-)?secret|code|cookie|id(?:_|-)?token|key|pass(?:word)?|refresh(?:_|-)?token|secret|session(?:_|-)?id|sig(?:nature)?|token)$/i;
+const SENSITIVE_FIELD_NAME_PATTERN =
+	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|x(?:_|-)?api(?:_|-)?key)$/i;
 
 const GLOBAL_FLAGS_WITH_VALUES = new Set([
 	"--session",
@@ -163,6 +166,36 @@ function redactUrlToken(token: string): string {
 	return parsed.toString();
 }
 
+function redactLooseUrlMatches(text: string): string {
+	return text.replace(/\b(?:https?|wss?):\/\/[^\s"'`<>\])]+/g, (match) => redactUrlToken(match));
+}
+
+export function redactSensitiveText(text: string): string {
+	return redactLooseUrlMatches(text)
+		.replace(/\b(Bearer)\s+[^\s",]+/gi, "$1 [REDACTED]")
+		.replace(/\b(Basic)\s+[^\s",]+/gi, "$1 [REDACTED]");
+}
+
+export function redactSensitiveValue(value: unknown): unknown {
+	if (typeof value === "string") {
+		return redactSensitiveText(value);
+	}
+	if (Array.isArray(value)) {
+		return value.map((item) => redactSensitiveValue(item));
+	}
+	if (!isRecord(value)) {
+		return value;
+	}
+	return Object.fromEntries(
+		Object.entries(value).map(([key, entryValue]) => {
+			if (SENSITIVE_FIELD_NAME_PATTERN.test(key)) {
+				return [key, "[REDACTED]"];
+			}
+			return [key, redactSensitiveValue(entryValue)];
+		}),
+	);
+}
+
 function redactFlagValue(flag: string, value: string): string {
 	if (SENSITIVE_VALUE_FLAGS.has(flag)) {
 		return "[REDACTED]";
@@ -261,6 +294,10 @@ export function resolveManagedSessionState(options: {
 	};
 }
 
+function isRestorableManagedSessionName(sessionName: string, fallbackSessionName: string): boolean {
+	return sessionName === fallbackSessionName || sessionName.startsWith(`${fallbackSessionName}-fresh-`);
+}
+
 export function restoreManagedSessionStateFromBranch(
 	branch: unknown[],
 	fallbackSessionName: string,
@@ -292,7 +329,13 @@ export function restoreManagedSessionStateFromBranch(
 		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
 		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
 		const usedImplicitSession = details.usedImplicitSession === true;
-		const managedSessionName = !explicitSessionName && sessionName && (usedImplicitSession || sessionMode === "fresh") ? sessionName : undefined;
+		const managedSessionName =
+			!explicitSessionName &&
+			sessionName &&
+			isRestorableManagedSessionName(sessionName, fallbackSessionName) &&
+			(usedImplicitSession || sessionMode === "fresh")
+				? sessionName
+				: undefined;
 		if (!managedSessionName) {
 			continue;
 		}
