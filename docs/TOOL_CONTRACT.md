@@ -141,13 +141,13 @@ Additional structured fields can appear when relevant:
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `imagePath` / `imagePaths` for screenshots and batched image outputs
-- `fullOutputPath` / `fullOutputPaths` when large snapshot output is compacted and spilled to a private file; persisted sessions keep that path under a private session-scoped artifact directory so it survives reload/resume
+- `fullOutputPath` / `fullOutputPaths` when large snapshot output is compacted and spilled to a private file; persisted sessions keep that path under a private session-scoped artifact directory with a bounded per-session budget so it survives reload/resume without unbounded growth
 - `sessionRecoveryHint` when startup-scoped flags need `sessionMode: "fresh"`
 - `inspection: true` plus `stdout` for successful plain-text inspection commands like `--help` and `--version`
 
 When the tool echoes `args` or `effectiveArgs` back into Pi, sensitive values such as `--headers`, proxy credentials, and auth-bearing URL parameters should be redacted first.
 
-For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private JSON spill file with the full upstream snapshot payload. Persisted sessions should keep that spill file under a private session-scoped artifact directory so the path remains usable after reload/restart.
+For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private JSON spill file with the full upstream snapshot payload. Persisted sessions should keep that spill file under a private session-scoped artifact directory so the path remains usable after reload/restart, with the oldest persisted spill files evicted as needed to stay within the per-session budget.
 
 ## High-value result rendering
 
@@ -176,7 +176,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - treat the extension-managed session as convenience state owned by the wrapper
 - preserve the current extension-managed session across normal `pi` shutdown/reload so persisted sessions can keep following the live browser on `/reload` or `/resume`
 - set an idle timeout on extension-managed sessions so abandoned daemons eventually self-clean
-- clean up process-private temp spill artifacts on shutdown, while keeping persisted-session snapshot spill files in a private session-scoped artifact directory so `details.fullOutputPath` survives reload/restart
+- clean up process-private temp spill artifacts on shutdown, while keeping persisted-session snapshot spill files in a private session-scoped artifact directory so `details.fullOutputPath` survives reload/restart and the oldest spill files are evicted if the per-session artifact budget is exceeded
 - reconstruct the current extension-managed session from persisted tool details on resume/reload so later default calls keep following the active managed browser
 - when an unnamed `sessionMode: "fresh"` launch succeeds, make it the new extension-managed session so later default calls keep using it
 - if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds

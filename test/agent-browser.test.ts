@@ -661,6 +661,8 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 	const defaultHarness = createExtensionHarness({ cwd: process.cwd(), prompt: "Open a page and summarize it." });
 	for (const command of [
 		"agent-browser open https://example.com",
+		"FOO=bar agent-browser --version",
+		"PATH=/tmp:$PATH agent-browser open https://example.com",
 		"env agent-browser --version",
 		"npx --yes agent-browser open https://example.com",
 		"pnpm dlx agent-browser open https://example.com",
@@ -1235,6 +1237,53 @@ test("buildToolPresentation keeps compact snapshot spill files in the persisted 
 		assert.match(await readFile(String(spillPath), "utf8"), /Persisted snapshot row 120/);
 		assert.equal((await stat(String(spillPath))).mode & 0o777, 0o600);
 		assert.equal((await stat(dirname(String(spillPath)))).mode & 0o777, 0o700);
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(sessionDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation evicts the oldest persisted snapshot spill files when the per-session artifact budget is exceeded", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-budget-"));
+	const refs = Object.fromEntries(
+		Array.from({ length: 90 }, (_, index) => [
+			`e${index + 1}`,
+			{ name: index % 3 === 0 ? `Budgeted control ${index + 1}` : "", role: index % 5 === 0 ? "button" : "generic" },
+		]),
+	);
+	const buildData = (label: string) => ({
+		origin: `https://example.com/${label}`,
+		refs,
+		snapshot: Array.from({ length: 120 }, (_, index) => `- generic \"${label} snapshot row ${index + 1}\" [ref=e${index + 1}] clickable [onclick]`).join("\n"),
+	});
+	const firstData = buildData("first");
+	const secondData = buildData("second");
+	const budgetBytes = Math.max(
+		Buffer.byteLength(JSON.stringify(firstData, null, 2)),
+		Buffer.byteLength(JSON.stringify(secondData, null, 2)),
+	) + 512;
+
+	try {
+		await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: String(budgetBytes) }, async () => {
+			const firstPresentation = await buildToolPresentation({
+				commandInfo: { command: "snapshot" },
+				cwd: process.cwd(),
+				envelope: { success: true, data: firstData },
+				persistentArtifactStore: { sessionDir, sessionId: TEST_SESSION_ID },
+			});
+			const secondPresentation = await buildToolPresentation({
+				commandInfo: { command: "snapshot" },
+				cwd: process.cwd(),
+				envelope: { success: true, data: secondData },
+				persistentArtifactStore: { sessionDir, sessionId: TEST_SESSION_ID },
+			});
+
+			assert.equal(typeof firstPresentation.fullOutputPath, "string");
+			assert.equal(typeof secondPresentation.fullOutputPath, "string");
+			assert.equal(await readFile(String(firstPresentation.fullOutputPath), "utf8").then(() => true, () => false), false);
+			assert.match(await readFile(String(secondPresentation.fullOutputPath), "utf8"), /second snapshot row 120/);
+		});
 	} finally {
 		await cleanupSecureTempArtifacts();
 		await rm(sessionDir, { force: true, recursive: true });

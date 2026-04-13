@@ -83,7 +83,7 @@ V1 ownership rule:
 Practical policy:
 - preserve the current extension-managed session across normal `pi` shutdown/reload so persisted sessions can keep following the live browser after `/reload` or `/resume`
 - set an idle timeout on extension-managed sessions so abandoned daemons self-clean after inactivity
-- clean up process-private temp spill artifacts on shutdown, but keep persisted-session snapshot spill files in a private session-scoped artifact directory so `details.fullOutputPath` stays usable after reload/resume
+- clean up process-private temp spill artifacts on shutdown, but keep persisted-session snapshot spill files in a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` stays usable after reload/resume without unbounded growth
 - reconstruct the current extension-managed session from persisted tool details on resume/reload so later default calls keep following the active managed browser
 - if an unnamed fresh launch replaces an active extension-managed session, best-effort close the old managed session after the switch succeeds
 - leave explicit caller-provided `--session` choices alone unless the caller closes them explicitly

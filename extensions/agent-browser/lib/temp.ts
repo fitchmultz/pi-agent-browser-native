@@ -19,6 +19,8 @@ const TEMP_ROOT_MARKER_VERSION = 1;
 const STALE_TEMP_ROOT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const TEMP_ROOT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES";
 const DEFAULT_TEMP_ROOT_MAX_BYTES = 32 * 1_024 * 1_024;
+const SESSION_ARTIFACT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES";
+const DEFAULT_SESSION_ARTIFACT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACTS_ROOT_DIR_NAME = ".pi-agent-browser-artifacts";
 
 export interface PersistentSessionArtifactStore {
@@ -75,18 +77,23 @@ function enqueueTempMutation<T>(task: () => Promise<T>): Promise<T> {
 	return nextTask;
 }
 
-async function getTempRootArtifactBytes(tempRoot: string): Promise<number> {
-	const entries = await readdir(tempRoot, { withFileTypes: true }).catch(() => []);
-	let totalBytes = 0;
+async function listArtifactFiles(directory: string, excludedNames: ReadonlySet<string> = new Set()): Promise<Array<{ mtimeMs: number; path: string; size: number }>> {
+	const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+	const files: Array<{ mtimeMs: number; path: string; size: number }> = [];
 	for (const entry of entries) {
-		if (!entry.isFile() || entry.name === TEMP_ROOT_MARKER_FILE_NAME) continue;
-		const path = join(tempRoot, entry.name);
+		if (!entry.isFile() || excludedNames.has(entry.name)) continue;
+		const path = join(directory, entry.name);
 		const stats = await stat(path).catch(() => undefined);
 		if (stats?.isFile()) {
-			totalBytes += stats.size;
+			files.push({ mtimeMs: stats.mtimeMs, path, size: stats.size });
 		}
 	}
-	return totalBytes;
+	return files;
+}
+
+async function getTempRootArtifactBytes(tempRoot: string): Promise<number> {
+	const files = await listArtifactFiles(tempRoot, new Set([TEMP_ROOT_MARKER_FILE_NAME]));
+	return files.reduce((totalBytes, file) => totalBytes + file.size, 0);
 }
 
 async function readTempRootOwnershipMarker(tempRoot: string): Promise<TempRootOwnershipRecord | undefined> {
@@ -159,6 +166,10 @@ export function getSecureTempRootMaxBytes(env: NodeJS.ProcessEnv = process.env):
 	return parsePositiveInteger(env[TEMP_ROOT_MAX_BYTES_ENV]) ?? DEFAULT_TEMP_ROOT_MAX_BYTES;
 }
 
+export function getPersistentSessionArtifactMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+	return parsePositiveInteger(env[SESSION_ARTIFACT_MAX_BYTES_ENV]) ?? DEFAULT_SESSION_ARTIFACT_MAX_BYTES;
+}
+
 async function assertSecureTempRootBudget(tempRoot: string, additionalBytes: number): Promise<void> {
 	if (additionalBytes <= 0) return;
 	const currentBytes = await getTempRootArtifactBytes(tempRoot);
@@ -187,6 +198,25 @@ async function ensurePersistentSessionArtifactDir(store: PersistentSessionArtifa
 	await mkdir(sessionDir, { recursive: true, mode: 0o700 });
 	await chmod(sessionDir, 0o700).catch(() => undefined);
 	return sessionDir;
+}
+
+async function prunePersistentSessionArtifactsToBudget(sessionArtifactDir: string, additionalBytes: number): Promise<void> {
+	if (additionalBytes <= 0) return;
+	const maxBytes = getPersistentSessionArtifactMaxBytes();
+	let files = await listArtifactFiles(sessionArtifactDir);
+	let totalBytes = files.reduce((total, file) => total + file.size, 0);
+	if (totalBytes + additionalBytes <= maxBytes) {
+		return;
+	}
+	files = files.sort((left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path));
+	for (const file of files) {
+		await rm(file.path, { force: true }).catch(() => undefined);
+		totalBytes -= file.size;
+		if (totalBytes + additionalBytes <= maxBytes) {
+			return;
+		}
+	}
+	throw new Error(`pi-agent-browser persisted spill budget exceeded (${totalBytes + additionalBytes} bytes > ${maxBytes} byte limit).`);
 }
 
 async function getSessionTempRoot(): Promise<string> {
@@ -251,18 +281,21 @@ export async function writePersistentSessionArtifactFile(options: {
 	suffix: string;
 }): Promise<string> {
 	const { content, prefix, store, suffix } = options;
-	const artifactDir = await ensurePersistentSessionArtifactDir(store);
-	const path = join(artifactDir, `${prefix}-${randomBytes(8).toString("hex")}${suffix}`);
-	const fileHandle = await open(path, "wx", 0o600);
-	try {
-		await fileHandle.writeFile(content);
-	} catch (error) {
-		await rm(path, { force: true }).catch(() => undefined);
-		throw error;
-	} finally {
-		await fileHandle.close().catch(() => undefined);
-	}
-	return path;
+	return await enqueueTempMutation(async () => {
+		const artifactDir = await ensurePersistentSessionArtifactDir(store);
+		await prunePersistentSessionArtifactsToBudget(artifactDir, getTempArtifactByteLength(content));
+		const path = join(artifactDir, `${prefix}-${randomBytes(8).toString("hex")}${suffix}`);
+		const fileHandle = await open(path, "wx", 0o600);
+		try {
+			await fileHandle.writeFile(content);
+		} catch (error) {
+			await rm(path, { force: true }).catch(() => undefined);
+			throw error;
+		} finally {
+			await fileHandle.close().catch(() => undefined);
+		}
+		return path;
+	});
 }
 
 export async function getSecureTempDebugState(): Promise<{ currentTempRoot?: string; ownedTempRoots: string[] }> {

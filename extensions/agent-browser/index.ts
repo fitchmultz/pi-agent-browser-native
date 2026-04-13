@@ -99,8 +99,9 @@ function buildInvocationPreview(effectiveArgs: string[]): string {
 const AGENT_BROWSER_BASH_PREFIX = String.raw`(?:env(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+)*\s+)?(?:(?:npx|bunx)(?:\s+-[^\s;&|]+|\s+--[^\s;&|]+(?:=[^\s;&|]+)?)*\s+|(?:pnpm|yarn)\s+dlx(?:\s+-[^\s;&|]+|\s+--[^\s;&|]+(?:=[^\s;&|]+)?)*\s+)?`;
 const AGENT_BROWSER_BASH_EXECUTABLE = String.raw`(?:[.~]|\.\.?|\/)?(?:[^\s;&|]+\/)?agent-browser`;
 const SHELL_COMMAND_SEGMENT_START_PATTERN = String.raw`(?:^\s*|(?:&&|\|\||[;&|])\s*)`;
+const SHELL_ASSIGNMENT_PREFIX = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*`;
 const DIRECT_AGENT_BROWSER_BASH_PATTERN = new RegExp(
-	String.raw`${SHELL_COMMAND_SEGMENT_START_PATTERN}${AGENT_BROWSER_BASH_PREFIX}${AGENT_BROWSER_BASH_EXECUTABLE}(?=\s|$)`,
+	String.raw`${SHELL_COMMAND_SEGMENT_START_PATTERN}${SHELL_ASSIGNMENT_PREFIX}${AGENT_BROWSER_BASH_PREFIX}${AGENT_BROWSER_BASH_EXECUTABLE}(?=\s|$)`,
 );
 const HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN = /(command\s+-v|which|type\s+-P)\s+agent-browser\b/;
 
