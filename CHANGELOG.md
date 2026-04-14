@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5 - 2026-04-14
+
+### Changed
+- refreshed the development and release-verification baseline to `@mariozechner/pi-coding-agent` `0.67.2` and `@types/node` `25.6.0`, keeping local typechecking and package verification aligned with the latest stable pi release used for this extension
+- re-locked the compatible transitive development dependency set pulled by the updated pi toolchain without changing the published `agent_browser` runtime contract
+
 ## 0.2.4 - 2026-04-13
 
 ### Fixed
