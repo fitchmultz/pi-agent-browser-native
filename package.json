@@ -62,5 +62,6 @@
     "verify": "npm run typecheck && npm run test",
     "verify:package": "node ./scripts/verify-package.mjs",
     "verify:release": "npm run verify && npm run verify:package"
-  }
+  },
+  "packageManager": "npm@11.12.1"
 }
