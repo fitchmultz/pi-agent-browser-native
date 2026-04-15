@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.6 - 2026-04-15
+
+### Changed
+- pinned `packageManager` metadata to `npm@11.12.1` so lockfile refreshes resolve consistently during release verification
+- refreshed the compatible transitive development dependency resolution pulled by the current pi toolchain without changing the published `agent_browser` runtime contract
+
 ## 0.2.5 - 2026-04-14
 
 ### Changed
