@@ -46,7 +46,7 @@
     "@sinclair/typebox": "*"
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.67.2",
+    "@mariozechner/pi-coding-agent": "^0.67.4",
     "@sinclair/typebox": "^0.34.49",
     "@types/node": "^25.6.0",
     "tsx": "^4.21.0",
@@ -63,5 +63,5 @@
     "verify:package": "node ./scripts/verify-package.mjs",
     "verify:release": "npm run verify && npm run verify:package"
   },
-  "packageManager": "npm@11.12.1"
+  "packageManager": "npm@10.9.8"
 }
