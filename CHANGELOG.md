@@ -2,9 +2,12 @@
 
 ## Unreleased
 
+## 0.2.7 - 2026-04-16
+
 ### Changed
 - updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.67.4`
 - aligned `packageManager` metadata to `npm@10.9.8`, the latest stable npm line compatible with the declared Node runtime floor
+- removed the published `@mariozechner/pi-coding-agent` peer dependency so installs rely on pi's bundled runtime instead of npm peer-resolution churn
 
 ## 0.2.6 - 2026-04-15
 
