@@ -579,7 +579,7 @@ export async function buildSnapshotPresentation(
 		);
 		if (fallbackPreview.omittedCount > 0) {
 			lines.push(
-				`- ... (${fallbackPreview.omittedCount} additional snapshot lines omitted; ${fullOutputPath ? "use the spill file for everything" : "the full raw snapshot was omitted"})`,
+				`- ... (${fallbackPreview.omittedCount} additional snapshot lines omitted; ${fullOutputPath ? `full output path: ${fullOutputPath}` : "the full raw snapshot was omitted"})`,
 			);
 		}
 	} else {
@@ -614,7 +614,7 @@ export async function buildSnapshotPresentation(
 	lines.push(
 		"",
 		fullOutputPath
-			? "Full raw snapshot path is available in details.fullOutputPath."
+			? `Full raw snapshot path: ${fullOutputPath}`
 			: `Full raw snapshot unavailable: ${spillErrorText ?? "temp spill file could not be created."}`,
 	);
 

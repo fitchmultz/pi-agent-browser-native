@@ -65,6 +65,7 @@ const QUICK_START_GUIDELINES = [
 	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin; sessionMode=fresh switches the extension-managed session to a fresh upstream launch when you need new --profile, --session-name, or --cdp state.",
 	"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }; after navigation, use { args: [\"click\", \"@e2\"] } then { args: [\"snapshot\", \"-i\"] }.",
 	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, and { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }.",
+	"High-value command reference: download <selector> <path> saves a file triggered by a click; get title/url/text/html/value/attr/count reads page state; screenshot [path] captures an image; pdf <path> saves a PDF; tab list and tab <tab-id-or-label> inspect or recover the active tab.",
 ] as const;
 const BRAVE_SEARCH_PROMPT_GUIDELINE =
 	"When a non-empty BRAVE_API_KEY is available in the current environment, prefer the Brave Search API via bash/curl to discover specific destination URLs, then open the chosen URL with agent_browser instead of browsing a search engine results page just to find the target.";
@@ -74,9 +75,10 @@ const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.",
 	"When using --profile, --session-name, or --cdp, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
 	"If you already used the implicit session and now need startup-scoped flags like --profile, --session-name, or --cdp, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.",
-	"If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <tab-id-or-label> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load, --url, --fn, or --text.",
+	"If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <tab-id-or-label> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load <state>, --url <matcher>, --fn <js>, or --text <matcher>.",
 	"For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.",
 	"For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.",
+	"For downloads, prefer download <selector> <path> when an element click should save a file. Do not rely on click alone when you need the downloaded file on disk.",
 	"When using eval --stdin, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics.",
 	"When using eval --stdin for extraction, return the value you want instead of relying on console.log as the primary result channel.",
 	"Do not call --help or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.",
@@ -322,6 +324,7 @@ function extractStringResultField(data: unknown, fieldName: "title" | "url"): st
 }
 
 const SESSION_TAB_PINNING_EXCLUDED_COMMANDS = new Set(["batch", "close", "goto", "navigate", "open", "session", "tab"]);
+const SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS = new Set(["batch", "close", "session", "tab"]);
 
 interface SessionTabTarget {
 	title?: string;
@@ -410,6 +413,14 @@ function shouldPinSessionTabForCommand(options: { command?: string; sessionName?
 		options.stdin === undefined &&
 		options.command !== undefined &&
 		!SESSION_TAB_PINNING_EXCLUDED_COMMANDS.has(options.command)
+	);
+}
+
+function shouldCorrectSessionTabAfterCommand(options: { command?: string; sessionName?: string }): boolean {
+	return (
+		options.sessionName !== undefined &&
+		options.command !== undefined &&
+		!SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS.has(options.command)
 	);
 }
 
@@ -918,12 +929,42 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 				}
 
+				const observedSessionTabTarget =
+					normalizeSessionTabTarget(navigationSummary) ?? extractSessionTabTargetFromData(presentationEnvelope?.data);
 				const currentSessionTabTarget = deriveSessionTabTarget({
 					command: executionPlan.commandInfo.command,
 					data: presentationEnvelope?.data,
 					navigationSummary,
 					previousTarget: priorSessionTabTarget,
 				});
+				if (
+					succeeded &&
+					priorSessionTabTarget &&
+					!sessionTabCorrection &&
+					observedSessionTabTarget &&
+					shouldCorrectSessionTabAfterCommand({
+						command: executionPlan.commandInfo.command,
+						sessionName: executionPlan.sessionName,
+					})
+				) {
+					const postCommandTabCorrection = await collectSessionTabSelection({
+						cwd: ctx.cwd,
+						sessionName: executionPlan.sessionName,
+						signal,
+						target: observedSessionTabTarget,
+					});
+					if (postCommandTabCorrection) {
+						const appliedPostCommandCorrection = await applyOpenResultTabCorrection({
+							correction: postCommandTabCorrection,
+							cwd: ctx.cwd,
+							sessionName: executionPlan.sessionName,
+							signal,
+						});
+						if (appliedPostCommandCorrection && !sessionTabCorrection) {
+							sessionTabCorrection = appliedPostCommandCorrection;
+						}
+					}
+				}
 				if (executionPlan.sessionName) {
 					if (executionPlan.commandInfo.command === "close" && succeeded) {
 						sessionTabTargets.delete(executionPlan.sessionName);

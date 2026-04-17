@@ -89,6 +89,7 @@ Practical policy:
 - leave explicit caller-provided `--session` choices alone unless the caller closes them explicitly
 - after profiled `open` / `goto` / `navigate` calls, verify the active tab still matches the returned page URL and best-effort switch back when restored profile tabs steal focus
 - once the wrapper knows which tab the agent is operating on, later active-tab commands may synthesize a tiny upstream `batch` that re-selects that tab and then runs the requested command in the same upstream invocation; this stays thin while avoiding reconnect-time drift on profile-restored sessions
+- after a successful command on a known tab target, the wrapper may best-effort restore that same target again if restored/background tabs steal focus after the command returns
 - for local Unix launches, set a short private socket directory so extension-generated session names do not fail on the upstream Unix socket-path length limit
 
 This is primarily about ownership clarity and avoiding surprise, not adding a heavy safety wrapper. If the extension invented the session, the extension should own its lifecycle without breaking reload/resume semantics. If the caller explicitly chose the upstream session model, the extension should stay out of the way.
@@ -126,7 +127,7 @@ This keeps the product centered on native tool usage instead of auxiliary skill 
 - compact result summaries
 - inline screenshots/images
 - lightweight session convenience
-- docs
+- docs, including a repo-readable command reference that mirrors the blocked direct-binary help path closely enough for normal agent work
 
 ### Upstream `agent-browser` owns
 

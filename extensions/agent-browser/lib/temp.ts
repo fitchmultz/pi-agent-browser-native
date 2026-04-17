@@ -260,7 +260,7 @@ export async function writeSecureTempChunk(options: {
 	const { content, fileHandle, path } = options;
 	await enqueueTempMutation(async () => {
 		await assertSecureTempRootBudget(dirname(path), getTempArtifactByteLength(content));
-		await fileHandle.writeFile(content);
+		await fileHandle.appendFile(content);
 	});
 }
 

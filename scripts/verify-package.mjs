@@ -23,6 +23,7 @@ export const REQUIRED_PACKED_FILES = [
 	"LICENSE",
 	"README.md",
 	"docs/ARCHITECTURE.md",
+	"docs/COMMAND_REFERENCE.md",
 	"docs/RELEASE.md",
 	"docs/REQUIREMENTS.md",
 	"docs/TOOL_CONTRACT.md",
