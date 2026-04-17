@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.9 - 2026-04-17
+
 ### Fixed
 - large non-snapshot outputs such as oversized `eval --stdin` payloads now compact inline content, spill the full payload to a private file, and print the actual spill path directly in tool content instead of dumping huge raw output into model context
 - file-save flows now render `download` results as explicit saved-file summaries so agents can see the downloaded path directly
