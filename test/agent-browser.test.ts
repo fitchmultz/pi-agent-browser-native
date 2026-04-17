@@ -551,17 +551,19 @@ test("buildExecutionPlan assigns a new managed session for fresh session mode", 
 });
 
 test("buildExecutionPlan injects the ChatGPT headless compatibility user-agent only when needed", () => {
-	const plan = buildExecutionPlan(["--profile", "Default", "open", "https://chatgpt.com"], {
-		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
-		managedSessionActive: false,
-		managedSessionName: "piab-demo-123",
-		sessionMode: "auto",
-	});
-	assert.equal(plan.compatibilityWorkaround?.id, "chatgpt-headless-user-agent");
-	const userAgentFlagIndex = plan.effectiveArgs.indexOf("--user-agent");
-	assert.ok(userAgentFlagIndex >= 0);
-	assert.match(plan.effectiveArgs[userAgentFlagIndex + 1] ?? "", /Chrome\/146\.0\.0\.0/);
-	assert.doesNotMatch(plan.effectiveArgs[userAgentFlagIndex + 1] ?? "", /HeadlessChrome/);
+	for (const targetUrl of ["https://chat.com", "https://chatgpt.com"] as const) {
+		const plan = buildExecutionPlan(["--profile", "Default", "open", targetUrl], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: false,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(plan.compatibilityWorkaround?.id, "chatgpt-headless-user-agent");
+		const userAgentFlagIndex = plan.effectiveArgs.indexOf("--user-agent");
+		assert.ok(userAgentFlagIndex >= 0);
+		assert.match(plan.effectiveArgs[userAgentFlagIndex + 1] ?? "", /Chrome\/146\.0\.0\.0/);
+		assert.doesNotMatch(plan.effectiveArgs[userAgentFlagIndex + 1] ?? "", /HeadlessChrome/);
+	}
 
 	const callerProvidedUserAgentPlan = buildExecutionPlan(
 		[
@@ -920,22 +922,43 @@ test("chooseOpenResultTabCorrection targets the navigated tab without disturbing
 	assert.deepEqual(
 		chooseOpenResultTabCorrection({
 			tabs: [
-				{ active: false, index: 0, title: "Example Domain", url: "https://example.com/" },
-				{ active: true, index: 1, title: "Grok", url: "https://grok.com/" },
+				{ active: false, tabId: "t1", title: "Example Domain", url: "https://example.com/" },
+				{ active: true, tabId: "t2", title: "Grok", url: "https://grok.com/" },
 			],
 			targetTitle: "Example Domain",
 			targetUrl: "https://example.com",
 		}),
-		{ selectedIndex: 0, targetTitle: "Example Domain", targetUrl: "https://example.com/" },
+		{ selectedTab: "t1", selectionKind: "tabId", targetTitle: "Example Domain", targetUrl: "https://example.com/" },
 	);
 	assert.equal(
 		chooseOpenResultTabCorrection({
-			tabs: [{ active: true, index: 0, title: "Example Domain", url: "https://example.com/" }],
+			tabs: [{ active: true, tabId: "t1", title: "Example Domain", url: "https://example.com/" }],
 			targetTitle: "Example Domain",
 			targetUrl: "https://example.com/",
 		}),
 		undefined,
 	);
+});
+
+test("buildToolPresentation renders stable tab ids from tab list output", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "tab", subcommand: "list" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				tabs: [
+					{ active: false, tabId: "t1", title: "ChatGPT", url: "https://chatgpt.com/" },
+					{ active: true, tabId: "t2", title: "Grok", url: "https://grok.com/" },
+				],
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.match((presentation.content[0] as { text: string }).text, /- \[t1\] ChatGPT — https:\/\/chatgpt\.com\//);
+	assert.match((presentation.content[0] as { text: string }).text, /\* \[t2\] Grok — https:\/\/grok\.com\//);
+	assert.equal(presentation.summary, "Tabs: 2");
 });
 
 test("parseAgentBrowserEnvelope reports invalid JSON clearly", async () => {
@@ -1755,11 +1778,11 @@ const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("tab") && args.includes("list")) {
   process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { index: 0, title: "Example Domain", url: "https://example.com/", active: false },
-    { index: 1, title: "Grok", url: "https://grok.com/", active: true }
+    { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
+    { tabId: "t2", title: "Grok", url: "https://grok.com/", active: true }
   ] } }));
-} else if (args.includes("tab") && args.includes("0")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { index: 0, title: "Example Domain", url: "https://example.com/" } }));
+} else if (args.includes("tab") && args.includes("t1")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t1", title: "Example Domain", url: "https://example.com/" } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: "https://example.com/" } }));
 }`,
@@ -1775,7 +1798,8 @@ if (args.includes("tab") && args.includes("list")) {
 			});
 			assert.equal(result.isError, false);
 			assert.deepEqual(result.details?.openResultTabCorrection, {
-				selectedIndex: 0,
+				selectedTab: "t1",
+				selectionKind: "tabId",
 				targetTitle: "Example Domain",
 				targetUrl: "https://example.com/",
 			});
@@ -1792,7 +1816,7 @@ if (args.includes("tab") && args.includes("list")) {
 				"https://example.com",
 			]);
 			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "0"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "t1"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1817,7 +1841,7 @@ if (args.includes("batch")) {
   const results = steps.map((step) => {
     const [command, ...rest] = step;
     if (command === "tab") {
-      active = rest[0] === "0" ? exampleSite : gemini;
+      active = rest[0] === "t1" ? exampleSite : gemini;
       return { command: step, success: true, result: active };
     }
     if (command === "click") {
@@ -1834,11 +1858,11 @@ if (args.includes("batch")) {
   process.stdout.write(JSON.stringify(results));
 } else if (args.includes("tab") && args.includes("list")) {
   process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { index: 0, title: exampleSite.title, url: exampleSite.url, active: false },
-    { index: 2, title: gemini.title, url: gemini.url, active: true }
+    { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: false },
+    { tabId: "t2", title: gemini.title, url: gemini.url, active: true }
   ] } }));
-} else if (args.includes("tab") && args.includes("0")) {
-  process.stdout.write(JSON.stringify({ success: true, data: exampleSite }));
+} else if (args.includes("tab") && args.includes("t1")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t1", ...exampleSite } }));
 } else if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: exampleSite }));
 } else if (args.includes("click")) {
@@ -1875,7 +1899,8 @@ if (args.includes("batch")) {
 				"https://example.com/",
 			);
 			assert.deepEqual(clickedSelector.details?.sessionTabCorrection, {
-				selectedIndex: 0,
+				selectedTab: "t1",
+				selectionKind: "tabId",
 				targetTitle: "Example Domain",
 				targetUrl: "https://example.com/",
 			});
@@ -1894,11 +1919,11 @@ if (args.includes("batch")) {
 				"https://example.com",
 			]);
 			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "0"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "t1"]);
 			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
 			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "batch"]);
 			assert.deepEqual(JSON.parse(String(invocations[4]?.stdin ?? "[]")), [
-				["tab", "0"],
+				["tab", "t1"],
 				["click", "@e9"],
 				["get", "title"],
 				["get", "url"],
@@ -2330,7 +2355,7 @@ if (args.includes("batch")) {
   const results = steps.map((step) => {
     const [command, ...rest] = step;
     if (command === "tab") {
-      active = rest[0] === "0" ? exampleSite : gemini;
+      active = rest[0] === "t1" ? exampleSite : gemini;
       return { command: step, success: true, result: active };
     }
     if (command === "snapshot") {
@@ -2349,8 +2374,8 @@ if (args.includes("batch")) {
   process.stdout.write(JSON.stringify(results));
 } else if (args.includes("tab") && args.includes("list")) {
   process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { index: 0, title: exampleSite.title, url: exampleSite.url, active: false },
-    { index: 2, title: gemini.title, url: gemini.url, active: true }
+    { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: false },
+    { tabId: "t2", title: gemini.title, url: gemini.url, active: true }
   ] } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: {
@@ -2384,7 +2409,8 @@ if (args.includes("batch")) {
 			});
 			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
 			assert.deepEqual(snapshot.details?.sessionTabCorrection, {
-				selectedIndex: 0,
+				selectedTab: "t1",
+				selectionKind: "tabId",
 				targetTitle: "Example Domain",
 				targetUrl: "https://example.com/",
 			});
@@ -2394,7 +2420,7 @@ if (args.includes("batch")) {
 			assert.equal(invocations.length, 2);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
 			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [["tab", "0"], ["snapshot", "-i"]]);
+			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [["tab", "t1"], ["snapshot", "-i"]]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

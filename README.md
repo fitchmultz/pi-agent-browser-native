@@ -178,7 +178,7 @@ Validated workflow examples:
 - click a link and confirm the destination title
 - use an explicit `--session` across multiple tool calls
 - use an explicit `--profile` and verify persisted browser storage across restarts
-- open `chatgpt.com` headlessly with `--profile Default` without forcing `--headed` or `--auto-connect`
+- open `chat.com` or `chatgpt.com` headlessly with `--profile Default` without forcing `--headed` or `--auto-connect`
 - verify `/reload` and full restart + `/resume` keep following the same implicit managed browser session
 - run `batch` with JSON via `stdin`
 - run `eval --stdin`
@@ -193,7 +193,7 @@ Current cautions:
 - implicit `piab-*` sessions are extension-managed convenience sessions; they stay alive across `pi` shutdown/reload so later default calls can keep following the active managed browser on `/reload` or `/resume`, rely on the configured idle timeout to reduce stale background daemons, store persisted-session large snapshot spill files under a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` survives reload/resume without unbounded growth, and still clean up process-private temp spill artifacts on shutdown
 - `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
 - for local Unix launches, the wrapper uses a short private socket directory under `/tmp` so extension-generated session names do not trip upstream Unix socket-path limits in longer cwd/session-name combinations
-- for direct headless local Chrome launches to `chatgpt.com` and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
+- for direct headless local Chrome launches to `chat.com`, `chatgpt.com`, and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
 - after profiled `open` calls, the extension best-effort re-selects the tab that matches the returned page URL when restored profile tabs steal focus during launch
 - after a target tab is known, later active-tab commands like `click` and `snapshot -i` best-effort pin that same tab inside the same upstream invocation when a reconnect would otherwise drift to a restored tab
 - explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension

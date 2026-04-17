@@ -74,7 +74,7 @@ const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.",
 	"When using --profile, --session-name, or --cdp, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
 	"If you already used the implicit session and now need startup-scoped flags like --profile, --session-name, or --cdp, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.",
-	"If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <n> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load, --url, --fn, or --text.",
+	"If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <tab-id-or-label> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load, --url, --fn, or --text.",
 	"For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.",
 	"For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.",
 	"When using eval --stdin, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics.",
@@ -414,25 +414,14 @@ function shouldPinSessionTabForCommand(options: { command?: string; sessionName?
 }
 
 function selectSessionTargetTab(options: {
-	tabs: Array<{ active?: boolean; index?: number; title?: string; url?: string }>;
+	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }>;
 	target: SessionTabTarget;
 }): OpenResultTabCorrection | undefined {
-	const matchingTabs = options.tabs.filter((tab) => normalizeComparableUrl(tab.url) === options.target.url);
-	if (matchingTabs.length === 0) {
-		return undefined;
-	}
-	const titledMatch =
-		typeof options.target.title === "string"
-			? matchingTabs.find((tab) => tab.title?.trim() === options.target.title)
-			: undefined;
-	const selectedTab = titledMatch ?? matchingTabs[0];
-	return typeof selectedTab.index === "number"
-		? {
-				selectedIndex: selectedTab.index,
-				targetTitle: options.target.title,
-				targetUrl: options.target.url,
-		  }
-		: undefined;
+	return chooseOpenResultTabCorrection({
+		tabs: options.tabs,
+		targetTitle: options.target.title,
+		targetUrl: options.target.url,
+	});
 }
 
 function deriveSessionTabTarget(options: {
@@ -570,9 +559,11 @@ async function collectOpenResultTabCorrection(options: {
 	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) {
 		return undefined;
 	}
-	const tabs = tabData.tabs.filter(isRecord).map((tab) => ({
+	const tabs = tabData.tabs.filter(isRecord).map((tab, index) => ({
 		active: tab.active === true,
-		index: typeof tab.index === "number" ? tab.index : undefined,
+		index: typeof tab.index === "number" ? tab.index : index,
+		label: typeof tab.label === "string" ? tab.label : undefined,
+		tabId: typeof tab.tabId === "string" ? tab.tabId : undefined,
 		title: typeof tab.title === "string" ? tab.title : undefined,
 		url: typeof tab.url === "string" ? tab.url : undefined,
 	}));
@@ -590,9 +581,11 @@ async function collectSessionTabSelection(options: {
 	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) {
 		return undefined;
 	}
-	const tabs = tabData.tabs.filter(isRecord).map((tab) => ({
+	const tabs = tabData.tabs.filter(isRecord).map((tab, index) => ({
 		active: tab.active === true,
-		index: typeof tab.index === "number" ? tab.index : undefined,
+		index: typeof tab.index === "number" ? tab.index : index,
+		label: typeof tab.label === "string" ? tab.label : undefined,
+		tabId: typeof tab.tabId === "string" ? tab.tabId : undefined,
 		title: typeof tab.title === "string" ? tab.title : undefined,
 		url: typeof tab.url === "string" ? tab.url : undefined,
 	}));
@@ -607,7 +600,7 @@ async function applyOpenResultTabCorrection(options: {
 }): Promise<OpenResultTabCorrection | undefined> {
 	const { correction, cwd, sessionName, signal } = options;
 	const result = await runSessionCommandData({
-		args: ["tab", String(correction.selectedIndex)],
+		args: ["tab", correction.selectedTab],
 		cwd,
 		sessionName,
 		signal,
@@ -816,7 +809,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					sessionTabCorrection = plannedSessionTabSelection;
 					processArgs = ["--json", "--session", executionPlan.sessionName, "batch"];
 					processStdin = JSON.stringify([
-						["tab", String(plannedSessionTabSelection.selectedIndex)],
+						["tab", plannedSessionTabSelection.selectedTab],
 						commandTokens,
 						...(includePinnedNavigationSummary ? [["get", "title"], ["get", "url"]] : []),
 					]);

@@ -11,7 +11,7 @@ import { basename } from "node:path";
 
 const STARTUP_SCOPED_FLAGS = ["--cdp", "--profile", "--session-name"] as const;
 const OPEN_COMMANDS = new Set(["goto", "navigate", "open"]);
-const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.openai.com", "chatgpt.com"]);
+const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
 const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
@@ -106,7 +106,8 @@ export interface CompatibilityWorkaround {
 }
 
 export interface OpenResultTabCorrection {
-	selectedIndex: number;
+	selectedTab: string;
+	selectionKind: "index" | "label" | "tabId";
 	targetTitle?: string;
 	targetUrl: string;
 }
@@ -537,6 +538,26 @@ function normalizeComparableUrl(url: string): string | undefined {
 	}
 }
 
+function normalizeTabSelectionValue(value: string | undefined): string | undefined {
+	const normalizedValue = value?.trim();
+	return normalizedValue && normalizedValue.length > 0 ? normalizedValue : undefined;
+}
+
+function extractTabSelection(tab: { index?: number; label?: string; tabId?: string }): Pick<OpenResultTabCorrection, "selectedTab" | "selectionKind"> | undefined {
+	const tabId = normalizeTabSelectionValue(tab.tabId);
+	if (tabId) {
+		return { selectedTab: tabId, selectionKind: "tabId" };
+	}
+	const label = normalizeTabSelectionValue(tab.label);
+	if (label) {
+		return { selectedTab: label, selectionKind: "label" };
+	}
+	if (typeof tab.index === "number" && Number.isInteger(tab.index) && tab.index >= 0) {
+		return { selectedTab: String(tab.index), selectionKind: "index" };
+	}
+	return undefined;
+}
+
 function parseComparableNavigationUrl(url: string): URL | undefined {
 	try {
 		return new URL(url);
@@ -727,7 +748,7 @@ export function buildExecutionPlan(
 
 export function chooseOpenResultTabCorrection(options: {
 	activeTabIndex?: number;
-	tabs: Array<{ active?: boolean; index?: number; title?: string; url?: string }>;
+	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }>;
 	targetTitle?: string;
 	targetUrl?: string;
 }): OpenResultTabCorrection | undefined {
@@ -740,6 +761,8 @@ export function chooseOpenResultTabCorrection(options: {
 	const tabsWithIndices = options.tabs.map((tab, index) => ({
 		...tab,
 		index: typeof tab.index === "number" ? tab.index : index,
+		label: normalizeTabSelectionValue(tab.label),
+		tabId: normalizeTabSelectionValue(tab.tabId),
 	}));
 	const activeTab =
 		tabsWithIndices.find((tab) => tab.active === true) ??
@@ -758,13 +781,14 @@ export function chooseOpenResultTabCorrection(options: {
 			? undefined
 			: matchingTabs.find((tab) => typeof tab.title === "string" && tab.title.trim() === trimmedTargetTitle);
 	const selectedTab = titledMatch ?? matchingTabs[0];
-	return selectedTab.index === undefined
-		? undefined
-		: {
-			selectedIndex: selectedTab.index,
+	const tabSelection = extractTabSelection(selectedTab);
+	return tabSelection
+		? {
+			...tabSelection,
 			targetTitle: trimmedTargetTitle.length > 0 ? trimmedTargetTitle : undefined,
 			targetUrl: normalizedTargetUrl,
-		};
+		}
+		: undefined;
 }
 
 export function parseCommandInfo(args: string[]): CommandInfo {
