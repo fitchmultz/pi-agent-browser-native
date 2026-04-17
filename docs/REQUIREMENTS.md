@@ -85,7 +85,7 @@ The design should comfortably support workflows such as:
 - web research
 - using browser UIs for other LLMs such as ChatGPT, Grok, Gemini, and Claude
 - isolated authenticated browser sessions
-- headless authenticated ChatGPT/OpenAI browsing without forcing `--headed` or `--auto-connect`
+- headless authenticated `chat.com` / ChatGPT / OpenAI browsing without forcing `--headed` or `--auto-connect`
 - upstream profile/debug workflows without adding a local profile-cloning layer in this package
 
 ## Implications for the implementation

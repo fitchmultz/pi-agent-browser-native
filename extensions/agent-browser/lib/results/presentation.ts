@@ -73,8 +73,15 @@ function getTabSummary(data: Record<string, unknown>): string | undefined {
 		const marker = tab.active === true ? "*" : "-";
 		const title = typeof tab.title === "string" ? tab.title : "(untitled)";
 		const url = typeof tab.url === "string" ? tab.url : "(no url)";
-		const tabIndex = typeof tab.index === "number" ? tab.index : index;
-		return `${marker} [${tabIndex}] ${title} — ${url}`;
+		const tabSelector =
+			typeof tab.tabId === "string" && tab.tabId.trim().length > 0
+				? tab.tabId.trim()
+				: typeof tab.label === "string" && tab.label.trim().length > 0
+					? tab.label.trim()
+					: typeof tab.index === "number"
+						? String(tab.index)
+						: String(index);
+		return `${marker} [${tabSelector}] ${title} — ${url}`;
 	});
 	return lines.join("\n");
 }
