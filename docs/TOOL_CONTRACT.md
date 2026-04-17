@@ -4,6 +4,7 @@ Related docs:
 - [`../README.md`](../README.md)
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)
 
 ## V1 tool
 
@@ -24,7 +25,7 @@ It also keeps the main UX where it belongs: the agent invokes the tool directly 
 
 The tool guidance should be written for task discovery first, not wrapper implementation first. That means the description should emphasize browser use cases like web research, reading live docs, clicking, filling, screenshots, extraction, and authenticated/profile-based workflows. Low-level wrapper details like `stdin` and exact CLI args belong in the schema and guidelines, not the lead description.
 
-The tool also needs an operating playbook, not just a capability list. The model should not have to rediscover basics each session. Guidance should explicitly encode the normal browser workflow (`open` -> `snapshot -i` -> interact -> re-snapshot), the authenticated-content workflow (prefer `--profile Default` on the first browser call and let the implicit session carry continuity; use `--auto-connect` as a fallback when profile reuse is unavailable), and the preferred recovery path when a session opens on the wrong tab, an action changes origin unexpectedly, or an `open` call returns blocked/blank/unexpected results (`tab list` / `tab <tab-id-or-label>` / `snapshot -i` before retrying different URLs or fallback strategies). It should also discourage inventing fixed explicit session names for routine tasks, because those names leak stale browser state across otherwise unrelated `pi` sessions. For read-only browsing tasks, guidance should prefer answering from the current page state first: use the current snapshot, structured ref labels, or `eval --stdin` on the current page before navigating into media viewers, detail routes, or other new pages unless the current view lacks the needed information. When using `eval --stdin`, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics. When using `eval --stdin` for extraction, return the intended value instead of relying on `console.log` as the primary result channel.
+The tool also needs an operating playbook, not just a capability list. The model should not have to rediscover basics each session. Guidance should explicitly encode the normal browser workflow (`open` -> `snapshot -i` -> interact -> re-snapshot), the authenticated-content workflow (prefer `--profile Default` on the first browser call and let the implicit session carry continuity; use `--auto-connect` as a fallback when profile reuse is unavailable), and the preferred recovery path when a session opens on the wrong tab, an action changes origin unexpectedly, or an `open` call returns blocked/blank/unexpected results (`tab list` / `tab <tab-id-or-label>` / `snapshot -i` before retrying different URLs or fallback strategies). It should also discourage inventing fixed explicit session names for routine tasks, because those names leak stale browser state across otherwise unrelated `pi` sessions. For read-only browsing tasks, guidance should prefer answering from the current page state first: use the current snapshot, structured ref labels, or `eval --stdin` on the current page before navigating into media viewers, detail routes, or other new pages unless the current view lacks the needed information. For downloads, guidance should explicitly prefer `download <selector> <path>` over `click` when the goal is a file on disk. When using `eval --stdin`, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics. When using `eval --stdin` for extraction, return the intended value instead of relying on `console.log` as the primary result channel. Because the extension blocks normal direct-binary usage in most agent sessions, the repository must also carry a local command reference that stays in sync with the effective tool surface.
 
 ## Parameters
 
@@ -109,7 +110,7 @@ Primary content should be:
 
 Examples:
 - small `snapshot` results should include the actual snapshot text
-- oversized `snapshot` results should switch to a compact view that preserves the primary content, nearby sections, and a trimmed set of high-value refs, while exposing the full raw snapshot path via `details.fullOutputPath`
+- oversized `snapshot` results should switch to a compact view that preserves the primary content, nearby sections, and a trimmed set of high-value refs, while exposing the full raw snapshot path directly in the rendered tool text and via `details.fullOutputPath`
 - successful navigation actions like `click`, `back`, `forward`, and `reload` should include a lightweight post-action title/url summary when the wrapper can address the active session
 - `tab list` should include a readable tab summary
 - `screenshot` should include the saved-path summary plus the inline image attachment when available
@@ -141,13 +142,13 @@ Additional structured fields can appear when relevant:
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `imagePath` / `imagePaths` for screenshots and batched image outputs
-- `fullOutputPath` / `fullOutputPaths` when large snapshot output is compacted and spilled to a private file; persisted sessions keep that path under a private session-scoped artifact directory with a bounded per-session budget so it survives reload/resume without unbounded growth
+- `fullOutputPath` / `fullOutputPaths` when large snapshot output or other oversized tool output is compacted and spilled to a private file; persisted sessions keep that path under a private session-scoped artifact directory with a bounded per-session budget so it survives reload/resume without unbounded growth
 - `sessionRecoveryHint` when startup-scoped flags need `sessionMode: "fresh"`
 - `inspection: true` plus `stdout` for successful plain-text inspection commands like `--help` and `--version`
 
 When the tool echoes `args` or `effectiveArgs` back into Pi, sensitive values such as `--headers`, proxy credentials, and auth-bearing URL parameters should be redacted first.
 
-For oversized snapshots, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private JSON spill file with the full upstream snapshot payload. Persisted sessions should keep that spill file under a private session-scoped artifact directory so the path remains usable after reload/restart, with the oldest persisted spill files evicted as needed to stay within the per-session budget.
+For oversized snapshots and other oversized tool outputs, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private spill file with the full upstream payload. The model-facing tool text should print the actual spill-file path when one exists instead of only saying to inspect a details key. Persisted sessions should keep that spill file under a private session-scoped artifact directory so the path remains usable after reload/restart, with the oldest persisted spill files evicted as needed to stay within the per-session budget.
 
 ## High-value result rendering
 
@@ -155,7 +156,8 @@ For oversized snapshots, details should switch to a compact metadata object and 
 
 Worth doing in v1:
 - screenshots → inline image attachment
-- snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path kept in `details.fullOutputPath` when the inline result would otherwise be too large
+- snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path printed directly in content and kept in `details.fullOutputPath` when the inline result would otherwise be too large
+- oversized generic outputs such as large `eval --stdin` payloads → compact preview plus the actual spill file path instead of dumping the whole payload into model context
 - extraction-style commands like `eval --stdin` and `get title` → scalar-first text with lightweight origin context when available
 - navigation actions like `click`, `back`, `forward`, and `reload` → lightweight post-action title/url summary when available
 - tab lists → compact summary/table
@@ -184,6 +186,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
 - after profiled `open` / `goto` / `navigate`, if upstream leaves a restored profile tab active instead of the page that was just opened, best-effort switch back to the tab whose URL matches the returned open result before returning control to the agent
 - once the wrapper has a known tab target for a session, later active-tab commands may best-effort pin that tab inside the same upstream invocation so reconnect drift does not send a `click`, `snapshot`, or similar action to a restored/background tab instead
+- after a successful command on a known tab target, the wrapper may best-effort restore that same target again if a restored/background tab steals focus after the command completes
 - on local Unix launches, set a short private socket directory for wrapper-spawned `agent-browser` processes so extension-generated session names do not fail the upstream Unix socket-path length limit in longer cwd/session-name combinations
 - treat successful plain-text inspection commands like `--help` and `--version` as stateless: do not inject the implicit managed session and do not let those calls claim the managed-session slot
 - if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active while `sessionMode` is `"auto"`, return a validation error with a structured recovery hint that recommends `sessionMode: "fresh"`

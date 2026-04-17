@@ -1147,6 +1147,51 @@ test("buildToolPresentation formats scalar extraction results for eval and get c
 	assert.equal(getPresentation.summary, "Title: Example Domain");
 });
 
+test("buildToolPresentation formats download results as saved-file summaries", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "download", subcommand: "@e5" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				path: "/tmp/report.pdf",
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.equal((presentation.content[0] as { text: string }).text, "Downloaded file: /tmp/report.pdf");
+	assert.equal(presentation.summary, "Downloaded file: /tmp/report.pdf");
+});
+
+test("buildToolPresentation compacts oversized generic outputs and prints the actual spill path", async () => {
+	const largeText = Array.from({ length: 220 }, (_, index) => `Large eval row ${index + 1}: ${"x".repeat(80)}`).join("\n");
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "eval", subcommand: "--stdin" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "https://example.com/large-eval",
+				result: largeText,
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Large eval output compacted/);
+	assert.match(text, /Full output path: /);
+	assert.equal(typeof presentation.fullOutputPath, "string");
+	assert.equal((presentation.data as { compacted: boolean }).compacted, true);
+
+	const spillPath = presentation.fullOutputPath;
+	assert.ok(spillPath);
+	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(await readFile(String(spillPath), "utf8"), /Large eval row 220/);
+	await rm(String(spillPath), { force: true });
+});
+
 test("buildToolPresentation formats batch output for the model", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "batch" },
@@ -1269,7 +1314,6 @@ test("buildToolPresentation reuses compact snapshot rendering inside batch outpu
 	assert.match(text, /Step 1 — snapshot -i/);
 	assert.match(text, /Compact snapshot view/);
 	assert.match(text, /Key refs:/);
-	assert.match(text, /details\.fullOutputPath/);
 	assert.equal(typeof presentation.fullOutputPath, "string");
 	assert.equal(presentation.batchSteps?.length, 1);
 	assert.equal(typeof presentation.batchSteps?.[0]?.fullOutputPath, "string");
@@ -1277,7 +1321,7 @@ test("buildToolPresentation reuses compact snapshot rendering inside batch outpu
 
 	const spillPath = presentation.batchSteps?.[0]?.fullOutputPath;
 	assert.ok(spillPath);
-	assert.doesNotMatch(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	if (spillPath) {
 		await rm(spillPath, { force: true });
 	}
@@ -1312,14 +1356,13 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /Compact snapshot view/);
 	assert.match(text, /Key refs:/);
-	assert.match(text, /details\.fullOutputPath/);
 	assert.match(presentation.summary, /Snapshot: 90 refs on https:\/\/example.com\/huge \(compact\)/);
 	assert.equal(typeof presentation.fullOutputPath, "string");
 	assert.equal((presentation.data as { compacted: boolean }).compacted, true);
 
 	const spillPath = presentation.fullOutputPath;
 	assert.ok(spillPath);
-	assert.doesNotMatch(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	const spillText = await readFile(spillPath, "utf8");
 	const spillStats = await stat(spillPath);
 	const spillDirStats = await stat(dirname(spillPath));
@@ -1928,6 +1971,88 @@ if (args.includes("batch")) {
 				["get", "title"],
 				["get", "url"],
 			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension re-selects the intended tab after a successful command when focus drifts afterward", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "tab-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const exampleSite = { title: "Example Domain", url: "https://example.com/" };
+const gemini = { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" };
+let state = { active: "example", tabListCount: 0 };
+try {
+  state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
+} catch {}
+const save = () => fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+if (args.includes("tab") && args.includes("list")) {
+  state.tabListCount += 1;
+  const activeKey = state.tabListCount === 1 ? "example" : state.active;
+  const activeSite = activeKey === "example" ? exampleSite : gemini;
+  const inactiveSite = activeKey === "example" ? gemini : exampleSite;
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: activeKey === "example" ? "t1" : "t2", title: activeSite.title, url: activeSite.url, active: true },
+    { tabId: activeKey === "example" ? "t2" : "t1", title: inactiveSite.title, url: inactiveSite.url, active: false }
+  ] } }));
+} else if (args.includes("click")) {
+  state.active = "gemini";
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.indexOf("click") + 1], title: exampleSite.title, url: exampleSite.url } }));
+} else if (args.includes("tab") && args.includes("t1")) {
+  state.active = "example";
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t1", ...exampleSite } }));
+} else {
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: exampleSite }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const clickedSelector = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "click", "@e9"],
+			});
+			assert.equal(clickedSelector.isError, false, JSON.stringify(clickedSelector));
+			assert.deepEqual(clickedSelector.details?.sessionTabCorrection, {
+				selectedTab: "t1",
+				selectionKind: "tabId",
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 4);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "click", "@e9"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "t1"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

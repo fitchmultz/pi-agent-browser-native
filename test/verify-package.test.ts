@@ -76,6 +76,7 @@ test("evaluatePackResult preserves the retired autoload-shim ban and split-resul
 	assert.equal(FORBIDDEN_REPO_FILES.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(FORBIDDEN_PACKED_FILES.includes(".pi/extensions/agent-browser.ts"), true);
 	for (const requiredPath of [
+		"docs/COMMAND_REFERENCE.md",
 		"extensions/agent-browser/lib/results.ts",
 		"extensions/agent-browser/lib/results/envelope.ts",
 		"extensions/agent-browser/lib/results/presentation.ts",

@@ -2,7 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+- large non-snapshot outputs such as oversized `eval --stdin` payloads now compact inline content, spill the full payload to a private file, and print the actual spill path directly in tool content instead of dumping huge raw output into model context
+- file-save flows now render `download` results as explicit saved-file summaries so agents can see the downloaded path directly
+- when a known target tab stays correct at command start but a restored/background tab steals focus after the command completes, the wrapper now best-effort restores the intended tab before returning control
+- compact snapshot text now prints the actual raw-spill file path directly instead of only referring agents to `details.fullOutputPath`
+
 ### Changed
+- added a published `docs/COMMAND_REFERENCE.md` so agents have a repo-readable local command/help surface even when direct `agent-browser` binary usage is blocked
+- expanded tool guidance, README, release notes, and repo guidance with download workflows, better `wait` usage, oversized-output handling, and the documentation-sync rule for upstream `agent-browser` updates
 - clarified the checkout-versus-installed-package workflow in README, release notes, and repo agent guidance so local development keeps one active Pi package source for this extension at a time instead of treating the published entrypoint file as optional
 
 ## 0.2.8 - 2026-04-16

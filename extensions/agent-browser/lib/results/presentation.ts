@@ -10,7 +10,11 @@ import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { parseCommandInfo, type CommandInfo } from "../runtime.js";
-import { type PersistentSessionArtifactStore } from "../temp.js";
+import {
+	type PersistentSessionArtifactStore,
+	writePersistentSessionArtifactFile,
+	writeSecureTempFile,
+} from "../temp.js";
 import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary } from "./snapshot.js";
 import {
 	type AgentBrowserBatchResult,
@@ -19,8 +23,10 @@ import {
 	type BatchStepPresentationDetails,
 	type ToolPresentation,
 	isRecord,
+	countLines,
 	parsePositiveInteger,
 	stringifyUnknown,
+	truncateText,
 } from "./shared.js";
 
 const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
@@ -35,6 +41,11 @@ const INLINE_IMAGE_MAX_BYTES_ENV = "PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES";
 const DEFAULT_INLINE_IMAGE_MAX_BYTES = 5 * 1_024 * 1_024;
 const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
 const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
+const LARGE_OUTPUT_INLINE_MAX_CHARS = 8_000;
+const LARGE_OUTPUT_INLINE_MAX_LINES = 120;
+const LARGE_OUTPUT_PREVIEW_MAX_CHARS = 2_500;
+const LARGE_OUTPUT_PREVIEW_MAX_LINES = 40;
+const LARGE_OUTPUT_FILE_PREFIX = "pi-agent-browser-output";
 
 interface NavigationSummary {
 	title?: string;
@@ -112,6 +123,19 @@ function getPageSummary(data: Record<string, unknown>): string | undefined {
 
 function getScreenshotSummary(data: Record<string, unknown>): string | undefined {
 	return typeof data.path === "string" ? `Saved image: ${data.path}` : undefined;
+}
+
+function getSavedFileSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
+	if (typeof data.path !== "string") {
+		return undefined;
+	}
+	if (commandInfo.command === "download") {
+		return `Downloaded file: ${data.path}`;
+	}
+	if (commandInfo.command === "pdf") {
+		return `Saved PDF: ${data.path}`;
+	}
+	return undefined;
 }
 
 function getScalarExtractionResult(data: Record<string, unknown>): string | undefined {
@@ -437,6 +461,10 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 		if (commandInfo.command === "screenshot" && typeof data.path === "string") {
 			return `Screenshot saved: ${data.path}`;
 		}
+		const savedFileSummary = getSavedFileSummary(commandInfo, data);
+		if (savedFileSummary) {
+			return savedFileSummary;
+		}
 		const extractionSummary = formatExtractionSummary(commandInfo, data);
 		if (extractionSummary) {
 			return extractionSummary;
@@ -489,6 +517,10 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	if (commandInfo.command === "screenshot") {
 		const screenshotSummary = getScreenshotSummary(data);
 		if (screenshotSummary) return screenshotSummary;
+	}
+	const savedFileSummary = getSavedFileSummary(commandInfo, data);
+	if (savedFileSummary) {
+		return savedFileSummary;
 	}
 
 	const extractionText = formatExtractionText(commandInfo, data);
@@ -546,6 +578,115 @@ async function attachInlineImage(presentation: ToolPresentation, imagePath: stri
 	}
 }
 
+function shouldCompactLargeOutput(text: string): boolean {
+	return text.length > LARGE_OUTPUT_INLINE_MAX_CHARS || countLines(text) > LARGE_OUTPUT_INLINE_MAX_LINES;
+}
+
+function buildLargeOutputPreview(text: string): { omittedLineCount: number; previewText: string } {
+	const lines = text.split("\n");
+	const previewLines: string[] = [];
+	let previewChars = 0;
+	for (const line of lines) {
+		if (previewLines.length >= LARGE_OUTPUT_PREVIEW_MAX_LINES || previewChars >= LARGE_OUTPUT_PREVIEW_MAX_CHARS) {
+			break;
+		}
+		const remainingChars = LARGE_OUTPUT_PREVIEW_MAX_CHARS - previewChars;
+		const previewLine = truncateText(line, Math.max(40, remainingChars));
+		previewLines.push(previewLine);
+		previewChars += previewLine.length + 1;
+	}
+	return {
+		omittedLineCount: Math.max(0, lines.length - previewLines.length),
+		previewText: previewLines.join("\n"),
+	};
+}
+
+async function writeLargeOutputSpillFile(options: {
+	data: unknown;
+	persistentArtifactStore?: PersistentSessionArtifactStore;
+	text: string;
+}): Promise<string> {
+	const payload =
+		typeof options.data === "string"
+			? options.data
+			: typeof options.data === "number" || typeof options.data === "boolean"
+				? String(options.data)
+				: options.data === undefined
+					? options.text
+					: stringifyUnknown(options.data);
+	const isStructuredPayload = typeof options.data !== "string" && typeof options.data !== "number" && typeof options.data !== "boolean";
+	const fileOptions = {
+		content: payload,
+		prefix: LARGE_OUTPUT_FILE_PREFIX,
+		suffix: isStructuredPayload ? ".json" : ".txt",
+	};
+	return options.persistentArtifactStore
+		? await writePersistentSessionArtifactFile({ ...fileOptions, store: options.persistentArtifactStore })
+		: await writeSecureTempFile(fileOptions);
+}
+
+async function compactLargePresentationOutput(options: {
+	commandInfo: CommandInfo;
+	data: unknown;
+	persistentArtifactStore?: PersistentSessionArtifactStore;
+	presentation: ToolPresentation;
+}): Promise<ToolPresentation> {
+	const text = getPresentationText(options.presentation);
+	if (text.length === 0 || !shouldCompactLargeOutput(text)) {
+		return options.presentation;
+	}
+
+	let fullOutputPath: string | undefined;
+	let spillErrorText: string | undefined;
+	try {
+		fullOutputPath = await writeLargeOutputSpillFile({
+			data: options.data,
+			persistentArtifactStore: options.persistentArtifactStore,
+			text,
+		});
+	} catch (error) {
+		spillErrorText = error instanceof Error ? error.message : String(error);
+	}
+
+	const { omittedLineCount, previewText } = buildLargeOutputPreview(text);
+	const commandLabel = options.commandInfo.command ?? "agent-browser";
+	const lines = [
+		`Large ${commandLabel} output compacted.`,
+		"",
+		"Preview:",
+		previewText,
+	];
+	if (omittedLineCount > 0) {
+		lines.push(`- ... (${omittedLineCount} additional lines omitted)`);
+	}
+	lines.push(
+		"",
+		fullOutputPath
+			? `Full output path: ${fullOutputPath}`
+			: `Full output unavailable: ${spillErrorText ?? "spill file could not be created."}`,
+	);
+
+	const firstTextIndex = options.presentation.content.findIndex((part) => part.type === "text");
+	const compactedText = lines.join("\n");
+	if (firstTextIndex >= 0) {
+		options.presentation.content[firstTextIndex] = { type: "text", text: compactedText };
+	} else {
+		options.presentation.content.unshift({ type: "text", text: compactedText });
+	}
+	options.presentation.data = {
+		compacted: true,
+		fullOutputPath,
+		outputCharCount: text.length,
+		outputLineCount: countLines(text),
+		previewCharCount: previewText.length,
+		previewLineCount: countLines(previewText),
+		spillError: spillErrorText,
+	};
+	options.presentation.fullOutputPath = fullOutputPath;
+	options.presentation.summary = `${options.presentation.summary} (compact)`;
+	return options.presentation;
+}
+
 export async function buildToolPresentation(options: {
 	commandInfo: CommandInfo;
 	cwd: string;
@@ -575,9 +716,11 @@ export async function buildToolPresentation(options: {
 				  };
 
 	const imagePath = extractImagePath(cwd, data);
-	if (!imagePath) {
-		return presentation;
-	}
-
-	return await attachInlineImage(presentation, imagePath);
+	const presentationWithImage = imagePath ? await attachInlineImage(presentation, imagePath) : presentation;
+	return await compactLargePresentationOutput({
+		commandInfo,
+		data,
+		persistentArtifactStore,
+		presentation: presentationWithImage,
+	});
 }

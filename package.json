@@ -32,6 +32,7 @@
     "CHANGELOG.md",
     "LICENSE",
     "docs/ARCHITECTURE.md",
+    "docs/COMMAND_REFERENCE.md",
     "docs/RELEASE.md",
     "docs/REQUIREMENTS.md",
     "docs/TOOL_CONTRACT.md"

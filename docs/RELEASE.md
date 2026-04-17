@@ -59,6 +59,7 @@ Before publishing, also validate the explicit local-checkout path:
 4. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
 5. Run a smoke prompt that exercises `agent_browser`.
 6. Validate managed-session continuity with both `/reload` and a full restart + `/resume`.
+7. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed.
 
 Example smoke prompt:
 
@@ -72,6 +73,8 @@ Recommended lifecycle follow-up:
 2. Run `/reload`, then ask for `snapshot -i` and confirm the same page is still active.
 3. Exit `pi`, relaunch it against the same session file or use `/resume`, then ask for `snapshot -i` again and confirm the same page is still active.
 4. Open a large page that compacts its snapshot output and confirm `details.fullOutputPath` still exists after the restart/resume flow.
+5. Trigger an oversized non-snapshot output (for example a deliberately large `eval --stdin` result) and confirm the tool prints the actual spill file path directly in content instead of only referencing a details key.
+6. Validate at least one file-download flow with `download <selector> <path>`.
 
 ## Post-publish install validation
 
@@ -95,6 +98,7 @@ Before publishing:
 
 - update `CHANGELOG.md`
 - confirm README install guidance still leads with the package-first flow
+- confirm `docs/COMMAND_REFERENCE.md` still matches the effective upstream command/help surface used by the wrapper
 - confirm the explicit local-checkout instructions still work for pre-release validation
 - rerun `npm run verify:release`
 - manually exercise `/reload` and full restart + `/resume` continuity in local checkout validation

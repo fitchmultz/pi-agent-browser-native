@@ -64,6 +64,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - Someone opening the repo should quickly understand the goal, purpose, install model, and usage.
 - Documents should read as complete documents, not iterative logs, unless they are explicitly meant to be iterative, such as a changelog.
 - Requirements, expectations, and durable rules from user conversations should be reflected in the appropriate docs.
+- Because direct-binary usage is commonly blocked in normal agent sessions, the repo must carry a local command reference for the effective `agent_browser` surface and keep it in sync with upstream changes.
 - Published package contents should include the canonical user-facing docs plus `LICENSE`.
 - Published package contents should exclude agent-only and superseded docs such as `AGENTS.md`, `docs/v1-tool-contract.md`, and `docs/native-integration-design.md`.
 
@@ -95,10 +96,12 @@ The design should comfortably support workflows such as:
 - The wrapper should stay thin, with upstream `agent-browser` remaining the source of truth for command semantics.
 - User-facing docs belong in `README.md` and the canonical published files under `docs/`.
 - Agent workflow and deeper testing procedures can stay in `AGENTS.md`, but published docs must not depend on that file being present.
+- When upstream `agent-browser` changes, refresh the local command reference, prompt guidance, and other extension-side docs so agents still have a repo-readable equivalent of the blocked direct-binary help path.
 - Keep mitigations for legacy-skill coexistence simple; do not add extra moving parts unless observed behavior justifies them.
 - Prefer narrow, evidence-backed compatibility mitigations over broad stealth layers when a specific upstream site starts rejecting the default headless launch fingerprint.
 - Preserve the page that a profiled `open` just navigated to; if restored profile tabs steal focus during launch, the wrapper should best-effort switch back to the returned page URL before handing control back to the agent.
 - Once a tab target is known for a session, later active-tab commands should best-effort pin that same tab inside the same upstream invocation when reconnect drift would otherwise land on a restored/background tab.
+- If a restored/background tab steals focus after a successful command, the wrapper should best-effort restore the intended target tab again before handing control back.
 - On local Unix launches, extension-generated session names should not fail just because the upstream default socket path is too long; the wrapper should choose a shorter socket directory when needed.
 
 ## Open design questions

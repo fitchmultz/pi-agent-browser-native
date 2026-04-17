@@ -134,6 +134,12 @@ Evaluate page JavaScript via stdin:
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
 
+Download a file to an explicit path instead of relying on `click` alone:
+
+```json
+{ "args": ["download", "@e5", "/tmp/report.pdf"] }
+```
+
 Start a fresh profiled launch after you already used the implicit session:
 
 ```json
@@ -192,6 +198,8 @@ Validated workflow examples:
 - run `eval --stdin`
 - take a screenshot with inline attachment support
 - inspect `agent_browser --help` and `--version` via the tool's stateless plain-text inspection fallback
+- use `download <selector> <path>` for attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
+- confirm oversized outputs show the actual spill file path directly in tool content, not just a details key name
 
 Inspection commands like `agent_browser --help` and `--version` are always supported. They return plain text, are useful for debugging or capability checks, and stay stateless: the extension does not inject its implicit session for them and they do not consume the managed-session slot needed for a later `--profile`, `--session-name`, or `--cdp` launch.
 
@@ -203,7 +211,9 @@ Current cautions:
 - for local Unix launches, the wrapper uses a short private socket directory under `/tmp` so extension-generated session names do not trip upstream Unix socket-path limits in longer cwd/session-name combinations
 - for direct headless local Chrome launches to `chat.com`, `chatgpt.com`, and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
 - after profiled `open` calls, the extension best-effort re-selects the tab that matches the returned page URL when restored profile tabs steal focus during launch
-- after a target tab is known, later active-tab commands like `click` and `snapshot -i` best-effort pin that same tab inside the same upstream invocation when a reconnect would otherwise drift to a restored tab
+- after a target tab is known, later active-tab commands best-effort pin that same tab inside the same upstream invocation when a reconnect would otherwise drift to a restored tab
+- after a successful command, the extension also best-effort restores that intended tab when a restored/background tab steals focus after the command completes
+- oversized snapshots and oversized generic outputs compact inline content and print the actual spill file path directly in the tool result when a spill file exists
 - explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension
 - explicit caller-provided `--user-agent` values win over the ChatGPT/OpenAI compatibility workaround
 - tool progress/details redact sensitive invocation values such as `--headers`, proxy credentials, and auth-bearing URL parameters before echoing them back into Pi
@@ -239,6 +249,7 @@ If you want to name the new upstream session yourself, pass an explicit session 
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — product requirements and constraints
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — current architecture decision
 - [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) — proposed v1 tool shape
+- [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md) — local repo-readable command reference for the blocked direct-binary path
 - [`docs/RELEASE.md`](docs/RELEASE.md) — maintainer release and package verification workflow
 
 ## Documentation rule
@@ -248,3 +259,10 @@ When requirements change in chat:
 1. update `docs/REQUIREMENTS.md`
 2. update the affected design docs
 3. update this README if user-facing expectations changed
+
+When the upstream `agent-browser` binary changes:
+
+1. re-check the upstream command/help surface
+2. update `docs/COMMAND_REFERENCE.md`
+3. update tool guidance, README, and release docs if behavior or recommended usage changed
+4. verify the blocked direct-binary path still has an equally usable local extension-side documentation path
