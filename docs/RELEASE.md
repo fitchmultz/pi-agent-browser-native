@@ -54,10 +54,11 @@ node scripts/verify-package.mjs --list-files
 Before publishing, also validate the explicit local-checkout path:
 
 1. Install `agent-browser` separately.
-2. Launch `pi --no-extensions -e .` from this repository root.
-3. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
-4. Run a smoke prompt that exercises `agent_browser`.
-5. Validate managed-session continuity with both `/reload` and a full restart + `/resume`.
+2. Make sure Pi has only one active source for this extension during checkout validation.
+3. Launch `pi --no-extensions -e .` from this repository root.
+4. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
+5. Run a smoke prompt that exercises `agent_browser`.
+6. Validate managed-session continuity with both `/reload` and a full restart + `/resume`.
 
 Example smoke prompt:
 
@@ -80,6 +81,11 @@ After publishing a release, validate the package-first install path explicitly:
 pi install npm:pi-agent-browser-native@<version>
 pi -e npm:pi-agent-browser-native@<version>
 ```
+
+For installed-package validation, make sure Pi has only one active source for this extension. The simplest safe paths are either:
+
+- temporarily disable/remove the checkout path and then run plain `pi`, or
+- use an isolated ephemeral run such as `pi --no-extensions -e npm:pi-agent-browser-native@<version>`
 
 Then confirm `pi` exposes the native `agent_browser` tool, that a basic `open` + `snapshot -i` flow works, and that `/reload` plus restart/`/resume` keep following the same implicit managed browser session.
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- clarified the checkout-versus-installed-package workflow in README, release notes, and repo agent guidance so local development keeps one active Pi package source for this extension at a time instead of treating the published entrypoint file as optional
+
 ## 0.2.8 - 2026-04-16
 
 ### Fixed

@@ -85,7 +85,9 @@ Until you are using a published package release, prefer an explicit checkout-onl
 pi --no-extensions -e /absolute/path/to/pi-agent-browser-native
 ```
 
-This avoids duplicate `agent_browser` registrations if you also have the published package installed globally.
+This keeps the checkout isolated from any other active package source for the same extension.
+
+This repository's `package.json` is itself a publishable pi package manifest that points at `extensions/agent-browser/index.ts`. That file is the real extension entrypoint for both the checkout and the published package. Keep exactly one active source for this extension in Pi settings at a time: either this checkout path or the published npm package.
 
 The native tool exposed to the agent is named `agent_browser`.
 
@@ -154,23 +156,29 @@ Use the agent_browser tool to open https://react.dev and then take an interactiv
 
 ## Local development
 
-Do not track or rely on a repo-local `.pi/extensions/agent-browser.ts` autoload shim for this package. When the package is also installed globally, that creates a duplicate `agent_browser` registration and blocks `pi` startup from this working directory.
+Do not track or rely on a repo-local `.pi/extensions/agent-browser.ts` autoload shim for this package. That creates an unnecessary second registration path.
 
+The published entrypoint lives at `extensions/agent-browser/index.ts` and is referenced directly from this repo's `package.json`. While developing this repo, keep the checkout path enabled in Pi settings and disable or uninstall `npm:pi-agent-browser-native` so Pi has only one active source for this extension.
+
+Recommended local development setup:
 1. Install `agent-browser` separately via the upstream project.
 2. Run `npm install`.
-3. Launch `pi` from this repository root with only the checkout extension loaded:
+3. Keep the checkout path enabled in Pi settings and disable or uninstall `npm:pi-agent-browser-native` while developing this repo.
+4. Launch `pi` from this repository root with only the checkout extension loaded:
 
 ```bash
 pi --no-extensions -e .
 ```
 
-4. Prompt the agent to use `agent_browser`.
+5. Prompt the agent to use `agent_browser`.
 
 Example prompt:
 
 ```text
 Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
 ```
+
+For installed-package validation after a release, temporarily do the reverse: disable/remove the checkout path from Pi settings and validate the published npm package, or use an isolated ephemeral run such as `pi --no-extensions -e npm:pi-agent-browser-native@<version>`.
 
 Validated workflow examples:
 
