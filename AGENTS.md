@@ -30,14 +30,11 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 ### Rules
 
 - For local checkout validation, launch `pi --no-extensions -e .` from this repository root and keep only one active source for this extension in Pi settings.
-- For code changes, isolated `pi` agent sessions that load this local checkout are a pre-commit requirement; validate behavior there before commit/push.
-- Pre-commit validation should exercise the local checkout code, because those changes are not published yet.
-- For post-publish installed-package validation, update the real installed package and validate it with only the published package active.
-- For installed-package validation, either temporarily disable/remove the checkout path and run plain `pi`, or use an isolated ephemeral run like `pi --no-extensions -e npm:pi-agent-browser-native@<version>`.
+- For code changes, isolated `pi` agent sessions that load this local checkout are a pre-commit requirement; whoever made the changes should validate unpublished checkout behavior there before commit/push (a published install alone is not a substitute).
+- For installed-package validation after publish: update the real installed package, then exercise it with only the published package active—either temporarily disable/remove the checkout path and run plain `pi`, or use an isolated ephemeral run like `pi --no-extensions -e npm:pi-agent-browser-native@<version>`.
 - Use `tmux` via bash commands.
 - Do **not** use the pi interactive shell extension for this workflow.
 - Drive `pi` like a real user by sending prompts normally.
-- Do **not** delegate testing or review to other agents or isolated `pi` sessions for this repository.
 - After extension changes, `/reload` is the minimum, but a full close-and-relaunch of `pi` is preferred for higher confidence.
 - If continuing the same conversation after restart, use `/resume` or an explicit session path/id.
 - Resumed sessions should reflect the updated extension code after restart.
