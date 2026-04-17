@@ -15,7 +15,6 @@ Dedicated `pi` integration of `agent-browser` as a native tool.
 - Prioritize the global install path first. Most users will install this extension globally, not as a project-local extension.
 - Keep the local extension-side documentation good enough that an agent can use the tool without relying on direct `agent-browser` binary help; when upstream `agent-browser` changes, update the repo-readable command reference, prompt guidance, README/docs, and any relevant tests in the same work.
 - For this repository, assume a single operator model: no human and no other agent is making changes here besides you.
-- Do **not** use subagents for this repository.
 - Treat every lingering scratch file, temp artifact, browser session, tmux session, or other side effect related to this repository as your responsibility to clean up.
 
 ## Documentation placement
