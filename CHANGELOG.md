@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.8 - 2026-04-16
+
 ### Fixed
 - updated the tab-correction and tab-pinning wrapper paths for `agent-browser` `0.26.0` tab metadata, so profiled launches and follow-up commands now re-select tabs using stable upstream tab ids instead of the retired numeric index shape
 - updated tab-list rendering and tool guidance to show `agent-browser`'s stable tab ids/labels instead of suggesting `tab <n>` commands that no longer work in `0.26.0`
