@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.10 - 2026-04-18
+
+### Changed
+- bumped the local pi development baseline to `@mariozechner/pi-coding-agent` `0.67.68` and `typescript` `6.0.3`
+- refreshed the release lockfile against the current stable pi patch line
+
+### Fixed
+- pinned the transitive `basic-ftp` dependency to `5.3.0` to clear the current audit finding during local verification and publish checks
+
 ## 0.2.9 - 2026-04-17
 
 ### Fixed
