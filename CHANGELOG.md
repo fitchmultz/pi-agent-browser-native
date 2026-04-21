@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.11 - 2026-04-21
+
+### Changed
+- updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.68.0`
+- regenerated the npm lockfile against the current stable dependency graph
+
+### Compatibility
+- reviewed the pi `0.68.0` changelog and confirmed the extension already uses the current named-tool registration model instead of removed cwd-bound tool exports
+
 ## 0.2.10 - 2026-04-18
 
 ### Changed
