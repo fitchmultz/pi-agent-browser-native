@@ -64,6 +64,20 @@ function createToolBranchEntry(options: { details: Record<string, unknown>; isEr
 	};
 }
 
+type RegisteredTool = {
+	description: string;
+	execute: (
+		toolCallId: string,
+		params: { args: string[]; sessionMode?: "auto" | "fresh"; stdin?: string },
+		signal: AbortSignal | undefined,
+		onUpdate: ((update: unknown) => void) | undefined,
+		ctx: unknown,
+	) => Promise<unknown>;
+	name: string;
+	promptGuidelines: string[];
+	promptSnippet: string;
+};
+
 function createExtensionHarness(options: {
 	branch?: unknown[];
 	cwd: string;
@@ -72,21 +86,7 @@ function createExtensionHarness(options: {
 	sessionFile?: string;
 }) {
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
-	let registeredTool:
-		| {
-				description: string;
-				execute: (
-					toolCallId: string,
-					params: { args: string[]; sessionMode?: "auto" | "fresh"; stdin?: string },
-					signal: AbortSignal,
-					onUpdate: ((update: unknown) => void) | undefined,
-					ctx: unknown,
-				) => Promise<unknown>;
-				name: string;
-				promptGuidelines: string[];
-				promptSnippet: string;
-		  }
-		| undefined;
+	let registeredTool: RegisteredTool | undefined;
 
 	agentBrowserExtension({
 		on(event, handler) {
@@ -95,7 +95,7 @@ function createExtensionHarness(options: {
 			handlers.set(event, existingHandlers);
 		},
 		registerTool(tool) {
-			registeredTool = tool as typeof registeredTool;
+			registeredTool = tool as unknown as RegisteredTool;
 		},
 	} as Parameters<typeof agentBrowserExtension>[0]);
 

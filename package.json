@@ -43,13 +43,13 @@
     ]
   },
   "peerDependencies": {
-    "@sinclair/typebox": "*"
+    "typebox": "*"
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.68.0",
-    "@sinclair/typebox": "^0.34.49",
+    "@mariozechner/pi-coding-agent": "^0.69.0",
     "@types/node": "^25.6.0",
     "tsx": "^4.21.0",
+    "typebox": "^1.1.31",
     "typescript": "^6.0.3"
   },
   "overrides": {

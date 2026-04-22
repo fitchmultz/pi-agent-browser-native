@@ -9,7 +9,7 @@
 import { rm } from "node:fs/promises";
 
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 import { runAgentBrowserProcess } from "./lib/process.js";
 import {
