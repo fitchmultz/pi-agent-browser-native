@@ -2,15 +2,15 @@
 
 ## Unreleased
 
-## 0.2.12 - 2026-04-22
+## 0.2.12 - 2026-04-23
 
 ### Changed
-- updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.69.0`
+- updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.70.0`
 - migrated published TypeBox integration metadata and source imports from `@sinclair/typebox` to `typebox` for pi `0.69.0` compatibility
 - regenerated the npm lockfile against the current stable dependency graph
 
 ### Compatibility
-- reviewed the pi `0.69.0` changelog and confirmed the extension already follows the current session-replacement guidance while now using the required TypeBox 1.x package name
+- reviewed the pi `0.70.0` changelog and confirmed the extension already follows the current session-replacement guidance while now using the required TypeBox 1.x package name and has no dependency on the changed terminal progress defaults
 
 
 ## 0.2.11 - 2026-04-21
