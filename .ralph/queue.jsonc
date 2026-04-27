@@ -1,4 +1,276 @@
 {
   "version": 1,
-  "tasks": []
+  "tasks": [
+    {
+      "id": "RQ-0039",
+      "status": "todo",
+      "title": "Investigate about:blank session regressions and add recovery coverage",
+      "description": "Feedback from a real dogfood run reports that after scroll/click sequences, `snapshot -i` sometimes returned `Origin: about:blank` even though the prior command was on the app, forcing recovery with `sessionMode=fresh` and causing brittle evidence collection. Current wrapper guidance documents manual recovery for blocked/blank states, and the implementation has tab pinning/correction paths, but there is no explicit about:blank detection or regression test for a known session target being replaced by a blank active tab. Minimal fix should first reproduce or simulate the failure, then add the smallest recovery or warning path that keeps the managed session on the intended tab when about:blank steals focus, or clearly reports the mismatch with next-step recovery instructions.",
+      "priority": "high",
+      "tags": [
+        "scan",
+        "sessions",
+        "reliability",
+        "browser-state"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/playbook.ts",
+        "test/agent-browser.resume-state.test.ts",
+        "test/agent-browser.extension-tabs.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:3-9 :: dogfood agent observed `snapshot -i` returning `Origin: about:blank` after prior commands were on the app; recovery required reopening with `sessionMode=fresh` and made evidence collection brittle.",
+        "path: extensions/agent-browser/lib/playbook.ts:32 :: current guidance only tells agents to use `tab list` / `tab` / `snapshot -i` when a session lands on blocked, blank, or unexpected pages; it does not implement automatic blank-tab recovery.",
+        "path: extensions/agent-browser/index.ts:1124-1347 :: session tab correction and post-command re-selection exist, but `rg -n \"about:blank\" extensions test docs README.md` found no explicit about:blank handling or tests.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before adding the regression."
+      ],
+      "plan": [
+        "Create a focused fake-upstream regression that simulates a managed session whose active tab becomes about:blank while a prior target tab still exists or is expected.",
+        "Trace whether current pre-pin/post-command correction can recover the intended tab in that scenario; if not, add the smallest targeted about:blank mismatch recovery or a strong wrapper warning with exact recovery calls.",
+        "Ensure recovery does not mask legitimate user navigation to about:blank when no prior intended target exists.",
+        "Verify by running `npm run verify` and confirming the new about:blank regression passes with no existing session lifecycle regressions."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:34:07Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
+    },
+    {
+      "id": "RQ-0040",
+      "status": "todo",
+      "title": "Fix record start copy so it does not claim a missing recording was saved",
+      "description": "A dogfood run found `record start` messaging confusing because the wrapper rendered wording like `Saved recording: ... not found on disk` even though recordings are only written after `record stop`. The presentation layer currently labels every video artifact as `Saved recording` and appends `not found on disk` whenever the artifact path does not exist, with tests only covering `record stop`. Minimal fix is to make record subcommand-aware copy: keep `record stop` as saved recording, but render `record start` as a lifecycle state such as `Recording started; output will be written on stop: <path>` without treating the not-yet-created file as an error.",
+      "priority": "medium",
+      "tags": [
+        "scan",
+        "recording",
+        "presentation",
+        "ux"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "test/agent-browser.presentation.test.ts",
+        "docs/COMMAND_REFERENCE.md",
+        "npm run verify"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:11-15 :: recording start reported wording like `Saved recording: ... not found on disk`; feedback suggests `Recording started; output will be written on stop`.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:496-535 :: video artifacts always format as `Saved recording`, and missing files append `not found on disk`.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:1217-1239 :: artifact extraction and summary generation happen generically for all path-bearing commands before any record lifecycle-specific presentation.",
+        "path: test/agent-browser.presentation.test.ts:371-432 :: metadata-first artifact tests cover `record stop` with `Saved recording: recording.webm`, but there is no `record start` case.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before adding lifecycle-copy coverage."
+      ],
+      "plan": [
+        "Confirm the installed upstream `record start <path>` JSON shape using the real-upstream test fixture or a fake-upstream fixture before changing presentation logic.",
+        "Update record artifact formatting to distinguish `record start` from `record stop`, preserving current saved-copy behavior for completed recordings.",
+        "Add focused presentation tests for `record start` and `record stop`, including the not-yet-present output path case.",
+        "If user-facing docs mention recording output, align them with the new lifecycle wording.",
+        "Verify by running `npm run verify` and confirming record presentation tests pass."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:34:07Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
+    },
+    {
+      "id": "RQ-0041",
+      "status": "todo",
+      "title": "Clarify selector strategy and ref churn in docs and prompt playbook",
+      "description": "Dogfood feedback says Playwright-style selectors such as `button:has-text('Close')` and `text=Close` failed while `@eNN` refs worked but went stale after scrolling or rerendering. Current docs mention refs, scoped selectors, `find`, `scroll`, and `scrollintoview`, but do not clearly explain supported selector strategy, unsupported Playwright selector dialects, or the need to re-snapshot after scroll/rerender. Minimal fix is documentation/playbook guidance that reduces avoidable failures without changing upstream selector semantics.",
+      "priority": "medium",
+      "tags": [
+        "scan",
+        "selectors",
+        "docs",
+        "playbook"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "extensions/agent-browser/lib/playbook.ts",
+        "npm run docs:playbook:check",
+        "npm run verify:command-reference"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:17-23 :: Playwright-style selectors `button:has-text('Close')` and `text=Close` failed; refs worked best but became stale after scrolling/rerendering.",
+        "feedback: /tmp/feedback.txt:36-40 :: scrolling plus refs slowed interactive testing; suggested click-by-accessible-name or robust visible-text matching to reduce ref churn.",
+        "path: docs/COMMAND_REFERENCE.md:42-52 :: recommended workflow says to inspect with refs and interact with refs or scoped selectors, but does not define selector dialect or fallback order.",
+        "path: docs/COMMAND_REFERENCE.md:225-230 :: command table lists `find <locator> <value> <action>`, `scroll`, and `scrollintoview`, but these are not tied into the recommended targeting workflow.",
+        "path: extensions/agent-browser/lib/playbook.ts:26-32 :: prompt playbook says re-snapshot after navigation/major DOM changes and gives blank-page recovery, but does not mention ref churn after scroll/rerender or `find role/text/...` as the preferred stable-text alternative.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; docs/playbook checks are green before adding guidance."
+      ],
+      "plan": [
+        "Add a concise selector strategy section to `docs/COMMAND_REFERENCE.md`: prefer current `@ref` from `snapshot -i`, re-run snapshot after scrolling/rerendering, use `find role/text/label/...` for stable accessible-name targeting, and use `scrollintoview` when needed.",
+        "Explicitly state that Playwright selector dialects like `text=...` and `:has-text(...)` are not guaranteed wrapper syntax unless verified against current upstream behavior.",
+        "Mirror the high-value agent-facing bullets in `extensions/agent-browser/lib/playbook.ts` and regenerate/check any generated docs that consume the playbook.",
+        "Verify by running `npm run docs:playbook:check`, `npm run verify:command-reference`, and `npm run verify`."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:34:07Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
+    },
+    {
+      "id": "RQ-0042",
+      "status": "todo",
+      "title": "Append actionable hints to stale ref and unsupported selector errors",
+      "description": "The feedback indicates selector failures were hard to interpret: Playwright-style selectors failed despite visible elements, and refs were reliable but stale after UI changes. Current mixed-failure rendering preserves upstream errors such as `Unknown ref: zzz`, but the wrapper does not append guidance about re-snapshotting, using `find`, or avoiding unsupported selector dialects. Minimal fix is to keep upstream error text intact while adding targeted wrapper hints for common stale-ref/selector-failure patterns.",
+      "priority": "medium",
+      "tags": [
+        "scan",
+        "selectors",
+        "errors",
+        "ux"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/envelope.ts",
+        "test/agent-browser.extension-tabs.test.ts",
+        "test/agent-browser.presentation.test.ts",
+        "npm run test"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:17-23 :: selector support felt inconsistent; Playwright-style selectors failed while refs worked but became stale easily.",
+        "path: test/agent-browser.extension-tabs.test.ts:180-208 :: mixed batch failure test renders raw upstream `Unknown ref: zzz` for `click @zzz` without wrapper guidance.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:1217-1222 :: when `errorText` is present, presentation returns exactly that text as content and summary, leaving no room for selector-specific remediation.",
+        "path: docs/COMMAND_REFERENCE.md:225-230 :: there are supported alternatives (`find` locator families and `scrollintoview`) that error hints can recommend.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before changing error copy."
+      ],
+      "plan": [
+        "Identify common upstream error strings for stale refs and selector parse/no-match failures from existing tests and, if needed, a small fake-upstream fixture.",
+        "Add a narrow hinting layer that appends guidance only to matching selector/ref errors, preserving the original upstream error text.",
+        "Cover both direct command failures and batch step failures so `Unknown ref` and unsupported-selector cases point users to `snapshot -i`, `find role/text/...`, and `scrollintoview`.",
+        "Verify by running `npm run test` and confirming existing failure rendering remains readable with the new targeted hints."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:34:07Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
+    },
+    {
+      "id": "RQ-0043",
+      "status": "todo",
+      "title": "Improve network request previews for QA debugging",
+      "description": "Dogfood feedback says QA needed first-class request inspection with method, URL, status, payload preview, and response preview. The wrapper already formats `network requests`, but current presentation only shows status, method, URL, and type, and tests intentionally avoid expanding headers. Minimal fix is to inspect the current upstream `network requests` JSON shape and render safe previews for request/response bodies or errors when those fields exist, while continuing to redact sensitive headers/tokens.",
+      "priority": "medium",
+      "tags": [
+        "scan",
+        "network",
+        "diagnostics",
+        "qa"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "test/agent-browser.presentation.test.ts",
+        "docs/COMMAND_REFERENCE.md",
+        "test/agent-browser.real-upstream-contract.test.ts",
+        "npm run test"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:27-32 :: QA had to infer API behavior separately via curl and requested recent XHR/fetch requests with method, URL, status, payload preview, and response preview.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:176-179 :: summary for `network requests` only reports request count.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:248-263 :: network preview renders only status, method, truncated URL, and resource/mime type.",
+        "path: test/agent-browser.presentation.test.ts:240-263 :: network preview test asserts two method/status/url lines and asserts sensitive headers are not included; there is no payload or response preview coverage.",
+        "path: docs/COMMAND_REFERENCE.md:230 :: command table documents `network requests [--clear] [--filter <pattern>]` but not what fields the wrapper surfaces for QA.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before adding diagnostic preview coverage."
+      ],
+      "plan": [
+        "Capture or inspect the installed upstream `network requests` JSON shape for XHR/fetch entries, including which request/response body fields are available.",
+        "Extend `formatNetworkRequestsText` to include bounded, redacted payload/response/error previews only for safe fields that upstream actually returns.",
+        "Add unit tests covering body previews, truncation, and redaction of headers/tokens/secrets.",
+        "Update `docs/COMMAND_REFERENCE.md` with a short note about what `network requests` exposes and any limitations.",
+        "Verify by running `npm run test` and, if upstream shape fixtures change, the relevant real-upstream contract command."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:34:07Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
+    },
+    {
+      "id": "RQ-0044",
+      "status": "todo",
+      "title": "Review artifact retention limits for screenshot and video-heavy dogfood workflows",
+      "description": "The feedback reports hitting the 30 recent artifacts cap quickly while collecting screenshots/videos during dogfooding. Current manifest behavior intentionally bounds recent session artifacts at 30 entries and reports live/evicted counts, but user-facing docs do not make the cap or dogfood workflow impact prominent. Minimal fix is to decide whether the default retention window should be larger or configurable for artifact-heavy QA, document the behavior clearly, and add/update eviction tests for any behavior change.",
+      "priority": "medium",
+      "tags": [
+        "scan",
+        "artifacts",
+        "dogfood",
+        "retention"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "extensions/agent-browser/lib/results/snapshot.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "test/agent-browser.presentation.test.ts",
+        "test/agent-browser.extension-tabs.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:25-31 :: dogfood run hit the `30 recent artifacts` cap quickly during screenshots/videos and suggested raising the cap or dogfood-mode persistence.",
+        "path: extensions/agent-browser/lib/results/shared.ts:73-74 :: `SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES = 30` hardcodes the recent manifest limit.",
+        "path: extensions/agent-browser/lib/results/shared.ts:116-122 :: retention summary renders `Session artifacts: ... (N/max recent)` when artifacts are tracked.",
+        "path: docs/COMMAND_REFERENCE.md:109-112 :: saved-file section says artifacts are exposed in details but does not mention the 30-entry retention cap or how to plan artifact-heavy QA runs.",
+        "path: docs/COMMAND_REFERENCE.md:395 :: wrapper-specific behavior mentions oversized outputs and spill files but not recent-artifact eviction pressure for screenshots/videos.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before retention-limit changes."
+      ],
+      "plan": [
+        "Audit current artifact retention budgets for manifest entries and persisted spill files, including whether screenshots/videos are only metadata-tracked or also subject to persisted cleanup.",
+        "Choose the smallest useful improvement: clearer docs only, a larger constant, or a documented environment/config override for artifact-heavy QA sessions.",
+        "If behavior changes, update unit/integration tests that cover manifest eviction and retention summaries so the new limit/configuration is locked in.",
+        "Update `docs/COMMAND_REFERENCE.md` and `docs/TOOL_CONTRACT.md` with plain-language artifact retention guidance for screenshot/video-heavy dogfood workflows.",
+        "Verify by running `npm run verify` and confirming eviction/retention tests reflect the chosen behavior."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:34:07Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
+    }
+  ]
 }
