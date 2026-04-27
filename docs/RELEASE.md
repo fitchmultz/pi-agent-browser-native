@@ -36,7 +36,7 @@ npm run verify:release
 
 `npm run verify:package:pi` runs the same package-content checks and additionally confirms that:
 
-- the packed package can be loaded by Pi in isolation, equivalent to `pi --no-extensions -e <packed-package>`
+- the packed package can be loaded through Pi SDK resource loading with the same isolation principle as `pi --no-extensions -e <package-source>`
 - exactly one `agent_browser` tool is registered
 - the registered `agent_browser` source resolves inside the extracted packed package path, not the working checkout
 

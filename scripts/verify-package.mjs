@@ -161,7 +161,7 @@ async function packToTemporaryPackageDir(cwd = process.cwd()) {
 	let tarballPath;
 
 	try {
-		const { stdout, stderr } = await execFile(npmCommand, ["pack", "--json"], {
+		const { stdout, stderr } = await execFile(npmCommand, ["pack", "--json", "--pack-destination", tempDir], {
 			cwd,
 			maxBuffer: 5 * 1024 * 1024,
 		});
@@ -170,7 +170,7 @@ async function packToTemporaryPackageDir(cwd = process.cwd()) {
 			throw new Error(`Unexpected npm pack result without a filename.\nstdout:\n${stdout}\n\nstderr:\n${stderr}`);
 		}
 
-		tarballPath = resolve(cwd, packResult.filename);
+		tarballPath = resolve(tempDir, packResult.filename);
 		await execFile(tarCommand, ["xzf", tarballPath, "-C", tempDir], {
 			maxBuffer: 5 * 1024 * 1024,
 		});
