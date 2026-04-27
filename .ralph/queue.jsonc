@@ -40,49 +40,6 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
-    },
-    {
-      "id": "RQ-0011",
-      "status": "todo",
-      "title": "Automate the missing-agent-browser error-path contract",
-      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: the repo treats the missing-binary path as a minimum validation item and promises a specific user-facing error, but the normal automated gate does not exercise that ENOENT branch. A regression in the not-on-PATH behavior could therefore ship while `npm run verify` still passes.\n\nMinimal proposed fix: add a focused fake-binary or PATH-stripping test that forces the spawn `ENOENT` branch and asserts the user-facing error text plus `isError: true`. Keep the current typecheck/test/package verification entrypoints unchanged once the new coverage lands.",
-      "priority": "medium",
-      "tags": [
-        "maintenance",
-        "testing",
-        "operability",
-        "contracts"
-      ],
-      "scope": [
-        "extensions/agent-browser/index.ts",
-        "docs/TOOL_CONTRACT.md",
-        "docs/IMPLEMENTATION_PLAN.md",
-        "package.json",
-        "test/agent-browser.test.ts"
-      ],
-      "evidence": [
-        "path: docs/TOOL_CONTRACT.md:166-172 :: the contract requires a clear missing-binary message that says `agent-browser` is required, not bundled, and points to upstream install/docs.",
-        "path: docs/IMPLEMENTATION_PLAN.md:118-128 :: local validation explicitly lists the missing-binary failure path as a minimum check.",
-        "path: package.json:58-65 :: the normal repo gate is `typecheck`, `test`, and package verification.",
-        "path: extensions/agent-browser/index.ts:102-108 :: `buildMissingBinaryMessage` defines the user-facing error text.",
-        "workflow: `rg -n \"required but was not found on PATH|buildMissingBinaryMessage|ENOENT|--version\" test/agent-browser.test.ts extensions/agent-browser/index.ts docs/TOOL_CONTRACT.md docs/IMPLEMENTATION_PLAN.md README.md` :: observed the ENOENT branch exists in implementation/docs, while the concrete execution coverage in `test/agent-browser.test.ts` explicitly exercises `--version` inspection rather than the missing-binary path."
-      ],
-      "plan": [
-        "Add a focused test that runs the tool with `agent-browser` absent from PATH or otherwise forces the spawn `ENOENT` branch.",
-        "Assert the returned message includes the required/not-bundled/upstream-docs guidance and that the tool call is marked as an error.",
-        "Keep the existing success-path inspection coverage, but make the missing-binary contract part of the normal automated suite.",
-        "Verify by running `npm test` and confirming the ENOENT regression covers the documented error text exactly enough to catch future drift."
-      ],
-      "notes": [],
-      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
-      "created_at": "2026-04-27T01:57:23Z",
-      "updated_at": "2026-04-27T01:57:23Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
     }
   ]
 }
