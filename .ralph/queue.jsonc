@@ -42,43 +42,6 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
-    },
-    {
-      "id": "RQ-0018",
-      "status": "todo",
-      "title": "Correct the stale runtime header about injected arguments",
-      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: extensions/agent-browser/lib/runtime.ts:1-6 :: the top-of-file invariant says the wrapper only injects `--json` plus an extension-managed `--session` when appropriate.\n- path: extensions/agent-browser/lib/runtime.ts:787-790 :: buildExecutionPlan also injects `--user-agent` when the ChatGPT headless compatibility workaround applies.\n- path: test/agent-browser.test.ts:670-711 :: the test suite explicitly verifies that `--user-agent` injection behavior.\n- workflow: npm run verify :: the compatibility-workaround tests pass, confirming the comment is stale rather than the code being wrong.\n\nWhy it matters: this header is supposed to be the local contract for reviewers reading the runtime module. Right now it understates real behavior that materially changes launched CLI args.\n\nMinimal proposed fix: update the purpose header and nearby invariant text so it reflects the current compatibility-workaround injection behavior without overstating the wrapper's scope.\n\nAcceptance criteria: the runtime header accurately describes current injected-argument behavior, including the narrow compatibility case; no contradictory comments remain nearby; `npm run verify` still passes.",
-      "priority": "low",
-      "tags": [
-        "maintenance",
-        "comments",
-        "runtime"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/runtime.ts",
-        "test/agent-browser.test.ts",
-        "npm run verify"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/lib/runtime.ts:1-6 :: header says only --json and extension-managed --session are injected",
-        "path: extensions/agent-browser/lib/runtime.ts:787-790 :: buildExecutionPlan also injects --user-agent for the compatibility workaround",
-        "path: test/agent-browser.test.ts:670-711 :: tests explicitly cover the user-agent injection path"
-      ],
-      "plan": [
-        "Update the runtime header comment and invariant text to describe the current narrow argument-injection behavior accurately.",
-        "Scan nearby comments for any other wording that still implies the older simpler injection model.",
-        "Verify by running `npm run verify` and confirming the comment update matches tested behavior."
-      ],
-      "notes": [],
-      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
-      "created_at": "2026-04-27T02:21:16Z",
-      "updated_at": "2026-04-27T02:21:16Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
     }
   ]
 }
