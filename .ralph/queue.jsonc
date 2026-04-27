@@ -2,54 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0027",
-      "status": "todo",
-      "title": "Add first-run doctor for PATH and source conflicts",
-      "description": "Opportunity type: UX improvement. The product is package-first and the docs repeatedly warn that users must install upstream `agent-browser` separately, keep exactly one active extension source, and avoid duplicate `agent_browser` registrations. Today the extension has a strong missing-binary error, but there is no single first-run diagnostic flow that checks PATH, targeted upstream version, or conflicting checkout/package installs before a user hits runtime friction. Why it matters: a lightweight doctor flow would shorten time-to-first-success, reduce support/debug churn, and make package-first onboarding much safer. Proposed approach: ship a minimal read-only maintainer-and-user facing diagnostic entrypoint, distinct from upstream `agent-browser doctor`, that checks `agent-browser` presence/version from the canonical capability baseline, inspects how Pi resolves this extension, flags multi-source conflicts when Pi exposes enough source metadata, and prints exact remediation steps; expand later with optional packaged/install-mode checks. Risks and mitigations: keep it read-only by default, do not mutate Pi settings, and scope it to observed failure modes so the wrapper stays thin. Acceptance criteria: one documented package-level command reports missing binary, version drift, and duplicate source conflicts with actionable fixes; release docs and README point to it; deterministic tests cover the expected failure messages.",
-      "priority": "high",
-      "tags": [
-        "innovation",
-        "ux",
-        "onboarding",
-        "diagnostics"
-      ],
-      "scope": [
-        "README.md",
-        "docs/RELEASE.md",
-        "docs/REQUIREMENTS.md",
-        "extensions/agent-browser/index.ts",
-        "package.json",
-        "scripts"
-      ],
-      "evidence": [
-        "path: README.md :: Install and try :: users must install upstream agent-browser separately and isolate temporary package or checkout trials to avoid duplicate `agent_browser` registrations",
-        "path: docs/REQUIREMENTS.md :: Install priority :: package-first docs require exactly one active source and explicitly forbid relying on repo-local auto-discovery",
-        "path: extensions/agent-browser/index.ts :: buildMissingBinaryMessage :: the current runtime diagnostic covers missing PATH install only and does not help with duplicate-source or version-targeting failures"
-      ],
-      "plan": [
-        "Define the exact first-run checks and remediation messages from the failure modes already documented in README and release guidance, including the boundary between this package-level diagnostic and upstream `agent-browser doctor`.",
-        "Implement a read-only doctor entrypoint that verifies PATH resolution, targeted upstream version from the canonical capability baseline, and Pi extension source conflicts without mutating user Pi settings.",
-        "Add deterministic tests for missing binary, version drift, duplicate-source conflict output, and the no-mutation/read-only guarantee where practical.",
-        "Document the doctor workflow in README and release guidance with explicit remediation steps for package-vs-checkout conflicts.",
-        "Verify by running the new doctor command in healthy and simulated-failure setups and confirming the reported remediation matches the observed state."
-      ],
-      "notes": [],
-      "request": "scan: none",
-      "created_at": "2026-04-27T08:29:39Z",
-      "updated_at": "2026-04-27T13:44:38Z",
-      "depends_on": [
-        "RQ-0036"
-      ],
-      "blocks": [],
-      "relates_to": [
-        "RQ-0028",
-        "RQ-0031"
-      ],
-      "custom_fields": {
-        "scan_agent": "scan-innovation"
-      }
-    },
-    {
       "id": "RQ-0029",
       "status": "todo",
       "title": "Automate reload and resume lifecycle regression coverage",
