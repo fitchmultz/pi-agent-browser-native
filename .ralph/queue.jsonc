@@ -2,34 +2,40 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0037",
+      "id": "RQ-0038",
       "status": "todo",
-      "title": "Investigate upstream wait --download file persistence semantics",
-      "description": "While validating RQ-0032 against agent-browser 0.26.0, the wrapper received a successful wait --download result with data.path/savedFilePath matching the requested path, but the requested local file was not present on disk immediately afterward in this environment. This is independent of the wrapper presentation work, which now renders and forwards the observed upstream saved-file metadata. Determine whether upstream expects a different fixture pattern, download directory configuration, or has a saveAs/persistence bug; then update the real-upstream contract test and docs to assert actual file existence when the upstream behavior is confirmed reliable.",
+      "title": "Track upstream wait --download saveAs persistence bug",
+      "description": "agent-browser 0.26.0 reports success for wait --download <path> with data.path/savedFilePath equal to the requested path, but in this environment the requested file is not created; the browser writes the fixture download to the default Downloads directory instead. Track or report the upstream saveAs/persistence issue, then update the real-upstream contract and docs once upstream reliably persists the requested path.",
       "priority": "medium",
       "tags": [
         "downloads",
-        "upstream-contract",
-        "validation"
+        "upstream",
+        "wait-download"
       ],
       "scope": [
         "test/agent-browser.real-upstream-contract.test.ts",
-        "test/helpers/agent-browser-harness.ts",
         "docs/COMMAND_REFERENCE.md",
         "docs/RELEASE.md"
       ],
-      "evidence": [],
-      "plan": [],
+      "evidence": [
+        "PI_AGENT_BROWSER_REAL_UPSTREAM=1 npm run test:real-upstream failed when asserting the requested path existed after wait --download; last read error was ENOENT for the requested temp path.",
+        "A post-failure filesystem sweep found report.txt under ~/Downloads, indicating upstream/browser persisted the download to the default download location rather than the requested saveAs path."
+      ],
+      "plan": [
+        "Reproduce against the next canonical upstream agent-browser version or an upstream fix branch.",
+        "Report or reference the upstream bug if it still reproduces.",
+        "When fixed, change the real-upstream contract from the current limitation assertion to requested-path content persistence and update docs/release guidance."
+      ],
       "notes": [
-        "Generated from follow-up proposal key wait-download-file-existence-contract"
+        "Generated from follow-up proposal key upstream-wait-download-saveas-bug"
       ],
       "request": "scan: none",
-      "created_at": "2026-04-27T15:23:34.175788000Z",
-      "updated_at": "2026-04-27T15:23:34.175788000Z",
+      "created_at": "2026-04-27T15:49:23.816156000Z",
+      "updated_at": "2026-04-27T15:49:23.816156000Z",
       "depends_on": [],
       "blocks": [],
       "relates_to": [
-        "RQ-0032"
+        "RQ-0037"
       ],
       "custom_fields": {}
     }
