@@ -107,7 +107,7 @@ The primary session control parameter is `sessionMode`:
 ### Mental model
 
 - `args` — exact CLI args after `agent-browser`
-- `stdin` — raw stdin only for `batch` and `eval --stdin`
+- `stdin` — raw stdin only for `batch` and `eval --stdin` (other command/stdin combinations are rejected before `agent-browser` is launched)
 - `sessionMode`
   - `"auto"` — default, reuse the extension-managed `pi`-scoped session
   - `"fresh"` — switch that managed session to a new profile/debug launch

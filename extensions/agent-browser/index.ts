@@ -56,7 +56,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 		description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators.",
 		minItems: 1,
 	}),
-	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content for commands like eval --stdin or batch." })),
+	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch and eval --stdin." })),
 	sessionMode: Type.Optional(
 		Type.Union([Type.Literal("auto"), Type.Literal("fresh")], {
 			description:
@@ -68,7 +68,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 const PROJECT_RULE_PROMPT =
 	"Project rule: when browser automation is needed, prefer the native `agent_browser` tool. Do not run direct `agent-browser` bash commands unless the user explicitly asks for a bash-oriented workflow or browser-integration debugging.";
 const QUICK_START_GUIDELINES = [
-	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin; sessionMode=fresh switches the extension-managed session to a fresh upstream launch when you need new --profile, --session-name, --cdp, --state, or --auto-connect state.",
+	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin, and other command/stdin combinations are rejected before launch; sessionMode=fresh switches the extension-managed session to a fresh upstream launch when you need new --profile, --session-name, --cdp, --state, or --auto-connect state.",
 	"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }; after navigation, use { args: [\"click\", \"@e2\"] } then { args: [\"snapshot\", \"-i\"] }.",
 	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, and { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }.",
 	"High-value command reference: download <selector> <path> saves a file triggered by a click; get title/url/text/html/value/attr/count reads page state; screenshot [path] captures an image; pdf <path> saves a PDF; tab list and tab <tab-id-or-label> inspect or recover the active tab.",
@@ -94,7 +94,7 @@ const TOOL_PROMPT_GUIDELINES_SUFFIX = [
 	"Prefer this tool over bash for opening sites, reading docs on the web, clicking, filling, screenshots, eval, and batch workflows.",
 	"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when this tool can do the job.",
 	"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
-	"Use stdin for commands like eval --stdin and batch instead of shell heredocs.",
+	"Use stdin only for eval --stdin and batch instead of shell heredocs; other command/stdin combinations are rejected before launch.",
 	"Let the extension-managed session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, --cdp, --state, or --auto-connect.",
 	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
 ] as const;
@@ -460,6 +460,20 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Sess
 		}
 	}
 	return restoredTargets;
+}
+
+function validateStdinCommandContract(options: { command?: string; commandTokens: string[]; stdin?: string }): string | undefined {
+	if (options.stdin === undefined) {
+		return undefined;
+	}
+	if (options.command === "batch") {
+		return undefined;
+	}
+	if (options.command === "eval" && options.commandTokens.includes("--stdin")) {
+		return undefined;
+	}
+	const commandLabel = options.command ? `\`${options.command}\`` : "the requested command";
+	return `agent_browser stdin is only supported for \`batch\` and \`eval --stdin\`; remove stdin from ${commandLabel} or use one of those command forms.`;
 }
 
 function supportsPinnedStdinCommand(options: { command?: string; commandTokens: string[]; stdin?: string }): boolean {
@@ -957,8 +971,29 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			const priorSessionTabTarget = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
 			const commandTokens = extractCommandTokens(params.args);
+			const stdinValidationError = validateStdinCommandContract({
+				command: executionPlan.commandInfo.command,
+				commandTokens,
+				stdin: params.stdin,
+			});
+			if (stdinValidationError) {
+				return {
+					content: [{ type: "text", text: stdinValidationError }],
+					details: {
+						args: redactedArgs,
+						command: executionPlan.commandInfo.command,
+						compatibilityWorkaround,
+						effectiveArgs: redactedEffectiveArgs,
+						sessionMode,
+						validationError: stdinValidationError,
+						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+					},
+					isError: true,
+				};
+			}
+
+			const priorSessionTabTarget = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
 			let pinnedBatchUnwrapMode: PinnedBatchUnwrapMode | undefined;
 			let includePinnedNavigationSummary = false;
 			let sessionTabCorrection: OpenResultTabCorrection | undefined;

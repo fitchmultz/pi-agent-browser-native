@@ -58,7 +58,8 @@ Examples:
 
 - type: `string`
 - optional
-- raw stdin for commands like `eval --stdin` and `batch`
+- raw stdin for `eval --stdin` and `batch`
+- rejected before launch for any other command/stdin combination, including commands such as `click`, `snapshot`, or `open`
 
 Examples:
 

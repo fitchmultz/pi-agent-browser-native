@@ -2839,6 +2839,57 @@ if (args.includes("tab") && args.includes("list")) {
 	}
 });
 
+test("agentBrowserExtension rejects unsupported stdin before resumed explicit-session tab planning", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "Wrong", url: "https://wrong.example/" } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const result = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "click", "@e9"],
+				stdin: "oops",
+			});
+
+			assert.equal(result.isError, true, JSON.stringify(result));
+			assert.match(String(result.details?.validationError ?? ""), /stdin/i);
+			assert.match(String(result.details?.validationError ?? ""), /batch/i);
+			assert.match(String(result.details?.validationError ?? ""), /eval --stdin/i);
+			assert.match(String((result.content[0] as { text: string }).text ?? ""), /stdin/i);
+			assert.equal(result.details?.sessionName, "named");
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations, []);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension pre-pins resumed explicit-session user batch and derives the resulting target", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");

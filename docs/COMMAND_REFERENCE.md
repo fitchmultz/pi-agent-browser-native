@@ -25,7 +25,7 @@ Tool parameters:
 ```
 
 - `args`: exact `agent-browser` CLI tokens after the binary name
-- `stdin`: only for commands like `batch` and `eval --stdin`
+- `stdin`: only for `batch` and `eval --stdin`; other command/stdin combinations are rejected before `agent-browser` is launched
 - `sessionMode`:
   - `"auto"` reuse the extension-managed session when possible
   - `"fresh"` rotate that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` apply
