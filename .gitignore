@@ -4,4 +4,5 @@ node_modules/
 *.tgz
 
 # Ralph debug logs (raw/unredacted; do not commit)
-.ralph/
+!.ralph/queue.jsonc
+!.ralph/done.jsonc

@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "RQ-0001",
+      "status": "todo",
+      "title": "Reject agent-browser JSON envelopes that omit success",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, J) Consistency/Integrity.\n\nWhy it matters: the parser currently accepts any JSON object as an upstream envelope and the executor only treats `success === false` as failure. A malformed `agent-browser --json` response like `{ \"error\": \"boom\" }` therefore becomes a successful empty tool result with summary `open completed`, which hides upstream protocol failures from the agent and can poison later session state.\n\nMinimal proposed fix: tighten envelope validation so non-batch JSON objects must include a boolean `success`, or otherwise fail closed when an `error` field is present without an explicit success value. Add one parser-level regression and one end-to-end fake-binary regression through `agentBrowserExtension`.\n\nAcceptance criteria: `npm test` stays green; a fake `agent-browser` binary that emits `{ \"error\": \"boom\" }` at exit code 0 returns `isError: true`, surfaces a useful error string, and no longer summarizes the call as `open completed`.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "protocol"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/envelope.ts",
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/results/envelope.ts:70-78 :: parseAgentBrowserEnvelope accepts any JSON object as an envelope, even when `success` is missing.",
+        "path: extensions/agent-browser/lib/results/envelope.ts:94-108 :: getAgentBrowserErrorText only reports envelope failures when `success === false`.",
+        "path: extensions/agent-browser/index.ts:883-887 :: the executor marks the tool call successful whenever `presentationEnvelope?.success !== false`.",
+        "workflow: npx tsx <<'EOF' ... parseAgentBrowserEnvelope('{\"error\":\"boom\"}') ... EOF :: observed `parsed.envelope = { error: \"boom\" }`, `errorText = null`, and `presentation.summary = \"open completed\"`.",
+        "workflow: npx tsx <<'EOF' ... fake agent-browser emits {\"error\":\"boom\"} ... EOF :: observed `result.isError = false`, `details.error = \"boom\"`, and `details.summary = \"open completed\"` for `open https://example.com`."
+      ],
+      "plan": [
+        "Require a boolean `success` field for non-batch JSON envelopes, or fail closed when a non-batch object carries an `error` without `success`.",
+        "Update error derivation so malformed-but-JSON upstream payloads surface as protocol errors instead of empty successes.",
+        "Add parser-level and fake-binary extension tests that cover missing-success envelopes.",
+        "Verify by running `npm test` and confirming the missing-success fake-binary case returns `isError: true` with a non-empty error message."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T00:35:41Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0002",
+      "status": "todo",
+      "title": "Unify launch-scoped flag handling across reuse guards and open correction",
+      "description": "Principles violated: C) DRY, E) Make bugs hard to write, F) Fail fast, J) Consistency/Integrity.\n\nWhy it matters: the wrapper treats launch-scoped behavior inconsistently. `buildExecutionPlan` only blocks `--profile`, `--session-name`, and `--cdp` from silently reusing an already-active implicit session, so other launch-scoped auth/session options like `--state` and `--auto-connect` slip through and get appended after the managed `--session`. Separately, post-open wrong-tab correction only runs for `--profile`, so equivalent fresh-launch paths like `--session-name` never get the same recovery.\n\nMinimal proposed fix: centralize launch-scoped flag classification in one helper and use it everywhere the wrapper makes launch-time decisions: implicit-session reuse blocking, recovery-hint generation, and post-open tab correction. Cover at least `--profile`, `--session-name`, `--cdp`, `--state`, and `--auto-connect`, with explicit comments if any upstream option is intentionally excluded.\n\nAcceptance criteria: `npm test` stays green; active implicit-session calls with `--state` or `--auto-connect` fail with the same structured `sessionMode: \"fresh\"` recovery guidance as the existing startup-scoped flags; fresh `--session-name` opens trigger the same tab-correction path already used for profiled opens.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "sessions"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/runtime.ts",
+        "extensions/agent-browser/index.ts",
+        "README.md",
+        "docs/COMMAND_REFERENCE.md",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/runtime.ts:12-12 :: `STARTUP_SCOPED_FLAGS` only includes `--cdp`, `--profile`, and `--session-name`.",
+        "path: extensions/agent-browser/lib/runtime.ts:705-718 :: only those startup-scoped flags are blocked from reusing an already-active implicit managed session.",
+        "path: extensions/agent-browser/index.ts:904-912 :: open-result tab correction only runs when the original args include `--profile`.",
+        "workflow: npx tsx <<'EOF' ... buildExecutionPlan(['--state', '/tmp/auth.json', 'open', 'https://example.com'], active managed session) ... EOF :: observed `validationError = null`, `startupScopedFlags = []`, and injected `effectiveArgs = ['--json','--session','piab-demo-123','--state', ...]`.",
+        "workflow: npx tsx <<'EOF' ... buildExecutionPlan(['--auto-connect', 'open', 'https://example.com'], active managed session) ... EOF :: observed `validationError = null`, `startupScopedFlags = []`, and injected `effectiveArgs = ['--json','--session','piab-demo-123','--auto-connect', ...]`.",
+        "workflow: npx tsx <<'EOF' ... fake `--session-name saved-auth open https://example.com` with `sessionMode: 'fresh'` ... EOF :: observed exactly one upstream open invocation and no `tab list` follow-up correction, unlike the profiled open path."
+      ],
+      "plan": [
+        "Extract a single source of truth for launch-scoped upstream flags and document why each flag is classified that way.",
+        "Reuse that classification in implicit-session validation, recovery-hint generation, and post-open wrong-tab correction.",
+        "Add regressions for `--state`, `--auto-connect`, and `--session-name` fresh-open correction alongside the existing `--profile` coverage.",
+        "Verify by running `npm test` and confirming the new launch-scoped cases either fail fast with `sessionMode: \"fresh\"` guidance or execute the expected `tab list` correction path."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T00:35:41Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0003",
+      "status": "todo",
+      "title": "Pre-pin stdin-driven explicit-session commands before they run",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: the wrapper disables pre-execution tab pinning whenever `stdin` is present, which means `eval --stdin` and user-authored `batch` calls on explicit sessions can run against the wrong active tab. Post-command correction happens too late: the command has already executed on the wrong page, and the wrapper can either overwrite the remembered session target or leave it stale relative to the batch result.\n\nMinimal proposed fix: stop using `stdin` presence as a blanket opt-out. Allow the wrapper to pre-pin supported stdin-driven commands by prepending the same `tab <id>` step it already uses for pinned `snapshot` and `click` flows, and update session-target derivation from batch results so the remembered tab matches what just ran.\n\nAcceptance criteria: `npm test` stays green; resumed explicit-session `eval --stdin` and `batch` probes execute against the intended stored tab, not the currently active restored tab; `sessionTabTarget` remains aligned with the page that actually produced the result.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "sessions",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:410-416 :: `shouldPinSessionTabForCommand` returns false whenever `stdin` is present.",
+        "path: extensions/agent-browser/index.ts:804-826 :: pre-pin wrapping into a `batch` with `tab <id>` only happens when `shouldPinSessionTabForCommand(...)` passes.",
+        "path: extensions/agent-browser/index.ts:932-973 :: session target updates fall back to previous state when the command result does not yield a new target, which leaves user-authored batch flows prone to stale target state.",
+        "workflow: npx tsx <<'EOF' ... resumed explicit session, `--session named eval --stdin` ... EOF :: observed result text `Google Gemini`, direct upstream eval invocation first, and only a later `tab list` correction after the wrong-page eval had already run.",
+        "workflow: npx tsx <<'EOF' ... resumed explicit session, `--session named batch` with `[[\"get\",\"title\"]]` ... EOF :: observed batch result title `Google Gemini`, `details.sessionTabTarget` still `Example Domain`, and no injected `tab` selection step before the user batch ran."
+      ],
+      "plan": [
+        "Narrow stdin handling to the commands that actually support it and let those commands participate in pre-execution tab pinning.",
+        "Teach the wrapper how to derive the current tab target from user-authored batch results or explicit tab-selection steps.",
+        "Add resumed-session regressions for `eval --stdin` and user batch calls that start with the wrong active tab.",
+        "Verify by running `npm test` and confirming both stdin-driven flows return content from the intended stored tab with a matching `sessionTabTarget`."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T00:35:41Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0004",
+      "status": "todo",
+      "title": "Forward the documented upstream env/config surface to agent-browser",
+      "description": "Principles violated: A) KISS, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: the child-process environment is restricted to a tiny allowlist plus `AI_GATEWAY_*` and `XDG_*`. That strips standard upstream `agent-browser` configuration and auth inputs such as `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_SESSION_NAME`, and related provider credentials, so a package-first global install cannot rely on the normal upstream env-driven setup even though the extension is supposed to stay thin and close to upstream behavior.\n\nMinimal proposed fix: expand the child env policy to forward the documented upstream configuration/auth variables needed for normal `agent-browser` operation, plus a curated set of provider credential variables. Preserve the existing secret-redaction behavior for tool progress/details so forwarding these vars does not leak them back into Pi.\n\nAcceptance criteria: `npm test` stays green; a focused env test proves the child sees documented config/auth vars such as `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_SESSION_NAME`, and `AGENT_BROWSER_ACTION_POLICY`, while unrelated secrets still remain filtered from tool updates/details.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "operability",
+        "passthrough"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/process.ts",
+        "test/agent-browser.test.ts",
+        "agent-browser --help",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/process.ts:25-71 :: the inherited env allowlist omits the standard upstream `AGENT_BROWSER_*` surface and any provider-specific credential vars.",
+        "path: extensions/agent-browser/lib/process.ts:107-133 :: `buildAgentBrowserProcessEnv` drops every env key outside that allowlist before spawning `agent-browser`.",
+        "workflow: agent-browser --help :: the current installed CLI documents upstream environment-driven configuration such as `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_SESSION_NAME`, `AGENT_BROWSER_ACTION_POLICY`, screenshot/download settings, and provider-backed workflows.",
+        "workflow: npx tsx <<'EOF' ... buildAgentBrowserProcessEnv({... AGENT_BROWSER_CONFIG, AGENT_BROWSER_SESSION_NAME, AGENT_BROWSER_ACTION_POLICY, BROWSERBASE_API_KEY, AI_GATEWAY_API_KEY ...}) ... EOF :: observed `hasAgentBrowserConfig = false`, `hasAgentBrowserSessionName = false`, `hasAgentBrowserActionPolicy = false`, `hasBrowserbaseApiKey = false`, while `hasAiGatewayApiKey = true`."
+      ],
+      "plan": [
+        "Define the minimum upstream env/config surface the wrapper must preserve to stay thin and package-first friendly.",
+        "Update `buildAgentBrowserProcessEnv` to forward that documented surface and add regression coverage for config/auth/provider envs.",
+        "Confirm tool progress/details still redact sensitive values after the broader env passthrough.",
+        "Verify by running `npm test` and a focused env probe that confirms the child process receives the intended upstream config/auth vars."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T00:35:41Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0005",
+      "status": "todo",
+      "title": "Make published-package validation safe and executable",
+      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: the docs give conflicting instructions for package-first validation. The README advertises `pi -e npm:pi-agent-browser-native` as a safe ephemeral try-out, but later in the same README and in the release doc the project says Pi must have only one active source for this extension and recommends either disabling the checkout path or using `pi --no-extensions -e npm:...`. At the same time, `npm run verify:release` never exercises the packaged install path it asks maintainers to trust, so package-first regressions can ship even when the repo gate is green.\n\nMinimal proposed fix: standardize the docs on one safe package-first validation path, remove or rewrite the conflicting `pi -e npm:...` guidance, and add a repeatable local release check that exercises the packed/published extension in Pi rather than only inspecting tarball contents.\n\nAcceptance criteria: README and release docs no longer contradict each other; the release workflow includes a scripted packaged-extension smoke path (for example a tarball or isolated `pi --no-extensions -e ...` run); and maintainers can point to one canonical command sequence for published-package validation.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "operability",
+        "release"
+      ],
+      "scope": [
+        "README.md",
+        "docs/RELEASE.md",
+        "package.json",
+        "scripts/verify-package.mjs"
+      ],
+      "evidence": [
+        "path: README.md:58-62 :: the top-level install section recommends `pi -e npm:pi-agent-browser-native` as a non-permanent published-package trial.",
+        "path: README.md:167-188 :: the local-development section says Pi must have only one active source and recommends isolated validation with `pi --no-extensions -e npm:pi-agent-browser-native@<version>` or disabling the checkout path.",
+        "path: docs/RELEASE.md:81-93 :: post-publish validation both shows `pi -e npm:...` and immediately warns that the safe paths are plain `pi` after removing the checkout or an isolated `pi --no-extensions -e npm:...` run.",
+        "path: package.json:58-64 :: `verify:release` only runs `verify` plus `verify:package`.",
+        "path: scripts/verify-package.mjs:130-228 :: the package verifier stops at `npm pack --json --dry-run` and tarball file-shape checks; it never launches Pi against the packed extension."
+      ],
+      "plan": [
+        "Choose one canonical safe published-package validation path and align README plus release docs around it.",
+        "Extend the release gate or add a companion script that exercises the packed extension in Pi instead of only the tarball contents.",
+        "Keep the packaged-path validation isolated from any checkout source so duplicate `agent_browser` registrations cannot mask failures.",
+        "Verify by running the documented release command sequence locally and confirming it loads exactly one `agent_browser` source through the package path."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T00:35:41Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0006",
+      "status": "todo",
+      "title": "Preserve spill-file paths for large parse-failure outputs",
+      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: large malformed upstream outputs currently lose their best debugging artifact. The process layer keeps only a 32k stdout tail once output spills past 512 KiB, and the executor always deletes the spill file in `finally`. When JSON parsing fails on a large snapshot/eval payload, the tool returns a parse error plus the truncated tail but no durable path to the full raw output.\n\nMinimal proposed fix: keep a readable spill-file path for parse-failure cases, either by surfacing `stdoutSpillPath` directly in error details/content or by copying the raw payload into the same secure artifact mechanism used for successful compacted output before deleting the original temp file.\n\nAcceptance criteria: `npm test` stays green; a fake binary that emits a >512 KiB invalid JSON payload returns `isError: true` with a usable full-output path in the response, and the referenced file remains readable long enough to inspect the raw output.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "operability",
+        "debuggability"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/process.ts",
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/process.ts:15-18 :: stdout spills after 512 KiB and only a 32k stdout tail is retained in memory.",
+        "path: extensions/agent-browser/lib/process.ts:214-215 :: spilled executions return `stdout = stdoutTail` plus `stdoutSpillPath`.",
+        "path: extensions/agent-browser/index.ts:1069-1072 :: the executor always deletes `processResult.stdoutSpillPath` in `finally`.",
+        "workflow: npx tsx <<'EOF' ... fake binary emits `'x'.repeat(600000)` ... EOF :: observed `parseError = \"agent-browser returned invalid JSON...\"`, `stdoutChars = 32000`, and `hasFullOutputPath = false` for the failing tool response."
+      ],
+      "plan": [
+        "Preserve or copy the raw spilled stdout into a caller-visible secure artifact when parse failure occurs on large output.",
+        "Expose that path in the error response so maintainers can inspect malformed large payloads without rerunning the flow blindly.",
+        "Add a fake-binary regression that emits oversized invalid JSON and asserts both the parse error and the presence of a readable full-output path.",
+        "Verify by running `npm test` and confirming the oversized-parse-failure case returns a readable spill path alongside the parse error."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T00:35:41Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    }
+  ]
+}
