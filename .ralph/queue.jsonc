@@ -2,49 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0015",
-      "status": "todo",
-      "title": "Deduplicate shared parsing helpers across runtime, temp, and results",
-      "description": "Principles: DRY knowledge, Localize change, Make bugs hard to write.\n\nEvidence:\n- path: extensions/agent-browser/lib/runtime.ts:189-195 :: runtime defines a local `isRecord` helper.\n- path: extensions/agent-browser/lib/temp.ts:54-68 :: temp defines both `isRecord` and `parsePositiveInteger` again.\n- path: extensions/agent-browser/lib/results/shared.ts:55-78 :: results/shared exports another `isRecord` plus another `parsePositiveInteger`.\n- workflow: rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib :: found duplicate implementations in runtime.ts, temp.ts, and results/shared.ts.\n\nWhy it matters: these helpers sit on boundary parsing for session state, temp-budget env vars, and result rendering. Any future adjustment to what counts as a record or how numeric env values are normalized has to be synchronized manually across multiple modules.\n\nMinimal proposed fix: extract the truly shared helpers to one small common module and import them where needed, while keeping higher-level module boundaries intact.\n\nAcceptance criteria: `isRecord` and `parsePositiveInteger` each have a single canonical implementation; affected modules import that implementation; `npm run verify` and `npm run verify:package` both pass afterward.",
-      "priority": "medium",
-      "tags": [
-        "maintenance",
-        "dry",
-        "runtime",
-        "temp",
-        "results"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/runtime.ts",
-        "extensions/agent-browser/lib/temp.ts",
-        "extensions/agent-browser/lib/results/shared.ts",
-        "rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib",
-        "npm run verify",
-        "npm run verify:package"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/lib/runtime.ts:189-195 :: runtime has a local isRecord helper",
-        "path: extensions/agent-browser/lib/temp.ts:54-68 :: temp repeats isRecord and parsePositiveInteger",
-        "path: extensions/agent-browser/lib/results/shared.ts:55-78 :: results/shared repeats isRecord and parsePositiveInteger",
-        "workflow: rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib :: found duplicate implementations across three modules"
-      ],
-      "plan": [
-        "Extract the duplicated low-level helpers into a shared utility module with the narrowest reasonable surface area.",
-        "Update runtime, temp, and results modules to import the canonical helpers and remove the local copies.",
-        "Verify by running `npm run verify` and `npm run verify:package` and confirming all parsing and packaging tests still pass."
-      ],
-      "notes": [],
-      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
-      "created_at": "2026-04-27T02:21:16Z",
-      "updated_at": "2026-04-27T02:21:16Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0016",
       "status": "todo",
       "title": "Split the mixed-scope agent-browser mega-suite into focused test files",
