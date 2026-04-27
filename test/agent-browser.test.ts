@@ -2210,14 +2210,30 @@ test("runAgentBrowserProcess forwards a curated environment instead of the full 
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`const envelope = {
+		`const readEnv = (name) => process.env[name] ?? null;
+const envelope = {
   success: true,
   data: {
-    secret: process.env.PI_AGENT_BROWSER_TEST_SECRET ?? null,
-    lang: process.env.LANG ?? null,
-    agentBrowserSession: process.env.AGENT_BROWSER_SESSION ?? null,
-    idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null,
-    socketDir: process.env.AGENT_BROWSER_SOCKET_DIR ?? null,
+    agentBrowserActionPolicy: readEnv("AGENT_BROWSER_ACTION_POLICY"),
+    agentBrowserConfig: readEnv("AGENT_BROWSER_CONFIG"),
+    agentBrowserEncryptionKey: readEnv("AGENT_BROWSER_ENCRYPTION_KEY"),
+    agentBrowserSession: readEnv("AGENT_BROWSER_SESSION"),
+    agentBrowserSessionName: readEnv("AGENT_BROWSER_SESSION_NAME"),
+    agentcoreRegion: readEnv("AGENTCORE_REGION"),
+    aiGatewayApiKey: readEnv("AI_GATEWAY_API_KEY"),
+    awsAccessKeyId: readEnv("AWS_ACCESS_KEY_ID"),
+    awsSecretAccessKey: readEnv("AWS_SECRET_ACCESS_KEY"),
+    browserbaseApiKey: readEnv("BROWSERBASE_API_KEY"),
+    browserlessApiKey: readEnv("BROWSERLESS_API_KEY"),
+    browserUseApiKey: readEnv("BROWSER_USE_API_KEY"),
+    databaseUrl: readEnv("DATABASE_URL"),
+    idleTimeout: readEnv("AGENT_BROWSER_IDLE_TIMEOUT_MS"),
+    kernelApiKey: readEnv("KERNEL_API_KEY"),
+    lang: readEnv("LANG"),
+    openaiApiKey: readEnv("OPENAI_API_KEY"),
+    secret: readEnv("PI_AGENT_BROWSER_TEST_SECRET"),
+    socketDir: readEnv("AGENT_BROWSER_SOCKET_DIR"),
+    unrelatedApiKey: readEnv("UNRELATED_API_KEY"),
     pathStartsWithTemp: (process.env.PATH ?? "").startsWith(${JSON.stringify(tempDir)})
   }
 };
@@ -2227,10 +2243,25 @@ process.stdout.write(JSON.stringify(envelope));`,
 	try {
 		await withPatchedEnv(
 			{
-				AGENT_BROWSER_SESSION: "from-parent",
+				AGENT_BROWSER_ACTION_POLICY: "/tmp/action-policy.json",
+				AGENT_BROWSER_CONFIG: "/tmp/agent-browser.json",
+				AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64),
+				AGENT_BROWSER_SESSION: "from-parent-session",
+				AGENT_BROWSER_SESSION_NAME: "from-parent-session-name",
 				AGENT_BROWSER_SOCKET_DIR: "/tmp/from-parent-should-not-leak",
+				AGENTCORE_REGION: "us-west-2",
+				AI_GATEWAY_API_KEY: "ai-gateway-key",
+				AWS_ACCESS_KEY_ID: "aws-access-key-id",
+				AWS_SECRET_ACCESS_KEY: "aws-secret-access-key",
+				BROWSERBASE_API_KEY: "browserbase-key",
+				BROWSERLESS_API_KEY: "browserless-key",
+				BROWSER_USE_API_KEY: "browser-use-key",
+				DATABASE_URL: "postgres://should-not-leak",
+				KERNEL_API_KEY: "kernel-key",
 				LANG: "en_US.UTF-8",
+				OPENAI_API_KEY: "openai-should-not-leak",
 				PI_AGENT_BROWSER_TEST_SECRET: "should-not-leak",
+				UNRELATED_API_KEY: "unrelated-should-not-leak",
 			},
 			async () => {
 				const processResult = await runAgentBrowserProcess({
@@ -2246,21 +2277,51 @@ process.stdout.write(JSON.stringify(envelope));`,
 				const parsed = await parseAgentBrowserEnvelope(processResult.stdout);
 				assert.equal(parsed.parseError, undefined);
 				const data = parsed.envelope?.data as {
+					agentBrowserActionPolicy: string | null;
+					agentBrowserConfig: string | null;
+					agentBrowserEncryptionKey: string | null;
 					agentBrowserSession: string | null;
+					agentBrowserSessionName: string | null;
+					agentcoreRegion: string | null;
+					aiGatewayApiKey: string | null;
+					awsAccessKeyId: string | null;
+					awsSecretAccessKey: string | null;
+					browserbaseApiKey: string | null;
+					browserlessApiKey: string | null;
+					browserUseApiKey: string | null;
+					databaseUrl: string | null;
 					idleTimeout: string | null;
+					kernelApiKey: string | null;
 					lang: string | null;
+					openaiApiKey: string | null;
 					pathStartsWithTemp: boolean;
 					secret: string | null;
 					socketDir: string | null;
+					unrelatedApiKey: string | null;
 				};
-				assert.equal(data.secret, null);
-				assert.equal(data.lang, "en_US.UTF-8");
-				assert.equal(data.agentBrowserSession, null);
+				assert.equal(data.agentBrowserActionPolicy, "/tmp/action-policy.json");
+				assert.equal(data.agentBrowserConfig, "/tmp/agent-browser.json");
+				assert.equal(data.agentBrowserEncryptionKey, "a".repeat(64));
+				assert.equal(data.agentBrowserSession, "from-parent-session");
+				assert.equal(data.agentBrowserSessionName, "from-parent-session-name");
+				assert.equal(data.agentcoreRegion, "us-west-2");
+				assert.equal(data.aiGatewayApiKey, "ai-gateway-key");
+				assert.equal(data.awsAccessKeyId, "aws-access-key-id");
+				assert.equal(data.awsSecretAccessKey, "aws-secret-access-key");
+				assert.equal(data.browserbaseApiKey, "browserbase-key");
+				assert.equal(data.browserlessApiKey, "browserless-key");
+				assert.equal(data.browserUseApiKey, "browser-use-key");
+				assert.equal(data.databaseUrl, null);
 				assert.equal(data.idleTimeout, "1234");
+				assert.equal(data.kernelApiKey, "kernel-key");
+				assert.equal(data.lang, "en_US.UTF-8");
+				assert.equal(data.openaiApiKey, null);
+				assert.equal(data.secret, null);
 				assert.equal(data.socketDir, getAgentBrowserSocketDir());
 				if (data.socketDir) {
 					assert.equal((await stat(data.socketDir)).isDirectory(), true);
 				}
+				assert.equal(data.unrelatedApiKey, null);
 				assert.equal(data.pathStartsWithTemp, true);
 			},
 		);

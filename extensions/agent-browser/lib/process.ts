@@ -63,12 +63,27 @@ const INHERITED_ENV_NAMES = new Set([
 	"USERPROFILE",
 	"WAYLAND_DISPLAY",
 	"XAUTHORITY",
+	"AWS_ACCESS_KEY_ID",
+	"AWS_SECRET_ACCESS_KEY",
+	"AWS_SESSION_TOKEN",
+	"AWS_PROFILE",
+	"AWS_REGION",
+	"AWS_DEFAULT_REGION",
 	httpProxyEnvName,
 	httpsProxyEnvName,
 	allProxyEnvName,
 	noProxyEnvName,
 ]);
-const INHERITED_ENV_PREFIXES = ["AI_GATEWAY_", "XDG_"] as const;
+const INHERITED_ENV_PREFIXES = [
+	"AGENT_BROWSER_",
+	"AGENTCORE_",
+	"AI_GATEWAY_",
+	"BROWSERBASE_",
+	"BROWSERLESS_",
+	"BROWSER_USE_",
+	"KERNEL_",
+	"XDG_",
+] as const;
 
 export interface ProcessRunResult {
 	aborted: boolean;
