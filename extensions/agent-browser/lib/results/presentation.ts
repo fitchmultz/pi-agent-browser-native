@@ -16,6 +16,7 @@ import {
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 } from "../temp.js";
+import { detectConfirmationRequired, type ConfirmationRequiredPresentation } from "./confirmation.js";
 import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary } from "./snapshot.js";
 import {
 	type AgentBrowserBatchResult,
@@ -118,6 +119,27 @@ function getPageSummary(data: Record<string, unknown>): string | undefined {
 	if (!title && !url) return undefined;
 	if (title && url) return `${title}\n${url}`;
 	return title ?? url;
+}
+
+function formatConfirmationRequiredSummary(confirmation: ConfirmationRequiredPresentation): string {
+	return `Confirmation required: ${confirmation.id}`;
+}
+
+function formatConfirmationRequiredText(confirmation: ConfirmationRequiredPresentation): string {
+	const lines = [
+		"Confirmation required.",
+		`Pending confirmation id: ${confirmation.id}`,
+	];
+	if (confirmation.actionText) {
+		lines.push(`Action: ${confirmation.actionText}`);
+	}
+	lines.push(
+		"",
+		"Next steps:",
+		`- Approve: { "args": ["confirm", "${confirmation.id}"] }`,
+		`- Deny: { "args": ["deny", "${confirmation.id}"] }`,
+	);
+	return lines.join("\n");
 }
 
 function getScreenshotSummary(data: Record<string, unknown>): string | undefined {
@@ -435,6 +457,11 @@ async function buildBatchPresentation(options: {
 }
 
 function formatSummary(commandInfo: CommandInfo, data: unknown): string {
+	const confirmationRequired = detectConfirmationRequired(data);
+	if (confirmationRequired) {
+		return formatConfirmationRequiredSummary(confirmationRequired);
+	}
+
 	if (Array.isArray(data) && commandInfo.command === "batch") {
 		const successCount = data.filter((item) => isRecord(item) && item.success !== false).length;
 		return successCount === data.length ? `Batch: ${successCount}/${data.length} succeeded` : `Batch failed: ${successCount}/${data.length} succeeded`;
@@ -483,6 +510,11 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 }
 
 function formatContentText(commandInfo: CommandInfo, data: unknown): string {
+	const confirmationRequired = detectConfirmationRequired(data);
+	if (confirmationRequired) {
+		return formatConfirmationRequiredText(confirmationRequired);
+	}
+
 	if (typeof data === "string") {
 		return data;
 	}

@@ -72,6 +72,75 @@ test("buildToolPresentation enriches click results with a current-page navigatio
 	assert.match(presentation.summary, /click → Destination Docs/);
 });
 
+test("buildToolPresentation renders pending confirmations with approve and deny recovery calls", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "click", subcommand: "@e7" },
+		cwd: process.cwd(),
+		envelope: {
+			success: false,
+			data: {
+				action: "click @e7",
+				confirmation_id: "c_8f3a1234",
+				confirmation_required: true,
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Confirmation required\./);
+	assert.match(text, /Pending confirmation id: c_8f3a1234/);
+	assert.match(text, /Action: click @e7/);
+	assert.match(text, /\{ "args": \["confirm", "c_8f3a1234"\] \}/);
+	assert.match(text, /\{ "args": \["deny", "c_8f3a1234"\] \}/);
+	assert.equal(presentation.summary, "Confirmation required: c_8f3a1234");
+});
+
+test("buildToolPresentation renders nested pending confirmations without stringifying sensitive nested context", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "click", subcommand: "@danger" },
+		cwd: process.cwd(),
+		envelope: {
+			success: false,
+			data: {
+				context: "https://user:pass@example.com/delete?token=secret Authorization: Bearer raw-token",
+				pendingConfirmation: {
+					confirmationRequired: true,
+					confirmationId: "c_nested",
+				},
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Pending confirmation id: c_nested/);
+	assert.match(text, /\["confirm", "c_nested"\]/);
+	assert.match(text, /\["deny", "c_nested"\]/);
+	assert.doesNotMatch(text, /user:pass|raw-token|token=secret/);
+	assert.equal(presentation.summary, "Confirmation required: c_nested");
+});
+
+test("buildToolPresentation does not classify confirmation-like records without an id", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "click", subcommand: "@e7" },
+		cwd: process.cwd(),
+		envelope: {
+			success: false,
+			data: {
+				confirmation_required: true,
+				message: "confirmation id omitted by upstream",
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.doesNotMatch(text, /Pending confirmation id:/);
+	assert.match(text, /confirmation id omitted by upstream/);
+	assert.notEqual(presentation.summary, "Confirmation required: undefined");
+});
+
 test("buildToolPresentation formats scalar extraction results for eval and get commands", async () => {
 	const evalPresentation = await buildToolPresentation({
 		commandInfo: { command: "eval", subcommand: "--stdin" },

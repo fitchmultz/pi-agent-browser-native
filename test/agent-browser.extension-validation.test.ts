@@ -252,6 +252,76 @@ test("agentBrowserExtension redacts sensitive args in updates and persisted deta
 	}
 });
 
+test("agentBrowserExtension renders confirmation recovery and redacts sensitive confirmation context", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-confirm-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: false, data: { confirmation_required: true, confirmation_id: "c_sensitive", action: "POST https://user:pass@example.com/delete?token=secret Authorization: Bearer raw-token" } }));
+process.exit(1);`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--confirm-actions", "click", "click", "@danger"],
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.type, "text");
+			const text = (result.content[0] as { text: string }).text;
+			assert.match(text, /Confirmation required\./);
+			assert.match(text, /Pending confirmation id: c_sensitive/);
+			assert.match(text, /\["confirm", "c_sensitive"\]/);
+			assert.match(text, /\["deny", "c_sensitive"\]/);
+			assert.match(String(result.details?.summary ?? ""), /Confirmation required: c_sensitive/);
+			assert.doesNotMatch(JSON.stringify(result.content), /user:pass|raw-token|token=secret/);
+			assert.doesNotMatch(JSON.stringify(result.details), /user:pass|raw-token|token=secret/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension passes confirm and deny recovery calls through to upstream", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-confirm-deny-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("confirm")) process.stdout.write(JSON.stringify({ success: true, data: "Action confirmed" }));
+else if (args.includes("deny")) process.stdout.write(JSON.stringify({ success: true, data: "Action denied" }));
+else process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const confirmed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["confirm", "c_demo"] });
+			assert.equal(confirmed.isError, false);
+			assert.match((confirmed.content[0] as { text: string }).text, /Action confirmed/);
+
+			const denied = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["deny", "c_demo"] });
+			assert.equal(denied.isError, false);
+			assert.match((denied.content[0] as { text: string }).text, /Action denied/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args.slice(-2), ["confirm", "c_demo"]);
+			assert.deepEqual(invocations[1]?.args.slice(-2), ["deny", "c_demo"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects dangling value-taking flags before spawning agent-browser", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");

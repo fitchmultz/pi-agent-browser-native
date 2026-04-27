@@ -9,6 +9,7 @@
 import { readFile } from "node:fs/promises";
 
 import { isRecord } from "../parsing.js";
+import { detectConfirmationRequired } from "./confirmation.js";
 import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, stringifyUnknown } from "./shared.js";
 
 function hasStructuredBatchStepFailure(data: unknown): data is AgentBrowserBatchResult[] {
@@ -133,7 +134,7 @@ export function getAgentBrowserErrorText(options: {
 	if (spawnError) return spawnError.message;
 	if (parseError) return parseError;
 	if (envelope?.success === false) {
-		if (hasStructuredBatchStepFailure(envelope.data) && envelope.error === undefined) {
+		if ((hasStructuredBatchStepFailure(envelope.data) || detectConfirmationRequired(envelope.data)) && envelope.error === undefined) {
 			return undefined;
 		}
 		return extractEnvelopeErrorText(envelope.error) ?? (stderr.trim() || buildFailureFallback(options));

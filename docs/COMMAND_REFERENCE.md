@@ -110,6 +110,23 @@ Prefer `download <selector> <path>` over `click` when the goal is a saved file. 
 
 Use `tab list` and `tab <tab-id-or-label>` when a profile restore, pop-up, or click opens or focuses the wrong tab.
 
+### Recover from guarded-action confirmations
+
+When a call uses `--confirm-actions` and upstream requires confirmation, the native tool result prints the pending confirmation id and both recovery calls. Use the same `agent_browser` tool; do not switch to bash.
+
+```json
+{ "args": ["--confirm-actions", "click", "click", "@danger"] }
+```
+
+If the result says `Pending confirmation id: c_8f3a1234`, choose one follow-up:
+
+```json
+{ "args": ["confirm", "c_8f3a1234"] }
+{ "args": ["deny", "c_8f3a1234"] }
+```
+
+Confirmation context may be redacted when it contains credentials, tokens, cookies, or auth-bearing URLs. Use the id exactly as printed.
+
 ## Full supported surface
 
 The tables below intentionally list more than the recommended workflow. Rare commands are included so agents can discover that the installed upstream supports them without direct `agent-browser --help` access.
