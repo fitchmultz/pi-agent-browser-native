@@ -25,7 +25,23 @@ It also keeps the main UX where it belongs: the agent invokes the tool directly 
 
 The tool guidance should be written for task discovery first, not wrapper implementation first. That means the description should emphasize browser use cases like web research, reading live docs, clicking, filling, screenshots, extraction, and authenticated/profile-based workflows. Low-level wrapper details like `stdin` and exact CLI args belong in the schema and guidelines, not the lead description.
 
-The tool also needs an operating playbook, not just a capability list. The model should not have to rediscover basics each session. Guidance should explicitly encode the normal browser workflow (`open` -> `snapshot -i` -> interact -> re-snapshot), the authenticated-content workflow (prefer `--profile Default` on the first browser call and let the implicit session carry continuity; use `--auto-connect` as a fallback when profile reuse is unavailable), and the preferred recovery path when a session opens on the wrong tab, an action changes origin unexpectedly, or an `open` call returns blocked/blank/unexpected results (`tab list` / `tab <tab-id-or-label>` / `snapshot -i` before retrying different URLs or fallback strategies). It should also discourage inventing fixed explicit session names for routine tasks, because those names leak stale browser state across otherwise unrelated `pi` sessions. For read-only browsing tasks, guidance should prefer answering from the current page state first: use the current snapshot, structured ref labels, or `eval --stdin` on the current page before navigating into media viewers, detail routes, or other new pages unless the current view lacks the needed information. For downloads, guidance should explicitly prefer `download <selector> <path>` over `click` when the goal is a file on disk. When using `eval --stdin`, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics. When using `eval --stdin` for extraction, return the intended value instead of relying on `console.log` as the primary result channel. Because the extension blocks normal direct-binary usage in most agent sessions, the repository must also carry a local command reference that stays in sync with the effective tool surface.
+The tool also needs an operating playbook, not just a capability list. The model should not have to rediscover basics each session. The canonical agent-facing playbook lives in `extensions/agent-browser/lib/playbook.ts`; generated Markdown fragments are updated by `npm run docs:playbook:write`, and `npm run docs:playbook:check` fails when checked-in documentation drifts.
+
+<!-- agent-browser-playbook:start shared-guidelines -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+- Standard workflow: open the page, snapshot -i, interact using refs, and re-snapshot after navigation or major DOM changes.
+- For authenticated or user-specific content like feeds, inboxes, dashboards, and accounts, prefer --profile Default on the first browser call and let the implicit session carry continuity. Use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.
+- Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.
+- When using --profile, --session-name, --cdp, --state, or --auto-connect, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.
+- If you already used the implicit session and now need launch-scoped flags like --profile, --session-name, --cdp, --state, or --auto-connect, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.
+- If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <tab-id-or-label> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load <state>, --url <matcher>, --fn <js>, or --text <matcher>.
+- For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.
+- For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.
+- For downloads, prefer download <selector> <path> when an element click should save a file. Do not rely on click alone when you need the downloaded file on disk.
+- When using eval --stdin, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics.
+- When using eval --stdin for extraction, return the value you want instead of relying on console.log as the primary result channel.
+- Do not call --help or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.
+<!-- agent-browser-playbook:end shared-guidelines -->
 
 ## Parameters
 
@@ -93,8 +109,18 @@ The extension should:
 - invoke `agent-browser` directly, not through a shell
 - parse JSON output into tool details
 - handle observed JSON result shapes, including the array returned by `batch --json`
-- allow plain-text fallback for inspection commands like `--help` and `--version`
-- support those inspection commands unconditionally so the tool contract stays local and predictable
+- allow plain-text fallback for native inspection calls
+- support those inspection calls unconditionally so the tool contract stays local and predictable
+
+<!-- agent-browser-playbook:start inspection -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
+
+- { "args": ["--help"] }
+- { "args": ["--version"] }
+
+These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, or auto-connect launches.
+<!-- agent-browser-playbook:end inspection -->
 - still describe normal browser workflows in guidance so models do not overuse inspection for routine tasks
 - surface stderr and non-zero exits clearly
 - attach images when the result points to a screenshot-like artifact
@@ -185,9 +211,12 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds
 - treat explicit caller-provided `--session` choices as user-managed
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
-- after profiled `open` / `goto` / `navigate`, if upstream leaves a restored profile tab active instead of the page that was just opened, best-effort switch back to the tab whose URL matches the returned open result before returning control to the agent
-- once the wrapper has a known tab target for a session, later active-tab commands may best-effort pin that tab inside the same upstream invocation so reconnect drift does not send a `click`, `snapshot`, or similar action to a restored/background tab instead
-- after a successful command on a known tab target, the wrapper may best-effort restore that same target again if a restored/background tab steals focus after the command completes
+<!-- agent-browser-playbook:start wrapper-tab-recovery -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+- After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
+- After a target tab is known for a session, later active-tab commands best-effort pin that tab inside the same upstream invocation when reconnect drift would otherwise move the command to a restored/background tab.
+- After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
+<!-- agent-browser-playbook:end wrapper-tab-recovery -->
 - on local Unix launches, set a short private socket directory for wrapper-spawned `agent-browser` processes so extension-generated session names do not fail the upstream Unix socket-path length limit in longer cwd/session-name combinations
 - treat successful plain-text inspection commands like `--help` and `--version` as stateless: do not inject the implicit managed session and do not let those calls claim the managed-session slot
 - if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active while `sessionMode` is `"auto"`, return a validation error with a structured recovery hint that recommends `sessionMode: "fresh"`

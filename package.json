@@ -56,10 +56,12 @@
     "basic-ftp": "5.3.0"
   },
   "scripts": {
+    "docs:playbook:check": "tsx ./scripts/check-playbook-drift.ts --check",
+    "docs:playbook:write": "tsx ./scripts/check-playbook-drift.ts --write",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "pack:dry-run": "npm pack --json --dry-run",
-    "verify": "npm run typecheck && npm run test",
+    "verify": "npm run docs:playbook:check && npm run typecheck && npm run test",
     "verify:package": "node ./scripts/verify-package.mjs",
     "verify:package:pi": "node ./scripts/verify-package.mjs --smoke-pi",
     "verify:release": "npm run verify && npm run verify:package:pi"

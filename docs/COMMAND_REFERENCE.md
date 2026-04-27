@@ -229,10 +229,15 @@ Example:
 - `session list`
 - `close`
 - `close --all`
-- `--help`
-- `--version`
+<!-- agent-browser-playbook:start inspection -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
 
-The wrapper keeps `--help` and `--version` stateless so they do not consume the implicit managed-session slot.
+- { "args": ["--help"] }
+- { "args": ["--version"] }
+
+These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, or auto-connect launches.
+<!-- agent-browser-playbook:end inspection -->
 
 ## Important global flags
 
@@ -251,8 +256,12 @@ The wrapper keeps `--help` and `--version` stateless so they do not consume the 
 
 - The extension may keep following one implicit managed session across later tool calls.
 - If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
-- After launch-scoped opens that can restore existing tabs (for example `--profile`, `--session-name`, or `--state`), the wrapper best-effort restores the intended target tab when restored tabs steal focus.
-- After the wrapper knows the intended tab for a session, later commands best-effort keep that tab active so reconnect drift does not silently move the browser to a restored/background tab.
+<!-- agent-browser-playbook:start wrapper-tab-recovery -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+- After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
+- After a target tab is known for a session, later active-tab commands best-effort pin that tab inside the same upstream invocation when reconnect drift would otherwise move the command to a restored/background tab.
+- After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
+<!-- agent-browser-playbook:end wrapper-tab-recovery -->
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result.
 
 ## Maintenance rule

@@ -210,11 +210,19 @@ Validated workflow examples:
 - run `batch` with JSON via `stdin`
 - run `eval --stdin`
 - take a screenshot with inline attachment support
-- inspect `agent_browser --help` and `--version` via the tool's stateless plain-text inspection fallback
+- inspect upstream help/version through native tool calls like `{ "args": ["--help"] }` and `{ "args": ["--version"] }` via the tool's stateless plain-text inspection fallback
 - use `download <selector> <path>` for attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
 - confirm oversized outputs show the actual spill file path directly in tool content, not just a details key name
 
-Inspection commands like `agent_browser --help` and `--version` are always supported. They return plain text, are useful for debugging or capability checks, and stay stateless: the extension does not inject its implicit session for them and they do not consume the managed-session slot needed for a later `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` launch.
+<!-- agent-browser-playbook:start inspection -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
+
+- { "args": ["--help"] }
+- { "args": ["--version"] }
+
+These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, or auto-connect launches.
+<!-- agent-browser-playbook:end inspection -->
 
 Current cautions:
 - passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
@@ -223,9 +231,12 @@ Current cautions:
 - `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
 - for local Unix launches, the wrapper uses a short private socket directory under `/tmp` so extension-generated session names do not trip upstream Unix socket-path limits in longer cwd/session-name combinations
 - for direct headless local Chrome launches to `chat.com`, `chatgpt.com`, and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
-- after launch-scoped `open` calls that can restore existing tabs (for example `--profile`, `--session-name`, or `--state`), the extension best-effort re-selects the tab that matches the returned page URL when restored tabs steal focus during launch
-- after a target tab is known, later active-tab commands best-effort pin that same tab inside the same upstream invocation when a reconnect would otherwise drift to a restored tab
-- after a successful command, the extension also best-effort restores that intended tab when a restored/background tab steals focus after the command completes
+<!-- agent-browser-playbook:start wrapper-tab-recovery -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+- After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
+- After a target tab is known for a session, later active-tab commands best-effort pin that tab inside the same upstream invocation when reconnect drift would otherwise move the command to a restored/background tab.
+- After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
+<!-- agent-browser-playbook:end wrapper-tab-recovery -->
 - oversized snapshots and oversized generic outputs compact inline content and print the actual spill file path directly in the tool result when a spill file exists
 - explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension
 - explicit caller-provided `--user-agent` values win over the ChatGPT/OpenAI compatibility workaround

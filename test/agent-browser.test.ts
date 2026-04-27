@@ -15,6 +15,14 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import agentBrowserExtension from "../extensions/agent-browser/index.js";
+import {
+	BRAVE_SEARCH_PROMPT_GUIDELINE,
+	QUICK_START_GUIDELINES,
+	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
+	TOOL_PROMPT_GUIDELINES_PREFIX,
+	TOOL_PROMPT_GUIDELINES_SUFFIX,
+	WRAPPER_TAB_RECOVERY_BEHAVIOR,
+} from "../extensions/agent-browser/lib/playbook.js";
 import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildToolPresentation,
@@ -789,19 +797,25 @@ test("agentBrowserExtension keeps the full browser playbook in tool metadata and
 		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
 
-		const sharedGuidelineFragments = [
-			"Quick start mental model: args are the exact agent-browser CLI args after the binary",
-			"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }",
-			"Common advanced calls: { args: [\"batch\"]",
-			"Standard workflow: open the page, snapshot -i, interact using refs",
-			"When a non-empty BRAVE_API_KEY is available in the current environment",
-			"Do not invent fixed explicit session names for routine tasks.",
-			"When using eval --stdin for extraction, return the value you want",
-			"Do not call --help or other exploratory inspection commands unless the user explicitly asks",
+		const expectedGuidelines = [
+			...TOOL_PROMPT_GUIDELINES_PREFIX,
+			...QUICK_START_GUIDELINES,
+			SHARED_BROWSER_PLAYBOOK_GUIDELINES[0],
+			BRAVE_SEARCH_PROMPT_GUIDELINE,
+			...SHARED_BROWSER_PLAYBOOK_GUIDELINES.slice(1),
+			...TOOL_PROMPT_GUIDELINES_SUFFIX,
 		];
-		for (const fragment of sharedGuidelineFragments) {
-			assert.equal(harness.tool.promptGuidelines.some((guideline) => guideline.includes(fragment)), true);
+		for (const guideline of expectedGuidelines) {
+			assert.equal(
+				harness.tool.promptGuidelines.includes(guideline),
+				true,
+				`missing canonical playbook guideline: ${guideline}`,
+			);
 		}
+		assert.equal(
+			WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) => line.includes("After a successful command")),
+			true,
+		);
 
 		const [genericTurn] = await runExtensionEventResults<{ systemPrompt: string }>(
 			harness.handlers,

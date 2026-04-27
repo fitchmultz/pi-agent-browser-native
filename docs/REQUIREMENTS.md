@@ -97,6 +97,7 @@ The design should comfortably support workflows such as:
 - User-facing docs belong in `README.md` and the canonical published files under `docs/`.
 - Agent workflow and deeper testing procedures can stay in `AGENTS.md`, but published docs must not depend on that file being present.
 - When upstream `agent-browser` changes, refresh the local command reference, prompt guidance, and other extension-side docs so agents still have a repo-readable equivalent of the blocked direct-binary help path.
+- The canonical agent-facing playbook should live in `extensions/agent-browser/lib/playbook.ts`; README, command-reference, and tool-contract fragments must be generated or checked from that source by `npm run docs:playbook:check` so prompt guidance and docs cannot drift silently.
 - Keep mitigations for legacy-skill coexistence simple; do not add extra moving parts unless observed behavior justifies them.
 - Prefer narrow, evidence-backed compatibility mitigations over broad stealth layers when a specific upstream site starts rejecting the default headless launch fingerprint.
 - Preserve the page that a profiled `open` just navigated to; if restored profile tabs steal focus during launch, the wrapper should best-effort switch back to the returned page URL before handing control back to the agent.
