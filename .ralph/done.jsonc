@@ -1824,6 +1824,50 @@
       "custom_fields": {
         "scan_agent": "scan-general"
       }
+    },
+    {
+      "id": "RQ-0039",
+      "status": "done",
+      "title": "Investigate about:blank session regressions and add recovery coverage",
+      "description": "Feedback from a real dogfood run reports that after scroll/click sequences, `snapshot -i` sometimes returned `Origin: about:blank` even though the prior command was on the app, forcing recovery with `sessionMode=fresh` and causing brittle evidence collection. Current wrapper guidance documents manual recovery for blocked/blank states, and the implementation has tab pinning/correction paths, but there is no explicit about:blank detection or regression test for a known session target being replaced by a blank active tab. Minimal fix should first reproduce or simulate the failure, then add the smallest recovery or warning path that keeps the managed session on the intended tab when about:blank steals focus, or clearly reports the mismatch with next-step recovery instructions.",
+      "priority": "high",
+      "tags": [
+        "scan",
+        "sessions",
+        "reliability",
+        "browser-state"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/playbook.ts",
+        "test/agent-browser.resume-state.test.ts",
+        "test/agent-browser.extension-tabs.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:3-9 :: dogfood agent observed `snapshot -i` returning `Origin: about:blank` after prior commands were on the app; recovery required reopening with `sessionMode=fresh` and made evidence collection brittle.",
+        "path: extensions/agent-browser/lib/playbook.ts:32 :: current guidance only tells agents to use `tab list` / `tab` / `snapshot -i` when a session lands on blocked, blank, or unexpected pages; it does not implement automatic blank-tab recovery.",
+        "path: extensions/agent-browser/index.ts:1124-1347 :: session tab correction and post-command re-selection exist, but `rg -n \"about:blank\" extensions test docs README.md` found no explicit about:blank handling or tests.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before adding the regression."
+      ],
+      "plan": [
+        "Create a focused fake-upstream regression that simulates a managed session whose active tab becomes about:blank while a prior target tab still exists or is expected.",
+        "Trace whether current pre-pin/post-command correction can recover the intended tab in that scenario; if not, add the smallest targeted about:blank mismatch recovery or a strong wrapper warning with exact recovery calls.",
+        "Ensure recovery does not mask legitimate user navigation to about:blank when no prior intended target exists.",
+        "Verify by running `npm run verify` and confirming the new about:blank regression passes with no existing session lifecycle regressions."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:50:26.509055000Z",
+      "completed_at": "2026-04-27T16:50:26.509055000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
     }
   ]
 }
