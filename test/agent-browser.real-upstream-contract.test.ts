@@ -238,6 +238,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal((waitDownloadDetails.savedFile as { path?: string } | undefined)?.path, downloadPath);
 					assert.match(waitedDownload.content[0]?.text ?? "", /Download completed/);
 
+					// Upstream tracking: https://github.com/vercel-labs/agent-browser/issues/1300.
 					// Current upstream agent-browser 0.26.0 reports the requested saveAs path but leaves the
 					// file in the browser's default download directory. Keep this explicit so release docs do
 					// not overstate savedFilePath as a verified on-disk artifact.

@@ -166,7 +166,7 @@ Download a file from a known link/control directly:
 { "args": ["download", "@e5", "/tmp/report.pdf"] }
 ```
 
-For dashboards that start an export asynchronously after a click or navigation, click first and then wait for the download. The wrapper reports `Download completed: /tmp/report.csv` and exposes `details.savedFilePath` plus `details.savedFile` for the `wait` result:
+For dashboards that start an export asynchronously after a click or navigation, click first and then wait for the download. The wrapper reports `Download completed: /tmp/report.csv` and exposes upstream-reported `details.savedFilePath` plus `details.savedFile` for the `wait` result; with upstream `agent-browser 0.26.0`, confirm `details.artifacts[].exists` before relying on a requested `wait --download <path>` file being present on disk (tracked upstream at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300)):
 
 ```json
 { "args": ["click", "@export"] }
@@ -245,7 +245,7 @@ Validated workflow examples:
 - take a screenshot with inline attachment support
 - inspect upstream help/version through native tool calls like `{ "args": ["--help"] }` and `{ "args": ["--version"] }` via the tool's stateless plain-text inspection fallback
 - use `download <selector> <path>` for direct attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
-- use `click` plus `wait --download <path>` for asynchronous export flows, and confirm `details.savedFilePath`/`details.savedFile` are present on the wait result or batch wait step
+- use `click` plus `wait --download <path>` for asynchronous export flows, confirm `details.savedFilePath`/`details.savedFile` are present on the wait result or batch wait step, and check `details.artifacts[].exists` before relying on requested-path persistence
 - confirm oversized outputs show the actual spill file path directly in tool content, not just a details key name
 - inspect `details.artifactManifest` / `details.artifactRetentionSummary` during artifact-heavy flows to recover recent saved files, spill files, and visible eviction state after reload/resume
 

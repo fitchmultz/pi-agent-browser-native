@@ -109,7 +109,7 @@ PI_AGENT_BROWSER_REAL_UPSTREAM=1 npm run test:real-upstream
 npm run verify:real-upstream
 ```
 
-This suite requires the installed `agent-browser --version` to exactly match `scripts/agent-browser-capability-baseline.mjs`. It serves fixture pages from localhost and validates real runtime output shapes for `--version`, `open`, `eval --stdin`, `snapshot -i`, `batch` stdin, `wait --download` metadata, wrapper artifact existence reporting for the requested wait-download path, and implicit managed-session reuse. If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
+This suite requires the installed `agent-browser --version` to exactly match `scripts/agent-browser-capability-baseline.mjs`. It serves fixture pages from localhost and validates real runtime output shapes for `--version`, `open`, `eval --stdin`, `snapshot -i`, `batch` stdin, `wait --download` metadata, wrapper artifact existence reporting for the requested wait-download path, and implicit managed-session reuse. The current upstream `wait --download <path>` saveAs persistence limitation is tracked at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300); until it is fixed, release validation must treat `details.savedFilePath` as upstream-reported metadata and use `details.artifacts[].exists` as the filesystem truth. If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
 
 Example smoke prompt:
 
