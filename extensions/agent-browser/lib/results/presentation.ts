@@ -46,6 +46,9 @@ const LARGE_OUTPUT_INLINE_MAX_LINES = 120;
 const LARGE_OUTPUT_PREVIEW_MAX_CHARS = 2_500;
 const LARGE_OUTPUT_PREVIEW_MAX_LINES = 40;
 const LARGE_OUTPUT_FILE_PREFIX = "pi-agent-browser-output";
+const DIAGNOSTIC_REQUEST_PREVIEW_LIMIT = 40;
+const DIAGNOSTIC_LOG_PREVIEW_LIMIT = 80;
+const AUTH_SHOW_SAFE_FIELDS = ["name", "profile", "url", "username", "createdAt", "updatedAt"] as const;
 
 interface NavigationSummary {
 	title?: string;
@@ -111,6 +114,211 @@ function getStreamSummary(data: Record<string, unknown>): string | undefined {
 		lines.push(`Port: ${data.port}`);
 	}
 	return lines.join("\n");
+}
+
+function getArrayField(data: Record<string, unknown>, key: string): unknown[] | undefined {
+	return Array.isArray(data[key]) ? data[key] : undefined;
+}
+
+function getStringField(data: Record<string, unknown>, key: string): string | undefined {
+	const value = data[key];
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function formatCount(count: number, singular: string, plural = `${singular}s`): string {
+	return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function firstLine(value: string, maxChars = 160): string {
+	return truncateText(value.split("\n", 1)[0] ?? value, maxChars);
+}
+
+function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
+	if (commandInfo.command === "session") {
+		const sessions = getArrayField(data, "sessions");
+		if (sessions) return `Sessions: ${sessions.length}`;
+		const session = getStringField(data, "session");
+		if (session) return `Session: ${session}`;
+	}
+
+	if (commandInfo.command === "profiles") {
+		const profiles = getArrayField(data, "profiles");
+		if (profiles) return `Chrome profiles: ${profiles.length}`;
+	}
+
+	if (commandInfo.command === "auth") {
+		const profiles = getArrayField(data, "profiles");
+		if (profiles) return `Auth profiles: ${profiles.length}`;
+		const name = getStringField(data, "name") ?? getStringField(data, "profile") ?? commandInfo.subcommand;
+		if (name && commandInfo.subcommand === "show") return `Auth profile: ${name}`;
+	}
+
+	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") {
+		const requests = getArrayField(data, "requests");
+		if (requests) return `Network requests: ${requests.length}`;
+	}
+
+	if (commandInfo.command === "console") {
+		const messages = getArrayField(data, "messages");
+		if (messages) return `Console messages: ${messages.length}`;
+	}
+
+	if (commandInfo.command === "errors") {
+		const errors = getArrayField(data, "errors");
+		if (errors) return `Page errors: ${errors.length}`;
+	}
+
+	if (commandInfo.command === "dashboard") {
+		if (typeof data.port === "number") return `Dashboard running on port ${data.port}`;
+		if (data.stopped === true) return "Dashboard stopped";
+		if (data.stopped === false) {
+			const reason = getStringField(data, "reason");
+			return reason ? `Dashboard not stopped: ${reason}` : "Dashboard not stopped";
+		}
+	}
+
+	if (commandInfo.command === "doctor") {
+		const status = getStringField(data, "status") ?? getStringField(data, "result");
+		if (status) return `Doctor: ${status}`;
+		const checks = getArrayField(data, "checks") ?? getArrayField(data, "issues") ?? getArrayField(data, "problems");
+		if (checks) return `Doctor: ${formatCount(checks.length, "item")}`;
+	}
+
+	return undefined;
+}
+
+function formatSessionText(data: Record<string, unknown>): string | undefined {
+	const sessions = getArrayField(data, "sessions");
+	if (sessions) {
+		if (sessions.length === 0) return "No active sessions.";
+		return sessions
+			.map((item, index) => {
+				if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
+				const name = getStringField(item, "name") ?? getStringField(item, "session") ?? getStringField(item, "id") ?? `(session ${index + 1})`;
+				const active = item.active === true ? " *active*" : "";
+				const details = [getStringField(item, "url"), getStringField(item, "title")].filter(Boolean).join(" — ");
+				return details ? `${index + 1}. ${name}${active} — ${details}` : `${index + 1}. ${name}${active}`;
+			})
+			.join("\n");
+	}
+	const session = getStringField(data, "session");
+	return session ? `Current session: ${session}` : undefined;
+}
+
+function formatProfilesText(profiles: unknown[], label: string): string {
+	if (profiles.length === 0) return `No ${label}.`;
+	return profiles
+		.map((item, index) => {
+			if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
+			const name = getStringField(item, "name") ?? getStringField(item, "profile") ?? `(unnamed ${index + 1})`;
+			const directory = getStringField(item, "directory") ?? getStringField(item, "path");
+			return directory ? `${index + 1}. ${name} (${directory})` : `${index + 1}. ${name}`;
+		})
+		.join("\n");
+}
+
+function formatAuthShowText(data: Record<string, unknown>): string | undefined {
+	const lines = AUTH_SHOW_SAFE_FIELDS.flatMap((key) => {
+		const value = data[key];
+		return typeof value === "string" && value.trim().length > 0 ? [`${key}: ${value.trim()}`] : [];
+	});
+	return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function formatNetworkRequestsText(data: Record<string, unknown>): string | undefined {
+	const requests = getArrayField(data, "requests");
+	if (!requests) return undefined;
+	if (requests.length === 0) return "No network requests captured.";
+	const shown = requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).map((item, index) => {
+		if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
+		const method = getStringField(item, "method") ?? "GET";
+		const status = typeof item.status === "number" ? String(item.status) : "pending";
+		const type = getStringField(item, "resourceType") ?? getStringField(item, "mimeType");
+		const url = getStringField(item, "url") ?? "(no url)";
+		return `${index + 1}. ${status} ${method} ${truncateText(url, 180)}${type ? ` (${type})` : ""}`;
+	});
+	if (requests.length > shown.length) {
+		shown.push(`... (${requests.length - shown.length} additional requests omitted from preview)`);
+	}
+	return shown.join("\n");
+}
+
+function formatConsoleText(data: Record<string, unknown>): string | undefined {
+	const messages = getArrayField(data, "messages");
+	if (!messages) return undefined;
+	if (messages.length === 0) return "No console messages.";
+	const shown = messages.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
+		if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
+		const type = getStringField(item, "type") ?? "message";
+		const text = getStringField(item, "text") ?? stringifyUnknown(item);
+		return `${index + 1}. [${type}] ${firstLine(text, 220)}`;
+	});
+	if (messages.length > shown.length) {
+		shown.push(`... (${messages.length - shown.length} additional console messages omitted from preview)`);
+	}
+	return shown.join("\n");
+}
+
+function formatErrorsText(data: Record<string, unknown>): string | undefined {
+	const errors = getArrayField(data, "errors");
+	if (!errors) return undefined;
+	if (errors.length === 0) return "No page errors.";
+	const shown = errors.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
+		if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
+		const text = getStringField(item, "text") ?? stringifyUnknown(item);
+		const location = [
+			getStringField(item, "url"),
+			typeof item.line === "number" ? `line ${item.line}` : undefined,
+			typeof item.column === "number" ? `column ${item.column}` : undefined,
+		]
+			.filter(Boolean)
+			.join(":");
+		return location ? `${index + 1}. ${firstLine(text, 220)} (${location})` : `${index + 1}. ${firstLine(text, 220)}`;
+	});
+	if (errors.length > shown.length) {
+		shown.push(`... (${errors.length - shown.length} additional errors omitted from preview)`);
+	}
+	return shown.join("\n");
+}
+
+function formatDashboardText(data: Record<string, unknown>): string | undefined {
+	const lines: string[] = [];
+	if (typeof data.port === "number") lines.push(`Port: ${data.port}`);
+	if (typeof data.pid === "number") lines.push(`PID: ${data.pid}`);
+	if (typeof data.stopped === "boolean") lines.push(`Stopped: ${data.stopped}`);
+	const reason = getStringField(data, "reason");
+	if (reason) lines.push(`Reason: ${reason}`);
+	return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function formatDoctorText(data: Record<string, unknown>): string | undefined {
+	const lines: string[] = [];
+	const status = getStringField(data, "status") ?? getStringField(data, "result");
+	if (status) lines.push(`Status: ${status}`);
+	for (const key of ["checks", "issues", "problems"] as const) {
+		const items = getArrayField(data, key);
+		if (items) lines.push(`${key}: ${items.length}`);
+	}
+	return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function formatDiagnosticText(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
+	if (commandInfo.command === "session") return formatSessionText(data);
+	if (commandInfo.command === "profiles") {
+		const profiles = getArrayField(data, "profiles");
+		if (profiles) return formatProfilesText(profiles, "Chrome profiles");
+	}
+	if (commandInfo.command === "auth") {
+		const profiles = getArrayField(data, "profiles");
+		if (profiles) return formatProfilesText(profiles, "auth profiles");
+		if (commandInfo.subcommand === "show") return formatAuthShowText(data);
+	}
+	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") return formatNetworkRequestsText(data);
+	if (commandInfo.command === "console") return formatConsoleText(data);
+	if (commandInfo.command === "errors") return formatErrorsText(data);
+	if (commandInfo.command === "dashboard") return formatDashboardText(data);
+	if (commandInfo.command === "doctor") return formatDoctorText(data);
+	return undefined;
 }
 
 function getPageSummary(data: Record<string, unknown>): string | undefined {
@@ -466,6 +674,9 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 		const successCount = data.filter((item) => isRecord(item) && item.success !== false).length;
 		return successCount === data.length ? `Batch: ${successCount}/${data.length} succeeded` : `Batch failed: ${successCount}/${data.length} succeeded`;
 	}
+	if (Array.isArray(data) && commandInfo.command === "profiles") {
+		return `Chrome profiles: ${data.length}`;
+	}
 	if (isRecord(data)) {
 		const navigationSummary = getNavigationSummary(data);
 		if (navigationSummary && isNavigationObservableCommand(commandInfo.command)) {
@@ -486,6 +697,10 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 		}
 		if (commandInfo.command === "screenshot" && typeof data.path === "string") {
 			return `Screenshot saved: ${data.path}`;
+		}
+		const diagnosticSummary = formatDiagnosticSummary(commandInfo, data);
+		if (diagnosticSummary) {
+			return diagnosticSummary;
 		}
 		const savedFileSummary = getSavedFileSummary(commandInfo, data);
 		if (savedFileSummary) {
@@ -520,6 +735,9 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	}
 	if (typeof data === "number" || typeof data === "boolean") {
 		return String(data);
+	}
+	if (Array.isArray(data) && commandInfo.command === "profiles") {
+		return formatProfilesText(data, "Chrome profiles");
 	}
 	if (!isRecord(data)) {
 		return stringifyUnknown(data);
@@ -557,6 +775,11 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	const extractionText = formatExtractionText(commandInfo, data);
 	if (extractionText) {
 		return extractionText;
+	}
+
+	const diagnosticText = formatDiagnosticText(commandInfo, data);
+	if (diagnosticText) {
+		return diagnosticText;
 	}
 
 	const pageSummary = getPageSummary(data);

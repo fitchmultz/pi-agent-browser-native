@@ -271,6 +271,8 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `stream disable` | Stop runtime WebSocket streaming. |
 | `stream status` | Show streaming status and active port. |
 
+When these diagnostic commands are invoked through the native `agent_browser` tool, structured console and page-error outputs render as compact summaries with counts and key fields. Large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context.
+
 ### Batch, auth, confirmations, sessions, chat, dashboard, and setup
 
 | Command | Purpose |
@@ -295,6 +297,8 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `upgrade` | Upgrade `agent-browser` to the latest version. |
 | `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. |
 | `profiles` | List available Chrome profiles. |
+
+When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. Auth, header, token, and other sensitive nested values remain in raw details only when upstream provides them and are not expanded in model-facing text.
 
 ## Important global flags, config, and environment
 

@@ -173,6 +173,170 @@ test("buildToolPresentation formats scalar extraction results for eval and get c
 	assert.equal(getPresentation.summary, "Title: Example Domain");
 });
 
+test("buildToolPresentation formats session status and session list", async () => {
+	const current = await buildToolPresentation({
+		commandInfo: { command: "session" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { session: "demo-session" } },
+	});
+	assert.equal(current.summary, "Session: demo-session");
+	assert.equal((current.content[0] as { text: string }).text, "Current session: demo-session");
+
+	const list = await buildToolPresentation({
+		commandInfo: { command: "session", subcommand: "list" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				sessions: [{ active: true, name: "work", title: "Example", url: "https://example.com" }],
+			},
+		},
+	});
+	assert.equal(list.summary, "Sessions: 1");
+	assert.equal((list.content[0] as { text: string }).text, "1. work *active* — https://example.com — Example");
+});
+
+test("buildToolPresentation formats Chrome profile arrays", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "profiles" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: [{ directory: "Default", name: "Default" }] },
+	});
+
+	assert.equal(presentation.summary, "Chrome profiles: 1");
+	assert.equal((presentation.content[0] as { text: string }).text, "1. Default (Default)");
+});
+
+test("buildToolPresentation formats auth profile lists and show output without expanding secrets", async () => {
+	const list = await buildToolPresentation({
+		commandInfo: { command: "auth", subcommand: "list" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: { profiles: [{ name: "prod", password: "secret", username: "user@example.com" }] },
+		},
+	});
+	assert.equal(list.summary, "Auth profiles: 1");
+	const listText = (list.content[0] as { text: string }).text;
+	assert.match(listText, /prod/);
+	assert.doesNotMatch(listText, /secret|password/);
+
+	const show = await buildToolPresentation({
+		commandInfo: { command: "auth", subcommand: "show" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: { name: "prod", password: "secret", token: "bearer-token", url: "https://example.com", username: "user@example.com" },
+		},
+	});
+	assert.equal(show.summary, "Auth profile: prod");
+	const showText = (show.content[0] as { text: string }).text;
+	assert.match(showText, /name: prod/);
+	assert.match(showText, /url: https:\/\/example.com/);
+	assert.match(showText, /username: user@example.com/);
+	assert.doesNotMatch(showText, /secret|password|bearer-token|token/);
+});
+
+test("buildToolPresentation formats network request previews", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "network", subcommand: "requests" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				requests: [
+					{ headers: { "User-Agent": "secret-agent" }, method: "GET", resourceType: "Document", status: 200, url: "https://example.com/" },
+					{ method: "POST", resourceType: "Fetch", status: 204, url: "https://example.com/api" },
+				],
+			},
+		},
+	});
+
+	assert.equal(presentation.summary, "Network requests: 2");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /1\. 200 GET https:\/\/example.com\/ \(Document\)/);
+	assert.match(text, /2\. 204 POST https:\/\/example.com\/api \(Fetch\)/);
+	assert.doesNotMatch(text, /User-Agent|secret-agent/);
+});
+
+test("buildToolPresentation formats console and errors previews", async () => {
+	const consolePresentation = await buildToolPresentation({
+		commandInfo: { command: "console" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: { messages: [{ args: [{ secret: true }], text: "hello", type: "log" }, { text: "boom", type: "error" }] },
+		},
+	});
+	assert.equal(consolePresentation.summary, "Console messages: 2");
+	const consoleText = (consolePresentation.content[0] as { text: string }).text;
+	assert.match(consoleText, /\[log\] hello/);
+	assert.match(consoleText, /\[error\] boom/);
+	assert.doesNotMatch(consoleText, /secret|args/);
+
+	const errorsPresentation = await buildToolPresentation({
+		commandInfo: { command: "errors" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: { errors: [{ column: 5, line: 10, text: "Error: delayed\n    at stack", url: "https://example.com/app.js" }] },
+		},
+	});
+	assert.equal(errorsPresentation.summary, "Page errors: 1");
+	assert.equal(
+		(errorsPresentation.content[0] as { text: string }).text,
+		"1. Error: delayed (https://example.com/app.js:line 10:column 5)",
+	);
+});
+
+test("buildToolPresentation formats dashboard and doctor status", async () => {
+	const dashboard = await buildToolPresentation({
+		commandInfo: { command: "dashboard", subcommand: "start" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { pid: 123, port: 4848 } },
+	});
+	assert.equal(dashboard.summary, "Dashboard running on port 4848");
+	assert.equal((dashboard.content[0] as { text: string }).text, "Port: 4848\nPID: 123");
+
+	const stopped = await buildToolPresentation({
+		commandInfo: { command: "dashboard", subcommand: "stop" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { reason: "not running", stopped: false } },
+	});
+	assert.equal(stopped.summary, "Dashboard not stopped: not running");
+	assert.match((stopped.content[0] as { text: string }).text, /Reason: not running/);
+
+	const doctor = await buildToolPresentation({
+		commandInfo: { command: "doctor" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { checks: [{ name: "binary" }], environment: { token: "secret" }, status: "ok" } },
+	});
+	assert.equal(doctor.summary, "Doctor: ok");
+	assert.equal((doctor.content[0] as { text: string }).text, "Status: ok\nchecks: 1");
+});
+
+test("buildToolPresentation compacts large diagnostic output and preserves spill path", async () => {
+	const messages = Array.from({ length: 180 }, (_, index) => ({ text: `diagnostic console row ${index + 1} ${"x".repeat(120)}`, type: "log" }));
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "console" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { messages } },
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Large console output compacted/);
+	assert.match(text, /Full output path: /);
+	assert.equal(typeof presentation.fullOutputPath, "string");
+	assert.equal((presentation.data as { compacted: boolean }).compacted, true);
+
+	const spillPath = presentation.fullOutputPath;
+	assert.ok(spillPath);
+	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(await readFile(String(spillPath), "utf8"), /diagnostic console row 180/);
+	await rm(String(spillPath), { force: true });
+});
+
 test("buildToolPresentation formats download results as saved-file summaries", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "download", subcommand: "@e5" },

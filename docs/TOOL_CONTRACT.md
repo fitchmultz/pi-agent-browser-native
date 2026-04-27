@@ -189,6 +189,7 @@ Worth doing in v1:
 - navigation actions like `click`, `back`, `forward`, and `reload` → lightweight post-action title/url summary when available
 - tab lists → compact summary/table
 - stream status → enabled/connected/port summary
+- diagnostic/status families (`session`, `session list`, `profiles`, `doctor`, `auth list`/`show`, `network requests`, `console`, `errors`, and dashboard start/stop/status outputs) → compact readable summaries with counts and stable fields; large log/request/error outputs use previews plus `fullOutputPath` spill files; sensitive nested auth/header/token fields are not expanded in the model-facing text
 
 ## Missing binary behavior
 
