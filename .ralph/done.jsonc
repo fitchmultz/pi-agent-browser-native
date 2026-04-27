@@ -295,6 +295,47 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0007",
+      "status": "done",
+      "title": "Limit inline image attachments to trusted screenshot outputs",
+      "description": "Principles violated: E) Make bugs hard to write, G) Least astonishment, I) Security baseline, J) Consistency/Integrity.\n\nWhy it matters: arbitrary page-controlled results are currently reinterpreted as local image paths and attached back into the tool response. That creates a local file disclosure path for commands like `eval` and `get text` when their result happens to be `foo.png` or an absolute `...jpg` path, and it also turns benign text like `notes.png` into misleading attachment failures.\n\nMinimal proposed fix: only resolve and attach local images for commands that are explicitly expected to create screenshot-style image artifacts, such as `screenshot` and trusted structured screenshot results inside batch flows. Treat plain strings and generic `{ path }` payloads from other commands as text unless the command contract explicitly guarantees a local image file.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "security",
+        "correctness",
+        "results"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/results/presentation.ts:539-549 :: `extractImagePath` treats any top-level string or any record with a `path` string ending in an image extension as a local image candidate, regardless of command type.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:551-577 :: `attachInlineImage` immediately stats and reads that resolved local path, then appends the image bytes into the tool content.",
+        "repro: `npx tsx <<'EOF' ... buildToolPresentation({ commandInfo: { command: 'eval', subcommand: '--stdin' }, cwd: tempDir, envelope: { success: true, data: 'secret.png' } }) ... EOF` :: expected plain text result `secret.png` :: actual `contentTypes: [\"text\",\"image\"]` and `imagePath` pointing at the local temp file.",
+        "repro: `npx tsx <<'EOF' ... buildToolPresentation({ commandInfo: { command: 'get', subcommand: 'text' }, cwd: repoRoot, envelope: { success: true, data: absoluteTempImagePath } }) ... EOF` :: expected plain text path echo :: actual inline image attachment from the absolute local file path."
+      ],
+      "plan": [
+        "Narrow image attachment detection so it only runs for trusted screenshot-producing commands or explicitly marked screenshot result payloads.",
+        "Keep screenshot and batch screenshot attachments working while preventing generic text and eval/get payloads from being resolved as local files.",
+        "Add regressions for plain string image-like outputs, absolute image-path strings, and the real screenshot path so the intended behavior is explicit.",
+        "Verify by running `npm test` and confirming non-screenshot string/path results stay text-only while screenshot outputs still attach inline images."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T02:10:03.382201000Z",
+      "completed_at": "2026-04-27T02:10:03.382201000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
     }
   ]
 }
