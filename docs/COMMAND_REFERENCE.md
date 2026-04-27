@@ -14,9 +14,12 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 ## Upstream baseline
 
+<!-- agent-browser-capability-baseline:start upstream-baseline -->
+<!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs:command-reference:write` to update. Do not edit manually. -->
 This reference is baselined to the locally installed `agent-browser 0.26.0` command/help surface. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify:command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
+<!-- agent-browser-capability-baseline:end upstream-baseline -->
 
 ## Core mental model
 
@@ -107,7 +110,7 @@ Prefer `download <selector> <path>` over `click` when the goal is a saved file. 
 
 Use `tab list` and `tab <tab-id-or-label>` when a profile restore, pop-up, or click opens or focuses the wrong tab.
 
-## Full supported surface in 0.26.0
+## Full supported surface
 
 The tables below intentionally list more than the recommended workflow. Rare commands are included so agents can discover that the installed upstream supports them without direct `agent-browser --help` access.
 
@@ -351,14 +354,69 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result.
 - The wrapper keeps `--help` and `--version` stateless so they do not consume the implicit managed-session slot.
 
+## Generated capability baseline
+
+<!-- agent-browser-capability-baseline:start capability-token-baseline -->
+<!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs:command-reference:write` to update. Do not edit manually. -->
+<details>
+<summary>Generated verifier capability baseline for agent-browser 0.26.0</summary>
+
+This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
+
+#### Upstream help commands sampled
+- root help: `agent-browser --help`
+- tab help: `agent-browser tab --help`
+- snapshot help: `agent-browser snapshot --help`
+- wait help: `agent-browser wait --help`
+
+#### Upstream help tokens expected
+- root help: `skills`
+- root help: `keyboard`
+- root help: `scroll`
+- root help: `scrollintoview`
+- root help: `connect`
+- root help: `is`
+- root help: `find`
+- root help: `mouse`
+- root help: `set`
+- root help: `network`
+- root help: `cookies [get|set|clear]`
+- root help: `storage`
+- root help: `diff snapshot`
+- root help: `trace start|stop [path]`
+- root help: `profiler start|stop [path]`
+- root help: `record start <path> [url]`
+- root help: `console [--clear]`
+- root help: `errors [--clear]`
+- root help: `highlight <sel>`
+- root help: `inspect`
+- root help: `clipboard <op> [text]`
+- root help: `stream enable [--port <n>]`
+- root help: `auth save <name>`
+- root help: `confirm <id>`
+- root help: `deny <id>`
+- root help: `chat <message>`
+- root help: `dashboard start --port <n>`
+- root help: `install --with-deps`
+- root help: `upgrade`
+- root help: `doctor [--fix]`
+- root help: `profiles`
+- snapshot help: `-u, --urls`
+- wait help: `--download [path]`
+- tab help: `new --label <name> [url]`
+
+</details>
+<!-- agent-browser-capability-baseline:end capability-token-baseline -->
+
 ## Maintenance rule
 
 Whenever the upstream `agent-browser` binary version changes in this project:
 
 1. run `agent-browser --version`, `agent-browser --help`, `agent-browser tab --help`, `agent-browser snapshot --help`, and `agent-browser wait --help`
-2. update this local command reference if anything changed
-3. update `scripts/verify-command-reference.mjs` token expectations when the maintained baseline changes
-4. run `npm run verify:command-reference`
-5. update tool prompt guidance if the recommended agent workflow changed
-6. update README and release docs if user-visible behavior changed
-7. validate the extension still exposes local documentation that is at least as usable as the blocked direct-binary path for normal agent work
+2. update the canonical metadata in `scripts/agent-browser-capability-baseline.mjs`
+3. update the human-authored command reference sections if command semantics or recommended workflows changed
+4. run `npm run docs:command-reference:write` to regenerate capability baseline blocks; do not manually edit generated blocks
+5. run `npm run verify:command-reference`
+6. update tool prompt guidance if the recommended agent workflow changed
+7. update README and release docs if user-visible behavior changed
+8. validate the extension still exposes local documentation that is at least as usable as the blocked direct-binary path for normal agent work

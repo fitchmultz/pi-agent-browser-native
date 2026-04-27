@@ -1,9 +1,9 @@
 /**
  * Purpose: Verify that docs/COMMAND_REFERENCE.md tracks the installed agent-browser help surface targeted by this package.
- * Responsibilities: Execute upstream help commands, compare key command/option tokens against the local reference, and report actionable drift failures.
+ * Responsibilities: Execute upstream help commands, compare canonical command/option tokens against the local reference, and report actionable drift failures.
  * Scope: Documentation drift detection only; it does not validate browser runtime behavior or package contents.
  * Usage: Run with `node scripts/verify-command-reference.mjs`, `npm run verify:command-reference`, or as part of `npm run verify`.
- * Invariants/Assumptions: This package targets the currently installed agent-browser 0.26.0 surface and does not provide backwards-compatibility shims for older upstream versions.
+ * Invariants/Assumptions: This package targets the current installed agent-browser surface declared in scripts/agent-browser-capability-baseline.mjs and does not provide backwards-compatibility shims for older upstream versions.
  */
 
 import { execFile as execFileCallback } from "node:child_process";
@@ -11,100 +11,30 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import {
+  CAPABILITY_BASELINE,
+  CAPABILITY_BASELINE_BLOCK_MARKER_PREFIX,
+  CAPABILITY_BASELINE_SOURCE,
+  COMMAND_REFERENCE_DOC_PATH,
+} from "./agent-browser-capability-baseline.mjs";
+
 const execFile = promisify(execFileCallback);
-const EXPECTED_VERSION = "0.26.0";
-const DOC_PATH = "docs/COMMAND_REFERENCE.md";
+const GENERATED_BLOCK_PATTERN = new RegExp(
+  `<!-- ${CAPABILITY_BASELINE_BLOCK_MARKER_PREFIX}:start [^>]+ -->[\\s\\S]*?<!-- ${CAPABILITY_BASELINE_BLOCK_MARKER_PREFIX}:end [^>]+ -->`,
+  "g",
+);
 
-const HELP_COMMANDS = [
-  { label: "root help", args: ["--help"] },
-  { label: "tab help", args: ["tab", "--help"] },
-  { label: "snapshot help", args: ["snapshot", "--help"] },
-  { label: "wait help", args: ["wait", "--help"] },
-];
-
-export const DOC_REQUIRED_TOKENS = [
-  "agent-browser 0.26.0",
-  "skills list",
-  "skills get core --full",
-  "keyboard type <text>",
-  "scroll <dir> [px]",
-  "scrollintoview <sel>",
-  "connect <port|url>",
-  "is <what> <selector>",
-  "find <locator> <value> <action>",
-  "mouse <action> [args]",
-  "set <setting> [value]",
-  "network <action>",
-  "cookies [get|set|clear]",
-  "storage <local|session>",
-  "diff snapshot",
-  "trace start|stop [path]",
-  "profiler start|stop [path]",
-  "record start <path> [url]",
-  "console [--clear]",
-  "errors [--clear]",
-  "highlight <sel>",
-  "inspect",
-  "clipboard <op> [text]",
-  "stream enable [--port <n>]",
-  "auth save <name>",
-  "confirm <id>",
-  "deny <id>",
-  "chat <message>",
-  "dashboard start --port <n>",
-  "install --with-deps",
-  "upgrade",
-  "doctor [--fix]",
-  "profiles",
-  "snapshot -i --urls",
-  "snapshot --urls",
-  "wait --download [path]",
-  "tab new --label <name> [url]",
-  "--action-policy <path>",
-  "--confirm-actions <list>",
-  "--engine <name>",
-  "AGENT_BROWSER_CONFIG",
-];
-
-export const UPSTREAM_EXPECTATIONS = [
-  { token: "skills", help: "root help" },
-  { token: "keyboard", help: "root help" },
-  { token: "scroll", help: "root help" },
-  { token: "scrollintoview", help: "root help" },
-  { token: "connect", help: "root help" },
-  { token: "is", help: "root help" },
-  { token: "find", help: "root help" },
-  { token: "mouse", help: "root help" },
-  { token: "set", help: "root help" },
-  { token: "network", help: "root help" },
-  { token: "cookies [get|set|clear]", help: "root help" },
-  { token: "storage", help: "root help" },
-  { token: "diff snapshot", help: "root help" },
-  { token: "trace start|stop [path]", help: "root help" },
-  { token: "profiler start|stop [path]", help: "root help" },
-  { token: "record start <path> [url]", help: "root help" },
-  { token: "console [--clear]", help: "root help" },
-  { token: "errors [--clear]", help: "root help" },
-  { token: "highlight <sel>", help: "root help" },
-  { token: "inspect", help: "root help" },
-  { token: "clipboard <op> [text]", help: "root help" },
-  { token: "stream enable [--port <n>]", help: "root help" },
-  { token: "auth save <name>", help: "root help" },
-  { token: "confirm <id>", help: "root help" },
-  { token: "deny <id>", help: "root help" },
-  { token: "chat <message>", help: "root help" },
-  { token: "dashboard start --port <n>", help: "root help" },
-  { token: "install --with-deps", help: "root help" },
-  { token: "upgrade", help: "root help" },
-  { token: "doctor [--fix]", help: "root help" },
-  { token: "profiles", help: "root help" },
-  { token: "-u, --urls", help: "snapshot help" },
-  { token: "--download [path]", help: "wait help" },
-  { token: "new --label <name> [url]", help: "tab help" },
-];
+export const EXPECTED_VERSION = CAPABILITY_BASELINE.targetVersion;
+export const HELP_COMMANDS = CAPABILITY_BASELINE.helpCommands;
+export const DOC_REQUIRED_TOKENS = CAPABILITY_BASELINE.docRequiredTokens;
+export const UPSTREAM_EXPECTATIONS = CAPABILITY_BASELINE.upstreamExpectations;
 
 export function collectMissingTokens(text, tokens) {
   return tokens.filter((token) => !text.includes(token));
+}
+
+export function stripGeneratedCapabilityBaselineBlocks(content) {
+  return content.replace(GENERATED_BLOCK_PATTERN, "");
 }
 
 function printHelp() {
@@ -116,8 +46,8 @@ Usage:
 Checks:
   1. agent-browser is installed on PATH.
   2. agent-browser --version is ${EXPECTED_VERSION}.
-  3. Expected 0.26.0 help tokens are present upstream.
-  4. docs/COMMAND_REFERENCE.md includes the maintained local reference tokens.
+  3. Expected ${EXPECTED_VERSION} help tokens from ${CAPABILITY_BASELINE_SOURCE} are present upstream.
+  4. ${COMMAND_REFERENCE_DOC_PATH} includes the maintained human-authored local reference tokens.
 
 Examples:
   npm run verify:command-reference
@@ -152,7 +82,7 @@ export async function verifyCommandReference({
   const version = versionOutput.trim().replace(/^agent-browser\s+/, "");
   if (version !== EXPECTED_VERSION) {
     failures.push(
-      `agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version || "<empty>"}. Refresh docs/COMMAND_REFERENCE.md and this verifier.`,
+      `agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version || "<empty>"}. Update ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs:command-reference:write\`, and refresh ${COMMAND_REFERENCE_DOC_PATH}.`,
     );
   }
 
@@ -164,13 +94,14 @@ export async function verifyCommandReference({
   for (const expectation of UPSTREAM_EXPECTATIONS) {
     const helpText = helpByLabel.get(expectation.help) ?? "";
     if (!helpText.includes(expectation.token)) {
-      failures.push(`Upstream ${expectation.help} no longer includes expected token: ${expectation.token}`);
+      failures.push(`Upstream ${expectation.help} no longer includes expected token from ${CAPABILITY_BASELINE_SOURCE}: ${expectation.token}`);
     }
   }
 
-  const doc = await readDoc(join(cwd, DOC_PATH));
-  for (const missingToken of collectMissingTokens(doc, DOC_REQUIRED_TOKENS)) {
-    failures.push(`${DOC_PATH} is missing token: ${missingToken}`);
+  const doc = await readDoc(join(cwd, COMMAND_REFERENCE_DOC_PATH));
+  const humanAuthoredDoc = stripGeneratedCapabilityBaselineBlocks(doc);
+  for (const missingToken of collectMissingTokens(humanAuthoredDoc, DOC_REQUIRED_TOKENS)) {
+    failures.push(`${COMMAND_REFERENCE_DOC_PATH} is missing human-authored token: ${missingToken}`);
   }
 
   return failures;

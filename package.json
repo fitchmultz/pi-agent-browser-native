@@ -58,10 +58,12 @@
   "scripts": {
     "docs:playbook:check": "tsx ./scripts/check-playbook-drift.ts --check",
     "docs:playbook:write": "tsx ./scripts/check-playbook-drift.ts --write",
+    "docs:command-reference:check": "node ./scripts/check-command-reference-baseline.mjs --check",
+    "docs:command-reference:write": "node ./scripts/check-command-reference-baseline.mjs --write",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "pack:dry-run": "npm pack --json --dry-run",
-    "verify:command-reference": "node ./scripts/verify-command-reference.mjs",
+    "verify:command-reference": "npm run docs:command-reference:check && node ./scripts/verify-command-reference.mjs",
     "verify": "npm run docs:playbook:check && npm run typecheck && npm run test && npm run verify:command-reference",
     "verify:package": "node ./scripts/verify-package.mjs",
     "verify:package:pi": "node ./scripts/verify-package.mjs --smoke-pi",
