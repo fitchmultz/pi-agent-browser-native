@@ -1,4 +1,208 @@
 {
   "version": 1,
-  "tasks": []
+  "tasks": [
+    {
+      "id": "RQ-0007",
+      "status": "todo",
+      "title": "Limit inline image attachments to trusted screenshot outputs",
+      "description": "Principles violated: E) Make bugs hard to write, G) Least astonishment, I) Security baseline, J) Consistency/Integrity.\n\nWhy it matters: arbitrary page-controlled results are currently reinterpreted as local image paths and attached back into the tool response. That creates a local file disclosure path for commands like `eval` and `get text` when their result happens to be `foo.png` or an absolute `...jpg` path, and it also turns benign text like `notes.png` into misleading attachment failures.\n\nMinimal proposed fix: only resolve and attach local images for commands that are explicitly expected to create screenshot-style image artifacts, such as `screenshot` and trusted structured screenshot results inside batch flows. Treat plain strings and generic `{ path }` payloads from other commands as text unless the command contract explicitly guarantees a local image file.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "security",
+        "correctness",
+        "results"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/results/presentation.ts:539-549 :: `extractImagePath` treats any top-level string or any record with a `path` string ending in an image extension as a local image candidate, regardless of command type.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:551-577 :: `attachInlineImage` immediately stats and reads that resolved local path, then appends the image bytes into the tool content.",
+        "repro: `npx tsx <<'EOF' ... buildToolPresentation({ commandInfo: { command: 'eval', subcommand: '--stdin' }, cwd: tempDir, envelope: { success: true, data: 'secret.png' } }) ... EOF` :: expected plain text result `secret.png` :: actual `contentTypes: [\"text\",\"image\"]` and `imagePath` pointing at the local temp file.",
+        "repro: `npx tsx <<'EOF' ... buildToolPresentation({ commandInfo: { command: 'get', subcommand: 'text' }, cwd: repoRoot, envelope: { success: true, data: absoluteTempImagePath } }) ... EOF` :: expected plain text path echo :: actual inline image attachment from the absolute local file path."
+      ],
+      "plan": [
+        "Narrow image attachment detection so it only runs for trusted screenshot-producing commands or explicitly marked screenshot result payloads.",
+        "Keep screenshot and batch screenshot attachments working while preventing generic text and eval/get payloads from being resolved as local files.",
+        "Add regressions for plain string image-like outputs, absolute image-path strings, and the real screenshot path so the intended behavior is explicit.",
+        "Verify by running `npm test` and confirming non-screenshot string/path results stay text-only while screenshot outputs still attach inline images."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T01:57:23Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0008",
+      "status": "todo",
+      "title": "Stop cross-process stale pruning from deleting live temp roots",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: a second live extension process can delete the first process's active temp root after the directory `mtime` crosses the 24-hour stale threshold. That can remove large-output or snapshot spill files while the first session is still running, creating hard-to-diagnose mid-session artifact loss.\n\nMinimal proposed fix: make stale-root pruning liveness-aware instead of `mtime`-only. Record and check an owner pid or lock/lease file, refresh liveness for active roots, and only prune roots whose owner is gone or whose lease cannot be renewed safely.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "operability",
+        "temp-files",
+        "reliability"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/temp.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx",
+        "node"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/temp.ts:123-148 :: `pruneStaleTempRoots` deletes any owned temp root older than the cutoff based only on marker ownership and directory `mtime`.",
+        "path: extensions/agent-browser/lib/temp.ts:230-245 :: every new `getSessionTempRoot` call runs stale-root pruning before or alongside creating a new temp root in the current process.",
+        "repro: `node <<'EOF' ... spawn process A to call openSecureTempFile and keep running; age A's temp-root mtime by 25h; spawn process B to call openSecureTempFile ... EOF` :: expected live process A temp root remains available :: actual `{ \"before\": true, \"after\": false }`, showing process B pruned process A's active root."
+      ],
+      "plan": [
+        "Extend the temp-root ownership marker or sibling lock state so the pruner can distinguish abandoned roots from roots still owned by a live process.",
+        "Refresh active-root liveness on writes or when a process reuses its temp root, and keep same-uid pruning conservative when liveness cannot be determined.",
+        "Add a regression that simulates two processes and proves a fresh process does not delete another still-live root even if its mtime looks old.",
+        "Verify by running `npm test` and a focused two-process repro that confirms `before=true` and `after=true` for the first live root."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T01:57:23Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0009",
+      "status": "todo",
+      "title": "Reject unsupported stdin on non-batch browser commands",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: passing `stdin` to a command that is not `batch` or `eval --stdin` silently disables the wrapper's explicit-session tab-pinning path while still forwarding that `stdin` upstream. In resumed explicit-session flows, that lets a `click` or similar command execute on the wrong active tab and overwrite the remembered `sessionTabTarget` with the wrong page.\n\nMinimal proposed fix: validate the `stdin` contract up front and reject `stdin` on unsupported commands, or normalize it away before any session-tab planning so unsupported `stdin` cannot bypass tab pinning. Keep the supported `batch` and `eval --stdin` flows unchanged.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "sessions",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "README.md",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:465-489 :: `supportsPinnedStdinCommand` returns false for any non-`batch` command with `stdin`, and `shouldPinSessionTabForCommand` gates the pre-pin logic on that result.",
+        "path: extensions/agent-browser/index.ts:965-1060 :: the executor still passes `params.stdin` through as `processStdin`, so unsupported `stdin` changes planning behavior without being rejected.",
+        "path: README.md:109-117 :: the documented contract says `stdin` is only for `batch` and `eval --stdin`.",
+        "repro: `npx tsx <<'EOF' ... resumed explicit session with stored target Example Domain; execute { args: ['--session','named','click','@e9'], stdin: 'oops' } ... EOF` :: expected wrapper-side validation error or preserved pre-pin behavior :: actual first upstream invocation was direct `['--json','--session','named','click','@e9']`, later details showed `sessionTabTarget` overwritten to `https://wrong.example/`."
+      ],
+      "plan": [
+        "Add explicit parameter validation that only allows `stdin` for `batch` and `eval --stdin`.",
+        "Keep supported stdin-driven commands pinned correctly, and make unsupported stdin combinations fail before any browser call is launched.",
+        "Add a resumed explicit-session regression that proves a stray `stdin` on `click` is rejected and no wrong-tab command is sent upstream.",
+        "Verify by running `npm test` and confirming the stray-stdin repro returns `isError: true` with no direct `click` invocation in the fake-binary log."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T01:57:23Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0010",
+      "status": "todo",
+      "title": "Fail fast on malformed batch step shapes before upstream execution",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, J) Consistency/Integrity.\n\nWhy it matters: the wrapper only validates that `batch` stdin parses as a top-level JSON array. It then prepends its synthetic `tab` step and forwards malformed step objects upstream, which weakens the wrapper's own invariants and turns clear wrapper-side input mistakes into opaque upstream behavior.\n\nMinimal proposed fix: validate each user batch step before wrapping it. Require every step to be a non-empty array of string command tokens, and reject malformed entries with a wrapper-side error before spawning `agent-browser`.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "batch",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:492-505 :: `parseUserBatchStdin` only checks JSON parsing and `Array.isArray(parsed)`.",
+        "path: extensions/agent-browser/index.ts:514-523 :: `buildPinnedBatchPlan` blindly spreads those parsed steps after the synthetic `['tab', selectedTab]` step.",
+        "repro: `npx tsx <<'EOF' ... resumed explicit session; execute { args: ['--session','named','batch'], stdin: '[{\"oops\":1}]' } ... EOF` :: expected wrapper-side validation error before spawn :: actual upstream invocation stdin was `[[\"tab\",\"t1\"],{\"oops\":1}]` and the tool call still returned `isError: false`."
+      ],
+      "plan": [
+        "Define a narrow wrapper-side schema for batch stdin steps that matches the command token arrays the wrapper and tests already expect.",
+        "Reject malformed step objects before building the synthetic tab-pinning batch so invalid user input never reaches upstream.",
+        "Add negative tests for non-array steps, empty steps, and non-string command tokens.",
+        "Verify by running `npm test` and confirming malformed batch stdin fails before spawn with no `batch` invocation in the fake-binary log."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T01:57:23Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0011",
+      "status": "todo",
+      "title": "Automate the missing-agent-browser error-path contract",
+      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: the repo treats the missing-binary path as a minimum validation item and promises a specific user-facing error, but the normal automated gate does not exercise that ENOENT branch. A regression in the not-on-PATH behavior could therefore ship while `npm run verify` still passes.\n\nMinimal proposed fix: add a focused fake-binary or PATH-stripping test that forces the spawn `ENOENT` branch and asserts the user-facing error text plus `isError: true`. Keep the current typecheck/test/package verification entrypoints unchanged once the new coverage lands.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "testing",
+        "operability",
+        "contracts"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/IMPLEMENTATION_PLAN.md",
+        "package.json",
+        "test/agent-browser.test.ts"
+      ],
+      "evidence": [
+        "path: docs/TOOL_CONTRACT.md:166-172 :: the contract requires a clear missing-binary message that says `agent-browser` is required, not bundled, and points to upstream install/docs.",
+        "path: docs/IMPLEMENTATION_PLAN.md:118-128 :: local validation explicitly lists the missing-binary failure path as a minimum check.",
+        "path: package.json:58-65 :: the normal repo gate is `typecheck`, `test`, and package verification.",
+        "path: extensions/agent-browser/index.ts:102-108 :: `buildMissingBinaryMessage` defines the user-facing error text.",
+        "workflow: `rg -n \"required but was not found on PATH|buildMissingBinaryMessage|ENOENT|--version\" test/agent-browser.test.ts extensions/agent-browser/index.ts docs/TOOL_CONTRACT.md docs/IMPLEMENTATION_PLAN.md README.md` :: observed the ENOENT branch exists in implementation/docs, while the concrete execution coverage in `test/agent-browser.test.ts` explicitly exercises `--version` inspection rather than the missing-binary path."
+      ],
+      "plan": [
+        "Add a focused test that runs the tool with `agent-browser` absent from PATH or otherwise forces the spawn `ENOENT` branch.",
+        "Assert the returned message includes the required/not-bundled/upstream-docs guidance and that the tool call is marked as an error.",
+        "Keep the existing success-path inspection coverage, but make the missing-binary contract part of the normal automated suite.",
+        "Verify by running `npm test` and confirming the ENOENT regression covers the documented error text exactly enough to catch future drift."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T01:57:23Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    }
+  ]
 }
