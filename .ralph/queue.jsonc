@@ -1,45 +1,4 @@
 {
   "version": 1,
-  "tasks": [
-    {
-      "id": "RQ-0008",
-      "status": "todo",
-      "title": "Stop cross-process stale pruning from deleting live temp roots",
-      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: a second live extension process can delete the first process's active temp root after the directory `mtime` crosses the 24-hour stale threshold. That can remove large-output or snapshot spill files while the first session is still running, creating hard-to-diagnose mid-session artifact loss.\n\nMinimal proposed fix: make stale-root pruning liveness-aware instead of `mtime`-only. Record and check an owner pid or lock/lease file, refresh liveness for active roots, and only prune roots whose owner is gone or whose lease cannot be renewed safely.",
-      "priority": "high",
-      "tags": [
-        "maintenance",
-        "operability",
-        "temp-files",
-        "reliability"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/temp.ts",
-        "test/agent-browser.test.ts",
-        "npx tsx",
-        "node"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/lib/temp.ts:123-148 :: `pruneStaleTempRoots` deletes any owned temp root older than the cutoff based only on marker ownership and directory `mtime`.",
-        "path: extensions/agent-browser/lib/temp.ts:230-245 :: every new `getSessionTempRoot` call runs stale-root pruning before or alongside creating a new temp root in the current process.",
-        "repro: `node <<'EOF' ... spawn process A to call openSecureTempFile and keep running; age A's temp-root mtime by 25h; spawn process B to call openSecureTempFile ... EOF` :: expected live process A temp root remains available :: actual `{ \"before\": true, \"after\": false }`, showing process B pruned process A's active root."
-      ],
-      "plan": [
-        "Extend the temp-root ownership marker or sibling lock state so the pruner can distinguish abandoned roots from roots still owned by a live process.",
-        "Refresh active-root liveness on writes or when a process reuses its temp root, and keep same-uid pruning conservative when liveness cannot be determined.",
-        "Add a regression that simulates two processes and proves a fresh process does not delete another still-live root even if its mtime looks old.",
-        "Verify by running `npm test` and a focused two-process repro that confirms `before=true` and `after=true` for the first live root."
-      ],
-      "notes": [],
-      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
-      "created_at": "2026-04-27T01:57:23Z",
-      "updated_at": "2026-04-27T01:57:23Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    }
-  ]
+  "tasks": []
 }
