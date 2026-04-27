@@ -1059,6 +1059,95 @@ test("agentBrowserExtension rejects malformed JSON envelopes that omit success",
 	}
 });
 
+test("agentBrowserExtension reports direct fallback failures with the effective invocation", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: false, data: { title: "Wrong page" } }));
+process.exit(1);`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com"],
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.type, "text");
+			const text = (result.content[0] as { text: string }).text;
+			assert.match(text, /^agent-browser --json --session \S+ open https:\/\/example\.com\/? reported failure \(exit code 1\)\.$/);
+			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(0, 3), ["--json", "--session", result.details?.sessionName]);
+			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-2), ["open", "https://example.com/"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports wrapper-assisted fallback failures with effective batch context", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
+    { command: ["get", "title"], success: false, result: { title: "Wrong page" } }
+  ]));
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
+  { tabId: "t2", title: "Other", url: "https://other.example/", active: true }
+] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "get", "title"],
+			});
+
+			assert.equal(result.isError, true, JSON.stringify(result));
+			assert.equal(result.content[0]?.type, "text");
+			const text = (result.content[0] as { text: string }).text;
+			assert.match(text, /agent-browser --json --session named batch reported failure \(exit code 1\)\./);
+			assert.match(text, /Wrapper recovery hint:/);
+			assert.match(text, /tab list/);
+			assert.deepEqual(result.details?.effectiveArgs, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String((await readInvocationLog(logPath))[1]?.stdin ?? "[]")), [["tab", "t1"], ["get", "title"]]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension preserves full spilled stdout for oversized parse failures", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
@@ -1276,16 +1365,20 @@ test("getAgentBrowserErrorText extracts nested envelope error messages", () => {
 	assert.equal(errorText, "Profile directory is locked");
 });
 
-test("getAgentBrowserErrorText falls back to stderr or a generic message when a failed envelope has no simple error field", () => {
+test("getAgentBrowserErrorText falls back to stderr or an invocation-aware message when a failed envelope has no simple error field", () => {
 	const stderrFallback = getAgentBrowserErrorText({
 		aborted: false,
+		command: "open",
+		effectiveArgs: ["--json", "open", "https://example.com"],
 		envelope: { success: false, data: { title: "Wrong page" } },
 		exitCode: 1,
 		plainTextInspection: false,
 		stderr: "Navigation failed upstream",
 	});
-	const genericFallback = getAgentBrowserErrorText({
+	const invocationFallback = getAgentBrowserErrorText({
 		aborted: false,
+		command: "open",
+		effectiveArgs: ["--json", "open", "https://example.com"],
 		envelope: { success: false, data: { title: "Wrong page" } },
 		exitCode: 1,
 		plainTextInspection: false,
@@ -1293,19 +1386,50 @@ test("getAgentBrowserErrorText falls back to stderr or a generic message when a 
 	});
 
 	assert.equal(stderrFallback, "Navigation failed upstream");
-	assert.equal(genericFallback, "agent-browser reported failure (exit code 1)");
+	assert.equal(invocationFallback, "agent-browser --json open https://example.com reported failure (exit code 1).");
 });
 
-test("getAgentBrowserErrorText falls back to generic exit codes when no envelope error exists", () => {
+test("getAgentBrowserErrorText falls back to command-aware exit codes when no envelope error exists", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,
+		command: "snapshot",
 		envelope: { success: true, data: null },
 		exitCode: 1,
 		plainTextInspection: false,
 		stderr: "",
 	});
 
-	assert.equal(errorText, "agent-browser exited with code 1.");
+	assert.equal(errorText, "agent-browser snapshot exited with code 1.");
+});
+
+test("getAgentBrowserErrorText appends wrapper recovery hints only to fallback messages", () => {
+	const wrapperRecoveryHint = "Wrapper recovery hint: inspect details.effectiveArgs and run tab list before retrying.";
+	const fallbackErrorText = getAgentBrowserErrorText({
+		aborted: false,
+		command: "batch",
+		effectiveArgs: ["--json", "--session", "named", "batch"],
+		envelope: { success: false, data: { title: "Wrong page" } },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+		wrapperRecoveryHint,
+	});
+	const explicitErrorText = getAgentBrowserErrorText({
+		aborted: false,
+		command: "batch",
+		effectiveArgs: ["--json", "--session", "named", "batch"],
+		envelope: { success: false, error: "Upstream failure" },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+		wrapperRecoveryHint,
+	});
+
+	assert.equal(
+		fallbackErrorText,
+		"agent-browser --json --session named batch reported failure (exit code 1).\nWrapper recovery hint: inspect details.effectiveArgs and run tab list before retrying.",
+	);
+	assert.equal(explicitErrorText, "Upstream failure");
 });
 
 test("getAgentBrowserErrorText defers mixed batch failures to batch rendering", () => {

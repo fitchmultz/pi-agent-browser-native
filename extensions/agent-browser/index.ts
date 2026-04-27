@@ -114,6 +114,20 @@ function buildInvocationPreview(effectiveArgs: string[]): string {
 	return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
 }
 
+function buildWrapperRecoveryHint(options: {
+	pinnedBatchUnwrapMode?: PinnedBatchUnwrapMode;
+	sessionTabCorrection?: OpenResultTabCorrection;
+}): string | undefined {
+	const wrapperManagedContexts = [
+		options.sessionTabCorrection ? "session tab correction" : undefined,
+		options.pinnedBatchUnwrapMode ? "pinned batch routing" : undefined,
+	].filter((item): item is string => item !== undefined);
+	if (wrapperManagedContexts.length === 0) {
+		return undefined;
+	}
+	return `Wrapper recovery hint: this call used ${wrapperManagedContexts.join(" and ")}. Inspect details.effectiveArgs and details.sessionTabCorrection; if the selected tab looks wrong, run tab list for the same session before retrying.`;
+}
+
 const DIRECT_AGENT_BROWSER_EXECUTABLE_PATTERN = /^(?:[.~]|\.\.?|\/)?(?:[^\s;&|]+\/)?agent-browser$/;
 const HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN = /^\s*(?:command\s+-v|which|type\s+-P)\s+agent-browser\s*$/;
 
@@ -1293,12 +1307,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 				const errorText = getAgentBrowserErrorText({
 					aborted: processResult.aborted,
+					command: executionPlan.commandInfo.command,
+					effectiveArgs: redactedProcessArgs,
 					envelope: presentationEnvelope,
 					exitCode: processResult.exitCode,
 					parseError,
 					plainTextInspection,
 					spawnError: processResult.spawnError,
 					stderr: processResult.stderr,
+					wrapperRecoveryHint: buildWrapperRecoveryHint({ pinnedBatchUnwrapMode, sessionTabCorrection }),
 				});
 
 				const presentation = plainTextInspection

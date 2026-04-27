@@ -88,14 +88,43 @@ export async function parseAgentBrowserEnvelope(options: string | { stdout: stri
 	}
 }
 
+function buildInvocationLabel(options: { command?: string; effectiveArgs?: string[] }): string {
+	if (options.effectiveArgs && options.effectiveArgs.length > 0) {
+		return `agent-browser ${options.effectiveArgs.join(" ")}`;
+	}
+	if (options.command && options.command.trim().length > 0) {
+		return `agent-browser ${options.command.trim()}`;
+	}
+	return "agent-browser";
+}
+
+function appendWrapperRecoveryHint(message: string, wrapperRecoveryHint?: string): string {
+	const hint = wrapperRecoveryHint?.trim();
+	return hint ? `${message}\n${hint}` : message;
+}
+
+function buildFailureFallback(options: { command?: string; effectiveArgs?: string[]; exitCode: number; wrapperRecoveryHint?: string }): string {
+	const invocation = buildInvocationLabel(options);
+	const exitSuffix = options.exitCode !== 0 ? ` (exit code ${options.exitCode})` : "";
+	return appendWrapperRecoveryHint(`${invocation} reported failure${exitSuffix}.`, options.wrapperRecoveryHint);
+}
+
+function buildExitCodeFallback(options: { command?: string; effectiveArgs?: string[]; exitCode: number; wrapperRecoveryHint?: string }): string {
+	const invocation = buildInvocationLabel(options);
+	return appendWrapperRecoveryHint(`${invocation} exited with code ${options.exitCode}.`, options.wrapperRecoveryHint);
+}
+
 export function getAgentBrowserErrorText(options: {
 	aborted: boolean;
+	command?: string;
+	effectiveArgs?: string[];
 	envelope?: AgentBrowserEnvelope;
 	exitCode: number;
 	parseError?: string;
 	plainTextInspection: boolean;
 	spawnError?: Error;
 	stderr: string;
+	wrapperRecoveryHint?: string;
 }): string | undefined {
 	const { aborted, envelope, exitCode, parseError, plainTextInspection, spawnError, stderr } = options;
 	if (plainTextInspection) return undefined;
@@ -106,10 +135,10 @@ export function getAgentBrowserErrorText(options: {
 		if (hasStructuredBatchStepFailure(envelope.data) && envelope.error === undefined) {
 			return undefined;
 		}
-		return extractEnvelopeErrorText(envelope.error) ?? (stderr.trim() || `agent-browser reported failure${exitCode !== 0 ? ` (exit code ${exitCode})` : "."}`);
+		return extractEnvelopeErrorText(envelope.error) ?? (stderr.trim() || buildFailureFallback(options));
 	}
 	if (exitCode !== 0) {
-		return stderr.trim() || `agent-browser exited with code ${exitCode}.`;
+		return stderr.trim() || buildExitCodeFallback(options);
 	}
 	return undefined;
 }
