@@ -818,6 +818,33 @@ process.stdout.write("agent-browser 9.9.9\\n");`,
 	}
 });
 
+test("agentBrowserExtension reports the documented missing agent-browser binary contract", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-missing-bin-"));
+
+	try {
+		await withPatchedEnv({ PATH: tempDir }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Open a page and summarize it." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--version"],
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.type, "text");
+			const text = (result.content[0] as { text: string }).text;
+			assert.match(text, /agent-browser is required but was not found on PATH\./);
+			assert.match(text, /This project does not bundle agent-browser\./);
+			assert.match(text, /Install it using the upstream docs:/);
+			assert.match(text, /https:\/\/agent-browser\.dev\//);
+			assert.match(text, /https:\/\/github\.com\/vercel-labs\/agent-browser/);
+			assert.match(String(result.details?.spawnError ?? ""), /ENOENT/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension redacts sensitive args in updates and persisted details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";
