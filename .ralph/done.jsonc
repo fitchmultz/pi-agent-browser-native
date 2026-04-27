@@ -1,4 +1,47 @@
 {
   "version": 1,
-  "tasks": []
+  "tasks": [
+    {
+      "id": "RQ-0003",
+      "status": "done",
+      "title": "Pre-pin stdin-driven explicit-session commands before they run",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: the wrapper disables pre-execution tab pinning whenever `stdin` is present, which means `eval --stdin` and user-authored `batch` calls on explicit sessions can run against the wrong active tab. Post-command correction happens too late: the command has already executed on the wrong page, and the wrapper can either overwrite the remembered session target or leave it stale relative to the batch result.\n\nMinimal proposed fix: stop using `stdin` presence as a blanket opt-out. Allow the wrapper to pre-pin supported stdin-driven commands by prepending the same `tab <id>` step it already uses for pinned `snapshot` and `click` flows, and update session-target derivation from batch results so the remembered tab matches what just ran.\n\nAcceptance criteria: `npm test` stays green; resumed explicit-session `eval --stdin` and `batch` probes execute against the intended stored tab, not the currently active restored tab; `sessionTabTarget` remains aligned with the page that actually produced the result.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "sessions",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:410-416 :: `shouldPinSessionTabForCommand` returns false whenever `stdin` is present.",
+        "path: extensions/agent-browser/index.ts:804-826 :: pre-pin wrapping into a `batch` with `tab <id>` only happens when `shouldPinSessionTabForCommand(...)` passes.",
+        "path: extensions/agent-browser/index.ts:932-973 :: session target updates fall back to previous state when the command result does not yield a new target, which leaves user-authored batch flows prone to stale target state.",
+        "workflow: npx tsx <<'EOF' ... resumed explicit session, `--session named eval --stdin` ... EOF :: observed result text `Google Gemini`, direct upstream eval invocation first, and only a later `tab list` correction after the wrong-page eval had already run.",
+        "workflow: npx tsx <<'EOF' ... resumed explicit session, `--session named batch` with `[[\"get\",\"title\"]]` ... EOF :: observed batch result title `Google Gemini`, `details.sessionTabTarget` still `Example Domain`, and no injected `tab` selection step before the user batch ran."
+      ],
+      "plan": [
+        "Narrow stdin handling to the commands that actually support it and let those commands participate in pre-execution tab pinning.",
+        "Teach the wrapper how to derive the current tab target from user-authored batch results or explicit tab-selection steps.",
+        "Add resumed-session regressions for `eval --stdin` and user batch calls that start with the wrong active tab.",
+        "Verify by running `npm test` and confirming both stdin-driven flows return content from the intended stored tab with a matching `sessionTabTarget`."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T01:40:28.460067000Z",
+      "completed_at": "2026-04-27T01:40:28.460067000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    }
+  ]
 }
