@@ -89,50 +89,6 @@
       }
     },
     {
-      "id": "RQ-0042",
-      "status": "todo",
-      "title": "Append actionable hints to stale ref and unsupported selector errors",
-      "description": "The feedback indicates selector failures were hard to interpret: Playwright-style selectors failed despite visible elements, and refs were reliable but stale after UI changes. Current mixed-failure rendering preserves upstream errors such as `Unknown ref: zzz`, but the wrapper does not append guidance about re-snapshotting, using `find`, or avoiding unsupported selector dialects. Minimal fix is to keep upstream error text intact while adding targeted wrapper hints for common stale-ref/selector-failure patterns.",
-      "priority": "medium",
-      "tags": [
-        "scan",
-        "selectors",
-        "errors",
-        "ux"
-      ],
-      "scope": [
-        "/tmp/feedback.txt",
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "extensions/agent-browser/lib/results/envelope.ts",
-        "test/agent-browser.extension-tabs.test.ts",
-        "test/agent-browser.presentation.test.ts",
-        "npm run test"
-      ],
-      "evidence": [
-        "feedback: /tmp/feedback.txt:17-23 :: selector support felt inconsistent; Playwright-style selectors failed while refs worked but became stale easily.",
-        "path: test/agent-browser.extension-tabs.test.ts:180-208 :: mixed batch failure test renders raw upstream `Unknown ref: zzz` for `click @zzz` without wrapper guidance.",
-        "path: extensions/agent-browser/lib/results/presentation.ts:1217-1222 :: when `errorText` is present, presentation returns exactly that text as content and summary, leaving no room for selector-specific remediation.",
-        "path: docs/COMMAND_REFERENCE.md:225-230 :: there are supported alternatives (`find` locator families and `scrollintoview`) that error hints can recommend.",
-        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before changing error copy."
-      ],
-      "plan": [
-        "Identify common upstream error strings for stale refs and selector parse/no-match failures from existing tests and, if needed, a small fake-upstream fixture.",
-        "Add a narrow hinting layer that appends guidance only to matching selector/ref errors, preserving the original upstream error text.",
-        "Cover both direct command failures and batch step failures so `Unknown ref` and unsupported-selector cases point users to `snapshot -i`, `find role/text/...`, and `scrollintoview`.",
-        "Verify by running `npm run test` and confirming existing failure rendering remains readable with the new targeted hints."
-      ],
-      "notes": [],
-      "request": "scan finding",
-      "created_at": "2026-04-27T16:34:07Z",
-      "updated_at": "2026-04-27T16:34:07Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-general"
-      }
-    },
-    {
       "id": "RQ-0043",
       "status": "todo",
       "title": "Improve network request previews for QA debugging",
