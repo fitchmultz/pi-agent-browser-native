@@ -39,6 +39,9 @@ npm run verify:release
 - the packed package can be loaded through Pi SDK resource loading with the same isolation principle as `pi --no-extensions -e <package-source>`
 - exactly one `agent_browser` tool is registered
 - the registered `agent_browser` source resolves inside the extracted packed package path, not the working checkout
+- the packaged `agent_browser` tool can be executed through Pi's loaded native tool definition with a deterministic fake upstream `agent-browser --version` binary
+
+The packaged execution smoke intentionally uses a temporary fake `agent-browser` binary and the `--version` inspection path. It proves first invocation of the packaged Pi tool without launching a real browser. Real browser coverage remains part of local checkout validation and post-publish install validation.
 
 Current forbidden packed files include:
 
@@ -91,14 +94,14 @@ Recommended configured-source lifecycle follow-up:
 
 ## Post-publish install validation
 
-After publishing a release, validate the package-first path in isolation:
+After publishing a release, validate the package-first path in isolation. `npm run verify:release` includes the deterministic fake-binary packaged execution gate, but it does not replace a real-browser installed-package smoke:
 
 ```bash
 npm run verify:release
 pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
 
-Then run the smoke prompt:
+Then run the real-browser smoke prompt:
 
 ```text
 Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.

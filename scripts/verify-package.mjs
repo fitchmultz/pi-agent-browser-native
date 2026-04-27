@@ -1,15 +1,15 @@
 /**
  * Purpose: Verify the published npm tarball shape, package-path Pi loadability, and key repo release prerequisites for pi-agent-browser.
- * Responsibilities: Parse CLI options, run `npm pack`, validate required and forbidden repo and packed files, catch repo-local auto-discovery shims, smoke-load the packed package in an isolated Pi resource loader when requested, and print concise release reports.
+ * Responsibilities: Parse CLI options, run `npm pack`, validate required and forbidden repo and packed files, catch repo-local auto-discovery shims, smoke-load and deterministically smoke-execute the packed package in an isolated Pi resource loader when requested, and print concise release reports.
  * Scope: Packaging and release verification only; code compilation/tests stay in the normal npm verify scripts.
  * Usage: Run with `node scripts/verify-package.mjs`, `node scripts/verify-package.mjs --smoke-pi`, `npm run verify:package`, `npm run verify:package:pi`, or `npm run verify:release`.
  * Invariants/Assumptions: The package is built directly from the current repo checkout, npm and tar are available on PATH, installed Pi SDK APIs match the current dev dependency, and the package should publish only canonical docs plus the extension source and license.
  */
 
 import { execFile as execFileCallback } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -27,6 +27,9 @@ const execFile = promisify(execFileCallback);
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const tarCommand = process.platform === "win32" ? "tar.exe" : "tar";
 const SUPPORTED_ARGS = new Set(["--list-files", "--smoke-pi"]);
+const PACKAGED_AGENT_BROWSER_SMOKE_ARGS = ["--version"];
+const PACKAGED_AGENT_BROWSER_SMOKE_TOOL_CALL_ID = "verify-package-agent-browser-smoke";
+const FAKE_AGENT_BROWSER_VERSION = "agent-browser 0.0.0-packaged-smoke";
 
 class UsageError extends Error {
 	constructor(message) {
@@ -43,8 +46,9 @@ Usage:
 
 Options:
   --list-files   Print every packed file path after validation.
-  --smoke-pi     Pack and extract the package, then verify Pi can load exactly one
-                 agent_browser tool from that package in isolation.
+  --smoke-pi     Pack and extract the package, verify Pi can load exactly one
+                 agent_browser tool from that package in isolation, and execute
+                 a deterministic fake-binary-backed agent_browser --version smoke.
   -h, --help     Show this help text.
 
 Checks:
@@ -54,6 +58,8 @@ Checks:
   4. Development-only or superseded files are absent from the tarball.
   5. With --smoke-pi, the packed package load path registers exactly one
      agent_browser tool whose source resolves inside the extracted package.
+  6. With --smoke-pi, that packaged tool executes through Pi's native tool
+     handler using a temporary fake agent-browser --version binary.
 
 Examples:
   npm run verify:package
@@ -205,6 +211,141 @@ export function evaluatePiSmokeResult(options) {
 	return failures;
 }
 
+function summarizeToolResult(result) {
+	if (!result || typeof result !== "object") return String(result);
+
+	const textContent = Array.isArray(result.content)
+		? result.content
+				.filter((item) => item?.type === "text" && typeof item.text === "string")
+				.map((item) => item.text)
+				.join("\n")
+		: "";
+	const details = result.details && typeof result.details === "object" ? result.details : undefined;
+	const summaryParts = [
+		textContent.trim(),
+		details?.summary ? `summary: ${details.summary}` : undefined,
+		details?.exitCode !== undefined ? `exitCode: ${details.exitCode}` : undefined,
+		details?.spawnError ? `spawnError: ${details.spawnError}` : undefined,
+		details?.stderr ? `stderr: ${details.stderr}` : undefined,
+	].filter((part) => typeof part === "string" && part.length > 0);
+	const summary = summaryParts.join("\n");
+	return summary.length > 1_200 ? `${summary.slice(0, 1_197)}...` : summary;
+}
+
+async function createFakeAgentBrowserBinary() {
+	const binDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-fake-bin-"));
+	const nodeExecutable = JSON.stringify(process.execPath);
+	const fakeScript = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version") || args.includes("-V")) {
+  console.log(${JSON.stringify(FAKE_AGENT_BROWSER_VERSION)});
+  process.exit(0);
+}
+console.error("fake agent-browser only supports --version for packaged smoke validation; received: " + args.join(" "));
+process.exit(64);
+`;
+
+	const posixPath = join(binDir, "agent-browser");
+	await writeFile(posixPath, fakeScript, "utf8");
+	await chmod(posixPath, 0o755);
+
+	const cmdPath = join(binDir, "agent-browser.cmd");
+	await writeFile(cmdPath, `@echo off\n${nodeExecutable} "%~dp0agent-browser" %*\n`, "utf8");
+
+	return {
+		binDir,
+		cleanup: async () => {
+			await rm(binDir, { force: true, recursive: true });
+		},
+	};
+}
+
+async function withFakeAgentBrowserOnPath(work) {
+	const fakeBinary = await createFakeAgentBrowserBinary();
+	const previousPath = process.env.PATH;
+	try {
+		process.env.PATH = previousPath ? `${fakeBinary.binDir}${delimiter}${previousPath}` : fakeBinary.binDir;
+		return await work();
+	} finally {
+		if (previousPath === undefined) {
+			delete process.env.PATH;
+		} else {
+			process.env.PATH = previousPath;
+		}
+		await fakeBinary.cleanup();
+	}
+}
+
+export async function executePackagedAgentBrowserSmoke(options) {
+	const { packageDir, session } = options;
+	const toolDefinition =
+		typeof session.getToolDefinition === "function" ? session.getToolDefinition("agent_browser") : undefined;
+
+	if (!toolDefinition || typeof toolDefinition.execute !== "function") {
+		return {
+			failures: ["Packaged agent_browser tool definition was not executable via Pi session.getToolDefinition()."],
+			invocation: undefined,
+		};
+	}
+
+	const ctx =
+		typeof session.createReplacedSessionContext === "function"
+			? session.createReplacedSessionContext()
+			: {
+					cwd: packageDir,
+					sessionManager: {
+						getBranch: () => [],
+						getSessionDir: () => undefined,
+						getSessionFile: () => undefined,
+						getSessionId: () => undefined,
+					},
+				};
+	const updates = [];
+	let result;
+	try {
+		result = await toolDefinition.execute(
+			PACKAGED_AGENT_BROWSER_SMOKE_TOOL_CALL_ID,
+			{ args: PACKAGED_AGENT_BROWSER_SMOKE_ARGS },
+			undefined,
+			(update) => updates.push(update),
+			ctx,
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			failures: [
+				`Packaged agent_browser invocation threw for args ${JSON.stringify(PACKAGED_AGENT_BROWSER_SMOKE_ARGS)}: ${message}`,
+			],
+			invocation: { args: PACKAGED_AGENT_BROWSER_SMOKE_ARGS, error: message, updates },
+		};
+	}
+
+	const text = summarizeToolResult(result);
+	const details = result && typeof result === "object" && result.details && typeof result.details === "object" ? result.details : {};
+	const failures = [];
+	if (result?.isError === true) {
+		failures.push(
+			`Packaged agent_browser invocation failed for args ${JSON.stringify(PACKAGED_AGENT_BROWSER_SMOKE_ARGS)}:\n${text}`,
+		);
+	}
+	if (details.inspection !== true) {
+		failures.push("Packaged agent_browser --version smoke did not report a plain-text inspection result.");
+	}
+	if (details.exitCode !== 0) {
+		failures.push(`Packaged agent_browser --version smoke exited with ${String(details.exitCode)}; expected 0.`);
+	}
+	if (!text.includes(FAKE_AGENT_BROWSER_VERSION)) {
+		failures.push(
+			`Packaged agent_browser --version smoke did not return expected fake version text ${JSON.stringify(FAKE_AGENT_BROWSER_VERSION)}.`,
+		);
+	}
+
+	return {
+		failures,
+		invocation: { args: PACKAGED_AGENT_BROWSER_SMOKE_ARGS, result, updates },
+	};
+}
+
 export function collectVerificationFailures(options) {
 	const { forbiddenPackedFiles, forbiddenRepoFiles, missingPackedFiles, missingRepoFiles } = options;
 	const failures = [];
@@ -276,6 +417,11 @@ function printVerificationReport(report, options) {
 function printPiSmokeReport(report) {
 	console.log(`Pi package smoke path: ${report.packageDir}`);
 	console.log(`agent_browser tools found: ${report.agentBrowserToolCount}`);
+	console.log(
+		`Packaged agent_browser invocation: ${
+			report.agentBrowserSmokeExecuted ? report.agentBrowserSmokeArgs.join(" ") : "not run"
+		}`,
+	);
 	if (report.failures.length > 0) {
 		console.error("Pi package smoke failed:");
 		for (const failure of report.failures) {
@@ -324,9 +470,22 @@ export async function verifyPackagedPiLoad(options = {}) {
 
 		const tools = session.getAllTools();
 		const failures = evaluatePiSmokeResult({ packageDir, tools });
+		let invocation;
+
+		if (failures.length === 0) {
+			const executionReport = await withFakeAgentBrowserOnPath(() =>
+				executePackagedAgentBrowserSmoke({ packageDir, session }),
+			);
+			failures.push(...executionReport.failures);
+			invocation = executionReport.invocation;
+		}
+
 		return {
+			agentBrowserSmokeArgs: PACKAGED_AGENT_BROWSER_SMOKE_ARGS,
+			agentBrowserSmokeExecuted: invocation !== undefined,
 			agentBrowserToolCount: tools.filter((tool) => tool.name === "agent_browser").length,
 			failures,
+			invocation,
 			packageDir,
 			packResult,
 			tools,

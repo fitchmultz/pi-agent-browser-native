@@ -52,6 +52,23 @@ const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 		packageDir: string;
 		tools: Array<{ name: string; path?: string; source?: { path?: string }; sourceInfo?: { path?: string } }>;
 	}) => string[];
+	executePackagedAgentBrowserSmoke: (options: {
+		packageDir: string;
+		session: {
+			createReplacedSessionContext?: () => unknown;
+			getToolDefinition?: (name: string) =>
+				| {
+						execute: (
+							toolCallId: string,
+							params: { args: string[] },
+							signal: AbortSignal | undefined,
+							onUpdate: ((update: unknown) => void) | undefined,
+							ctx: unknown,
+						) => Promise<unknown>;
+				  }
+				| undefined;
+		};
+	}) => Promise<{ failures: string[]; invocation?: unknown }>;
 	parseCliArgs: (argv?: string[]) => { listFiles: boolean; showHelp: boolean; smokePi: boolean };
 };
 const {
@@ -60,6 +77,7 @@ const {
 	collectVerificationFailures,
 	evaluatePackResult,
 	evaluatePiSmokeResult,
+	executePackagedAgentBrowserSmoke,
 	loadPublishContract,
 	parseCliArgs,
 } = verifyPackageModule;
@@ -131,6 +149,70 @@ test("evaluatePiSmokeResult requires exactly one packaged agent_browser source",
 		})[0] ?? "",
 		/source path metadata/,
 	);
+});
+
+test("executePackagedAgentBrowserSmoke invokes the packaged agent_browser tool with deterministic version args", async () => {
+	const calls: Array<{ ctx: unknown; params: { args: string[] }; toolCallId: string }> = [];
+	const context = { cwd: "/tmp/pkg/package" };
+	const report = await executePackagedAgentBrowserSmoke({
+		packageDir: "/tmp/pkg/package",
+		session: {
+			createReplacedSessionContext: () => context,
+			getToolDefinition: (name: string) =>
+				name === "agent_browser"
+					? {
+							execute: async (toolCallId, params, _signal, onUpdate, ctx) => {
+								onUpdate?.({ content: [{ type: "text", text: "Running agent-browser --version" }] });
+								calls.push({ ctx, params, toolCallId });
+								return {
+									content: [{ type: "text", text: "agent-browser 0.0.0-packaged-smoke" }],
+									details: {
+										exitCode: 0,
+										inspection: true,
+										stdout: "agent-browser 0.0.0-packaged-smoke",
+									},
+									isError: false,
+								};
+							},
+						}
+					: undefined,
+		},
+	});
+
+	assert.deepEqual(report.failures, []);
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0]?.toolCallId, "verify-package-agent-browser-smoke");
+	assert.deepEqual(calls[0]?.params, { args: ["--version"] });
+	assert.equal(calls[0]?.ctx, context);
+});
+
+test("executePackagedAgentBrowserSmoke reports a non-executable packaged tool definition", async () => {
+	const report = await executePackagedAgentBrowserSmoke({
+		packageDir: "/tmp/pkg/package",
+		session: { getToolDefinition: () => undefined },
+	});
+
+	assert.match(report.failures[0] ?? "", /not executable/);
+});
+
+test("executePackagedAgentBrowserSmoke reports packaged invocation failures clearly", async () => {
+	const report = await executePackagedAgentBrowserSmoke({
+		packageDir: "/tmp/pkg/package",
+		session: {
+			getToolDefinition: () => ({
+				execute: async () => ({
+					content: [{ type: "text", text: "boom from fake binary" }],
+					details: { exitCode: 64, inspection: true, stderr: "boom" },
+					isError: true,
+				}),
+			}),
+		},
+	});
+
+	const failures = report.failures.join("\n");
+	assert.match(failures, /Packaged agent_browser invocation failed/);
+	assert.match(failures, /--version/);
+	assert.match(failures, /boom/);
 });
 
 test("publish contract derives required packed files from package.json", async () => {
