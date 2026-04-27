@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "RQ-0021",
+      "status": "todo",
+      "title": "Handle cancelled stdin calls without crashing on EPIPE",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, H) Operational hygiene.\n\nWhy it matters: cancellation is supposed to be the safe stop-work path, but any already-aborted `eval --stdin` or `batch` invocation can crash the extension host before the wrapper returns a normal aborted result. That turns routine cancellation into a reliability failure and can drop the surrounding Pi session state.\n\nMinimal proposed fix: make stdin writes abort-safe by short-circuiting before writing to `child.stdin` when the signal is already aborted, and handle `child.stdin` write/end `EPIPE` as a normal aborted-or-exited subprocess outcome instead of an unhandled process error.\n\nAcceptance criteria: add focused coverage for already-aborted and mid-write-aborted stdin calls; confirm they return an aborted/error tool result without unhandled process exceptions; verify `npm run verify` stays green.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "cancellation",
+        "correctness",
+        "process"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/process.ts",
+        "test/agent-browser.process.test.ts",
+        "node --import tsx --input-type=module"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/process.ts:242-247 :: `abortChild()` kills the subprocess but does not guard later stdin writes.",
+        "path: extensions/agent-browser/lib/process.ts:264-275 :: an already-aborted signal still falls through to `child.stdin.write(stdin)` and `child.stdin.end()` with no stdin error handler.",
+        "repro: `node --import tsx --input-type=module <<'EOF' ... runAgentBrowserProcess({ args:['eval','--stdin'], stdin:'console.log(1)', signal:alreadyAbortedSignal }) ... EOF` :: expected an aborted `ProcessRunResult` or normal tool error :: actual process exit 1 with `Unhandled 'error' event` and `Error: write EPIPE` from `extensions/agent-browser/lib/process.ts:273`.",
+        "workflow: npm run verify :: observed pass; the canonical gate does not currently exercise cancelled stdin writes."
+      ],
+      "plan": [
+        "Guard the stdin path so aborted signals skip `child.stdin.write()` and treat broken-pipe writes as a settled subprocess outcome.",
+        "Add targeted process-layer tests for already-aborted stdin and cancellation during stdin-bearing commands.",
+        "Verify by running `npm run verify` and rerunning the aborted-stdin repro to confirm it returns a normal aborted/error result without crashing the process."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T03:06:24Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0022",
+      "status": "todo",
+      "title": "Serialize managed-session rotation across overlapping tool calls",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: overlapping implicit-session calls race on shared mutable state, so a later fresh launch can be silently discarded by an older call finishing later, and a managed-session replacement can close a browser that another in-flight tool call is still using. Under load this sends follow-up auto calls to the wrong browser or fails active work mid-command.\n\nMinimal proposed fix: introduce per-managed-session serialization or generation checks around state transitions and replacement cleanup so only the latest relevant completion can promote or close the managed session. Treat stale completions as non-authoritative for managed-session mutation.\n\nAcceptance criteria: add concurrency-focused regressions covering both stale-completion rollback and mid-flight close hazards; confirm later `sessionMode: \"fresh\"` launches remain authoritative; confirm overlapping auto calls do not have their session closed out from under them; verify `npm run verify` stays green.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "concurrency",
+        "sessions",
+        "correctness"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/runtime.ts",
+        "test/agent-browser.resume-state.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:882-887 :: managed-session activity, name, cwd, and fresh ordinal live in mutable module-scoped variables shared by every tool call.",
+        "path: extensions/agent-browser/index.ts:949-962 :: each execution plans its managed-session transition against the current shared state before any async subprocess work completes.",
+        "path: extensions/agent-browser/index.ts:1238-1259 :: completion mutates shared managed-session state and may immediately `closeManagedSession(...)` for the previously active session.",
+        "path: extensions/agent-browser/lib/runtime.ts:348-369 :: `resolveManagedSessionState(...)` always treats the completing call's `managedSessionName` as authoritative when it succeeds, regardless of whether a newer call already promoted a different session.",
+        "repro: `npx tsx <<'EOF' ... start auto open https://example.com/slow-base, wait 5ms, start --profile Default open https://example.com/fast-fresh with sessionMode:'fresh', then run snapshot -i ... EOF` :: expected the follow-up implicit snapshot to stay on the fresh session :: actual `details.sessionName` reverted to the base session and the invocation log included an unexpected `--session <fresh> close`.",
+        "repro: `npx tsx <<'EOF' ... establish implicit session, start snapshot -i, wait 25ms, start fresh profiled open ... EOF` :: expected the in-flight snapshot to complete against the original managed session :: actual snapshot returned `session was closed mid-command` after the fresh launch triggered `--session <base> close` before the snapshot completed."
+      ],
+      "plan": [
+        "Add a managed-session mutation guard such as a per-call generation token or serialized critical section around rotation and replacement cleanup.",
+        "Ensure replacement `close` only happens after no in-flight tool call still depends on the outgoing managed session, or suppress close for stale completions.",
+        "Add regression coverage for both overlapping rotation outcomes and stale completion ordering.",
+        "Verify by running `npm run verify` plus the two concurrency repro scripts and confirming follow-up auto calls stay on the newest session while overlapping in-flight calls still succeed."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T03:06:24Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0023",
+      "status": "todo",
+      "title": "Prevent explicit-session tab target rollback after overlapping opens",
+      "description": "Principles violated: E) Make bugs hard to write, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: explicit `--session` calls share one in-memory `sessionTabTargets` map with last-completion-wins semantics. When two opens overlap, the older slower result can overwrite the newer target, and the next pinned `click` or `snapshot` is steered back to the stale page even though the newer open already succeeded.\n\nMinimal proposed fix: version or timestamp session-tab target updates per session so only the newest relevant command result can replace the remembered target, and add overlap-aware tests for explicit-session pinning.\n\nAcceptance criteria: overlapping explicit-session opens leave the remembered target on the most recent successful open; the next pinned command selects the expected newer tab; verify `npm run verify` stays green.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "concurrency",
+        "sessions",
+        "tabs"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.extension-tabs.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:887 :: tab targeting state is stored in a shared module-scoped `Map<string, SessionTabTarget>`.",
+        "path: extensions/agent-browser/index.ts:1001-1016 :: follow-up commands read the remembered target before deciding whether to synthesize a pinned batch.",
+        "path: extensions/agent-browser/index.ts:1192-1235 :: successful commands derive a new observed target and overwrite `sessionTabTargets` with no ordering guard beyond completion order.",
+        "repro: `npx tsx <<'EOF' ... start --session named open https://example.com/slow-first, wait 5ms, start --session named open https://example.com/fast-second, then run --session named click @e9 ... EOF` :: expected the pinned click to follow the newer fast-second tab :: actual `details.sessionTabCorrection.targetUrl` was `https://example.com/slow-first` and the logged wrapper batch stdin began with `[\"tab\",\"t1\"]`, proving the stale first tab was re-pinned."
+      ],
+      "plan": [
+        "Track explicit-session tab targets with a monotonic ordering signal so stale completions cannot overwrite newer targets.",
+        "Add a focused overlap regression that asserts the next pinned command after competing opens selects the newer target.",
+        "Verify by running `npm run verify` and rerunning the explicit-session overlap repro to confirm the wrapper batch pins the newer tab instead of the stale one."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T03:06:24Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0024",
+      "status": "todo",
+      "title": "Delete rotated-session close spill files after cleanup runs",
+      "description": "Principles violated: H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: managed-session replacement uses a best-effort background `close` call, but oversized stdout from that close path is never cleaned up. Under repeated fresh-session rotations, those orphaned `process-stdout-*.json` files remain in the shared temp root for the rest of the Pi session and consume the same 32 MiB budget used by active spill files.\n\nMinimal proposed fix: have `closeManagedSession()` clean up any `stdoutSpillPath` it created, even though the close result is otherwise ignored, and add coverage for large close output during rotation.\n\nAcceptance criteria: a fresh-session replacement that emits oversized close output leaves no `process-stdout-*.json` behind in the active temp root; verify `npm run verify` stays green.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "temp-files",
+        "sessions",
+        "operability"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/process.ts",
+        "extensions/agent-browser/lib/temp.ts",
+        "test/agent-browser.process.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:860-873 :: `closeManagedSession()` awaits `runAgentBrowserProcess(...)` and ignores the returned spill-path information.",
+        "path: extensions/agent-browser/lib/process.ts:188-205 :: oversized stdout creates `process-stdout-*.json` spill files under the secure temp root.",
+        "path: extensions/agent-browser/index.ts:899-902 :: temp-root cleanup only happens on `session_shutdown`, so leaked close spill files survive for the rest of the session.",
+        "repro: `npx tsx <<'EOF' ... fake agent-browser emits ~700 KB only for close; run open, then a sessionMode:'fresh' profiled open; inspect getSecureTempDebugState().currentTempRoot ... EOF` :: expected no leftover process spill after the tool call completed :: actual leftover file `process-stdout-6931ff7e72b12e57.json` remained at 700026 bytes in the active temp root."
+      ],
+      "plan": [
+        "Capture the `ProcessRunResult` from `closeManagedSession()` and remove any `stdoutSpillPath` in a finally block.",
+        "Add a regression that rotates the managed session through a large-output close and asserts the active temp root stays clean afterward.",
+        "Verify by running `npm run verify` and rerunning the close-spill repro to confirm no `process-stdout-*.json` remains after rotation."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T03:06:24Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0025",
+      "status": "todo",
+      "title": "Remove abort listeners after subprocess completion",
+      "description": "Principles violated: H) Operational hygiene, D) Localize change.\n\nWhy it matters: every successful subprocess leaves its abort listener attached to the provided signal. The extension reuses one signal across the main call and follow-up tab-summary or correction subprocesses, so repeated work grows retained listeners and stale closures around old child processes. That is silent resource leakage in the exact hot paths this wrapper uses under load.\n\nMinimal proposed fix: register the abort handler once per subprocess and remove it in every settle path (`close`, `error`, and immediate-abort handling) before resolving the promise.\n\nAcceptance criteria: repeated `runAgentBrowserProcess()` calls against one shared signal leave `getEventListeners(signal, 'abort').length === 0` after completion; verify `npm run verify` stays green.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "cancellation",
+        "operability",
+        "process"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/process.ts",
+        "test/agent-browser.process.test.ts",
+        "node --import tsx --input-type=module"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/process.ts:212-233 :: `finish()` closes the process result without unregistering any abort listener that was attached to the shared signal.",
+        "path: extensions/agent-browser/lib/process.ts:264-269 :: each invocation adds `signal.addEventListener('abort', abortChild, { once: true })` when a signal is supplied.",
+        "path: extensions/agent-browser/index.ts:1094-1223 :: the extension reuses the same `signal` for the main subprocess plus follow-up navigation-summary and tab-correction subprocesses.",
+        "repro: `node --import tsx --input-type=module <<'EOF' ... loop runAgentBrowserProcess(...) 5 times with one AbortController.signal; inspect getEventListeners(signal,'abort').length ... EOF` :: expected listener count to return to 0 after each subprocess settles :: actual counts grew `[1,2,3,4,5]` and stayed at 5."
+      ],
+      "plan": [
+        "Refactor `runAgentBrowserProcess()` so the abort listener is removed whenever the subprocess settles or when immediate abort prevents normal execution.",
+        "Add focused process-layer coverage that asserts no abort listeners remain after repeated successful runs with a shared signal.",
+        "Verify by running `npm run verify` and rerunning the listener-count repro to confirm the final count returns to 0."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T03:06:24Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0026",
+      "status": "todo",
+      "title": "Make stale temp-root pruning robust to PID reuse",
+      "description": "Principles violated: E) Make bugs hard to write, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: stale-root pruning now trusts only the recorded PID plus UID to decide whether an owned temp root is still live. If a crashed root's PID gets reused by an unrelated live process, the stale root becomes effectively unprunable and can linger indefinitely instead of aging out on the next run. Under repeated crashes or long-lived hosts, that leaves hidden temp artifacts behind forever.\n\nMinimal proposed fix: extend the ownership marker with a stronger liveness token such as process start time, boot/session nonce, or renewable lease content, and require that stronger token before treating a stale root as still alive.\n\nAcceptance criteria: a backdated temp root whose marker PID has been reused by a different live process is pruned on the next temp-root acquisition; live current roots still remain protected; verify `npm run verify` stays green.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "temp-files",
+        "cleanup",
+        "operability"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/temp.ts",
+        "test/agent-browser.runtime.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/temp.ts:126-133 :: the ownership marker records timestamps, PID, and UID, but no process-start or generation token.",
+        "path: extensions/agent-browser/lib/temp.ts:156-166 :: liveness is inferred only from `process.kill(pid, 0)`.",
+        "path: extensions/agent-browser/lib/temp.ts:169-197 :: stale pruning skips deletion whenever the recorded PID appears alive, even for roots older than the stale cutoff.",
+        "repro: `npx tsx <<'EOF' ... create a 48-hour-old pi-agent-browser-* root with ownerPid = process.pid, then call openSecureTempFile() ... EOF` :: expected stale-root pruning to remove the obviously old abandoned root on the next acquisition :: actual `{ \"before\": true, \"after\": true }`, showing the stale root survives solely because the PID is live."
+      ],
+      "plan": [
+        "Strengthen temp-root ownership markers with a generation-aware liveness token instead of relying on PID/UID alone.",
+        "Add pruning tests that distinguish a truly live current root from an old root whose PID has been reused.",
+        "Verify by running `npm run verify` and rerunning the stale-root repro to confirm old crash leftovers are pruned while active roots remain intact."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T03:06:24Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    }
+  ]
+}

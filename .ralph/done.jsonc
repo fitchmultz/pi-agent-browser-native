@@ -1,0 +1,846 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "RQ-0003",
+      "status": "done",
+      "title": "Pre-pin stdin-driven explicit-session commands before they run",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: the wrapper disables pre-execution tab pinning whenever `stdin` is present, which means `eval --stdin` and user-authored `batch` calls on explicit sessions can run against the wrong active tab. Post-command correction happens too late: the command has already executed on the wrong page, and the wrapper can either overwrite the remembered session target or leave it stale relative to the batch result.\n\nMinimal proposed fix: stop using `stdin` presence as a blanket opt-out. Allow the wrapper to pre-pin supported stdin-driven commands by prepending the same `tab <id>` step it already uses for pinned `snapshot` and `click` flows, and update session-target derivation from batch results so the remembered tab matches what just ran.\n\nAcceptance criteria: `npm test` stays green; resumed explicit-session `eval --stdin` and `batch` probes execute against the intended stored tab, not the currently active restored tab; `sessionTabTarget` remains aligned with the page that actually produced the result.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "sessions",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:410-416 :: `shouldPinSessionTabForCommand` returns false whenever `stdin` is present.",
+        "path: extensions/agent-browser/index.ts:804-826 :: pre-pin wrapping into a `batch` with `tab <id>` only happens when `shouldPinSessionTabForCommand(...)` passes.",
+        "path: extensions/agent-browser/index.ts:932-973 :: session target updates fall back to previous state when the command result does not yield a new target, which leaves user-authored batch flows prone to stale target state.",
+        "workflow: npx tsx <<'EOF' ... resumed explicit session, `--session named eval --stdin` ... EOF :: observed result text `Google Gemini`, direct upstream eval invocation first, and only a later `tab list` correction after the wrong-page eval had already run.",
+        "workflow: npx tsx <<'EOF' ... resumed explicit session, `--session named batch` with `[[\"get\",\"title\"]]` ... EOF :: observed batch result title `Google Gemini`, `details.sessionTabTarget` still `Example Domain`, and no injected `tab` selection step before the user batch ran."
+      ],
+      "plan": [
+        "Narrow stdin handling to the commands that actually support it and let those commands participate in pre-execution tab pinning.",
+        "Teach the wrapper how to derive the current tab target from user-authored batch results or explicit tab-selection steps.",
+        "Add resumed-session regressions for `eval --stdin` and user batch calls that start with the wrong active tab.",
+        "Verify by running `npm test` and confirming both stdin-driven flows return content from the intended stored tab with a matching `sessionTabTarget`."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T01:40:28.460067000Z",
+      "completed_at": "2026-04-27T01:40:28.460067000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0005",
+      "status": "done",
+      "title": "Make published-package validation safe and executable",
+      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: the docs give conflicting instructions for package-first validation. The README advertises `pi -e npm:pi-agent-browser-native` as a safe ephemeral try-out, but later in the same README and in the release doc the project says Pi must have only one active source for this extension and recommends either disabling the checkout path or using `pi --no-extensions -e npm:...`. At the same time, `npm run verify:release` never exercises the packaged install path it asks maintainers to trust, so package-first regressions can ship even when the repo gate is green.\n\nMinimal proposed fix: standardize the docs on one safe package-first validation path, remove or rewrite the conflicting `pi -e npm:...` guidance, and add a repeatable local release check that exercises the packed/published extension in Pi rather than only inspecting tarball contents.\n\nAcceptance criteria: README and release docs no longer contradict each other; the release workflow includes a scripted packaged-extension smoke path (for example a tarball or isolated `pi --no-extensions -e ...` run); and maintainers can point to one canonical command sequence for published-package validation.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "operability",
+        "release"
+      ],
+      "scope": [
+        "README.md",
+        "docs/RELEASE.md",
+        "package.json",
+        "scripts/verify-package.mjs"
+      ],
+      "evidence": [
+        "path: README.md:58-62 :: the top-level install section recommends `pi -e npm:pi-agent-browser-native` as a non-permanent published-package trial.",
+        "path: README.md:167-188 :: the local-development section says Pi must have only one active source and recommends isolated validation with `pi --no-extensions -e npm:pi-agent-browser-native@<version>` or disabling the checkout path.",
+        "path: docs/RELEASE.md:81-93 :: post-publish validation both shows `pi -e npm:...` and immediately warns that the safe paths are plain `pi` after removing the checkout or an isolated `pi --no-extensions -e npm:...` run.",
+        "path: package.json:58-64 :: `verify:release` only runs `verify` plus `verify:package`.",
+        "path: scripts/verify-package.mjs:130-228 :: the package verifier stops at `npm pack --json --dry-run` and tarball file-shape checks; it never launches Pi against the packed extension."
+      ],
+      "plan": [
+        "Choose one canonical safe published-package validation path and align README plus release docs around it.",
+        "Extend the release gate or add a companion script that exercises the packed extension in Pi instead of only the tarball contents.",
+        "Keep the packaged-path validation isolated from any checkout source so duplicate `agent_browser` registrations cannot mask failures.",
+        "Verify by running the documented release command sequence locally and confirming it loads exactly one `agent_browser` source through the package path."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T01:42:56.297541000Z",
+      "completed_at": "2026-04-27T01:42:56.297541000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0006",
+      "status": "done",
+      "title": "Preserve spill-file paths for large parse-failure outputs",
+      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: large malformed upstream outputs currently lose their best debugging artifact. The process layer keeps only a 32k stdout tail once output spills past 512 KiB, and the executor always deletes the spill file in `finally`. When JSON parsing fails on a large snapshot/eval payload, the tool returns a parse error plus the truncated tail but no durable path to the full raw output.\n\nMinimal proposed fix: keep a readable spill-file path for parse-failure cases, either by surfacing `stdoutSpillPath` directly in error details/content or by copying the raw payload into the same secure artifact mechanism used for successful compacted output before deleting the original temp file.\n\nAcceptance criteria: `npm test` stays green; a fake binary that emits a >512 KiB invalid JSON payload returns `isError: true` with a usable full-output path in the response, and the referenced file remains readable long enough to inspect the raw output.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "operability",
+        "debuggability"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/process.ts",
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/process.ts:15-18 :: stdout spills after 512 KiB and only a 32k stdout tail is retained in memory.",
+        "path: extensions/agent-browser/lib/process.ts:214-215 :: spilled executions return `stdout = stdoutTail` plus `stdoutSpillPath`.",
+        "path: extensions/agent-browser/index.ts:1069-1072 :: the executor always deletes `processResult.stdoutSpillPath` in `finally`.",
+        "workflow: npx tsx <<'EOF' ... fake binary emits `'x'.repeat(600000)` ... EOF :: observed `parseError = \"agent-browser returned invalid JSON...\"`, `stdoutChars = 32000`, and `hasFullOutputPath = false` for the failing tool response."
+      ],
+      "plan": [
+        "Preserve or copy the raw spilled stdout into a caller-visible secure artifact when parse failure occurs on large output.",
+        "Expose that path in the error response so maintainers can inspect malformed large payloads without rerunning the flow blindly.",
+        "Add a fake-binary regression that emits oversized invalid JSON and asserts both the parse error and the presence of a readable full-output path.",
+        "Verify by running `npm test` and confirming the oversized-parse-failure case returns a readable spill path alongside the parse error."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T01:45:13.113280000Z",
+      "completed_at": "2026-04-27T01:45:13.113280000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0001",
+      "status": "done",
+      "title": "Reject agent-browser JSON envelopes that omit success",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, J) Consistency/Integrity.\n\nWhy it matters: the parser currently accepts any JSON object as an upstream envelope and the executor only treats `success === false` as failure. A malformed `agent-browser --json` response like `{ \"error\": \"boom\" }` therefore becomes a successful empty tool result with summary `open completed`, which hides upstream protocol failures from the agent and can poison later session state.\n\nMinimal proposed fix: tighten envelope validation so non-batch JSON objects must include a boolean `success`, or otherwise fail closed when an `error` field is present without an explicit success value. Add one parser-level regression and one end-to-end fake-binary regression through `agentBrowserExtension`.\n\nAcceptance criteria: `npm test` stays green; a fake `agent-browser` binary that emits `{ \"error\": \"boom\" }` at exit code 0 returns `isError: true`, surfaces a useful error string, and no longer summarizes the call as `open completed`.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "protocol"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/envelope.ts",
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/results/envelope.ts:70-78 :: parseAgentBrowserEnvelope accepts any JSON object as an envelope, even when `success` is missing.",
+        "path: extensions/agent-browser/lib/results/envelope.ts:94-108 :: getAgentBrowserErrorText only reports envelope failures when `success === false`.",
+        "path: extensions/agent-browser/index.ts:883-887 :: the executor marks the tool call successful whenever `presentationEnvelope?.success !== false`.",
+        "workflow: npx tsx <<'EOF' ... parseAgentBrowserEnvelope('{\"error\":\"boom\"}') ... EOF :: observed `parsed.envelope = { error: \"boom\" }`, `errorText = null`, and `presentation.summary = \"open completed\"`.",
+        "workflow: npx tsx <<'EOF' ... fake agent-browser emits {\"error\":\"boom\"} ... EOF :: observed `result.isError = false`, `details.error = \"boom\"`, and `details.summary = \"open completed\"` for `open https://example.com`."
+      ],
+      "plan": [
+        "Require a boolean `success` field for non-batch JSON envelopes, or fail closed when a non-batch object carries an `error` without `success`.",
+        "Update error derivation so malformed-but-JSON upstream payloads surface as protocol errors instead of empty successes.",
+        "Add parser-level and fake-binary extension tests that cover missing-success envelopes.",
+        "Verify by running `npm test` and confirming the missing-success fake-binary case returns `isError: true` with a non-empty error message."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T01:46:59.706402000Z",
+      "completed_at": "2026-04-27T01:46:59.706402000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0002",
+      "status": "done",
+      "title": "Unify launch-scoped flag handling across reuse guards and open correction",
+      "description": "Principles violated: C) DRY, E) Make bugs hard to write, F) Fail fast, J) Consistency/Integrity.\n\nWhy it matters: the wrapper treats launch-scoped behavior inconsistently. `buildExecutionPlan` only blocks `--profile`, `--session-name`, and `--cdp` from silently reusing an already-active implicit session, so other launch-scoped auth/session options like `--state` and `--auto-connect` slip through and get appended after the managed `--session`. Separately, post-open wrong-tab correction only runs for `--profile`, so equivalent fresh-launch paths like `--session-name` never get the same recovery.\n\nMinimal proposed fix: centralize launch-scoped flag classification in one helper and use it everywhere the wrapper makes launch-time decisions: implicit-session reuse blocking, recovery-hint generation, and post-open tab correction. Cover at least `--profile`, `--session-name`, `--cdp`, `--state`, and `--auto-connect`, with explicit comments if any upstream option is intentionally excluded.\n\nAcceptance criteria: `npm test` stays green; active implicit-session calls with `--state` or `--auto-connect` fail with the same structured `sessionMode: \"fresh\"` recovery guidance as the existing startup-scoped flags; fresh `--session-name` opens trigger the same tab-correction path already used for profiled opens.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "sessions"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/runtime.ts",
+        "extensions/agent-browser/index.ts",
+        "README.md",
+        "docs/COMMAND_REFERENCE.md",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/runtime.ts:12-12 :: `STARTUP_SCOPED_FLAGS` only includes `--cdp`, `--profile`, and `--session-name`.",
+        "path: extensions/agent-browser/lib/runtime.ts:705-718 :: only those startup-scoped flags are blocked from reusing an already-active implicit managed session.",
+        "path: extensions/agent-browser/index.ts:904-912 :: open-result tab correction only runs when the original args include `--profile`.",
+        "workflow: npx tsx <<'EOF' ... buildExecutionPlan(['--state', '/tmp/auth.json', 'open', 'https://example.com'], active managed session) ... EOF :: observed `validationError = null`, `startupScopedFlags = []`, and injected `effectiveArgs = ['--json','--session','piab-demo-123','--state', ...]`.",
+        "workflow: npx tsx <<'EOF' ... buildExecutionPlan(['--auto-connect', 'open', 'https://example.com'], active managed session) ... EOF :: observed `validationError = null`, `startupScopedFlags = []`, and injected `effectiveArgs = ['--json','--session','piab-demo-123','--auto-connect', ...]`.",
+        "workflow: npx tsx <<'EOF' ... fake `--session-name saved-auth open https://example.com` with `sessionMode: 'fresh'` ... EOF :: observed exactly one upstream open invocation and no `tab list` follow-up correction, unlike the profiled open path."
+      ],
+      "plan": [
+        "Extract a single source of truth for launch-scoped upstream flags and document why each flag is classified that way.",
+        "Reuse that classification in implicit-session validation, recovery-hint generation, and post-open wrong-tab correction.",
+        "Add regressions for `--state`, `--auto-connect`, and `--session-name` fresh-open correction alongside the existing `--profile` coverage.",
+        "Verify by running `npm test` and confirming the new launch-scoped cases either fail fast with `sessionMode: \"fresh\"` guidance or execute the expected `tab list` correction path."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T01:47:01.734908000Z",
+      "completed_at": "2026-04-27T01:47:01.734908000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0004",
+      "status": "done",
+      "title": "Forward the documented upstream env/config surface to agent-browser",
+      "description": "Principles violated: A) KISS, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: the child-process environment is restricted to a tiny allowlist plus `AI_GATEWAY_*` and `XDG_*`. That strips standard upstream `agent-browser` configuration and auth inputs such as `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_SESSION_NAME`, and related provider credentials, so a package-first global install cannot rely on the normal upstream env-driven setup even though the extension is supposed to stay thin and close to upstream behavior.\n\nMinimal proposed fix: expand the child env policy to forward the documented upstream configuration/auth variables needed for normal `agent-browser` operation, plus a curated set of provider credential variables. Preserve the existing secret-redaction behavior for tool progress/details so forwarding these vars does not leak them back into Pi.\n\nAcceptance criteria: `npm test` stays green; a focused env test proves the child sees documented config/auth vars such as `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_SESSION_NAME`, and `AGENT_BROWSER_ACTION_POLICY`, while unrelated secrets still remain filtered from tool updates/details.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "operability",
+        "passthrough"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/process.ts",
+        "test/agent-browser.test.ts",
+        "agent-browser --help",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/process.ts:25-71 :: the inherited env allowlist omits the standard upstream `AGENT_BROWSER_*` surface and any provider-specific credential vars.",
+        "path: extensions/agent-browser/lib/process.ts:107-133 :: `buildAgentBrowserProcessEnv` drops every env key outside that allowlist before spawning `agent-browser`.",
+        "workflow: agent-browser --help :: the current installed CLI documents upstream environment-driven configuration such as `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_SESSION_NAME`, `AGENT_BROWSER_ACTION_POLICY`, screenshot/download settings, and provider-backed workflows.",
+        "workflow: npx tsx <<'EOF' ... buildAgentBrowserProcessEnv({... AGENT_BROWSER_CONFIG, AGENT_BROWSER_SESSION_NAME, AGENT_BROWSER_ACTION_POLICY, BROWSERBASE_API_KEY, AI_GATEWAY_API_KEY ...}) ... EOF :: observed `hasAgentBrowserConfig = false`, `hasAgentBrowserSessionName = false`, `hasAgentBrowserActionPolicy = false`, `hasBrowserbaseApiKey = false`, while `hasAiGatewayApiKey = true`."
+      ],
+      "plan": [
+        "Define the minimum upstream env/config surface the wrapper must preserve to stay thin and package-first friendly.",
+        "Update `buildAgentBrowserProcessEnv` to forward that documented surface and add regression coverage for config/auth/provider envs.",
+        "Confirm tool progress/details still redact sensitive values after the broader env passthrough.",
+        "Verify by running `npm test` and a focused env probe that confirms the child process receives the intended upstream config/auth vars."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T00:35:41Z",
+      "updated_at": "2026-04-27T01:47:03.913398000Z",
+      "completed_at": "2026-04-27T01:47:03.913398000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0009",
+      "status": "done",
+      "title": "Reject unsupported stdin on non-batch browser commands",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: passing `stdin` to a command that is not `batch` or `eval --stdin` silently disables the wrapper's explicit-session tab-pinning path while still forwarding that `stdin` upstream. In resumed explicit-session flows, that lets a `click` or similar command execute on the wrong active tab and overwrite the remembered `sessionTabTarget` with the wrong page.\n\nMinimal proposed fix: validate the `stdin` contract up front and reject `stdin` on unsupported commands, or normalize it away before any session-tab planning so unsupported `stdin` cannot bypass tab pinning. Keep the supported `batch` and `eval --stdin` flows unchanged.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "sessions",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "README.md",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:465-489 :: `supportsPinnedStdinCommand` returns false for any non-`batch` command with `stdin`, and `shouldPinSessionTabForCommand` gates the pre-pin logic on that result.",
+        "path: extensions/agent-browser/index.ts:965-1060 :: the executor still passes `params.stdin` through as `processStdin`, so unsupported `stdin` changes planning behavior without being rejected.",
+        "path: README.md:109-117 :: the documented contract says `stdin` is only for `batch` and `eval --stdin`.",
+        "repro: `npx tsx <<'EOF' ... resumed explicit session with stored target Example Domain; execute { args: ['--session','named','click','@e9'], stdin: 'oops' } ... EOF` :: expected wrapper-side validation error or preserved pre-pin behavior :: actual first upstream invocation was direct `['--json','--session','named','click','@e9']`, later details showed `sessionTabTarget` overwritten to `https://wrong.example/`."
+      ],
+      "plan": [
+        "Add explicit parameter validation that only allows `stdin` for `batch` and `eval --stdin`.",
+        "Keep supported stdin-driven commands pinned correctly, and make unsupported stdin combinations fail before any browser call is launched.",
+        "Add a resumed explicit-session regression that proves a stray `stdin` on `click` is rejected and no wrong-tab command is sent upstream.",
+        "Verify by running `npm test` and confirming the stray-stdin repro returns `isError: true` with no direct `click` invocation in the fake-binary log."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T02:09:32.139192000Z",
+      "completed_at": "2026-04-27T02:09:32.139192000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0007",
+      "status": "done",
+      "title": "Limit inline image attachments to trusted screenshot outputs",
+      "description": "Principles violated: E) Make bugs hard to write, G) Least astonishment, I) Security baseline, J) Consistency/Integrity.\n\nWhy it matters: arbitrary page-controlled results are currently reinterpreted as local image paths and attached back into the tool response. That creates a local file disclosure path for commands like `eval` and `get text` when their result happens to be `foo.png` or an absolute `...jpg` path, and it also turns benign text like `notes.png` into misleading attachment failures.\n\nMinimal proposed fix: only resolve and attach local images for commands that are explicitly expected to create screenshot-style image artifacts, such as `screenshot` and trusted structured screenshot results inside batch flows. Treat plain strings and generic `{ path }` payloads from other commands as text unless the command contract explicitly guarantees a local image file.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "security",
+        "correctness",
+        "results"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/results/presentation.ts:539-549 :: `extractImagePath` treats any top-level string or any record with a `path` string ending in an image extension as a local image candidate, regardless of command type.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:551-577 :: `attachInlineImage` immediately stats and reads that resolved local path, then appends the image bytes into the tool content.",
+        "repro: `npx tsx <<'EOF' ... buildToolPresentation({ commandInfo: { command: 'eval', subcommand: '--stdin' }, cwd: tempDir, envelope: { success: true, data: 'secret.png' } }) ... EOF` :: expected plain text result `secret.png` :: actual `contentTypes: [\"text\",\"image\"]` and `imagePath` pointing at the local temp file.",
+        "repro: `npx tsx <<'EOF' ... buildToolPresentation({ commandInfo: { command: 'get', subcommand: 'text' }, cwd: repoRoot, envelope: { success: true, data: absoluteTempImagePath } }) ... EOF` :: expected plain text path echo :: actual inline image attachment from the absolute local file path."
+      ],
+      "plan": [
+        "Narrow image attachment detection so it only runs for trusted screenshot-producing commands or explicitly marked screenshot result payloads.",
+        "Keep screenshot and batch screenshot attachments working while preventing generic text and eval/get payloads from being resolved as local files.",
+        "Add regressions for plain string image-like outputs, absolute image-path strings, and the real screenshot path so the intended behavior is explicit.",
+        "Verify by running `npm test` and confirming non-screenshot string/path results stay text-only while screenshot outputs still attach inline images."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T02:10:03.382201000Z",
+      "completed_at": "2026-04-27T02:10:03.382201000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0010",
+      "status": "done",
+      "title": "Fail fast on malformed batch step shapes before upstream execution",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, J) Consistency/Integrity.\n\nWhy it matters: the wrapper only validates that `batch` stdin parses as a top-level JSON array. It then prepends its synthetic `tab` step and forwards malformed step objects upstream, which weakens the wrapper's own invariants and turns clear wrapper-side input mistakes into opaque upstream behavior.\n\nMinimal proposed fix: validate each user batch step before wrapping it. Require every step to be a non-empty array of string command tokens, and reject malformed entries with a wrapper-side error before spawning `agent-browser`.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "batch",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:492-505 :: `parseUserBatchStdin` only checks JSON parsing and `Array.isArray(parsed)`.",
+        "path: extensions/agent-browser/index.ts:514-523 :: `buildPinnedBatchPlan` blindly spreads those parsed steps after the synthetic `['tab', selectedTab]` step.",
+        "repro: `npx tsx <<'EOF' ... resumed explicit session; execute { args: ['--session','named','batch'], stdin: '[{\"oops\":1}]' } ... EOF` :: expected wrapper-side validation error before spawn :: actual upstream invocation stdin was `[[\"tab\",\"t1\"],{\"oops\":1}]` and the tool call still returned `isError: false`."
+      ],
+      "plan": [
+        "Define a narrow wrapper-side schema for batch stdin steps that matches the command token arrays the wrapper and tests already expect.",
+        "Reject malformed step objects before building the synthetic tab-pinning batch so invalid user input never reaches upstream.",
+        "Add negative tests for non-array steps, empty steps, and non-string command tokens.",
+        "Verify by running `npm test` and confirming malformed batch stdin fails before spawn with no `batch` invocation in the fake-binary log."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T02:10:24.820786000Z",
+      "completed_at": "2026-04-27T02:10:24.820786000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0011",
+      "status": "done",
+      "title": "Automate the missing-agent-browser error-path contract",
+      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: the repo treats the missing-binary path as a minimum validation item and promises a specific user-facing error, but the normal automated gate does not exercise that ENOENT branch. A regression in the not-on-PATH behavior could therefore ship while `npm run verify` still passes.\n\nMinimal proposed fix: add a focused fake-binary or PATH-stripping test that forces the spawn `ENOENT` branch and asserts the user-facing error text plus `isError: true`. Keep the current typecheck/test/package verification entrypoints unchanged once the new coverage lands.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "testing",
+        "operability",
+        "contracts"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/IMPLEMENTATION_PLAN.md",
+        "package.json",
+        "test/agent-browser.test.ts"
+      ],
+      "evidence": [
+        "path: docs/TOOL_CONTRACT.md:166-172 :: the contract requires a clear missing-binary message that says `agent-browser` is required, not bundled, and points to upstream install/docs.",
+        "path: docs/IMPLEMENTATION_PLAN.md:118-128 :: local validation explicitly lists the missing-binary failure path as a minimum check.",
+        "path: package.json:58-65 :: the normal repo gate is `typecheck`, `test`, and package verification.",
+        "path: extensions/agent-browser/index.ts:102-108 :: `buildMissingBinaryMessage` defines the user-facing error text.",
+        "workflow: `rg -n \"required but was not found on PATH|buildMissingBinaryMessage|ENOENT|--version\" test/agent-browser.test.ts extensions/agent-browser/index.ts docs/TOOL_CONTRACT.md docs/IMPLEMENTATION_PLAN.md README.md` :: observed the ENOENT branch exists in implementation/docs, while the concrete execution coverage in `test/agent-browser.test.ts` explicitly exercises `--version` inspection rather than the missing-binary path."
+      ],
+      "plan": [
+        "Add a focused test that runs the tool with `agent-browser` absent from PATH or otherwise forces the spawn `ENOENT` branch.",
+        "Assert the returned message includes the required/not-bundled/upstream-docs guidance and that the tool call is marked as an error.",
+        "Keep the existing success-path inspection coverage, but make the missing-binary contract part of the normal automated suite.",
+        "Verify by running `npm test` and confirming the ENOENT regression covers the documented error text exactly enough to catch future drift."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T02:12:33.130571000Z",
+      "completed_at": "2026-04-27T02:12:33.130571000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0008",
+      "status": "done",
+      "title": "Stop cross-process stale pruning from deleting live temp roots",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: a second live extension process can delete the first process's active temp root after the directory `mtime` crosses the 24-hour stale threshold. That can remove large-output or snapshot spill files while the first session is still running, creating hard-to-diagnose mid-session artifact loss.\n\nMinimal proposed fix: make stale-root pruning liveness-aware instead of `mtime`-only. Record and check an owner pid or lock/lease file, refresh liveness for active roots, and only prune roots whose owner is gone or whose lease cannot be renewed safely.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "operability",
+        "temp-files",
+        "reliability"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/temp.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx",
+        "node"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/temp.ts:123-148 :: `pruneStaleTempRoots` deletes any owned temp root older than the cutoff based only on marker ownership and directory `mtime`.",
+        "path: extensions/agent-browser/lib/temp.ts:230-245 :: every new `getSessionTempRoot` call runs stale-root pruning before or alongside creating a new temp root in the current process.",
+        "repro: `node <<'EOF' ... spawn process A to call openSecureTempFile and keep running; age A's temp-root mtime by 25h; spawn process B to call openSecureTempFile ... EOF` :: expected live process A temp root remains available :: actual `{ \"before\": true, \"after\": false }`, showing process B pruned process A's active root."
+      ],
+      "plan": [
+        "Extend the temp-root ownership marker or sibling lock state so the pruner can distinguish abandoned roots from roots still owned by a live process.",
+        "Refresh active-root liveness on writes or when a process reuses its temp root, and keep same-uid pruning conservative when liveness cannot be determined.",
+        "Add a regression that simulates two processes and proves a fresh process does not delete another still-live root even if its mtime looks old.",
+        "Verify by running `npm test` and a focused two-process repro that confirms `before=true` and `after=true` for the first live root."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T02:12:51.803952000Z",
+      "completed_at": "2026-04-27T02:12:51.803952000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0012",
+      "status": "done",
+      "title": "Make agent-browser fallback failures actionable",
+      "description": "Principles: Fail fast appropriately, Operational hygiene, Consistency/Integrity.\n\nEvidence:\n- path: extensions/agent-browser/lib/results/envelope.ts:91-113 :: getAgentBrowserErrorText falls back to generic strings when upstream fails without stderr or a usable envelope error.\n- path: test/agent-browser.test.ts:1279-1299 :: current tests explicitly accept the generic fallback path instead of a command-aware message.\n- workflow: npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; console.log(getAgentBrowserErrorText({ aborted:false, envelope:{ success:false, data:{ title:\"Wrong page\" } }, exitCode:1, plainTextInspection:false, stderr:\"\" })); console.log(getAgentBrowserErrorText({ aborted:false, envelope:{ success:true, data:null }, exitCode:1, plainTextInspection:false, stderr:\"\" }));' :: expected a command-aware failure with recovery context :: actual output was only \"agent-browser reported failure (exit code 1)\" and \"agent-browser exited with code 1.\".\n\nWhy it matters: when a native tool call fails after wrapper-added session pinning, tab correction, or plain command execution, the operator cannot tell what kind of command failed or what to try next. That turns real failures into guesswork during interactive use.\n\nMinimal proposed fix: thread command or effective-args context into fallback error derivation and include a concise recovery hint for wrapper-managed cases while preserving the current precedence of explicit envelope error text, stderr, and parse errors.\n\nAcceptance criteria: add focused tests for fallback failures from at least one direct command path and one wrapper-assisted path; confirm the returned text names the failed command or effective invocation; verify `npm run verify` stays green.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "errors",
+        "operability",
+        "results"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/envelope.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; ...'",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/results/envelope.ts:91-113 :: fallback failures collapse to generic exit-code text when no stderr or usable envelope error exists",
+        "path: test/agent-browser.test.ts:1279-1299 :: tests currently accept the generic fallback branch instead of protecting a more actionable error contract",
+        "workflow: npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; ...' :: expected command-aware failure text :: actual output was only generic exit-code messages"
+      ],
+      "plan": [
+        "Update fallback error derivation so non-parse, non-stderr failures include the failed command or effective invocation and any relevant wrapper context.",
+        "Add or tighten tests for failed envelope and non-zero-exit fallback cases so the operator-facing copy is explicit and stable.",
+        "Verify by running `npm run verify` and confirming the new fallback-message assertions pass."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:34:24.278555000Z",
+      "completed_at": "2026-04-27T02:34:24.278555000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0013",
+      "status": "done",
+      "title": "Unify the agent_browser playbook and fix current doc drift",
+      "description": "Principles: DRY knowledge, Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: README.md:213-228 :: README describes inspection support using shell-like `agent_browser --help` wording and documents post-command tab restoration.\n- path: docs/COMMAND_REFERENCE.md:226-256 :: the command reference documents stateless `--help` and `--version` but omits the post-command tab-restoration behavior that the wrapper currently implements.\n- path: docs/REQUIREMENTS.md:99-104 :: requirements require the local command reference and prompt guidance to stay in sync with wrapper behavior, including post-command tab restoration.\n- path: docs/TOOL_CONTRACT.md:28-29,184-193 :: the tool contract repeats the same playbook rules and explicitly includes post-command tab restoration.\n- path: extensions/agent-browser/index.ts:70-99 :: prompt guidance hard-codes another copy of the same workflow rules inside the extension.\n\nWhy it matters: the repo currently has several hand-maintained copies of the same agent-facing workflow. They are already drifting, which makes the local command reference less reliable for the exact browser-recovery edge cases the wrapper is supposed to clarify.\n\nMinimal proposed fix: move the shared playbook text to one canonical source or generated fragment, update README and COMMAND_REFERENCE to use actual tool-call shapes, and restore any omitted behavior notes that are part of the effective wrapper surface.\n\nAcceptance criteria: README, COMMAND_REFERENCE, and tool guidance describe the same inspection path and recovery behaviors; the command reference includes the currently implemented post-command tab restoration behavior; add a lightweight regression check or generation step that prevents future drift; verify `npm run verify` still passes.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "docs",
+        "dry",
+        "agent-browser"
+      ],
+      "scope": [
+        "README.md",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "docs/REQUIREMENTS.md",
+        "extensions/agent-browser/index.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: README.md:213-228 :: README uses shell-like inspection wording and documents post-command tab restoration",
+        "path: docs/COMMAND_REFERENCE.md:226-256 :: command reference documents stateless inspection but omits the implemented post-command tab-restoration behavior",
+        "path: docs/REQUIREMENTS.md:99-104 :: requirements say the command reference and prompt guidance must stay in sync with wrapper behavior",
+        "path: extensions/agent-browser/index.ts:70-99 :: another hand-maintained copy of the same browser workflow lives in prompt-guidance arrays"
+      ],
+      "plan": [
+        "Pick one canonical source for agent-facing workflow guidance and refactor README, COMMAND_REFERENCE, and extension prompt guidance to consume it or stay mechanically aligned.",
+        "Replace shell-like inspection wording with real tool-call examples and add the missing post-command recovery behavior to the command reference.",
+        "Verify by reviewing the rendered docs diff and running `npm run verify` with any new drift guard green."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:34:48.696169000Z",
+      "completed_at": "2026-04-27T02:34:48.696169000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0019",
+      "status": "done",
+      "title": "Refresh the local command reference to the installed agent-browser surface",
+      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: docs/COMMAND_REFERENCE.md:11-13 :: the file claims to be the repo-readable equivalent of the upstream command surface for blocked direct-binary sessions.\n- path: docs/REQUIREMENTS.md:67-68 :: requirements say the local command reference must stay in sync with the effective agent_browser surface.\n- workflow: agent-browser --version :: local upstream version is `0.26.0`.\n- workflow: agent-browser --help :: current help includes major surface area not represented in docs/COMMAND_REFERENCE.md, including `skills`, `keyboard`, `scroll`, `scrollintoview`, `is`, `find`, `mouse`, `set`, `network`, `storage`, `diff`, `trace`, `record`, `stream`, `auth`, `confirm`, `deny`, `chat`, `dashboard`, `doctor`, `profiles`, `snapshot --urls`, and `wait --download`.\n- workflow: agent-browser tab --help; agent-browser snapshot --help; agent-browser wait --help :: subcommand help confirms current options that the local reference does not enumerate.\n\nWhy it matters: this repo explicitly positions the local command reference as the fallback for blocked binary help. Right now it materially understates the command surface available to the extension's target upstream version on this machine.\n\nMinimal proposed fix: re-baseline docs/COMMAND_REFERENCE.md against the currently installed `agent-browser` help output, clearly separate the core recommended workflow from the full supported surface, and add a lightweight verification step that catches future upstream drift.\n\nAcceptance criteria: the command reference reflects the installed upstream 0.26.0 command and option surface relevant to this project; recommended workflows stay concise while a full or linked reference covers the rest; add a drift check against `agent-browser --help` or a maintained snapshot; verify `npm run verify`, `npm run verify:package`, and `npm run verify:package:pi` remain green.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "docs",
+        "agent-browser",
+        "upstream-sync"
+      ],
+      "scope": [
+        "docs/COMMAND_REFERENCE.md",
+        "docs/REQUIREMENTS.md",
+        "agent-browser --version",
+        "agent-browser --help",
+        "agent-browser tab --help",
+        "agent-browser snapshot --help",
+        "agent-browser wait --help",
+        "npm run verify",
+        "npm run verify:package",
+        "npm run verify:package:pi"
+      ],
+      "evidence": [
+        "path: docs/COMMAND_REFERENCE.md:11-13 :: command reference claims to substitute for blocked direct binary help",
+        "path: docs/REQUIREMENTS.md:67-68 :: requirements say the local command reference must stay in sync with the effective tool surface",
+        "workflow: agent-browser --version :: actual installed upstream version is 0.26.0",
+        "workflow: agent-browser --help :: current help exposes major command groups and options not represented in docs/COMMAND_REFERENCE.md"
+      ],
+      "plan": [
+        "Audit the currently installed agent-browser help output and decide which parts belong in the concise recommended workflow versus an expanded supported-surface section.",
+        "Update docs/COMMAND_REFERENCE.md so it matches the installed upstream surface this extension targets, including omitted command families and important subcommand options.",
+        "Verify by comparing the refreshed doc against `agent-browser --help`, `agent-browser tab --help`, `agent-browser snapshot --help`, and `agent-browser wait --help`, then run `npm run verify`, `npm run verify:package`, and `npm run verify:package:pi`."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:23:43Z",
+      "updated_at": "2026-04-27T02:36:53.992810000Z",
+      "completed_at": "2026-04-27T02:36:53.992810000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0014",
+      "status": "done",
+      "title": "Tighten malformed-envelope tests around operator-facing copy",
+      "description": "Principles: Fail fast appropriately, Operational hygiene, Consistency/Integrity.\n\nEvidence:\n- path: test/agent-browser.test.ts:1033-1053 :: malformed-envelope assertions accept broad alternation regexes such as `/invalid JSON envelope|success|protocol/i`.\n- path: test/agent-browser.test.ts:1234-1245 :: parse-error assertions for missing or non-boolean `success` also use loose alternation regexes.\n- path: extensions/agent-browser/lib/results/envelope.ts:75-87 :: the implementation now emits specific operator-facing parse errors, but the tests do not pin that copy.\n- workflow: rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts :: found the permissive alternation assertions at lines 1052, 1053, 1238, and 1245.\n\nWhy it matters: this suite is supposed to protect clear failure modes, but these regexes would still pass after a regression to much vaguer or more jargon-heavy copy. That weakens the repo's guardrail around error clarity.\n\nMinimal proposed fix: replace the permissive regexes with explicit expected messages or tighter substrings for each malformed-envelope case, and keep one dedicated test per failure shape.\n\nAcceptance criteria: tests for missing `success` and non-boolean `success` assert the intended copy directly or with narrowly scoped matches; `npm run verify` passes without the broad alternation patterns.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "tests",
+        "errors",
+        "results"
+      ],
+      "scope": [
+        "test/agent-browser.test.ts",
+        "extensions/agent-browser/lib/results/envelope.ts",
+        "rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: test/agent-browser.test.ts:1033-1053 :: malformed-envelope tool-call assertions use broad alternation regexes",
+        "path: test/agent-browser.test.ts:1234-1245 :: parseEnvelope unit tests also use loose alternation regexes for missing or non-boolean success",
+        "workflow: rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts :: found the permissive alternation assertions protecting parse-error copy"
+      ],
+      "plan": [
+        "Replace the broad alternation assertions with explicit expected copy or narrowly scoped matches for each malformed-envelope branch.",
+        "Keep at least one unit test for each parse-error shape and one tool-level propagation test so copy regressions are caught close to the failure site.",
+        "Verify by running `npm run verify` and confirming the stricter assertions pass."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:37:45.203746000Z",
+      "completed_at": "2026-04-27T02:37:45.203746000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0020",
+      "status": "done",
+      "title": "Resolve the mixed -e versus /reload local-validation workflow",
+      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: AGENTS.md:85-96 :: repo guidance prescribes local checkout validation with `pi --no-extensions -e .` and still requires `/reload` or full restart validation after extension changes.\n- path: README.md:173-200,209-223 :: README tells maintainers to keep the checkout path enabled in Pi settings, launch with `pi --no-extensions -e .`, and validate `/reload` or restart plus `/resume`.\n- path: docs/REQUIREMENTS.md:73-79 :: requirements also prescribe `/reload` validation in the local workflow.\n- external: /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md :: accessed 2026-04-27 :: Pi's own extension docs say `pi -e ./path.ts` is for quick tests, while `/reload` applies to auto-discovered extension locations.\n- workflow: pi --help :: `--no-extensions` disables extension discovery while explicit `-e` paths still work, confirming the repo is mixing two loading models in one workflow description.\n\nWhy it matters: maintainers are being told to validate hot reload while also being told to launch in a mode that bypasses extension discovery. That makes it unclear which extension path `/reload` is actually exercising and can create false confidence about local checkout validation.\n\nMinimal proposed fix: choose one canonical local-validation workflow for hot-reload testing versus quick isolated `-e` testing, document the tradeoff explicitly, and remove contradictory instructions about Pi settings and `/reload` from the non-canonical path.\n\nAcceptance criteria: README, AGENTS, and requirements describe one coherent local-validation workflow for `/reload` and one coherent quick-test workflow for `-e`; the docs explain when Pi settings should or should not matter; verify the updated instructions against Pi's extension docs and `pi --help`.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "docs",
+        "workflow",
+        "pi"
+      ],
+      "scope": [
+        "AGENTS.md",
+        "README.md",
+        "docs/REQUIREMENTS.md",
+        "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md",
+        "pi --help"
+      ],
+      "evidence": [
+        "path: AGENTS.md:85-96 :: local validation instructions combine `pi --no-extensions -e .` with `/reload` expectations",
+        "path: README.md:173-200,209-223 :: README mixes Pi settings guidance, isolated -e loading, and `/reload` expectations in the same workflow",
+        "path: docs/REQUIREMENTS.md:73-79 :: requirements also prescribe `/reload` in the local validation path",
+        "external: /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md :: accessed 2026-04-27 :: Pi docs reserve `/reload` for auto-discovered extension locations, not ad hoc `-e` quick tests",
+        "workflow: pi --help :: `--no-extensions` disables extension discovery while explicit `-e` paths still work"
+      ],
+      "plan": [
+        "Decide which local validation path is canonical for hot reload and which is canonical for isolated quick tests.",
+        "Update AGENTS, README, and requirements so each path has consistent setup steps, Pi settings expectations, and reload or restart guidance.",
+        "Verify by checking the updated instructions against Pi's extension docs and `pi --help`, then spot-reading the repo docs for contradictions."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:23:43Z",
+      "updated_at": "2026-04-27T02:38:33.961736000Z",
+      "completed_at": "2026-04-27T02:38:33.961736000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0015",
+      "status": "done",
+      "title": "Deduplicate shared parsing helpers across runtime, temp, and results",
+      "description": "Principles: DRY knowledge, Localize change, Make bugs hard to write.\n\nEvidence:\n- path: extensions/agent-browser/lib/runtime.ts:189-195 :: runtime defines a local `isRecord` helper.\n- path: extensions/agent-browser/lib/temp.ts:54-68 :: temp defines both `isRecord` and `parsePositiveInteger` again.\n- path: extensions/agent-browser/lib/results/shared.ts:55-78 :: results/shared exports another `isRecord` plus another `parsePositiveInteger`.\n- workflow: rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib :: found duplicate implementations in runtime.ts, temp.ts, and results/shared.ts.\n\nWhy it matters: these helpers sit on boundary parsing for session state, temp-budget env vars, and result rendering. Any future adjustment to what counts as a record or how numeric env values are normalized has to be synchronized manually across multiple modules.\n\nMinimal proposed fix: extract the truly shared helpers to one small common module and import them where needed, while keeping higher-level module boundaries intact.\n\nAcceptance criteria: `isRecord` and `parsePositiveInteger` each have a single canonical implementation; affected modules import that implementation; `npm run verify` and `npm run verify:package` both pass afterward.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "dry",
+        "runtime",
+        "temp",
+        "results"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/runtime.ts",
+        "extensions/agent-browser/lib/temp.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib",
+        "npm run verify",
+        "npm run verify:package"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/runtime.ts:189-195 :: runtime has a local isRecord helper",
+        "path: extensions/agent-browser/lib/temp.ts:54-68 :: temp repeats isRecord and parsePositiveInteger",
+        "path: extensions/agent-browser/lib/results/shared.ts:55-78 :: results/shared repeats isRecord and parsePositiveInteger",
+        "workflow: rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib :: found duplicate implementations across three modules"
+      ],
+      "plan": [
+        "Extract the duplicated low-level helpers into a shared utility module with the narrowest reasonable surface area.",
+        "Update runtime, temp, and results modules to import the canonical helpers and remove the local copies.",
+        "Verify by running `npm run verify` and `npm run verify:package` and confirming all parsing and packaging tests still pass."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:43:21.511569000Z",
+      "completed_at": "2026-04-27T02:43:21.511569000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0017",
+      "status": "done",
+      "title": "Collapse publish-contract file lists to one canonical source",
+      "description": "Principles: DRY knowledge, Consistency/Integrity.\n\nEvidence:\n- path: package.json:29-39 :: package publish contents are declared in the npm `files` list.\n- path: scripts/verify-package.mjs:23-55 :: the verifier carries a second manual source of truth with required and forbidden packed files.\n- path: test/verify-package.test.ts:123-143 :: the test adds a third copy by manually enumerating a subset of required packed paths.\n- workflow: npm run verify:package :: package verification currently passes, which means the drift risk is maintenance-only rather than a present failure.\n\nWhy it matters: changing published docs or extension files currently means updating multiple independent inventories. That increases the odds of false failures, silent omissions, or reviewer confusion about which list is canonical.\n\nMinimal proposed fix: introduce one canonical publish-contract data source that both the verifier and tests consume, and keep package.json as the declarative npm surface instead of re-encoding overlapping rules by hand.\n\nAcceptance criteria: verifier and tests read publish-contract data from one shared source; the manual subset list in test/verify-package.test.ts is removed or generated; `npm run verify:package` and `npm run verify` both pass.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "dry",
+        "packaging",
+        "tests"
+      ],
+      "scope": [
+        "package.json",
+        "scripts/verify-package.mjs",
+        "test/verify-package.test.ts",
+        "npm run verify:package",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: package.json:29-39 :: npm publish contents are declared in the files list",
+        "path: scripts/verify-package.mjs:23-55 :: verifier repeats required and forbidden packed-file inventories by hand",
+        "path: test/verify-package.test.ts:123-143 :: test repeats a manual subset of required packed paths",
+        "workflow: npm run verify:package :: current pass confirms the issue is duplicated maintenance surface rather than a broken gate"
+      ],
+      "plan": [
+        "Define one canonical publish-contract manifest or module that captures required and forbidden package rules.",
+        "Refactor verify-package and its tests to consume that canonical data instead of repeating overlapping path lists.",
+        "Verify by running `npm run verify:package` and `npm run verify` and confirming the package gate still passes."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:45:39.991039000Z",
+      "completed_at": "2026-04-27T02:45:39.991039000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0018",
+      "status": "done",
+      "title": "Correct the stale runtime header about injected arguments",
+      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: extensions/agent-browser/lib/runtime.ts:1-6 :: the top-of-file invariant says the wrapper only injects `--json` plus an extension-managed `--session` when appropriate.\n- path: extensions/agent-browser/lib/runtime.ts:787-790 :: buildExecutionPlan also injects `--user-agent` when the ChatGPT headless compatibility workaround applies.\n- path: test/agent-browser.test.ts:670-711 :: the test suite explicitly verifies that `--user-agent` injection behavior.\n- workflow: npm run verify :: the compatibility-workaround tests pass, confirming the comment is stale rather than the code being wrong.\n\nWhy it matters: this header is supposed to be the local contract for reviewers reading the runtime module. Right now it understates real behavior that materially changes launched CLI args.\n\nMinimal proposed fix: update the purpose header and nearby invariant text so it reflects the current compatibility-workaround injection behavior without overstating the wrapper's scope.\n\nAcceptance criteria: the runtime header accurately describes current injected-argument behavior, including the narrow compatibility case; no contradictory comments remain nearby; `npm run verify` still passes.",
+      "priority": "low",
+      "tags": [
+        "maintenance",
+        "comments",
+        "runtime"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/runtime.ts",
+        "test/agent-browser.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/runtime.ts:1-6 :: header says only --json and extension-managed --session are injected",
+        "path: extensions/agent-browser/lib/runtime.ts:787-790 :: buildExecutionPlan also injects --user-agent for the compatibility workaround",
+        "path: test/agent-browser.test.ts:670-711 :: tests explicitly cover the user-agent injection path"
+      ],
+      "plan": [
+        "Update the runtime header comment and invariant text to describe the current narrow argument-injection behavior accurately.",
+        "Scan nearby comments for any other wording that still implies the older simpler injection model.",
+        "Verify by running `npm run verify` and confirming the comment update matches tested behavior."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:46:20.263203000Z",
+      "completed_at": "2026-04-27T02:46:20.263203000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0016",
+      "status": "done",
+      "title": "Split the mixed-scope agent-browser mega-suite into focused test files",
+      "description": "Principles: Localize change, Operational hygiene.\n\nEvidence:\n- path: test/agent-browser.test.ts:1-249 :: one file owns shared harness setup for runtime, temp, process, results, and extension integration tests.\n- path: test/agent-browser.test.ts:254-3436 :: the same file contains roughly the full repo test surface, from pure helper tests through process and extension lifecycle integration.\n- workflow: wc -l test/agent-browser.test.ts test/verify-package.test.ts :: agent-browser.test.ts is 3483 lines while the only other test file is 152 lines.\n- workflow: rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts :: 34 repeated temp-dir bootstrap sites.\n- workflow: rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts :: 35 repeated env-patching sites.\n- workflow: rg -c \"runExtensionEvent\\(harness.handlers, \\\"session_start\\\"\" test/agent-browser.test.ts :: 17 repeated session-start bootstrap sites.\n\nWhy it matters: failures are harder to localize, fixture reuse is mostly copy-paste, and a small change to one subsystem forces maintainers to navigate a single 3.4k-line test file that mixes unit and higher-level integration concerns.\n\nMinimal proposed fix: split the suite by subject area such as runtime, temp/process, results, and extension integration, and extract common harness/bootstrap helpers into shared test utilities.\n\nAcceptance criteria: the large mixed-scope file is removed or substantially reduced in favor of focused test files and shared fixtures; `npm run verify` still passes; maintainers can run subject-specific test files without scanning a monolithic suite.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "tests",
+        "structure",
+        "agent-browser"
+      ],
+      "scope": [
+        "test/agent-browser.test.ts",
+        "test/verify-package.test.ts",
+        "wc -l test/agent-browser.test.ts test/verify-package.test.ts",
+        "rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts",
+        "rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: test/agent-browser.test.ts:1-249 :: one file hosts shared harness code for multiple subsystems",
+        "workflow: wc -l test/agent-browser.test.ts test/verify-package.test.ts :: mixed-scope agent-browser.test.ts is 3483 lines while the second suite is only 152 lines",
+        "workflow: rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts :: found 34 repeated temp bootstrap sites",
+        "workflow: rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts :: found 35 repeated env bootstrap sites"
+      ],
+      "plan": [
+        "Extract common harness and bootstrap helpers into shared test utilities.",
+        "Split the current mega-suite into focused runtime, temp/process, results, and extension integration test files with clearer ownership.",
+        "Verify by running `npm run verify` and confirming the split suites remain green."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:47:22.137276000Z",
+      "completed_at": "2026-04-27T02:47:22.137276000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    }
+  ]
+}
