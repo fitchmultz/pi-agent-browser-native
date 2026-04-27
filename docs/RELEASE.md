@@ -57,15 +57,22 @@ node scripts/verify-package.mjs --list-files
 
 ## Local development validation
 
-Before publishing, also validate the explicit local-checkout path:
+Before publishing, validate both local-checkout modes without mixing their assumptions.
+
+### Quick isolated checkout smoke test
 
 1. Install `agent-browser` separately.
-2. Make sure Pi has only one active source for this extension during checkout validation.
-3. Launch `pi --no-extensions -e .` from this repository root.
-4. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
-5. Run a smoke prompt that exercises `agent_browser`.
-6. Validate managed-session continuity with both `/reload` and a full restart + `/resume`.
-7. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed, then run `npm run verify:command-reference`.
+2. Launch `pi --no-extensions -e .` from this repository root.
+3. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
+4. Run a smoke prompt that exercises `agent_browser`.
+5. Restart the `pi` process after extension edits; Pi settings and `/reload` are not the validation target in this isolated mode.
+
+### Configured-source lifecycle validation
+
+1. Configure exactly one active source for this extension in Pi settings: this checkout path before publishing, or the installed package after publishing.
+2. Launch plain `pi` so extension discovery is active.
+3. Validate managed-session continuity with `/reload` and a full restart + `/resume`.
+4. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed, then run `npm run verify:command-reference`.
 
 Example smoke prompt:
 
@@ -73,7 +80,7 @@ Example smoke prompt:
 Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
 ```
 
-Recommended lifecycle follow-up:
+Recommended configured-source lifecycle follow-up:
 
 1. Open a page with the implicit managed session and confirm the title.
 2. Run `/reload`, then ask for `snapshot -i` and confirm the same page is still active.
@@ -107,7 +114,7 @@ Before publishing:
 - confirm README install guidance still leads with the package-first flow
 - confirm `docs/COMMAND_REFERENCE.md` still matches the effective upstream command/help surface used by the wrapper
 - run `npm run verify:command-reference` if the installed upstream `agent-browser` version or help surface changed
-- confirm the explicit local-checkout instructions still work for pre-release validation
+- confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and plain-`pi` configured-source lifecycle validation
 - rerun `npm run verify:release`
-- manually exercise `/reload` and full restart + `/resume` continuity in local checkout validation
+- manually exercise `/reload` and full restart + `/resume` continuity in configured-source lifecycle validation
 - publish only after the tarball contents and isolated packaged-extension smoke check match expectations

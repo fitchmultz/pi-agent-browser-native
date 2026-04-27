@@ -9,7 +9,7 @@ Related docs:
 
 Build this as a **thin `pi` extension/package** that exposes `agent-browser` as one native tool while keeping upstream `agent-browser` as the source of truth.
 
-The package install path is the primary product path. Local checkout development should use explicit CLI loading, while package-manifest behavior and packaged contents matter more.
+The package install path is the primary product path. Local checkout development should use explicit CLI loading for isolated smoke tests and configured-source plain `pi` runs for lifecycle validation, while package-manifest behavior and packaged contents matter more.
 
 ## Chosen shape
 
@@ -46,11 +46,17 @@ That means:
 
 The published package should load from the `pi` manifest in `package.json`.
 
-Local checkout development should use explicit CLI loading such as `pi --no-extensions -e .` from the repository root instead of repo-local `.pi/extensions/` auto-discovery.
+Local checkout validation has two intentional modes:
+
+- **Quick isolated mode:** use explicit CLI loading such as `pi --no-extensions -e .` from the repository root. This bypasses Pi settings and extension discovery, avoids duplicate `agent_browser` registrations when another source is installed globally, and is the right mode for checkout smoke tests.
+- **Configured-source lifecycle mode:** configure exactly one active checkout or package source in Pi settings and launch plain `pi`. This is the right mode for validating `/reload`, restart, and `/resume` behavior because those lifecycle checks exercise discovered/configured resources.
+
+The repo should not add a repo-local `.pi/extensions/` autoload shim as the documented checkout path.
 
 Why:
 - avoids duplicate `agent_browser` registrations when the package is also installed globally
 - keeps the product contract centered on the package manifest instead of repo-local autoload wiring
+- keeps reload and resume validation tied to Pi's configured-source lifecycle instead of an isolated quick-test path
 - keeps the published tarball focused on the package manifest, extension code, canonical docs, and license
 
 The published package should exclude agent-only and superseded repo materials such as `AGENTS.md`, `docs/v1-tool-contract.md`, `docs/native-integration-design.md`, and other internal planning notes.

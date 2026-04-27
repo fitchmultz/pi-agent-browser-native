@@ -83,17 +83,21 @@ pi --no-extensions -e https://github.com/fitchmultz/pi-agent-browser-native
 
 This avoids duplicate `agent_browser` registrations when you already have `pi-agent-browser-native` installed globally.
 
-### Current practical local-checkout flow
+### Current practical local-checkout flows
 
-Until you are using a published package release, prefer an explicit checkout-only run instead of installing the checkout into your normal `pi` package set:
+This repository's `package.json` is itself a publishable pi package manifest that points at `extensions/agent-browser/index.ts`. That file is the real extension entrypoint for both the checkout and the published package.
 
-```bash
-pi --no-extensions -e /absolute/path/to/pi-agent-browser-native
-```
+Use two local-checkout modes intentionally:
 
-This keeps the checkout isolated from any other active package source for the same extension.
+- **Quick isolated smoke test:** run the checkout explicitly with `-e` and disable extension discovery:
 
-This repository's `package.json` is itself a publishable pi package manifest that points at `extensions/agent-browser/index.ts`. That file is the real extension entrypoint for both the checkout and the published package. Keep exactly one active source for this extension in Pi settings at a time: either this checkout path or the published npm package.
+  ```bash
+  pi --no-extensions -e /absolute/path/to/pi-agent-browser-native
+  ```
+
+  This bypasses Pi settings and any configured checkout/global package sources, so it avoids duplicate `agent_browser` registrations. After editing extension code, restart this `pi` process to validate the new source; do not use this mode as proof that configured-source `/reload` works.
+
+- **Configured-source lifecycle validation:** keep exactly one active source for this extension in Pi settings, either this checkout path or the published npm package, then launch plain `pi`. Use this mode when validating `/reload`, full restart, and `/resume` behavior because Pi's reload flow operates on discovered/configured resources.
 
 The native tool exposed to the agent is named `agent_browser`.
 
@@ -170,19 +174,19 @@ Use the agent_browser tool to open https://react.dev and then take an interactiv
 
 Do not track or rely on a repo-local `.pi/extensions/agent-browser.ts` autoload shim for this package. That creates an unnecessary second registration path.
 
-The published entrypoint lives at `extensions/agent-browser/index.ts` and is referenced directly from this repo's `package.json`. While developing this repo, keep the checkout path enabled in Pi settings and disable or uninstall `npm:pi-agent-browser-native` so Pi has only one active source for this extension.
+The published entrypoint lives at `extensions/agent-browser/index.ts` and is referenced directly from this repo's `package.json`.
 
 Recommended local development setup:
 1. Install `agent-browser` separately via the upstream project.
 2. Run `npm install`.
-3. Keep the checkout path enabled in Pi settings and disable or uninstall `npm:pi-agent-browser-native` while developing this repo.
-4. Launch `pi` from this repository root with only the checkout extension loaded:
+3. For a quick checkout-only smoke test, launch `pi` from this repository root with discovery disabled:
 
 ```bash
 pi --no-extensions -e .
 ```
 
-5. Prompt the agent to use `agent_browser`.
+4. Prompt the agent to use `agent_browser`.
+5. For hot-reload or resume validation, configure exactly one active source for this extension in Pi settings, launch plain `pi`, and exercise `/reload` plus restart/`/resume`. Settings matter only in this configured-source mode; they are bypassed by `--no-extensions -e .`.
 
 Example prompt:
 
@@ -206,7 +210,7 @@ Validated workflow examples:
 - use an explicit `--session` across multiple tool calls
 - use an explicit `--profile` and verify persisted browser storage across restarts
 - open `chat.com` or `chatgpt.com` headlessly with `--profile Default` without forcing `--headed` or `--auto-connect`
-- verify `/reload` and full restart + `/resume` keep following the same implicit managed browser session
+- in configured-source lifecycle mode, verify `/reload` and full restart + `/resume` keep following the same implicit managed browser session
 - run `batch` with JSON via `stdin`
 - run `eval --stdin`
 - take a screenshot with inline attachment support
