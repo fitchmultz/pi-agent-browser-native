@@ -253,6 +253,48 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0009",
+      "status": "done",
+      "title": "Reject unsupported stdin on non-batch browser commands",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: passing `stdin` to a command that is not `batch` or `eval --stdin` silently disables the wrapper's explicit-session tab-pinning path while still forwarding that `stdin` upstream. In resumed explicit-session flows, that lets a `click` or similar command execute on the wrong active tab and overwrite the remembered `sessionTabTarget` with the wrong page.\n\nMinimal proposed fix: validate the `stdin` contract up front and reject `stdin` on unsupported commands, or normalize it away before any session-tab planning so unsupported `stdin` cannot bypass tab pinning. Keep the supported `batch` and `eval --stdin` flows unchanged.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "sessions",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "README.md",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:465-489 :: `supportsPinnedStdinCommand` returns false for any non-`batch` command with `stdin`, and `shouldPinSessionTabForCommand` gates the pre-pin logic on that result.",
+        "path: extensions/agent-browser/index.ts:965-1060 :: the executor still passes `params.stdin` through as `processStdin`, so unsupported `stdin` changes planning behavior without being rejected.",
+        "path: README.md:109-117 :: the documented contract says `stdin` is only for `batch` and `eval --stdin`.",
+        "repro: `npx tsx <<'EOF' ... resumed explicit session with stored target Example Domain; execute { args: ['--session','named','click','@e9'], stdin: 'oops' } ... EOF` :: expected wrapper-side validation error or preserved pre-pin behavior :: actual first upstream invocation was direct `['--json','--session','named','click','@e9']`, later details showed `sessionTabTarget` overwritten to `https://wrong.example/`."
+      ],
+      "plan": [
+        "Add explicit parameter validation that only allows `stdin` for `batch` and `eval --stdin`.",
+        "Keep supported stdin-driven commands pinned correctly, and make unsupported stdin combinations fail before any browser call is launched.",
+        "Add a resumed explicit-session regression that proves a stray `stdin` on `click` is rejected and no wrong-tab command is sent upstream.",
+        "Verify by running `npm test` and confirming the stray-stdin repro returns `isError: true` with no direct `click` invocation in the fake-binary log."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T02:09:32.139192000Z",
+      "completed_at": "2026-04-27T02:09:32.139192000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
     }
   ]
 }
