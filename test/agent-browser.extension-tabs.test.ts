@@ -26,6 +26,10 @@ import {
 	writeFakeAgentBrowserBinary
 } from "./helpers/agent-browser-harness.js";
 
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test("agentBrowserExtension persists compact snapshot spill files for persisted sessions across shutdown cleanup", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
@@ -350,6 +354,115 @@ if (args.includes("batch")) {
 			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "batch"]);
 			assert.deepEqual(JSON.parse(String(invocations[4]?.stdin ?? "[]")), [
 				["tab", "t1"],
+				["click", "@e9"],
+				["get", "title"],
+				["get", "url"],
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps newer explicit-session tab target after overlapping opens", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const slow = { title: "Slow First", url: "https://example.com/slow-first" };
+const fast = { title: "Fast Second", url: "https://example.com/fast-second" };
+if (args.includes("https://example.com/slow-first")) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  process.stdout.write(JSON.stringify({ success: true, data: slow }));
+} else if (args.includes("https://example.com/fast-second")) {
+  process.stdout.write(JSON.stringify({ success: true, data: fast }));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "t1", title: slow.title, url: slow.url, active: true },
+    { tabId: "t2", title: fast.title, url: fast.url, active: false }
+  ] } }));
+} else if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  const results = steps.map((step) => {
+    const [command, subcommand] = step;
+    if (command === "tab") {
+      return { command: step, success: true, result: subcommand === "t2" ? fast : slow };
+    }
+    if (command === "click") {
+      return { command: step, success: true, result: { clicked: subcommand } };
+    }
+    if (command === "get" && subcommand === "title") {
+      return { command: step, success: true, result: fast.title };
+    }
+    if (command === "get" && subcommand === "url") {
+      return { command: step, success: true, result: fast.url };
+    }
+    return { command: step, success: true, result: fast };
+  });
+  process.stdout.write(JSON.stringify(results));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: fast }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const slowOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "open", "https://example.com/slow-first"],
+			});
+			await delay(5);
+			const fastOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "open", "https://example.com/fast-second"],
+			});
+
+			const [slowOpen, fastOpen] = await Promise.all([slowOpenPromise, fastOpenPromise]);
+			assert.equal(slowOpen.isError, false, JSON.stringify(slowOpen));
+			assert.equal(fastOpen.isError, false, JSON.stringify(fastOpen));
+
+			const clickedSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "click", "@e9"],
+			});
+			assert.equal(clickedSelector.isError, false, JSON.stringify(clickedSelector));
+			assert.deepEqual(clickedSelector.details?.sessionTabCorrection, {
+				selectedTab: "t2",
+				selectionKind: "tabId",
+				targetTitle: "Fast Second",
+				targetUrl: "https://example.com/fast-second",
+			});
+			assert.equal(
+				(clickedSelector.details?.navigationSummary as { title?: string; url?: string } | undefined)?.title,
+				"Fast Second",
+			);
+			assert.equal(
+				(clickedSelector.details?.navigationSummary as { title?: string; url?: string } | undefined)?.url,
+				"https://example.com/fast-second",
+			);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(
+				invocations.some((entry) =>
+					entry.args.join("\u0000") === ["--json", "--session", "named", "open", "https://example.com/slow-first"].join("\u0000"),
+				),
+				true,
+			);
+			assert.equal(
+				invocations.some((entry) =>
+					entry.args.join("\u0000") === ["--json", "--session", "named", "open", "https://example.com/fast-second"].join("\u0000"),
+				),
+				true,
+			);
+			assert.deepEqual(invocations.at(-2)?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations.at(-1)?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations.at(-1)?.stdin ?? "[]")), [
+				["tab", "t2"],
 				["click", "@e9"],
 				["get", "title"],
 				["get", "url"],

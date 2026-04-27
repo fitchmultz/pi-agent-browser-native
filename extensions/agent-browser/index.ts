@@ -8,7 +8,7 @@
 
 import { readFile, rm } from "node:fs/promises";
 
-import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType, type AgentToolResult, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 
 import {
@@ -36,6 +36,7 @@ import {
 	getLatestUserPrompt,
 	hasLaunchScopedTabCorrectionFlag,
 	hasUsableBraveApiKey,
+	extractExplicitSessionName,
 	redactInvocationArgs,
 	redactSensitiveText,
 	redactSensitiveValue,
@@ -318,6 +319,8 @@ const SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS = new Set(["batch", 
 
 type PinnedBatchUnwrapMode = "single-command" | "user-batch";
 
+type AgentBrowserToolResult = AgentToolResult<unknown> & { isError?: boolean };
+
 type BatchCommandStep = [string, ...string[]];
 
 interface PinnedBatchPlan {
@@ -329,6 +332,26 @@ interface PinnedBatchPlan {
 interface SessionTabTarget {
 	title?: string;
 	url: string;
+}
+
+interface OrderedSessionTabTarget {
+	order: number;
+	target: SessionTabTarget;
+}
+
+function getLatestSessionTabTargetOrder(targets: Map<string, OrderedSessionTabTarget>): number {
+	let latestOrder = 0;
+	for (const target of targets.values()) {
+		latestOrder = Math.max(latestOrder, target.order);
+	}
+	return latestOrder;
+}
+
+function shouldApplySessionTabTargetUpdate(options: {
+	current?: OrderedSessionTabTarget;
+	updateOrder: number;
+}): boolean {
+	return !options.current || options.updateOrder >= options.current.order;
 }
 
 function normalizeComparableUrl(url: string | undefined): string | undefined {
@@ -412,8 +435,9 @@ function extractSessionTabTargetFromBatchResults(data: unknown): SessionTabTarge
 	return currentTarget;
 }
 
-function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, SessionTabTarget> {
-	const restoredTargets = new Map<string, SessionTabTarget>();
+function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, OrderedSessionTabTarget> {
+	const restoredTargets = new Map<string, OrderedSessionTabTarget>();
+	let restoredOrder = 0;
 	for (const entry of branch) {
 		if (!isRecord(entry) || entry.type !== "message") {
 			continue;
@@ -432,6 +456,7 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Sess
 		}
 		const command = typeof details.command === "string" ? details.command : undefined;
 		if (command === "close" && message.isError !== true) {
+			restoredOrder += 1;
 			restoredTargets.delete(sessionName);
 			continue;
 		}
@@ -442,7 +467,8 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Sess
 			  })
 			: undefined;
 		if (sessionTabTarget) {
-			restoredTargets.set(sessionName, sessionTabTarget);
+			restoredOrder += 1;
+			restoredTargets.set(sessionName, { order: restoredOrder, target: sessionTabTarget });
 		}
 	}
 	return restoredTargets;
@@ -911,7 +937,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let managedSessionName = managedSessionBaseName;
 	let managedSessionCwd = process.cwd();
 	let freshSessionOrdinal = 0;
-	let sessionTabTargets = new Map<string, SessionTabTarget>();
+	let sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
+	let sessionTabTargetUpdateOrder = 0;
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -922,11 +949,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		managedSessionCwd = ctx.cwd;
 		freshSessionOrdinal = restoredState.freshSessionOrdinal;
 		sessionTabTargets = restoreSessionTabTargetsFromBranch(ctx.sessionManager.getBranch());
+		sessionTabTargetUpdateOrder = getLatestSessionTabTargetOrder(sessionTabTargets);
 	});
 
 	pi.on("session_shutdown", async () => {
 		managedSessionActive = false;
-		sessionTabTargets = new Map<string, SessionTabTarget>();
+		sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
+		sessionTabTargetUpdateOrder = 0;
 		await cleanupSecureTempArtifacts();
 	});
 
@@ -974,7 +1003,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			return managedSessionExecutionQueue.run(async () => {
+			const tabTargetUpdateOrder = ++sessionTabTargetUpdateOrder;
+			const runTool = async (): Promise<AgentBrowserToolResult> => {
 				const sessionMode = params.sessionMode ?? DEFAULT_SESSION_MODE;
 				const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
 				const executionPlan = buildExecutionPlan(params.args, {
@@ -1027,7 +1057,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					};
 				}
 
-				const priorSessionTabTarget = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
+				const priorSessionTabTargetState = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
+				const priorSessionTabTarget = priorSessionTabTargetState?.target;
 				let pinnedBatchUnwrapMode: PinnedBatchUnwrapMode | undefined;
 				let includePinnedNavigationSummary = false;
 				let sessionTabCorrection: OpenResultTabCorrection | undefined;
@@ -1257,10 +1288,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						}
 					}
 					if (executionPlan.sessionName) {
-						if (executionPlan.commandInfo.command === "close" && succeeded) {
-							sessionTabTargets.delete(executionPlan.sessionName);
-						} else if (currentSessionTabTarget) {
-							sessionTabTargets.set(executionPlan.sessionName, currentSessionTabTarget);
+						const activeSessionTabTargetState = sessionTabTargets.get(executionPlan.sessionName);
+						if (shouldApplySessionTabTargetUpdate({ current: activeSessionTabTargetState, updateOrder: tabTargetUpdateOrder })) {
+							if (executionPlan.commandInfo.command === "close" && succeeded) {
+								sessionTabTargets.delete(executionPlan.sessionName);
+							} else if (currentSessionTabTarget) {
+								sessionTabTargets.set(executionPlan.sessionName, { order: tabTargetUpdateOrder, target: currentSessionTabTarget });
+							}
 						}
 					}
 
@@ -1376,7 +1410,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
 					}
 				}
-			});
+			};
+
+			return extractExplicitSessionName(params.args)
+				? runTool()
+				: managedSessionExecutionQueue.run(runTool);
 		},
 	});
 }
