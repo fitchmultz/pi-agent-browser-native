@@ -210,13 +210,17 @@ export async function runAgentBrowserProcess(options: {
 				});
 		};
 
+		const removeAbortListener = () => {
+			if (!signal || !abortListener) return;
+			signal.removeEventListener("abort", abortListener);
+			abortListener = undefined;
+		};
+
 		const finish = (exitCode: number) => {
 			if (settled) return;
 			settled = true;
 			void pendingStdoutWrite.finally(async () => {
-				if (signal && abortListener) {
-					signal.removeEventListener("abort", abortListener);
-				}
+				removeAbortListener();
 				if (killTimer) {
 					clearTimeout(killTimer);
 				}

@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +46,7 @@ test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls"
 
 		assert.equal(processResult.aborted, true);
 		assert.equal(processResult.spawnError, undefined);
+		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -92,6 +94,35 @@ test("runAgentBrowserProcess handles abort during stdin-bearing command", async 
 		const processResult = await resultPromise;
 		assert.equal(processResult.aborted, true);
 		assert.equal(processResult.spawnError, undefined);
+		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess removes abort listeners after repeated successful runs with one shared signal", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
+	);
+	const controller = new AbortController();
+
+	try {
+		for (let index = 0; index < 5; index += 1) {
+			const processResult = await runAgentBrowserProcess({
+				args: ["snapshot"],
+				cwd: tempDir,
+				env: { PATH: `${tempDir}:${basePath}` },
+				signal: controller.signal,
+			});
+
+			assert.equal(processResult.exitCode, 0);
+			assert.equal(processResult.spawnError, undefined);
+			assert.equal(processResult.aborted, false);
+			assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+		}
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
