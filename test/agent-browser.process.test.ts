@@ -24,6 +24,79 @@ import {
 	writeFakeAgentBrowserBinary
 } from "./helpers/agent-browser-harness.js";
 
+test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdin.resume(); setTimeout(() => process.stdout.write(JSON.stringify({ success: true, data: "late" })), 5000);`,
+	);
+	const controller = new AbortController();
+	controller.abort();
+
+	try {
+		const processResult = await runAgentBrowserProcess({
+			args: ["eval", "--stdin"],
+			cwd: tempDir,
+			env: { PATH: `${tempDir}:${basePath}` },
+			signal: controller.signal,
+			stdin: "console.log(1)",
+		});
+
+		assert.equal(processResult.aborted, true);
+		assert.equal(processResult.spawnError, undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess handles closed stdin pipe without an unhandled EPIPE", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `process.stdin.destroy(); setImmediate(() => process.exit(0));`);
+
+	try {
+		const processResult = await runAgentBrowserProcess({
+			args: ["batch"],
+			cwd: tempDir,
+			env: { PATH: `${tempDir}:${basePath}` },
+			stdin: "x".repeat(4 * 1024 * 1024),
+		});
+
+		assert.equal(processResult.aborted, false);
+		assert.equal(processResult.spawnError, undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess handles abort during stdin-bearing command", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdin.resume(); setTimeout(() => process.stdout.write(JSON.stringify({ success: true })), 5000);`,
+	);
+	const controller = new AbortController();
+
+	try {
+		const resultPromise = runAgentBrowserProcess({
+			args: ["eval", "--stdin"],
+			cwd: tempDir,
+			env: { PATH: `${tempDir}:${basePath}` },
+			signal: controller.signal,
+			stdin: "document.title",
+		});
+		setImmediate(() => controller.abort());
+
+		const processResult = await resultPromise;
+		assert.equal(processResult.aborted, true);
+		assert.equal(processResult.spawnError, undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnvelope still sees the full payload", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const fakeAgentBrowserPath = join(tempDir, "agent-browser");

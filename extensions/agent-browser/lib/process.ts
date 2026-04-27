@@ -175,6 +175,7 @@ export async function runAgentBrowserProcess(options: {
 		let pendingStdoutWrite = Promise.resolve();
 		let stdoutSpillError: Error | undefined;
 		let killTimer: NodeJS.Timeout | undefined;
+		let abortListener: (() => void) | undefined;
 
 		const queueStdoutChunk = (buffer: Buffer) => {
 			stdoutTail = appendTail(stdoutTail, buffer.toString("utf8"), MAX_BUFFERED_STDOUT_TAIL_CHARS);
@@ -213,6 +214,9 @@ export async function runAgentBrowserProcess(options: {
 			if (settled) return;
 			settled = true;
 			void pendingStdoutWrite.finally(async () => {
+				if (signal && abortListener) {
+					signal.removeEventListener("abort", abortListener);
+				}
 				if (killTimer) {
 					clearTimeout(killTimer);
 				}
@@ -246,7 +250,33 @@ export async function runAgentBrowserProcess(options: {
 				child.kill("SIGKILL");
 			}, 2_000);
 		};
+		const recordStdinError = (error: unknown) => {
+			const stdinError = error instanceof Error ? error : new Error(String(error));
+			const errorCode = (stdinError as NodeJS.ErrnoException).code;
+			if (errorCode === "EPIPE" || errorCode === "ERR_STREAM_DESTROYED") {
+				return;
+			}
+			if (!spawnError) {
+				spawnError = stdinError;
+			}
+		};
+		const writeChildStdin = () => {
+			if (aborted || signal?.aborted) {
+				child.stdin.destroy();
+				return;
+			}
+			try {
+				if (stdin) {
+					child.stdin.write(stdin);
+				}
+				child.stdin.end();
+			} catch (error) {
+				recordStdinError(error);
+				child.stdin.destroy();
+			}
+		};
 
+		child.stdin.on("error", recordStdinError);
 		child.once("error", (error) => {
 			spawnError = error instanceof Error ? error : new Error(String(error));
 			finish(127);
@@ -265,13 +295,11 @@ export async function runAgentBrowserProcess(options: {
 			if (signal.aborted) {
 				abortChild();
 			} else {
-				signal.addEventListener("abort", abortChild, { once: true });
+				abortListener = abortChild;
+				signal.addEventListener("abort", abortListener, { once: true });
 			}
 		}
 
-		if (stdin) {
-			child.stdin.write(stdin);
-		}
-		child.stdin.end();
+		writeChildStdin();
 	});
 }
