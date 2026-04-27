@@ -1422,6 +1422,54 @@
       "custom_fields": {
         "scan_agent": "scan-innovation"
       }
+    },
+    {
+      "id": "RQ-0029",
+      "status": "done",
+      "title": "Automate reload and resume lifecycle regression coverage",
+      "description": "Opportunity type: reliability. The repo's primary confidence path is a real Pi session driven in tmux, and the docs explicitly require configured-source validation for `/reload`, full restart, and `/resume`. That critical lifecycle path is still manual today. Why it matters: the extension's differentiating value is managed-session continuity, artifact persistence, and tab recovery across lifecycle events, so manual-only validation is the highest-confidence gap in the repo. Proposed approach: add an explicit opt-in tmux-driven lifecycle harness that launches configured-source Pi, sends prompts, exercises `/reload` and restart plus `/resume`, and asserts that the same managed browser state and spill-file paths survive. Risks and mitigations: keep the harness deterministic, isolate Pi settings and extension sources rather than mutating the operator's normal configuration unless explicitly requested, clean up tmux/browser/temp side effects, and capture transcripts for post-failure debugging instead of relying on fragile text scraping alone. Acceptance criteria: one documented opt-in script runs the configured-source lifecycle checks end to end, emits actionable transcript artifacts on failure, covers same-page continuity plus persisted `fullOutputPath` survival, proves updated extension-code pickup via a deterministic sentinel or equivalent mechanism, and performs best-effort cleanup.",
+      "priority": "high",
+      "tags": [
+        "innovation",
+        "reliability",
+        "lifecycle",
+        "automation"
+      ],
+      "scope": [
+        "AGENTS.md",
+        "docs/RELEASE.md",
+        "docs/REQUIREMENTS.md",
+        "package.json",
+        "scripts",
+        "test"
+      ],
+      "evidence": [
+        "path: AGENTS.md :: Preferred testing workflow :: the primary confidence path is an end-to-end Pi run inside tmux with separate isolated and configured-source lifecycle modes",
+        "path: docs/RELEASE.md :: Configured-source lifecycle validation :: maintainers are told to manually exercise `/reload`, restart, and `/resume` to validate managed-session continuity and persisted spill paths",
+        "path: package.json :: scripts :: there is no lifecycle or tmux automation entrypoint alongside `verify`, `verify:package:pi`, or `verify:release`"
+      ],
+      "plan": [
+        "Define a deterministic opt-in lifecycle scenario that proves managed-session continuity, persisted artifact survival, and updated extension code pickup without depending on the operator's normal Pi settings.",
+        "Implement a tmux-driven harness that launches configured-source Pi with an isolated source configuration, submits prompts, restarts Pi, resumes the session, and captures transcripts.",
+        "Add assertions for same-page continuity, persisted spill-file reachability, updated-code sentinel visibility, and clear failure logs.",
+        "Document when to use the automated lifecycle harness versus isolated quick smoke mode, including cleanup and transcript retention behavior.",
+        "Verify by running the new lifecycle command and confirming it passes on a healthy setup, cleans up tmux/browser/temp artifacts, and produces usable transcript evidence on an injected failure."
+      ],
+      "notes": [],
+      "request": "scan: none",
+      "created_at": "2026-04-27T08:29:39Z",
+      "updated_at": "2026-04-27T15:11:18.763469000Z",
+      "completed_at": "2026-04-27T15:11:18.763469000Z",
+      "depends_on": [
+        "RQ-0028"
+      ],
+      "blocks": [],
+      "relates_to": [
+        "RQ-0035"
+      ],
+      "custom_fields": {
+        "scan_agent": "scan-innovation"
+      }
     }
   ]
 }
