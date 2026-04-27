@@ -155,8 +155,9 @@ export async function runAgentBrowserProcess(options: {
 	stdin?: string;
 }): Promise<ProcessRunResult> {
 	const { args, cwd, env, signal, stdin } = options;
-	let effectiveEnv = env;
-	const requestedSocketDir = env?.[AGENT_BROWSER_SOCKET_DIR_ENV] ?? getAgentBrowserSocketDir();
+	const explicitSocketDir = env?.[AGENT_BROWSER_SOCKET_DIR_ENV];
+	let effectiveEnv = explicitSocketDir === undefined ? { ...env, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : env;
+	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir && (await ensureAgentBrowserSocketDir(requestedSocketDir))) {
 		effectiveEnv = { ...env, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };
 	}

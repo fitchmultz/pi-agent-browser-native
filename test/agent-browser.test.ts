@@ -2295,7 +2295,9 @@ const envelope = {
   data: {
     agentBrowserActionPolicy: readEnv("AGENT_BROWSER_ACTION_POLICY"),
     agentBrowserConfig: readEnv("AGENT_BROWSER_CONFIG"),
+    agentBrowserConfirmActions: readEnv("AGENT_BROWSER_CONFIRM_ACTIONS"),
     agentBrowserEncryptionKey: readEnv("AGENT_BROWSER_ENCRYPTION_KEY"),
+    agentBrowserScreenshotDir: readEnv("AGENT_BROWSER_SCREENSHOT_DIR"),
     agentBrowserSession: readEnv("AGENT_BROWSER_SESSION"),
     agentBrowserSessionName: readEnv("AGENT_BROWSER_SESSION_NAME"),
     agentcoreRegion: readEnv("AGENTCORE_REGION"),
@@ -2324,7 +2326,9 @@ process.stdout.write(JSON.stringify(envelope));`,
 			{
 				AGENT_BROWSER_ACTION_POLICY: "/tmp/action-policy.json",
 				AGENT_BROWSER_CONFIG: "/tmp/agent-browser.json",
+				AGENT_BROWSER_CONFIRM_ACTIONS: "1",
 				AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64),
+				AGENT_BROWSER_SCREENSHOT_DIR: "/tmp/agent-browser-screenshots",
 				AGENT_BROWSER_SESSION: "from-parent-session",
 				AGENT_BROWSER_SESSION_NAME: "from-parent-session-name",
 				AGENT_BROWSER_SOCKET_DIR: "/tmp/from-parent-should-not-leak",
@@ -2358,7 +2362,9 @@ process.stdout.write(JSON.stringify(envelope));`,
 				const data = parsed.envelope?.data as {
 					agentBrowserActionPolicy: string | null;
 					agentBrowserConfig: string | null;
+					agentBrowserConfirmActions: string | null;
 					agentBrowserEncryptionKey: string | null;
+					agentBrowserScreenshotDir: string | null;
 					agentBrowserSession: string | null;
 					agentBrowserSessionName: string | null;
 					agentcoreRegion: string | null;
@@ -2380,7 +2386,9 @@ process.stdout.write(JSON.stringify(envelope));`,
 				};
 				assert.equal(data.agentBrowserActionPolicy, "/tmp/action-policy.json");
 				assert.equal(data.agentBrowserConfig, "/tmp/agent-browser.json");
+				assert.equal(data.agentBrowserConfirmActions, "1");
 				assert.equal(data.agentBrowserEncryptionKey, "a".repeat(64));
+				assert.equal(data.agentBrowserScreenshotDir, "/tmp/agent-browser-screenshots");
 				assert.equal(data.agentBrowserSession, "from-parent-session");
 				assert.equal(data.agentBrowserSessionName, "from-parent-session-name");
 				assert.equal(data.agentcoreRegion, "us-west-2");
