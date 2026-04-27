@@ -967,6 +967,46 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0023",
+      "status": "done",
+      "title": "Prevent explicit-session tab target rollback after overlapping opens",
+      "description": "Principles violated: E) Make bugs hard to write, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: explicit `--session` calls share one in-memory `sessionTabTargets` map with last-completion-wins semantics. When two opens overlap, the older slower result can overwrite the newer target, and the next pinned `click` or `snapshot` is steered back to the stale page even though the newer open already succeeded.\n\nMinimal proposed fix: version or timestamp session-tab target updates per session so only the newest relevant command result can replace the remembered target, and add overlap-aware tests for explicit-session pinning.\n\nAcceptance criteria: overlapping explicit-session opens leave the remembered target on the most recent successful open; the next pinned command selects the expected newer tab; verify `npm run verify` stays green.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "concurrency",
+        "sessions",
+        "tabs"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.extension-tabs.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:887 :: tab targeting state is stored in a shared module-scoped `Map<string, SessionTabTarget>`.",
+        "path: extensions/agent-browser/index.ts:1001-1016 :: follow-up commands read the remembered target before deciding whether to synthesize a pinned batch.",
+        "path: extensions/agent-browser/index.ts:1192-1235 :: successful commands derive a new observed target and overwrite `sessionTabTargets` with no ordering guard beyond completion order.",
+        "repro: `npx tsx <<'EOF' ... start --session named open https://example.com/slow-first, wait 5ms, start --session named open https://example.com/fast-second, then run --session named click @e9 ... EOF` :: expected the pinned click to follow the newer fast-second tab :: actual `details.sessionTabCorrection.targetUrl` was `https://example.com/slow-first` and the logged wrapper batch stdin began with `[\"tab\",\"t1\"]`, proving the stale first tab was re-pinned."
+      ],
+      "plan": [
+        "Track explicit-session tab targets with a monotonic ordering signal so stale completions cannot overwrite newer targets.",
+        "Add a focused overlap regression that asserts the next pinned command after competing opens selects the newer target.",
+        "Verify by running `npm run verify` and rerunning the explicit-session overlap repro to confirm the wrapper batch pins the newer tab instead of the stale one."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T04:18:11.460043000Z",
+      "completed_at": "2026-04-27T04:18:11.460043000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
     }
   ]
 }
