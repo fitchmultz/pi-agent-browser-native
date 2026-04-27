@@ -420,8 +420,8 @@ function extractSessionTabTargetFromBatchResults(data: unknown): SessionTabTarge
 		const resultTarget = extractSessionTabTargetFromData(result);
 		if (resultTarget) {
 			currentTarget = resultTarget;
-			pendingTitle = undefined;
 		}
+		pendingTitle = undefined;
 	}
 	return currentTarget;
 }

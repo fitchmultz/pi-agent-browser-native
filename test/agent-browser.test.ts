@@ -2937,6 +2937,145 @@ if (args.includes("batch")) {
 	}
 });
 
+test("agentBrowserExtension rejects malformed resumed explicit-session batch stdin before user batch execution", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify({ success: true, data: [{ command: ["batch"], success: true, result: "should not run" }] }));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
+    { tabId: "t2", title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en", active: true }
+  ] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Unexpected", url: "https://unexpected.example/" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const batchResult = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "batch"],
+				stdin: "not-json",
+			});
+			assert.equal(batchResult.isError, true, JSON.stringify(batchResult));
+			assert.match(String(batchResult.details?.validationError ?? ""), /could not be parsed as JSON/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 1);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not combine stale batch title with a later url after intervening commands", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+let active = { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" };
+const example = { title: "Example Domain", url: "https://example.com/" };
+const org = { title: "Example Org", url: "https://example.org/" };
+if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  const results = steps.map((step) => {
+    const [command, ...rest] = step;
+    if (command === "tab") {
+      active = rest[0] === "t1" ? example : active;
+      return { command: step, success: true, result: { tabId: rest[0], ...active } };
+    }
+    if (command === "get" && rest[0] === "title") {
+      return { command: step, success: true, result: active.title };
+    }
+    if (command === "open") {
+      active = org;
+      return { command: step, success: true, result: { status: "navigated" } };
+    }
+    if (command === "get" && rest[0] === "url") {
+      return { command: step, success: true, result: active.url };
+    }
+    return { command: step, success: true, result: { status: "ok" } };
+  });
+  process.stdout.write(JSON.stringify(results));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "t1", title: example.title, url: example.url, active: false },
+    { tabId: "t2", title: active.title, url: active.url, active: true }
+  ] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: active }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const batchResult = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "batch"],
+				stdin: JSON.stringify([["get", "title"], ["open", "https://example.org"], ["get", "url"]]),
+			});
+			assert.equal(batchResult.isError, false, JSON.stringify(batchResult));
+			assert.deepEqual(batchResult.details?.sessionTabTarget, { title: undefined, url: "https://example.org/" });
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 2);
+			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
+				["tab", "t1"],
+				["get", "title"],
+				["open", "https://example.org"],
+				["get", "url"],
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not mark a failed first implicit command as active", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
