@@ -6,7 +6,7 @@
  * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
  */
 
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 
 import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
@@ -42,7 +42,12 @@ import {
 	type CompatibilityWorkaround,
 	type OpenResultTabCorrection,
 } from "./lib/runtime.js";
-import { cleanupSecureTempArtifacts, type PersistentSessionArtifactStore } from "./lib/temp.js";
+import {
+	cleanupSecureTempArtifacts,
+	type PersistentSessionArtifactStore,
+	writePersistentSessionArtifactFile,
+	writeSecureTempFile,
+} from "./lib/temp.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
 
@@ -784,6 +789,35 @@ function getPersistentSessionArtifactStore(ctx: {
 	return { sessionDir, sessionId };
 }
 
+async function preserveParseFailureOutput(options: {
+	persistentArtifactStore?: PersistentSessionArtifactStore;
+	stdoutSpillPath?: string;
+}): Promise<{ fullOutputPath?: string; fullOutputUnavailable?: string }> {
+	if (!options.stdoutSpillPath) {
+		return {};
+	}
+
+	try {
+		const rawOutput = await readFile(options.stdoutSpillPath);
+		const fullOutputPath = options.persistentArtifactStore
+			? await writePersistentSessionArtifactFile({
+					content: rawOutput,
+					prefix: "pi-agent-browser-parse-failure-output",
+					store: options.persistentArtifactStore,
+					suffix: ".txt",
+				})
+			: await writeSecureTempFile({
+					content: rawOutput,
+					prefix: "pi-agent-browser-parse-failure-output",
+					suffix: ".txt",
+				});
+		return { fullOutputPath };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { fullOutputUnavailable: message };
+	}
+}
+
 function redactRecoveryHint(recoveryHint: {
 	exampleArgs: string[];
 	exampleParams: { args: string[]; sessionMode: "fresh" };
@@ -1042,6 +1076,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			try {
+				const persistentArtifactStore = getPersistentSessionArtifactStore(ctx);
 				const parsed = await parseAgentBrowserEnvelope({
 					stdout: processResult.stdout,
 					stdoutPath: processResult.stdoutSpillPath,
@@ -1059,6 +1094,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					presentationEnvelope = pinnedBatchResult.envelope ?? presentationEnvelope;
 					navigationSummary = pinnedBatchResult.navigationSummary;
 				}
+				const parseFailureOutput = parseError
+					? await preserveParseFailureOutput({
+							persistentArtifactStore,
+							stdoutSpillPath: processResult.stdoutSpillPath,
+						})
+					: {};
 				const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
 				const plainTextInspection = executionPlan.plainTextInspection && processSucceeded;
 				const parseSucceeded = plainTextInspection || parseError === undefined;
@@ -1204,8 +1245,18 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							cwd: ctx.cwd,
 							envelope: presentationEnvelope,
 							errorText,
-							persistentArtifactStore: getPersistentSessionArtifactStore(ctx),
+							persistentArtifactStore,
 					  });
+				if (parseFailureOutput.fullOutputPath || parseFailureOutput.fullOutputUnavailable) {
+					const existingText = presentation.content[0]?.type === "text" ? presentation.content[0].text : "";
+					const notice = parseFailureOutput.fullOutputPath
+						? `Full output path: ${parseFailureOutput.fullOutputPath}`
+						: `Full raw output unavailable: ${parseFailureOutput.fullOutputUnavailable}`;
+					presentation.content[0] = {
+						type: "text",
+						text: existingText.length > 0 ? `${existingText}\n\n${notice}` : notice,
+					};
+				}
 				const redactedContent = presentation.content.map((item) =>
 					item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,
 				);
@@ -1226,8 +1277,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						openResultTabCorrection: redactSensitiveValue(openResultTabCorrection),
 						effectiveArgs: redactedProcessArgs,
 						exitCode: processResult.exitCode,
-						fullOutputPath: presentation.fullOutputPath,
+						fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
 						fullOutputPaths: presentation.fullOutputPaths,
+						fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
 						imagePath: presentation.imagePath,
 						imagePaths: presentation.imagePaths,
 						parseError: plainTextInspection ? undefined : parseError,

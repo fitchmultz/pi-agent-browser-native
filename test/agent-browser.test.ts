@@ -930,6 +930,85 @@ test("agentBrowserExtension rejects malformed JSON envelopes that omit success",
 	}
 });
 
+test("agentBrowserExtension preserves full spilled stdout for oversized parse failures", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-"));
+	const sessionFile = join(sessionDir, "session.jsonl");
+	const basePath = process.env.PATH ?? "";
+	const sentinel = "RQ-0006-parse-failure-sentinel";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write("x".repeat(600000) + ${JSON.stringify(sentinel)});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionDir, sessionFile });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["snapshot", "-i"],
+			});
+
+			assert.equal(result.isError, true);
+			assert.match(String(result.details?.parseError ?? ""), /invalid JSON/i);
+			assert.equal(result.content[0]?.type, "text");
+			assert.match((result.content[0] as { text: string }).text, /Full output path: /);
+			assert.equal(typeof result.details?.fullOutputPath, "string");
+			assert.equal(result.details?.fullOutputUnavailable, undefined);
+			const fullOutputPath = result.details?.fullOutputPath as string;
+			assert.equal(fullOutputPath.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
+			const stats = await stat(fullOutputPath);
+			assert.ok(stats.size > 512 * 1024);
+			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+			await runExtensionEvent(harness.handlers, "session_shutdown");
+			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+		});
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(tempDir, { force: true, recursive: true });
+		await rm(sessionDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension returns temp full-output path for oversized parse failures without session artifacts", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	const sentinel = "RQ-0006-temp-parse-failure-sentinel";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write("x".repeat(600000) + ${JSON.stringify(sentinel)});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "document.body.innerText",
+			});
+
+			assert.equal(result.isError, true);
+			assert.match(String(result.details?.parseError ?? ""), /invalid JSON/i);
+			assert.equal(result.content[0]?.type, "text");
+			assert.match((result.content[0] as { text: string }).text, /Full output path: /);
+			assert.equal(typeof result.details?.fullOutputPath, "string");
+			assert.equal(result.details?.fullOutputUnavailable, undefined);
+			const fullOutputPath = result.details?.fullOutputPath as string;
+			const stats = await stat(fullOutputPath);
+			assert.ok(stats.size > 512 * 1024);
+			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+		});
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("parseCommandInfo skips global flags with values", () => {
 	const commandInfo = parseCommandInfo(["--session", "named", "--profile", "./profile", "tab", "list"]);
 	assert.deepEqual(commandInfo, { command: "tab", subcommand: "list" });
