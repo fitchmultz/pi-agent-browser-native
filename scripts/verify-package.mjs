@@ -14,46 +14,19 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createAgentSession, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
+import {
+	FORBIDDEN_PACKED_FILES,
+	FORBIDDEN_REPO_FILES,
+	REQUIRED_REPO_FILES,
+	loadPublishContract,
+} from "./publish-contract.mjs";
+
+export { FORBIDDEN_PACKED_FILES, FORBIDDEN_REPO_FILES, REQUIRED_REPO_FILES, loadPublishContract };
 
 const execFile = promisify(execFileCallback);
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const tarCommand = process.platform === "win32" ? "tar.exe" : "tar";
 const SUPPORTED_ARGS = new Set(["--list-files", "--smoke-pi"]);
-
-export const REQUIRED_REPO_FILES = ["LICENSE"];
-export const FORBIDDEN_REPO_FILES = [".pi/extensions/agent-browser.ts"];
-export const REQUIRED_PACKED_FILES = [
-	"CHANGELOG.md",
-	"LICENSE",
-	"README.md",
-	"docs/ARCHITECTURE.md",
-	"docs/COMMAND_REFERENCE.md",
-	"docs/RELEASE.md",
-	"docs/REQUIREMENTS.md",
-	"docs/TOOL_CONTRACT.md",
-	"extensions/agent-browser/index.ts",
-	"extensions/agent-browser/lib/parsing.ts",
-	"extensions/agent-browser/lib/process.ts",
-	"extensions/agent-browser/lib/results.ts",
-	"extensions/agent-browser/lib/results/envelope.ts",
-	"extensions/agent-browser/lib/results/presentation.ts",
-	"extensions/agent-browser/lib/results/shared.ts",
-	"extensions/agent-browser/lib/results/snapshot.ts",
-	"extensions/agent-browser/lib/runtime.ts",
-	"extensions/agent-browser/lib/temp.ts",
-	"package.json",
-];
-export const FORBIDDEN_PACKED_FILES = [
-	".pi/extensions/agent-browser.ts",
-	"AGENTS.md",
-	"docs/IMPLEMENTATION_PLAN.md",
-	"docs/native-integration-design.md",
-	"docs/v1-tool-contract.md",
-	"progress.md",
-	"scripts/verify-package.mjs",
-	"test/agent-browser.test.ts",
-	"test/verify-package.test.ts",
-];
 
 class UsageError extends Error {
 	constructor(message) {
@@ -253,10 +226,10 @@ export function collectVerificationFailures(options) {
 }
 
 export function evaluatePackResult(options) {
-	const { forbiddenRepoFiles, missingRepoFiles, packResult } = options;
+	const { forbiddenRepoFiles, missingRepoFiles, packResult, publishContract } = options;
 	const packedPaths = collectPackedPaths(Array.isArray(packResult.files) ? packResult.files : []);
-	const missingPackedFiles = REQUIRED_PACKED_FILES.filter((path) => !packedPaths.has(path));
-	const forbiddenPackedFiles = FORBIDDEN_PACKED_FILES.filter((path) => packedPaths.has(path));
+	const missingPackedFiles = publishContract.requiredPackedFiles.filter((path) => !packedPaths.has(path));
+	const forbiddenPackedFiles = publishContract.forbiddenPackedFiles.filter((path) => packedPaths.has(path));
 	const failures = collectVerificationFailures({
 		forbiddenPackedFiles,
 		forbiddenRepoFiles,
@@ -272,6 +245,7 @@ export function evaluatePackResult(options) {
 		missingRepoFiles,
 		packResult,
 		packedPaths,
+		publishContract,
 	};
 }
 
@@ -314,10 +288,11 @@ function printPiSmokeReport(report) {
 
 export async function verifyPackageRelease(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
-	const missingRepoFiles = await collectMissingPaths(REQUIRED_REPO_FILES, cwd);
-	const forbiddenRepoFiles = await collectPresentPaths(FORBIDDEN_REPO_FILES, cwd);
+	const publishContract = await loadPublishContract({ cwd });
+	const missingRepoFiles = await collectMissingPaths(publishContract.requiredRepoFiles, cwd);
+	const forbiddenRepoFiles = await collectPresentPaths(publishContract.forbiddenRepoFiles, cwd);
 	const packResult = await getDryRunPackResult(cwd);
-	return evaluatePackResult({ forbiddenRepoFiles, missingRepoFiles, packResult });
+	return evaluatePackResult({ forbiddenRepoFiles, missingRepoFiles, packResult, publishContract });
 }
 
 export async function verifyPackagedPiLoad(options = {}) {

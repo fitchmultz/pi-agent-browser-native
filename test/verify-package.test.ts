@@ -1,19 +1,31 @@
 /**
  * Purpose: Verify the release/package gate helpers that protect the published tarball contract.
- * Responsibilities: Assert CLI option parsing, failure aggregation, and required/forbidden package invariants for the verify-package maintainer script.
+ * Responsibilities: Assert CLI option parsing, failure aggregation, publish-contract derivation, and required/forbidden package invariants for the verify-package maintainer script.
  * Scope: Focused unit coverage for `scripts/verify-package.mjs` helper behavior only; full package verification still runs through `npm run verify:package` and `npm run verify:release`.
  * Usage: Run with `npm test` or as part of `npm run verify`.
- * Invariants/Assumptions: The retired `.pi/extensions/agent-browser.ts` autoload shim must stay forbidden, and the split result-rendering source files must remain required in the published package.
+ * Invariants/Assumptions: The retired `.pi/extensions/agent-browser.ts` autoload shim must stay forbidden, and required packed files must be derived from the canonical publish contract rather than duplicated in tests.
  */
 
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 const verifyPackageModulePath = "../scripts/verify-package.mjs";
+
+interface PublishContract {
+	declaredPackageFiles: string[];
+	forbiddenPackedFiles: string[];
+	forbiddenRepoFiles: string[];
+	requiredPackedFiles: string[];
+	requiredRepoFiles: string[];
+}
+
 const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 	FORBIDDEN_PACKED_FILES: string[];
 	FORBIDDEN_REPO_FILES: string[];
-	REQUIRED_PACKED_FILES: string[];
+	loadPublishContract: (options?: { cwd?: string }) => Promise<PublishContract>;
 	collectVerificationFailures: (options: {
 		forbiddenPackedFiles: string[];
 		forbiddenRepoFiles: string[];
@@ -30,6 +42,7 @@ const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 			size: number;
 			unpackedSize: number;
 		};
+		publishContract: Pick<PublishContract, "forbiddenPackedFiles" | "requiredPackedFiles">;
 	}) => {
 		failures: string[];
 		forbiddenPackedFiles: string[];
@@ -44,10 +57,10 @@ const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 const {
 	FORBIDDEN_PACKED_FILES,
 	FORBIDDEN_REPO_FILES,
-	REQUIRED_PACKED_FILES,
 	collectVerificationFailures,
 	evaluatePackResult,
 	evaluatePiSmokeResult,
+	loadPublishContract,
 	parseCliArgs,
 } = verifyPackageModule;
 
@@ -120,31 +133,44 @@ test("evaluatePiSmokeResult requires exactly one packaged agent_browser source",
 	);
 });
 
-test("evaluatePackResult preserves the retired autoload-shim ban and split-result module requirements", () => {
+test("publish contract derives required packed files from package.json", async () => {
+	const publishContract = await loadPublishContract();
+
 	assert.equal(FORBIDDEN_REPO_FILES.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(FORBIDDEN_PACKED_FILES.includes(".pi/extensions/agent-browser.ts"), true);
-	for (const requiredPath of [
-		"docs/COMMAND_REFERENCE.md",
-		"extensions/agent-browser/lib/parsing.ts",
-		"extensions/agent-browser/lib/results.ts",
-		"extensions/agent-browser/lib/results/envelope.ts",
-		"extensions/agent-browser/lib/results/presentation.ts",
-		"extensions/agent-browser/lib/results/shared.ts",
-		"extensions/agent-browser/lib/results/snapshot.ts",
-	] as const) {
-		assert.equal(REQUIRED_PACKED_FILES.includes(requiredPath), true);
-	}
+	assert.equal(publishContract.forbiddenRepoFiles.includes(".pi/extensions/agent-browser.ts"), true);
+	assert.equal(publishContract.forbiddenPackedFiles.includes(".pi/extensions/agent-browser.ts"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("package.json"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("docs/COMMAND_REFERENCE.md"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/index.ts"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/lib/parsing.ts"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/lib/playbook.ts"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/lib/results/snapshot.ts"), true);
+});
 
+test("loadPublishContract reports missing package.json files entries clearly", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "publish-contract-test-"));
+	try {
+		await writeFile(join(tempDir, "package.json"), JSON.stringify({ files: ["missing.md"] }), "utf8");
+		await assert.rejects(() => loadPublishContract({ cwd: tempDir }), /package\.json files entry "missing\.md" does not exist/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("evaluatePackResult uses the shared publish contract", async () => {
+	const publishContract = await loadPublishContract();
 	const report = evaluatePackResult({
 		forbiddenRepoFiles: [],
 		missingRepoFiles: [],
 		packResult: {
-			entryCount: REQUIRED_PACKED_FILES.length,
-			filename: "pi-agent-browser-native-0.1.5.tgz",
-			files: REQUIRED_PACKED_FILES.map((path: string) => ({ path })),
+			entryCount: publishContract.requiredPackedFiles.length,
+			filename: "pi-agent-browser-native-0.2.12.tgz",
+			files: publishContract.requiredPackedFiles.map((path) => ({ path })),
 			size: 123,
 			unpackedSize: 456,
 		},
+		publishContract,
 	});
 
 	assert.deepEqual(report.failures, []);
