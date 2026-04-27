@@ -87,52 +87,6 @@
       "custom_fields": {
         "scan_agent": "scan-general"
       }
-    },
-    {
-      "id": "RQ-0043",
-      "status": "todo",
-      "title": "Improve network request previews for QA debugging",
-      "description": "Dogfood feedback says QA needed first-class request inspection with method, URL, status, payload preview, and response preview. The wrapper already formats `network requests`, but current presentation only shows status, method, URL, and type, and tests intentionally avoid expanding headers. Minimal fix is to inspect the current upstream `network requests` JSON shape and render safe previews for request/response bodies or errors when those fields exist, while continuing to redact sensitive headers/tokens.",
-      "priority": "medium",
-      "tags": [
-        "scan",
-        "network",
-        "diagnostics",
-        "qa"
-      ],
-      "scope": [
-        "/tmp/feedback.txt",
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "test/agent-browser.presentation.test.ts",
-        "docs/COMMAND_REFERENCE.md",
-        "test/agent-browser.real-upstream-contract.test.ts",
-        "npm run test"
-      ],
-      "evidence": [
-        "feedback: /tmp/feedback.txt:27-32 :: QA had to infer API behavior separately via curl and requested recent XHR/fetch requests with method, URL, status, payload preview, and response preview.",
-        "path: extensions/agent-browser/lib/results/presentation.ts:176-179 :: summary for `network requests` only reports request count.",
-        "path: extensions/agent-browser/lib/results/presentation.ts:248-263 :: network preview renders only status, method, truncated URL, and resource/mime type.",
-        "path: test/agent-browser.presentation.test.ts:240-263 :: network preview test asserts two method/status/url lines and asserts sensitive headers are not included; there is no payload or response preview coverage.",
-        "path: docs/COMMAND_REFERENCE.md:230 :: command table documents `network requests [--clear] [--filter <pattern>]` but not what fields the wrapper surfaces for QA.",
-        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before adding diagnostic preview coverage."
-      ],
-      "plan": [
-        "Capture or inspect the installed upstream `network requests` JSON shape for XHR/fetch entries, including which request/response body fields are available.",
-        "Extend `formatNetworkRequestsText` to include bounded, redacted payload/response/error previews only for safe fields that upstream actually returns.",
-        "Add unit tests covering body previews, truncation, and redaction of headers/tokens/secrets.",
-        "Update `docs/COMMAND_REFERENCE.md` with a short note about what `network requests` exposes and any limitations.",
-        "Verify by running `npm run test` and, if upstream shape fixtures change, the relevant real-upstream contract command."
-      ],
-      "notes": [],
-      "request": "scan finding",
-      "created_at": "2026-04-27T16:34:07Z",
-      "updated_at": "2026-04-27T16:34:07Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-general"
-      }
     }
   ]
 }
