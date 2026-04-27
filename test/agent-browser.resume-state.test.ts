@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,6 +21,26 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary
 } from "./helpers/agent-browser-harness.js";
+
+const CONCURRENCY_TEST_TIMEOUT_MS = 5_000;
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withConcurrencyTestTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+	let timeout: NodeJS.Timeout | undefined;
+	const timeoutPromise = new Promise<never>((_resolve, reject) => {
+		timeout = setTimeout(() => reject(new Error(message)), CONCURRENCY_TEST_TIMEOUT_MS);
+	});
+	try {
+		return await Promise.race([promise, timeoutPromise]);
+	} finally {
+		if (timeout) {
+			clearTimeout(timeout);
+		}
+	}
+}
 
 test("agentBrowserExtension reconstructs managed session state on session_start and keeps startup-scoped flags blocked after resume", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
@@ -276,6 +296,215 @@ process.stdout.write(JSON.stringify(envelope));`,
 			assert.equal(invocations[5]?.idleTimeout, "1234");
 		});
 	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension serializes overlapping base and fresh calls so fresh remains authoritative", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const gatePath = join(tempDir, "release-base");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("https://example.com/slow-base")) {
+  while (!fs.existsSync(${JSON.stringify(gatePath)})) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+}
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: args.includes("--profile") ? "Profiled" : "Base", url: args[args.length - 1] } };
+process.stdout.write(JSON.stringify(envelope));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const basePromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/slow-base"],
+			});
+			await delay(25);
+			const freshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/fast-fresh"],
+				sessionMode: "fresh",
+			});
+			await delay(25);
+			const invocationsBeforeRelease = await readInvocationLog(logPath);
+			assert.equal(invocationsBeforeRelease.some((entry) => entry.args.includes("https://example.com/fast-fresh")), false);
+
+			await writeFile(gatePath, "go", "utf8");
+			const [baseResult, freshResult] = await withConcurrencyTestTimeout(
+				Promise.all([basePromise, freshPromise]),
+				"overlapping base/fresh calls did not complete after releasing the base gate",
+			);
+			assert.equal(baseResult.isError, false, JSON.stringify(baseResult));
+			assert.equal(freshResult.isError, false, JSON.stringify(freshResult));
+
+			const freshSessionName = freshResult.details?.sessionName;
+			assert.equal(typeof freshSessionName, "string");
+
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.equal(followUp.details?.sessionName, freshSessionName);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(
+				invocations.some((entry) => entry.args[0] === "--session" && entry.args[1] === String(freshSessionName) && entry.args[2] === "close"),
+				false,
+			);
+			assert.deepEqual(invocations.at(-1)?.args, ["--json", "--session", String(freshSessionName), "snapshot", "-i"]);
+		});
+	} finally {
+		await writeFile(gatePath, "go", "utf8").catch(() => undefined);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not close an overlapping auto call's session mid-command", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const snapshotGatePath = join(tempDir, "release-snapshot");
+	const closedDir = join(tempDir, "closed-sessions");
+	const basePath = process.env.PATH ?? "";
+	await mkdir(closedDir, { recursive: true });
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const sessionIndex = args.indexOf("--session");
+const sessionName = sessionIndex >= 0 ? args[sessionIndex + 1] : "none";
+const closedPath = path.join(${JSON.stringify(closedDir)}, encodeURIComponent(sessionName) + ".closed");
+const log = (event) => fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ event, args, sessionName }) + "\\n");
+log("start");
+if (args.includes("snapshot")) {
+  while (!fs.existsSync(${JSON.stringify(snapshotGatePath)})) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  if (fs.existsSync(closedPath)) {
+    process.stdout.write(JSON.stringify({ success: false, error: "session was closed mid-command" }));
+    process.exit(1);
+  }
+  log("snapshot-done");
+}
+if (args.includes("close")) {
+  fs.writeFileSync(closedPath, "closed");
+  log("close-done");
+}
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: args.includes("--profile") ? "Fresh" : "Base", url: args[args.length - 1] } };
+process.stdout.write(JSON.stringify(envelope));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"] });
+			assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
+			const baseSessionName = firstOpen.details?.sessionName;
+			assert.equal(typeof baseSessionName, "string");
+
+			const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			await delay(25);
+			const freshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/fresh"],
+				sessionMode: "fresh",
+			});
+			await delay(25);
+			const invocationsBeforeRelease = await readInvocationLog(logPath);
+			assert.equal(
+				invocationsBeforeRelease.some((entry) => entry.event === "close-done" && entry.sessionName === baseSessionName),
+				false,
+				"fresh rotation must not close the base session while the snapshot is still gated",
+			);
+
+			await writeFile(snapshotGatePath, "go", "utf8");
+			const [snapshotResult, freshResult] = await withConcurrencyTestTimeout(
+				Promise.all([snapshotPromise, freshPromise]),
+				"overlapping snapshot/fresh calls did not complete after releasing the snapshot gate",
+			);
+			assert.equal(snapshotResult.isError, false, JSON.stringify(snapshotResult));
+			assert.equal(freshResult.isError, false, JSON.stringify(freshResult));
+
+			const invocations = await readInvocationLog(logPath);
+			const snapshotDoneIndex = invocations.findIndex((entry) => entry.event === "snapshot-done" && entry.sessionName === baseSessionName);
+			const closeBaseIndex = invocations.findIndex((entry) => entry.event === "close-done" && entry.sessionName === baseSessionName);
+			assert.ok(snapshotDoneIndex >= 0, "snapshot should finish against the original managed session");
+			assert.ok(closeBaseIndex > snapshotDoneIndex, "base close should happen after the overlapping snapshot finishes");
+		});
+	} finally {
+		await writeFile(snapshotGatePath, "go", "utf8").catch(() => undefined);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension allocates distinct managed sessions for overlapping fresh launches", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const firstGatePath = join(tempDir, "release-first-fresh");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("https://example.com/fresh-a")) {
+  while (!fs.existsSync(${JSON.stringify(firstGatePath)})) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+}
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: "Fresh", url: args[args.length - 1] } };
+process.stdout.write(JSON.stringify(envelope));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstFreshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/fresh-a"],
+				sessionMode: "fresh",
+			});
+			await delay(25);
+			const secondFreshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/fresh-b"],
+				sessionMode: "fresh",
+			});
+			await delay(25);
+			const invocationsBeforeRelease = await readInvocationLog(logPath);
+			assert.equal(invocationsBeforeRelease.some((entry) => entry.args.includes("https://example.com/fresh-b")), false);
+
+			await writeFile(firstGatePath, "go", "utf8");
+			const [firstFresh, secondFresh] = await withConcurrencyTestTimeout(
+				Promise.all([firstFreshPromise, secondFreshPromise]),
+				"overlapping fresh calls did not complete after releasing the first fresh gate",
+			);
+			assert.equal(firstFresh.isError, false, JSON.stringify(firstFresh));
+			assert.equal(secondFresh.isError, false, JSON.stringify(secondFresh));
+			assert.equal(typeof firstFresh.details?.sessionName, "string");
+			assert.equal(typeof secondFresh.details?.sessionName, "string");
+			assert.notEqual(firstFresh.details?.sessionName, secondFresh.details?.sessionName);
+
+			const firstSessionName = String(firstFresh.details?.sessionName);
+			const secondSessionName = String(secondFresh.details?.sessionName);
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.includes(firstSessionName) && entry.args.includes("https://example.com/fresh-a")));
+			assert.ok(invocations.some((entry) => entry.args.includes(secondSessionName) && entry.args.includes("https://example.com/fresh-b")));
+		});
+	} finally {
+		await writeFile(firstGatePath, "go", "utf8").catch(() => undefined);
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });

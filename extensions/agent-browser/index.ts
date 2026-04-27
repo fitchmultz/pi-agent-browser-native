@@ -857,6 +857,28 @@ function redactRecoveryHint(recoveryHint: {
 	};
 }
 
+// Serializes managed-session read/modify/write work so overlapping tool calls cannot promote stale state or close an in-use session.
+class AsyncExecutionQueue {
+	private tail: Promise<void> = Promise.resolve();
+
+	run<T>(work: () => Promise<T>): Promise<T> {
+		const previous = this.tail;
+		let release!: () => void;
+		this.tail = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		return (async () => {
+			await previous;
+			try {
+				return await work();
+			} finally {
+				release();
+			}
+		})();
+	}
+}
+
 async function closeManagedSession(options: { cwd: string; sessionName: string; timeoutMs: number }): Promise<void> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
@@ -890,6 +912,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let managedSessionCwd = process.cwd();
 	let freshSessionOrdinal = 0;
 	let sessionTabTargets = new Map<string, SessionTabTarget>();
+	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 
 	pi.on("session_start", async (_event, ctx) => {
 		managedSessionBaseName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
@@ -951,407 +974,409 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				};
 			}
 
-			const sessionMode = params.sessionMode ?? DEFAULT_SESSION_MODE;
-			const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
-			const executionPlan = buildExecutionPlan(params.args, {
-				freshSessionName,
-				managedSessionActive,
-				managedSessionName,
-				sessionMode,
-			});
-			const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
-			const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
-			const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
-			if (executionPlan.managedSessionName === freshSessionName) {
-				freshSessionOrdinal += 1;
-			}
+			return managedSessionExecutionQueue.run(async () => {
+				const sessionMode = params.sessionMode ?? DEFAULT_SESSION_MODE;
+				const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
+				const executionPlan = buildExecutionPlan(params.args, {
+					freshSessionName,
+					managedSessionActive,
+					managedSessionName,
+					sessionMode,
+				});
+				const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
+				const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
+				const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
+				if (executionPlan.managedSessionName === freshSessionName) {
+					freshSessionOrdinal += 1;
+				}
 
-			if (executionPlan.validationError) {
-				return {
-					content: [{ type: "text", text: executionPlan.validationError }],
-					details: {
-						args: redactedArgs,
-						invalidValueFlag: executionPlan.invalidValueFlag,
-						sessionMode,
-						sessionRecoveryHint: redactedRecoveryHint,
-						startupScopedFlags: executionPlan.startupScopedFlags,
-						validationError: executionPlan.validationError,
-					},
-					isError: true,
-				};
-			}
+				if (executionPlan.validationError) {
+					return {
+						content: [{ type: "text", text: executionPlan.validationError }],
+						details: {
+							args: redactedArgs,
+							invalidValueFlag: executionPlan.invalidValueFlag,
+							sessionMode,
+							sessionRecoveryHint: redactedRecoveryHint,
+							startupScopedFlags: executionPlan.startupScopedFlags,
+							validationError: executionPlan.validationError,
+						},
+						isError: true,
+					};
+				}
 
-			const commandTokens = extractCommandTokens(params.args);
-			const stdinValidationError = validateStdinCommandContract({
-				command: executionPlan.commandInfo.command,
-				commandTokens,
-				stdin: params.stdin,
-			});
-			if (stdinValidationError) {
-				return {
-					content: [{ type: "text", text: stdinValidationError }],
-					details: {
-						args: redactedArgs,
-						command: executionPlan.commandInfo.command,
-						compatibilityWorkaround,
-						effectiveArgs: redactedEffectiveArgs,
-						sessionMode,
-						validationError: stdinValidationError,
-						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-					},
-					isError: true,
-				};
-			}
-
-			const priorSessionTabTarget = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
-			let pinnedBatchUnwrapMode: PinnedBatchUnwrapMode | undefined;
-			let includePinnedNavigationSummary = false;
-			let sessionTabCorrection: OpenResultTabCorrection | undefined;
-			let processArgs = executionPlan.effectiveArgs;
-			let processStdin = params.stdin;
-			if (
-				priorSessionTabTarget &&
-				shouldPinSessionTabForCommand({
+				const commandTokens = extractCommandTokens(params.args);
+				const stdinValidationError = validateStdinCommandContract({
 					command: executionPlan.commandInfo.command,
 					commandTokens,
-					sessionName: executionPlan.sessionName,
 					stdin: params.stdin,
-				})
-			) {
-				const plannedSessionTabSelection = await collectSessionTabSelection({
-					cwd: ctx.cwd,
-					sessionName: executionPlan.sessionName,
-					signal,
-					target: priorSessionTabTarget,
 				});
-				if (plannedSessionTabSelection && executionPlan.sessionName) {
-					if (executionPlan.commandInfo.command === "eval" && params.stdin !== undefined) {
-						const appliedSessionTabSelection = await applyOpenResultTabCorrection({
-							correction: plannedSessionTabSelection,
-							cwd: ctx.cwd,
-							sessionName: executionPlan.sessionName,
-							signal,
-						});
-						if (!appliedSessionTabSelection) {
-							const error = "agent-browser could not re-select the intended tab before running the command.";
-							return {
-								content: [{ type: "text", text: error }],
-								details: {
-									args: redactedArgs,
-									command: executionPlan.commandInfo.command,
-									compatibilityWorkaround,
-									effectiveArgs: redactedEffectiveArgs,
-									sessionMode,
-									sessionTabCorrection: plannedSessionTabSelection,
-									validationError: error,
-									...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-								},
-								isError: true,
-							};
-						}
-						sessionTabCorrection = appliedSessionTabSelection;
-					} else {
-						const pinnedBatchPlan = buildPinnedBatchPlan({
+				if (stdinValidationError) {
+					return {
+						content: [{ type: "text", text: stdinValidationError }],
+						details: {
+							args: redactedArgs,
 							command: executionPlan.commandInfo.command,
-							commandTokens,
-							selectedTab: plannedSessionTabSelection.selectedTab,
-							stdin: params.stdin,
-						});
-						if (pinnedBatchPlan && "error" in pinnedBatchPlan) {
-							return {
-								content: [{ type: "text", text: pinnedBatchPlan.error }],
-								details: {
-									args: redactedArgs,
-									command: executionPlan.commandInfo.command,
-									compatibilityWorkaround,
-									effectiveArgs: redactedEffectiveArgs,
-									sessionMode,
-									sessionTabCorrection: plannedSessionTabSelection,
-									validationError: pinnedBatchPlan.error,
-									...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-								},
-								isError: true,
-							};
-						}
-						if (pinnedBatchPlan) {
-							sessionTabCorrection = plannedSessionTabSelection;
-							processArgs = ["--json", "--session", executionPlan.sessionName, "batch"];
-							processStdin = JSON.stringify(pinnedBatchPlan.steps);
-							includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
-							pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;
+							compatibilityWorkaround,
+							effectiveArgs: redactedEffectiveArgs,
+							sessionMode,
+							validationError: stdinValidationError,
+							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+						},
+						isError: true,
+					};
+				}
+
+				const priorSessionTabTarget = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
+				let pinnedBatchUnwrapMode: PinnedBatchUnwrapMode | undefined;
+				let includePinnedNavigationSummary = false;
+				let sessionTabCorrection: OpenResultTabCorrection | undefined;
+				let processArgs = executionPlan.effectiveArgs;
+				let processStdin = params.stdin;
+				if (
+					priorSessionTabTarget &&
+					shouldPinSessionTabForCommand({
+						command: executionPlan.commandInfo.command,
+						commandTokens,
+						sessionName: executionPlan.sessionName,
+						stdin: params.stdin,
+					})
+				) {
+					const plannedSessionTabSelection = await collectSessionTabSelection({
+						cwd: ctx.cwd,
+						sessionName: executionPlan.sessionName,
+						signal,
+						target: priorSessionTabTarget,
+					});
+					if (plannedSessionTabSelection && executionPlan.sessionName) {
+						if (executionPlan.commandInfo.command === "eval" && params.stdin !== undefined) {
+							const appliedSessionTabSelection = await applyOpenResultTabCorrection({
+								correction: plannedSessionTabSelection,
+								cwd: ctx.cwd,
+								sessionName: executionPlan.sessionName,
+								signal,
+							});
+							if (!appliedSessionTabSelection) {
+								const error = "agent-browser could not re-select the intended tab before running the command.";
+								return {
+									content: [{ type: "text", text: error }],
+									details: {
+										args: redactedArgs,
+										command: executionPlan.commandInfo.command,
+										compatibilityWorkaround,
+										effectiveArgs: redactedEffectiveArgs,
+										sessionMode,
+										sessionTabCorrection: plannedSessionTabSelection,
+										validationError: error,
+										...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+									},
+									isError: true,
+								};
+							}
+							sessionTabCorrection = appliedSessionTabSelection;
+						} else {
+							const pinnedBatchPlan = buildPinnedBatchPlan({
+								command: executionPlan.commandInfo.command,
+								commandTokens,
+								selectedTab: plannedSessionTabSelection.selectedTab,
+								stdin: params.stdin,
+							});
+							if (pinnedBatchPlan && "error" in pinnedBatchPlan) {
+								return {
+									content: [{ type: "text", text: pinnedBatchPlan.error }],
+									details: {
+										args: redactedArgs,
+										command: executionPlan.commandInfo.command,
+										compatibilityWorkaround,
+										effectiveArgs: redactedEffectiveArgs,
+										sessionMode,
+										sessionTabCorrection: plannedSessionTabSelection,
+										validationError: pinnedBatchPlan.error,
+										...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+									},
+									isError: true,
+								};
+							}
+							if (pinnedBatchPlan) {
+								sessionTabCorrection = plannedSessionTabSelection;
+								processArgs = ["--json", "--session", executionPlan.sessionName, "batch"];
+								processStdin = JSON.stringify(pinnedBatchPlan.steps);
+								includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
+								pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;
+							}
 						}
 					}
 				}
-			}
-			const redactedProcessArgs = redactInvocationArgs(processArgs);
+				const redactedProcessArgs = redactInvocationArgs(processArgs);
 
-			onUpdate?.({
-				content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(redactedProcessArgs)}` }],
-				details: {
-					compatibilityWorkaround,
-					effectiveArgs: redactedProcessArgs,
-					sessionMode,
-					sessionTabCorrection,
-					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-				},
-			});
-
-			const processResult = await runAgentBrowserProcess({
-				args: processArgs,
-				cwd: ctx.cwd,
-				env: executionPlan.managedSessionName ? { AGENT_BROWSER_IDLE_TIMEOUT_MS: implicitSessionIdleTimeoutMs } : undefined,
-				signal,
-				stdin: processStdin,
-			});
-
-			if (processResult.spawnError?.message.includes("ENOENT")) {
-				const errorText = buildMissingBinaryMessage();
-				return {
-					content: [{ type: "text", text: errorText }],
+				onUpdate?.({
+					content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(redactedProcessArgs)}` }],
 					details: {
-						args: redactedArgs,
 						compatibilityWorkaround,
 						effectiveArgs: redactedProcessArgs,
 						sessionMode,
 						sessionTabCorrection,
-						spawnError: processResult.spawnError.message,
+						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 					},
-					isError: true,
-				};
-			}
-
-			try {
-				const persistentArtifactStore = getPersistentSessionArtifactStore(ctx);
-				const parsed = await parseAgentBrowserEnvelope({
-					stdout: processResult.stdout,
-					stdoutPath: processResult.stdoutSpillPath,
 				});
-				let parseError = parsed.parseError;
-				let presentationEnvelope = parsed.envelope;
-				let navigationSummary: NavigationSummary | undefined;
-				if (pinnedBatchUnwrapMode) {
-					const pinnedBatchResult = unwrapPinnedSessionBatchEnvelope({
-						envelope: parsed.envelope,
-						includeNavigationSummary: includePinnedNavigationSummary,
-						mode: pinnedBatchUnwrapMode,
-					});
-					parseError = pinnedBatchResult.parseError ?? parseError;
-					presentationEnvelope = pinnedBatchResult.envelope ?? presentationEnvelope;
-					navigationSummary = pinnedBatchResult.navigationSummary;
-				}
-				const parseFailureOutput = parseError
-					? await preserveParseFailureOutput({
-							persistentArtifactStore,
-							stdoutSpillPath: processResult.stdoutSpillPath,
-						})
-					: {};
-				const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
-				const plainTextInspection = executionPlan.plainTextInspection && processSucceeded;
-				const parseSucceeded = plainTextInspection || parseError === undefined;
-				const envelopeSuccess = plainTextInspection ? true : presentationEnvelope?.success !== false;
-				const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
-				const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
 
-				if (succeeded && !navigationSummary && shouldCaptureNavigationSummary(executionPlan.commandInfo.command, presentationEnvelope?.data)) {
-					navigationSummary = await collectNavigationSummary({
-						cwd: ctx.cwd,
-						sessionName: executionPlan.sessionName,
-						signal,
-					});
-				}
-				if (navigationSummary && presentationEnvelope) {
-					presentationEnvelope = {
-						...presentationEnvelope,
-						data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary),
+				const processResult = await runAgentBrowserProcess({
+					args: processArgs,
+					cwd: ctx.cwd,
+					env: executionPlan.managedSessionName ? { AGENT_BROWSER_IDLE_TIMEOUT_MS: implicitSessionIdleTimeoutMs } : undefined,
+					signal,
+					stdin: processStdin,
+				});
+
+				if (processResult.spawnError?.message.includes("ENOENT")) {
+					const errorText = buildMissingBinaryMessage();
+					return {
+						content: [{ type: "text", text: errorText }],
+						details: {
+							args: redactedArgs,
+							compatibilityWorkaround,
+							effectiveArgs: redactedProcessArgs,
+							sessionMode,
+							sessionTabCorrection,
+							spawnError: processResult.spawnError.message,
+						},
+						isError: true,
 					};
 				}
 
-				let openResultTabCorrection: OpenResultTabCorrection | undefined;
-				if (
-					succeeded &&
-					executionPlan.sessionName &&
-					hasLaunchScopedTabCorrectionFlag(params.args) &&
-					(executionPlan.commandInfo.command === "goto" ||
-						executionPlan.commandInfo.command === "navigate" ||
-						executionPlan.commandInfo.command === "open")
-				) {
-					const targetTitle = extractStringResultField(presentationEnvelope?.data, "title");
-					const targetUrl = extractStringResultField(presentationEnvelope?.data, "url");
-					const plannedTabCorrection = await collectOpenResultTabCorrection({
-						cwd: ctx.cwd,
-						sessionName: executionPlan.sessionName,
-						signal,
-						targetTitle,
-						targetUrl,
+				try {
+					const persistentArtifactStore = getPersistentSessionArtifactStore(ctx);
+					const parsed = await parseAgentBrowserEnvelope({
+						stdout: processResult.stdout,
+						stdoutPath: processResult.stdoutSpillPath,
 					});
-					if (plannedTabCorrection) {
-						openResultTabCorrection = await applyOpenResultTabCorrection({
-							correction: plannedTabCorrection,
+					let parseError = parsed.parseError;
+					let presentationEnvelope = parsed.envelope;
+					let navigationSummary: NavigationSummary | undefined;
+					if (pinnedBatchUnwrapMode) {
+						const pinnedBatchResult = unwrapPinnedSessionBatchEnvelope({
+							envelope: parsed.envelope,
+							includeNavigationSummary: includePinnedNavigationSummary,
+							mode: pinnedBatchUnwrapMode,
+						});
+						parseError = pinnedBatchResult.parseError ?? parseError;
+						presentationEnvelope = pinnedBatchResult.envelope ?? presentationEnvelope;
+						navigationSummary = pinnedBatchResult.navigationSummary;
+					}
+					const parseFailureOutput = parseError
+						? await preserveParseFailureOutput({
+								persistentArtifactStore,
+								stdoutSpillPath: processResult.stdoutSpillPath,
+							})
+						: {};
+					const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
+					const plainTextInspection = executionPlan.plainTextInspection && processSucceeded;
+					const parseSucceeded = plainTextInspection || parseError === undefined;
+					const envelopeSuccess = plainTextInspection ? true : presentationEnvelope?.success !== false;
+					const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
+					const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
+
+					if (succeeded && !navigationSummary && shouldCaptureNavigationSummary(executionPlan.commandInfo.command, presentationEnvelope?.data)) {
+						navigationSummary = await collectNavigationSummary({
 							cwd: ctx.cwd,
 							sessionName: executionPlan.sessionName,
 							signal,
 						});
 					}
-				}
+					if (navigationSummary && presentationEnvelope) {
+						presentationEnvelope = {
+							...presentationEnvelope,
+							data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary),
+						};
+					}
 
-				const observedSessionTabTarget =
-					normalizeSessionTabTarget(navigationSummary) ??
-					extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) ??
-					extractSessionTabTargetFromData(presentationEnvelope?.data);
-				const currentSessionTabTarget = deriveSessionTabTarget({
-					command: executionPlan.commandInfo.command,
-					data: presentationEnvelope?.data,
-					navigationSummary,
-					previousTarget: priorSessionTabTarget,
-				});
-				if (
-					succeeded &&
-					priorSessionTabTarget &&
-					!sessionTabCorrection &&
-					observedSessionTabTarget &&
-					shouldCorrectSessionTabAfterCommand({
-						command: executionPlan.commandInfo.command,
-						sessionName: executionPlan.sessionName,
-					})
-				) {
-					const postCommandTabCorrection = await collectSessionTabSelection({
-						cwd: ctx.cwd,
-						sessionName: executionPlan.sessionName,
-						signal,
-						target: observedSessionTabTarget,
-					});
-					if (postCommandTabCorrection) {
-						const appliedPostCommandCorrection = await applyOpenResultTabCorrection({
-							correction: postCommandTabCorrection,
+					let openResultTabCorrection: OpenResultTabCorrection | undefined;
+					if (
+						succeeded &&
+						executionPlan.sessionName &&
+						hasLaunchScopedTabCorrectionFlag(params.args) &&
+						(executionPlan.commandInfo.command === "goto" ||
+							executionPlan.commandInfo.command === "navigate" ||
+							executionPlan.commandInfo.command === "open")
+					) {
+						const targetTitle = extractStringResultField(presentationEnvelope?.data, "title");
+						const targetUrl = extractStringResultField(presentationEnvelope?.data, "url");
+						const plannedTabCorrection = await collectOpenResultTabCorrection({
 							cwd: ctx.cwd,
 							sessionName: executionPlan.sessionName,
 							signal,
+							targetTitle,
+							targetUrl,
 						});
-						if (appliedPostCommandCorrection && !sessionTabCorrection) {
-							sessionTabCorrection = appliedPostCommandCorrection;
+						if (plannedTabCorrection) {
+							openResultTabCorrection = await applyOpenResultTabCorrection({
+								correction: plannedTabCorrection,
+								cwd: ctx.cwd,
+								sessionName: executionPlan.sessionName,
+								signal,
+							});
 						}
 					}
-				}
-				if (executionPlan.sessionName) {
-					if (executionPlan.commandInfo.command === "close" && succeeded) {
-						sessionTabTargets.delete(executionPlan.sessionName);
-					} else if (currentSessionTabTarget) {
-						sessionTabTargets.set(executionPlan.sessionName, currentSessionTabTarget);
+
+					const observedSessionTabTarget =
+						normalizeSessionTabTarget(navigationSummary) ??
+						extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) ??
+						extractSessionTabTargetFromData(presentationEnvelope?.data);
+					const currentSessionTabTarget = deriveSessionTabTarget({
+						command: executionPlan.commandInfo.command,
+						data: presentationEnvelope?.data,
+						navigationSummary,
+						previousTarget: priorSessionTabTarget,
+					});
+					if (
+						succeeded &&
+						priorSessionTabTarget &&
+						!sessionTabCorrection &&
+						observedSessionTabTarget &&
+						shouldCorrectSessionTabAfterCommand({
+							command: executionPlan.commandInfo.command,
+							sessionName: executionPlan.sessionName,
+						})
+					) {
+						const postCommandTabCorrection = await collectSessionTabSelection({
+							cwd: ctx.cwd,
+							sessionName: executionPlan.sessionName,
+							signal,
+							target: observedSessionTabTarget,
+						});
+						if (postCommandTabCorrection) {
+							const appliedPostCommandCorrection = await applyOpenResultTabCorrection({
+								correction: postCommandTabCorrection,
+								cwd: ctx.cwd,
+								sessionName: executionPlan.sessionName,
+								signal,
+							});
+							if (appliedPostCommandCorrection && !sessionTabCorrection) {
+								sessionTabCorrection = appliedPostCommandCorrection;
+							}
+						}
+					}
+					if (executionPlan.sessionName) {
+						if (executionPlan.commandInfo.command === "close" && succeeded) {
+							sessionTabTargets.delete(executionPlan.sessionName);
+						} else if (currentSessionTabTarget) {
+							sessionTabTargets.set(executionPlan.sessionName, currentSessionTabTarget);
+						}
+					}
+
+					const priorManagedSessionCwd = managedSessionCwd;
+					const managedSessionState = resolveManagedSessionState({
+						command: executionPlan.commandInfo.command,
+						managedSessionName: executionPlan.managedSessionName,
+						priorActive: managedSessionActive,
+						priorSessionName: managedSessionName,
+						succeeded,
+					});
+					const replacedManagedSessionName = managedSessionState.replacedSessionName;
+					managedSessionActive = managedSessionState.active;
+					managedSessionName = managedSessionState.sessionName;
+					if (executionPlan.managedSessionName && succeeded) {
+						managedSessionCwd = ctx.cwd;
+					}
+					if (replacedManagedSessionName) {
+						sessionTabTargets.delete(replacedManagedSessionName);
+						await closeManagedSession({
+							cwd: priorManagedSessionCwd,
+							sessionName: replacedManagedSessionName,
+							timeoutMs: implicitSessionCloseTimeoutMs,
+						});
+					}
+
+					const errorText = getAgentBrowserErrorText({
+						aborted: processResult.aborted,
+						command: executionPlan.commandInfo.command,
+						effectiveArgs: redactedProcessArgs,
+						envelope: presentationEnvelope,
+						exitCode: processResult.exitCode,
+						parseError,
+						plainTextInspection,
+						spawnError: processResult.spawnError,
+						stderr: processResult.stderr,
+						wrapperRecoveryHint: buildWrapperRecoveryHint({ pinnedBatchUnwrapMode, sessionTabCorrection }),
+					});
+
+					const presentation = plainTextInspection
+						? {
+							batchFailure: undefined,
+							batchSteps: undefined,
+							content: [{ type: "text" as const, text: inspectionText ?? "" }],
+							data: undefined,
+							fullOutputPath: undefined,
+							fullOutputPaths: undefined,
+							imagePath: undefined,
+							imagePaths: undefined,
+							summary: `${redactedArgs.join(" ")} completed`,
+						  }
+						: await buildToolPresentation({
+								commandInfo: executionPlan.commandInfo,
+								cwd: ctx.cwd,
+								envelope: presentationEnvelope,
+								errorText,
+								persistentArtifactStore,
+						  });
+					if (parseFailureOutput.fullOutputPath || parseFailureOutput.fullOutputUnavailable) {
+						const existingText = presentation.content[0]?.type === "text" ? presentation.content[0].text : "";
+						const notice = parseFailureOutput.fullOutputPath
+							? `Full output path: ${parseFailureOutput.fullOutputPath}`
+							: `Full raw output unavailable: ${parseFailureOutput.fullOutputUnavailable}`;
+						presentation.content[0] = {
+							type: "text",
+							text: existingText.length > 0 ? `${existingText}\n\n${notice}` : notice,
+						};
+					}
+					const redactedContent = presentation.content.map((item) =>
+						item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,
+					);
+
+					return {
+						content: redactedContent,
+						details: {
+							args: redactedArgs,
+							batchFailure: redactSensitiveValue(presentation.batchFailure),
+							batchSteps: redactSensitiveValue(presentation.batchSteps),
+							command: executionPlan.commandInfo.command,
+							compatibilityWorkaround,
+							subcommand: executionPlan.commandInfo.subcommand,
+							data: redactSensitiveValue(presentation.data),
+							error: plainTextInspection ? undefined : redactSensitiveValue(presentationEnvelope?.error),
+							inspection: plainTextInspection || undefined,
+							navigationSummary: redactSensitiveValue(navigationSummary),
+							openResultTabCorrection: redactSensitiveValue(openResultTabCorrection),
+							effectiveArgs: redactedProcessArgs,
+							exitCode: processResult.exitCode,
+							fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
+							fullOutputPaths: presentation.fullOutputPaths,
+							fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
+							imagePath: presentation.imagePath,
+							imagePaths: presentation.imagePaths,
+							parseError: plainTextInspection ? undefined : parseError,
+							sessionMode,
+							sessionTabCorrection: redactSensitiveValue(sessionTabCorrection),
+							sessionTabTarget: redactSensitiveValue(currentSessionTabTarget),
+							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+							sessionRecoveryHint: redactedRecoveryHint,
+							startupScopedFlags: executionPlan.startupScopedFlags,
+							stderr: processResult.stderr ? redactSensitiveText(processResult.stderr) : undefined,
+							stdout: plainTextInspection
+								? redactSensitiveText(inspectionText ?? "")
+								: parseSucceeded
+									? undefined
+									: redactSensitiveText(processResult.stdout),
+							summary: redactSensitiveText(presentation.summary),
+						},
+						isError: !succeeded,
+					};
+				} finally {
+					if (processResult.stdoutSpillPath) {
+						await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
 					}
 				}
-
-				const priorManagedSessionCwd = managedSessionCwd;
-				const managedSessionState = resolveManagedSessionState({
-					command: executionPlan.commandInfo.command,
-					managedSessionName: executionPlan.managedSessionName,
-					priorActive: managedSessionActive,
-					priorSessionName: managedSessionName,
-					succeeded,
-				});
-				const replacedManagedSessionName = managedSessionState.replacedSessionName;
-				managedSessionActive = managedSessionState.active;
-				managedSessionName = managedSessionState.sessionName;
-				if (executionPlan.managedSessionName && succeeded) {
-					managedSessionCwd = ctx.cwd;
-				}
-				if (replacedManagedSessionName) {
-					sessionTabTargets.delete(replacedManagedSessionName);
-					await closeManagedSession({
-						cwd: priorManagedSessionCwd,
-						sessionName: replacedManagedSessionName,
-						timeoutMs: implicitSessionCloseTimeoutMs,
-					});
-				}
-
-				const errorText = getAgentBrowserErrorText({
-					aborted: processResult.aborted,
-					command: executionPlan.commandInfo.command,
-					effectiveArgs: redactedProcessArgs,
-					envelope: presentationEnvelope,
-					exitCode: processResult.exitCode,
-					parseError,
-					plainTextInspection,
-					spawnError: processResult.spawnError,
-					stderr: processResult.stderr,
-					wrapperRecoveryHint: buildWrapperRecoveryHint({ pinnedBatchUnwrapMode, sessionTabCorrection }),
-				});
-
-				const presentation = plainTextInspection
-					? {
-						batchFailure: undefined,
-						batchSteps: undefined,
-						content: [{ type: "text" as const, text: inspectionText ?? "" }],
-						data: undefined,
-						fullOutputPath: undefined,
-						fullOutputPaths: undefined,
-						imagePath: undefined,
-						imagePaths: undefined,
-						summary: `${redactedArgs.join(" ")} completed`,
-					  }
-					: await buildToolPresentation({
-							commandInfo: executionPlan.commandInfo,
-							cwd: ctx.cwd,
-							envelope: presentationEnvelope,
-							errorText,
-							persistentArtifactStore,
-					  });
-				if (parseFailureOutput.fullOutputPath || parseFailureOutput.fullOutputUnavailable) {
-					const existingText = presentation.content[0]?.type === "text" ? presentation.content[0].text : "";
-					const notice = parseFailureOutput.fullOutputPath
-						? `Full output path: ${parseFailureOutput.fullOutputPath}`
-						: `Full raw output unavailable: ${parseFailureOutput.fullOutputUnavailable}`;
-					presentation.content[0] = {
-						type: "text",
-						text: existingText.length > 0 ? `${existingText}\n\n${notice}` : notice,
-					};
-				}
-				const redactedContent = presentation.content.map((item) =>
-					item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,
-				);
-
-				return {
-					content: redactedContent,
-					details: {
-						args: redactedArgs,
-						batchFailure: redactSensitiveValue(presentation.batchFailure),
-						batchSteps: redactSensitiveValue(presentation.batchSteps),
-						command: executionPlan.commandInfo.command,
-						compatibilityWorkaround,
-						subcommand: executionPlan.commandInfo.subcommand,
-						data: redactSensitiveValue(presentation.data),
-						error: plainTextInspection ? undefined : redactSensitiveValue(presentationEnvelope?.error),
-						inspection: plainTextInspection || undefined,
-						navigationSummary: redactSensitiveValue(navigationSummary),
-						openResultTabCorrection: redactSensitiveValue(openResultTabCorrection),
-						effectiveArgs: redactedProcessArgs,
-						exitCode: processResult.exitCode,
-						fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
-						fullOutputPaths: presentation.fullOutputPaths,
-						fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
-						imagePath: presentation.imagePath,
-						imagePaths: presentation.imagePaths,
-						parseError: plainTextInspection ? undefined : parseError,
-						sessionMode,
-						sessionTabCorrection: redactSensitiveValue(sessionTabCorrection),
-						sessionTabTarget: redactSensitiveValue(currentSessionTabTarget),
-						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-						sessionRecoveryHint: redactedRecoveryHint,
-						startupScopedFlags: executionPlan.startupScopedFlags,
-						stderr: processResult.stderr ? redactSensitiveText(processResult.stderr) : undefined,
-						stdout: plainTextInspection
-							? redactSensitiveText(inspectionText ?? "")
-							: parseSucceeded
-								? undefined
-								: redactSensitiveText(processResult.stdout),
-						summary: redactSensitiveText(presentation.summary),
-					},
-					isError: !succeeded,
-				};
-			} finally {
-				if (processResult.stdoutSpillPath) {
-					await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
-				}
-			}
+			});
 		},
 	});
 }

@@ -153,14 +153,23 @@ export async function writeFakeAgentBrowserBinary(tempDir: string, scriptBody: s
 	return fakeAgentBrowserPath;
 }
 
-export async function readInvocationLog(logPath: string): Promise<Array<{ args: string[]; idleTimeout?: string | null; socketDir?: string | null; stdin?: string | null }>> {
+export interface InvocationLogEntry {
+	args: string[];
+	event?: string;
+	idleTimeout?: string | null;
+	sessionName?: string;
+	socketDir?: string | null;
+	stdin?: string | null;
+}
+
+export async function readInvocationLog(logPath: string): Promise<InvocationLogEntry[]> {
 	try {
 		const text = await readFile(logPath, "utf8");
 		return text
 			.split("\n")
 			.map((line) => line.trim())
 			.filter((line) => line.length > 0)
-			.map((line) => JSON.parse(line) as { args: string[]; idleTimeout?: string | null; socketDir?: string | null; stdin?: string | null });
+			.map((line) => JSON.parse(line) as InvocationLogEntry);
 	} catch (error) {
 		const errorWithCode = error as NodeJS.ErrnoException;
 		if (errorWithCode.code === "ENOENT") {
