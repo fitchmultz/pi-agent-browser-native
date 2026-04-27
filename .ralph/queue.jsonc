@@ -1,4 +1,376 @@
 {
   "version": 1,
-  "tasks": []
+  "tasks": [
+    {
+      "id": "RQ-0012",
+      "status": "todo",
+      "title": "Make agent-browser fallback failures actionable",
+      "description": "Principles: Fail fast appropriately, Operational hygiene, Consistency/Integrity.\n\nEvidence:\n- path: extensions/agent-browser/lib/results/envelope.ts:91-113 :: getAgentBrowserErrorText falls back to generic strings when upstream fails without stderr or a usable envelope error.\n- path: test/agent-browser.test.ts:1279-1299 :: current tests explicitly accept the generic fallback path instead of a command-aware message.\n- workflow: npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; console.log(getAgentBrowserErrorText({ aborted:false, envelope:{ success:false, data:{ title:\"Wrong page\" } }, exitCode:1, plainTextInspection:false, stderr:\"\" })); console.log(getAgentBrowserErrorText({ aborted:false, envelope:{ success:true, data:null }, exitCode:1, plainTextInspection:false, stderr:\"\" }));' :: expected a command-aware failure with recovery context :: actual output was only \"agent-browser reported failure (exit code 1)\" and \"agent-browser exited with code 1.\".\n\nWhy it matters: when a native tool call fails after wrapper-added session pinning, tab correction, or plain command execution, the operator cannot tell what kind of command failed or what to try next. That turns real failures into guesswork during interactive use.\n\nMinimal proposed fix: thread command or effective-args context into fallback error derivation and include a concise recovery hint for wrapper-managed cases while preserving the current precedence of explicit envelope error text, stderr, and parse errors.\n\nAcceptance criteria: add focused tests for fallback failures from at least one direct command path and one wrapper-assisted path; confirm the returned text names the failed command or effective invocation; verify `npm run verify` stays green.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "errors",
+        "operability",
+        "results"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/envelope.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; ...'",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/results/envelope.ts:91-113 :: fallback failures collapse to generic exit-code text when no stderr or usable envelope error exists",
+        "path: test/agent-browser.test.ts:1279-1299 :: tests currently accept the generic fallback branch instead of protecting a more actionable error contract",
+        "workflow: npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; ...' :: expected command-aware failure text :: actual output was only generic exit-code messages"
+      ],
+      "plan": [
+        "Update fallback error derivation so non-parse, non-stderr failures include the failed command or effective invocation and any relevant wrapper context.",
+        "Add or tighten tests for failed envelope and non-zero-exit fallback cases so the operator-facing copy is explicit and stable.",
+        "Verify by running `npm run verify` and confirming the new fallback-message assertions pass."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:21:16Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0019",
+      "status": "todo",
+      "title": "Refresh the local command reference to the installed agent-browser surface",
+      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: docs/COMMAND_REFERENCE.md:11-13 :: the file claims to be the repo-readable equivalent of the upstream command surface for blocked direct-binary sessions.\n- path: docs/REQUIREMENTS.md:67-68 :: requirements say the local command reference must stay in sync with the effective agent_browser surface.\n- workflow: agent-browser --version :: local upstream version is `0.26.0`.\n- workflow: agent-browser --help :: current help includes major surface area not represented in docs/COMMAND_REFERENCE.md, including `skills`, `keyboard`, `scroll`, `scrollintoview`, `is`, `find`, `mouse`, `set`, `network`, `storage`, `diff`, `trace`, `record`, `stream`, `auth`, `confirm`, `deny`, `chat`, `dashboard`, `doctor`, `profiles`, `snapshot --urls`, and `wait --download`.\n- workflow: agent-browser tab --help; agent-browser snapshot --help; agent-browser wait --help :: subcommand help confirms current options that the local reference does not enumerate.\n\nWhy it matters: this repo explicitly positions the local command reference as the fallback for blocked binary help. Right now it materially understates the command surface available to the extension's target upstream version on this machine.\n\nMinimal proposed fix: re-baseline docs/COMMAND_REFERENCE.md against the currently installed `agent-browser` help output, clearly separate the core recommended workflow from the full supported surface, and add a lightweight verification step that catches future upstream drift.\n\nAcceptance criteria: the command reference reflects the installed upstream 0.26.0 command and option surface relevant to this project; recommended workflows stay concise while a full or linked reference covers the rest; add a drift check against `agent-browser --help` or a maintained snapshot; verify `npm run verify`, `npm run verify:package`, and `npm run verify:package:pi` remain green.",
+      "priority": "high",
+      "tags": [
+        "maintenance",
+        "docs",
+        "agent-browser",
+        "upstream-sync"
+      ],
+      "scope": [
+        "docs/COMMAND_REFERENCE.md",
+        "docs/REQUIREMENTS.md",
+        "agent-browser --version",
+        "agent-browser --help",
+        "agent-browser tab --help",
+        "agent-browser snapshot --help",
+        "agent-browser wait --help",
+        "npm run verify",
+        "npm run verify:package",
+        "npm run verify:package:pi"
+      ],
+      "evidence": [
+        "path: docs/COMMAND_REFERENCE.md:11-13 :: command reference claims to substitute for blocked direct binary help",
+        "path: docs/REQUIREMENTS.md:67-68 :: requirements say the local command reference must stay in sync with the effective tool surface",
+        "workflow: agent-browser --version :: actual installed upstream version is 0.26.0",
+        "workflow: agent-browser --help :: current help exposes major command groups and options not represented in docs/COMMAND_REFERENCE.md"
+      ],
+      "plan": [
+        "Audit the currently installed agent-browser help output and decide which parts belong in the concise recommended workflow versus an expanded supported-surface section.",
+        "Update docs/COMMAND_REFERENCE.md so it matches the installed upstream surface this extension targets, including omitted command families and important subcommand options.",
+        "Verify by comparing the refreshed doc against `agent-browser --help`, `agent-browser tab --help`, `agent-browser snapshot --help`, and `agent-browser wait --help`, then run `npm run verify`, `npm run verify:package`, and `npm run verify:package:pi`."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:23:43Z",
+      "updated_at": "2026-04-27T02:23:43Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0013",
+      "status": "todo",
+      "title": "Unify the agent_browser playbook and fix current doc drift",
+      "description": "Principles: DRY knowledge, Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: README.md:213-228 :: README describes inspection support using shell-like `agent_browser --help` wording and documents post-command tab restoration.\n- path: docs/COMMAND_REFERENCE.md:226-256 :: the command reference documents stateless `--help` and `--version` but omits the post-command tab-restoration behavior that the wrapper currently implements.\n- path: docs/REQUIREMENTS.md:99-104 :: requirements require the local command reference and prompt guidance to stay in sync with wrapper behavior, including post-command tab restoration.\n- path: docs/TOOL_CONTRACT.md:28-29,184-193 :: the tool contract repeats the same playbook rules and explicitly includes post-command tab restoration.\n- path: extensions/agent-browser/index.ts:70-99 :: prompt guidance hard-codes another copy of the same workflow rules inside the extension.\n\nWhy it matters: the repo currently has several hand-maintained copies of the same agent-facing workflow. They are already drifting, which makes the local command reference less reliable for the exact browser-recovery edge cases the wrapper is supposed to clarify.\n\nMinimal proposed fix: move the shared playbook text to one canonical source or generated fragment, update README and COMMAND_REFERENCE to use actual tool-call shapes, and restore any omitted behavior notes that are part of the effective wrapper surface.\n\nAcceptance criteria: README, COMMAND_REFERENCE, and tool guidance describe the same inspection path and recovery behaviors; the command reference includes the currently implemented post-command tab restoration behavior; add a lightweight regression check or generation step that prevents future drift; verify `npm run verify` still passes.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "docs",
+        "dry",
+        "agent-browser"
+      ],
+      "scope": [
+        "README.md",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "docs/REQUIREMENTS.md",
+        "extensions/agent-browser/index.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: README.md:213-228 :: README uses shell-like inspection wording and documents post-command tab restoration",
+        "path: docs/COMMAND_REFERENCE.md:226-256 :: command reference documents stateless inspection but omits the implemented post-command tab-restoration behavior",
+        "path: docs/REQUIREMENTS.md:99-104 :: requirements say the command reference and prompt guidance must stay in sync with wrapper behavior",
+        "path: extensions/agent-browser/index.ts:70-99 :: another hand-maintained copy of the same browser workflow lives in prompt-guidance arrays"
+      ],
+      "plan": [
+        "Pick one canonical source for agent-facing workflow guidance and refactor README, COMMAND_REFERENCE, and extension prompt guidance to consume it or stay mechanically aligned.",
+        "Replace shell-like inspection wording with real tool-call examples and add the missing post-command recovery behavior to the command reference.",
+        "Verify by reviewing the rendered docs diff and running `npm run verify` with any new drift guard green."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:21:16Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0020",
+      "status": "todo",
+      "title": "Resolve the mixed -e versus /reload local-validation workflow",
+      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: AGENTS.md:85-96 :: repo guidance prescribes local checkout validation with `pi --no-extensions -e .` and still requires `/reload` or full restart validation after extension changes.\n- path: README.md:173-200,209-223 :: README tells maintainers to keep the checkout path enabled in Pi settings, launch with `pi --no-extensions -e .`, and validate `/reload` or restart plus `/resume`.\n- path: docs/REQUIREMENTS.md:73-79 :: requirements also prescribe `/reload` validation in the local workflow.\n- external: /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md :: accessed 2026-04-27 :: Pi's own extension docs say `pi -e ./path.ts` is for quick tests, while `/reload` applies to auto-discovered extension locations.\n- workflow: pi --help :: `--no-extensions` disables extension discovery while explicit `-e` paths still work, confirming the repo is mixing two loading models in one workflow description.\n\nWhy it matters: maintainers are being told to validate hot reload while also being told to launch in a mode that bypasses extension discovery. That makes it unclear which extension path `/reload` is actually exercising and can create false confidence about local checkout validation.\n\nMinimal proposed fix: choose one canonical local-validation workflow for hot-reload testing versus quick isolated `-e` testing, document the tradeoff explicitly, and remove contradictory instructions about Pi settings and `/reload` from the non-canonical path.\n\nAcceptance criteria: README, AGENTS, and requirements describe one coherent local-validation workflow for `/reload` and one coherent quick-test workflow for `-e`; the docs explain when Pi settings should or should not matter; verify the updated instructions against Pi's extension docs and `pi --help`.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "docs",
+        "workflow",
+        "pi"
+      ],
+      "scope": [
+        "AGENTS.md",
+        "README.md",
+        "docs/REQUIREMENTS.md",
+        "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md",
+        "pi --help"
+      ],
+      "evidence": [
+        "path: AGENTS.md:85-96 :: local validation instructions combine `pi --no-extensions -e .` with `/reload` expectations",
+        "path: README.md:173-200,209-223 :: README mixes Pi settings guidance, isolated -e loading, and `/reload` expectations in the same workflow",
+        "path: docs/REQUIREMENTS.md:73-79 :: requirements also prescribe `/reload` in the local validation path",
+        "external: /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md :: accessed 2026-04-27 :: Pi docs reserve `/reload` for auto-discovered extension locations, not ad hoc `-e` quick tests",
+        "workflow: pi --help :: `--no-extensions` disables extension discovery while explicit `-e` paths still work"
+      ],
+      "plan": [
+        "Decide which local validation path is canonical for hot reload and which is canonical for isolated quick tests.",
+        "Update AGENTS, README, and requirements so each path has consistent setup steps, Pi settings expectations, and reload or restart guidance.",
+        "Verify by checking the updated instructions against Pi's extension docs and `pi --help`, then spot-reading the repo docs for contradictions."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:23:43Z",
+      "updated_at": "2026-04-27T02:23:43Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0014",
+      "status": "todo",
+      "title": "Tighten malformed-envelope tests around operator-facing copy",
+      "description": "Principles: Fail fast appropriately, Operational hygiene, Consistency/Integrity.\n\nEvidence:\n- path: test/agent-browser.test.ts:1033-1053 :: malformed-envelope assertions accept broad alternation regexes such as `/invalid JSON envelope|success|protocol/i`.\n- path: test/agent-browser.test.ts:1234-1245 :: parse-error assertions for missing or non-boolean `success` also use loose alternation regexes.\n- path: extensions/agent-browser/lib/results/envelope.ts:75-87 :: the implementation now emits specific operator-facing parse errors, but the tests do not pin that copy.\n- workflow: rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts :: found the permissive alternation assertions at lines 1052, 1053, 1238, and 1245.\n\nWhy it matters: this suite is supposed to protect clear failure modes, but these regexes would still pass after a regression to much vaguer or more jargon-heavy copy. That weakens the repo's guardrail around error clarity.\n\nMinimal proposed fix: replace the permissive regexes with explicit expected messages or tighter substrings for each malformed-envelope case, and keep one dedicated test per failure shape.\n\nAcceptance criteria: tests for missing `success` and non-boolean `success` assert the intended copy directly or with narrowly scoped matches; `npm run verify` passes without the broad alternation patterns.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "tests",
+        "errors",
+        "results"
+      ],
+      "scope": [
+        "test/agent-browser.test.ts",
+        "extensions/agent-browser/lib/results/envelope.ts",
+        "rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: test/agent-browser.test.ts:1033-1053 :: malformed-envelope tool-call assertions use broad alternation regexes",
+        "path: test/agent-browser.test.ts:1234-1245 :: parseEnvelope unit tests also use loose alternation regexes for missing or non-boolean success",
+        "workflow: rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts :: found the permissive alternation assertions protecting parse-error copy"
+      ],
+      "plan": [
+        "Replace the broad alternation assertions with explicit expected copy or narrowly scoped matches for each malformed-envelope branch.",
+        "Keep at least one unit test for each parse-error shape and one tool-level propagation test so copy regressions are caught close to the failure site.",
+        "Verify by running `npm run verify` and confirming the stricter assertions pass."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:21:16Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0015",
+      "status": "todo",
+      "title": "Deduplicate shared parsing helpers across runtime, temp, and results",
+      "description": "Principles: DRY knowledge, Localize change, Make bugs hard to write.\n\nEvidence:\n- path: extensions/agent-browser/lib/runtime.ts:189-195 :: runtime defines a local `isRecord` helper.\n- path: extensions/agent-browser/lib/temp.ts:54-68 :: temp defines both `isRecord` and `parsePositiveInteger` again.\n- path: extensions/agent-browser/lib/results/shared.ts:55-78 :: results/shared exports another `isRecord` plus another `parsePositiveInteger`.\n- workflow: rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib :: found duplicate implementations in runtime.ts, temp.ts, and results/shared.ts.\n\nWhy it matters: these helpers sit on boundary parsing for session state, temp-budget env vars, and result rendering. Any future adjustment to what counts as a record or how numeric env values are normalized has to be synchronized manually across multiple modules.\n\nMinimal proposed fix: extract the truly shared helpers to one small common module and import them where needed, while keeping higher-level module boundaries intact.\n\nAcceptance criteria: `isRecord` and `parsePositiveInteger` each have a single canonical implementation; affected modules import that implementation; `npm run verify` and `npm run verify:package` both pass afterward.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "dry",
+        "runtime",
+        "temp",
+        "results"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/runtime.ts",
+        "extensions/agent-browser/lib/temp.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib",
+        "npm run verify",
+        "npm run verify:package"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/runtime.ts:189-195 :: runtime has a local isRecord helper",
+        "path: extensions/agent-browser/lib/temp.ts:54-68 :: temp repeats isRecord and parsePositiveInteger",
+        "path: extensions/agent-browser/lib/results/shared.ts:55-78 :: results/shared repeats isRecord and parsePositiveInteger",
+        "workflow: rg -n \"function isRecord|function parsePositiveInteger\" extensions/agent-browser/lib :: found duplicate implementations across three modules"
+      ],
+      "plan": [
+        "Extract the duplicated low-level helpers into a shared utility module with the narrowest reasonable surface area.",
+        "Update runtime, temp, and results modules to import the canonical helpers and remove the local copies.",
+        "Verify by running `npm run verify` and `npm run verify:package` and confirming all parsing and packaging tests still pass."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:21:16Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0016",
+      "status": "todo",
+      "title": "Split the mixed-scope agent-browser mega-suite into focused test files",
+      "description": "Principles: Localize change, Operational hygiene.\n\nEvidence:\n- path: test/agent-browser.test.ts:1-249 :: one file owns shared harness setup for runtime, temp, process, results, and extension integration tests.\n- path: test/agent-browser.test.ts:254-3436 :: the same file contains roughly the full repo test surface, from pure helper tests through process and extension lifecycle integration.\n- workflow: wc -l test/agent-browser.test.ts test/verify-package.test.ts :: agent-browser.test.ts is 3483 lines while the only other test file is 152 lines.\n- workflow: rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts :: 34 repeated temp-dir bootstrap sites.\n- workflow: rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts :: 35 repeated env-patching sites.\n- workflow: rg -c \"runExtensionEvent\\(harness.handlers, \\\"session_start\\\"\" test/agent-browser.test.ts :: 17 repeated session-start bootstrap sites.\n\nWhy it matters: failures are harder to localize, fixture reuse is mostly copy-paste, and a small change to one subsystem forces maintainers to navigate a single 3.4k-line test file that mixes unit and higher-level integration concerns.\n\nMinimal proposed fix: split the suite by subject area such as runtime, temp/process, results, and extension integration, and extract common harness/bootstrap helpers into shared test utilities.\n\nAcceptance criteria: the large mixed-scope file is removed or substantially reduced in favor of focused test files and shared fixtures; `npm run verify` still passes; maintainers can run subject-specific test files without scanning a monolithic suite.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "tests",
+        "structure",
+        "agent-browser"
+      ],
+      "scope": [
+        "test/agent-browser.test.ts",
+        "test/verify-package.test.ts",
+        "wc -l test/agent-browser.test.ts test/verify-package.test.ts",
+        "rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts",
+        "rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: test/agent-browser.test.ts:1-249 :: one file hosts shared harness code for multiple subsystems",
+        "workflow: wc -l test/agent-browser.test.ts test/verify-package.test.ts :: mixed-scope agent-browser.test.ts is 3483 lines while the second suite is only 152 lines",
+        "workflow: rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts :: found 34 repeated temp bootstrap sites",
+        "workflow: rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts :: found 35 repeated env bootstrap sites"
+      ],
+      "plan": [
+        "Extract common harness and bootstrap helpers into shared test utilities.",
+        "Split the current mega-suite into focused runtime, temp/process, results, and extension integration test files with clearer ownership.",
+        "Verify by running `npm run verify` and confirming the split suites remain green."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:21:16Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0017",
+      "status": "todo",
+      "title": "Collapse publish-contract file lists to one canonical source",
+      "description": "Principles: DRY knowledge, Consistency/Integrity.\n\nEvidence:\n- path: package.json:29-39 :: package publish contents are declared in the npm `files` list.\n- path: scripts/verify-package.mjs:23-55 :: the verifier carries a second manual source of truth with required and forbidden packed files.\n- path: test/verify-package.test.ts:123-143 :: the test adds a third copy by manually enumerating a subset of required packed paths.\n- workflow: npm run verify:package :: package verification currently passes, which means the drift risk is maintenance-only rather than a present failure.\n\nWhy it matters: changing published docs or extension files currently means updating multiple independent inventories. That increases the odds of false failures, silent omissions, or reviewer confusion about which list is canonical.\n\nMinimal proposed fix: introduce one canonical publish-contract data source that both the verifier and tests consume, and keep package.json as the declarative npm surface instead of re-encoding overlapping rules by hand.\n\nAcceptance criteria: verifier and tests read publish-contract data from one shared source; the manual subset list in test/verify-package.test.ts is removed or generated; `npm run verify:package` and `npm run verify` both pass.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "dry",
+        "packaging",
+        "tests"
+      ],
+      "scope": [
+        "package.json",
+        "scripts/verify-package.mjs",
+        "test/verify-package.test.ts",
+        "npm run verify:package",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: package.json:29-39 :: npm publish contents are declared in the files list",
+        "path: scripts/verify-package.mjs:23-55 :: verifier repeats required and forbidden packed-file inventories by hand",
+        "path: test/verify-package.test.ts:123-143 :: test repeats a manual subset of required packed paths",
+        "workflow: npm run verify:package :: current pass confirms the issue is duplicated maintenance surface rather than a broken gate"
+      ],
+      "plan": [
+        "Define one canonical publish-contract manifest or module that captures required and forbidden package rules.",
+        "Refactor verify-package and its tests to consume that canonical data instead of repeating overlapping path lists.",
+        "Verify by running `npm run verify:package` and `npm run verify` and confirming the package gate still passes."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:21:16Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    },
+    {
+      "id": "RQ-0018",
+      "status": "todo",
+      "title": "Correct the stale runtime header about injected arguments",
+      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: extensions/agent-browser/lib/runtime.ts:1-6 :: the top-of-file invariant says the wrapper only injects `--json` plus an extension-managed `--session` when appropriate.\n- path: extensions/agent-browser/lib/runtime.ts:787-790 :: buildExecutionPlan also injects `--user-agent` when the ChatGPT headless compatibility workaround applies.\n- path: test/agent-browser.test.ts:670-711 :: the test suite explicitly verifies that `--user-agent` injection behavior.\n- workflow: npm run verify :: the compatibility-workaround tests pass, confirming the comment is stale rather than the code being wrong.\n\nWhy it matters: this header is supposed to be the local contract for reviewers reading the runtime module. Right now it understates real behavior that materially changes launched CLI args.\n\nMinimal proposed fix: update the purpose header and nearby invariant text so it reflects the current compatibility-workaround injection behavior without overstating the wrapper's scope.\n\nAcceptance criteria: the runtime header accurately describes current injected-argument behavior, including the narrow compatibility case; no contradictory comments remain nearby; `npm run verify` still passes.",
+      "priority": "low",
+      "tags": [
+        "maintenance",
+        "comments",
+        "runtime"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/runtime.ts",
+        "test/agent-browser.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/runtime.ts:1-6 :: header says only --json and extension-managed --session are injected",
+        "path: extensions/agent-browser/lib/runtime.ts:787-790 :: buildExecutionPlan also injects --user-agent for the compatibility workaround",
+        "path: test/agent-browser.test.ts:670-711 :: tests explicitly cover the user-agent injection path"
+      ],
+      "plan": [
+        "Update the runtime header comment and invariant text to describe the current narrow argument-injection behavior accurately.",
+        "Scan nearby comments for any other wording that still implies the older simpler injection model.",
+        "Verify by running `npm run verify` and confirming the comment update matches tested behavior."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:21:16Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
+    }
+  ]
 }
