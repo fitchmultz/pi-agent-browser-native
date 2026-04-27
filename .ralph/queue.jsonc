@@ -2,45 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0021",
-      "status": "todo",
-      "title": "Handle cancelled stdin calls without crashing on EPIPE",
-      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, H) Operational hygiene.\n\nWhy it matters: cancellation is supposed to be the safe stop-work path, but any already-aborted `eval --stdin` or `batch` invocation can crash the extension host before the wrapper returns a normal aborted result. That turns routine cancellation into a reliability failure and can drop the surrounding Pi session state.\n\nMinimal proposed fix: make stdin writes abort-safe by short-circuiting before writing to `child.stdin` when the signal is already aborted, and handle `child.stdin` write/end `EPIPE` as a normal aborted-or-exited subprocess outcome instead of an unhandled process error.\n\nAcceptance criteria: add focused coverage for already-aborted and mid-write-aborted stdin calls; confirm they return an aborted/error tool result without unhandled process exceptions; verify `npm run verify` stays green.",
-      "priority": "high",
-      "tags": [
-        "maintenance",
-        "cancellation",
-        "correctness",
-        "process"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/process.ts",
-        "test/agent-browser.process.test.ts",
-        "node --import tsx --input-type=module"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/lib/process.ts:242-247 :: `abortChild()` kills the subprocess but does not guard later stdin writes.",
-        "path: extensions/agent-browser/lib/process.ts:264-275 :: an already-aborted signal still falls through to `child.stdin.write(stdin)` and `child.stdin.end()` with no stdin error handler.",
-        "repro: `node --import tsx --input-type=module <<'EOF' ... runAgentBrowserProcess({ args:['eval','--stdin'], stdin:'console.log(1)', signal:alreadyAbortedSignal }) ... EOF` :: expected an aborted `ProcessRunResult` or normal tool error :: actual process exit 1 with `Unhandled 'error' event` and `Error: write EPIPE` from `extensions/agent-browser/lib/process.ts:273`.",
-        "workflow: npm run verify :: observed pass; the canonical gate does not currently exercise cancelled stdin writes."
-      ],
-      "plan": [
-        "Guard the stdin path so aborted signals skip `child.stdin.write()` and treat broken-pipe writes as a settled subprocess outcome.",
-        "Add targeted process-layer tests for already-aborted stdin and cancellation during stdin-bearing commands.",
-        "Verify by running `npm run verify` and rerunning the aborted-stdin repro to confirm it returns a normal aborted/error result without crashing the process."
-      ],
-      "notes": [],
-      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
-      "created_at": "2026-04-27T03:06:24Z",
-      "updated_at": "2026-04-27T03:06:24Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0022",
       "status": "todo",
       "title": "Serialize managed-session rotation across overlapping tool calls",
