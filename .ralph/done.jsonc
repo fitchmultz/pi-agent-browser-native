@@ -1374,6 +1374,54 @@
       "custom_fields": {
         "scan_agent": "scan-innovation"
       }
+    },
+    {
+      "id": "RQ-0033",
+      "status": "done",
+      "title": "Render file artifacts beyond screenshots",
+      "description": "Opportunity type: feature gap. The extension already inlines screenshots and summarizes direct download and pdf outputs, but other file-producing upstream commands such as `trace`, `profiler`, `record`, and network HAR capture remain generic pass-throughs. Why it matters: artifact-heavy debugging and QA workflows are one of the clearest advantages of a native browser tool, and generic file output makes those workflows harder to inspect, compare, and hand off. Proposed approach: after confirming real upstream output shapes, add a unified metadata-first artifact renderer that recognizes supported file-producing commands, returns saved-path plus file-type metadata, and provides lightweight previews only where safe without bloating context. Risks and mitigations: treat artifact rendering as metadata-first so large binaries stay out of model context unless there is a safe inline preview, and keep the shared artifact shape reusable by async downloads and future inventory work. Acceptance criteria: representative file-producing commands return readable artifact summaries with structured paths and types, batch flows preserve per-step artifact metadata, network HAR output is included if upstream exposes a path-bearing shape, and tests cover at least trace, profiler, record, and screenshot behavior together.",
+      "priority": "medium",
+      "tags": [
+        "innovation",
+        "feature-gap",
+        "artifacts",
+        "qa"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "test/agent-browser.presentation.test.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md"
+      ],
+      "evidence": [
+        "path: docs/COMMAND_REFERENCE.md :: Diff, debug, and streaming :: `trace`, `profiler`, `record`, and related file-producing commands are part of the documented upstream surface",
+        "path: extensions/agent-browser/lib/results/presentation.ts :: extractImagePath :: only screenshot outputs are currently trusted for inline attachment behavior",
+        "path: test/agent-browser.presentation.test.ts :: coverage :: artifact-focused tests cover screenshots, downloads, and pdfs but not trace, profiler, record, or HAR-style outputs"
+      ],
+      "plan": [
+        "Define a shared artifact metadata shape that works for screenshot, pdf, download, wait-based download, trace, profiler, record, network HAR, and future file-producing commands.",
+        "Implement artifact-family rendering that preserves saved paths, file type hints, and safe inline previews where appropriate.",
+        "Extend batch rendering so file artifacts remain inspectable per step.",
+        "Add tests for representative non-screenshot artifact commands and update docs to describe the new behavior.",
+        "Verify by running presentation tests and checking that representative artifact commands return concise summaries with stable structured paths."
+      ],
+      "notes": [],
+      "request": "scan: none",
+      "created_at": "2026-04-27T08:29:39Z",
+      "updated_at": "2026-04-27T15:11:16.250152000Z",
+      "completed_at": "2026-04-27T15:11:16.250152000Z",
+      "depends_on": [
+        "RQ-0030"
+      ],
+      "blocks": [],
+      "relates_to": [
+        "RQ-0032",
+        "RQ-0035"
+      ],
+      "custom_fields": {
+        "scan_agent": "scan-innovation"
+      }
     }
   ]
 }
