@@ -798,6 +798,49 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0016",
+      "status": "done",
+      "title": "Split the mixed-scope agent-browser mega-suite into focused test files",
+      "description": "Principles: Localize change, Operational hygiene.\n\nEvidence:\n- path: test/agent-browser.test.ts:1-249 :: one file owns shared harness setup for runtime, temp, process, results, and extension integration tests.\n- path: test/agent-browser.test.ts:254-3436 :: the same file contains roughly the full repo test surface, from pure helper tests through process and extension lifecycle integration.\n- workflow: wc -l test/agent-browser.test.ts test/verify-package.test.ts :: agent-browser.test.ts is 3483 lines while the only other test file is 152 lines.\n- workflow: rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts :: 34 repeated temp-dir bootstrap sites.\n- workflow: rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts :: 35 repeated env-patching sites.\n- workflow: rg -c \"runExtensionEvent\\(harness.handlers, \\\"session_start\\\"\" test/agent-browser.test.ts :: 17 repeated session-start bootstrap sites.\n\nWhy it matters: failures are harder to localize, fixture reuse is mostly copy-paste, and a small change to one subsystem forces maintainers to navigate a single 3.4k-line test file that mixes unit and higher-level integration concerns.\n\nMinimal proposed fix: split the suite by subject area such as runtime, temp/process, results, and extension integration, and extract common harness/bootstrap helpers into shared test utilities.\n\nAcceptance criteria: the large mixed-scope file is removed or substantially reduced in favor of focused test files and shared fixtures; `npm run verify` still passes; maintainers can run subject-specific test files without scanning a monolithic suite.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "tests",
+        "structure",
+        "agent-browser"
+      ],
+      "scope": [
+        "test/agent-browser.test.ts",
+        "test/verify-package.test.ts",
+        "wc -l test/agent-browser.test.ts test/verify-package.test.ts",
+        "rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts",
+        "rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: test/agent-browser.test.ts:1-249 :: one file hosts shared harness code for multiple subsystems",
+        "workflow: wc -l test/agent-browser.test.ts test/verify-package.test.ts :: mixed-scope agent-browser.test.ts is 3483 lines while the second suite is only 152 lines",
+        "workflow: rg -c \"const tempDir = await mkdtemp\\(\" test/agent-browser.test.ts :: found 34 repeated temp bootstrap sites",
+        "workflow: rg -c \"await withPatchedEnv\\(\" test/agent-browser.test.ts :: found 35 repeated env bootstrap sites"
+      ],
+      "plan": [
+        "Extract common harness and bootstrap helpers into shared test utilities.",
+        "Split the current mega-suite into focused runtime, temp/process, results, and extension integration test files with clearer ownership.",
+        "Verify by running `npm run verify` and confirming the split suites remain green."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:47:22.137276000Z",
+      "completed_at": "2026-04-27T02:47:22.137276000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
     }
   ]
 }
