@@ -373,6 +373,27 @@ function isRestorableManagedSessionName(sessionName: string, fallbackSessionName
 	return sessionName === fallbackSessionName || sessionName.startsWith(`${fallbackSessionName}-fresh-`);
 }
 
+function getManagedSessionRestoreRank(options: {
+	fallbackSessionName: string;
+	freshSessionRanks: Map<string, number>;
+	sessionName: string;
+}): number | undefined {
+	const { fallbackSessionName, freshSessionRanks, sessionName } = options;
+	if (sessionName === fallbackSessionName) {
+		return 0;
+	}
+	if (!sessionName.startsWith(`${fallbackSessionName}-fresh-`)) {
+		return undefined;
+	}
+	const existingRank = freshSessionRanks.get(sessionName);
+	if (existingRank !== undefined) {
+		return existingRank;
+	}
+	const nextRank = freshSessionRanks.size + 1;
+	freshSessionRanks.set(sessionName, nextRank);
+	return nextRank;
+}
+
 export function restoreManagedSessionStateFromBranch(
 	branch: unknown[],
 	fallbackSessionName: string,
@@ -381,7 +402,9 @@ export function restoreManagedSessionStateFromBranch(
 		active: false,
 		sessionName: fallbackSessionName,
 	};
+	let activeRestoreRank = 0;
 	let freshSessionOrdinal = 0;
+	const freshSessionRanks = new Map<string, number>();
 
 	for (const entry of branch) {
 		if (!isRecord(entry) || entry.type !== "message") {
@@ -415,10 +438,31 @@ export function restoreManagedSessionStateFromBranch(
 			continue;
 		}
 
+		const restoreRank = getManagedSessionRestoreRank({
+			fallbackSessionName,
+			freshSessionRanks,
+			sessionName: managedSessionName,
+		});
+		if (restoreRank === undefined) {
+			continue;
+		}
+
 		const messageIsError = typeof message.isError === "boolean" ? message.isError : undefined;
 		const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
 		const succeeded = messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
 		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
+		if (succeeded && sessionMode === "fresh") {
+			freshSessionOrdinal += 1;
+		}
+		const staleCompletion = succeeded && command !== "close" && restoreRank < activeRestoreRank;
+		if (staleCompletion) {
+			continue;
+		}
+		const staleClose = command === "close" && restoredState.active && managedSessionName !== restoredState.sessionName;
+		if (staleClose) {
+			continue;
+		}
+
 		restoredState = resolveManagedSessionState({
 			command,
 			managedSessionName,
@@ -426,8 +470,8 @@ export function restoreManagedSessionStateFromBranch(
 			priorSessionName: restoredState.sessionName,
 			succeeded,
 		});
-		if (succeeded && sessionMode === "fresh") {
-			freshSessionOrdinal += 1;
+		if (succeeded && command !== "close" && restoredState.active) {
+			activeRestoreRank = restoreRank;
 		}
 	}
 

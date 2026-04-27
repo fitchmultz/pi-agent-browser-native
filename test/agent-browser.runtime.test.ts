@@ -205,6 +205,184 @@ test("restoreManagedSessionStateFromBranch ignores inspection entries and recons
 	});
 });
 
+test("restoreManagedSessionStateFromBranch ignores stale base completions after fresh rotation", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--profile", "Default", "open", "https://example.com/fresh"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/stale-base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.sessionName, "piab-demo-123-fresh-aaa");
+	assert.equal(restored.freshSessionOrdinal, 1);
+});
+
+test("restoreManagedSessionStateFromBranch ignores stale earlier fresh completions after newer fresh rotation", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["--profile", "Default", "open", "https://example.com/first-fresh"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--profile", "Work", "open", "https://example.com/second-fresh"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-bbb",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["snapshot", "-i"],
+					command: "snapshot",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.sessionName, "piab-demo-123-fresh-bbb");
+	assert.equal(restored.freshSessionOrdinal, 2);
+});
+
+test("restoreManagedSessionStateFromBranch ignores stale close entries for superseded managed sessions", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--profile", "Default", "open", "https://example.com/fresh"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["close"],
+					command: "close",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.sessionName, "piab-demo-123-fresh-aaa");
+	assert.equal(restored.freshSessionOrdinal, 1);
+});
+
+test("restoreManagedSessionStateFromBranch does not resurrect superseded sessions after latest session closes", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--profile", "Default", "open", "https://example.com/fresh"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["close"],
+					command: "close",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/stale-base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.sessionName, "piab-demo-123-fresh-aaa");
+	assert.equal(restored.freshSessionOrdinal, 1);
+});
+
 test("restoreManagedSessionStateFromBranch keeps cwd isolation by ignoring sessions from a different base name", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[
