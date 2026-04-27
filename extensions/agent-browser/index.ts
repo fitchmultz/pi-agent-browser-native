@@ -324,8 +324,16 @@ function extractStringResultField(data: unknown, fieldName: "title" | "url"): st
 	return text.length > 0 ? text : undefined;
 }
 
-const SESSION_TAB_PINNING_EXCLUDED_COMMANDS = new Set(["batch", "close", "goto", "navigate", "open", "session", "tab"]);
+const SESSION_TAB_PINNING_EXCLUDED_COMMANDS = new Set(["close", "goto", "navigate", "open", "session", "tab"]);
 const SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS = new Set(["batch", "close", "session", "tab"]);
+
+type PinnedBatchUnwrapMode = "single-command" | "user-batch";
+
+interface PinnedBatchPlan {
+	includeNavigationSummary: boolean;
+	steps: unknown[];
+	unwrapMode: PinnedBatchUnwrapMode;
+}
 
 interface SessionTabTarget {
 	title?: string;
@@ -372,6 +380,47 @@ function extractSessionTabTargetFromData(data: unknown): SessionTabTarget | unde
 	return undefined;
 }
 
+function extractBatchResultCommand(item: Record<string, unknown>): string[] {
+	return Array.isArray(item.command) ? item.command.filter((token): token is string => typeof token === "string") : [];
+}
+
+function extractSessionTabTargetFromBatchResults(data: unknown): SessionTabTarget | undefined {
+	if (!Array.isArray(data)) {
+		return undefined;
+	}
+
+	let currentTarget: SessionTabTarget | undefined;
+	let pendingTitle: string | undefined;
+	for (const item of data) {
+		if (!isRecord(item) || item.success === false) {
+			continue;
+		}
+		const [name, subcommand] = extractBatchResultCommand(item);
+		const result = item.result;
+
+		if (name === "get" && subcommand === "title") {
+			pendingTitle = extractStringResultField(result, "title");
+			continue;
+		}
+		if (name === "get" && subcommand === "url") {
+			const url = extractStringResultField(result, "url");
+			const target = normalizeSessionTabTarget({ title: pendingTitle, url });
+			if (target) {
+				currentTarget = target;
+			}
+			pendingTitle = undefined;
+			continue;
+		}
+
+		const resultTarget = extractSessionTabTargetFromData(result);
+		if (resultTarget) {
+			currentTarget = resultTarget;
+			pendingTitle = undefined;
+		}
+	}
+	return currentTarget;
+}
+
 function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, SessionTabTarget> {
 	const restoredTargets = new Map<string, SessionTabTarget>();
 	for (const entry of branch) {
@@ -408,13 +457,79 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Sess
 	return restoredTargets;
 }
 
-function shouldPinSessionTabForCommand(options: { command?: string; sessionName?: string; stdin?: string }): boolean {
+function supportsPinnedStdinCommand(options: { command?: string; commandTokens: string[]; stdin?: string }): boolean {
+	if (options.command === "batch") {
+		return options.stdin !== undefined;
+	}
+	if (options.stdin === undefined) {
+		return true;
+	}
+	if (options.command === "eval") {
+		return options.commandTokens.includes("--stdin");
+	}
+	return false;
+}
+
+function shouldPinSessionTabForCommand(options: {
+	command?: string;
+	commandTokens: string[];
+	sessionName?: string;
+	stdin?: string;
+}): boolean {
 	return (
 		options.sessionName !== undefined &&
-		options.stdin === undefined &&
 		options.command !== undefined &&
-		!SESSION_TAB_PINNING_EXCLUDED_COMMANDS.has(options.command)
+		!SESSION_TAB_PINNING_EXCLUDED_COMMANDS.has(options.command) &&
+		supportsPinnedStdinCommand(options)
 	);
+}
+
+function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps?: unknown[] } {
+	if (stdin === undefined) {
+		return { steps: [] };
+	}
+	try {
+		const parsed = JSON.parse(stdin) as unknown;
+		if (!Array.isArray(parsed)) {
+			return { error: "agent_browser batch stdin must be a JSON array of command steps." };
+		}
+		return { steps: parsed };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { error: `agent_browser batch stdin could not be parsed as JSON: ${message}` };
+	}
+}
+
+function buildPinnedBatchPlan(options: {
+	command?: string;
+	commandTokens: string[];
+	selectedTab: string;
+	stdin?: string;
+}): PinnedBatchPlan | { error: string } | undefined {
+	if (options.command === "batch") {
+		const parsed = parseUserBatchStdin(options.stdin);
+		if (parsed.error) {
+			return { error: parsed.error };
+		}
+		return {
+			includeNavigationSummary: false,
+			steps: [["tab", options.selectedTab], ...(parsed.steps ?? [])],
+			unwrapMode: "user-batch",
+		};
+	}
+	if (options.commandTokens.length === 0) {
+		return undefined;
+	}
+	const includeNavigationSummary = options.command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(options.command);
+	return {
+		includeNavigationSummary,
+		steps: [
+			["tab", options.selectedTab],
+			options.commandTokens,
+			...(includeNavigationSummary ? [["get", "title"], ["get", "url"]] : []),
+		],
+		unwrapMode: "single-command",
+	};
 }
 
 function shouldCorrectSessionTabAfterCommand(options: { command?: string; sessionName?: string }): boolean {
@@ -447,6 +562,7 @@ function deriveSessionTabTarget(options: {
 	}
 	return (
 		normalizeSessionTabTarget(options.navigationSummary) ??
+		extractSessionTabTargetFromBatchResults(options.data) ??
 		extractSessionTabTargetFromData(options.data) ??
 		options.previousTarget
 	);
@@ -455,6 +571,7 @@ function deriveSessionTabTarget(options: {
 function unwrapPinnedSessionBatchEnvelope(options: {
 	envelope?: AgentBrowserEnvelope;
 	includeNavigationSummary: boolean;
+	mode?: PinnedBatchUnwrapMode;
 }): { envelope?: AgentBrowserEnvelope; navigationSummary?: NavigationSummary; parseError?: string } {
 	if (!options.envelope) {
 		return {};
@@ -468,19 +585,29 @@ function unwrapPinnedSessionBatchEnvelope(options: {
 	const steps = options.envelope.data.filter(isRecord) as AgentBrowserBatchResult[];
 	const tabSelectionStep = steps[0];
 	const commandStep = steps[1];
-	if (!commandStep) {
-		return {
-			envelope: {
-				success: false,
-				error: "agent-browser did not return the corrected command result.",
-			},
-		};
-	}
 	if (tabSelectionStep?.success === false) {
 		return {
 			envelope: {
 				success: false,
 				error: tabSelectionStep.error ?? "agent-browser could not re-select the intended tab before running the command.",
+			},
+		};
+	}
+	if (options.mode === "user-batch") {
+		const userSteps = steps.slice(1);
+		return {
+			envelope: {
+				success: userSteps.every((step) => step.success !== false),
+				data: userSteps,
+				error: userSteps.find((step) => step.success === false)?.error,
+			},
+		};
+	}
+	if (!commandStep) {
+		return {
+			envelope: {
+				success: false,
+				error: "agent-browser did not return the corrected command result.",
 			},
 		};
 	}
@@ -797,8 +924,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			const priorSessionTabTarget = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
-			const includePinnedNavigationSummary =
-				executionPlan.commandInfo.command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(executionPlan.commandInfo.command);
+			const commandTokens = extractCommandTokens(params.args);
+			let pinnedBatchUnwrapMode: PinnedBatchUnwrapMode | undefined;
+			let includePinnedNavigationSummary = false;
 			let sessionTabCorrection: OpenResultTabCorrection | undefined;
 			let processArgs = executionPlan.effectiveArgs;
 			let processStdin = params.stdin;
@@ -806,6 +934,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				priorSessionTabTarget &&
 				shouldPinSessionTabForCommand({
 					command: executionPlan.commandInfo.command,
+					commandTokens,
 					sessionName: executionPlan.sessionName,
 					stdin: params.stdin,
 				})
@@ -816,15 +945,63 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					signal,
 					target: priorSessionTabTarget,
 				});
-				const commandTokens = extractCommandTokens(params.args);
-				if (plannedSessionTabSelection && commandTokens.length > 0 && executionPlan.sessionName) {
-					sessionTabCorrection = plannedSessionTabSelection;
-					processArgs = ["--json", "--session", executionPlan.sessionName, "batch"];
-					processStdin = JSON.stringify([
-						["tab", plannedSessionTabSelection.selectedTab],
-						commandTokens,
-						...(includePinnedNavigationSummary ? [["get", "title"], ["get", "url"]] : []),
-					]);
+				if (plannedSessionTabSelection && executionPlan.sessionName) {
+					if (executionPlan.commandInfo.command === "eval" && params.stdin !== undefined) {
+						const appliedSessionTabSelection = await applyOpenResultTabCorrection({
+							correction: plannedSessionTabSelection,
+							cwd: ctx.cwd,
+							sessionName: executionPlan.sessionName,
+							signal,
+						});
+						if (!appliedSessionTabSelection) {
+							const error = "agent-browser could not re-select the intended tab before running the command.";
+							return {
+								content: [{ type: "text", text: error }],
+								details: {
+									args: redactedArgs,
+									command: executionPlan.commandInfo.command,
+									compatibilityWorkaround,
+									effectiveArgs: redactedEffectiveArgs,
+									sessionMode,
+									sessionTabCorrection: plannedSessionTabSelection,
+									validationError: error,
+									...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+								},
+								isError: true,
+							};
+						}
+						sessionTabCorrection = appliedSessionTabSelection;
+					} else {
+						const pinnedBatchPlan = buildPinnedBatchPlan({
+							command: executionPlan.commandInfo.command,
+							commandTokens,
+							selectedTab: plannedSessionTabSelection.selectedTab,
+							stdin: params.stdin,
+						});
+						if (pinnedBatchPlan && "error" in pinnedBatchPlan) {
+							return {
+								content: [{ type: "text", text: pinnedBatchPlan.error }],
+								details: {
+									args: redactedArgs,
+									command: executionPlan.commandInfo.command,
+									compatibilityWorkaround,
+									effectiveArgs: redactedEffectiveArgs,
+									sessionMode,
+									sessionTabCorrection: plannedSessionTabSelection,
+									validationError: pinnedBatchPlan.error,
+									...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+								},
+								isError: true,
+							};
+						}
+						if (pinnedBatchPlan) {
+							sessionTabCorrection = plannedSessionTabSelection;
+							processArgs = ["--json", "--session", executionPlan.sessionName, "batch"];
+							processStdin = JSON.stringify(pinnedBatchPlan.steps);
+							includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
+							pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;
+						}
+					}
 				}
 			}
 			const redactedProcessArgs = redactInvocationArgs(processArgs);
@@ -872,10 +1049,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				let parseError = parsed.parseError;
 				let presentationEnvelope = parsed.envelope;
 				let navigationSummary: NavigationSummary | undefined;
-				if (sessionTabCorrection) {
+				if (pinnedBatchUnwrapMode) {
 					const pinnedBatchResult = unwrapPinnedSessionBatchEnvelope({
 						envelope: parsed.envelope,
 						includeNavigationSummary: includePinnedNavigationSummary,
+						mode: pinnedBatchUnwrapMode,
 					});
 					parseError = pinnedBatchResult.parseError ?? parseError;
 					presentationEnvelope = pinnedBatchResult.envelope ?? presentationEnvelope;
@@ -931,7 +1109,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				}
 
 				const observedSessionTabTarget =
-					normalizeSessionTabTarget(navigationSummary) ?? extractSessionTabTargetFromData(presentationEnvelope?.data);
+					normalizeSessionTabTarget(navigationSummary) ??
+					extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) ??
+					extractSessionTabTargetFromData(presentationEnvelope?.data);
 				const currentSessionTabTarget = deriveSessionTabTarget({
 					command: executionPlan.commandInfo.command,
 					data: presentationEnvelope?.data,

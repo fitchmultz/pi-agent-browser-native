@@ -2617,6 +2617,178 @@ if (args.includes("batch")) {
 	}
 });
 
+test("agentBrowserExtension pre-pins resumed explicit-session eval stdin before execution", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "tab-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const exampleSite = { title: "Example Domain", url: "https://example.com/" };
+const gemini = { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" };
+let state = { active: "gemini" };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+const activeSite = () => state.active === "example" ? exampleSite : gemini;
+const save = () => fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: state.active === "example" },
+    { tabId: "t2", title: gemini.title, url: gemini.url, active: state.active !== "example" }
+  ] } }));
+} else if (args.includes("tab") && args.includes("t1")) {
+  state.active = "example";
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t1", ...exampleSite } }));
+} else if (args.includes("eval")) {
+  process.stdout.write(JSON.stringify({ success: true, data: activeSite().title }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: activeSite() }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const evalResult = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "eval", "--stdin"],
+				stdin: "document.title",
+			});
+			assert.equal(evalResult.isError, false, JSON.stringify(evalResult));
+			assert.match((evalResult.content[0] as { text: string }).text, /Example Domain/);
+			assert.deepEqual(evalResult.details?.sessionTabTarget, {
+				title: "Example Domain",
+				url: "https://example.com/",
+			});
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 3);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "t1"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "eval", "--stdin"]);
+			assert.equal(invocations[2]?.stdin, "document.title");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension pre-pins resumed explicit-session user batch and derives the resulting target", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const sites = {
+  example: { title: "Example Domain", url: "https://example.com/" },
+  gemini: { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" },
+  org: { title: "Example Org", url: "https://example.org/" }
+};
+if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  let active = sites.gemini;
+  const results = steps.map((step) => {
+    const [command, ...rest] = step;
+    if (command === "tab") {
+      active = rest[0] === "t1" ? sites.example : sites.gemini;
+      return { command: step, success: true, result: { tabId: rest[0], ...active } };
+    }
+    if (command === "open") {
+      active = sites.org;
+      return { command: step, success: true, result: active };
+    }
+    if (command === "get" && rest[0] === "title") {
+      return { command: step, success: true, result: active.title };
+    }
+    if (command === "get" && rest[0] === "url") {
+      return { command: step, success: true, result: active.url };
+    }
+    return { command: step, success: true, result: active };
+  });
+  process.stdout.write(JSON.stringify(results));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "t1", title: sites.example.title, url: sites.example.url, active: false },
+    { tabId: "t2", title: sites.gemini.title, url: sites.gemini.url, active: true }
+  ] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: sites.gemini }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const batchResult = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "batch"],
+				stdin: JSON.stringify([["open", "https://example.org"], ["get", "title"], ["get", "url"]]),
+			});
+			assert.equal(batchResult.isError, false, JSON.stringify(batchResult));
+			assert.match((batchResult.content[0] as { text: string }).text, /Example Org/);
+			assert.deepEqual(batchResult.details?.sessionTabTarget, {
+				title: "Example Org",
+				url: "https://example.org/",
+			});
+			const batchSteps = batchResult.details?.batchSteps as Array<{ command?: string[] }> | undefined;
+			assert.deepEqual(batchSteps?.map((step) => step.command), [
+				["open", "https://example.org/"],
+				["get", "title"],
+				["get", "url"],
+			]);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 2);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
+				["tab", "t1"],
+				["open", "https://example.org"],
+				["get", "title"],
+				["get", "url"],
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not mark a failed first implicit command as active", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
