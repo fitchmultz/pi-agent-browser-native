@@ -125,46 +125,6 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
-    },
-    {
-      "id": "RQ-0006",
-      "status": "todo",
-      "title": "Preserve spill-file paths for large parse-failure outputs",
-      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: large malformed upstream outputs currently lose their best debugging artifact. The process layer keeps only a 32k stdout tail once output spills past 512 KiB, and the executor always deletes the spill file in `finally`. When JSON parsing fails on a large snapshot/eval payload, the tool returns a parse error plus the truncated tail but no durable path to the full raw output.\n\nMinimal proposed fix: keep a readable spill-file path for parse-failure cases, either by surfacing `stdoutSpillPath` directly in error details/content or by copying the raw payload into the same secure artifact mechanism used for successful compacted output before deleting the original temp file.\n\nAcceptance criteria: `npm test` stays green; a fake binary that emits a >512 KiB invalid JSON payload returns `isError: true` with a usable full-output path in the response, and the referenced file remains readable long enough to inspect the raw output.",
-      "priority": "medium",
-      "tags": [
-        "maintenance",
-        "operability",
-        "debuggability"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/process.ts",
-        "extensions/agent-browser/index.ts",
-        "test/agent-browser.test.ts",
-        "npx tsx"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/lib/process.ts:15-18 :: stdout spills after 512 KiB and only a 32k stdout tail is retained in memory.",
-        "path: extensions/agent-browser/lib/process.ts:214-215 :: spilled executions return `stdout = stdoutTail` plus `stdoutSpillPath`.",
-        "path: extensions/agent-browser/index.ts:1069-1072 :: the executor always deletes `processResult.stdoutSpillPath` in `finally`.",
-        "workflow: npx tsx <<'EOF' ... fake binary emits `'x'.repeat(600000)` ... EOF :: observed `parseError = \"agent-browser returned invalid JSON...\"`, `stdoutChars = 32000`, and `hasFullOutputPath = false` for the failing tool response."
-      ],
-      "plan": [
-        "Preserve or copy the raw spilled stdout into a caller-visible secure artifact when parse failure occurs on large output.",
-        "Expose that path in the error response so maintainers can inspect malformed large payloads without rerunning the flow blindly.",
-        "Add a fake-binary regression that emits oversized invalid JSON and asserts both the parse error and the presence of a readable full-output path.",
-        "Verify by running `npm test` and confirming the oversized-parse-failure case returns a readable spill path alongside the parse error."
-      ],
-      "notes": [],
-      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
-      "created_at": "2026-04-27T00:35:41Z",
-      "updated_at": "2026-04-27T00:35:41Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
     }
   ]
 }
