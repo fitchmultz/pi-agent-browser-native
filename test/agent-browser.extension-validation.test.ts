@@ -197,7 +197,8 @@ test("agentBrowserExtension reports the documented missing agent-browser binary 
 			const text = (result.content[0] as { text: string }).text;
 			assert.match(text, /agent-browser is required but was not found on PATH\./);
 			assert.match(text, /This project does not bundle agent-browser\./);
-			assert.match(text, /Install it using the upstream docs:/);
+			assert.match(text, /pi-agent-browser-doctor/);
+			assert.match(text, /package\/PATH diagnostics/);
 			assert.match(text, /https:\/\/agent-browser\.dev\//);
 			assert.match(text, /https:\/\/github\.com\/vercel-labs\/agent-browser/);
 			assert.match(String(result.details?.spawnError ?? ""), /ENOENT/);

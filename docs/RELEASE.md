@@ -16,8 +16,11 @@ From the repository root:
 
 ```bash
 npm install
+npm run doctor
 npm run verify:release
 ```
+
+`npm run doctor` is a read-only first-run diagnostic for PATH, targeted upstream version, and duplicate package/checkout source conflicts. It does not replace upstream `agent-browser doctor` for browser runtime health and does not edit Pi settings.
 
 `npm run verify:release` runs:
 
@@ -31,6 +34,7 @@ npm run verify:release
 - no repo-local `.pi/extensions/agent-browser.ts` autoload shim is present
 - `LICENSE` exists in the repo and the packed tarball
 - canonical published docs are present
+- the package-level doctor command and capability baseline are present
 - extension source files are present, including the split result-rendering modules required by the published facade
 - agent-only and superseded docs are absent from the tarball
 
@@ -97,6 +101,7 @@ Recommended configured-source lifecycle follow-up:
 After publishing a release, validate the package-first path in isolation. `npm run verify:release` includes the deterministic fake-binary packaged execution gate, but it does not replace a real-browser installed-package smoke:
 
 ```bash
+npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor
 npm run verify:release
 pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
@@ -117,6 +122,7 @@ Before publishing:
 - confirm README install guidance still leads with the package-first flow
 - confirm `docs/COMMAND_REFERENCE.md` still matches the effective upstream command/help surface used by the wrapper
 - run `npm run verify:command-reference` if the installed upstream `agent-browser` version or help surface changed
+- run `npm run doctor` and confirm any duplicate-source remediation matches the active package/check-out setup
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and plain-`pi` configured-source lifecycle validation
 - rerun `npm run verify:release`
 - manually exercise `/reload` and full restart + `/resume` continuity in configured-source lifecycle validation

@@ -67,6 +67,22 @@ For a specific published version:
 pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
 
+### First-run doctor
+
+Run the package doctor before first use or when `agent_browser` is missing or duplicated:
+
+```bash
+pi-agent-browser-doctor
+# one-off without installing the package source permanently:
+npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor
+# from a checkout:
+npm run doctor
+```
+
+The doctor is read-only. It checks that upstream `agent-browser` is on `PATH`, that `agent-browser --version` matches the wrapper's capability baseline, and that Pi settings do not point at multiple active `pi-agent-browser-native` sources. It does not run upstream `agent-browser doctor --fix` or edit Pi settings.
+
+If it reports duplicate sources, keep exactly one active source. For normal use, keep `pi install npm:pi-agent-browser-native` and remove checkout paths from Pi settings. For temporary package or checkout trials, use `pi --no-extensions -e npm:pi-agent-browser-native[@<version>]` or `pi --no-extensions -e /path/to/checkout` so configured sources are bypassed.
+
 ### GitHub install
 
 For the source install path, prefer the repository URL:

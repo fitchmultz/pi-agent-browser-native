@@ -26,8 +26,13 @@
   "engines": {
     "node": ">=20.6.0"
   },
+  "bin": {
+    "pi-agent-browser-doctor": "./scripts/doctor.mjs"
+  },
   "files": [
     "extensions",
+    "scripts/doctor.mjs",
+    "scripts/agent-browser-capability-baseline.mjs",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
@@ -60,6 +65,7 @@
     "docs:playbook:write": "tsx ./scripts/check-playbook-drift.ts --write",
     "docs:command-reference:check": "node ./scripts/check-command-reference-baseline.mjs --check",
     "docs:command-reference:write": "node ./scripts/check-command-reference-baseline.mjs --write",
+    "doctor": "node ./scripts/doctor.mjs",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "pack:dry-run": "npm pack --json --dry-run",
