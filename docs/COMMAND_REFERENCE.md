@@ -129,7 +129,8 @@ Prefer `download <selector> <path>` when the target element itself is the downlo
 
 Wrapper result rendering is metadata-first for saved files:
 - screenshots return a saved-path summary, structured `details.artifacts` metadata, and an inline image attachment when safe
-- downloads, PDFs, `wait --download` files, traces, CPU profiles, WebM recordings, and path-bearing HAR captures return concise saved-path summaries plus structured `details.artifacts` metadata without inlining large files
+- downloads, PDFs, `wait --download` files, traces, CPU profiles, completed WebM recordings from `record stop`, and path-bearing HAR captures return concise saved-path summaries plus structured `details.artifacts` metadata without inlining large files
+- `record start <path>` reports that recording started and that output will be written on `record stop`; the target file may not exist until recording stops
 - `batch` keeps each step's artifacts in `details.batchSteps[].artifacts` and aggregates them in top-level `details.artifacts` in step order
 
 #### Artifact retention and dogfood-heavy QA runs
@@ -309,7 +310,7 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `diff url <u1> <u2>` | Compare two pages. |
 | `trace start|stop [path]` | Record a Chrome DevTools trace. |
 | `profiler start|stop [path]` | Record a Chrome DevTools profile. |
-| `record start <path> [url]` | Start WebM video recording. |
+| `record start <path> [url]` | Start WebM video recording; output is written on `record stop`. |
 | `record stop` | Stop and save video. |
 | `console [--clear]` | View or clear console logs. |
 | `errors [--clear]` | View or clear page errors. |

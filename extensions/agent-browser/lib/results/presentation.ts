@@ -552,6 +552,14 @@ function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMetadata[],
 	}));
 }
 
+function isRecordingStartArtifact(artifact: FileArtifactMetadata): boolean {
+	return artifact.command === "record" && artifact.subcommand === "start" && artifact.kind === "video";
+}
+
+function isManifestFileArtifact(artifact: FileArtifactMetadata): boolean {
+	return !isRecordingStartArtifact(artifact);
+}
+
 function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 	switch (artifact.kind) {
 		case "download":
@@ -569,7 +577,7 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 		case "trace":
 			return "Saved trace";
 		case "video":
-			return "Saved recording";
+			return isRecordingStartArtifact(artifact) ? "Recording started; output will be written on stop" : "Saved recording";
 	}
 }
 
@@ -586,6 +594,10 @@ function formatArtifactSummary(artifacts: FileArtifactMetadata[]): string | unde
 
 function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): string[] {
 	return artifacts.map((artifact) => {
+		if (isRecordingStartArtifact(artifact)) {
+			return `${formatArtifactLabel(artifact)}: ${artifact.path}`;
+		}
+
 		const suffix = [
 			artifact.mediaType,
 			typeof artifact.sizeBytes === "number" ? formatByteCount(artifact.sizeBytes) : undefined,
@@ -1369,6 +1381,6 @@ export async function buildToolPresentation(options: {
 	return applyArtifactManifest(
 		compactedPresentation,
 		compactedPresentation.artifactManifest ?? artifactManifest,
-		buildManifestEntriesForFileArtifacts(artifacts),
+		buildManifestEntriesForFileArtifacts(artifacts.filter(isManifestFileArtifact)),
 	);
 }

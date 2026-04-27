@@ -575,6 +575,30 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 	}
 });
 
+test("buildToolPresentation renders record start as a lifecycle state without missing-file copy", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "record", subcommand: "start" },
+		cwd: "/tmp/pi-agent-browser-artifact-tests",
+		envelope: { success: true, data: { path: "recording.webm" } },
+	});
+
+	assert.equal(presentation.summary, "Recording started; output will be written on stop: recording.webm");
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Recording started; output will be written on stop: recording\.webm/);
+	assert.doesNotMatch(text, /Saved recording/);
+	assert.doesNotMatch(text, /not found on disk/);
+	assert.doesNotMatch(text, /Session artifacts:/);
+	assert.equal(presentation.artifacts?.length, 1);
+	assert.equal(presentation.artifacts?.[0]?.kind, "video");
+	assert.equal(presentation.artifacts?.[0]?.path, "recording.webm");
+	assert.equal(presentation.artifacts?.[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", "recording.webm"));
+	assert.equal(presentation.artifacts?.[0]?.mediaType, "video/webm");
+	assert.equal(presentation.artifacts?.[0]?.exists, false);
+	assert.equal(presentation.artifactManifest, undefined);
+	assert.equal(presentation.artifactRetentionSummary, undefined);
+});
+
 test("buildToolPresentation records explicit saved files in the bounded session artifact manifest", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-manifest-"));
 	const downloadPath = join(tempDir, "download.txt");
@@ -909,6 +933,7 @@ test("buildToolPresentation preserves non-screenshot file artifacts inside batch
 			data: [
 				{ command: ["trace", "stop", "trace.zip"], result: { eventCount: 1, path: "trace.zip" }, success: true },
 				{ command: ["profiler", "stop", "profile.cpuprofile"], result: { eventCount: 2, path: "profile.cpuprofile" }, success: true },
+				{ command: ["record", "start", "recording.webm"], result: { path: "recording.webm" }, success: true },
 				{ command: ["record", "stop"], result: { frames: 3, path: "recording.webm" }, success: true },
 				{ command: ["network", "har", "stop", "network.har"], result: { path: "network.har", requestCount: 0 }, success: true },
 			],
@@ -920,12 +945,15 @@ test("buildToolPresentation preserves non-screenshot file artifacts inside batch
 	assert.match(text, /Saved trace: trace\.zip/);
 	assert.match(text, /Step 2 — profiler stop profile\.cpuprofile/);
 	assert.match(text, /Saved profile: profile\.cpuprofile/);
-	assert.match(text, /Step 3 — record stop/);
+	assert.match(text, /Step 3 — record start recording\.webm/);
+	assert.match(text, /Recording started; output will be written on stop: recording\.webm/);
+	assert.doesNotMatch(presentation.batchSteps?.[2]?.text ?? "", /Saved recording|not found on disk/);
+	assert.match(text, /Step 4 — record stop/);
 	assert.match(text, /Saved recording: recording\.webm/);
-	assert.match(text, /Step 4 — network har stop network\.har/);
+	assert.match(text, /Step 5 — network har stop network\.har/);
 	assert.match(text, /Saved HAR: network\.har/);
-	assert.deepEqual(presentation.artifacts?.map((artifact) => artifact.kind), ["trace", "profile", "video", "har"]);
-	assert.deepEqual(presentation.batchSteps?.map((step) => step.artifacts?.[0]?.kind), ["trace", "profile", "video", "har"]);
+	assert.deepEqual(presentation.artifacts?.map((artifact) => artifact.kind), ["trace", "profile", "video", "video", "har"]);
+	assert.deepEqual(presentation.batchSteps?.map((step) => step.artifacts?.[0]?.kind), ["trace", "profile", "video", "video", "har"]);
 	assert.equal(presentation.imagePath, undefined);
 	assert.equal(presentation.imagePaths, undefined);
 });
