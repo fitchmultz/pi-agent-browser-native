@@ -127,47 +127,6 @@
       }
     },
     {
-      "id": "RQ-0005",
-      "status": "todo",
-      "title": "Make published-package validation safe and executable",
-      "description": "Principles violated: F) Fail fast, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: the docs give conflicting instructions for package-first validation. The README advertises `pi -e npm:pi-agent-browser-native` as a safe ephemeral try-out, but later in the same README and in the release doc the project says Pi must have only one active source for this extension and recommends either disabling the checkout path or using `pi --no-extensions -e npm:...`. At the same time, `npm run verify:release` never exercises the packaged install path it asks maintainers to trust, so package-first regressions can ship even when the repo gate is green.\n\nMinimal proposed fix: standardize the docs on one safe package-first validation path, remove or rewrite the conflicting `pi -e npm:...` guidance, and add a repeatable local release check that exercises the packed/published extension in Pi rather than only inspecting tarball contents.\n\nAcceptance criteria: README and release docs no longer contradict each other; the release workflow includes a scripted packaged-extension smoke path (for example a tarball or isolated `pi --no-extensions -e ...` run); and maintainers can point to one canonical command sequence for published-package validation.",
-      "priority": "high",
-      "tags": [
-        "maintenance",
-        "operability",
-        "release"
-      ],
-      "scope": [
-        "README.md",
-        "docs/RELEASE.md",
-        "package.json",
-        "scripts/verify-package.mjs"
-      ],
-      "evidence": [
-        "path: README.md:58-62 :: the top-level install section recommends `pi -e npm:pi-agent-browser-native` as a non-permanent published-package trial.",
-        "path: README.md:167-188 :: the local-development section says Pi must have only one active source and recommends isolated validation with `pi --no-extensions -e npm:pi-agent-browser-native@<version>` or disabling the checkout path.",
-        "path: docs/RELEASE.md:81-93 :: post-publish validation both shows `pi -e npm:...` and immediately warns that the safe paths are plain `pi` after removing the checkout or an isolated `pi --no-extensions -e npm:...` run.",
-        "path: package.json:58-64 :: `verify:release` only runs `verify` plus `verify:package`.",
-        "path: scripts/verify-package.mjs:130-228 :: the package verifier stops at `npm pack --json --dry-run` and tarball file-shape checks; it never launches Pi against the packed extension."
-      ],
-      "plan": [
-        "Choose one canonical safe published-package validation path and align README plus release docs around it.",
-        "Extend the release gate or add a companion script that exercises the packed extension in Pi instead of only the tarball contents.",
-        "Keep the packaged-path validation isolated from any checkout source so duplicate `agent_browser` registrations cannot mask failures.",
-        "Verify by running the documented release command sequence locally and confirming it loads exactly one `agent_browser` source through the package path."
-      ],
-      "notes": [],
-      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
-      "created_at": "2026-04-27T00:35:41Z",
-      "updated_at": "2026-04-27T00:35:41Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0006",
       "status": "todo",
       "title": "Preserve spill-file paths for large parse-failure outputs",
