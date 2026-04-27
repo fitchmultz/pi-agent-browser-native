@@ -1135,6 +1135,51 @@
       "custom_fields": {
         "scan_agent": "scan-innovation"
       }
+    },
+    {
+      "id": "RQ-0028",
+      "status": "done",
+      "title": "Execute agent_browser in packaged smoke validation",
+      "description": "Opportunity type: reliability. The packaged smoke gate currently proves that the packed extension loads and that exactly one `agent_browser` tool resolves from inside the extracted tarball, but it stops short of executing the packaged tool. That leaves a real release gap between package loadability and first invocation success. Why it matters: a tarball can pass packaging checks and still fail on first use because of packaged source breakage, runtime metadata drift, or mismatched extension loading assumptions. Proposed approach: keep the current source-path assertions, then add a smallest-possible executable smoke through Pi's package loader and native tool handler, starting with a deterministic fake-binary-backed `agent_browser --version` or equivalent no-browser invocation and expanding to one browser-shaped invocation later. Risks and mitigations: avoid flaky browser dependence by making the first packaged execution deterministic, isolated from real browser launches, and fully cleaned up with the existing temp package and temp agent dirs. Acceptance criteria: `npm run verify:package:pi` fails when packaged tool execution through Pi breaks, reports the failing packaged invocation clearly, still guarantees the loaded tool came from the extracted tarball path, and leaves no persistent temp artifacts.",
+      "priority": "high",
+      "tags": [
+        "innovation",
+        "reliability",
+        "release",
+        "packaging"
+      ],
+      "scope": [
+        "scripts/verify-package.mjs",
+        "test/verify-package.test.ts",
+        "docs/RELEASE.md",
+        "package.json"
+      ],
+      "evidence": [
+        "path: scripts/verify-package.mjs :: evaluatePiSmokeResult :: the current smoke check only asserts one packaged `agent_browser` tool and that its source path is inside the extracted package directory",
+        "workflow: npm run verify:package:pi :: package verification stops at Pi loadability and does not invoke the packaged tool through the Pi session",
+        "path: docs/RELEASE.md :: Post-publish install validation :: maintainers still have to manually run `open` plus `snapshot -i` after `verify:release` to learn whether the packaged tool actually works"
+      ],
+      "plan": [
+        "Define the narrowest packaged execution smoke that proves the tarball can execute `agent_browser` through the Pi native tool handler after resource loading.",
+        "Extend `verify-package.mjs` to invoke the packaged tool in isolation with a deterministic fake or no-browser upstream command and capture clear failure output.",
+        "Add focused tests that simulate packaged execution success and failure without depending on a real browser.",
+        "Update release docs so packaged smoke expectations match the new gate and distinguish it from real-browser post-publish validation.",
+        "Verify by running `npm run verify:package:pi` and confirming it validates source-path isolation, executes the packaged tool successfully, and cleans up temp dirs."
+      ],
+      "notes": [],
+      "request": "scan: none",
+      "created_at": "2026-04-27T08:29:39Z",
+      "updated_at": "2026-04-27T14:48:11.397222000Z",
+      "completed_at": "2026-04-27T14:48:11.397222000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [
+        "RQ-0027",
+        "RQ-0030"
+      ],
+      "custom_fields": {
+        "scan_agent": "scan-innovation"
+      }
     }
   ]
 }
