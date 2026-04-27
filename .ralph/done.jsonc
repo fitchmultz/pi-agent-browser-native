@@ -718,6 +718,48 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0017",
+      "status": "done",
+      "title": "Collapse publish-contract file lists to one canonical source",
+      "description": "Principles: DRY knowledge, Consistency/Integrity.\n\nEvidence:\n- path: package.json:29-39 :: package publish contents are declared in the npm `files` list.\n- path: scripts/verify-package.mjs:23-55 :: the verifier carries a second manual source of truth with required and forbidden packed files.\n- path: test/verify-package.test.ts:123-143 :: the test adds a third copy by manually enumerating a subset of required packed paths.\n- workflow: npm run verify:package :: package verification currently passes, which means the drift risk is maintenance-only rather than a present failure.\n\nWhy it matters: changing published docs or extension files currently means updating multiple independent inventories. That increases the odds of false failures, silent omissions, or reviewer confusion about which list is canonical.\n\nMinimal proposed fix: introduce one canonical publish-contract data source that both the verifier and tests consume, and keep package.json as the declarative npm surface instead of re-encoding overlapping rules by hand.\n\nAcceptance criteria: verifier and tests read publish-contract data from one shared source; the manual subset list in test/verify-package.test.ts is removed or generated; `npm run verify:package` and `npm run verify` both pass.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "dry",
+        "packaging",
+        "tests"
+      ],
+      "scope": [
+        "package.json",
+        "scripts/verify-package.mjs",
+        "test/verify-package.test.ts",
+        "npm run verify:package",
+        "npm run verify"
+      ],
+      "evidence": [
+        "path: package.json:29-39 :: npm publish contents are declared in the files list",
+        "path: scripts/verify-package.mjs:23-55 :: verifier repeats required and forbidden packed-file inventories by hand",
+        "path: test/verify-package.test.ts:123-143 :: test repeats a manual subset of required packed paths",
+        "workflow: npm run verify:package :: current pass confirms the issue is duplicated maintenance surface rather than a broken gate"
+      ],
+      "plan": [
+        "Define one canonical publish-contract manifest or module that captures required and forbidden package rules.",
+        "Refactor verify-package and its tests to consume that canonical data instead of repeating overlapping path lists.",
+        "Verify by running `npm run verify:package` and `npm run verify` and confirming the package gate still passes."
+      ],
+      "notes": [],
+      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
+      "created_at": "2026-04-27T02:21:16Z",
+      "updated_at": "2026-04-27T02:45:39.991039000Z",
+      "completed_at": "2026-04-27T02:45:39.991039000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
     }
   ]
 }
