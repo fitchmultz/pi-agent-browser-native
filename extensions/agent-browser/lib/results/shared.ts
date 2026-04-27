@@ -9,7 +9,7 @@
 export interface AgentBrowserEnvelope {
 	data?: unknown;
 	error?: unknown;
-	success?: boolean;
+	success: boolean;
 }
 
 export interface AgentBrowserBatchResult {

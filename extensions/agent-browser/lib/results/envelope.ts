@@ -75,7 +75,13 @@ export async function parseAgentBrowserEnvelope(options: string | { stdout: stri
 		if (!isRecord(parsed)) {
 			return { parseError: "agent-browser returned JSON, but it was not an object envelope." };
 		}
-		return { envelope: parsed };
+		if (!("success" in parsed)) {
+			return { parseError: "agent-browser returned an invalid JSON envelope: missing boolean success field." };
+		}
+		if (typeof parsed.success !== "boolean") {
+			return { parseError: "agent-browser returned an invalid JSON envelope: success field must be boolean." };
+		}
+		return { envelope: parsed as AgentBrowserEnvelope };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { parseError: `agent-browser returned invalid JSON: ${message}` };

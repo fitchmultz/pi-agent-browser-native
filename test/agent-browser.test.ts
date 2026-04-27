@@ -886,6 +886,35 @@ process.stdout.write(JSON.stringify({ success: true, data: { args } }));`,
 	}
 });
 
+test("agentBrowserExtension rejects malformed JSON envelopes that omit success", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ error: "boom" }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com"],
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.type, "text");
+			assert.match((result.content[0] as { text: string }).text, /invalid JSON envelope|success|protocol/i);
+			assert.match(String(result.details?.parseError ?? ""), /invalid JSON envelope|success/i);
+			assert.doesNotMatch(String(result.details?.summary ?? ""), /^open completed$/i);
+			assert.equal(result.details?.error, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("parseCommandInfo skips global flags with values", () => {
 	const commandInfo = parseCommandInfo(["--session", "named", "--profile", "./profile", "tab", "list"]);
 	assert.deepEqual(commandInfo, { command: "tab", subcommand: "list" });
@@ -976,6 +1005,27 @@ test("parseAgentBrowserEnvelope accepts batch JSON arrays", async () => {
 
 	assert.equal(parsed.parseError, undefined);
 	assert.equal(Array.isArray(parsed.envelope?.data), true);
+	assert.equal(parsed.envelope?.success, true);
+});
+
+test("parseAgentBrowserEnvelope rejects object envelopes without boolean success", async () => {
+	const parsed = await parseAgentBrowserEnvelope(JSON.stringify({ error: "boom" }));
+
+	assert.equal(parsed.envelope, undefined);
+	assert.match(parsed.parseError ?? "", /invalid JSON envelope|success/i);
+});
+
+test("parseAgentBrowserEnvelope rejects object envelopes with non-boolean success", async () => {
+	const parsed = await parseAgentBrowserEnvelope(JSON.stringify({ success: "true", data: { title: "ok" } }));
+
+	assert.equal(parsed.envelope, undefined);
+	assert.match(parsed.parseError ?? "", /success.*boolean|boolean success/i);
+});
+
+test("parseAgentBrowserEnvelope accepts valid object envelopes with boolean success", async () => {
+	const parsed = await parseAgentBrowserEnvelope(JSON.stringify({ success: true, data: { title: "ok" } }));
+
+	assert.equal(parsed.parseError, undefined);
 	assert.equal(parsed.envelope?.success, true);
 });
 
