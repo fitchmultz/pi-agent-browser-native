@@ -49,6 +49,9 @@ Checks:
   3. Expected ${EXPECTED_VERSION} help tokens from ${CAPABILITY_BASELINE_SOURCE} are present upstream.
   4. ${COMMAND_REFERENCE_DOC_PATH} includes the maintained human-authored local reference tokens.
 
+Related runtime contract check:
+  npm run test:real-upstream
+
 Examples:
   npm run verify:command-reference
   npm run verify

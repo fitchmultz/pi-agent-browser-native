@@ -81,6 +81,18 @@ Before publishing, validate both local-checkout modes without mixing their assum
 3. Validate managed-session continuity with `/reload` and a full restart + `/resume`.
 4. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed, then run `npm run verify:command-reference`.
 
+### Real upstream contract validation
+
+The default `npm test` and `npm run verify` paths use fast deterministic tests and fake binaries. When a change touches upstream command planning, result presentation, managed-session behavior, or the canonical capability baseline, also run the opt-in real-upstream contract suite:
+
+```bash
+PI_AGENT_BROWSER_REAL_UPSTREAM=1 npm run test:real-upstream
+# equivalent release-script alias
+npm run verify:real-upstream
+```
+
+This suite requires the installed `agent-browser --version` to exactly match `scripts/agent-browser-capability-baseline.mjs`. It serves fixture pages from localhost and validates real runtime output shapes for `--version`, `open`, `eval --stdin`, `snapshot -i`, `batch` stdin, and implicit managed-session reuse. If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
+
 Example smoke prompt:
 
 ```text
@@ -123,6 +135,7 @@ Before publishing:
 - confirm `docs/COMMAND_REFERENCE.md` still matches the effective upstream command/help surface used by the wrapper
 - run `npm run verify:command-reference` if the installed upstream `agent-browser` version or help surface changed
 - run `npm run doctor` and confirm any duplicate-source remediation matches the active package/check-out setup
+- run `npm run verify:real-upstream` for upstream runtime, result-presentation, or managed-session changes
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and plain-`pi` configured-source lifecycle validation
 - rerun `npm run verify:release`
 - manually exercise `/reload` and full restart + `/resume` continuity in configured-source lifecycle validation

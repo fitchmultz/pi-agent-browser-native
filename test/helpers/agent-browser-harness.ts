@@ -10,11 +10,90 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { chmod, readFile, writeFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 
 import agentBrowserExtension from "../../extensions/agent-browser/index.js";
 
 export const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
+
+export interface FixtureServer {
+	baseUrl: string;
+	close: () => Promise<void>;
+}
+
+function sendFixtureHtml(response: ServerResponse, html: string): void {
+	response.writeHead(200, {
+		"cache-control": "no-store",
+		"content-type": "text/html; charset=utf-8",
+	});
+	response.end(html);
+}
+
+export async function startAgentBrowserContractFixtureServer(): Promise<FixtureServer> {
+	const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+		const url = new URL(request.url ?? "/", "http://127.0.0.1");
+		if (url.pathname === "/" || url.pathname === "/contract") {
+			sendFixtureHtml(
+				response,
+				`<!doctype html>
+<html lang="en">
+<head><title>Agent Browser Contract Fixture</title></head>
+<body>
+	<main id="main">
+		<h1>Agent Browser Contract Fixture</h1>
+		<p id="status">Ready for real upstream contract validation.</p>
+		<a id="next-link" href="/next">Go to next fixture page</a>
+		<button id="mark-ready" type="button" onclick="document.body.dataset.clicked='yes'; document.getElementById('status').textContent='Clicked';">Mark ready</button>
+	</main>
+</body>
+</html>`,
+			);
+			return;
+		}
+
+		if (url.pathname === "/next") {
+			sendFixtureHtml(
+				response,
+				`<!doctype html>
+<html lang="en">
+<head><title>Next Contract Fixture</title></head>
+<body><main><h1>Next Contract Fixture</h1><p>Navigation target.</p></main></body>
+</html>`,
+			);
+			return;
+		}
+
+		response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+		response.end("not found");
+	});
+
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			server.off("error", reject);
+			resolve();
+		});
+	});
+
+	const address = server.address() as AddressInfo | null;
+	assert.ok(address, "expected fixture server to bind to a local port");
+	return {
+		baseUrl: `http://127.0.0.1:${address.port}`,
+		close: async () => {
+			await new Promise<void>((resolve, reject) => {
+				server.close((error) => {
+					if (error) {
+						reject(error);
+						return;
+					}
+					resolve();
+				});
+			});
+		},
+	};
+}
 
 export function buildUserBranch(prompt = ""): unknown[] {
 	return prompt.length === 0
