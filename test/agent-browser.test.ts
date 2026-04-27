@@ -1044,6 +1044,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { args } }));`,
 	}
 });
 
+const MISSING_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: missing boolean success field.";
+const NON_BOOLEAN_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: success field must be boolean.";
+
 test("agentBrowserExtension rejects malformed JSON envelopes that omit success", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";
@@ -1063,8 +1066,9 @@ test("agentBrowserExtension rejects malformed JSON envelopes that omit success",
 
 			assert.equal(result.isError, true);
 			assert.equal(result.content[0]?.type, "text");
-			assert.match((result.content[0] as { text: string }).text, /invalid JSON envelope|success|protocol/i);
-			assert.match(String(result.details?.parseError ?? ""), /invalid JSON envelope|success/i);
+			assert.equal((result.content[0] as { text: string }).text, MISSING_SUCCESS_PARSE_ERROR);
+			assert.equal(result.details?.parseError, MISSING_SUCCESS_PARSE_ERROR);
+			assert.equal(result.details?.summary, MISSING_SUCCESS_PARSE_ERROR);
 			assert.doesNotMatch(String(result.details?.summary ?? ""), /^open completed$/i);
 			assert.equal(result.details?.error, undefined);
 		});
@@ -1338,14 +1342,14 @@ test("parseAgentBrowserEnvelope rejects object envelopes without boolean success
 	const parsed = await parseAgentBrowserEnvelope(JSON.stringify({ error: "boom" }));
 
 	assert.equal(parsed.envelope, undefined);
-	assert.match(parsed.parseError ?? "", /invalid JSON envelope|success/i);
+	assert.equal(parsed.parseError, MISSING_SUCCESS_PARSE_ERROR);
 });
 
 test("parseAgentBrowserEnvelope rejects object envelopes with non-boolean success", async () => {
 	const parsed = await parseAgentBrowserEnvelope(JSON.stringify({ success: "true", data: { title: "ok" } }));
 
 	assert.equal(parsed.envelope, undefined);
-	assert.match(parsed.parseError ?? "", /success.*boolean|boolean success/i);
+	assert.equal(parsed.parseError, NON_BOOLEAN_SUCCESS_PARSE_ERROR);
 });
 
 test("parseAgentBrowserEnvelope accepts valid object envelopes with boolean success", async () => {
