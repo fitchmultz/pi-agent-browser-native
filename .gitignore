@@ -2,3 +2,6 @@ node_modules/
 .DS_Store
 .pi/
 *.tgz
+
+# Ralph debug logs (raw/unredacted; do not commit)
+.ralph/
