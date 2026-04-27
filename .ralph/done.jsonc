@@ -336,6 +336,46 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0010",
+      "status": "done",
+      "title": "Fail fast on malformed batch step shapes before upstream execution",
+      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, J) Consistency/Integrity.\n\nWhy it matters: the wrapper only validates that `batch` stdin parses as a top-level JSON array. It then prepends its synthetic `tab` step and forwards malformed step objects upstream, which weakens the wrapper's own invariants and turns clear wrapper-side input mistakes into opaque upstream behavior.\n\nMinimal proposed fix: validate each user batch step before wrapping it. Require every step to be a non-empty array of string command tokens, and reject malformed entries with a wrapper-side error before spawning `agent-browser`.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "correctness",
+        "batch",
+        "stdin"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "test/agent-browser.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:492-505 :: `parseUserBatchStdin` only checks JSON parsing and `Array.isArray(parsed)`.",
+        "path: extensions/agent-browser/index.ts:514-523 :: `buildPinnedBatchPlan` blindly spreads those parsed steps after the synthetic `['tab', selectedTab]` step.",
+        "repro: `npx tsx <<'EOF' ... resumed explicit session; execute { args: ['--session','named','batch'], stdin: '[{\"oops\":1}]' } ... EOF` :: expected wrapper-side validation error before spawn :: actual upstream invocation stdin was `[[\"tab\",\"t1\"],{\"oops\":1}]` and the tool call still returned `isError: false`."
+      ],
+      "plan": [
+        "Define a narrow wrapper-side schema for batch stdin steps that matches the command token arrays the wrapper and tests already expect.",
+        "Reject malformed step objects before building the synthetic tab-pinning batch so invalid user input never reaches upstream.",
+        "Add negative tests for non-array steps, empty steps, and non-string command tokens.",
+        "Verify by running `npm test` and confirming malformed batch stdin fails before spawn with no `batch` invocation in the fake-binary log."
+      ],
+      "notes": [],
+      "request": "scan: edge cases and bugs in the pi native agent_browser integration and agent-browser passthrough",
+      "created_at": "2026-04-27T01:57:23Z",
+      "updated_at": "2026-04-27T02:10:24.820786000Z",
+      "completed_at": "2026-04-27T02:10:24.820786000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
     }
   ]
 }
