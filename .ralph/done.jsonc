@@ -1636,6 +1636,52 @@
         "RQ-0037"
       ],
       "custom_fields": {}
+    },
+    {
+      "id": "RQ-0041",
+      "status": "done",
+      "title": "Clarify selector strategy and ref churn in docs and prompt playbook",
+      "description": "Dogfood feedback says Playwright-style selectors such as `button:has-text('Close')` and `text=Close` failed while `@eNN` refs worked but went stale after scrolling or rerendering. Current docs mention refs, scoped selectors, `find`, `scroll`, and `scrollintoview`, but do not clearly explain supported selector strategy, unsupported Playwright selector dialects, or the need to re-snapshot after scroll/rerender. Minimal fix is documentation/playbook guidance that reduces avoidable failures without changing upstream selector semantics.",
+      "priority": "medium",
+      "tags": [
+        "scan",
+        "selectors",
+        "docs",
+        "playbook"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "extensions/agent-browser/lib/playbook.ts",
+        "npm run docs:playbook:check",
+        "npm run verify:command-reference"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:17-23 :: Playwright-style selectors `button:has-text('Close')` and `text=Close` failed; refs worked best but became stale after scrolling/rerendering.",
+        "feedback: /tmp/feedback.txt:36-40 :: scrolling plus refs slowed interactive testing; suggested click-by-accessible-name or robust visible-text matching to reduce ref churn.",
+        "path: docs/COMMAND_REFERENCE.md:42-52 :: recommended workflow says to inspect with refs and interact with refs or scoped selectors, but does not define selector dialect or fallback order.",
+        "path: docs/COMMAND_REFERENCE.md:225-230 :: command table lists `find <locator> <value> <action>`, `scroll`, and `scrollintoview`, but these are not tied into the recommended targeting workflow.",
+        "path: extensions/agent-browser/lib/playbook.ts:26-32 :: prompt playbook says re-snapshot after navigation/major DOM changes and gives blank-page recovery, but does not mention ref churn after scroll/rerender or `find role/text/...` as the preferred stable-text alternative.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; docs/playbook checks are green before adding guidance."
+      ],
+      "plan": [
+        "Add a concise selector strategy section to `docs/COMMAND_REFERENCE.md`: prefer current `@ref` from `snapshot -i`, re-run snapshot after scrolling/rerendering, use `find role/text/label/...` for stable accessible-name targeting, and use `scrollintoview` when needed.",
+        "Explicitly state that Playwright selector dialects like `text=...` and `:has-text(...)` are not guaranteed wrapper syntax unless verified against current upstream behavior.",
+        "Mirror the high-value agent-facing bullets in `extensions/agent-browser/lib/playbook.ts` and regenerate/check any generated docs that consume the playbook.",
+        "Verify by running `npm run docs:playbook:check`, `npm run verify:command-reference`, and `npm run verify`."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:43:04.005256000Z",
+      "completed_at": "2026-04-27T16:43:04.005256000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
     }
   ]
 }
