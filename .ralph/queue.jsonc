@@ -2,48 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0020",
-      "status": "todo",
-      "title": "Resolve the mixed -e versus /reload local-validation workflow",
-      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: AGENTS.md:85-96 :: repo guidance prescribes local checkout validation with `pi --no-extensions -e .` and still requires `/reload` or full restart validation after extension changes.\n- path: README.md:173-200,209-223 :: README tells maintainers to keep the checkout path enabled in Pi settings, launch with `pi --no-extensions -e .`, and validate `/reload` or restart plus `/resume`.\n- path: docs/REQUIREMENTS.md:73-79 :: requirements also prescribe `/reload` validation in the local workflow.\n- external: /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md :: accessed 2026-04-27 :: Pi's own extension docs say `pi -e ./path.ts` is for quick tests, while `/reload` applies to auto-discovered extension locations.\n- workflow: pi --help :: `--no-extensions` disables extension discovery while explicit `-e` paths still work, confirming the repo is mixing two loading models in one workflow description.\n\nWhy it matters: maintainers are being told to validate hot reload while also being told to launch in a mode that bypasses extension discovery. That makes it unclear which extension path `/reload` is actually exercising and can create false confidence about local checkout validation.\n\nMinimal proposed fix: choose one canonical local-validation workflow for hot-reload testing versus quick isolated `-e` testing, document the tradeoff explicitly, and remove contradictory instructions about Pi settings and `/reload` from the non-canonical path.\n\nAcceptance criteria: README, AGENTS, and requirements describe one coherent local-validation workflow for `/reload` and one coherent quick-test workflow for `-e`; the docs explain when Pi settings should or should not matter; verify the updated instructions against Pi's extension docs and `pi --help`.",
-      "priority": "medium",
-      "tags": [
-        "maintenance",
-        "docs",
-        "workflow",
-        "pi"
-      ],
-      "scope": [
-        "AGENTS.md",
-        "README.md",
-        "docs/REQUIREMENTS.md",
-        "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md",
-        "pi --help"
-      ],
-      "evidence": [
-        "path: AGENTS.md:85-96 :: local validation instructions combine `pi --no-extensions -e .` with `/reload` expectations",
-        "path: README.md:173-200,209-223 :: README mixes Pi settings guidance, isolated -e loading, and `/reload` expectations in the same workflow",
-        "path: docs/REQUIREMENTS.md:73-79 :: requirements also prescribe `/reload` in the local validation path",
-        "external: /opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md :: accessed 2026-04-27 :: Pi docs reserve `/reload` for auto-discovered extension locations, not ad hoc `-e` quick tests",
-        "workflow: pi --help :: `--no-extensions` disables extension discovery while explicit `-e` paths still work"
-      ],
-      "plan": [
-        "Decide which local validation path is canonical for hot reload and which is canonical for isolated quick tests.",
-        "Update AGENTS, README, and requirements so each path has consistent setup steps, Pi settings expectations, and reload or restart guidance.",
-        "Verify by checking the updated instructions against Pi's extension docs and `pi --help`, then spot-reading the repo docs for contradictions."
-      ],
-      "notes": [],
-      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
-      "created_at": "2026-04-27T02:23:43Z",
-      "updated_at": "2026-04-27T02:23:43Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0015",
       "status": "todo",
       "title": "Deduplicate shared parsing helpers across runtime, temp, and results",
