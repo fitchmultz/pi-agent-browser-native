@@ -2,45 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0025",
-      "status": "todo",
-      "title": "Remove abort listeners after subprocess completion",
-      "description": "Principles violated: H) Operational hygiene, D) Localize change.\n\nWhy it matters: every successful subprocess leaves its abort listener attached to the provided signal. The extension reuses one signal across the main call and follow-up tab-summary or correction subprocesses, so repeated work grows retained listeners and stale closures around old child processes. That is silent resource leakage in the exact hot paths this wrapper uses under load.\n\nMinimal proposed fix: register the abort handler once per subprocess and remove it in every settle path (`close`, `error`, and immediate-abort handling) before resolving the promise.\n\nAcceptance criteria: repeated `runAgentBrowserProcess()` calls against one shared signal leave `getEventListeners(signal, 'abort').length === 0` after completion; verify `npm run verify` stays green.",
-      "priority": "medium",
-      "tags": [
-        "maintenance",
-        "cancellation",
-        "operability",
-        "process"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/process.ts",
-        "test/agent-browser.process.test.ts",
-        "node --import tsx --input-type=module"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/lib/process.ts:212-233 :: `finish()` closes the process result without unregistering any abort listener that was attached to the shared signal.",
-        "path: extensions/agent-browser/lib/process.ts:264-269 :: each invocation adds `signal.addEventListener('abort', abortChild, { once: true })` when a signal is supplied.",
-        "path: extensions/agent-browser/index.ts:1094-1223 :: the extension reuses the same `signal` for the main subprocess plus follow-up navigation-summary and tab-correction subprocesses.",
-        "repro: `node --import tsx --input-type=module <<'EOF' ... loop runAgentBrowserProcess(...) 5 times with one AbortController.signal; inspect getEventListeners(signal,'abort').length ... EOF` :: expected listener count to return to 0 after each subprocess settles :: actual counts grew `[1,2,3,4,5]` and stayed at 5."
-      ],
-      "plan": [
-        "Refactor `runAgentBrowserProcess()` so the abort listener is removed whenever the subprocess settles or when immediate abort prevents normal execution.",
-        "Add focused process-layer coverage that asserts no abort listeners remain after repeated successful runs with a shared signal.",
-        "Verify by running `npm run verify` and rerunning the listener-count repro to confirm the final count returns to 0."
-      ],
-      "notes": [],
-      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
-      "created_at": "2026-04-27T03:06:24Z",
-      "updated_at": "2026-04-27T03:06:24Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0026",
       "status": "todo",
       "title": "Make stale temp-root pruning robust to PID reuse",
