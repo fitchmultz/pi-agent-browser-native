@@ -1727,6 +1727,56 @@
       "custom_fields": {
         "scan_agent": "scan-general"
       }
+    },
+    {
+      "id": "RQ-0044",
+      "status": "done",
+      "title": "Review artifact retention limits for screenshot and video-heavy dogfood workflows",
+      "description": "The feedback reports hitting the 30 recent artifacts cap quickly while collecting screenshots/videos during dogfooding. Current manifest behavior intentionally bounds recent session artifacts at 30 entries and reports live/evicted counts, but user-facing docs do not make the cap or dogfood workflow impact prominent. Minimal fix is to decide whether the default retention window should be larger or configurable for artifact-heavy QA, document the behavior clearly, and add/update eviction tests for any behavior change.",
+      "priority": "medium",
+      "tags": [
+        "scan",
+        "artifacts",
+        "dogfood",
+        "retention"
+      ],
+      "scope": [
+        "/tmp/feedback.txt",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "extensions/agent-browser/lib/results/snapshot.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "test/agent-browser.presentation.test.ts",
+        "test/agent-browser.extension-tabs.test.ts",
+        "npm run verify"
+      ],
+      "evidence": [
+        "feedback: /tmp/feedback.txt:25-31 :: dogfood run hit the `30 recent artifacts` cap quickly during screenshots/videos and suggested raising the cap or dogfood-mode persistence.",
+        "path: extensions/agent-browser/lib/results/shared.ts:73-74 :: `SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES = 30` hardcodes the recent manifest limit.",
+        "path: extensions/agent-browser/lib/results/shared.ts:116-122 :: retention summary renders `Session artifacts: ... (N/max recent)` when artifacts are tracked.",
+        "path: docs/COMMAND_REFERENCE.md:109-112 :: saved-file section says artifacts are exposed in details but does not mention the 30-entry retention cap or how to plan artifact-heavy QA runs.",
+        "path: docs/COMMAND_REFERENCE.md:395 :: wrapper-specific behavior mentions oversized outputs and spill files but not recent-artifact eviction pressure for screenshots/videos.",
+        "command: npm run verify :: passed 170 tests, 0 failed, 1 skipped; baseline is green before retention-limit changes."
+      ],
+      "plan": [
+        "Audit current artifact retention budgets for manifest entries and persisted spill files, including whether screenshots/videos are only metadata-tracked or also subject to persisted cleanup.",
+        "Choose the smallest useful improvement: clearer docs only, a larger constant, or a documented environment/config override for artifact-heavy QA sessions.",
+        "If behavior changes, update unit/integration tests that cover manifest eviction and retention summaries so the new limit/configuration is locked in.",
+        "Update `docs/COMMAND_REFERENCE.md` and `docs/TOOL_CONTRACT.md` with plain-language artifact retention guidance for screenshot/video-heavy dogfood workflows.",
+        "Verify by running `npm run verify` and confirming eviction/retention tests reflect the chosen behavior."
+      ],
+      "notes": [],
+      "request": "scan finding",
+      "created_at": "2026-04-27T16:34:07Z",
+      "updated_at": "2026-04-27T16:45:29.980324000Z",
+      "completed_at": "2026-04-27T16:45:29.980324000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-general"
+      }
     }
   ]
 }
