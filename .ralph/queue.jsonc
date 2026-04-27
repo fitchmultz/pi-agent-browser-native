@@ -2,52 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0019",
-      "status": "todo",
-      "title": "Refresh the local command reference to the installed agent-browser surface",
-      "description": "Principles: Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: docs/COMMAND_REFERENCE.md:11-13 :: the file claims to be the repo-readable equivalent of the upstream command surface for blocked direct-binary sessions.\n- path: docs/REQUIREMENTS.md:67-68 :: requirements say the local command reference must stay in sync with the effective agent_browser surface.\n- workflow: agent-browser --version :: local upstream version is `0.26.0`.\n- workflow: agent-browser --help :: current help includes major surface area not represented in docs/COMMAND_REFERENCE.md, including `skills`, `keyboard`, `scroll`, `scrollintoview`, `is`, `find`, `mouse`, `set`, `network`, `storage`, `diff`, `trace`, `record`, `stream`, `auth`, `confirm`, `deny`, `chat`, `dashboard`, `doctor`, `profiles`, `snapshot --urls`, and `wait --download`.\n- workflow: agent-browser tab --help; agent-browser snapshot --help; agent-browser wait --help :: subcommand help confirms current options that the local reference does not enumerate.\n\nWhy it matters: this repo explicitly positions the local command reference as the fallback for blocked binary help. Right now it materially understates the command surface available to the extension's target upstream version on this machine.\n\nMinimal proposed fix: re-baseline docs/COMMAND_REFERENCE.md against the currently installed `agent-browser` help output, clearly separate the core recommended workflow from the full supported surface, and add a lightweight verification step that catches future upstream drift.\n\nAcceptance criteria: the command reference reflects the installed upstream 0.26.0 command and option surface relevant to this project; recommended workflows stay concise while a full or linked reference covers the rest; add a drift check against `agent-browser --help` or a maintained snapshot; verify `npm run verify`, `npm run verify:package`, and `npm run verify:package:pi` remain green.",
-      "priority": "high",
-      "tags": [
-        "maintenance",
-        "docs",
-        "agent-browser",
-        "upstream-sync"
-      ],
-      "scope": [
-        "docs/COMMAND_REFERENCE.md",
-        "docs/REQUIREMENTS.md",
-        "agent-browser --version",
-        "agent-browser --help",
-        "agent-browser tab --help",
-        "agent-browser snapshot --help",
-        "agent-browser wait --help",
-        "npm run verify",
-        "npm run verify:package",
-        "npm run verify:package:pi"
-      ],
-      "evidence": [
-        "path: docs/COMMAND_REFERENCE.md:11-13 :: command reference claims to substitute for blocked direct binary help",
-        "path: docs/REQUIREMENTS.md:67-68 :: requirements say the local command reference must stay in sync with the effective tool surface",
-        "workflow: agent-browser --version :: actual installed upstream version is 0.26.0",
-        "workflow: agent-browser --help :: current help exposes major command groups and options not represented in docs/COMMAND_REFERENCE.md"
-      ],
-      "plan": [
-        "Audit the currently installed agent-browser help output and decide which parts belong in the concise recommended workflow versus an expanded supported-surface section.",
-        "Update docs/COMMAND_REFERENCE.md so it matches the installed upstream surface this extension targets, including omitted command families and important subcommand options.",
-        "Verify by comparing the refreshed doc against `agent-browser --help`, `agent-browser tab --help`, `agent-browser snapshot --help`, and `agent-browser wait --help`, then run `npm run verify`, `npm run verify:package`, and `npm run verify:package:pi`."
-      ],
-      "notes": [],
-      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
-      "created_at": "2026-04-27T02:23:43Z",
-      "updated_at": "2026-04-27T02:23:43Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0020",
       "status": "todo",
       "title": "Resolve the mixed -e versus /reload local-validation workflow",
