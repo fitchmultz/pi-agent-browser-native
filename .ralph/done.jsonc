@@ -1087,6 +1087,54 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0036",
+      "status": "done",
+      "title": "Centralize the upstream 0.26.0 capability baseline",
+      "description": "Opportunity type: modernization. The repo intentionally targets the current installed upstream version only, but the current version baseline is duplicated across the command reference, the verifier, and tests as a large hand-maintained token set. That works today, but it will create needless maintenance drag as upstream evolves. Why it matters: a single source of truth for the targeted upstream version and expected help tokens will reduce update churn, make drift easier to review, and keep docs and tests synchronized. Proposed approach: move the targeted upstream version and capability-token baseline into one canonical metadata source, make the verifier and docs consume it, and keep human-authored explanations separate from generated capability data. Risks and mitigations: keep generation narrow to versioned capability metadata so the docs remain readable and intentional, mark generated sections clearly, and avoid manual edits to generated fragments. Acceptance criteria: the targeted upstream version and token expectations live in one canonical source, the verifier and docs read from it, generated sections are clearly marked, and updating the upstream target requires changing one well-documented place plus regenerating derived content.",
+      "priority": "medium",
+      "tags": [
+        "innovation",
+        "modernization",
+        "docs",
+        "maintainability"
+      ],
+      "scope": [
+        "docs/COMMAND_REFERENCE.md",
+        "scripts/verify-command-reference.mjs",
+        "test/verify-command-reference.test.ts",
+        "package.json",
+        "scripts"
+      ],
+      "evidence": [
+        "path: docs/COMMAND_REFERENCE.md :: Upstream baseline :: the command reference is explicitly pinned to `agent-browser 0.26.0` and repeats that version in the heading text",
+        "path: scripts/verify-command-reference.mjs :: EXPECTED_VERSION and token lists :: the verifier hardcodes the target version and a large manual set of required documentation and upstream-help tokens",
+        "path: test/verify-command-reference.test.ts :: fakeRunWithVersion :: tests duplicate the pinned version assumption and verifier expectations"
+      ],
+      "plan": [
+        "Design a single canonical metadata source for the targeted upstream version and expected capability tokens, including how generated doc fragments are marked.",
+        "Refactor the command-reference verifier and any generated doc fragments to consume that metadata instead of duplicating constants.",
+        "Update tests to validate the metadata-driven flow rather than hardcoded scattered version assumptions.",
+        "Document the maintainer workflow for bumping the targeted upstream version and regenerating derived content, including the no-manual-edit rule for generated fragments.",
+        "Verify by updating the metadata source in a controlled test scenario and confirming the verifier, docs, and tests all change coherently from that one source."
+      ],
+      "notes": [],
+      "request": "scan: none",
+      "created_at": "2026-04-27T08:29:39Z",
+      "updated_at": "2026-04-27T14:47:16.004500000Z",
+      "completed_at": "2026-04-27T14:47:16.004500000Z",
+      "depends_on": [],
+      "blocks": [
+        "RQ-0027",
+        "RQ-0030"
+      ],
+      "relates_to": [
+        "RQ-0031"
+      ],
+      "custom_fields": {
+        "scan_agent": "scan-innovation"
+      }
     }
   ]
 }
