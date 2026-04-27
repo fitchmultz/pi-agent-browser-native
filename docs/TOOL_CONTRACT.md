@@ -170,6 +170,7 @@ Additional structured fields can appear when relevant:
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `imagePath` / `imagePaths` for screenshots and batched image outputs
 - `artifacts` for upstream saved files such as screenshots, PDFs, downloads, `wait --download` files, traces, CPU profiles, WebM recordings, and path-bearing HAR captures. Each artifact includes the original saved `path`, resolved `absolutePath`, `kind`, optional `mediaType`, optional `extension`, and best-effort disk metadata such as `exists` and `sizeBytes`.
+- `savedFilePath` / `savedFile` for direct `download`, `pdf`, and `wait --download` saved-file workflows; batch results preserve the same fields on the relevant `batchSteps` entry.
 - `batchSteps[].artifacts` for per-step artifacts in `batch` output; top-level `artifacts` aggregates all step artifacts in order
 - `fullOutputPath` / `fullOutputPaths` when large snapshot output or other oversized tool output is compacted and spilled to a private file; persisted sessions keep that path under a private session-scoped artifact directory with a bounded per-session budget so it survives reload/resume without unbounded growth
 - `sessionRecoveryHint` when startup-scoped flags need `sessionMode: "fresh"`
@@ -185,7 +186,7 @@ For oversized snapshots and other oversized tool outputs, details should switch 
 
 Worth doing in v1:
 - screenshots → saved-path summary, `details.artifacts` metadata, and inline image attachment when safe
-- file artifacts such as PDFs, downloads, `wait --download` files, traces, CPU profiles, WebM recordings, and path-bearing HAR captures → concise saved-path summaries plus metadata in `details.artifacts`; large or binary artifacts are not inlined into model context
+- file artifacts such as PDFs, downloads, `wait --download` files, traces, CPU profiles, WebM recordings, and path-bearing HAR captures → concise saved-path summaries plus metadata in `details.artifacts`; direct saved-file workflows also expose `details.savedFilePath` / `details.savedFile`; large or binary artifacts are not inlined into model context
 - snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path printed directly in content and kept in `details.fullOutputPath` when the inline result would otherwise be too large
 - oversized generic outputs such as large `eval --stdin` payloads → compact preview plus the actual spill file path instead of dumping the whole payload into model context
 - extraction-style commands like `eval --stdin` and `get title` → scalar-first text with lightweight origin context when available

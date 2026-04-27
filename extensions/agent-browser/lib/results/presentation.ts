@@ -25,6 +25,7 @@ import {
 	type BatchStepPresentationDetails,
 	type FileArtifactKind,
 	type FileArtifactMetadata,
+	type SavedFilePresentationDetails,
 	type ToolPresentation,
 	countLines,
 	stringifyUnknown,
@@ -461,7 +462,7 @@ async function extractFileArtifacts(commandInfo: CommandInfo, cwd: string, data:
 function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 	switch (artifact.kind) {
 		case "download":
-			return "Downloaded file";
+			return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download completed" : "Downloaded file";
 		case "file":
 			return "Saved file";
 		case "har":
@@ -499,6 +500,43 @@ function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): string[
 		].filter((item): item is string => item !== undefined).join(", ");
 		return suffix ? `${formatArtifactLabel(artifact)}: ${artifact.path} (${suffix})` : `${formatArtifactLabel(artifact)}: ${artifact.path}`;
 	});
+}
+
+function isDownloadWaitCommand(commandInfo: CommandInfo): boolean {
+	return commandInfo.command === "wait" && commandInfo.subcommand === "--download";
+}
+
+function extractSavedFilePath(data: Record<string, unknown>): string | undefined {
+	return typeof data.path === "string" && data.path.trim().length > 0 ? data.path : undefined;
+}
+
+function getSavedFileDetails(commandInfo: CommandInfo, data: Record<string, unknown>): SavedFilePresentationDetails | undefined {
+	const path = extractSavedFilePath(data);
+	if (!path) {
+		return undefined;
+	}
+	const savedFileCommand = isDownloadWaitCommand(commandInfo)
+		? "wait"
+		: commandInfo.command === "download" || commandInfo.command === "pdf"
+			? commandInfo.command
+			: undefined;
+	if (!savedFileCommand) {
+		return undefined;
+	}
+
+	const { path: _path, ...metadata } = data;
+	const details: SavedFilePresentationDetails = {
+		command: savedFileCommand,
+		kind: savedFileCommand === "pdf" ? "pdf" : "download",
+		path,
+	};
+	if (Object.keys(metadata).length > 0) {
+		details.metadata = metadata;
+	}
+	if (commandInfo.subcommand) {
+		details.subcommand = commandInfo.subcommand;
+	}
+	return details;
 }
 
 function getScalarExtractionResult(data: Record<string, unknown>): string | undefined {
@@ -713,6 +751,8 @@ async function buildBatchStepPresentation(options: {
 			imagePath: imagePaths[0],
 			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
 			index,
+			savedFile: presentation.savedFile,
+			savedFilePath: presentation.savedFilePath,
 			success: true,
 			summary: presentation.summary,
 			text,
@@ -1110,6 +1150,13 @@ export async function buildToolPresentation(options: {
 				  };
 	if (artifacts.length > 0 && !presentation.artifacts) {
 		presentation.artifacts = artifacts;
+	}
+	if (isRecord(data)) {
+		const savedFile = getSavedFileDetails(commandInfo, data);
+		if (savedFile) {
+			presentation.savedFile = savedFile;
+			presentation.savedFilePath = savedFile.path;
+		}
 	}
 
 	const imagePath = extractImagePath(commandInfo, cwd, data);

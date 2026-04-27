@@ -1345,6 +1345,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							fullOutputPaths: undefined,
 							imagePath: undefined,
 							imagePaths: undefined,
+							savedFile: undefined,
+							savedFilePath: undefined,
 							summary: `${redactedArgs.join(" ")} completed`,
 						  }
 						: await buildToolPresentation({
@@ -1391,6 +1393,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							imagePath: presentation.imagePath,
 							imagePaths: presentation.imagePaths,
 							parseError: plainTextInspection ? undefined : parseError,
+							savedFile: redactSensitiveValue(presentation.savedFile),
+							savedFilePath: presentation.savedFilePath ? redactSensitiveText(presentation.savedFilePath) : undefined,
 							sessionMode,
 							sessionTabCorrection: redactSensitiveValue(sessionTabCorrection),
 							sessionTabTarget: redactSensitiveValue(currentSessionTabTarget),

@@ -359,6 +359,13 @@ test("buildToolPresentation formats download results as saved-file summaries", a
 	assert.equal(presentation.artifacts?.[0]?.absolutePath, "/tmp/report.pdf");
 	assert.equal(presentation.artifacts?.[0]?.mediaType, "application/pdf");
 	assert.equal(presentation.artifacts?.[0]?.exists, false);
+	assert.equal(presentation.savedFilePath, "/tmp/report.pdf");
+	assert.deepEqual(presentation.savedFile, {
+		command: "download",
+		kind: "download",
+		path: "/tmp/report.pdf",
+		subcommand: "@e5",
+	});
 });
 
 test("buildToolPresentation renders metadata-first summaries for file artifact commands", async () => {
@@ -375,7 +382,7 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 			data: { path: "download.txt" },
 			expectedKind: "download",
 			expectedMediaType: "text/plain",
-			expectedText: "Downloaded file: download.txt",
+			expectedText: "Download completed: download.txt",
 		},
 		{
 			commandInfo: { command: "trace", subcommand: "stop" },
@@ -425,6 +432,19 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 		assert.equal(presentation.artifacts?.[0]?.exists, false);
 		assert.equal(presentation.imagePath, undefined);
 		assert.equal(presentation.imagePaths, undefined);
+		if (item.commandInfo.command === "pdf") {
+			assert.equal(presentation.savedFilePath, "page.pdf");
+			assert.equal(presentation.savedFile?.kind, "pdf");
+		}
+		if (item.commandInfo.command === "wait") {
+			assert.equal(presentation.savedFilePath, "download.txt");
+			assert.deepEqual(presentation.savedFile, {
+				command: "wait",
+				kind: "download",
+				path: "download.txt",
+				subcommand: "--download",
+			});
+		}
 	}
 });
 
@@ -593,6 +613,34 @@ test("buildToolPresentation does not inline non-screenshot path records with ima
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
+});
+
+test("buildToolPresentation preserves wait --download saved-file metadata inside batch output", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [
+				{ command: ["click", "#export"], result: { clicked: true }, success: true },
+				{ command: ["wait", "--download", "/tmp/export.csv"], result: { path: "/tmp/export.csv", elapsedMs: 75 }, success: true },
+			],
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Step 1 — click #export/);
+	assert.match(text, /Step 2 — wait --download \/tmp\/export\.csv/);
+	assert.match(text, /Download completed: \/tmp\/export\.csv/);
+	assert.equal(presentation.batchSteps?.[1]?.artifacts?.[0]?.kind, "download");
+	assert.equal(presentation.batchSteps?.[1]?.savedFilePath, "/tmp/export.csv");
+	assert.deepEqual(presentation.batchSteps?.[1]?.savedFile, {
+		command: "wait",
+		kind: "download",
+		metadata: { elapsedMs: 75 },
+		path: "/tmp/export.csv",
+		subcommand: "--download",
+	});
 });
 
 test("buildToolPresentation reuses standalone inline screenshot rendering inside batch output", async () => {

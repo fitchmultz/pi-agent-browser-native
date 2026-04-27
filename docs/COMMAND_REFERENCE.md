@@ -81,6 +81,21 @@ Use `batch --bail` when later steps should stop after the first failed command.
 
 Do not use a bare `wait --load`; `--load` needs a state value such as `load`, `domcontentloaded`, or `networkidle`.
 
+Use `wait --download [path]` after an earlier action has already started a browser download, such as a dashboard export button that responds asynchronously:
+
+```json
+{ "args": ["click", "@export"] }
+{ "args": ["wait", "--download", "/tmp/report.csv"] }
+```
+
+For one-call flows, put the click and wait in `batch`; the wait step keeps the saved-file metadata in `details.batchSteps[n].savedFilePath` and `details.batchSteps[n].savedFile`:
+
+```json
+{ "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
+```
+
+A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls.
+
 ### Download, screenshot, and PDF files
 
 ```json
@@ -89,7 +104,7 @@ Do not use a bare `wait --load`; `--load` needs a state value such as `load`, `d
 { "args": ["pdf", "/tmp/page.pdf"] }
 ```
 
-Prefer `download <selector> <path>` over `click` when the goal is a saved file. Use `wait --download [path]` when a previous action starts the download.
+Prefer `download <selector> <path>` when the target element itself is the downloadable link/control. Use `click` plus `wait --download [path]` when a previous action starts the download indirectly.
 
 Wrapper result rendering is metadata-first for saved files:
 - screenshots return a saved-path summary, structured `details.artifacts` metadata, and an inline image attachment when safe
@@ -251,7 +266,7 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `wait --load <state>` | Wait for load state: `load`, `domcontentloaded`, or `networkidle`. |
 | `wait --fn <expression>` | Wait for a JavaScript expression to become truthy. |
 | `wait --text <text>` | Wait for text to appear on the page. |
-| `wait --download [path]` | Wait for a download to complete and optionally save it to `path`. |
+| `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include `savedFilePath`/`savedFile`. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. |
 | `wait <selector> --state hidden` | Wait for an element to become hidden. |
 | `wait <selector> --state detached` | Wait for an element to detach. |

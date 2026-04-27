@@ -393,6 +393,40 @@ test("agentBrowserExtension rejects malformed JSON envelopes that omit success",
 	}
 });
 
+test("agentBrowserExtension forwards wait --download saved-file metadata in details", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-download-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: true, data: { path: "/tmp/export.csv", elapsedMs: 64 } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["wait", "--download", "/tmp/export.csv"],
+			});
+
+			assert.equal(result.isError, false);
+			assert.equal(result.content[0]?.type, "text");
+			assert.match((result.content[0] as { text: string }).text, /Download completed: \/tmp\/export\.csv/);
+			assert.equal(result.details?.savedFilePath, "/tmp/export.csv");
+			assert.deepEqual(result.details?.savedFile, {
+				command: "wait",
+				kind: "download",
+				metadata: { elapsedMs: 64 },
+				path: "/tmp/export.csv",
+				subcommand: "--download",
+			});
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports direct fallback failures with the effective invocation", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";

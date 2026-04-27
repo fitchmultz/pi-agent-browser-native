@@ -65,6 +65,34 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 			return;
 		}
 
+		if (url.pathname === "/download") {
+			sendFixtureHtml(
+				response,
+				`<!doctype html>
+<html lang="en">
+<head><title>Download Contract Fixture</title></head>
+<body>
+	<main>
+		<h1>Download Contract Fixture</h1>
+		<button id="delayed-download" type="button" onclick="setTimeout(() => { window.location.href = '/download-file'; }, 1000);">Export report</button>
+		<a id="direct-download" href="/download-file" download="report.txt">Direct report</a>
+	</main>
+</body>
+</html>`,
+			);
+			return;
+		}
+
+		if (url.pathname === "/download-file") {
+			response.writeHead(200, {
+				"cache-control": "no-store",
+				"content-disposition": 'attachment; filename="report.txt"',
+				"content-type": "text/plain; charset=utf-8",
+			});
+			response.end("download contract fixture report\n");
+			return;
+		}
+
 		response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
 		response.end("not found");
 	});

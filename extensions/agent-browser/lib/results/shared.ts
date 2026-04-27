@@ -33,6 +33,14 @@ export interface FileArtifactMetadata {
 	subcommand?: string;
 }
 
+export interface SavedFilePresentationDetails {
+	command: "download" | "pdf" | "wait";
+	kind: "download" | "pdf";
+	metadata?: Record<string, unknown>;
+	path: string;
+	subcommand?: string;
+}
+
 export interface BatchStepPresentationDetails {
 	artifacts?: FileArtifactMetadata[];
 	command?: string[];
@@ -43,6 +51,8 @@ export interface BatchStepPresentationDetails {
 	imagePath?: string;
 	imagePaths?: string[];
 	index: number;
+	savedFile?: SavedFilePresentationDetails;
+	savedFilePath?: string;
 	success: boolean;
 	summary: string;
 	text: string;
@@ -65,6 +75,8 @@ export interface ToolPresentation {
 	fullOutputPaths?: string[];
 	imagePath?: string;
 	imagePaths?: string[];
+	savedFile?: SavedFilePresentationDetails;
+	savedFilePath?: string;
 	summary: string;
 }
 

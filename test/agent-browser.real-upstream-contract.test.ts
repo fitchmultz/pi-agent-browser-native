@@ -1,6 +1,6 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for version, open, snapshot, eval stdin, batch stdin, and managed-session reuse shapes.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for version, open, snapshot, eval stdin, batch stdin, wait-download, and managed-session reuse shapes.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `PI_AGENT_BROWSER_REAL_UPSTREAM=1 npm run test:real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
@@ -197,6 +197,19 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(batchDetails.sessionName, managedSessionName);
 					assert.equal(batchDetails.usedImplicitSession, true);
 					assert.match(JSON.stringify(batchDetails.data), /Ready for real upstream contract validation|Agent Browser Contract Fixture/);
+
+					const downloadPath = join(tempDir, "wait-download-report.txt");
+					const downloadPage = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `${fixtureServer?.baseUrl}/download`] });
+					assertSuccessfulResult(downloadPage, shapes.commands.open, "open download fixture");
+					const clickedExport = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "#delayed-download"] });
+					assert.equal(clickedExport.isError, false, `click should start async download: ${clickedExport.content[0]?.text ?? ""}`);
+					const waitedDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download", downloadPath] });
+					const waitDownloadDetails = assertSuccessfulResult(waitedDownload, shapes.commands.waitDownload, "wait --download");
+					assert.equal(waitDownloadDetails.sessionName, managedSessionName);
+					assert.equal(waitDownloadDetails.usedImplicitSession, true);
+					assert.equal(waitDownloadDetails.savedFilePath, downloadPath);
+					assert.equal((waitDownloadDetails.savedFile as { path?: string } | undefined)?.path, downloadPath);
+					assert.match(waitedDownload.content[0]?.text ?? "", /Download completed/);
 				},
 			);
 		} finally {

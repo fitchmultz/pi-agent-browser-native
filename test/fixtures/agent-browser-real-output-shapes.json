@@ -17,6 +17,10 @@
     },
     "batch": {
       "detailKeys": ["args", "batchSteps", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "summary", "usedImplicitSession"]
+    },
+    "waitDownload": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "savedFile", "savedFilePath", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"],
+      "dataKeys": ["path"]
     }
   }
 }

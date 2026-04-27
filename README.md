@@ -160,10 +160,23 @@ Evaluate page JavaScript via stdin:
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
 
-Download a file to an explicit path instead of relying on `click` alone:
+Download a file from a known link/control directly:
 
 ```json
 { "args": ["download", "@e5", "/tmp/report.pdf"] }
+```
+
+For dashboards that start an export asynchronously after a click or navigation, click first and then wait for the download. The wrapper reports `Download completed: /tmp/report.csv` and exposes `details.savedFilePath` plus `details.savedFile` for the `wait` result:
+
+```json
+{ "args": ["click", "@export"] }
+{ "args": ["wait", "--download", "/tmp/report.csv"] }
+```
+
+Batch flows preserve the same saved-file metadata on the wait step:
+
+```json
+{ "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
 ```
 
 Start a fresh profiled launch after you already used the implicit session:
@@ -231,7 +244,8 @@ Validated workflow examples:
 - run `eval --stdin`
 - take a screenshot with inline attachment support
 - inspect upstream help/version through native tool calls like `{ "args": ["--help"] }` and `{ "args": ["--version"] }` via the tool's stateless plain-text inspection fallback
-- use `download <selector> <path>` for attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
+- use `download <selector> <path>` for direct attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
+- use `click` plus `wait --download <path>` for asynchronous export flows, and confirm `details.savedFilePath`/`details.savedFile` are present on the wait result or batch wait step
 - confirm oversized outputs show the actual spill file path directly in tool content, not just a details key name
 
 <!-- agent-browser-playbook:start inspection -->
