@@ -44,45 +44,6 @@
       }
     },
     {
-      "id": "RQ-0014",
-      "status": "todo",
-      "title": "Tighten malformed-envelope tests around operator-facing copy",
-      "description": "Principles: Fail fast appropriately, Operational hygiene, Consistency/Integrity.\n\nEvidence:\n- path: test/agent-browser.test.ts:1033-1053 :: malformed-envelope assertions accept broad alternation regexes such as `/invalid JSON envelope|success|protocol/i`.\n- path: test/agent-browser.test.ts:1234-1245 :: parse-error assertions for missing or non-boolean `success` also use loose alternation regexes.\n- path: extensions/agent-browser/lib/results/envelope.ts:75-87 :: the implementation now emits specific operator-facing parse errors, but the tests do not pin that copy.\n- workflow: rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts :: found the permissive alternation assertions at lines 1052, 1053, 1238, and 1245.\n\nWhy it matters: this suite is supposed to protect clear failure modes, but these regexes would still pass after a regression to much vaguer or more jargon-heavy copy. That weakens the repo's guardrail around error clarity.\n\nMinimal proposed fix: replace the permissive regexes with explicit expected messages or tighter substrings for each malformed-envelope case, and keep one dedicated test per failure shape.\n\nAcceptance criteria: tests for missing `success` and non-boolean `success` assert the intended copy directly or with narrowly scoped matches; `npm run verify` passes without the broad alternation patterns.",
-      "priority": "medium",
-      "tags": [
-        "maintenance",
-        "tests",
-        "errors",
-        "results"
-      ],
-      "scope": [
-        "test/agent-browser.test.ts",
-        "extensions/agent-browser/lib/results/envelope.ts",
-        "rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts",
-        "npm run verify"
-      ],
-      "evidence": [
-        "path: test/agent-browser.test.ts:1033-1053 :: malformed-envelope tool-call assertions use broad alternation regexes",
-        "path: test/agent-browser.test.ts:1234-1245 :: parseEnvelope unit tests also use loose alternation regexes for missing or non-boolean success",
-        "workflow: rg -n \"assert\\.match\\([^\\n]*\\|\" test/agent-browser.test.ts test/verify-package.test.ts :: found the permissive alternation assertions protecting parse-error copy"
-      ],
-      "plan": [
-        "Replace the broad alternation assertions with explicit expected copy or narrowly scoped matches for each malformed-envelope branch.",
-        "Keep at least one unit test for each parse-error shape and one tool-level propagation test so copy regressions are caught close to the failure site.",
-        "Verify by running `npm run verify` and confirming the stricter assertions pass."
-      ],
-      "notes": [],
-      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
-      "created_at": "2026-04-27T02:21:16Z",
-      "updated_at": "2026-04-27T02:21:16Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0015",
       "status": "todo",
       "title": "Deduplicate shared parsing helpers across runtime, temp, and results",
