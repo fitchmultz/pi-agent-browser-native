@@ -94,7 +94,7 @@ The native tool exposed to the agent is named `agent_browser`.
 The primary session control parameter is `sessionMode`:
 
 - `"auto"` (default) reuses the extension-managed `pi`-scoped session when possible
-- `"fresh"` switches that managed session to a fresh upstream launch so startup-scoped flags like `--profile`, `--session-name`, and `--cdp` apply and later auto calls follow the new browser
+- `"fresh"` switches that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, and `--auto-connect` apply and later auto calls follow the new browser
 
 ## Agent quick start
 
@@ -201,16 +201,16 @@ Validated workflow examples:
 - use `download <selector> <path>` for attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
 - confirm oversized outputs show the actual spill file path directly in tool content, not just a details key name
 
-Inspection commands like `agent_browser --help` and `--version` are always supported. They return plain text, are useful for debugging or capability checks, and stay stateless: the extension does not inject its implicit session for them and they do not consume the managed-session slot needed for a later `--profile`, `--session-name`, or `--cdp` launch.
+Inspection commands like `agent_browser --help` and `--version` are always supported. They return plain text, are useful for debugging or capability checks, and stay stateless: the extension does not inject its implicit session for them and they do not consume the managed-session slot needed for a later `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` launch.
 
 Current cautions:
 - passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
-- startup-scoped flags like `--profile`, `--session-name`, and `--cdp` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
+- launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, and `--auto-connect` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
 - implicit `piab-*` sessions are extension-managed convenience sessions; they stay alive across `pi` shutdown/reload so later default calls can keep following the active managed browser on `/reload` or `/resume`, rely on the configured idle timeout to reduce stale background daemons, store persisted-session large snapshot spill files under a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` survives reload/resume without unbounded growth, and still clean up process-private temp spill artifacts on shutdown
 - `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
 - for local Unix launches, the wrapper uses a short private socket directory under `/tmp` so extension-generated session names do not trip upstream Unix socket-path limits in longer cwd/session-name combinations
 - for direct headless local Chrome launches to `chat.com`, `chatgpt.com`, and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
-- after profiled `open` calls, the extension best-effort re-selects the tab that matches the returned page URL when restored profile tabs steal focus during launch
+- after launch-scoped `open` calls that can restore existing tabs (for example `--profile`, `--session-name`, or `--state`), the extension best-effort re-selects the tab that matches the returned page URL when restored tabs steal focus during launch
 - after a target tab is known, later active-tab commands best-effort pin that same tab inside the same upstream invocation when a reconnect would otherwise drift to a restored tab
 - after a successful command, the extension also best-effort restores that intended tab when a restored/background tab steals focus after the command completes
 - oversized snapshots and oversized generic outputs compact inline content and print the actual spill file path directly in the tool result when a spill file exists

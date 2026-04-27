@@ -28,7 +28,7 @@ Tool parameters:
 - `stdin`: only for commands like `batch` and `eval --stdin`
 - `sessionMode`:
   - `"auto"` reuse the extension-managed session when possible
-  - `"fresh"` rotate that managed session to a fresh upstream launch so startup-scoped flags like `--profile`, `--session-name`, or `--cdp` apply
+  - `"fresh"` rotate that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` apply
 
 ## Recommended workflow
 
@@ -240,6 +240,8 @@ The wrapper keeps `--help` and `--version` stateless so they do not consume the 
 - `--session <name>` explicit upstream session name
 - `--session-name <name>` upstream saved auth/session state name
 - `--cdp <port-or-url>` connect to an existing browser
+- `--state <path>` load upstream saved state/auth data
+- `--auto-connect` attach to an already-running browser/debug endpoint according to upstream behavior
 - `--headed` show the browser window
 - `--download-path <dir>` default download directory
 - `--user-agent <ua>` custom user agent
@@ -248,8 +250,8 @@ The wrapper keeps `--help` and `--version` stateless so they do not consume the 
 ## Wrapper-specific behavior worth knowing
 
 - The extension may keep following one implicit managed session across later tool calls.
-- If startup-scoped flags like `--profile`, `--session-name`, or `--cdp` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
-- After profiled opens, the wrapper best-effort restores the intended target tab when restored tabs steal focus.
+- If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
+- After launch-scoped opens that can restore existing tabs (for example `--profile`, `--session-name`, or `--state`), the wrapper best-effort restores the intended target tab when restored tabs steal focus.
 - After the wrapper knows the intended tab for a session, later commands best-effort keep that tab active so reconnect drift does not silently move the browser to a restored/background tab.
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result.
 

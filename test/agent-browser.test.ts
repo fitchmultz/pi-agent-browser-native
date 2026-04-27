@@ -36,6 +36,7 @@ import {
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
+	hasLaunchScopedTabCorrectionFlag,
 	hasUsableBraveApiKey,
 	parseCommandInfo,
 	redactInvocationArgs,
@@ -478,7 +479,7 @@ test("buildExecutionPlan keeps inspection commands stateless", () => {
 });
 
 test("buildExecutionPlan rejects missing values for value-taking flags before parsing commands", () => {
-	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"]] as const) {
+	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"], ["--state"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -516,6 +517,8 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		["--profile", "Default", "open", "https://example.com"],
 		["--session-name", "saved-auth", "open", "https://example.com"],
 		["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"],
+		["--state", "/tmp/auth.json", "open", "https://example.com"],
+		["--auto-connect", "open", "https://example.com"],
 	] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -524,13 +527,25 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 			sessionMode: "auto",
 		});
 
-		assert.match(plan.validationError ?? "", /startup-scoped flags/i);
+		assert.match(plan.validationError ?? "", /launch-scoped flags/i);
 		assert.equal(plan.startupScopedFlags.length, 1);
 		assert.equal(plan.startupScopedFlags[0], args[0]);
 		assert.equal(plan.usedImplicitSession, false);
 		assert.equal(plan.recoveryHint?.recommendedSessionMode, "fresh");
 		assert.deepEqual(plan.recoveryHint?.exampleParams, { args: [...args], sessionMode: "fresh" });
 	}
+});
+
+test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state but not cdp or auto-connect", () => {
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile", "Default", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile=Default", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name", "saved", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name=saved", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state", "/tmp/auth.json", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state=/tmp/auth.json", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"]), false);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--auto-connect", "open", "https://example.com"]), false);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["open", "https://example.com"]), false);
 });
 
 test("buildExecutionPlan assigns a new managed session for fresh session mode", () => {
@@ -2294,7 +2309,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				args: ["--profile", "Default", "open", "https://example.com/profiled"],
 			});
 			assert.equal(blocked.isError, true);
-			assert.match(String(blocked.details?.validationError ?? ""), /startup-scoped flags/i);
+			assert.match(String(blocked.details?.validationError ?? ""), /launch-scoped flags/i);
 			assert.equal((await readInvocationLog(logPath)).length, 1);
 		});
 	} finally {
@@ -2399,7 +2414,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 						args: ["--profile", "Default", "open", "https://example.com/profile"],
 					});
 					assert.equal(blocked.isError, true);
-					assert.match(String(blocked.details?.validationError ?? ""), /startup-scoped flags/i);
+					assert.match(String(blocked.details?.validationError ?? ""), /launch-scoped flags/i);
 					assert.equal(blocked.details?.sessionMode, "auto");
 					assert.equal(
 						(blocked.details?.sessionRecoveryHint as { recommendedSessionMode?: string } | undefined)?.recommendedSessionMode,
@@ -2638,6 +2653,98 @@ process.exit(shouldFail ? 1 : 0);`,
 			assert.equal(invocations.length, 3);
 			assert.equal(invocations[1]?.args.includes("--profile"), true);
 			assert.deepEqual(invocations[2]?.args, ["--json", "--session", String(followUp.details?.sessionName), "tab", "list"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension blocks launch-scoped --state and --auto-connect flags after an implicit session is active", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: args[args.length - 1] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com"],
+			});
+			assert.equal(firstOpen.isError, false);
+
+			for (const args of [
+				["--state", "/tmp/auth.json", "open", "https://example.com/state"],
+				["--auto-connect", "open", "https://example.com/auto"],
+			] as const) {
+				const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
+				assert.equal(blocked.isError, true, `expected ${args[0]} to be blocked`);
+				assert.match(String(blocked.details?.validationError ?? ""), /launch-scoped flags/i);
+				assert.equal(blocked.details?.sessionMode, "auto");
+				assert.equal(
+					(blocked.details?.sessionRecoveryHint as { recommendedSessionMode?: string } | undefined)?.recommendedSessionMode,
+					"fresh",
+				);
+			}
+
+			assert.equal((await readInvocationLog(logPath)).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension re-selects the navigated tab after --session-name fresh opens when restored tabs steal focus", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
+    { tabId: "t2", title: "Restored Tab", url: "https://restored.example.com/", active: true }
+  ] } }));
+} else if (args.includes("tab") && args.includes("t1")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t1", title: "Example Domain", url: "https://example.com/" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: "https://example.com/" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session-name", "saved-auth", "open", "https://example.com"],
+				sessionMode: "fresh",
+			});
+			assert.equal(result.isError, false);
+			assert.deepEqual(result.details?.openResultTabCorrection, {
+				selectedTab: "t1",
+				selectionKind: "tabId",
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 3);
+			assert.equal(invocations[0]?.args.includes("--session-name"), true);
+			assert.deepEqual(invocations[1]?.args?.slice(-2), ["tab", "list"]);
+			assert.deepEqual(invocations[2]?.args?.slice(-2), ["tab", "t1"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

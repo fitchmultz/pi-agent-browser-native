@@ -30,6 +30,7 @@ import {
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
+	hasLaunchScopedTabCorrectionFlag,
 	hasUsableBraveApiKey,
 	redactInvocationArgs,
 	redactSensitiveText,
@@ -54,7 +55,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 	sessionMode: Type.Optional(
 		Type.Union([Type.Literal("auto"), Type.Literal("fresh")], {
 			description:
-				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so startup-scoped flags like --profile, --session-name, or --cdp apply and later auto calls follow the new browser.",
+				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --profile, --session-name, --cdp, --state, or --auto-connect apply and later auto calls follow the new browser.",
 			default: DEFAULT_SESSION_MODE,
 		}),
 	),
@@ -62,7 +63,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 const PROJECT_RULE_PROMPT =
 	"Project rule: when browser automation is needed, prefer the native `agent_browser` tool. Do not run direct `agent-browser` bash commands unless the user explicitly asks for a bash-oriented workflow or browser-integration debugging.";
 const QUICK_START_GUIDELINES = [
-	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin; sessionMode=fresh switches the extension-managed session to a fresh upstream launch when you need new --profile, --session-name, or --cdp state.",
+	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin; sessionMode=fresh switches the extension-managed session to a fresh upstream launch when you need new --profile, --session-name, --cdp, --state, or --auto-connect state.",
 	"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }; after navigation, use { args: [\"click\", \"@e2\"] } then { args: [\"snapshot\", \"-i\"] }.",
 	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, and { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }.",
 	"High-value command reference: download <selector> <path> saves a file triggered by a click; get title/url/text/html/value/attr/count reads page state; screenshot [path] captures an image; pdf <path> saves a PDF; tab list and tab <tab-id-or-label> inspect or recover the active tab.",
@@ -73,8 +74,8 @@ const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Standard workflow: open the page, snapshot -i, interact using refs, and re-snapshot after navigation or major DOM changes.",
 	"For authenticated or user-specific content like feeds, inboxes, dashboards, and accounts, prefer --profile Default on the first browser call and let the implicit session carry continuity. Use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.",
 	"Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.",
-	"When using --profile, --session-name, or --cdp, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
-	"If you already used the implicit session and now need startup-scoped flags like --profile, --session-name, or --cdp, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.",
+	"When using --profile, --session-name, --cdp, --state, or --auto-connect, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
+	"If you already used the implicit session and now need launch-scoped flags like --profile, --session-name, --cdp, --state, or --auto-connect, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.",
 	"If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <tab-id-or-label> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load <state>, --url <matcher>, --fn <js>, or --text <matcher>.",
 	"For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.",
 	"For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.",
@@ -89,7 +90,7 @@ const TOOL_PROMPT_GUIDELINES_SUFFIX = [
 	"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when this tool can do the job.",
 	"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
 	"Use stdin for commands like eval --stdin and batch instead of shell heredocs.",
-	"Let the extension-managed session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, or --cdp.",
+	"Let the extension-managed session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, --cdp, --state, or --auto-connect.",
 	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
 ] as const;
 
@@ -905,7 +906,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				if (
 					succeeded &&
 					executionPlan.sessionName &&
-					params.args.some((token) => token === "--profile" || token.startsWith("--profile=")) &&
+					hasLaunchScopedTabCorrectionFlag(params.args) &&
 					(executionPlan.commandInfo.command === "goto" ||
 						executionPlan.commandInfo.command === "navigate" ||
 						executionPlan.commandInfo.command === "open")

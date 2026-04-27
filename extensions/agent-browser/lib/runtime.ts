@@ -9,7 +9,53 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
-const STARTUP_SCOPED_FLAGS = ["--cdp", "--profile", "--session-name"] as const;
+/**
+ * Launch-scoped flags that select the upstream browser session/auth mechanism at launch time.
+ *
+ * These flags must not be silently appended after an already-active extension-managed session
+ * because upstream ignores or conflicts with them once a session is reused. Every flag here
+ * participates in implicit-session validation blocking and recovery-hint generation.
+ *
+ * Intentionally excluded from the tab-correction subset:
+ * - `--auto-connect` attaches to a running browser but is a general-purpose debug/attach mode,
+ *   not a state-restore mechanism that typically leaves restored tabs stealing focus.
+ * - `--cdp` connects to an arbitrary endpoint; similar reasoning to `--auto-connect`.
+ *
+ * Other flags like `--headed`, `--engine`, `--executable-path`, `--user-agent`, and
+ * `--download-path` are first-launch-sensitive but not alternate session/auth attach
+ * mechanisms, so they are intentionally excluded from the full launch-scoped set.
+ */
+const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
+	{
+		flag: "--auto-connect",
+		reason: "attaches to an already-running browser at launch time instead of reusing an existing named session",
+	},
+	{
+		flag: "--cdp",
+		reason: "selects the browser/CDP endpoint used when an upstream session is launched",
+	},
+	{
+		flag: "--profile",
+		reason: "selects Chrome profile state for the upstream launch",
+	},
+	{
+		flag: "--session-name",
+		reason: "selects upstream saved auth/session state for the launch",
+	},
+	{
+		flag: "--state",
+		reason: "loads persisted upstream browser/auth state at launch time",
+	},
+] as const;
+
+const LAUNCH_SCOPED_FLAG_LABEL = LAUNCH_SCOPED_FLAG_DEFINITIONS.map((definition) => definition.flag).join(", ");
+
+/**
+ * The subset of launch-scoped flags that can restore browser/auth state with pre-existing tabs
+ * and are plausible wrong-active-tab sources after a fresh launch. These trigger post-open
+ * tab-correction (the `tab list` + re-select cycle).
+ */
+const LAUNCH_SCOPED_TAB_CORRECTION_FLAGS = new Set(["--profile", "--session-name", "--state"] as const);
 const OPEN_COMMANDS = new Set(["goto", "navigate", "open"]);
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
 const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
@@ -619,7 +665,18 @@ export function extractExplicitSessionName(args: string[]): string | undefined {
 }
 
 export function getStartupScopedFlags(args: string[]): string[] {
-	return STARTUP_SCOPED_FLAGS.filter((flag) => hasFlagToken(args, flag));
+	return LAUNCH_SCOPED_FLAG_DEFINITIONS
+		.map((definition) => definition.flag)
+		.filter((flag) => hasFlagToken(args, flag));
+}
+
+export function hasLaunchScopedTabCorrectionFlag(args: string[]): boolean {
+	return args.some((token) => {
+		for (const flag of LAUNCH_SCOPED_TAB_CORRECTION_FLAGS) {
+			if (token === flag || token.startsWith(`${flag}=`)) return true;
+		}
+		return false;
+	});
 }
 
 export function buildPromptPolicy(prompt: string): PromptPolicy {
@@ -708,11 +765,11 @@ export function buildExecutionPlan(
 				exampleArgs: args,
 				exampleParams: { args, sessionMode: "fresh" },
 				reason:
-					"Startup-scoped flags like --profile, --session-name, and --cdp need a fresh upstream launch once the extension-managed session is already active.",
+					`Launch-scoped flags (${LAUNCH_SCOPED_FLAG_LABEL}) need a fresh upstream launch once the extension-managed session is already active.`,
 				recommendedSessionMode: "fresh",
 			};
 			validationError = [
-				`The current extension-managed agent-browser session is already running, so startup-scoped flags ${startupScopedFlags.join(", ")} would be ignored by upstream agent-browser.`,
+				`The current extension-managed agent-browser session is already running, so launch-scoped flags ${startupScopedFlags.join(", ")} would be ignored by upstream agent-browser.`,
 				"Retry this call with `sessionMode: \"fresh\"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.",
 			].join(" ");
 		} else {
