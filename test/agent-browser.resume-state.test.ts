@@ -599,6 +599,78 @@ if (args.includes("batch")) {
 	}
 });
 
+test("agentBrowserExtension pre-pins resumed explicit-session snapshot when about:blank is active", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-blank-pin-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const exampleSite = { title: "Example Domain", url: "https://example.com/" };
+if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  const results = steps.map((step) => {
+    const [command, selectedTab] = step;
+    if (command === "tab") return { command: step, success: true, result: { tabId: selectedTab, ...exampleSite } };
+    if (command === "snapshot") return { command: step, success: true, result: { origin: exampleSite.url, refs: { e1: { name: exampleSite.title, role: "heading" } }, snapshot: '- heading "Example Domain" [level=1, ref=e1]' } };
+    return { command: step, success: true, result: exampleSite };
+  });
+  process.stdout.write(JSON.stringify(results));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "blank", title: "", url: "about:blank", active: true },
+    { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: false }
+  ] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "about:blank", snapshot: "Origin: about:blank" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const snapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "snapshot", "-i"],
+			});
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.deepEqual(snapshot.details?.sessionTabCorrection, {
+				selectedTab: "t1",
+				selectionKind: "tabId",
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
+			assert.match((snapshot.content[0] as { text: string }).text, /Example Domain/);
+			assert.doesNotMatch((snapshot.content[0] as { text: string }).text, /Origin: about:blank/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 2);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [["tab", "t1"], ["snapshot", "-i"]]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension pre-pins resumed explicit-session eval stdin before execution", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");

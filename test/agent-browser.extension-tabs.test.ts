@@ -446,6 +446,245 @@ if (args.includes("batch")) {
 	}
 });
 
+test("agentBrowserExtension recovers and preserves the prior target when a command returns about:blank", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-about-blank-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "tab-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const exampleSite = { title: "Example Domain", url: "https://example.com/" };
+let state = { active: "blank", tabListCount: 0 };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+const save = () => fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  const results = steps.map((step) => {
+    const [command, selectedTab] = step;
+    if (command === "tab") {
+      state.active = selectedTab === "t1" ? "example" : "blank";
+      save();
+      return { command: step, success: true, result: { tabId: selectedTab, ...exampleSite } };
+    }
+    if (command === "click") {
+      state.active = "blank";
+      save();
+      return { command: step, success: true, result: { clicked: selectedTab } };
+    }
+    if (command === "get" && selectedTab === "title") return { command: step, success: true, result: "" };
+    if (command === "get" && selectedTab === "url") return { command: step, success: true, result: "about:blank" };
+    return { command: step, success: true, result: {} };
+  });
+  process.stdout.write(JSON.stringify(results));
+} else if (args.includes("tab") && args.includes("list")) {
+  state.tabListCount += 1;
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "blank", title: "", url: "about:blank", active: state.active === "blank" },
+    { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: state.active === "example" }
+  ] } }));
+} else if (args.includes("tab") && args.includes("t1")) {
+  state.active = "example";
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t1", ...exampleSite } }));
+} else {
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: exampleSite }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const result = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "click", "@e9"],
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match((result.content[0] as { text: string }).text, /^Warning: agent_browser detected that this session returned about:blank/);
+			assert.match((result.content[0] as { text: string }).text, /https:\/\/example\.com\//);
+			assert.deepEqual(result.details?.aboutBlankSessionMismatch, {
+				activeUrl: "about:blank",
+				recoveryApplied: true,
+				recoveryHint: "agent_browser detected that the active tab became about:blank while this session still had a prior intended tab. Run tab list for this session and re-select the intended tab, or retry with sessionMode=fresh if the tab is gone.",
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
+			assert.deepEqual(result.details?.sessionTabCorrection, {
+				selectedTab: "t1",
+				selectionKind: "tabId",
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
+			assert.deepEqual(result.details?.sessionTabTarget, {
+				title: "Example Domain",
+				url: "https://example.com/",
+			});
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 4);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
+				["tab", "t1"],
+				["click", "@e9"],
+				["get", "title"],
+				["get", "url"],
+			]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "t1"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension warns and preserves the prior target when about:blank has no recoverable tab", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-about-blank-missing-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "blank", title: "", url: "about:blank", active: true }
+  ] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "about:blank", snapshot: "Origin: about:blank" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const result = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "snapshot", "-i"],
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match((result.content[0] as { text: string }).text, /No matching tab could be re-selected/);
+			assert.match((result.content[0] as { text: string }).text, /sessionMode=fresh/);
+			assert.equal((result.details?.aboutBlankSessionMismatch as { recoveryApplied?: boolean } | undefined)?.recoveryApplied, false);
+			assert.equal(result.details?.sessionTabCorrection, undefined);
+			assert.deepEqual(result.details?.sessionTabTarget, {
+				title: "Example Domain",
+				url: "https://example.com/",
+			});
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 3);
+			assert.deepEqual(invocations.at(-1)?.args, ["--json", "--session", "named", "tab", "list"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension allows explicit navigation to about:blank", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-about-blank-explicit-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "blank", title: "", url: "about:blank", active: true }
+  ] } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "about:blank", snapshot: "Origin: about:blank" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "", url: "about:blank" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+
+			const result = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "open", "about:blank"],
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.equal(result.details?.aboutBlankSessionMismatch, undefined);
+			assert.equal(result.details?.sessionTabCorrection, undefined);
+			assert.deepEqual(result.details?.sessionTabTarget, { title: undefined, url: "about:blank" });
+			assert.doesNotMatch((result.content[0] as { text: string }).text, /^Warning:/);
+
+			const snapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "snapshot", "-i"],
+			});
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.equal(snapshot.details?.aboutBlankSessionMismatch, undefined);
+			assert.equal(snapshot.details?.sessionTabCorrection, undefined);
+			assert.deepEqual(snapshot.details?.sessionTabTarget, { title: undefined, url: "about:blank" });
+			assert.doesNotMatch((snapshot.content[0] as { text: string }).text, /^Warning:/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "open", "about:blank"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
+			assert.equal(
+				invocations.some((invocation) => JSON.stringify(invocation.args) === JSON.stringify(["--json", "--session", "named", "tab", "blank"])),
+				false,
+			);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension keeps newer explicit-session tab target after overlapping opens", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");

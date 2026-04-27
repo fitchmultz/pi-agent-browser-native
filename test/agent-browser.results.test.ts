@@ -67,6 +67,17 @@ test("chooseOpenResultTabCorrection targets the navigated tab without disturbing
 		}),
 		{ selectedTab: "t1", selectionKind: "tabId", targetTitle: "Example Domain", targetUrl: "https://example.com/" },
 	);
+	assert.deepEqual(
+		chooseOpenResultTabCorrection({
+			tabs: [
+				{ active: true, tabId: "blank", title: "", url: "about:blank" },
+				{ active: false, tabId: "app", title: "Example Domain", url: "https://example.com/" },
+			],
+			targetTitle: "Example Domain",
+			targetUrl: "https://example.com/",
+		}),
+		{ selectedTab: "app", selectionKind: "tabId", targetTitle: "Example Domain", targetUrl: "https://example.com/" },
+	);
 	assert.equal(
 		chooseOpenResultTabCorrection({
 			tabs: [{ active: true, tabId: "t1", title: "Example Domain", url: "https://example.com/" }],

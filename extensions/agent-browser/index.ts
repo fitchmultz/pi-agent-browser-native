@@ -347,6 +347,14 @@ interface OrderedSessionTabTarget {
 	target: SessionTabTarget;
 }
 
+interface AboutBlankSessionMismatch {
+	activeUrl: "about:blank";
+	recoveryApplied: boolean;
+	recoveryHint: string;
+	targetTitle?: string;
+	targetUrl: string;
+}
+
 function getLatestSessionTabTargetOrder(targets: Map<string, OrderedSessionTabTarget>): number {
 	let latestOrder = 0;
 	for (const target of targets.values()) {
@@ -374,6 +382,26 @@ function normalizeComparableUrl(url: string | undefined): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function isAboutBlankUrl(url: string | undefined): boolean {
+	return normalizeComparableUrl(url) === "about:blank";
+}
+
+function isAboutBlankSessionTabTarget(target: SessionTabTarget | undefined): boolean {
+	return isAboutBlankUrl(target?.url);
+}
+
+function commandExplicitlyTargetsAboutBlank(commandTokens: string[]): boolean {
+	return commandTokens.some((token) => isAboutBlankUrl(token));
+}
+
+function buildAboutBlankRecoveryHint(): string {
+	return "agent_browser detected that the active tab became about:blank while this session still had a prior intended tab. Run tab list for this session and re-select the intended tab, or retry with sessionMode=fresh if the tab is gone.";
+}
+
+function buildAboutBlankWarning(mismatch: AboutBlankSessionMismatch): string {
+	return `Warning: agent_browser detected that this session returned about:blank while the prior intended tab was ${mismatch.targetUrl}. ${mismatch.recoveryApplied ? "The wrapper re-selected the intended tab for the session." : "No matching tab could be re-selected; run tab list for the same session or retry with sessionMode=fresh."}`;
 }
 
 function normalizeSessionTabTarget(target: { title?: string; url?: string } | undefined): SessionTabTarget | undefined {
@@ -1314,16 +1342,52 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						normalizeSessionTabTarget(navigationSummary) ??
 						extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) ??
 						extractSessionTabTargetFromData(presentationEnvelope?.data);
-					const currentSessionTabTarget = deriveSessionTabTarget({
+					let currentSessionTabTarget = deriveSessionTabTarget({
 						command: executionPlan.commandInfo.command,
 						data: presentationEnvelope?.data,
 						navigationSummary,
 						previousTarget: priorSessionTabTarget,
 					});
+					let aboutBlankSessionMismatch: AboutBlankSessionMismatch | undefined;
+					const shouldTreatAboutBlankAsMismatch =
+						succeeded &&
+						priorSessionTabTarget !== undefined &&
+						!isAboutBlankSessionTabTarget(priorSessionTabTarget) &&
+						isAboutBlankSessionTabTarget(observedSessionTabTarget ?? currentSessionTabTarget) &&
+						!commandExplicitlyTargetsAboutBlank(commandTokens);
+					if (shouldTreatAboutBlankAsMismatch && priorSessionTabTarget) {
+						const aboutBlankRecovery = await collectSessionTabSelection({
+							cwd: ctx.cwd,
+							sessionName: executionPlan.sessionName,
+							signal,
+							target: priorSessionTabTarget,
+						});
+						const appliedAboutBlankRecovery = aboutBlankRecovery
+							? await applyOpenResultTabCorrection({
+									correction: aboutBlankRecovery,
+									cwd: ctx.cwd,
+									sessionName: executionPlan.sessionName,
+									signal,
+							  })
+							: undefined;
+						if (appliedAboutBlankRecovery) {
+							sessionTabCorrection = appliedAboutBlankRecovery;
+						}
+						aboutBlankSessionMismatch = {
+							activeUrl: "about:blank",
+							recoveryApplied: appliedAboutBlankRecovery !== undefined,
+							recoveryHint: buildAboutBlankRecoveryHint(),
+							targetTitle: priorSessionTabTarget.title,
+							targetUrl: priorSessionTabTarget.url,
+						};
+						currentSessionTabTarget = priorSessionTabTarget;
+					}
 					if (
 						succeeded &&
 						priorSessionTabTarget &&
 						!sessionTabCorrection &&
+						!aboutBlankSessionMismatch &&
+						!commandExplicitlyTargetsAboutBlank(commandTokens) &&
 						observedSessionTabTarget &&
 						shouldCorrectSessionTabAfterCommand({
 							command: executionPlan.commandInfo.command,
@@ -1439,7 +1503,19 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (presentation.artifactManifest) {
 						artifactManifest = presentation.artifactManifest;
 					}
-					const redactedContent = presentation.content.map((item) =>
+					const contentWithSessionWarnings = aboutBlankSessionMismatch ? [...presentation.content] : presentation.content;
+					if (aboutBlankSessionMismatch) {
+						const warning = buildAboutBlankWarning(aboutBlankSessionMismatch);
+						if (contentWithSessionWarnings[0]?.type === "text") {
+							contentWithSessionWarnings[0] = {
+								...contentWithSessionWarnings[0],
+								text: `${warning}\n\n${contentWithSessionWarnings[0].text}`,
+							};
+						} else {
+							contentWithSessionWarnings.unshift({ type: "text", text: warning });
+						}
+					}
+					const redactedContent = contentWithSessionWarnings.map((item) =>
 						item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,
 					);
 
@@ -1459,6 +1535,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							error: plainTextInspection ? undefined : redactSensitiveValue(presentationEnvelope?.error),
 							inspection: plainTextInspection || undefined,
 							navigationSummary: redactSensitiveValue(navigationSummary),
+							aboutBlankSessionMismatch: redactSensitiveValue(aboutBlankSessionMismatch),
 							openResultTabCorrection: redactSensitiveValue(openResultTabCorrection),
 							effectiveArgs: redactedProcessArgs,
 							exitCode: processResult.exitCode,
