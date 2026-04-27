@@ -173,12 +173,14 @@ Additional structured fields can appear when relevant:
 - `savedFilePath` / `savedFile` for direct `download`, `pdf`, and `wait --download` saved-file workflows; batch results preserve the same fields on the relevant `batchSteps` entry.
 - `batchSteps[].artifacts` for per-step artifacts in `batch` output; top-level `artifacts` aggregates all step artifacts in order
 - `fullOutputPath` / `fullOutputPaths` when large snapshot output or other oversized tool output is compacted and spilled to a private file; persisted sessions keep that path under a private session-scoped artifact directory with a bounded per-session budget so it survives reload/resume without unbounded growth
+- `artifactManifest` for a bounded, metadata-only inventory of recent session artifacts. Entries include path metadata, artifact `kind`, source `command`/`subcommand` when safe, `storageScope` (`persistent-session`, `process-temp`, or `explicit-path`), and `retentionState` (`live`, `ephemeral`, `missing`, or `evicted`). The manifest must not store command args, output contents, headers, DOM snapshots, or downloaded file contents.
+- `artifactRetentionSummary` with a concise count of live, evicted, ephemeral, and missing artifacts from the current manifest; relevant artifact-producing results also append this summary to model-facing text.
 - `sessionRecoveryHint` when startup-scoped flags need `sessionMode: "fresh"`
 - `inspection: true` plus `stdout` for successful plain-text inspection commands like `--help` and `--version`
 
 When the tool echoes `args` or `effectiveArgs` back into Pi, sensitive values such as `--headers`, proxy credentials, and auth-bearing URL parameters should be redacted first.
 
-For oversized snapshots and other oversized tool outputs, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private spill file with the full upstream payload. The model-facing tool text should print the actual spill-file path when one exists instead of only saying to inspect a details key. Persisted sessions should keep that spill file under a private session-scoped artifact directory so the path remains usable after reload/restart, with the oldest persisted spill files evicted as needed to stay within the per-session budget.
+For oversized snapshots and other oversized tool outputs, details should switch to a compact metadata object and include `fullOutputPath` pointing at a private spill file with the full upstream payload. The model-facing tool text should print the actual spill-file path when one exists instead of only saying to inspect a details key. Persisted sessions should keep that spill file under a private session-scoped artifact directory so the path remains usable after reload/restart. The oldest persisted spill files are evicted as needed to stay within the per-session budget, and those evictions are reported as `artifactManifest.entries[].retentionState: "evicted"` instead of silently disappearing from the session inventory.
 
 ## High-value result rendering
 
@@ -186,8 +188,8 @@ For oversized snapshots and other oversized tool outputs, details should switch 
 
 Worth doing in v1:
 - screenshots → saved-path summary, `details.artifacts` metadata, and inline image attachment when safe
-- file artifacts such as PDFs, downloads, `wait --download` files, traces, CPU profiles, WebM recordings, and path-bearing HAR captures → concise saved-path summaries plus metadata in `details.artifacts`; direct saved-file workflows also expose `details.savedFilePath` / `details.savedFile`; large or binary artifacts are not inlined into model context
-- snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path printed directly in content and kept in `details.fullOutputPath` when the inline result would otherwise be too large
+- file artifacts such as PDFs, downloads, `wait --download` files, traces, CPU profiles, WebM recordings, and path-bearing HAR captures → concise saved-path summaries plus metadata in `details.artifacts` and `details.artifactManifest`; direct saved-file workflows also expose `details.savedFilePath` / `details.savedFile`; large or binary artifacts are not inlined into model context
+- snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path printed directly in content and kept in `details.fullOutputPath` plus `details.artifactManifest` when the inline result would otherwise be too large
 - oversized generic outputs such as large `eval --stdin` payloads → compact preview plus the actual spill file path instead of dumping the whole payload into model context
 - extraction-style commands like `eval --stdin` and `get title` → scalar-first text with lightweight origin context when available
 - navigation actions like `click`, `back`, `forward`, and `reload` → lightweight post-action title/url summary when available
@@ -211,7 +213,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - preserve the current extension-managed session across normal `pi` shutdown/reload so persisted sessions can keep following the live browser on `/reload` or `/resume`
 - set an idle timeout on extension-managed sessions so abandoned daemons eventually self-clean
 - clean up process-private temp spill artifacts on shutdown, while keeping persisted-session snapshot spill files in a private session-scoped artifact directory so `details.fullOutputPath` survives reload/restart and the oldest spill files are evicted if the per-session artifact budget is exceeded
-- reconstruct the current extension-managed session from persisted tool details on resume/reload so later default calls keep following the active managed browser
+- reconstruct the current extension-managed session and latest `artifactManifest` from persisted tool details on resume/reload so later default calls keep following the active managed browser and can continue reporting artifact retention state
 - when an unnamed `sessionMode: "fresh"` launch succeeds, make it the new extension-managed session so later default calls keep using it
 - if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds
 - treat explicit caller-provided `--session` choices as user-managed

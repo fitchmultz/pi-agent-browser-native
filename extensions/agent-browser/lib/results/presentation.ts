@@ -12,6 +12,7 @@ import { extname, resolve } from "node:path";
 import { isRecord, parsePositiveInteger } from "../parsing.js";
 import { parseCommandInfo, type CommandInfo } from "../runtime.js";
 import {
+	type PersistentSessionArtifactEviction,
 	type PersistentSessionArtifactStore,
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
@@ -23,11 +24,17 @@ import {
 	type AgentBrowserEnvelope,
 	type BatchFailurePresentationDetails,
 	type BatchStepPresentationDetails,
+	type ArtifactStorageScope,
 	type FileArtifactKind,
 	type FileArtifactMetadata,
 	type SavedFilePresentationDetails,
+	type SessionArtifactManifest,
+	type SessionArtifactManifestEntry,
 	type ToolPresentation,
+	buildEvictedSessionArtifactEntries,
 	countLines,
+	formatSessionArtifactRetentionSummary,
+	mergeSessionArtifactManifest,
 	stringifyUnknown,
 	truncateText,
 } from "./shared.js";
@@ -79,6 +86,16 @@ function appendPresentationNotice(presentation: ToolPresentation, message: strin
 		type: "text",
 		text: existingText.length > 0 ? `${existingText}\n\n${message}` : message,
 	};
+}
+
+function applyArtifactManifest(presentation: ToolPresentation, baseManifest: SessionArtifactManifest | undefined, entries: SessionArtifactManifestEntry[]): ToolPresentation {
+	if (entries.length === 0) return presentation;
+	const artifactManifest = mergeSessionArtifactManifest({ base: baseManifest, entries });
+	if (!artifactManifest) return presentation;
+	presentation.artifactManifest = artifactManifest;
+	presentation.artifactRetentionSummary = formatSessionArtifactRetentionSummary(artifactManifest);
+	appendPresentationNotice(presentation, presentation.artifactRetentionSummary);
+	return presentation;
 }
 
 function getTabSummary(data: Record<string, unknown>): string | undefined {
@@ -459,6 +476,23 @@ async function extractFileArtifacts(commandInfo: CommandInfo, cwd: string, data:
 	return artifacts.filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
 }
 
+function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMetadata[], nowMs = Date.now()): SessionArtifactManifestEntry[] {
+	return artifacts.map((artifact) => ({
+		absolutePath: artifact.absolutePath,
+		command: artifact.command,
+		createdAtMs: nowMs,
+		exists: artifact.exists,
+		extension: artifact.extension,
+		kind: artifact.kind,
+		mediaType: artifact.mediaType,
+		path: artifact.path,
+		retentionState: artifact.exists === false ? "missing" : "live",
+		sizeBytes: artifact.sizeBytes,
+		storageScope: "explicit-path",
+		subcommand: artifact.subcommand,
+	}));
+}
+
 function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 	switch (artifact.kind) {
 		case "download":
@@ -694,12 +728,13 @@ function getBatchFailureDetails(steps: Array<{ details: BatchStepPresentationDet
 }
 
 async function buildBatchStepPresentation(options: {
+	artifactManifest?: SessionArtifactManifest;
 	cwd: string;
 	index: number;
 	item: AgentBrowserBatchResult;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 }): Promise<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> {
-	const { cwd, index, item, persistentArtifactStore } = options;
+	const { artifactManifest, cwd, index, item, persistentArtifactStore } = options;
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const commandText = formatBatchStepCommand(command, index);
 
@@ -725,6 +760,7 @@ async function buildBatchStepPresentation(options: {
 	}
 
 	const presentation = await buildToolPresentation({
+		artifactManifest,
 		commandInfo: parseCommandInfo(command ?? []),
 		cwd,
 		envelope: { data: item.result, success: true },
@@ -762,6 +798,7 @@ async function buildBatchStepPresentation(options: {
 }
 
 async function buildBatchPresentation(options: {
+	artifactManifest?: SessionArtifactManifest;
 	cwd: string;
 	data: AgentBrowserBatchResult[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
@@ -770,8 +807,10 @@ async function buildBatchPresentation(options: {
 	const { cwd, data, persistentArtifactStore, summary } = options;
 	const steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> = [];
 	const protectedPersistentPaths: string[] = [];
+	let currentArtifactManifest = options.artifactManifest;
 	for (const [index, item] of data.entries()) {
 		const step = await buildBatchStepPresentation({
+			artifactManifest: currentArtifactManifest,
 			cwd,
 			index,
 			item,
@@ -780,6 +819,7 @@ async function buildBatchPresentation(options: {
 				: undefined,
 		});
 		steps.push(step);
+		currentArtifactManifest = step.presentation.artifactManifest ?? currentArtifactManifest;
 		protectedPersistentPaths.push(
 			...getPresentationPaths({
 				primaryPath: step.presentation.fullOutputPath,
@@ -828,11 +868,16 @@ async function buildBatchPresentation(options: {
 				].join("\n");
 	const text = failureHeader ? `${failureHeader}\n\n${stepText}` : stepText;
 
+	const artifactRetentionSummary = currentArtifactManifest ? formatSessionArtifactRetentionSummary(currentArtifactManifest) : undefined;
+	const contentText = artifactRetentionSummary && currentArtifactManifest !== options.artifactManifest ? `${text}\n\n${artifactRetentionSummary}` : text;
+
 	return {
+		artifactManifest: currentArtifactManifest,
+		artifactRetentionSummary,
 		artifacts: artifacts.length > 0 ? artifacts : undefined,
 		batchFailure,
 		batchSteps: steps.map((step) => step.details),
-		content: [{ type: "text", text }, ...images],
+		content: [{ type: "text", text: contentText }, ...images],
 		data,
 		fullOutputPath: fullOutputPaths[0],
 		fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
@@ -1031,11 +1076,17 @@ function buildLargeOutputPreview(text: string): { omittedLineCount: number; prev
 	};
 }
 
+interface LargeOutputSpillWriteResult {
+	evictedArtifacts: PersistentSessionArtifactEviction[];
+	path: string;
+	storageScope: ArtifactStorageScope;
+}
+
 async function writeLargeOutputSpillFile(options: {
 	data: unknown;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	text: string;
-}): Promise<string> {
+}): Promise<LargeOutputSpillWriteResult> {
 	const payload =
 		typeof options.data === "string"
 			? options.data
@@ -1050,12 +1101,36 @@ async function writeLargeOutputSpillFile(options: {
 		prefix: LARGE_OUTPUT_FILE_PREFIX,
 		suffix: isStructuredPayload ? ".json" : ".txt",
 	};
-	return options.persistentArtifactStore
-		? await writePersistentSessionArtifactFile({ ...fileOptions, store: options.persistentArtifactStore })
-		: await writeSecureTempFile(fileOptions);
+	if (options.persistentArtifactStore) {
+		const result = await writePersistentSessionArtifactFile({ ...fileOptions, store: options.persistentArtifactStore });
+		return { ...result, storageScope: "persistent-session" };
+	}
+	return { evictedArtifacts: [], path: await writeSecureTempFile(fileOptions), storageScope: "process-temp" };
+}
+
+function buildSpillArtifactEntries(options: {
+	commandInfo: CommandInfo;
+	evictedArtifacts: PersistentSessionArtifactEviction[];
+	path: string;
+	storageScope: ArtifactStorageScope;
+}): SessionArtifactManifestEntry[] {
+	const nowMs = Date.now();
+	return [
+		{
+			command: options.commandInfo.command,
+			createdAtMs: nowMs,
+			kind: "spill",
+			path: options.path,
+			retentionState: options.storageScope === "persistent-session" ? "live" : "ephemeral",
+			storageScope: options.storageScope,
+			subcommand: options.commandInfo.subcommand,
+		},
+		...buildEvictedSessionArtifactEntries(options.evictedArtifacts, nowMs),
+	];
 }
 
 async function compactLargePresentationOutput(options: {
+	artifactManifest?: SessionArtifactManifest;
 	commandInfo: CommandInfo;
 	data: unknown;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
@@ -1067,13 +1142,15 @@ async function compactLargePresentationOutput(options: {
 	}
 
 	let fullOutputPath: string | undefined;
+	let spill: LargeOutputSpillWriteResult | undefined;
 	let spillErrorText: string | undefined;
 	try {
-		fullOutputPath = await writeLargeOutputSpillFile({
+		spill = await writeLargeOutputSpillFile({
 			data: options.data,
 			persistentArtifactStore: options.persistentArtifactStore,
 			text,
 		});
+		fullOutputPath = spill.path;
 	} catch (error) {
 		spillErrorText = error instanceof Error ? error.message : String(error);
 	}
@@ -1114,17 +1191,30 @@ async function compactLargePresentationOutput(options: {
 	};
 	options.presentation.fullOutputPath = fullOutputPath;
 	options.presentation.summary = `${options.presentation.summary} (compact)`;
+	if (fullOutputPath && spill) {
+		return applyArtifactManifest(
+			options.presentation,
+			options.presentation.artifactManifest ?? options.artifactManifest,
+			buildSpillArtifactEntries({
+				commandInfo: options.commandInfo,
+				evictedArtifacts: spill.evictedArtifacts,
+				path: fullOutputPath,
+				storageScope: spill.storageScope,
+			}),
+		);
+	}
 	return options.presentation;
 }
 
 export async function buildToolPresentation(options: {
+	artifactManifest?: SessionArtifactManifest;
 	commandInfo: CommandInfo;
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
 	errorText?: string;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 }): Promise<ToolPresentation> {
-	const { commandInfo, cwd, envelope, errorText, persistentArtifactStore } = options;
+	const { artifactManifest, commandInfo, cwd, envelope, errorText, persistentArtifactStore } = options;
 	if (errorText) {
 		return {
 			content: [{ type: "text", text: errorText }],
@@ -1139,9 +1229,9 @@ export async function buildToolPresentation(options: {
 	const artifactText = artifacts.length > 0 ? formatArtifactMetadataLines(artifacts).join("\n") : undefined;
 	const presentation =
 		commandInfo.command === "batch" && Array.isArray(data)
-			? await buildBatchPresentation({ cwd, data: data as AgentBrowserBatchResult[], persistentArtifactStore, summary })
+			? await buildBatchPresentation({ artifactManifest, cwd, data: data as AgentBrowserBatchResult[], persistentArtifactStore, summary })
 			: commandInfo.command === "snapshot" && isRecord(data)
-				? await buildSnapshotPresentation(data, persistentArtifactStore)
+				? await buildSnapshotPresentation(data, persistentArtifactStore, artifactManifest)
 				: {
 						artifacts: artifacts.length > 0 ? artifacts : undefined,
 						content: [{ type: "text" as const, text: artifactText ?? formatContentText(commandInfo, data) }],
@@ -1161,10 +1251,16 @@ export async function buildToolPresentation(options: {
 
 	const imagePath = extractImagePath(commandInfo, cwd, data);
 	const presentationWithImage = imagePath ? await attachInlineImage(presentation, imagePath) : presentation;
-	return await compactLargePresentationOutput({
+	const compactedPresentation = await compactLargePresentationOutput({
+		artifactManifest,
 		commandInfo,
 		data,
 		persistentArtifactStore,
 		presentation: presentationWithImage,
 	});
+	return applyArtifactManifest(
+		compactedPresentation,
+		compactedPresentation.artifactManifest ?? artifactManifest,
+		buildManifestEntriesForFileArtifacts(artifacts),
+	);
 }

@@ -448,6 +448,32 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 	}
 });
 
+test("buildToolPresentation records explicit saved files in the bounded session artifact manifest", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-manifest-"));
+	const downloadPath = join(tempDir, "download.txt");
+	await writeFile(downloadPath, "manifest download");
+	try {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "download" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: "download.txt" } },
+		});
+
+		assert.equal(presentation.artifactManifest?.version, 1);
+		assert.equal(presentation.artifactManifest?.liveCount, 1);
+		assert.equal(presentation.artifactManifest?.evictedCount, 0);
+		assert.equal(presentation.artifactManifest?.entries[0]?.path, "download.txt");
+		assert.equal(presentation.artifactManifest?.entries[0]?.absolutePath, downloadPath);
+		assert.equal(presentation.artifactManifest?.entries[0]?.kind, "download");
+		assert.equal(presentation.artifactManifest?.entries[0]?.storageScope, "explicit-path");
+		assert.equal(presentation.artifactManifest?.entries[0]?.retentionState, "live");
+		assert.match(presentation.artifactRetentionSummary ?? "", /1 live, 0 evicted/);
+		assert.match((presentation.content[0] as { text: string }).text, /Session artifacts: 1 live, 0 evicted/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("buildToolPresentation compacts oversized generic outputs and prints the actual spill path", async () => {
 	const largeText = Array.from({ length: 220 }, (_, index) => `Large eval row ${index + 1}: ${"x".repeat(80)}`).join("\n");
 	const presentation = await buildToolPresentation({
@@ -879,6 +905,7 @@ test("buildToolPresentation evicts the oldest persisted snapshot spill files whe
 				persistentArtifactStore: { sessionDir, sessionId: TEST_SESSION_ID },
 			});
 			const secondPresentation = await buildToolPresentation({
+				artifactManifest: firstPresentation.artifactManifest,
 				commandInfo: { command: "snapshot" },
 				cwd: process.cwd(),
 				envelope: { success: true, data: secondData },
@@ -889,6 +916,22 @@ test("buildToolPresentation evicts the oldest persisted snapshot spill files whe
 			assert.equal(typeof secondPresentation.fullOutputPath, "string");
 			assert.equal(await readFile(String(firstPresentation.fullOutputPath), "utf8").then(() => true, () => false), false);
 			assert.match(await readFile(String(secondPresentation.fullOutputPath), "utf8"), /second snapshot row 120/);
+			assert.equal(secondPresentation.artifactManifest?.liveCount, 1);
+			assert.equal(secondPresentation.artifactManifest?.evictedCount, 1);
+			assert.equal(
+				secondPresentation.artifactManifest?.entries.some(
+					(entry) => entry.path === firstPresentation.fullOutputPath && entry.retentionState === "evicted",
+				),
+				true,
+			);
+			assert.equal(
+				secondPresentation.artifactManifest?.entries.some(
+					(entry) => entry.path === secondPresentation.fullOutputPath && entry.retentionState === "live",
+				),
+				true,
+			);
+			assert.match(secondPresentation.artifactRetentionSummary ?? "", /1 live, 1 evicted/);
+			assert.match((secondPresentation.content[0] as { text: string }).text, /Session artifacts: 1 live, 1 evicted/);
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();

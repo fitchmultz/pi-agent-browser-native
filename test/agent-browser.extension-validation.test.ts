@@ -545,6 +545,12 @@ test("agentBrowserExtension preserves full spilled stdout for oversized parse fa
 			assert.equal(result.details?.fullOutputUnavailable, undefined);
 			const fullOutputPath = result.details?.fullOutputPath as string;
 			assert.equal(fullOutputPath.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
+			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
+			assert.equal(manifest?.liveCount, 1);
+			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
+			assert.equal(manifest?.entries?.[0]?.retentionState, "live");
+			assert.equal(manifest?.entries?.[0]?.storageScope, "persistent-session");
+			assert.match(String(result.details?.artifactRetentionSummary), /1 live, 0 evicted/);
 			const stats = await stat(fullOutputPath);
 			assert.ok(stats.size > 512 * 1024);
 			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
@@ -585,6 +591,12 @@ test("agentBrowserExtension returns temp full-output path for oversized parse fa
 			assert.equal(typeof result.details?.fullOutputPath, "string");
 			assert.equal(result.details?.fullOutputUnavailable, undefined);
 			const fullOutputPath = result.details?.fullOutputPath as string;
+			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
+			assert.equal(manifest?.liveCount, 0);
+			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
+			assert.equal(manifest?.entries?.[0]?.retentionState, "ephemeral");
+			assert.equal(manifest?.entries?.[0]?.storageScope, "process-temp");
+			assert.match(String(result.details?.artifactRetentionSummary), /0 live, 0 evicted, 1 ephemeral/);
 			const stats = await stat(fullOutputPath);
 			assert.ok(stats.size > 512 * 1024);
 			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));

@@ -41,6 +41,124 @@ export interface SavedFilePresentationDetails {
 	subcommand?: string;
 }
 
+export type ArtifactRetentionState = "evicted" | "ephemeral" | "live" | "missing";
+
+export type ArtifactStorageScope = "explicit-path" | "persistent-session" | "process-temp";
+
+export interface SessionArtifactManifestEntry {
+	absolutePath?: string;
+	command?: string;
+	createdAtMs: number;
+	evictedAtMs?: number;
+	exists?: boolean;
+	extension?: string;
+	kind: FileArtifactKind | "spill";
+	mediaType?: string;
+	path: string;
+	retentionState: ArtifactRetentionState;
+	sizeBytes?: number;
+	storageScope: ArtifactStorageScope;
+	subcommand?: string;
+}
+
+export interface SessionArtifactManifest {
+	entries: SessionArtifactManifestEntry[];
+	evictedCount: number;
+	liveCount: number;
+	maxEntries: number;
+	updatedAtMs: number;
+	version: 1;
+}
+
+export const SESSION_ARTIFACT_MANIFEST_VERSION = 1;
+export const SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES = 30;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function isManifestEntry(value: unknown): value is SessionArtifactManifestEntry {
+	if (!isRecord(value)) return false;
+	if (typeof value.path !== "string" || value.path.trim().length === 0) return false;
+	if (typeof value.createdAtMs !== "number" || !Number.isFinite(value.createdAtMs)) return false;
+	if (!["evicted", "ephemeral", "live", "missing"].includes(String(value.retentionState))) return false;
+	if (!["explicit-path", "persistent-session", "process-temp"].includes(String(value.storageScope))) return false;
+	if (typeof value.kind !== "string" || value.kind.trim().length === 0) return false;
+	return true;
+}
+
+export function isSessionArtifactManifest(value: unknown): value is SessionArtifactManifest {
+	if (!isRecord(value)) return false;
+	if (value.version !== SESSION_ARTIFACT_MANIFEST_VERSION) return false;
+	if (!Array.isArray(value.entries) || !value.entries.every(isManifestEntry)) return false;
+	if (typeof value.updatedAtMs !== "number" || !Number.isFinite(value.updatedAtMs)) return false;
+	if (typeof value.maxEntries !== "number" || !Number.isSafeInteger(value.maxEntries) || value.maxEntries <= 0) return false;
+	if (typeof value.liveCount !== "number" || !Number.isSafeInteger(value.liveCount) || value.liveCount < 0) return false;
+	if (typeof value.evictedCount !== "number" || !Number.isSafeInteger(value.evictedCount) || value.evictedCount < 0) return false;
+	return true;
+}
+
+export function buildEvictedSessionArtifactEntries(
+	evictedArtifacts: Array<{ mtimeMs: number; path: string; sizeBytes: number }>,
+	nowMs: number,
+): SessionArtifactManifestEntry[] {
+	return evictedArtifacts.map((artifact) => ({
+		createdAtMs: artifact.mtimeMs,
+		evictedAtMs: nowMs,
+		kind: "spill",
+		path: artifact.path,
+		retentionState: "evicted",
+		sizeBytes: artifact.sizeBytes,
+		storageScope: "persistent-session",
+	}));
+}
+
+export function formatSessionArtifactRetentionSummary(manifest: SessionArtifactManifest): string {
+	const ephemeralCount = manifest.entries.filter((entry) => entry.retentionState === "ephemeral").length;
+	const missingCount = manifest.entries.filter((entry) => entry.retentionState === "missing").length;
+	const parts = [`${manifest.liveCount} live`, `${manifest.evictedCount} evicted`];
+	if (ephemeralCount > 0) parts.push(`${ephemeralCount} ephemeral`);
+	if (missingCount > 0) parts.push(`${missingCount} missing`);
+	return `Session artifacts: ${parts.join(", ")} (${manifest.entries.length}/${manifest.maxEntries} recent).`;
+}
+
+export function mergeSessionArtifactManifest(options: {
+	base?: SessionArtifactManifest;
+	entries?: SessionArtifactManifestEntry[];
+	nowMs?: number;
+}): SessionArtifactManifest | undefined {
+	const nowMs = options.nowMs ?? Date.now();
+	const byPath = new Map<string, SessionArtifactManifestEntry>();
+	for (const entry of options.base?.entries ?? []) {
+		byPath.set(entry.path, entry);
+	}
+	for (const entry of options.entries ?? []) {
+		const existing = byPath.get(entry.path);
+		byPath.set(entry.path, {
+			...existing,
+			...entry,
+			createdAtMs: existing?.createdAtMs ?? entry.createdAtMs,
+			evictedAtMs: entry.retentionState === "evicted" ? (entry.evictedAtMs ?? nowMs) : entry.evictedAtMs,
+		});
+	}
+	if (byPath.size === 0) return undefined;
+	const entries = [...byPath.values()]
+		.sort((left, right) => {
+			const leftTime = left.evictedAtMs ?? left.createdAtMs;
+			const rightTime = right.evictedAtMs ?? right.createdAtMs;
+			return rightTime - leftTime || left.path.localeCompare(right.path);
+		})
+		.slice(0, SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES);
+	return {
+		entries,
+		evictedCount: entries.filter((entry) => entry.retentionState === "evicted").length,
+		liveCount: entries.filter((entry) => entry.retentionState === "live").length,
+		maxEntries: SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
+		updatedAtMs: nowMs,
+		version: SESSION_ARTIFACT_MANIFEST_VERSION,
+	};
+}
+
 export interface BatchStepPresentationDetails {
 	artifacts?: FileArtifactMetadata[];
 	command?: string[];
@@ -66,6 +184,8 @@ export interface BatchFailurePresentationDetails {
 }
 
 export interface ToolPresentation {
+	artifactManifest?: SessionArtifactManifest;
+	artifactRetentionSummary?: string;
 	artifacts?: FileArtifactMetadata[];
 	batchFailure?: BatchFailurePresentationDetails;
 	batchSteps?: BatchStepPresentationDetails[];

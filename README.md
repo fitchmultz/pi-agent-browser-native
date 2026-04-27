@@ -247,6 +247,7 @@ Validated workflow examples:
 - use `download <selector> <path>` for direct attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
 - use `click` plus `wait --download <path>` for asynchronous export flows, and confirm `details.savedFilePath`/`details.savedFile` are present on the wait result or batch wait step
 - confirm oversized outputs show the actual spill file path directly in tool content, not just a details key name
+- inspect `details.artifactManifest` / `details.artifactRetentionSummary` during artifact-heavy flows to recover recent saved files, spill files, and visible eviction state after reload/resume
 
 <!-- agent-browser-playbook:start inspection -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
@@ -261,7 +262,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 Current cautions:
 - passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
 - launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, and `--auto-connect` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
-- implicit `piab-*` sessions are extension-managed convenience sessions; they stay alive across `pi` shutdown/reload so later default calls can keep following the active managed browser on `/reload` or `/resume`, rely on the configured idle timeout to reduce stale background daemons, store persisted-session large snapshot spill files under a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` survives reload/resume without unbounded growth, and still clean up process-private temp spill artifacts on shutdown
+- implicit `piab-*` sessions are extension-managed convenience sessions; they stay alive across `pi` shutdown/reload so later default calls can keep following the active managed browser on `/reload` or `/resume`, rely on the configured idle timeout to reduce stale background daemons, store persisted-session large snapshot spill files under a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` and metadata-only `details.artifactManifest` survive reload/resume without unbounded growth, and still clean up process-private temp spill artifacts on shutdown
 - `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
 - for local Unix launches, the wrapper uses a short private socket directory under `/tmp` so extension-generated session names do not trip upstream Unix socket-path limits in longer cwd/session-name combinations
 - for direct headless local Chrome launches to `chat.com`, `chatgpt.com`, and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
@@ -271,7 +272,7 @@ Current cautions:
 - After a target tab is known for a session, later active-tab commands best-effort pin that tab inside the same upstream invocation when reconnect drift would otherwise move the command to a restored/background tab.
 - After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
-- oversized snapshots and oversized generic outputs compact inline content and print the actual spill file path directly in the tool result when a spill file exists
+- oversized snapshots and oversized generic outputs compact inline content and print the actual spill file path directly in the tool result when a spill file exists; recent spills and explicit saved artifacts are also summarized in `details.artifactManifest`, including `evicted` entries when retention budgets remove older persisted files
 - explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension
 - explicit caller-provided `--user-agent` values win over the ChatGPT/OpenAI compatibility workaround
 - tool progress/details redact sensitive invocation values such as `--headers`, proxy credentials, and auth-bearing URL parameters before echoing them back into Pi

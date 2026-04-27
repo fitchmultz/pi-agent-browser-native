@@ -7,8 +7,24 @@
  */
 
 import { isRecord } from "../parsing.js";
-import { type PersistentSessionArtifactStore, writePersistentSessionArtifactFile, writeSecureTempFile } from "../temp.js";
-import { type ToolPresentation, compareRefIds, countLines, normalizeWhitespace, truncateText } from "./shared.js";
+import {
+	type PersistentSessionArtifactEviction,
+	type PersistentSessionArtifactStore,
+	writePersistentSessionArtifactFile,
+	writeSecureTempFile,
+} from "../temp.js";
+import {
+	type SessionArtifactManifest,
+	type SessionArtifactManifestEntry,
+	type ToolPresentation,
+	buildEvictedSessionArtifactEntries,
+	compareRefIds,
+	countLines,
+	formatSessionArtifactRetentionSummary,
+	mergeSessionArtifactManifest,
+	normalizeWhitespace,
+	truncateText,
+} from "./shared.js";
 
 const SNAPSHOT_INLINE_MAX_CHARS = 6_000;
 const SNAPSHOT_INLINE_MAX_LINES = 80;
@@ -464,18 +480,49 @@ function canUseStructuredSnapshotPreview(snapshotLines: SnapshotLine[], refEntri
 	);
 }
 
+interface SnapshotSpillWriteResult {
+	evictedArtifacts: PersistentSessionArtifactEviction[];
+	path: string;
+	storageScope: "persistent-session" | "process-temp";
+}
+
 async function writeSnapshotSpillFile(
 	data: Record<string, unknown>,
 	persistentArtifactStore: PersistentSessionArtifactStore | undefined,
-): Promise<string> {
+): Promise<SnapshotSpillWriteResult> {
 	const options = {
 		content: JSON.stringify(data, null, 2),
 		prefix: SNAPSHOT_SPILL_FILE_PREFIX,
 		suffix: ".json",
 	};
-	return persistentArtifactStore
-		? await writePersistentSessionArtifactFile({ ...options, store: persistentArtifactStore })
-		: await writeSecureTempFile(options);
+	if (persistentArtifactStore) {
+		const result = await writePersistentSessionArtifactFile({ ...options, store: persistentArtifactStore });
+		return { ...result, storageScope: "persistent-session" };
+	}
+	return { evictedArtifacts: [], path: await writeSecureTempFile(options), storageScope: "process-temp" };
+}
+
+function applySnapshotArtifactManifest(options: {
+	baseManifest?: SessionArtifactManifest;
+	command?: string;
+	fullOutputPath?: string;
+	spill?: SnapshotSpillWriteResult;
+}): { artifactManifest?: SessionArtifactManifest; artifactRetentionSummary?: string } {
+	if (!options.fullOutputPath || !options.spill) return {};
+	const nowMs = Date.now();
+	const entries: SessionArtifactManifestEntry[] = [
+		{
+			command: options.command,
+			createdAtMs: nowMs,
+			kind: "spill",
+			path: options.fullOutputPath,
+			retentionState: options.spill.storageScope === "persistent-session" ? "live" : "ephemeral",
+			storageScope: options.spill.storageScope,
+		},
+		...buildEvictedSessionArtifactEntries(options.spill.evictedArtifacts, nowMs),
+	];
+	const artifactManifest = mergeSessionArtifactManifest({ base: options.baseManifest, entries, nowMs });
+	return artifactManifest ? { artifactManifest, artifactRetentionSummary: formatSessionArtifactRetentionSummary(artifactManifest) } : {};
 }
 
 export function formatSnapshotSummary(data: Record<string, unknown>): string {
@@ -497,6 +544,7 @@ export function formatRawSnapshotText(data: Record<string, unknown>): string {
 export async function buildSnapshotPresentation(
 	data: Record<string, unknown>,
 	persistentArtifactStore: PersistentSessionArtifactStore | undefined = undefined,
+	artifactManifest: SessionArtifactManifest | undefined = undefined,
 ): Promise<ToolPresentation> {
 	const summary = formatSnapshotSummary(data);
 	const rawText = formatRawSnapshotText(data);
@@ -509,9 +557,11 @@ export async function buildSnapshotPresentation(
 	}
 
 	let fullOutputPath: string | undefined;
+	let spill: SnapshotSpillWriteResult | undefined;
 	let spillErrorText: string | undefined;
 	try {
-		fullOutputPath = await writeSnapshotSpillFile(data, persistentArtifactStore);
+		spill = await writeSnapshotSpillFile(data, persistentArtifactStore);
+		fullOutputPath = spill.path;
 	} catch (error) {
 		spillErrorText = error instanceof Error ? error.message : String(error);
 	}
@@ -619,7 +669,18 @@ export async function buildSnapshotPresentation(
 			: `Full raw snapshot unavailable: ${spillErrorText ?? "temp spill file could not be created."}`,
 	);
 
+	const manifestFields = applySnapshotArtifactManifest({
+		baseManifest: artifactManifest,
+		command: "snapshot",
+		fullOutputPath,
+		spill,
+	});
+	if (manifestFields.artifactRetentionSummary) {
+		lines.push("", manifestFields.artifactRetentionSummary);
+	}
+
 	return {
+		...manifestFields,
 		content: [{ type: "text", text: lines.join("\n") }],
 		data: {
 			compacted: true,

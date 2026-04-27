@@ -35,6 +35,17 @@ export interface PersistentSessionArtifactStore {
 	sessionId: string;
 }
 
+export interface PersistentSessionArtifactEviction {
+	mtimeMs: number;
+	path: string;
+	sizeBytes: number;
+}
+
+export interface PersistentSessionArtifactWriteResult {
+	evictedArtifacts: PersistentSessionArtifactEviction[];
+	path: string;
+}
+
 interface TempRootOwnershipRecord {
 	createdAtMs: number;
 	kind: string;
@@ -297,23 +308,25 @@ async function prunePersistentSessionArtifactsToBudget(
 	sessionArtifactDir: string,
 	additionalBytes: number,
 	protectedPaths: ReadonlySet<string>,
-): Promise<void> {
-	if (additionalBytes <= 0) return;
+): Promise<PersistentSessionArtifactEviction[]> {
+	if (additionalBytes <= 0) return [];
 	const maxBytes = getPersistentSessionArtifactMaxBytes();
 	let files = await listArtifactFiles(sessionArtifactDir);
 	let totalBytes = files.reduce((total, file) => total + file.size, 0);
 	if (totalBytes + additionalBytes <= maxBytes) {
-		return;
+		return [];
 	}
+	const evictedArtifacts: PersistentSessionArtifactEviction[] = [];
 	files = files.sort((left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path));
 	for (const file of files) {
 		if (protectedPaths.has(file.path)) {
 			continue;
 		}
 		await rm(file.path, { force: true }).catch(() => undefined);
+		evictedArtifacts.push({ mtimeMs: file.mtimeMs, path: file.path, sizeBytes: file.size });
 		totalBytes -= file.size;
 		if (totalBytes + additionalBytes <= maxBytes) {
-			return;
+			return evictedArtifacts;
 		}
 	}
 	throw new Error(`pi-agent-browser persisted spill budget exceeded (${totalBytes + additionalBytes} bytes > ${maxBytes} byte limit).`);
@@ -382,11 +395,11 @@ export async function writePersistentSessionArtifactFile(options: {
 	prefix: string;
 	store: PersistentSessionArtifactStore;
 	suffix: string;
-}): Promise<string> {
+}): Promise<PersistentSessionArtifactWriteResult> {
 	const { content, prefix, store, suffix } = options;
 	return await enqueueTempMutation(async () => {
 		const artifactDir = await ensurePersistentSessionArtifactDir(store);
-		await prunePersistentSessionArtifactsToBudget(
+		const evictedArtifacts = await prunePersistentSessionArtifactsToBudget(
 			artifactDir,
 			getTempArtifactByteLength(content),
 			new Set((store.protectedPaths ?? []).filter((path) => dirname(path) === artifactDir)),
@@ -401,7 +414,7 @@ export async function writePersistentSessionArtifactFile(options: {
 		} finally {
 			await fileHandle.close().catch(() => undefined);
 		}
-		return path;
+		return { evictedArtifacts, path };
 	});
 }
 

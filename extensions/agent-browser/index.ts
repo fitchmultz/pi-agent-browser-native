@@ -49,10 +49,18 @@ import {
 } from "./lib/runtime.js";
 import {
 	cleanupSecureTempArtifacts,
+	type PersistentSessionArtifactEviction,
 	type PersistentSessionArtifactStore,
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 } from "./lib/temp.js";
+import {
+	type SessionArtifactManifest,
+	buildEvictedSessionArtifactEntries,
+	formatSessionArtifactRetentionSummary,
+	isSessionArtifactManifest,
+	mergeSessionArtifactManifest,
+} from "./lib/results/shared.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
 
@@ -474,6 +482,20 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Orde
 	return restoredTargets;
 }
 
+function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactManifest | undefined {
+	let restoredManifest: SessionArtifactManifest | undefined;
+	for (const entry of branch) {
+		if (!isRecord(entry) || entry.type !== "message") continue;
+		const message = isRecord(entry.message) ? entry.message : undefined;
+		if (!message || message.toolName !== "agent_browser") continue;
+		const details = isRecord(message.details) ? message.details : undefined;
+		if (isSessionArtifactManifest(details?.artifactManifest)) {
+			restoredManifest = details.artifactManifest;
+		}
+	}
+	return restoredManifest;
+}
+
 function validateStdinCommandContract(options: { command?: string; commandTokens: string[]; stdin?: string }): string | undefined {
 	if (options.stdin === undefined) {
 		return undefined;
@@ -835,28 +857,63 @@ function getPersistentSessionArtifactStore(ctx: {
 }
 
 async function preserveParseFailureOutput(options: {
+	artifactManifest?: SessionArtifactManifest;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	stdoutSpillPath?: string;
-}): Promise<{ fullOutputPath?: string; fullOutputUnavailable?: string }> {
+}): Promise<{
+	artifactManifest?: SessionArtifactManifest;
+	artifactRetentionSummary?: string;
+	fullOutputPath?: string;
+	fullOutputUnavailable?: string;
+}> {
 	if (!options.stdoutSpillPath) {
 		return {};
 	}
 
 	try {
 		const rawOutput = await readFile(options.stdoutSpillPath);
-		const fullOutputPath = options.persistentArtifactStore
-			? await writePersistentSessionArtifactFile({
-					content: rawOutput,
-					prefix: "pi-agent-browser-parse-failure-output",
-					store: options.persistentArtifactStore,
-					suffix: ".txt",
-				})
-			: await writeSecureTempFile({
-					content: rawOutput,
-					prefix: "pi-agent-browser-parse-failure-output",
-					suffix: ".txt",
-				});
-		return { fullOutputPath };
+		const nowMs = Date.now();
+		let evictedArtifacts: PersistentSessionArtifactEviction[] = [];
+		let fullOutputPath: string;
+		let storageScope: "persistent-session" | "process-temp";
+		if (options.persistentArtifactStore) {
+			const result = await writePersistentSessionArtifactFile({
+				content: rawOutput,
+				prefix: "pi-agent-browser-parse-failure-output",
+				store: options.persistentArtifactStore,
+				suffix: ".txt",
+			});
+			fullOutputPath = result.path;
+			evictedArtifacts = result.evictedArtifacts;
+			storageScope = "persistent-session";
+		} else {
+			fullOutputPath = await writeSecureTempFile({
+				content: rawOutput,
+				prefix: "pi-agent-browser-parse-failure-output",
+				suffix: ".txt",
+			});
+			storageScope = "process-temp";
+		}
+		const artifactManifest = mergeSessionArtifactManifest({
+			base: options.artifactManifest,
+			entries: [
+				{
+					command: "agent-browser",
+					createdAtMs: nowMs,
+					kind: "spill",
+					path: fullOutputPath,
+					retentionState: storageScope === "persistent-session" ? "live" : "ephemeral",
+					storageScope,
+				},
+				...buildEvictedSessionArtifactEntries(evictedArtifacts, nowMs),
+			],
+			nowMs,
+		});
+		return {
+			artifactManifest,
+			artifactRetentionSummary: artifactManifest ? formatSessionArtifactRetentionSummary(artifactManifest) : undefined,
+			fullOutputPath,
+		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { fullOutputUnavailable: message };
@@ -939,6 +996,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let freshSessionOrdinal = 0;
 	let sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
 	let sessionTabTargetUpdateOrder = 0;
+	let artifactManifest: SessionArtifactManifest | undefined;
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -950,12 +1008,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		freshSessionOrdinal = restoredState.freshSessionOrdinal;
 		sessionTabTargets = restoreSessionTabTargetsFromBranch(ctx.sessionManager.getBranch());
 		sessionTabTargetUpdateOrder = getLatestSessionTabTargetOrder(sessionTabTargets);
+		artifactManifest = restoreArtifactManifestFromBranch(ctx.sessionManager.getBranch());
 	});
 
 	pi.on("session_shutdown", async () => {
 		managedSessionActive = false;
 		sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
 		sessionTabTargetUpdateOrder = 0;
+		artifactManifest = undefined;
 		await cleanupSecureTempArtifacts();
 	});
 
@@ -1196,6 +1256,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 					const parseFailureOutput = parseError
 						? await preserveParseFailureOutput({
+								artifactManifest,
 								persistentArtifactStore,
 								stdoutSpillPath: processResult.stdoutSpillPath,
 							})
@@ -1350,21 +1411,33 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							summary: `${redactedArgs.join(" ")} completed`,
 						  }
 						: await buildToolPresentation({
+								artifactManifest,
 								commandInfo: executionPlan.commandInfo,
 								cwd: ctx.cwd,
 								envelope: presentationEnvelope,
 								errorText,
 								persistentArtifactStore,
 						  });
+					if (parseFailureOutput.artifactManifest) {
+						presentation.artifactManifest = parseFailureOutput.artifactManifest;
+						presentation.artifactRetentionSummary = parseFailureOutput.artifactRetentionSummary;
+					}
 					if (parseFailureOutput.fullOutputPath || parseFailureOutput.fullOutputUnavailable) {
 						const existingText = presentation.content[0]?.type === "text" ? presentation.content[0].text : "";
-						const notice = parseFailureOutput.fullOutputPath
-							? `Full output path: ${parseFailureOutput.fullOutputPath}`
-							: `Full raw output unavailable: ${parseFailureOutput.fullOutputUnavailable}`;
+						const noticeLines = [
+							parseFailureOutput.fullOutputPath
+								? `Full output path: ${parseFailureOutput.fullOutputPath}`
+								: `Full raw output unavailable: ${parseFailureOutput.fullOutputUnavailable}`,
+							parseFailureOutput.artifactRetentionSummary,
+						].filter((item): item is string => item !== undefined);
+						const notice = noticeLines.join("\n");
 						presentation.content[0] = {
 							type: "text",
 							text: existingText.length > 0 ? `${existingText}\n\n${notice}` : notice,
 						};
+					}
+					if (presentation.artifactManifest) {
+						artifactManifest = presentation.artifactManifest;
 					}
 					const redactedContent = presentation.content.map((item) =>
 						item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,
@@ -1374,6 +1447,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						content: redactedContent,
 						details: {
 							args: redactedArgs,
+							artifactManifest: redactSensitiveValue(presentation.artifactManifest),
+							artifactRetentionSummary: presentation.artifactRetentionSummary,
 							artifacts: redactSensitiveValue(presentation.artifacts),
 							batchFailure: redactSensitiveValue(presentation.batchFailure),
 							batchSteps: redactSensitiveValue(presentation.batchSteps),
