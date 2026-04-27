@@ -1229,6 +1229,56 @@
       "custom_fields": {
         "scan_agent": "scan-innovation"
       }
+    },
+    {
+      "id": "RQ-0030",
+      "status": "done",
+      "title": "Add a real upstream agent-browser contract suite",
+      "description": "Opportunity type: reliability. The current automated test surface is excellent for wrapper logic, but it uses fake extension contexts and fake `agent-browser` binaries. The repo does not yet validate live upstream JSON behavior, real browser session semantics, or actual Pi interaction against the installed upstream tool. Why it matters: the product deliberately targets only the current locally installed upstream version, so the biggest remaining risk is drift between the fake harness and the real upstream/browser behavior. Proposed approach: add an opt-in integration suite that requires the installed target upstream version from the canonical capability baseline, serves deterministic local fixture pages, and validates a small but meaningful set of real commands such as inspection, `open`, `snapshot -i`, `batch`, `eval --stdin`, and one lifecycle-sensitive browser reuse flow. Risks and mitigations: keep the suite opt-in and deterministic so the default fast test loop stays stable, fail clearly on missing/wrong upstream prerequisites, and avoid external-site dependence. Acceptance criteria: the repo has a documented real-upstream test command, it fails clearly on upstream drift or unexpected JSON shape changes, it records or fixtures the output shapes needed by presentation work, and it covers at least one managed-session reuse path using the real binary.",
+      "priority": "high",
+      "tags": [
+        "innovation",
+        "reliability",
+        "integration",
+        "testing"
+      ],
+      "scope": [
+        "test/helpers/agent-browser-harness.ts",
+        "test",
+        "scripts/verify-command-reference.mjs",
+        "docs/RELEASE.md",
+        "package.json"
+      ],
+      "evidence": [
+        "path: test/helpers/agent-browser-harness.ts :: fake agent-browser harness :: integration tests simulate Pi and upstream behavior with fake executables and a local harness rather than a real browser session",
+        "path: scripts/verify-command-reference.mjs :: verifyCommandReference :: current upstream verification checks version and help tokens only, not runtime JSON or browser behavior",
+        "path: docs/COMMAND_REFERENCE.md :: Full supported surface in 0.26.0 :: the wrapper tracks a broad upstream surface that is wider than the repo's current real-runtime validation"
+      ],
+      "plan": [
+        "Choose a deterministic real-upstream scenario set and local fixture server pages that exercise the highest-value commands and managed-session behavior.",
+        "Add an opt-in integration command that runs against the installed target `agent-browser` version from the canonical capability baseline and fails fast on missing prerequisites.",
+        "Capture and assert live upstream output shapes for a minimal command set without depending on unrelated external sites.",
+        "Document how maintainers should use the real-upstream suite alongside the fast fake-binary tests and presentation fixture updates.",
+        "Verify by running the new upstream suite against the installed target version and confirming it catches intentional runtime-shape regressions."
+      ],
+      "notes": [],
+      "request": "scan: none",
+      "created_at": "2026-04-27T08:29:39Z",
+      "updated_at": "2026-04-27T14:57:48.529598000Z",
+      "completed_at": "2026-04-27T14:57:48.529598000Z",
+      "depends_on": [
+        "RQ-0036"
+      ],
+      "blocks": [
+        "RQ-0031",
+        "RQ-0032",
+        "RQ-0033",
+        "RQ-0034"
+      ],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-innovation"
+      }
     }
   ]
 }
