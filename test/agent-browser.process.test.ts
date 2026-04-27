@@ -132,6 +132,27 @@ test("runAgentBrowserProcess removes abort listeners after repeated successful r
 	}
 });
 
+test("runAgentBrowserProcess removes abort listeners after spawn errors", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const controller = new AbortController();
+
+	try {
+		const processResult = await runAgentBrowserProcess({
+			args: ["snapshot"],
+			cwd: tempDir,
+			env: { PATH: tempDir },
+			signal: controller.signal,
+		});
+
+		assert.equal(processResult.exitCode, 127);
+		assert.match(processResult.spawnError?.message ?? "", /ENOENT|agent-browser/);
+		assert.equal(processResult.aborted, false);
+		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnvelope still sees the full payload", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
