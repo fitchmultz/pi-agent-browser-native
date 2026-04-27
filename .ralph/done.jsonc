@@ -1326,6 +1326,54 @@
       "custom_fields": {
         "scan_agent": "scan-innovation"
       }
+    },
+    {
+      "id": "RQ-0031",
+      "status": "done",
+      "title": "Render session and diagnostic command families natively",
+      "description": "Opportunity type: feature gap. The extension already makes snapshots, navigation, extraction, screenshots, tab lists, stream status, and batch flows feel native, but a large set of documented upstream commands still falls through generic record rendering. This is especially visible for `session`, `auth`, `profiles`, `doctor`, `network`, `console`, `errors`, and dashboard-style status flows. Why it matters: these are exactly the commands users reach for when the browser state is confusing, authentication is involved, or they need operational visibility; generic JSON here weakens the native-tool experience. Proposed approach: after capturing real upstream output shapes, add a first wave of compact command-family-specific renderers for the highest-signal status and diagnostics flows, favoring `session`, `profiles`, and `doctor` before broader log/status families, then expand to larger log families with previews plus spill files where needed. Risks and mitigations: keep renderers close to upstream data, preserve redaction for auth/diagnostic values, and avoid inventing new semantics beyond formatting and compaction. Acceptance criteria: the selected first-wave command families return readable summaries with counts and key fields, large outputs degrade to previews plus spill paths, redaction-sensitive fields are not expanded, and new presentation tests cover each supported family.",
+      "priority": "high",
+      "tags": [
+        "innovation",
+        "feature-gap",
+        "ux",
+        "presentation"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "test/agent-browser.presentation.test.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md"
+      ],
+      "evidence": [
+        "path: docs/COMMAND_REFERENCE.md :: command families :: the documented surface includes session, auth, dashboard, doctor, network, console, errors, and profiles commands",
+        "path: extensions/agent-browser/lib/results/presentation.ts :: formatSummary and formatContentText :: command-specific rendering exists for snapshot, navigation, extraction, tab, stream status, screenshot, download, pdf, and batch, while other families fall through generic stringification",
+        "path: test/agent-browser.presentation.test.ts :: coverage :: current presentation tests focus on snapshots, navigation, extraction, downloads, screenshots, and batch flows rather than diagnostic or status-heavy command families"
+      ],
+      "plan": [
+        "Use real-upstream output-shape evidence to pick the first diagnostic and status command families that would most improve agent recovery and operator visibility.",
+        "Implement compact summaries and large-output previews for those families while preserving raw details, spill paths, and redaction behavior.",
+        "Add focused presentation tests that lock the new renderers to stable, low-noise outputs based on observed upstream shapes.",
+        "Refresh tool-contract and command-reference docs to describe the richer native rendering.",
+        "Verify by running the presentation test suite and manually checking representative command outputs for readability, redaction, and spill-path preservation."
+      ],
+      "notes": [],
+      "request": "scan: none",
+      "created_at": "2026-04-27T08:29:39Z",
+      "updated_at": "2026-04-27T15:05:52.845552000Z",
+      "completed_at": "2026-04-27T15:05:52.845552000Z",
+      "depends_on": [
+        "RQ-0030"
+      ],
+      "blocks": [],
+      "relates_to": [
+        "RQ-0027",
+        "RQ-0034"
+      ],
+      "custom_fields": {
+        "scan_agent": "scan-innovation"
+      }
     }
   ]
 }
