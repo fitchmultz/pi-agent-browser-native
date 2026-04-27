@@ -334,9 +334,11 @@ const SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS = new Set(["batch", 
 
 type PinnedBatchUnwrapMode = "single-command" | "user-batch";
 
+type BatchCommandStep = [string, ...string[]];
+
 interface PinnedBatchPlan {
 	includeNavigationSummary: boolean;
-	steps: unknown[];
+	steps: BatchCommandStep[];
 	unwrapMode: PinnedBatchUnwrapMode;
 }
 
@@ -503,7 +505,35 @@ function shouldPinSessionTabForCommand(options: {
 	);
 }
 
-function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps?: unknown[] } {
+function validateUserBatchStep(
+	step: unknown,
+	index: number,
+):
+	| { ok: true; step: BatchCommandStep }
+	| { ok: false; error: string } {
+	if (!Array.isArray(step)) {
+		return {
+			ok: false,
+			error: `agent_browser batch stdin step ${index} must be a non-empty array of string command tokens.`,
+		};
+	}
+	if (step.length === 0) {
+		return {
+			ok: false,
+			error: `agent_browser batch stdin step ${index} must not be empty.`,
+		};
+	}
+	const invalidTokenIndex = step.findIndex((token) => typeof token !== "string");
+	if (invalidTokenIndex !== -1) {
+		return {
+			ok: false,
+			error: `agent_browser batch stdin step ${index} token ${invalidTokenIndex} must be a string.`,
+		};
+	}
+	return { ok: true, step: step as BatchCommandStep };
+}
+
+function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps?: BatchCommandStep[] } {
 	if (stdin === undefined) {
 		return { steps: [] };
 	}
@@ -512,7 +542,15 @@ function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps
 		if (!Array.isArray(parsed)) {
 			return { error: "agent_browser batch stdin must be a JSON array of command steps." };
 		}
-		return { steps: parsed };
+		const steps: BatchCommandStep[] = [];
+		for (const [index, rawStep] of parsed.entries()) {
+			const validated = validateUserBatchStep(rawStep, index);
+			if (!validated.ok) {
+				return { error: validated.error };
+			}
+			steps.push(validated.step);
+		}
+		return { steps };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { error: `agent_browser batch stdin could not be parsed as JSON: ${message}` };
@@ -530,9 +568,10 @@ function buildPinnedBatchPlan(options: {
 		if (parsed.error) {
 			return { error: parsed.error };
 		}
+		const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
 		return {
 			includeNavigationSummary: false,
-			steps: [["tab", options.selectedTab], ...(parsed.steps ?? [])],
+			steps: [tabSelectionStep, ...(parsed.steps ?? [])],
 			unwrapMode: "user-batch",
 		};
 	}
@@ -540,13 +579,12 @@ function buildPinnedBatchPlan(options: {
 		return undefined;
 	}
 	const includeNavigationSummary = options.command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(options.command);
+	const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
+	const commandStep = options.commandTokens as BatchCommandStep;
+	const navigationSummarySteps: BatchCommandStep[] = includeNavigationSummary ? [["get", "title"], ["get", "url"]] : [];
 	return {
 		includeNavigationSummary,
-		steps: [
-			["tab", options.selectedTab],
-			options.commandTokens,
-			...(includeNavigationSummary ? [["get", "title"], ["get", "url"]] : []),
-		],
+		steps: [tabSelectionStep, commandStep, ...navigationSummarySteps],
 		unwrapMode: "single-command",
 	};
 }
