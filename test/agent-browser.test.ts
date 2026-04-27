@@ -23,6 +23,7 @@ import {
 	TOOL_PROMPT_GUIDELINES_SUFFIX,
 	WRAPPER_TAB_RECOVERY_BEHAVIOR,
 } from "../extensions/agent-browser/lib/playbook.js";
+import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
 import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildToolPresentation,
@@ -290,6 +291,21 @@ test("hasUsableBraveApiKey only accepts non-empty values", () => {
 	assert.equal(hasUsableBraveApiKey(""), false);
 	assert.equal(hasUsableBraveApiKey("   \n\t  "), false);
 	assert.equal(hasUsableBraveApiKey("demo-key"), true);
+});
+
+test("shared parsing helpers preserve boundary parsing semantics", () => {
+	assert.equal(isRecord({}), true);
+	assert.equal(isRecord([]), true);
+	assert.equal(isRecord(null), false);
+	assert.equal(isRecord("object"), false);
+
+	assert.equal(parsePositiveInteger(undefined), undefined);
+	assert.equal(parsePositiveInteger("42"), 42);
+	assert.equal(parsePositiveInteger(" 42 "), 42);
+	assert.equal(parsePositiveInteger("0"), undefined);
+	assert.equal(parsePositiveInteger("-1"), undefined);
+	assert.equal(parsePositiveInteger("1.5"), undefined);
+	assert.equal(parsePositiveInteger("9007199254740992"), undefined);
 });
 
 test("implicit session timeout helpers prefer explicit overrides and safe defaults", () => {

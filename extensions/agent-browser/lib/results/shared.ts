@@ -1,6 +1,6 @@
 /**
  * Purpose: Share stable result-rendering types and small data-shaping helpers across the focused result modules.
- * Responsibilities: Define upstream envelope/presentation types, provide safe record/string utilities, and expose lightweight text helpers used by envelope parsing, snapshot compaction, and presentation rendering.
+ * Responsibilities: Define upstream envelope/presentation types, provide safe string utilities, and expose lightweight text helpers used by envelope parsing, snapshot compaction, and presentation rendering.
  * Scope: Shared result helpers only; higher-level parsing, snapshot compaction, and image attachment orchestration live in neighboring modules.
  * Usage: Imported by the focused result modules that back the public `lib/results.ts` facade.
  * Invariants/Assumptions: Helpers stay generic, side-effect free, and small enough to reuse without reintroducing a new god module.
@@ -52,10 +52,6 @@ export interface ToolPresentation {
 	summary: string;
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
 export function stringifyUnknown(value: unknown): string {
 	if (typeof value === "string") return value;
 	if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -65,15 +61,6 @@ export function stringifyUnknown(value: unknown): string {
 	} catch {
 		return String(value);
 	}
-}
-
-export function parsePositiveInteger(rawValue: string | undefined): number | undefined {
-	if (typeof rawValue !== "string") return undefined;
-	const normalizedValue = rawValue.trim();
-	if (!/^\d+$/.test(normalizedValue)) return undefined;
-	const parsedValue = Number(normalizedValue);
-	if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) return undefined;
-	return parsedValue;
 }
 
 export function countLines(text: string): number {

@@ -12,6 +12,8 @@ import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { isRecord, parsePositiveInteger } from "./parsing.js";
+
 const TEMP_ROOT_PREFIX = "pi-agent-browser-";
 const TEMP_ROOT_MARKER_FILE_NAME = ".pi-agent-browser-owner.json";
 const TEMP_ROOT_MARKER_KIND = "pi-agent-browser-temp-root";
@@ -51,21 +53,8 @@ let exitCleanupRegistered = false;
 let tempMutationQueue = Promise.resolve();
 const ownedTempRoots = new Set<string>();
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
 function getCurrentProcessUid(): number | undefined {
 	return typeof process.getuid === "function" ? process.getuid() : undefined;
-}
-
-function parsePositiveInteger(rawValue: string | undefined): number | undefined {
-	if (typeof rawValue !== "string") return undefined;
-	const normalizedValue = rawValue.trim();
-	if (!/^\d+$/.test(normalizedValue)) return undefined;
-	const parsedValue = Number(normalizedValue);
-	if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) return undefined;
-	return parsedValue;
 }
 
 function isPositiveFiniteNumber(value: unknown): value is number {

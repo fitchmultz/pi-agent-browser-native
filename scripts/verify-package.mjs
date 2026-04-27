@@ -32,6 +32,7 @@ export const REQUIRED_PACKED_FILES = [
 	"docs/REQUIREMENTS.md",
 	"docs/TOOL_CONTRACT.md",
 	"extensions/agent-browser/index.ts",
+	"extensions/agent-browser/lib/parsing.ts",
 	"extensions/agent-browser/lib/process.ts",
 	"extensions/agent-browser/lib/results.ts",
 	"extensions/agent-browser/lib/results/envelope.ts",

@@ -6,8 +6,9 @@
  * Invariants/Assumptions: Snapshot compaction should stay helpful even if upstream snapshot text formatting shifts, so structured parsing is best-effort and always has a resilient raw-outline fallback.
  */
 
+import { isRecord } from "../parsing.js";
 import { type PersistentSessionArtifactStore, writePersistentSessionArtifactFile, writeSecureTempFile } from "../temp.js";
-import { type ToolPresentation, compareRefIds, countLines, isRecord, normalizeWhitespace, truncateText } from "./shared.js";
+import { type ToolPresentation, compareRefIds, countLines, normalizeWhitespace, truncateText } from "./shared.js";
 
 const SNAPSHOT_INLINE_MAX_CHARS = 6_000;
 const SNAPSHOT_INLINE_MAX_LINES = 80;

@@ -8,7 +8,8 @@
 
 import { readFile } from "node:fs/promises";
 
-import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, isRecord, stringifyUnknown } from "./shared.js";
+import { isRecord } from "../parsing.js";
+import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, stringifyUnknown } from "./shared.js";
 
 function hasStructuredBatchStepFailure(data: unknown): data is AgentBrowserBatchResult[] {
 	return Array.isArray(data) && data.some((item) => isRecord(item) && item.success === false);

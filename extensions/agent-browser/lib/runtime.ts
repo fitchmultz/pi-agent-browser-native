@@ -9,6 +9,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
+import { isRecord } from "./parsing.js";
+
 /**
  * Launch-scoped flags that select the upstream browser session/auth mechanism at launch time.
  *
@@ -184,10 +186,6 @@ export interface RestoredManagedSessionState extends ManagedSessionState {
 
 export interface PromptPolicy {
 	allowLegacyAgentBrowserBash: boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 function isStringArray(value: unknown): value is string[] {
