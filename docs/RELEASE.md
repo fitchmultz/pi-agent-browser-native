@@ -21,7 +21,7 @@ npm run verify:release
 
 `npm run verify:release` runs:
 
-1. `npm run verify` for TypeScript and unit coverage
+1. `npm run verify` for TypeScript, unit coverage, and command-reference drift detection
 2. `npm run verify:package:pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
 
 ## What package verification checks
@@ -65,7 +65,7 @@ Before publishing, also validate the explicit local-checkout path:
 4. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
 5. Run a smoke prompt that exercises `agent_browser`.
 6. Validate managed-session continuity with both `/reload` and a full restart + `/resume`.
-7. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed.
+7. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed, then run `npm run verify:command-reference`.
 
 Example smoke prompt:
 
@@ -106,6 +106,7 @@ Before publishing:
 - update `CHANGELOG.md`
 - confirm README install guidance still leads with the package-first flow
 - confirm `docs/COMMAND_REFERENCE.md` still matches the effective upstream command/help surface used by the wrapper
+- run `npm run verify:command-reference` if the installed upstream `agent-browser` version or help surface changed
 - confirm the explicit local-checkout instructions still work for pre-release validation
 - rerun `npm run verify:release`
 - manually exercise `/reload` and full restart + `/resume` continuity in local checkout validation

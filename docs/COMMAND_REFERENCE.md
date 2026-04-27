@@ -12,6 +12,12 @@ Provide a local, repo-readable command reference for the native `agent_browser` 
 
 This project intentionally blocks normal `agent-browser` bash usage in most agent sessions, so the agent still needs an accessible local equivalent of the upstream command surface. This document is the durable reference the agent can read inside the repository without calling the binary directly.
 
+## Upstream baseline
+
+This reference is baselined to the locally installed `agent-browser 0.26.0` command/help surface. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+
+The lightweight drift check is `npm run verify:command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
+
 ## Core mental model
 
 Tool parameters:
@@ -24,19 +30,21 @@ Tool parameters:
 }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name
-- `stdin`: only for `batch` and `eval --stdin`; other command/stdin combinations are rejected before `agent-browser` is launched
+- `args`: exact `agent-browser` CLI tokens after the binary name.
+- `stdin`: only for `batch` and `eval --stdin`; other command/stdin combinations are rejected before `agent-browser` is launched.
 - `sessionMode`:
-  - `"auto"` reuse the extension-managed session when possible
-  - `"fresh"` rotate that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` apply
+  - `"auto"` reuses the extension-managed session when possible.
+  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` apply.
 
 ## Recommended workflow
+
+Keep routine browser work simple: open a page, inspect it with refs, interact with refs or scoped selectors, then inspect again.
 
 ### Normal browse flow
 
 ```json
 { "args": ["open", "https://example.com"] }
-{ "args": ["snapshot", "-i"] }
+{ "args": ["snapshot", "-i", "--urls"] }
 { "args": ["click", "@e2"] }
 { "args": ["snapshot", "-i"] }
 ```
@@ -46,14 +54,39 @@ Tool parameters:
 ```json
 { "args": ["get", "title"] }
 { "args": ["get", "url"] }
+{ "args": ["get", "text", "main"] }
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
+
+Prefer `get` and scoped `eval --stdin` for read-only extraction. Return the intended JavaScript value instead of relying on `console.log`.
 
 ### Run a multi-step flow in one browser invocation
 
 ```json
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
 ```
+
+Use `batch --bail` when later steps should stop after the first failed command.
+
+### Wait for page readiness or downloads
+
+```json
+{ "args": ["wait", "--load", "networkidle"] }
+{ "args": ["wait", "--url", "**/dashboard"] }
+{ "args": ["wait", "--download", "/tmp/report.pdf"] }
+```
+
+Do not use a bare `wait --load`; `--load` needs a state value such as `load`, `domcontentloaded`, or `networkidle`.
+
+### Download, screenshot, and PDF files
+
+```json
+{ "args": ["download", "@e5", "/tmp/report.pdf"] }
+{ "args": ["screenshot", "/tmp/page.png"] }
+{ "args": ["pdf", "/tmp/page.pdf"] }
+```
+
+Prefer `download <selector> <path>` over `click` when the goal is a saved file. Use `wait --download [path]` when a previous action starts the download.
 
 ### Switch from an already-active implicit session to a fresh profiled launch
 
@@ -64,171 +97,77 @@ Tool parameters:
 }
 ```
 
-## High-value commands
-
-### Open and navigation
-
-- `open <url>`
-- `goto <url>`
-- `navigate <url>`
-- `back`
-- `forward`
-- `reload`
-
-Examples:
-
-```json
-{ "args": ["open", "https://react.dev"] }
-{ "args": ["reload"] }
-```
-
-### Snapshot and page inspection
-
-- `snapshot`
-- `snapshot -i` interactive elements only
-- `snapshot -c` compact tree
-- `snapshot -d <n>` limit depth
-- `snapshot -s <selector>` scope to one subtree
-
-Examples:
-
-```json
-{ "args": ["snapshot", "-i"] }
-{ "args": ["snapshot", "-i", "-s", "main"] }
-```
-
-### Element interaction
-
-- `click <selector-or-@ref>`
-- `dblclick <selector-or-@ref>`
-- `hover <selector-or-@ref>`
-- `focus <selector-or-@ref>`
-- `type <selector-or-@ref> <text>`
-- `fill <selector-or-@ref> <text>`
-- `press <key>`
-- `check <selector-or-@ref>`
-- `uncheck <selector-or-@ref>`
-- `select <selector-or-@ref> <value...>`
-- `drag <src> <dst>`
-- `upload <selector-or-@ref> <files...>`
-
-Examples:
-
-```json
-{ "args": ["click", "@e12"] }
-{ "args": ["fill", "#email", "user@example.com"] }
-{ "args": ["press", "Enter"] }
-```
-
-### Downloads and saved files
-
-Use the purpose-built command when a click should save a file.
-
-- `download <selector-or-@ref> <path>`
-- `pdf <path>`
-- `screenshot [path]`
-
-Examples:
-
-```json
-{ "args": ["download", "@e5", "/tmp/report.pdf"] }
-{ "args": ["pdf", "/tmp/page.pdf"] }
-{ "args": ["screenshot", "/tmp/page.png"] }
-```
-
-Rules:
-
-- Prefer `download <selector> <path>` over `click` when the goal is a downloaded file on disk.
-- Prefer explicit output paths when the calling task needs to read, move, or attach the saved file later.
-- Use `--download-path <dir>` on the first launch when many downloads should land in one directory.
-
-### Read page state
-
-`get <subcommand>` supports:
-
-- `title`
-- `url`
-- `text <selector>`
-- `html <selector>`
-- `value <selector>`
-- `attr <selector> <name>`
-- `count <selector>`
-- `box <selector>`
-- `styles <selector>`
-- `cdp-url`
-
-Examples:
-
-```json
-{ "args": ["get", "title"] }
-{ "args": ["get", "text", "main"] }
-{ "args": ["get", "attr", "a.primary", "href"] }
-```
-
-### JavaScript evaluation
-
-- `eval <js>`
-- `eval --stdin` with JavaScript in `stdin`
-
-Example:
-
-```json
-{ "args": ["eval", "--stdin"], "stdin": "Array.from(document.querySelectorAll('a')).map((a) => a.href)" }
-```
-
-Rules:
-
-- Return the intended value instead of relying on `console.log`.
-- Scope DOM queries to the relevant route, component, or element.
-- Prefer `snapshot -i` refs first when the task is interaction-heavy.
-
-### Wait
-
-- `wait <ms>`
-- `wait <selector>`
-- use explicit variants like `--load <state>`, `--url <matcher>`, `--fn <js>`, or `--text <matcher>` when needed
-
-Important:
-
-- bare `wait --load` is incomplete; `--load` needs a state value
-
-### Tabs
-
-- `tab list`
-- `tab <tab-id-or-label>`
-- `tab new`
-- `tab close`
-
-Examples:
+### Recover tabs when focus lands somewhere unexpected
 
 ```json
 { "args": ["tab", "list"] }
-{ "args": ["tab", "t3"] }
+{ "args": ["tab", "t2"] }
+{ "args": ["snapshot", "-i"] }
 ```
 
-Use this when:
+Use `tab list` and `tab <tab-id-or-label>` when a profile restore, pop-up, or click opens or focuses the wrong tab.
 
-- a restored profile tab steals focus
-- an interaction opens a new tab
-- the browser lands on the wrong page unexpectedly
+## Full supported surface in 0.26.0
 
-### Batch
+The tables below intentionally list more than the recommended workflow. Rare commands are included so agents can discover that the installed upstream supports them without direct `agent-browser --help` access.
 
-- `batch`
-- `batch --bail`
+### Built-in skills
 
-Example:
+| Command | Purpose |
+| --- | --- |
+| `skills list` | List available CLI-bundled skills. |
+| `skills get core` | Print the core usage guide. |
+| `skills get core --full` | Print the full version-matched core command reference and templates. |
+| `skills get <name>` | Load a specialized skill such as `electron` or `slack`. |
+| `skills path [name]` | Print a skill directory path. |
 
-```json
-{ "args": ["batch", "--bail"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"],[\"click\",\"@e2\"]]" }
-```
+### Core page and element commands
+
+| Command | Purpose |
+| --- | --- |
+| `open <url>` | Navigate to a URL. |
+| `click <sel>` | Click an element or `@ref`. |
+| `dblclick <sel>` | Double-click an element. |
+| `type <sel> <text>` | Type into an element. |
+| `fill <sel> <text>` | Clear and fill an element. |
+| `press <key>` | Press a key such as `Enter`, `Tab`, or `Control+a`. |
+| `keyboard type <text>` | Type text with real keystrokes and no selector. |
+| `keyboard inserttext <text>` | Insert text without key events. |
+| `hover <sel>` | Hover an element. |
+| `focus <sel>` | Focus an element. |
+| `check <sel>` | Check a checkbox. |
+| `uncheck <sel>` | Uncheck a checkbox. |
+| `select <sel> <val...>` | Select one or more dropdown options. |
+| `drag <src> <dst>` | Drag and drop. |
+| `upload <sel> <files...>` | Upload one or more files. |
+| `download <sel> <path>` | Download a file by clicking an element. |
+| `scroll <dir> [px]` | Scroll `up`, `down`, `left`, or `right`. |
+| `scrollintoview <sel>` | Scroll an element into view. |
+| `wait <sel|ms>` | Wait for an element or a duration. |
+| `screenshot [path]` | Take a screenshot. |
+| `pdf <path>` | Save the page as a PDF. |
+| `snapshot` | Print an accessibility tree with refs for AI interaction. |
+| `eval <js>` | Run JavaScript. Use `eval --stdin` through this wrapper for larger snippets. |
+| `connect <port|url>` | Connect to a browser through CDP. |
+| `close [--all]` | Close the current browser or all sessions. |
+
+### Navigation
+
+| Command | Purpose |
+| --- | --- |
+| `back` | Go back. |
+| `forward` | Go forward. |
+| `reload` | Reload the current page. |
 
 ### Session and inspection commands
 
-- `session`
-- `session list`
-- `close`
-- `close --all`
+| Command | Purpose |
+| --- | --- |
+| `session` | Show current session name. |
+| `session list` | List active sessions. |
+| `close` | Close the current browser session. |
+| `close --all` | Close every session. |
+
 <!-- agent-browser-playbook:start inspection -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
 Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
@@ -239,18 +178,165 @@ Native inspection calls use the `agent_browser` tool shape, not shell-like direc
 These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, or auto-connect launches.
 <!-- agent-browser-playbook:end inspection -->
 
-## Important global flags
+### Page state, finding, mouse, settings, network, and storage
 
-- `--profile <name|path>` reuse Chrome profile state
-- `--session <name>` explicit upstream session name
-- `--session-name <name>` upstream saved auth/session state name
-- `--cdp <port-or-url>` connect to an existing browser
-- `--state <path>` load upstream saved state/auth data
-- `--auto-connect` attach to an already-running browser/debug endpoint according to upstream behavior
-- `--headed` show the browser window
-- `--download-path <dir>` default download directory
-- `--user-agent <ua>` custom user agent
-- `--json` injected by the wrapper automatically for normal tool execution
+| Family | Surface |
+| --- | --- |
+| `get <what> [selector]` | `text`, `html`, `value`, `attr <name>`, `title`, `url`, `count`, `box`, `styles`, `cdp-url`. |
+| `is <what> <selector>` | Check `visible`, `enabled`, or `checked`. |
+| `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, `testid`, `first`, `last`, and `nth`. |
+| `mouse <action> [args]` | `move <x> <y>`, `down [btn]`, `up [btn]`, `wheel <dy> [dx]`. |
+| `set <setting> [value]` | `viewport <w> <h>`, `device <name>`, `geo <lat> <lng>`, `offline [on|off]`, `headers <json>`, `credentials <user> <pass>`, `media [dark|light] [reduced-motion]`. |
+| `network <action>` | `route <url> [--abort|--body <json>]`, `unroute [url]`, `requests [--clear] [--filter <pattern>]`, `har <start|stop> [path]`. |
+| `cookies [get|set|clear]` | Manage cookies. `set` supports `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, and `--expires`. |
+| `storage <local|session>` | Manage web storage. |
+
+### Tabs
+
+Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `docs` or `app` are interchangeable with ids wherever a tab reference is accepted.
+
+| Command | Purpose |
+| --- | --- |
+| `tab` | List open tabs by default. |
+| `tab list` | List open tabs with ids and labels. |
+| `tab new [url]` | Open a new tab. |
+| `tab new --label <name> [url]` | Open a new tab with a user label. |
+| `tab <t<N>|label>` | Switch to a tab by id or label. |
+| `tab close [t<N>|label]` | Close the current tab or a referenced tab. |
+
+### Snapshot
+
+| Option | Purpose |
+| --- | --- |
+| `snapshot` | Full accessibility tree with refs. |
+| `snapshot -i` / `snapshot --interactive` | Include only interactive elements. |
+| `snapshot -i --urls` | Include only interactive elements and link hrefs. |
+| `snapshot -u` / `snapshot --urls` | Include href URLs for link elements. |
+| `snapshot -c` / `snapshot --compact` | Remove empty structural elements. |
+| `snapshot -d <n>` / `snapshot --depth <n>` | Limit tree depth. |
+| `snapshot -s <sel>` / `snapshot --selector <sel>` | Scope to a CSS selector. |
+
+### Wait
+
+| Mode | Purpose |
+| --- | --- |
+| `wait <selector>` | Wait for an element to appear. |
+| `wait <ms>` | Wait for a fixed number of milliseconds. |
+| `wait --url <pattern>` | Wait for the URL to match a pattern. |
+| `wait --load <state>` | Wait for load state: `load`, `domcontentloaded`, or `networkidle`. |
+| `wait --fn <expression>` | Wait for a JavaScript expression to become truthy. |
+| `wait --text <text>` | Wait for text to appear on the page. |
+| `wait --download [path]` | Wait for a download to complete and optionally save it to `path`. |
+| `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. |
+| `wait <selector> --state hidden` | Wait for an element to become hidden. |
+| `wait <selector> --state detached` | Wait for an element to detach. |
+
+### Diff, debug, and streaming
+
+| Command | Purpose |
+| --- | --- |
+| `diff snapshot` | Compare current versus last snapshot. |
+| `diff screenshot --baseline` | Compare current screenshot versus a baseline image. |
+| `diff url <u1> <u2>` | Compare two pages. |
+| `trace start|stop [path]` | Record a Chrome DevTools trace. |
+| `profiler start|stop [path]` | Record a Chrome DevTools profile. |
+| `record start <path> [url]` | Start WebM video recording. |
+| `record stop` | Stop and save video. |
+| `console [--clear]` | View or clear console logs. |
+| `errors [--clear]` | View or clear page errors. |
+| `highlight <sel>` | Highlight an element. |
+| `inspect` | Open Chrome DevTools for the active page. |
+| `clipboard <op> [text]` | Read/write clipboard: `read`, `write`, `copy`, `paste`. |
+| `stream enable [--port <n>]` | Start runtime WebSocket streaming for this session. |
+| `stream disable` | Stop runtime WebSocket streaming. |
+| `stream status` | Show streaming status and active port. |
+
+### Batch, auth, confirmations, sessions, chat, dashboard, and setup
+
+| Command | Purpose |
+| --- | --- |
+| `batch [--bail] ["cmd" ...]` | Execute multiple commands sequentially from args or stdin. |
+| `auth save <name> [opts]` | Save an auth profile with options such as `--url`, `--username`, `--password`, or `--password-stdin`. |
+| `auth login <name>` | Login using saved credentials. |
+| `auth list` | List saved auth profiles. |
+| `auth show <name>` | Show auth profile metadata. |
+| `auth delete <name>` | Delete an auth profile. |
+| `confirm <id>` | Approve a pending action. |
+| `deny <id>` | Deny a pending action. |
+| `session` | Show current session name. |
+| `session list` | List active sessions. |
+| `chat <message>` | Send a natural-language instruction. |
+| `chat` | Start interactive chat when stdin is a TTY. |
+| `dashboard [start]` | Start the dashboard server on the default port `4848`. |
+| `dashboard start --port <n>` | Start the dashboard on a specific port. |
+| `dashboard stop` | Stop the dashboard server. |
+| `install` | Install browser binaries. |
+| `install --with-deps` | Install browser binaries plus Linux system dependencies. |
+| `upgrade` | Upgrade `agent-browser` to the latest version. |
+| `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. |
+| `profiles` | List available Chrome profiles. |
+
+## Important global flags, config, and environment
+
+### Authentication and session flags
+
+- `--profile <name|path>`: reuse Chrome profile login state or use a persistent custom profile. Environment: `AGENT_BROWSER_PROFILE`.
+- `--session <name>`: use an isolated session. Environment: `AGENT_BROWSER_SESSION`.
+- `--session-name <name>`: auto-save/restore cookies and local storage by name. Environment: `AGENT_BROWSER_SESSION_NAME`.
+- `--state <path>`: load saved auth state from JSON. Environment: `AGENT_BROWSER_STATE`.
+- `--auto-connect`: connect to a running Chrome to reuse auth state. Environment: `AGENT_BROWSER_AUTO_CONNECT`.
+- `--headers <json>`: apply HTTP headers scoped to the opened URL's origin.
+
+### Browser launch and runtime flags
+
+- `--executable-path <path>`: custom browser executable. Environment: `AGENT_BROWSER_EXECUTABLE_PATH`.
+- `--extension <path>`: load browser extensions; repeatable. Environment: `AGENT_BROWSER_EXTENSIONS`.
+- `--args <args>`: browser launch args, comma or newline separated. Environment: `AGENT_BROWSER_ARGS`.
+- `--user-agent <ua>`: custom user agent. Environment: `AGENT_BROWSER_USER_AGENT`.
+- `--proxy <server>`: proxy server URL. Environments: `AGENT_BROWSER_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`.
+- `--proxy-bypass <hosts>`: proxy bypass hosts. Environments: `AGENT_BROWSER_PROXY_BYPASS`, `NO_PROXY`.
+- `--ignore-https-errors`: ignore HTTPS certificate errors. Environment: `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`.
+- `--allow-file-access`: allow `file://` URLs to access local files. Environment: `AGENT_BROWSER_ALLOW_FILE_ACCESS`.
+- `--headed`: show the browser window. Environment: `AGENT_BROWSER_HEADED`.
+- `--cdp <port>`: connect through Chrome DevTools Protocol.
+- `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
+- `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
+- `--engine <name>`: browser engine, `chrome` by default or `lightpanda`. Environment: `AGENT_BROWSER_ENGINE`.
+- `--no-auto-dialog`: disable automatic dismissal of alert/beforeunload dialogs. Environment: `AGENT_BROWSER_NO_AUTO_DIALOG`.
+
+### Output, provider, policy, and AI flags
+
+- `--json`: JSON output. The wrapper injects this automatically for normal tool execution.
+- `--annotate`: annotated screenshot with numbered labels and legend. Environment: `AGENT_BROWSER_ANNOTATE`.
+- `--screenshot-dir <path>`: default screenshot output directory. Environment: `AGENT_BROWSER_SCREENSHOT_DIR`.
+- `--screenshot-quality <n>`: JPEG quality `0-100`. Environment: `AGENT_BROWSER_SCREENSHOT_QUALITY`.
+- `--screenshot-format <fmt>`: `png` or `jpeg`. Environment: `AGENT_BROWSER_SCREENSHOT_FORMAT`.
+- `--content-boundaries`: wrap page output in boundary markers. Environment: `AGENT_BROWSER_CONTENT_BOUNDARIES`.
+- `--max-output <chars>`: truncate page output to N characters. Environment: `AGENT_BROWSER_MAX_OUTPUT`.
+- `--allowed-domains <list>`: restrict navigation domains. Environment: `AGENT_BROWSER_ALLOWED_DOMAINS`.
+- `--action-policy <path>`: action policy JSON file. Environment: `AGENT_BROWSER_ACTION_POLICY`.
+- `--confirm-actions <list>`: action categories requiring confirmation. Environment: `AGENT_BROWSER_CONFIRM_ACTIONS`.
+- `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
+- `-p, --provider <name>`: provider such as `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.
+- `--device <name>`: iOS device name. Environment: `AGENT_BROWSER_IOS_DEVICE`.
+- `--model <name>`: AI model for `chat`. Environment: `AI_GATEWAY_MODEL`.
+- `-v, --verbose`: show tool commands and raw output.
+- `-q, --quiet`: show only AI text responses.
+- `--debug`: debug output. Environment: `AGENT_BROWSER_DEBUG`.
+- `--version`, `-V`: show version.
+
+### Config precedence
+
+`agent-browser` looks for `agent-browser.json` in these locations, from lowest to highest priority:
+
+1. `~/.agent-browser/config.json` for user defaults.
+2. `./agent-browser.json` for project overrides.
+3. Environment variables, including `AGENT_BROWSER_CONFIG`.
+4. CLI flags.
+
+Use `--config <path>` to load a specific config file. Boolean flags accept optional `true` or `false` values, such as `--headed false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
+
+Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, and `AI_GATEWAY_API_KEY`.
 
 ## Wrapper-specific behavior worth knowing
 
@@ -263,13 +349,16 @@ These calls return plain text and stay stateless: the extension does not inject 
 - After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result.
+- The wrapper keeps `--help` and `--version` stateless so they do not consume the implicit managed-session slot.
 
 ## Maintenance rule
 
 Whenever the upstream `agent-browser` binary version changes in this project:
 
-1. re-check the upstream command/help surface
+1. run `agent-browser --version`, `agent-browser --help`, `agent-browser tab --help`, `agent-browser snapshot --help`, and `agent-browser wait --help`
 2. update this local command reference if anything changed
-3. update tool prompt guidance if the recommended agent workflow changed
-4. update README and release docs if the user-visible behavior changed
-5. validate the extension still exposes local documentation that is at least as usable as the blocked direct-binary path for normal agent work
+3. update `scripts/verify-command-reference.mjs` token expectations when the maintained baseline changes
+4. run `npm run verify:command-reference`
+5. update tool prompt guidance if the recommended agent workflow changed
+6. update README and release docs if user-visible behavior changed
+7. validate the extension still exposes local documentation that is at least as usable as the blocked direct-binary path for normal agent work

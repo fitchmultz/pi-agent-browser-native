@@ -65,6 +65,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - Documents should read as complete documents, not iterative logs, unless they are explicitly meant to be iterative, such as a changelog.
 - Requirements, expectations, and durable rules from user conversations should be reflected in the appropriate docs.
 - Because direct-binary usage is commonly blocked in normal agent sessions, the repo must carry a local command reference for the effective `agent_browser` surface and keep it in sync with upstream changes.
+- Repository verification must include a lightweight command-reference drift check against the targeted installed upstream `agent-browser` version.
 - Published package contents should include the canonical user-facing docs plus `LICENSE`.
 - Published package contents should exclude agent-only and superseded docs such as `AGENTS.md`, `docs/v1-tool-contract.md`, and `docs/native-integration-design.md`.
 
