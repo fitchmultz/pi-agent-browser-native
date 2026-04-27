@@ -1047,6 +1047,46 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0026",
+      "status": "done",
+      "title": "Make stale temp-root pruning robust to PID reuse",
+      "description": "Principles violated: E) Make bugs hard to write, H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: stale-root pruning now trusts only the recorded PID plus UID to decide whether an owned temp root is still live. If a crashed root's PID gets reused by an unrelated live process, the stale root becomes effectively unprunable and can linger indefinitely instead of aging out on the next run. Under repeated crashes or long-lived hosts, that leaves hidden temp artifacts behind forever.\n\nMinimal proposed fix: extend the ownership marker with a stronger liveness token such as process start time, boot/session nonce, or renewable lease content, and require that stronger token before treating a stale root as still alive.\n\nAcceptance criteria: a backdated temp root whose marker PID has been reused by a different live process is pruned on the next temp-root acquisition; live current roots still remain protected; verify `npm run verify` stays green.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "temp-files",
+        "cleanup",
+        "operability"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/temp.ts",
+        "test/agent-browser.runtime.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/temp.ts:126-133 :: the ownership marker records timestamps, PID, and UID, but no process-start or generation token.",
+        "path: extensions/agent-browser/lib/temp.ts:156-166 :: liveness is inferred only from `process.kill(pid, 0)`.",
+        "path: extensions/agent-browser/lib/temp.ts:169-197 :: stale pruning skips deletion whenever the recorded PID appears alive, even for roots older than the stale cutoff.",
+        "repro: `npx tsx <<'EOF' ... create a 48-hour-old pi-agent-browser-* root with ownerPid = process.pid, then call openSecureTempFile() ... EOF` :: expected stale-root pruning to remove the obviously old abandoned root on the next acquisition :: actual `{ \"before\": true, \"after\": true }`, showing the stale root survives solely because the PID is live."
+      ],
+      "plan": [
+        "Strengthen temp-root ownership markers with a generation-aware liveness token instead of relying on PID/UID alone.",
+        "Add pruning tests that distinguish a truly live current root from an old root whose PID has been reused.",
+        "Verify by running `npm run verify` and rerunning the stale-root repro to confirm old crash leftovers are pruned while active roots remain intact."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T04:21:49.037821000Z",
+      "completed_at": "2026-04-27T04:21:49.037821000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
     }
   ]
 }
