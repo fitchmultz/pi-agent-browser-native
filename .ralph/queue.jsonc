@@ -2,49 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0022",
-      "status": "todo",
-      "title": "Serialize managed-session rotation across overlapping tool calls",
-      "description": "Principles violated: E) Make bugs hard to write, F) Fail fast, G) Least astonishment, J) Consistency/Integrity.\n\nWhy it matters: overlapping implicit-session calls race on shared mutable state, so a later fresh launch can be silently discarded by an older call finishing later, and a managed-session replacement can close a browser that another in-flight tool call is still using. Under load this sends follow-up auto calls to the wrong browser or fails active work mid-command.\n\nMinimal proposed fix: introduce per-managed-session serialization or generation checks around state transitions and replacement cleanup so only the latest relevant completion can promote or close the managed session. Treat stale completions as non-authoritative for managed-session mutation.\n\nAcceptance criteria: add concurrency-focused regressions covering both stale-completion rollback and mid-flight close hazards; confirm later `sessionMode: \"fresh\"` launches remain authoritative; confirm overlapping auto calls do not have their session closed out from under them; verify `npm run verify` stays green.",
-      "priority": "high",
-      "tags": [
-        "maintenance",
-        "concurrency",
-        "sessions",
-        "correctness"
-      ],
-      "scope": [
-        "extensions/agent-browser/index.ts",
-        "extensions/agent-browser/lib/runtime.ts",
-        "test/agent-browser.resume-state.test.ts",
-        "npx tsx"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/index.ts:882-887 :: managed-session activity, name, cwd, and fresh ordinal live in mutable module-scoped variables shared by every tool call.",
-        "path: extensions/agent-browser/index.ts:949-962 :: each execution plans its managed-session transition against the current shared state before any async subprocess work completes.",
-        "path: extensions/agent-browser/index.ts:1238-1259 :: completion mutates shared managed-session state and may immediately `closeManagedSession(...)` for the previously active session.",
-        "path: extensions/agent-browser/lib/runtime.ts:348-369 :: `resolveManagedSessionState(...)` always treats the completing call's `managedSessionName` as authoritative when it succeeds, regardless of whether a newer call already promoted a different session.",
-        "repro: `npx tsx <<'EOF' ... start auto open https://example.com/slow-base, wait 5ms, start --profile Default open https://example.com/fast-fresh with sessionMode:'fresh', then run snapshot -i ... EOF` :: expected the follow-up implicit snapshot to stay on the fresh session :: actual `details.sessionName` reverted to the base session and the invocation log included an unexpected `--session <fresh> close`.",
-        "repro: `npx tsx <<'EOF' ... establish implicit session, start snapshot -i, wait 25ms, start fresh profiled open ... EOF` :: expected the in-flight snapshot to complete against the original managed session :: actual snapshot returned `session was closed mid-command` after the fresh launch triggered `--session <base> close` before the snapshot completed."
-      ],
-      "plan": [
-        "Add a managed-session mutation guard such as a per-call generation token or serialized critical section around rotation and replacement cleanup.",
-        "Ensure replacement `close` only happens after no in-flight tool call still depends on the outgoing managed session, or suppress close for stale completions.",
-        "Add regression coverage for both overlapping rotation outcomes and stale completion ordering.",
-        "Verify by running `npm run verify` plus the two concurrency repro scripts and confirming follow-up auto calls stay on the newest session while overlapping in-flight calls still succeed."
-      ],
-      "notes": [],
-      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
-      "created_at": "2026-04-27T03:06:24Z",
-      "updated_at": "2026-04-27T03:06:24Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0023",
       "status": "todo",
       "title": "Prevent explicit-session tab target rollback after overlapping opens",
