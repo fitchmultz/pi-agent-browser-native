@@ -1470,6 +1470,53 @@
       "custom_fields": {
         "scan_agent": "scan-innovation"
       }
+    },
+    {
+      "id": "RQ-0032",
+      "status": "done",
+      "title": "Make wait --download a first-class workflow",
+      "description": "Opportunity type: feature gap. The repo documents `wait --download [path]` for asynchronous download flows, but current examples, rendering, and coverage center on direct `download <selector> <path>` calls. Pages that start downloads indirectly after a click or navigation still lack a wrapper-level first-class UX. Why it matters: file capture is one of the most practical browser-automation jobs, and async download flows are common in authenticated dashboards and report exports. Proposed approach: after confirming real upstream output shapes, add explicit rendering and metadata support for `wait --download`, capture saved path and timing details, and cover the click-then-wait pattern in docs, direct tests, and batch-style tests where appropriate. Risks and mitigations: keep the enhancement narrow to observed async download output shapes and reuse existing saved-file/artifact presentation primitives where possible. Acceptance criteria: click-triggered download workflows can be validated with `wait --download`, the tool returns a readable saved-file summary plus structured details, batch flows preserve the saved-file metadata for the wait step, and tests cover both direct and wait-based download capture.",
+      "priority": "high",
+      "tags": [
+        "innovation",
+        "feature-gap",
+        "downloads",
+        "workflow"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "test/agent-browser.presentation.test.ts",
+        "README.md",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/RELEASE.md"
+      ],
+      "evidence": [
+        "path: docs/COMMAND_REFERENCE.md :: Wait :: `wait --download [path]` is documented as the preferred primitive when a previous action starts the download",
+        "path: README.md :: Validated workflow examples :: file-save guidance focuses on direct `download <selector> <path>` rather than async click-then-wait flows",
+        "path: extensions/agent-browser/lib/results/presentation.ts :: getSavedFileSummary :: current saved-file rendering only recognizes direct download and pdf command outputs"
+      ],
+      "plan": [
+        "Confirm the real upstream output shapes and user-facing summary needs for async wait-based download completion.",
+        "Extend presentation and structured details so `wait --download` returns a clear saved-file result and useful metadata using the shared saved-file/artifact primitives where possible.",
+        "Add tests for click-then-wait, direct wait-based download flows, and batch-style click plus wait flows.",
+        "Update README and command-reference examples to show when `wait --download` is safer than `download` or plain `click`.",
+        "Verify by running the updated presentation tests and confirming the documented async download example returns the expected saved-path summary."
+      ],
+      "notes": [],
+      "request": "scan: none",
+      "created_at": "2026-04-27T08:29:39Z",
+      "updated_at": "2026-04-27T15:23:34.153273000Z",
+      "completed_at": "2026-04-27T15:23:34.153273000Z",
+      "depends_on": [
+        "RQ-0030"
+      ],
+      "blocks": [],
+      "relates_to": [
+        "RQ-0033"
+      ],
+      "custom_fields": {
+        "scan_agent": "scan-innovation"
+      }
     }
   ]
 }
