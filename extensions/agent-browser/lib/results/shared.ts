@@ -71,7 +71,19 @@ export interface SessionArtifactManifest {
 }
 
 export const SESSION_ARTIFACT_MANIFEST_VERSION = 1;
-export const SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES = 30;
+export const SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES_ENV = "PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES";
+export const DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES = 100;
+
+function parsePositiveSafeInteger(value: string | undefined): number | undefined {
+	if (value === undefined) return undefined;
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+	return parsed;
+}
+
+export function getSessionArtifactManifestMaxEntries(env: NodeJS.ProcessEnv = process.env): number {
+	return parsePositiveSafeInteger(env[SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES_ENV]) ?? DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -128,6 +140,7 @@ export function mergeSessionArtifactManifest(options: {
 	nowMs?: number;
 }): SessionArtifactManifest | undefined {
 	const nowMs = options.nowMs ?? Date.now();
+	const maxEntries = getSessionArtifactManifestMaxEntries();
 	const byPath = new Map<string, SessionArtifactManifestEntry>();
 	for (const entry of options.base?.entries ?? []) {
 		byPath.set(entry.path, entry);
@@ -148,12 +161,12 @@ export function mergeSessionArtifactManifest(options: {
 			const rightTime = right.evictedAtMs ?? right.createdAtMs;
 			return rightTime - leftTime || left.path.localeCompare(right.path);
 		})
-		.slice(0, SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES);
+		.slice(0, maxEntries);
 	return {
 		entries,
 		evictedCount: entries.filter((entry) => entry.retentionState === "evicted").length,
 		liveCount: entries.filter((entry) => entry.retentionState === "live").length,
-		maxEntries: SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
+		maxEntries,
 		updatedAtMs: nowMs,
 		version: SESSION_ARTIFACT_MANIFEST_VERSION,
 	};

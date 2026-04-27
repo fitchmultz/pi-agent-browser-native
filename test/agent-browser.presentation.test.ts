@@ -16,6 +16,12 @@ import {
 	buildToolPresentation
 } from "../extensions/agent-browser/lib/results.js";
 import {
+	DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
+	getSessionArtifactManifestMaxEntries,
+	mergeSessionArtifactManifest,
+	type SessionArtifactManifestEntry,
+} from "../extensions/agent-browser/lib/results/shared.js";
+import {
 	cleanupSecureTempArtifacts
 } from "../extensions/agent-browser/lib/temp.js";
 import {
@@ -548,6 +554,64 @@ test("buildToolPresentation records explicit saved files in the bounded session 
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
+});
+
+test("artifact manifest defaults to a QA-friendly recent window", () => {
+	assert.equal(getSessionArtifactManifestMaxEntries({}), DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES);
+	assert.equal(DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES, 100);
+});
+
+test("artifact manifest recent window is configurable and ignores invalid values", async () => {
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3" }, async () => {
+		assert.equal(getSessionArtifactManifestMaxEntries(), 3);
+	});
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "0" }, async () => {
+		assert.equal(getSessionArtifactManifestMaxEntries(), DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES);
+	});
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "-1" }, async () => {
+		assert.equal(getSessionArtifactManifestMaxEntries(), DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES);
+	});
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3.5" }, async () => {
+		assert.equal(getSessionArtifactManifestMaxEntries(), DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES);
+	});
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "not-a-number" }, async () => {
+		assert.equal(getSessionArtifactManifestMaxEntries(), DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES);
+	});
+});
+
+test("artifact manifest evicts oldest metadata entries at the configured recent window", async () => {
+	const entries: SessionArtifactManifestEntry[] = Array.from({ length: 5 }, (_, index) => ({
+		createdAtMs: 1_000 + index,
+		kind: "image",
+		path: `screenshot-${index + 1}.png`,
+		retentionState: "live",
+		storageScope: "explicit-path",
+	}));
+
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3" }, async () => {
+		const manifest = mergeSessionArtifactManifest({ entries, nowMs: 2_000 });
+		assert.equal(manifest?.maxEntries, 3);
+		assert.deepEqual(
+			manifest?.entries.map((entry) => entry.path),
+			["screenshot-5.png", "screenshot-4.png", "screenshot-3.png"],
+		);
+		assert.equal(manifest?.liveCount, 3);
+		assert.equal(manifest?.evictedCount, 0);
+	});
+});
+
+test("buildToolPresentation reports the configured artifact manifest recent window", async () => {
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3" }, async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "screenshot" },
+			cwd: process.cwd(),
+			envelope: { success: true, data: { path: "dogfood-shot.png" } },
+		});
+
+		assert.equal(presentation.artifactManifest?.maxEntries, 3);
+		assert.match(presentation.artifactRetentionSummary ?? "", /\(1\/3 recent\)/);
+		assert.match((presentation.content[0] as { text: string }).text, /Session artifacts: .*\(1\/3 recent\)/);
+	});
 });
 
 test("buildToolPresentation compacts oversized generic outputs and prints the actual spill path", async () => {
