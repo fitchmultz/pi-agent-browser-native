@@ -75,6 +75,8 @@
     "verify": "npm run docs:playbook:check && npm run typecheck && npm run test && npm run verify:command-reference",
     "verify:package": "node ./scripts/verify-package.mjs",
     "verify:package:pi": "node ./scripts/verify-package.mjs --smoke-pi",
+    "verify:lifecycle": "node ./scripts/verify-lifecycle.mjs",
+    "verify:lifecycle:keep-artifacts": "node ./scripts/verify-lifecycle.mjs --keep-artifacts",
     "verify:release": "npm run verify && npm run verify:package:pi"
   },
   "packageManager": "npm@10.9.8"

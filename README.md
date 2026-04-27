@@ -113,7 +113,7 @@ Use two local-checkout modes intentionally:
 
   This bypasses Pi settings and any configured checkout/global package sources, so it avoids duplicate `agent_browser` registrations. After editing extension code, restart this `pi` process to validate the new source; do not use this mode as proof that configured-source `/reload` works.
 
-- **Configured-source lifecycle validation:** keep exactly one active source for this extension in Pi settings, either this checkout path or the published npm package, then launch plain `pi`. Use this mode when validating `/reload`, full restart, and `/resume` behavior because Pi's reload flow operates on discovered/configured resources.
+- **Configured-source lifecycle validation:** run `npm run verify:lifecycle` for the opt-in automated tmux harness, or keep exactly one active source for this extension in Pi settings and launch plain `pi` for manual checks. Use this mode when validating `/reload`, full restart, and `/resume` behavior because Pi's reload flow operates on discovered/configured resources.
 
 The native tool exposed to the agent is named `agent_browser`.
 
@@ -202,7 +202,7 @@ pi --no-extensions -e .
 ```
 
 4. Prompt the agent to use `agent_browser`.
-5. For hot-reload or resume validation, configure exactly one active source for this extension in Pi settings, launch plain `pi`, and exercise `/reload` plus restart/`/resume`. Settings matter only in this configured-source mode; they are bypassed by `--no-extensions -e .`.
+5. For hot-reload or resume validation, run `npm run verify:lifecycle` or configure exactly one active source for this extension in Pi settings, launch plain `pi`, and exercise `/reload` plus restart/`/resume`. Settings matter only in this configured-source mode; they are bypassed by `--no-extensions -e .`. See [`docs/RELEASE.md`](docs/RELEASE.md) for the automated harness behavior, cleanup, and transcript retention details.
 
 Example prompt:
 

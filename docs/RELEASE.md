@@ -27,6 +27,14 @@ npm run verify:release
 1. `npm run verify` for TypeScript, unit coverage, and command-reference drift detection
 2. `npm run verify:package:pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
 
+The configured-source lifecycle regression harness is opt-in because it launches an interactive `pi` process under `tmux` and requires a usable local model configuration:
+
+```bash
+npm run verify:lifecycle
+```
+
+Use `npm run verify:lifecycle:keep-artifacts` when debugging failures.
+
 ## What package verification checks
 
 `npm run verify:package` confirms that:
@@ -75,6 +83,16 @@ Before publishing, validate both local-checkout modes without mixing their assum
 5. Restart the `pi` process after extension edits; Pi settings and `/reload` are not the validation target in this isolated mode.
 
 ### Configured-source lifecycle validation
+
+Prefer the automated harness for deterministic configured-source lifecycle regression coverage:
+
+```bash
+npm run verify:lifecycle
+```
+
+The harness creates an isolated `PI_CODING_AGENT_DIR`, writes settings with exactly one temporary configured package source, runs plain `pi` in `tmux`, puts a deterministic fake `agent-browser` first on `PATH`, and drives `/reload`, full restart, and `/resume`. It asserts same-page managed-session continuity, persisted `details.fullOutputPath` reachability after resume, and updated extension-code pickup through a temporary sentinel command. On failure it retains transcripts/session artifacts; on success it performs best-effort cleanup. It does not replace occasional real-browser manual smoke testing.
+
+Manual validation remains useful for release confidence and installed-package checks:
 
 1. Configure exactly one active source for this extension in Pi settings: this checkout path before publishing, or the installed package after publishing.
 2. Launch plain `pi` so extension discovery is active.
@@ -134,9 +152,10 @@ Before publishing:
 - confirm README install guidance still leads with the package-first flow
 - confirm `docs/COMMAND_REFERENCE.md` still matches the effective upstream command/help surface used by the wrapper
 - run `npm run verify:command-reference` if the installed upstream `agent-browser` version or help surface changed
-- run `npm run doctor` and confirm any duplicate-source remediation matches the active package/check-out setup
+- run `npm run doctor` and confirm any duplicate-source remediation matches the active package/checkout setup
 - run `npm run verify:real-upstream` for upstream runtime, result-presentation, or managed-session changes
-- confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and plain-`pi` configured-source lifecycle validation
+- confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and configured-source lifecycle validation
 - rerun `npm run verify:release`
-- manually exercise `/reload` and full restart + `/resume` continuity in configured-source lifecycle validation
+- run `npm run verify:lifecycle` for opt-in configured-source `/reload` plus restart/`/resume` regression coverage
+- manually exercise real-browser `/reload` and full restart + `/resume` continuity when release risk warrants browser-level confidence beyond the fake upstream harness
 - publish only after the tarball contents and isolated packaged-extension smoke check match expectations

@@ -76,6 +76,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - The primary confidence path is a real `pi` session driven in `tmux`.
 - For quick local checkout smoke validation, launch `pi --no-extensions -e .` from the repository root so only the checkout copy loads; do not rely on Pi settings or `/reload` semantics in this isolated mode.
 - For hot-reload validation, configure exactly one active source for this extension in Pi settings and launch plain `pi`; validate `/reload` there because it exercises auto-discovered/configured resources.
+- Maintain an opt-in tmux-driven configured-source lifecycle harness that isolates Pi settings, uses exactly one configured source, exercises `/reload`, full restart, and `/resume`, and asserts managed-session continuity plus persisted artifact survival. Keep `docs/RELEASE.md` accurate about the harness behavior, cleanup, transcript retention, and limitations.
 - Validate a full `pi` restart with `/resume` when changes touch managed-session continuity, reload behavior, or persisted artifact paths.
 - Prefer full `pi` restart over `/reload` when validating extension changes beyond a quick reload smoke check.
 - Use `/resume` when needed after restart.
