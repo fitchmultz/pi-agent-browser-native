@@ -881,6 +881,48 @@
       "custom_fields": {
         "scan_agent": "scan-maintenance"
       }
+    },
+    {
+      "id": "RQ-0024",
+      "status": "done",
+      "title": "Delete rotated-session close spill files after cleanup runs",
+      "description": "Principles violated: H) Operational hygiene, J) Consistency/Integrity.\n\nWhy it matters: managed-session replacement uses a best-effort background `close` call, but oversized stdout from that close path is never cleaned up. Under repeated fresh-session rotations, those orphaned `process-stdout-*.json` files remain in the shared temp root for the rest of the Pi session and consume the same 32 MiB budget used by active spill files.\n\nMinimal proposed fix: have `closeManagedSession()` clean up any `stdoutSpillPath` it created, even though the close result is otherwise ignored, and add coverage for large close output during rotation.\n\nAcceptance criteria: a fresh-session replacement that emits oversized close output leaves no `process-stdout-*.json` behind in the active temp root; verify `npm run verify` stays green.",
+      "priority": "medium",
+      "tags": [
+        "maintenance",
+        "temp-files",
+        "sessions",
+        "operability"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/process.ts",
+        "extensions/agent-browser/lib/temp.ts",
+        "test/agent-browser.process.test.ts",
+        "npx tsx"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/index.ts:860-873 :: `closeManagedSession()` awaits `runAgentBrowserProcess(...)` and ignores the returned spill-path information.",
+        "path: extensions/agent-browser/lib/process.ts:188-205 :: oversized stdout creates `process-stdout-*.json` spill files under the secure temp root.",
+        "path: extensions/agent-browser/index.ts:899-902 :: temp-root cleanup only happens on `session_shutdown`, so leaked close spill files survive for the rest of the session.",
+        "repro: `npx tsx <<'EOF' ... fake agent-browser emits ~700 KB only for close; run open, then a sessionMode:'fresh' profiled open; inspect getSecureTempDebugState().currentTempRoot ... EOF` :: expected no leftover process spill after the tool call completed :: actual leftover file `process-stdout-6931ff7e72b12e57.json` remained at 700026 bytes in the active temp root."
+      ],
+      "plan": [
+        "Capture the `ProcessRunResult` from `closeManagedSession()` and remove any `stdoutSpillPath` in a finally block.",
+        "Add a regression that rotates the managed session through a large-output close and asserts the active temp root stays clean afterward.",
+        "Verify by running `npm run verify` and rerunning the close-spill repro to confirm no `process-stdout-*.json` remains after rotation."
+      ],
+      "notes": [],
+      "request": "scan: Cancellation, overlapping tool calls, rapid sequential agent_browser invocations, and temp-root lifecycle under load.",
+      "created_at": "2026-04-27T03:06:24Z",
+      "updated_at": "2026-04-27T04:16:12.896832000Z",
+      "completed_at": "2026-04-27T04:16:12.896832000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "scan_agent": "scan-maintenance"
+      }
     }
   ]
 }
