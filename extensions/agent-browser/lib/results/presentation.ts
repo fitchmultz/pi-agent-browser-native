@@ -536,7 +536,14 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	return stringifyUnknown(data);
 }
 
-function extractImagePath(cwd: string, data: unknown): string | undefined {
+function isTrustedScreenshotOutput(commandInfo: CommandInfo): boolean {
+	return commandInfo.command === "screenshot";
+}
+
+function extractImagePath(commandInfo: CommandInfo, cwd: string, data: unknown): string | undefined {
+	if (!isTrustedScreenshotOutput(commandInfo)) {
+		return undefined;
+	}
 	if (typeof data === "string") {
 		const mimeType = getImageMimeType(data);
 		return mimeType ? resolve(cwd, data) : undefined;
@@ -715,7 +722,7 @@ export async function buildToolPresentation(options: {
 						summary,
 				  };
 
-	const imagePath = extractImagePath(cwd, data);
+	const imagePath = extractImagePath(commandInfo, cwd, data);
 	const presentationWithImage = imagePath ? await attachInlineImage(presentation, imagePath) : presentation;
 	return await compactLargePresentationOutput({
 		commandInfo,

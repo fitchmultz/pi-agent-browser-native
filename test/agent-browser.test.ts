@@ -1386,6 +1386,73 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 	assert.match(presentation.summary, /Batch failed: 1\/2 succeeded/);
 });
 
+test("buildToolPresentation keeps eval image-like string results text-only", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-untrusted-image-"));
+	const imagePath = join(tempDir, "secret.png");
+	await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+	try {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "eval", subcommand: "--stdin" },
+			cwd: tempDir,
+			envelope: { success: true, data: "secret.png" },
+		});
+
+		assert.equal(presentation.content.length, 1);
+		assert.equal(presentation.content[0]?.type, "text");
+		assert.equal((presentation.content[0] as { text: string }).text, "secret.png");
+		assert.equal(presentation.imagePath, undefined);
+		assert.equal(presentation.imagePaths, undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation keeps get absolute image path results text-only", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-untrusted-absolute-image-"));
+	const imagePath = join(tempDir, "secret.jpg");
+	await writeFile(imagePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+
+	try {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "get", subcommand: "text" },
+			cwd: process.cwd(),
+			envelope: { success: true, data: imagePath },
+		});
+
+		assert.equal(presentation.content.length, 1);
+		assert.equal(presentation.content[0]?.type, "text");
+		assert.equal((presentation.content[0] as { text: string }).text, imagePath);
+		assert.equal(presentation.imagePath, undefined);
+		assert.equal(presentation.imagePaths, undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation does not inline non-screenshot path records with image extensions", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-download-image-"));
+	const imagePath = join(tempDir, "downloaded.png");
+	await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+	try {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "download", subcommand: "@e5" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: "downloaded.png" } },
+		});
+
+		assert.equal(presentation.content.length, 1);
+		assert.equal(presentation.content[0]?.type, "text");
+		assert.equal((presentation.content[0] as { text: string }).text, "Downloaded file: downloaded.png");
+		assert.equal(presentation.summary, "Downloaded file: downloaded.png");
+		assert.equal(presentation.imagePath, undefined);
+		assert.equal(presentation.imagePaths, undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("buildToolPresentation reuses standalone inline screenshot rendering inside batch output", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-image-"));
 	const imagePath = join(tempDir, "batched.png");
