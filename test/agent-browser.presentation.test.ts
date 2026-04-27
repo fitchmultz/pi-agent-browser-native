@@ -350,8 +350,82 @@ test("buildToolPresentation formats download results as saved-file summaries", a
 	});
 
 	assert.equal(presentation.content[0]?.type, "text");
-	assert.equal((presentation.content[0] as { text: string }).text, "Downloaded file: /tmp/report.pdf");
+	assert.match((presentation.content[0] as { text: string }).text, /Downloaded file: \/tmp\/report\.pdf/);
+	assert.match((presentation.content[0] as { text: string }).text, /application\/pdf/);
+	assert.match((presentation.content[0] as { text: string }).text, /not found on disk/);
 	assert.equal(presentation.summary, "Downloaded file: /tmp/report.pdf");
+	assert.equal(presentation.artifacts?.[0]?.kind, "download");
+	assert.equal(presentation.artifacts?.[0]?.path, "/tmp/report.pdf");
+	assert.equal(presentation.artifacts?.[0]?.absolutePath, "/tmp/report.pdf");
+	assert.equal(presentation.artifacts?.[0]?.mediaType, "application/pdf");
+	assert.equal(presentation.artifacts?.[0]?.exists, false);
+});
+
+test("buildToolPresentation renders metadata-first summaries for file artifact commands", async () => {
+	const cases = [
+		{
+			commandInfo: { command: "pdf" },
+			data: { path: "page.pdf" },
+			expectedKind: "pdf",
+			expectedMediaType: "application/pdf",
+			expectedText: "Saved PDF: page.pdf",
+		},
+		{
+			commandInfo: { command: "wait", subcommand: "--download" },
+			data: { path: "download.txt" },
+			expectedKind: "download",
+			expectedMediaType: "text/plain",
+			expectedText: "Downloaded file: download.txt",
+		},
+		{
+			commandInfo: { command: "trace", subcommand: "stop" },
+			data: { eventCount: 382, path: "trace.zip" },
+			expectedKind: "trace",
+			expectedMediaType: "application/zip",
+			expectedText: "Saved trace: trace.zip",
+		},
+		{
+			commandInfo: { command: "profiler", subcommand: "stop" },
+			data: { eventCount: 350, path: "profile.cpuprofile" },
+			expectedKind: "profile",
+			expectedMediaType: "application/json",
+			expectedText: "Saved profile: profile.cpuprofile",
+		},
+		{
+			commandInfo: { command: "record", subcommand: "stop" },
+			data: { frames: 6, path: "recording.webm" },
+			expectedKind: "video",
+			expectedMediaType: "video/webm",
+			expectedText: "Saved recording: recording.webm",
+		},
+		{
+			commandInfo: { command: "network", subcommand: "har" },
+			data: { path: "network.har", requestCount: 0 },
+			expectedKind: "har",
+			expectedMediaType: "application/json",
+			expectedText: "Saved HAR: network.har",
+		},
+	] as const;
+
+	for (const item of cases) {
+		const presentation = await buildToolPresentation({
+			commandInfo: item.commandInfo,
+			cwd: "/tmp/pi-agent-browser-artifact-tests",
+			envelope: { success: true, data: item.data },
+		});
+
+		assert.equal(presentation.content[0]?.type, "text");
+		assert.match((presentation.content[0] as { text: string }).text, new RegExp(item.expectedText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.equal(presentation.summary, item.expectedText);
+		assert.equal(presentation.artifacts?.length, 1);
+		assert.equal(presentation.artifacts?.[0]?.kind, item.expectedKind);
+		assert.equal(presentation.artifacts?.[0]?.path, item.data.path);
+		assert.equal(presentation.artifacts?.[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", item.data.path));
+		assert.equal(presentation.artifacts?.[0]?.mediaType, item.expectedMediaType);
+		assert.equal(presentation.artifacts?.[0]?.exists, false);
+		assert.equal(presentation.imagePath, undefined);
+		assert.equal(presentation.imagePaths, undefined);
+	}
 });
 
 test("buildToolPresentation compacts oversized generic outputs and prints the actual spill path", async () => {
@@ -454,6 +528,21 @@ test("buildToolPresentation keeps eval image-like string results text-only", asy
 	}
 });
 
+test("buildToolPresentation keeps non-artifact path-like scalar results text-only", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "eval", subcommand: "--stdin" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: "/tmp/debug.har" },
+	});
+
+	assert.equal(presentation.content.length, 1);
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.equal((presentation.content[0] as { text: string }).text, "/tmp/debug.har");
+	assert.equal(presentation.artifacts, undefined);
+	assert.equal(presentation.imagePath, undefined);
+	assert.equal(presentation.imagePaths, undefined);
+});
+
 test("buildToolPresentation keeps get absolute image path results text-only", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-untrusted-absolute-image-"));
 	const imagePath = join(tempDir, "secret.jpg");
@@ -490,8 +579,15 @@ test("buildToolPresentation does not inline non-screenshot path records with ima
 
 		assert.equal(presentation.content.length, 1);
 		assert.equal(presentation.content[0]?.type, "text");
-		assert.equal((presentation.content[0] as { text: string }).text, "Downloaded file: downloaded.png");
+		assert.match((presentation.content[0] as { text: string }).text, /Downloaded file: downloaded\.png/);
+		assert.match((presentation.content[0] as { text: string }).text, /image\/png/);
 		assert.equal(presentation.summary, "Downloaded file: downloaded.png");
+		assert.equal(presentation.artifacts?.[0]?.kind, "download");
+		assert.equal(presentation.artifacts?.[0]?.path, "downloaded.png");
+		assert.equal(presentation.artifacts?.[0]?.absolutePath, imagePath);
+		assert.equal(presentation.artifacts?.[0]?.mediaType, "image/png");
+		assert.equal(presentation.artifacts?.[0]?.exists, true);
+		assert.equal(presentation.artifacts?.[0]?.sizeBytes, 4);
 		assert.equal(presentation.imagePath, undefined);
 		assert.equal(presentation.imagePaths, undefined);
 	} finally {
@@ -530,10 +626,46 @@ test("buildToolPresentation reuses standalone inline screenshot rendering inside
 		assert.equal(presentation.content[1]?.type, "image");
 		assert.equal(presentation.imagePath, imagePath);
 		assert.deepEqual(presentation.imagePaths, [imagePath]);
+		assert.equal(presentation.artifacts?.[0]?.kind, "image");
+		assert.equal(presentation.artifacts?.[0]?.path, "batched.png");
+		assert.equal(presentation.artifacts?.[0]?.absolutePath, imagePath);
+		assert.equal(presentation.artifacts?.[0]?.mediaType, "image/png");
+		assert.equal(presentation.artifacts?.[0]?.exists, true);
 		assert.equal(presentation.batchSteps?.[1]?.imagePath, imagePath);
+		assert.equal(presentation.batchSteps?.[1]?.artifacts?.[0]?.kind, "image");
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
+});
+
+test("buildToolPresentation preserves non-screenshot file artifacts inside batch output", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: "/tmp/pi-agent-browser-batch-artifacts",
+		envelope: {
+			success: true,
+			data: [
+				{ command: ["trace", "stop", "trace.zip"], result: { eventCount: 1, path: "trace.zip" }, success: true },
+				{ command: ["profiler", "stop", "profile.cpuprofile"], result: { eventCount: 2, path: "profile.cpuprofile" }, success: true },
+				{ command: ["record", "stop"], result: { frames: 3, path: "recording.webm" }, success: true },
+				{ command: ["network", "har", "stop", "network.har"], result: { path: "network.har", requestCount: 0 }, success: true },
+			],
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Step 1 — trace stop trace\.zip/);
+	assert.match(text, /Saved trace: trace\.zip/);
+	assert.match(text, /Step 2 — profiler stop profile\.cpuprofile/);
+	assert.match(text, /Saved profile: profile\.cpuprofile/);
+	assert.match(text, /Step 3 — record stop/);
+	assert.match(text, /Saved recording: recording\.webm/);
+	assert.match(text, /Step 4 — network har stop network\.har/);
+	assert.match(text, /Saved HAR: network\.har/);
+	assert.deepEqual(presentation.artifacts?.map((artifact) => artifact.kind), ["trace", "profile", "video", "har"]);
+	assert.deepEqual(presentation.batchSteps?.map((step) => step.artifacts?.[0]?.kind), ["trace", "profile", "video", "har"]);
+	assert.equal(presentation.imagePath, undefined);
+	assert.equal(presentation.imagePaths, undefined);
 });
 
 test("buildToolPresentation reuses compact snapshot rendering inside batch output", async () => {
@@ -892,8 +1024,13 @@ test("buildToolPresentation skips oversized inline image attachments", { concurr
 
 			assert.equal(presentation.content.length, 1);
 			assert.equal(presentation.content[0]?.type, "text");
+			assert.match((presentation.content[0] as { text: string }).text, /Saved image: large\.png/);
 			assert.match((presentation.content[0] as { text: string }).text, /Image attachment skipped:/);
 			assert.equal(presentation.imagePath, imagePath);
+			assert.equal(presentation.artifacts?.[0]?.kind, "image");
+			assert.equal(presentation.artifacts?.[0]?.path, "large.png");
+			assert.equal(presentation.artifacts?.[0]?.absolutePath, imagePath);
+			assert.equal(presentation.artifacts?.[0]?.sizeBytes, 256);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

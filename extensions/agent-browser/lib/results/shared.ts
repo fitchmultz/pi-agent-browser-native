@@ -19,7 +19,22 @@ export interface AgentBrowserBatchResult {
 	success?: boolean;
 }
 
+export type FileArtifactKind = "download" | "file" | "har" | "image" | "pdf" | "profile" | "trace" | "video";
+
+export interface FileArtifactMetadata {
+	absolutePath: string;
+	command?: string;
+	exists?: boolean;
+	extension?: string;
+	kind: FileArtifactKind;
+	mediaType?: string;
+	path: string;
+	sizeBytes?: number;
+	subcommand?: string;
+}
+
 export interface BatchStepPresentationDetails {
+	artifacts?: FileArtifactMetadata[];
 	command?: string[];
 	commandText: string;
 	data?: unknown;
@@ -41,6 +56,7 @@ export interface BatchFailurePresentationDetails {
 }
 
 export interface ToolPresentation {
+	artifacts?: FileArtifactMetadata[];
 	batchFailure?: BatchFailurePresentationDetails;
 	batchSteps?: BatchStepPresentationDetails[];
 	content: Array<{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }>;

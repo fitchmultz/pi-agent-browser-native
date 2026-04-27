@@ -91,6 +91,11 @@ Do not use a bare `wait --load`; `--load` needs a state value such as `load`, `d
 
 Prefer `download <selector> <path>` over `click` when the goal is a saved file. Use `wait --download [path]` when a previous action starts the download.
 
+Wrapper result rendering is metadata-first for saved files:
+- screenshots return a saved-path summary, structured `details.artifacts` metadata, and an inline image attachment when safe
+- downloads, PDFs, `wait --download` files, traces, CPU profiles, WebM recordings, and path-bearing HAR captures return concise saved-path summaries plus structured `details.artifacts` metadata without inlining large files
+- `batch` keeps each step's artifacts in `details.batchSteps[].artifacts` and aggregates them in top-level `details.artifacts` in step order
+
 ### Switch from an already-active implicit session to a fresh profiled launch
 
 ```json

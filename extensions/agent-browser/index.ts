@@ -1336,6 +1336,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 					const presentation = plainTextInspection
 						? {
+							artifacts: undefined,
 							batchFailure: undefined,
 							batchSteps: undefined,
 							content: [{ type: "text" as const, text: inspectionText ?? "" }],
@@ -1371,6 +1372,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						content: redactedContent,
 						details: {
 							args: redactedArgs,
+							artifacts: redactSensitiveValue(presentation.artifacts),
 							batchFailure: redactSensitiveValue(presentation.batchFailure),
 							batchSteps: redactSensitiveValue(presentation.batchSteps),
 							command: executionPlan.commandInfo.command,

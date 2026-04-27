@@ -7,7 +7,7 @@
  */
 
 import { readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 
 import { isRecord, parsePositiveInteger } from "../parsing.js";
 import { parseCommandInfo, type CommandInfo } from "../runtime.js";
@@ -23,6 +23,8 @@ import {
 	type AgentBrowserEnvelope,
 	type BatchFailurePresentationDetails,
 	type BatchStepPresentationDetails,
+	type FileArtifactKind,
+	type FileArtifactMetadata,
 	type ToolPresentation,
 	countLines,
 	stringifyUnknown,
@@ -56,7 +58,7 @@ interface NavigationSummary {
 }
 
 function getImageMimeType(filePath: string): string | undefined {
-	const extension = filePath.toLowerCase().slice(filePath.lastIndexOf("."));
+	const extension = extname(filePath).toLowerCase();
 	return IMAGE_EXTENSION_TO_MIME_TYPE[extension];
 }
 
@@ -354,17 +356,149 @@ function getScreenshotSummary(data: Record<string, unknown>): string | undefined
 	return typeof data.path === "string" ? `Saved image: ${data.path}` : undefined;
 }
 
-function getSavedFileSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
-	if (typeof data.path !== "string") {
+const PATH_FIELD_CANDIDATES = [
+	"path",
+	"file",
+	"filePath",
+	"outputPath",
+	"downloadPath",
+	"harPath",
+	"tracePath",
+	"profilePath",
+	"videoPath",
+] as const;
+
+const ARTIFACT_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
+	".cpuprofile": "application/json",
+	".har": "application/json",
+	".html": "text/html",
+	".json": "application/json",
+	".pdf": "application/pdf",
+	".txt": "text/plain",
+	".webm": "video/webm",
+	".zip": "application/zip",
+	...IMAGE_EXTENSION_TO_MIME_TYPE,
+};
+
+function getArtifactKind(commandInfo: CommandInfo): FileArtifactKind | undefined {
+	if (commandInfo.command === "screenshot") return "image";
+	if (commandInfo.command === "pdf") return "pdf";
+	if (commandInfo.command === "download") return "download";
+	if (commandInfo.command === "wait" && commandInfo.subcommand === "--download") return "download";
+	if (commandInfo.command === "trace") return "trace";
+	if (commandInfo.command === "profiler") return "profile";
+	if (commandInfo.command === "record") return "video";
+	if (commandInfo.command === "network" && commandInfo.subcommand === "har") return "har";
+	return undefined;
+}
+
+function extractPathStrings(data: unknown): string[] {
+	if (typeof data === "string") {
+		return data.trim().length > 0 ? [data] : [];
+	}
+	if (!isRecord(data)) {
+		return [];
+	}
+
+	const paths: string[] = [];
+	for (const key of PATH_FIELD_CANDIDATES) {
+		const value = data[key];
+		if (typeof value === "string" && value.trim().length > 0) {
+			paths.push(value);
+		}
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				if (typeof item === "string" && item.trim().length > 0) {
+					paths.push(item);
+				}
+			}
+		}
+	}
+	return [...new Set(paths)];
+}
+
+async function buildFileArtifactMetadata(options: {
+	commandInfo: CommandInfo;
+	cwd: string;
+	path: string;
+}): Promise<FileArtifactMetadata | undefined> {
+	const kind = getArtifactKind(options.commandInfo);
+	if (!kind) {
 		return undefined;
 	}
-	if (commandInfo.command === "download") {
-		return `Downloaded file: ${data.path}`;
+
+	const absolutePath = resolve(options.cwd, options.path);
+	const extension = extname(options.path).toLowerCase() || undefined;
+	let exists: boolean | undefined;
+	let sizeBytes: number | undefined;
+	try {
+		const fileStats = await stat(absolutePath);
+		exists = true;
+		sizeBytes = fileStats.size;
+	} catch {
+		exists = false;
 	}
-	if (commandInfo.command === "pdf") {
-		return `Saved PDF: ${data.path}`;
+
+	return {
+		absolutePath,
+		command: options.commandInfo.command,
+		exists,
+		extension,
+		kind,
+		mediaType: extension ? ARTIFACT_EXTENSION_TO_MEDIA_TYPE[extension] : undefined,
+		path: options.path,
+		sizeBytes,
+		subcommand: options.commandInfo.subcommand,
+	};
+}
+
+async function extractFileArtifacts(commandInfo: CommandInfo, cwd: string, data: unknown): Promise<FileArtifactMetadata[]> {
+	const candidates = extractPathStrings(data);
+	const artifacts = await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ commandInfo, cwd, path })));
+	return artifacts.filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
+}
+
+function formatArtifactLabel(artifact: FileArtifactMetadata): string {
+	switch (artifact.kind) {
+		case "download":
+			return "Downloaded file";
+		case "file":
+			return "Saved file";
+		case "har":
+			return "Saved HAR";
+		case "image":
+			return "Saved image";
+		case "pdf":
+			return "Saved PDF";
+		case "profile":
+			return "Saved profile";
+		case "trace":
+			return "Saved trace";
+		case "video":
+			return "Saved recording";
 	}
-	return undefined;
+}
+
+function formatArtifactSummary(artifacts: FileArtifactMetadata[]): string | undefined {
+	if (artifacts.length === 0) {
+		return undefined;
+	}
+	if (artifacts.length === 1) {
+		const artifact = artifacts[0];
+		return `${formatArtifactLabel(artifact)}: ${artifact.path}`;
+	}
+	return `Saved ${artifacts.length} artifacts: ${artifacts.map((artifact) => `${artifact.kind} ${artifact.path}`).join(", ")}`;
+}
+
+function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): string[] {
+	return artifacts.map((artifact) => {
+		const suffix = [
+			artifact.mediaType,
+			typeof artifact.sizeBytes === "number" ? formatByteCount(artifact.sizeBytes) : undefined,
+			artifact.exists === false ? "not found on disk" : undefined,
+		].filter((item): item is string => item !== undefined).join(", ");
+		return suffix ? `${formatArtifactLabel(artifact)}: ${artifact.path} (${suffix})` : `${formatArtifactLabel(artifact)}: ${artifact.path}`;
+	});
 }
 
 function getScalarExtractionResult(data: Record<string, unknown>): string | undefined {
@@ -539,6 +673,7 @@ async function buildBatchStepPresentation(options: {
 		};
 		return {
 			details: {
+				artifacts: presentation.artifacts,
 				command,
 				commandText,
 				data: item.error,
@@ -569,6 +704,7 @@ async function buildBatchStepPresentation(options: {
 
 	return {
 		details: {
+			artifacts: presentation.artifacts,
 			command,
 			commandText,
 			data: presentation.data,
@@ -614,6 +750,7 @@ async function buildBatchPresentation(options: {
 
 	const batchFailure = getBatchFailureDetails(steps);
 	const images = steps.flatMap((step) => getPresentationImages(step.presentation));
+	const artifacts = steps.flatMap((step) => step.presentation.artifacts ?? []);
 	const fullOutputPaths = steps.flatMap((step) => getPresentationPaths({
 		primaryPath: step.presentation.fullOutputPath,
 		secondaryPaths: step.presentation.fullOutputPaths,
@@ -652,6 +789,7 @@ async function buildBatchPresentation(options: {
 	const text = failureHeader ? `${failureHeader}\n\n${stepText}` : stepText;
 
 	return {
+		artifacts: artifacts.length > 0 ? artifacts : undefined,
 		batchFailure,
 		batchSteps: steps.map((step) => step.details),
 		content: [{ type: "text", text }, ...images],
@@ -701,10 +839,6 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 		const diagnosticSummary = formatDiagnosticSummary(commandInfo, data);
 		if (diagnosticSummary) {
 			return diagnosticSummary;
-		}
-		const savedFileSummary = getSavedFileSummary(commandInfo, data);
-		if (savedFileSummary) {
-			return savedFileSummary;
 		}
 		const extractionSummary = formatExtractionSummary(commandInfo, data);
 		if (extractionSummary) {
@@ -767,11 +901,6 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 		const screenshotSummary = getScreenshotSummary(data);
 		if (screenshotSummary) return screenshotSummary;
 	}
-	const savedFileSummary = getSavedFileSummary(commandInfo, data);
-	if (savedFileSummary) {
-		return savedFileSummary;
-	}
-
 	const extractionText = formatExtractionText(commandInfo, data);
 	if (extractionText) {
 		return extractionText;
@@ -964,17 +1093,24 @@ export async function buildToolPresentation(options: {
 	}
 
 	const data = envelope?.data;
-	const summary = formatSummary(commandInfo, data);
+	const artifacts = await extractFileArtifacts(commandInfo, cwd, data);
+	const artifactSummary = formatArtifactSummary(artifacts);
+	const summary = artifactSummary ?? formatSummary(commandInfo, data);
+	const artifactText = artifacts.length > 0 ? formatArtifactMetadataLines(artifacts).join("\n") : undefined;
 	const presentation =
 		commandInfo.command === "batch" && Array.isArray(data)
 			? await buildBatchPresentation({ cwd, data: data as AgentBrowserBatchResult[], persistentArtifactStore, summary })
 			: commandInfo.command === "snapshot" && isRecord(data)
 				? await buildSnapshotPresentation(data, persistentArtifactStore)
 				: {
-						content: [{ type: "text" as const, text: formatContentText(commandInfo, data) }],
+						artifacts: artifacts.length > 0 ? artifacts : undefined,
+						content: [{ type: "text" as const, text: artifactText ?? formatContentText(commandInfo, data) }],
 						data,
 						summary,
 				  };
+	if (artifacts.length > 0 && !presentation.artifacts) {
+		presentation.artifacts = artifacts;
+	}
 
 	const imagePath = extractImagePath(commandInfo, cwd, data);
 	const presentationWithImage = imagePath ? await attachInlineImage(presentation, imagePath) : presentation;
