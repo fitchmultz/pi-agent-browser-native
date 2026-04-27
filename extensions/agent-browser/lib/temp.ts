@@ -32,9 +32,19 @@ export interface PersistentSessionArtifactStore {
 interface TempRootOwnershipRecord {
 	createdAtMs: number;
 	kind: string;
+	leaseUpdatedAtMs?: number;
+	ownerPid?: number;
 	ownerUid?: number;
 	version: number;
 }
+
+interface TempRootOwnershipMarkerOptions {
+	createdAtMs?: number;
+	leaseUpdatedAtMs?: number;
+	ownerPid?: number;
+}
+
+type ProcessLiveness = "alive" | "dead" | "unknown";
 
 let sessionTempRootPromise: Promise<string> | undefined;
 let exitCleanupRegistered = false;
@@ -58,11 +68,22 @@ function parsePositiveInteger(rawValue: string | undefined): number | undefined 
 	return parsedValue;
 }
 
+function isPositiveFiniteNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 function isTempRootOwnershipRecord(value: unknown): value is TempRootOwnershipRecord {
 	if (!isRecord(value)) return false;
 	if (value.kind !== TEMP_ROOT_MARKER_KIND || value.version !== TEMP_ROOT_MARKER_VERSION) return false;
-	if (typeof value.createdAtMs !== "number" || !Number.isFinite(value.createdAtMs) || value.createdAtMs <= 0) return false;
-	return value.ownerUid === undefined || typeof value.ownerUid === "number";
+	if (!isPositiveFiniteNumber(value.createdAtMs)) return false;
+	if (value.leaseUpdatedAtMs !== undefined && !isPositiveFiniteNumber(value.leaseUpdatedAtMs)) return false;
+	if (value.ownerPid !== undefined) {
+		if (typeof value.ownerPid !== "number" || !Number.isSafeInteger(value.ownerPid) || value.ownerPid <= 0) return false;
+	}
+	if (value.ownerUid !== undefined) {
+		if (typeof value.ownerUid !== "number" || !Number.isSafeInteger(value.ownerUid) || value.ownerUid < 0) return false;
+	}
+	return true;
 }
 
 function getTempArtifactByteLength(content: string | Uint8Array): number {
@@ -107,17 +128,53 @@ async function readTempRootOwnershipMarker(tempRoot: string): Promise<TempRootOw
 	}
 }
 
-export async function writeSecureTempRootOwnershipMarker(tempRoot: string, createdAtMs = Date.now()): Promise<string> {
+export async function writeSecureTempRootOwnershipMarker(
+	tempRoot: string,
+	options: TempRootOwnershipMarkerOptions = {},
+): Promise<string> {
 	const markerPath = join(tempRoot, TEMP_ROOT_MARKER_FILE_NAME);
+	const createdAtMs = options.createdAtMs ?? Date.now();
 	const markerRecord: TempRootOwnershipRecord = {
 		createdAtMs,
 		kind: TEMP_ROOT_MARKER_KIND,
+		leaseUpdatedAtMs: options.leaseUpdatedAtMs ?? createdAtMs,
+		ownerPid: options.ownerPid ?? process.pid,
 		ownerUid: getCurrentProcessUid(),
 		version: TEMP_ROOT_MARKER_VERSION,
 	};
 	await writeFile(markerPath, JSON.stringify(markerRecord, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
 	await chmod(markerPath, 0o600).catch(() => undefined);
 	return markerPath;
+}
+
+async function refreshSecureTempRootLease(tempRoot: string): Promise<void> {
+	const markerPath = join(tempRoot, TEMP_ROOT_MARKER_FILE_NAME);
+	const ownershipMarker = await readTempRootOwnershipMarker(tempRoot);
+	if (!ownershipMarker) return;
+	if (ownershipMarker.ownerPid !== process.pid) return;
+	const currentUid = getCurrentProcessUid();
+	if (currentUid !== undefined && ownershipMarker.ownerUid !== undefined && ownershipMarker.ownerUid !== currentUid) return;
+	const refreshedMarker: TempRootOwnershipRecord = {
+		...ownershipMarker,
+		leaseUpdatedAtMs: Date.now(),
+		ownerPid: process.pid,
+		ownerUid: currentUid,
+	};
+	await writeFile(markerPath, JSON.stringify(refreshedMarker, null, 2), { encoding: "utf8", mode: 0o600 });
+	await chmod(markerPath, 0o600).catch(() => undefined);
+}
+
+function getProcessLiveness(pid: number | undefined): ProcessLiveness {
+	if (pid === undefined) return "unknown";
+	try {
+		process.kill(pid, 0);
+		return "alive";
+	} catch (error) {
+		const errorWithCode = error as NodeJS.ErrnoException;
+		if (errorWithCode.code === "ESRCH") return "dead";
+		if (errorWithCode.code === "EPERM") return "alive";
+		return "unknown";
+	}
 }
 
 async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise<void> {
@@ -141,9 +198,12 @@ async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise
 				) {
 					return;
 				}
+				if (getProcessLiveness(ownershipMarker.ownerPid) !== "dead") return;
 
+				const staleTimestampMs = ownershipMarker.leaseUpdatedAtMs ?? ownershipMarker.createdAtMs;
+				if (staleTimestampMs >= cutoffTime) return;
 				const stats = await stat(path).catch(() => undefined);
-				if (!stats?.isDirectory() || stats.mtimeMs >= cutoffTime) return;
+				if (!stats?.isDirectory()) return;
 				await rm(path, { force: true, recursive: true }).catch(() => undefined);
 			}),
 	);
@@ -241,6 +301,7 @@ async function getSessionTempRoot(): Promise<string> {
 	}
 
 	const tempRoot = await sessionTempRootPromise;
+	await refreshSecureTempRootLease(tempRoot).catch(() => undefined);
 	await pruneStaleTempRoots(tempRoot).catch(() => undefined);
 	return tempRoot;
 }
@@ -259,7 +320,9 @@ export async function writeSecureTempChunk(options: {
 }): Promise<void> {
 	const { content, fileHandle, path } = options;
 	await enqueueTempMutation(async () => {
-		await assertSecureTempRootBudget(dirname(path), getTempArtifactByteLength(content));
+		const tempRoot = dirname(path);
+		await refreshSecureTempRootLease(tempRoot).catch(() => undefined);
+		await assertSecureTempRootBudget(tempRoot, getTempArtifactByteLength(content));
 		await fileHandle.appendFile(content);
 	});
 }

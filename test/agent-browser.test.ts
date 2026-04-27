@@ -7,6 +7,8 @@
  */
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -199,6 +201,53 @@ async function readInvocationLog(logPath: string): Promise<Array<{ args: string[
 			return [];
 		}
 		throw error;
+	}
+}
+
+async function readChildStdoutJsonLine<T>(child: ReturnType<typeof spawn>, timeoutMs = 5_000): Promise<T> {
+	assert.ok(child.stdout, "expected child stdout pipe");
+	assert.ok(child.stderr, "expected child stderr pipe");
+	let stdout = "";
+	let stderr = "";
+	child.stderr.setEncoding("utf8");
+	child.stderr.on("data", (chunk: string) => {
+		stderr += chunk;
+	});
+	return await new Promise<T>((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			reject(new Error(`Timed out waiting for child stdout JSON line. stdout=${stdout} stderr=${stderr}`));
+		}, timeoutMs);
+		child.stdout?.setEncoding("utf8");
+		child.stdout?.on("data", (chunk: string) => {
+			stdout += chunk;
+			const firstLine = stdout.split("\n").find((line) => line.trim().length > 0);
+			if (!firstLine) return;
+			clearTimeout(timeout);
+			try {
+				resolve(JSON.parse(firstLine) as T);
+			} catch (error) {
+				reject(error);
+			}
+		});
+		child.once("exit", (code, signal) => {
+			clearTimeout(timeout);
+			reject(new Error(`Child exited before stdout JSON line: code=${code} signal=${signal} stdout=${stdout} stderr=${stderr}`));
+		});
+		child.once("error", (error) => {
+			clearTimeout(timeout);
+			reject(error);
+		});
+	});
+}
+
+async function stopChildProcess(child: ReturnType<typeof spawn>): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) return;
+	child.kill("SIGTERM");
+	const timeout = setTimeout(() => child.kill("SIGKILL"), 2_000);
+	try {
+		await once(child, "exit");
+	} finally {
+		clearTimeout(timeout);
 	}
 }
 
@@ -402,7 +451,7 @@ test("stale temp pruning only removes explicitly owned roots", { concurrency: fa
 	await chmod(unownedRoot, 0o700);
 	await chmod(ownedRoot, 0o700);
 	await writeFile(join(unownedRoot, "leftover.txt"), "keep", "utf8");
-	await writeSecureTempRootOwnershipMarker(ownedRoot, staleTime.getTime());
+	await writeSecureTempRootOwnershipMarker(ownedRoot, { createdAtMs: staleTime.getTime(), ownerPid: 99_999_999 });
 	await utimes(unownedRoot, staleTime, staleTime);
 	await utimes(ownedRoot, staleTime, staleTime);
 
@@ -417,6 +466,59 @@ test("stale temp pruning only removes explicitly owned roots", { concurrency: fa
 	} finally {
 		await rm(unownedRoot, { force: true, recursive: true }).catch(() => undefined);
 		await rm(ownedRoot, { force: true, recursive: true }).catch(() => undefined);
+		await cleanupSecureTempArtifacts();
+	}
+});
+
+test("stale temp pruning does not remove a live root owned by another process", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1_000);
+	const childScript = `
+		import { dirname } from "node:path";
+		import { openSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+		const tempFile = await openSecureTempFile("live-root", ".txt");
+		await tempFile.fileHandle.close();
+		console.log(JSON.stringify({ root: dirname(tempFile.path) }));
+		setInterval(() => undefined, 1_000);
+	`;
+	const childA = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
+		cwd: process.cwd(),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	let liveRoot: string | undefined;
+	try {
+		liveRoot = (await readChildStdoutJsonLine<{ root: string }>(childA)).root;
+		const markerPath = join(liveRoot, ".pi-agent-browser-owner.json");
+		const marker = JSON.parse(await readFile(markerPath, "utf8")) as Record<string, unknown>;
+		await writeFile(
+			markerPath,
+			JSON.stringify({ ...marker, createdAtMs: staleTime.getTime(), leaseUpdatedAtMs: staleTime.getTime() }, null, 2),
+			"utf8",
+		);
+		await utimes(liveRoot, staleTime, staleTime);
+		const before = await stat(liveRoot).then(() => true, () => false);
+
+		const childBScript = `
+			import { openSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+			const tempFile = await openSecureTempFile("prune-trigger", ".txt");
+			await tempFile.fileHandle.close();
+			console.log(JSON.stringify({ done: true }));
+		`;
+		const childB = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childBScript], {
+			cwd: process.cwd(),
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		const childBExit = once(childB, "exit");
+		await readChildStdoutJsonLine<{ done: boolean }>(childB);
+		const [childBExitCode] = await childBExit;
+		assert.equal(childBExitCode, 0);
+
+		const after = await stat(liveRoot).then(() => true, () => false);
+		assert.deepEqual({ after, before }, { after: true, before: true });
+	} finally {
+		await stopChildProcess(childA);
+		if (liveRoot) await rm(liveRoot, { force: true, recursive: true }).catch(() => undefined);
 		await cleanupSecureTempArtifacts();
 	}
 });
