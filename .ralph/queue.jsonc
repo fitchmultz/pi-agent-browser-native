@@ -48,48 +48,6 @@
       }
     },
     {
-      "id": "RQ-0013",
-      "status": "todo",
-      "title": "Unify the agent_browser playbook and fix current doc drift",
-      "description": "Principles: DRY knowledge, Least astonishment, Consistency/Integrity.\n\nEvidence:\n- path: README.md:213-228 :: README describes inspection support using shell-like `agent_browser --help` wording and documents post-command tab restoration.\n- path: docs/COMMAND_REFERENCE.md:226-256 :: the command reference documents stateless `--help` and `--version` but omits the post-command tab-restoration behavior that the wrapper currently implements.\n- path: docs/REQUIREMENTS.md:99-104 :: requirements require the local command reference and prompt guidance to stay in sync with wrapper behavior, including post-command tab restoration.\n- path: docs/TOOL_CONTRACT.md:28-29,184-193 :: the tool contract repeats the same playbook rules and explicitly includes post-command tab restoration.\n- path: extensions/agent-browser/index.ts:70-99 :: prompt guidance hard-codes another copy of the same workflow rules inside the extension.\n\nWhy it matters: the repo currently has several hand-maintained copies of the same agent-facing workflow. They are already drifting, which makes the local command reference less reliable for the exact browser-recovery edge cases the wrapper is supposed to clarify.\n\nMinimal proposed fix: move the shared playbook text to one canonical source or generated fragment, update README and COMMAND_REFERENCE to use actual tool-call shapes, and restore any omitted behavior notes that are part of the effective wrapper surface.\n\nAcceptance criteria: README, COMMAND_REFERENCE, and tool guidance describe the same inspection path and recovery behaviors; the command reference includes the currently implemented post-command tab restoration behavior; add a lightweight regression check or generation step that prevents future drift; verify `npm run verify` still passes.",
-      "priority": "medium",
-      "tags": [
-        "maintenance",
-        "docs",
-        "dry",
-        "agent-browser"
-      ],
-      "scope": [
-        "README.md",
-        "docs/COMMAND_REFERENCE.md",
-        "docs/TOOL_CONTRACT.md",
-        "docs/REQUIREMENTS.md",
-        "extensions/agent-browser/index.ts",
-        "npm run verify"
-      ],
-      "evidence": [
-        "path: README.md:213-228 :: README uses shell-like inspection wording and documents post-command tab restoration",
-        "path: docs/COMMAND_REFERENCE.md:226-256 :: command reference documents stateless inspection but omits the implemented post-command tab-restoration behavior",
-        "path: docs/REQUIREMENTS.md:99-104 :: requirements say the command reference and prompt guidance must stay in sync with wrapper behavior",
-        "path: extensions/agent-browser/index.ts:70-99 :: another hand-maintained copy of the same browser workflow lives in prompt-guidance arrays"
-      ],
-      "plan": [
-        "Pick one canonical source for agent-facing workflow guidance and refactor README, COMMAND_REFERENCE, and extension prompt guidance to consume it or stay mechanically aligned.",
-        "Replace shell-like inspection wording with real tool-call examples and add the missing post-command recovery behavior to the command reference.",
-        "Verify by reviewing the rendered docs diff and running `npm run verify` with any new drift guard green."
-      ],
-      "notes": [],
-      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
-      "created_at": "2026-04-27T02:21:16Z",
-      "updated_at": "2026-04-27T02:21:16Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0020",
       "status": "todo",
       "title": "Resolve the mixed -e versus /reload local-validation workflow",
