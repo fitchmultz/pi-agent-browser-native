@@ -458,6 +458,38 @@ test("stale temp pruning only removes explicitly owned roots", { concurrency: fa
 	}
 });
 
+test("stale temp pruning removes roots whose marker PID was reused", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
+	const staleRoot = await mkdtemp(join(tmpdir(), "pi-agent-browser-reused-pid-"));
+	await chmod(staleRoot, 0o700);
+	const child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1_000);"], {
+		stdio: ["ignore", "ignore", "ignore"],
+	});
+
+	try {
+		assert.ok(child.pid);
+		await writeSecureTempRootOwnershipMarker(staleRoot, {
+			createdAtMs: staleTime.getTime(),
+			leaseUpdatedAtMs: staleTime.getTime(),
+			ownerPid: child.pid,
+			ownerProcessStartIdentity: "definitely-not-this-child-process-start",
+		});
+		await utimes(staleRoot, staleTime, staleTime);
+
+		const before = await stat(staleRoot).then(() => true, () => false);
+		const tempFile = await openSecureTempFile("prune-reused-pid", ".txt");
+		await tempFile.fileHandle.close();
+		const after = await stat(staleRoot).then(() => true, () => false);
+
+		assert.deepEqual({ after, before }, { after: false, before: true });
+	} finally {
+		await stopChildProcess(child);
+		await rm(staleRoot, { force: true, recursive: true }).catch(() => undefined);
+		await cleanupSecureTempArtifacts();
+	}
+});
+
 test("stale temp pruning does not remove a live root owned by another process", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1_000);

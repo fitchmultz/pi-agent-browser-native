@@ -6,11 +6,13 @@
  * Invariants/Assumptions: Temp artifacts live under the OS temp directory, each active run uses a dedicated 0700 directory, files are created with exclusive 0600 permissions, session-scoped persisted artifacts stay under the pi session directory, and stale pruning only touches roots with an explicit pi-agent-browser ownership marker.
  */
 
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 
 import { isRecord, parsePositiveInteger } from "./parsing.js";
 
@@ -24,6 +26,8 @@ const DEFAULT_TEMP_ROOT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES";
 const DEFAULT_SESSION_ARTIFACT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACTS_ROOT_DIR_NAME = ".pi-agent-browser-artifacts";
+const PROCESS_START_IDENTITY_TIMEOUT_MS = 1_000;
+const execFileAsync = promisify(execFile);
 
 export interface PersistentSessionArtifactStore {
 	protectedPaths?: readonly string[];
@@ -36,6 +40,7 @@ interface TempRootOwnershipRecord {
 	kind: string;
 	leaseUpdatedAtMs?: number;
 	ownerPid?: number;
+	ownerProcessStartIdentity?: string;
 	ownerUid?: number;
 	version: number;
 }
@@ -44,6 +49,7 @@ interface TempRootOwnershipMarkerOptions {
 	createdAtMs?: number;
 	leaseUpdatedAtMs?: number;
 	ownerPid?: number;
+	ownerProcessStartIdentity?: string;
 }
 
 type ProcessLiveness = "alive" | "dead" | "unknown";
@@ -68,6 +74,9 @@ function isTempRootOwnershipRecord(value: unknown): value is TempRootOwnershipRe
 	if (value.leaseUpdatedAtMs !== undefined && !isPositiveFiniteNumber(value.leaseUpdatedAtMs)) return false;
 	if (value.ownerPid !== undefined) {
 		if (typeof value.ownerPid !== "number" || !Number.isSafeInteger(value.ownerPid) || value.ownerPid <= 0) return false;
+	}
+	if (value.ownerProcessStartIdentity !== undefined) {
+		if (typeof value.ownerProcessStartIdentity !== "string" || value.ownerProcessStartIdentity.trim() === "") return false;
 	}
 	if (value.ownerUid !== undefined) {
 		if (typeof value.ownerUid !== "number" || !Number.isSafeInteger(value.ownerUid) || value.ownerUid < 0) return false;
@@ -117,17 +126,33 @@ async function readTempRootOwnershipMarker(tempRoot: string): Promise<TempRootOw
 	}
 }
 
+async function getProcessStartIdentity(pid: number | undefined): Promise<string | undefined> {
+	if (pid === undefined) return undefined;
+	if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+	try {
+		const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], {
+			timeout: PROCESS_START_IDENTITY_TIMEOUT_MS,
+		});
+		const identity = stdout.trim().replace(/\s+/g, " ");
+		return identity || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export async function writeSecureTempRootOwnershipMarker(
 	tempRoot: string,
 	options: TempRootOwnershipMarkerOptions = {},
 ): Promise<string> {
 	const markerPath = join(tempRoot, TEMP_ROOT_MARKER_FILE_NAME);
 	const createdAtMs = options.createdAtMs ?? Date.now();
+	const ownerPid = options.ownerPid ?? process.pid;
 	const markerRecord: TempRootOwnershipRecord = {
 		createdAtMs,
 		kind: TEMP_ROOT_MARKER_KIND,
 		leaseUpdatedAtMs: options.leaseUpdatedAtMs ?? createdAtMs,
-		ownerPid: options.ownerPid ?? process.pid,
+		ownerPid,
+		ownerProcessStartIdentity: options.ownerProcessStartIdentity ?? (await getProcessStartIdentity(ownerPid)),
 		ownerUid: getCurrentProcessUid(),
 		version: TEMP_ROOT_MARKER_VERSION,
 	};
@@ -143,27 +168,45 @@ async function refreshSecureTempRootLease(tempRoot: string): Promise<void> {
 	if (ownershipMarker.ownerPid !== process.pid) return;
 	const currentUid = getCurrentProcessUid();
 	if (currentUid !== undefined && ownershipMarker.ownerUid !== undefined && ownershipMarker.ownerUid !== currentUid) return;
+	const currentProcessStartIdentity = await getProcessStartIdentity(process.pid);
+	if (
+		ownershipMarker.ownerProcessStartIdentity !== undefined &&
+		currentProcessStartIdentity !== undefined &&
+		ownershipMarker.ownerProcessStartIdentity !== currentProcessStartIdentity
+	) {
+		return;
+	}
 	const refreshedMarker: TempRootOwnershipRecord = {
 		...ownershipMarker,
 		leaseUpdatedAtMs: Date.now(),
 		ownerPid: process.pid,
+		ownerProcessStartIdentity: currentProcessStartIdentity ?? ownershipMarker.ownerProcessStartIdentity,
 		ownerUid: currentUid,
 	};
 	await writeFile(markerPath, JSON.stringify(refreshedMarker, null, 2), { encoding: "utf8", mode: 0o600 });
 	await chmod(markerPath, 0o600).catch(() => undefined);
 }
 
-function getProcessLiveness(pid: number | undefined): ProcessLiveness {
+async function getMarkerOwnerLiveness(ownershipMarker: TempRootOwnershipRecord): Promise<ProcessLiveness> {
+	const pid = ownershipMarker.ownerPid;
 	if (pid === undefined) return "unknown";
 	try {
 		process.kill(pid, 0);
-		return "alive";
 	} catch (error) {
 		const errorWithCode = error as NodeJS.ErrnoException;
 		if (errorWithCode.code === "ESRCH") return "dead";
-		if (errorWithCode.code === "EPERM") return "alive";
-		return "unknown";
+		if (errorWithCode.code !== "EPERM") return "unknown";
 	}
+
+	const currentProcessStartIdentity = await getProcessStartIdentity(pid);
+	if (
+		ownershipMarker.ownerProcessStartIdentity !== undefined &&
+		currentProcessStartIdentity !== undefined &&
+		ownershipMarker.ownerProcessStartIdentity === currentProcessStartIdentity
+	) {
+		return "alive";
+	}
+	return "dead";
 }
 
 async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise<void> {
@@ -187,10 +230,10 @@ async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise
 				) {
 					return;
 				}
-				if (getProcessLiveness(ownershipMarker.ownerPid) !== "dead") return;
-
 				const staleTimestampMs = ownershipMarker.leaseUpdatedAtMs ?? ownershipMarker.createdAtMs;
 				if (staleTimestampMs >= cutoffTime) return;
+				if ((await getMarkerOwnerLiveness(ownershipMarker)) === "alive") return;
+
 				const stats = await stat(path).catch(() => undefined);
 				if (!stats?.isDirectory()) return;
 				await rm(path, { force: true, recursive: true }).catch(() => undefined);
