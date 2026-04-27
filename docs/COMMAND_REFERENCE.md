@@ -41,7 +41,7 @@ Tool parameters:
 
 ## Recommended workflow
 
-Keep routine browser work simple: open a page, inspect it with refs, interact with refs or scoped selectors, then inspect again.
+Keep routine browser work simple: open a page, inspect it with `snapshot -i`, interact with current `@ref` values from that snapshot, then inspect again. Re-run `snapshot -i` after navigation, scrolling, rerendering, or other major DOM changes because refs can become stale.
 
 ### Normal browse flow
 
@@ -51,6 +51,27 @@ Keep routine browser work simple: open a page, inspect it with refs, interact wi
 { "args": ["click", "@e2"] }
 { "args": ["snapshot", "-i"] }
 ```
+
+### Selector strategy
+
+Prefer targets in this order:
+
+1. Use a current `@ref` from the latest `snapshot -i` for visible interactive controls.
+2. After `scroll`, `scrollintoview`, navigation, or any rerender, take a fresh `snapshot -i` before reusing refs.
+3. When a target is easiest to describe by accessible name or visible text, use `find` locators such as `role`, `text`, `label`, `placeholder`, `alt`, `title`, or `testid` instead of guessing selector syntax.
+4. Use CSS selectors for scoped extraction or stable app-specific hooks when you know they match the current page.
+
+Examples:
+
+```json
+{ "args": ["find", "role", "button", "click", "--name", "Close"] }
+{ "args": ["find", "text", "Close", "click"] }
+{ "args": ["find", "label", "Email", "fill", "user@example.com"] }
+{ "args": ["scrollintoview", "@e12"] }
+{ "args": ["snapshot", "-i"] }
+```
+
+Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 
 ### Extract page data
 
