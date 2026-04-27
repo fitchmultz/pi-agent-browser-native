@@ -141,6 +141,82 @@ test("buildToolPresentation does not classify confirmation-like records without 
 	assert.notEqual(presentation.summary, "Confirmation required: undefined");
 });
 
+test("buildToolPresentation appends stale-ref recovery guidance to direct command failures", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "click", subcommand: "@zzz" },
+		cwd: process.cwd(),
+		errorText: "Unknown ref: zzz",
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /^Unknown ref: zzz/);
+	assert.match(text, /snapshot -i/);
+	assert.match(text, /find role\|text\|label/);
+	assert.match(text, /scrollintoview/);
+	assert.equal(presentation.summary, text);
+});
+
+test("buildToolPresentation appends selector-dialect guidance to unsupported selector failures", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "click", subcommand: "button:has-text('Close')" },
+		cwd: process.cwd(),
+		errorText: "Failed to parse selector: button:has-text('Close')",
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /^Failed to parse selector: button:has-text\('Close'\)/);
+	assert.match(text, /unsupported selector dialect/i);
+	assert.match(text, /snapshot -i/);
+	assert.match(text, /find role\|text\|label/);
+	assert.match(text, /scrollintoview/);
+	assert.equal(presentation.summary, text);
+});
+
+test("buildToolPresentation appends selector-dialect guidance to Playwright-style selector match failures", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "click", subcommand: "text=Close" },
+		cwd: process.cwd(),
+		errorText: "No elements found for selector: text=Close",
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /^No elements found for selector: text=Close/);
+	assert.match(text, /unsupported selector dialect/i);
+	assert.match(text, /snapshot -i/);
+	assert.match(text, /find role\|text\|label/);
+	assert.match(text, /scrollintoview/);
+});
+
+test("buildToolPresentation does not append selector guidance to unrelated errors", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "open", subcommand: "https://example.com" },
+		cwd: process.cwd(),
+		errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT",
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.equal((presentation.content[0] as { text: string }).text, "Navigation failed: net::ERR_BLOCKED_BY_CLIENT");
+	assert.equal(presentation.summary, "Navigation failed: net::ERR_BLOCKED_BY_CLIENT");
+});
+
+test("buildToolPresentation does not append selector guidance to non-dialect selector-token errors", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "click", subcommand: "button" },
+		cwd: process.cwd(),
+		errorText: "Element not visible: getByRole('button', { name: 'Submit' })",
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.equal(
+		(presentation.content[0] as { text: string }).text,
+		"Element not visible: getByRole('button', { name: 'Submit' })",
+	);
+	assert.equal(presentation.summary, "Element not visible: getByRole('button', { name: 'Submit' })");
+});
+
 test("buildToolPresentation formats scalar extraction results for eval and get commands", async () => {
 	const evalPresentation = await buildToolPresentation({
 		commandInfo: { command: "eval", subcommand: "--stdin" },
@@ -544,6 +620,9 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 	assert.match((presentation.content[0] as { text: string }).text, /Example Domain/);
 	assert.match((presentation.content[0] as { text: string }).text, /Step 2 — click @zzz \(failed\)/);
 	assert.match((presentation.content[0] as { text: string }).text, /Error: Unknown ref: zzz/);
+	assert.match((presentation.content[0] as { text: string }).text, /snapshot -i/);
+	assert.match((presentation.content[0] as { text: string }).text, /find role\|text\|label/);
+	assert.match((presentation.content[0] as { text: string }).text, /scrollintoview/);
 	assert.equal(presentation.batchFailure?.failedStep.index, 1);
 	assert.equal(presentation.batchFailure?.failedStep.commandText, "click @zzz");
 	assert.equal(presentation.batchFailure?.failureCount, 1);

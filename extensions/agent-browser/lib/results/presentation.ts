@@ -708,9 +708,57 @@ function formatBatchStepCommand(command: string[] | undefined, index: number): s
 	return command && command.length > 0 ? command.join(" ") : `step-${index + 1}`;
 }
 
+const STALE_REF_ERROR_HINT = [
+	"Agent-browser hint: This ref may be stale after navigation, scrolling, or re-rendering.",
+	"Run `snapshot -i` again and retry with a current `@e…` ref; for less ref churn, use `find role|text|label|placeholder|alt|title|testid ...` or `scrollintoview` before interacting with off-screen elements.",
+].join(" ");
+
+const SELECTOR_DIALECT_ERROR_HINT = [
+	"Agent-browser hint: This selector may use an unsupported selector dialect.",
+	"Prefer refs from `snapshot -i`, or use supported `find role|text|label|placeholder|alt|title|testid ...` locators; use `scrollintoview` before interacting with off-screen elements.",
+].join(" ");
+
+function getSelectorRecoveryHint(errorText: string): string | undefined {
+	const normalized = errorText.trim();
+	if (normalized.length === 0) {
+		return undefined;
+	}
+
+	if (/\bUnknown ref\b|\bstale ref\b|\bref\b.*\b(?:not found|missing|expired)\b/i.test(normalized)) {
+		return STALE_REF_ERROR_HINT;
+	}
+
+	const mentionsPlaywrightSelectorDialect = /(?:\btext=|:has-text\(|\bgetByRole\b|\bgetByText\b)/i.test(normalized);
+	const reportsSelectorMatchFailure =
+		/\b(?:no elements? found|failed to find|could not find|unable to find)\b.*\b(?:selector|locator)\b/i.test(normalized) ||
+		/\b(?:selector|locator)\b.*\b(?:no elements? found|not found|missing|failed to find|could not find|unable to find)\b/i.test(
+			normalized,
+		);
+
+	if (
+		/\b(?:unsupported|unknown|invalid)\s+(?:selector|locator)\b/i.test(normalized) ||
+		/\bfailed to parse selector\b/i.test(normalized) ||
+		/\bselector\b.*\b(?:parse|syntax|unsupported|invalid)\b/i.test(normalized) ||
+		(mentionsPlaywrightSelectorDialect && reportsSelectorMatchFailure)
+	) {
+		return SELECTOR_DIALECT_ERROR_HINT;
+	}
+
+	return undefined;
+}
+
+function appendSelectorRecoveryHint(errorText: string): string {
+	const hint = getSelectorRecoveryHint(errorText);
+	if (!hint || errorText.includes("Agent-browser hint:")) {
+		return errorText;
+	}
+	return `${errorText}\n\n${hint}`;
+}
+
 function formatBatchStepError(error: unknown): string {
 	const errorText = stringifyUnknown(error).trim();
-	return errorText.length > 0 ? `Error: ${errorText}` : "Error: batch step failed.";
+	const formattedErrorText = errorText.length > 0 ? `Error: ${errorText}` : "Error: batch step failed.";
+	return appendSelectorRecoveryHint(formattedErrorText);
 }
 
 function getBatchFailureDetails(steps: Array<{ details: BatchStepPresentationDetails }>): BatchFailurePresentationDetails | undefined {
@@ -1216,9 +1264,10 @@ export async function buildToolPresentation(options: {
 }): Promise<ToolPresentation> {
 	const { artifactManifest, commandInfo, cwd, envelope, errorText, persistentArtifactStore } = options;
 	if (errorText) {
+		const hintedErrorText = appendSelectorRecoveryHint(errorText);
 		return {
-			content: [{ type: "text", text: errorText }],
-			summary: errorText,
+			content: [{ type: "text", text: hintedErrorText }],
+			summary: hintedErrorText,
 		};
 	}
 

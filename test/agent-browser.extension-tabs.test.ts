@@ -206,6 +206,9 @@ process.exitCode = 1;`,
 			assert.match((result.content[0] as { text: string }).text, /Example Domain/);
 			assert.match((result.content[0] as { text: string }).text, /Step 2 — click @zzz \(failed\)/);
 			assert.match((result.content[0] as { text: string }).text, /Error: Unknown ref: zzz/);
+			assert.match((result.content[0] as { text: string }).text, /snapshot -i/);
+			assert.match((result.content[0] as { text: string }).text, /find role\|text\|label/);
+			assert.match((result.content[0] as { text: string }).text, /scrollintoview/);
 			assert.equal((result.details?.summary as string | undefined)?.includes("Batch failed: 1/2 succeeded"), true);
 			assert.equal((result.details?.exitCode as number | undefined) ?? 0, 1);
 			assert.equal((result.details?.batchFailure as { failedStep?: { index?: number; commandText?: string } } | undefined)?.failedStep?.index, 1);
