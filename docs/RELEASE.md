@@ -22,7 +22,7 @@ npm run verify:release
 `npm run verify:release` runs:
 
 1. `npm run verify` for TypeScript and unit coverage
-2. `npm run verify:package` for package-content validation via `npm pack --json --dry-run`
+2. `npm run verify:package:pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
 
 ## What package verification checks
 
@@ -33,6 +33,12 @@ npm run verify:release
 - canonical published docs are present
 - extension source files are present, including the split result-rendering modules required by the published facade
 - agent-only and superseded docs are absent from the tarball
+
+`npm run verify:package:pi` runs the same package-content checks and additionally confirms that:
+
+- the packed package can be loaded by Pi in isolation, equivalent to `pi --no-extensions -e <packed-package>`
+- exactly one `agent_browser` tool is registered
+- the registered `agent_browser` source resolves inside the extracted packed package path, not the working checkout
 
 Current forbidden packed files include:
 
@@ -78,19 +84,20 @@ Recommended lifecycle follow-up:
 
 ## Post-publish install validation
 
-After publishing a release, validate the package-first install path explicitly:
+After publishing a release, validate the package-first path in isolation:
 
 ```bash
-pi install npm:pi-agent-browser-native@<version>
-pi -e npm:pi-agent-browser-native@<version>
+npm run verify:release
+pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
 
-For installed-package validation, make sure Pi has only one active source for this extension. The simplest safe paths are either:
+Then run the smoke prompt:
 
-- temporarily disable/remove the checkout path and then run plain `pi`, or
-- use an isolated ephemeral run such as `pi --no-extensions -e npm:pi-agent-browser-native@<version>`
+```text
+Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
+```
 
-Then confirm `pi` exposes the native `agent_browser` tool, that a basic `open` + `snapshot -i` flow works, and that `/reload` plus restart/`/resume` keep following the same implicit managed browser session.
+Only use plain `pi` for installed-package validation after temporarily disabling or removing the checkout source or any other active source for this extension from Pi settings. Then confirm `pi` exposes the native `agent_browser` tool, that a basic `open` + `snapshot -i` flow works, and that `/reload` plus restart/`/resume` keep following the same implicit managed browser session.
 
 ## Release notes checklist
 
@@ -102,4 +109,4 @@ Before publishing:
 - confirm the explicit local-checkout instructions still work for pre-release validation
 - rerun `npm run verify:release`
 - manually exercise `/reload` and full restart + `/resume` continuity in local checkout validation
-- publish only after the tarball contents match expectations
+- publish only after the tarball contents and isolated packaged-extension smoke check match expectations

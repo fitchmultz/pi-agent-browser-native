@@ -35,7 +35,11 @@ const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 		forbiddenPackedFiles: string[];
 		missingPackedFiles: string[];
 	};
-	parseCliArgs: (argv?: string[]) => { listFiles: boolean; showHelp: boolean };
+	evaluatePiSmokeResult: (options: {
+		packageDir: string;
+		tools: Array<{ name: string; path?: string; source?: { path?: string }; sourceInfo?: { path?: string } }>;
+	}) => string[];
+	parseCliArgs: (argv?: string[]) => { listFiles: boolean; showHelp: boolean; smokePi: boolean };
 };
 const {
 	FORBIDDEN_PACKED_FILES,
@@ -43,14 +47,21 @@ const {
 	REQUIRED_PACKED_FILES,
 	collectVerificationFailures,
 	evaluatePackResult,
+	evaluatePiSmokeResult,
 	parseCliArgs,
 } = verifyPackageModule;
 
-test("parseCliArgs supports help and list-files modes", () => {
-	assert.deepEqual(parseCliArgs([]), { listFiles: false, showHelp: false });
-	assert.deepEqual(parseCliArgs(["--list-files"]), { listFiles: true, showHelp: false });
-	assert.deepEqual(parseCliArgs(["--help"]), { listFiles: false, showHelp: true });
-	assert.deepEqual(parseCliArgs(["-h"]), { listFiles: false, showHelp: true });
+test("parseCliArgs supports help, list-files, and smoke-pi modes", () => {
+	assert.deepEqual(parseCliArgs([]), { listFiles: false, showHelp: false, smokePi: false });
+	assert.deepEqual(parseCliArgs(["--list-files"]), { listFiles: true, showHelp: false, smokePi: false });
+	assert.deepEqual(parseCliArgs(["--smoke-pi"]), { listFiles: false, showHelp: false, smokePi: true });
+	assert.deepEqual(parseCliArgs(["--list-files", "--smoke-pi"]), {
+		listFiles: true,
+		showHelp: false,
+		smokePi: true,
+	});
+	assert.deepEqual(parseCliArgs(["--help"]), { listFiles: false, showHelp: true, smokePi: false });
+	assert.deepEqual(parseCliArgs(["-h"]), { listFiles: false, showHelp: true, smokePi: false });
 });
 
 test("parseCliArgs rejects unknown options with a usage error", () => {
@@ -70,6 +81,43 @@ test("collectVerificationFailures reports each repo and packed invariant breach"
 	assert.match(failures[1] ?? "", /Forbidden repo file present/);
 	assert.match(failures[2] ?? "", /Missing required packed file/);
 	assert.match(failures[3] ?? "", /Forbidden packed file present/);
+});
+
+test("evaluatePiSmokeResult requires exactly one packaged agent_browser source", () => {
+	assert.deepEqual(
+		evaluatePiSmokeResult({
+			packageDir: "/tmp/pkg/package",
+			tools: [
+				{
+					name: "agent_browser",
+					sourceInfo: { path: "/tmp/pkg/package/extensions/agent-browser/index.ts" },
+				},
+			],
+		}),
+		[],
+	);
+
+	assert.match(
+		evaluatePiSmokeResult({
+			packageDir: "/tmp/pkg/package",
+			tools: [],
+		})[0] ?? "",
+		/Expected exactly one/,
+	);
+	assert.match(
+		evaluatePiSmokeResult({
+			packageDir: "/tmp/pkg/package",
+			tools: [{ name: "agent_browser", sourceInfo: { path: "/repo/extensions/agent-browser/index.ts" } }],
+		})[0] ?? "",
+		/expected a source inside packed package/,
+	);
+	assert.match(
+		evaluatePiSmokeResult({
+			packageDir: "/tmp/pkg/package",
+			tools: [{ name: "agent_browser" }],
+		})[0] ?? "",
+		/source path metadata/,
+	);
 });
 
 test("evaluatePackResult preserves the retired autoload-shim ban and split-result module requirements", () => {

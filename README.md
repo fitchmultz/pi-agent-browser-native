@@ -55,10 +55,16 @@ Install `agent-browser` separately, then install this package into `pi`:
 pi install npm:pi-agent-browser-native
 ```
 
-To try a published package without installing it permanently:
+To try a published package without installing it permanently, isolate that temporary package source from any configured checkout or global install:
 
 ```bash
-pi -e npm:pi-agent-browser-native
+pi --no-extensions -e npm:pi-agent-browser-native
+```
+
+For a specific published version:
+
+```bash
+pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
 
 ### GitHub install
@@ -184,7 +190,14 @@ Example prompt:
 Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
 ```
 
-For installed-package validation after a release, temporarily do the reverse: disable/remove the checkout path from Pi settings and validate the published npm package, or use an isolated ephemeral run such as `pi --no-extensions -e npm:pi-agent-browser-native@<version>`.
+For installed-package validation after a release, use exactly one active source. The canonical isolated validation sequence is:
+
+```bash
+npm run verify:package:pi
+pi --no-extensions -e npm:pi-agent-browser-native@<version>
+```
+
+Only use plain `pi` for installed-package validation after disabling or removing the checkout source from Pi settings.
 
 Validated workflow examples:
 
