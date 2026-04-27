@@ -32,52 +32,6 @@
         "RQ-0032"
       ],
       "custom_fields": {}
-    },
-    {
-      "id": "RQ-0035",
-      "status": "todo",
-      "title": "Track session artifact inventory and retention",
-      "description": "Opportunity type: UX improvement. The extension already creates valuable session-scoped artifacts such as persisted snapshot spill files and explicit saved downloads, but the current UX depends on the agent remembering individual printed paths. There is no durable session-level artifact index or retention view. Why it matters: artifact-heavy QA and debugging flows become much easier when the tool can tell the agent what files this session created, what was evicted, and which paths are still live after reload or resume. Proposed approach: build on the shared artifact metadata shape with a bounded, metadata-only session-scoped artifact manifest or structured details field that records recent artifacts, source command family, and retention state, then surface a concise summary on relevant results. Risks and mitigations: keep it metadata-only and bounded so it does not become a second storage system, avoid storing sensitive command args or output content, and make evictions explicit without retaining evicted data. Acceptance criteria: relevant tool results expose recent session artifacts and retention status, evictions are visible instead of silent, manifests/details survive restart or resume at the intended persistence level, and tests cover persistence plus budget-driven eviction reporting.",
-      "priority": "medium",
-      "tags": [
-        "innovation",
-        "ux",
-        "artifacts",
-        "observability"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/temp.ts",
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "test/agent-browser.presentation.test.ts",
-        "test/agent-browser.extension-tabs.test.ts",
-        "docs/TOOL_CONTRACT.md"
-      ],
-      "evidence": [
-        "path: README.md :: spill and download guidance :: users are expected to rely on printed spill paths and explicit save locations to recover files created by the tool",
-        "path: docs/TOOL_CONTRACT.md :: Details :: `fullOutputPath` and session-scoped artifact storage exist, but there is no inspectable artifact inventory or retention summary",
-        "path: extensions/agent-browser/lib/temp.ts :: persisted spill files and budget eviction :: the wrapper already owns session-scoped artifact creation and eviction behavior"
-      ],
-      "plan": [
-        "Define a bounded artifact-manifest shape that records recent files, source command family context, retention state, and redaction-safe metadata only.",
-        "Persist and surface that manifest through structured details and concise result summaries on artifact-producing commands without storing sensitive args or output content.",
-        "Add tests for manifest persistence across reload or resume and for visible reporting when retention budgets evict older artifacts.",
-        "Document how agents should use the artifact inventory instead of relying only on ad hoc printed paths.",
-        "Verify by running the artifact and resume-state tests and confirming recent artifact metadata remains accurate after restart and budget eviction."
-      ],
-      "notes": [],
-      "request": "scan: none",
-      "created_at": "2026-04-27T08:29:39Z",
-      "updated_at": "2026-04-27T13:44:38Z",
-      "depends_on": [
-        "RQ-0033"
-      ],
-      "blocks": [],
-      "relates_to": [
-        "RQ-0029"
-      ],
-      "custom_fields": {
-        "scan_agent": "scan-innovation"
-      }
     }
   ]
 }
