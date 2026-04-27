@@ -109,7 +109,7 @@ PI_AGENT_BROWSER_REAL_UPSTREAM=1 npm run test:real-upstream
 npm run verify:real-upstream
 ```
 
-This suite requires the installed `agent-browser --version` to exactly match `scripts/agent-browser-capability-baseline.mjs`. It serves fixture pages from localhost and validates real runtime output shapes for `--version`, `open`, `eval --stdin`, `snapshot -i`, `batch` stdin, `wait --download`, and implicit managed-session reuse. If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
+This suite requires the installed `agent-browser --version` to exactly match `scripts/agent-browser-capability-baseline.mjs`. It serves fixture pages from localhost and validates real runtime output shapes for `--version`, `open`, `eval --stdin`, `snapshot -i`, `batch` stdin, `wait --download` metadata, wrapper artifact existence reporting for the requested wait-download path, and implicit managed-session reuse. If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
 
 Example smoke prompt:
 
@@ -125,7 +125,7 @@ Recommended configured-source lifecycle follow-up:
 4. Open a large page that compacts its snapshot output and confirm `details.fullOutputPath` still exists after the restart/resume flow.
 5. Trigger an oversized non-snapshot output (for example a deliberately large `eval --stdin` result) and confirm the tool prints the actual spill file path directly in content instead of only referencing a details key.
 6. Validate at least one direct file-download flow with `download <selector> <path>`.
-7. Validate at least one asynchronous export flow with `click` followed by `wait --download <path>`, confirming the wait result reports `savedFilePath`/`savedFile`.
+7. Validate at least one asynchronous export flow with `click` followed by `wait --download <path>`, confirming the wait result reports `savedFilePath`/`savedFile` and checking `details.artifacts[].exists` before relying on the requested path being present on disk.
 
 ## Post-publish install validation
 

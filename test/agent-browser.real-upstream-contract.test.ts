@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -18,6 +18,8 @@ import test from "node:test";
 import { CAPABILITY_BASELINE, expectedVersionLabel } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
 	createExtensionHarness,
+	DOWNLOAD_FIXTURE_CONTENT,
+	DOWNLOAD_FIXTURE_FILENAME,
 	executeRegisteredTool,
 	startAgentBrowserContractFixtureServer,
 	withPatchedEnv,
@@ -56,6 +58,22 @@ function assertSuccessfulResult(
 		assertHasKeys(result.details?.data as Record<string, unknown> | undefined, shape.dataKeys, `${label} data`);
 	}
 	return result.details ?? {};
+}
+
+async function readFileIfPresent(path: string): Promise<string | undefined> {
+	try {
+		return await readFile(path, "utf8");
+	} catch (error) {
+		const errorWithCode = error as NodeJS.ErrnoException;
+		if (errorWithCode.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+async function removeDefaultFixtureDownloadIfPresent(): Promise<void> {
+	const defaultDownloadPath = join(homedir(), "Downloads", DOWNLOAD_FIXTURE_FILENAME);
+	if ((await readFileIfPresent(defaultDownloadPath)) !== DOWNLOAD_FIXTURE_CONTENT) return;
+	await rm(defaultDownloadPath, { force: true });
 }
 
 async function assertInstalledAgentBrowserVersion(): Promise<void> {
@@ -131,6 +149,15 @@ async function terminateNewAgentBrowserProcesses(previousRoots: Set<number>): Pr
 		}
 	}
 	await delay(500);
+	for (const pid of [...targets].reverse()) {
+		if (pid === process.pid) continue;
+		try {
+			process.kill(pid, 0);
+			process.kill(pid, "SIGKILL");
+		} catch {
+			// The process exited after SIGTERM or before the liveness check.
+		}
+	}
 }
 
 if (!REAL_UPSTREAM_ENABLED) {
@@ -201,7 +228,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					const downloadPath = join(tempDir, "wait-download-report.txt");
 					const downloadPage = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `${fixtureServer?.baseUrl}/download`] });
 					assertSuccessfulResult(downloadPage, shapes.commands.open, "open download fixture");
-					const clickedExport = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "#delayed-download"] });
+					const clickedExport = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "#delayed-anchor-download"] });
 					assert.equal(clickedExport.isError, false, `click should start async download: ${clickedExport.content[0]?.text ?? ""}`);
 					const waitedDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download", downloadPath] });
 					const waitDownloadDetails = assertSuccessfulResult(waitedDownload, shapes.commands.waitDownload, "wait --download");
@@ -210,12 +237,25 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(waitDownloadDetails.savedFilePath, downloadPath);
 					assert.equal((waitDownloadDetails.savedFile as { path?: string } | undefined)?.path, downloadPath);
 					assert.match(waitedDownload.content[0]?.text ?? "", /Download completed/);
+
+					// Current upstream agent-browser 0.26.0 reports the requested saveAs path but leaves the
+					// file in the browser's default download directory. Keep this explicit so release docs do
+					// not overstate savedFilePath as a verified on-disk artifact.
+					const artifacts = waitDownloadDetails.artifacts as Array<{ exists?: boolean; path?: string; sizeBytes?: number }> | undefined;
+					assert.equal(artifacts?.[0]?.path, downloadPath);
+					assert.equal(artifacts?.[0]?.exists, false);
+					assert.equal(
+						await readFileIfPresent(downloadPath),
+						undefined,
+						"agent-browser 0.26.0 reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
+					);
 				},
 			);
 		} finally {
 			await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: managedSessionName, socketDir });
 			await terminateNewAgentBrowserProcesses(agentBrowserRootsBeforeTest);
 			await fixtureServer?.close();
+			await removeDefaultFixtureDownloadIfPresent();
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	});

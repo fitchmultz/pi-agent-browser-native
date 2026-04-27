@@ -17,6 +17,8 @@ import { dirname, join } from "node:path";
 import agentBrowserExtension from "../../extensions/agent-browser/index.js";
 
 export const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
+export const DOWNLOAD_FIXTURE_CONTENT = "download contract fixture report\n";
+export const DOWNLOAD_FIXTURE_FILENAME = "pi-agent-browser-wait-download-contract.txt";
 
 export interface FixtureServer {
 	baseUrl: string;
@@ -75,7 +77,15 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 	<main>
 		<h1>Download Contract Fixture</h1>
 		<button id="delayed-download" type="button" onclick="setTimeout(() => { window.location.href = '/download-file'; }, 1000);">Export report</button>
-		<a id="direct-download" href="/download-file" download="report.txt">Direct report</a>
+		<button id="delayed-anchor-download" type="button" onclick="setTimeout(() => {
+			const link = document.createElement('a');
+			link.href = '/download-file';
+			link.download = '${DOWNLOAD_FIXTURE_FILENAME}';
+			document.body.appendChild(link);
+			link.click();
+			link.remove();
+		}, 1000);">Export report with anchor</button>
+		<a id="direct-download" href="/download-file" download="${DOWNLOAD_FIXTURE_FILENAME}">Direct report</a>
 	</main>
 </body>
 </html>`,
@@ -86,10 +96,10 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 		if (url.pathname === "/download-file") {
 			response.writeHead(200, {
 				"cache-control": "no-store",
-				"content-disposition": 'attachment; filename="report.txt"',
+				"content-disposition": `attachment; filename="${DOWNLOAD_FIXTURE_FILENAME}"`,
 				"content-type": "text/plain; charset=utf-8",
 			});
-			response.end("download contract fixture report\n");
+			response.end(DOWNLOAD_FIXTURE_CONTENT);
 			return;
 		}
 

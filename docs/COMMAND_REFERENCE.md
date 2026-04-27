@@ -94,7 +94,7 @@ For one-call flows, put the click and wait in `batch`; the wait step keeps the s
 { "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
 ```
 
-A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls.
+A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.26.0`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true.
 
 ### Download, screenshot, and PDF files
 
@@ -266,7 +266,7 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `wait --load <state>` | Wait for load state: `load`, `domcontentloaded`, or `networkidle`. |
 | `wait --fn <expression>` | Wait for a JavaScript expression to become truthy. |
 | `wait --text <text>` | Wait for text to appear on the page. |
-| `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include `savedFilePath`/`savedFile`. |
+| `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. |
 | `wait <selector> --state hidden` | Wait for an element to become hidden. |
 | `wait <selector> --state detached` | Wait for an element to detach. |
