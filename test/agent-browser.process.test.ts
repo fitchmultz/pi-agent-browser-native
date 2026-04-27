@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,11 +18,15 @@ import {
 	parseAgentBrowserEnvelope
 } from "../extensions/agent-browser/lib/results.js";
 import {
-	cleanupSecureTempArtifacts
+	cleanupSecureTempArtifacts,
+	getSecureTempDebugState,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
+	createExtensionHarness,
+	executeRegisteredTool,
+	runExtensionEvent,
 	withPatchedEnv,
-	writeFakeAgentBrowserBinary
+	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
 test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls", async () => {
@@ -206,6 +210,91 @@ test("runAgentBrowserProcess stops spilling once the secure temp budget is excee
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 		await cleanupSecureTempArtifacts();
+	}
+});
+
+test("agentBrowserExtension removes oversized close stdout spill after fresh-session rotation", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+const isClose = args.includes("close");
+if (isClose) {
+	process.stdout.write(JSON.stringify({ success: true, data: { closed: true, payload: "x".repeat(700000) } }));
+} else {
+	process.stdout.write(JSON.stringify({ success: true, data: { title: "OK", url: "https://example.com/" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/one"],
+			});
+			assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
+
+			const freshOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--profile", "Default", "open", "https://example.com/two"],
+				sessionMode: "fresh",
+			});
+			assert.equal(freshOpen.isError, false, JSON.stringify(freshOpen));
+
+			const { currentTempRoot } = await getSecureTempDebugState();
+			assert.equal(typeof currentTempRoot, "string");
+			const entries = await readdir(currentTempRoot as string);
+			assert.deepEqual(entries.filter((entry) => entry.startsWith("process-stdout-")), []);
+		});
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension removes oversized navigation-summary stdout spills after failed helper commands", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+const isNavigationSummaryHelper = args.includes("get") && (args.includes("title") || args.includes("url"));
+if (isNavigationSummaryHelper) {
+	process.stdout.write(JSON.stringify({ success: false, data: { payload: "x".repeat(700000) } }), () => process.exit(1));
+} else if (args.includes("open")) {
+	process.stdout.write(JSON.stringify({ success: true, data: { title: "OK", url: "https://example.com/" } }));
+} else {
+	process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/"],
+			});
+			assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["click", "@e1"],
+			});
+			assert.equal(click.isError, false, JSON.stringify(click));
+
+			const { currentTempRoot } = await getSecureTempDebugState();
+			assert.equal(typeof currentTempRoot, "string");
+			const entries = await readdir(currentTempRoot as string);
+			assert.deepEqual(entries.filter((entry) => entry.startsWith("process-stdout-")), []);
+		});
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 

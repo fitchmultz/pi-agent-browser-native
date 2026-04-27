@@ -683,14 +683,14 @@ async function runSessionCommandData(options: {
 		cwd,
 		signal,
 	});
-	if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
-		return undefined;
-	}
-	const parsed = await parseAgentBrowserEnvelope({
-		stdout: processResult.stdout,
-		stdoutPath: processResult.stdoutSpillPath,
-	});
 	try {
+		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
+			return undefined;
+		}
+		const parsed = await parseAgentBrowserEnvelope({
+			stdout: processResult.stdout,
+			stdoutPath: processResult.stdoutSpillPath,
+		});
 		if (parsed.parseError || parsed.envelope?.success === false) {
 			return undefined;
 		}
@@ -860,16 +860,21 @@ function redactRecoveryHint(recoveryHint: {
 async function closeManagedSession(options: { cwd: string; sessionName: string; timeoutMs: number }): Promise<void> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+	let stdoutSpillPath: string | undefined;
 	try {
-		await runAgentBrowserProcess({
+		const processResult = await runAgentBrowserProcess({
 			args: ["--session", options.sessionName, "close"],
 			cwd: options.cwd,
 			signal: controller.signal,
 		});
+		stdoutSpillPath = processResult.stdoutSpillPath;
 	} catch {
 		// Best-effort cleanup only.
 	} finally {
 		clearTimeout(timer);
+		if (stdoutSpillPath) {
+			await rm(stdoutSpillPath, { force: true }).catch(() => undefined);
+		}
 	}
 }
 
