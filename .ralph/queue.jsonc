@@ -2,45 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0012",
-      "status": "todo",
-      "title": "Make agent-browser fallback failures actionable",
-      "description": "Principles: Fail fast appropriately, Operational hygiene, Consistency/Integrity.\n\nEvidence:\n- path: extensions/agent-browser/lib/results/envelope.ts:91-113 :: getAgentBrowserErrorText falls back to generic strings when upstream fails without stderr or a usable envelope error.\n- path: test/agent-browser.test.ts:1279-1299 :: current tests explicitly accept the generic fallback path instead of a command-aware message.\n- workflow: npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; console.log(getAgentBrowserErrorText({ aborted:false, envelope:{ success:false, data:{ title:\"Wrong page\" } }, exitCode:1, plainTextInspection:false, stderr:\"\" })); console.log(getAgentBrowserErrorText({ aborted:false, envelope:{ success:true, data:null }, exitCode:1, plainTextInspection:false, stderr:\"\" }));' :: expected a command-aware failure with recovery context :: actual output was only \"agent-browser reported failure (exit code 1)\" and \"agent-browser exited with code 1.\".\n\nWhy it matters: when a native tool call fails after wrapper-added session pinning, tab correction, or plain command execution, the operator cannot tell what kind of command failed or what to try next. That turns real failures into guesswork during interactive use.\n\nMinimal proposed fix: thread command or effective-args context into fallback error derivation and include a concise recovery hint for wrapper-managed cases while preserving the current precedence of explicit envelope error text, stderr, and parse errors.\n\nAcceptance criteria: add focused tests for fallback failures from at least one direct command path and one wrapper-assisted path; confirm the returned text names the failed command or effective invocation; verify `npm run verify` stays green.",
-      "priority": "high",
-      "tags": [
-        "maintenance",
-        "errors",
-        "operability",
-        "results"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/results/envelope.ts",
-        "test/agent-browser.test.ts",
-        "npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; ...'",
-        "npm run verify"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/lib/results/envelope.ts:91-113 :: fallback failures collapse to generic exit-code text when no stderr or usable envelope error exists",
-        "path: test/agent-browser.test.ts:1279-1299 :: tests currently accept the generic fallback branch instead of protecting a more actionable error contract",
-        "workflow: npx tsx --eval 'import { getAgentBrowserErrorText } from \"./extensions/agent-browser/lib/results/envelope.ts\"; ...' :: expected command-aware failure text :: actual output was only generic exit-code messages"
-      ],
-      "plan": [
-        "Update fallback error derivation so non-parse, non-stderr failures include the failed command or effective invocation and any relevant wrapper context.",
-        "Add or tighten tests for failed envelope and non-zero-exit fallback cases so the operator-facing copy is explicit and stable.",
-        "Verify by running `npm run verify` and confirming the new fallback-message assertions pass."
-      ],
-      "notes": [],
-      "request": "scan: code hygiene only: duplication, unclear error messages, test structure, comments that lie",
-      "created_at": "2026-04-27T02:21:16Z",
-      "updated_at": "2026-04-27T02:21:16Z",
-      "depends_on": [],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "scan_agent": "scan-maintenance"
-      }
-    },
-    {
       "id": "RQ-0019",
       "status": "todo",
       "title": "Refresh the local command reference to the installed agent-browser surface",
