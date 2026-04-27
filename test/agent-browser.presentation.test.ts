@@ -319,7 +319,8 @@ test("buildToolPresentation formats auth profile lists and show output without e
 	assert.doesNotMatch(showText, /secret|password|bearer-token|token/);
 });
 
-test("buildToolPresentation formats network request previews", async () => {
+test("buildToolPresentation formats redacted network payload, response, and error previews", async () => {
+	const longResponse = `{"items":["${"x".repeat(400)}"],"token":"response-secret"}`;
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "network", subcommand: "requests" },
 		cwd: process.cwd(),
@@ -327,8 +328,18 @@ test("buildToolPresentation formats network request previews", async () => {
 			success: true,
 			data: {
 				requests: [
-					{ headers: { "User-Agent": "secret-agent" }, method: "GET", resourceType: "Document", status: 200, url: "https://example.com/" },
-					{ method: "POST", resourceType: "Fetch", status: 204, url: "https://example.com/api" },
+					{ headers: { "User-Agent": "secret-agent" }, method: "GET", requestId: "req-1", resourceType: "Document", status: 200, url: "https://example.com/" },
+					{
+						error: "net::ERR_FAILED Authorization: Bearer error-secret",
+						method: "POST",
+						postData: { name: "demo", token: "body-secret", url: "https://api.example.test/callback?token=nested-url-secret" },
+						requestId: "req-2",
+						resourceType: "Fetch",
+						responseBody: longResponse,
+						responseHeaders: { "Set-Cookie": "session=header-secret" },
+						status: 201,
+						url: "https://api.example.test/items?token=url-secret",
+					},
 				],
 			},
 		},
@@ -336,9 +347,43 @@ test("buildToolPresentation formats network request previews", async () => {
 
 	assert.equal(presentation.summary, "Network requests: 2");
 	const text = (presentation.content[0] as { text: string }).text;
-	assert.match(text, /1\. 200 GET https:\/\/example.com\/ \(Document\)/);
-	assert.match(text, /2\. 204 POST https:\/\/example.com\/api \(Fetch\)/);
-	assert.doesNotMatch(text, /User-Agent|secret-agent/);
+	assert.match(text, /1\. 200 GET https:\/\/example.com\/ \(Document\) \[req-1\]/);
+	assert.match(text, /2\. 201 POST https:\/\/api\.example\.test\/items\?token=%5BREDACTED%5D \(Fetch\) \[req-2\]/);
+	assert.match(text, /Payload: .*name.*demo/);
+	assert.match(text, /Payload: .*\[REDACTED\]/);
+	assert.match(text, /Payload: .*https:\/\/api\.example\.test\/callback\?token=%5BREDACTED%5D/);
+	assert.match(text, /Response: /);
+	assert.match(text, /Response: .*…/);
+	assert.match(text, /Error: net::ERR_FAILED Authorization: Bearer \[REDACTED\]/);
+	assert.doesNotMatch(text, /User-Agent|secret-agent|body-secret|response-secret|header-secret|url-secret|nested-url-secret|error-secret|Set-Cookie/);
+});
+
+test("buildToolPresentation formats singular network request details without expanding headers", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "network", subcommand: "request" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				headers: { Authorization: "Bearer header-secret" },
+				method: "POST",
+				mimeType: "application/json",
+				postData: "{\"name\":\"demo\",\"token\":\"payload-secret\"}",
+				requestId: "detail-1",
+				resourceType: "Fetch",
+				responseBody: "{\"ok\":true,\"secret\":\"response-secret\"}",
+				responseHeaders: { "Set-Cookie": "session=header-secret" },
+				status: 200,
+				url: "https://api.example.test/items?token=url-secret",
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /1\. 200 POST https:\/\/api\.example\.test\/items\?token=%5BREDACTED%5D \(Fetch\) \[detail-1\]/);
+	assert.match(text, /Payload: .*\[REDACTED\]/);
+	assert.match(text, /Response: .*\[REDACTED\]/);
+	assert.doesNotMatch(text, /Authorization|Set-Cookie|header-secret|payload-secret|response-secret|url-secret/);
 });
 
 test("buildToolPresentation formats console and errors previews", async () => {

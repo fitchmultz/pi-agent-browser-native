@@ -256,7 +256,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, `testid`, `first`, `last`, and `nth`. |
 | `mouse <action> [args]` | `move <x> <y>`, `down [btn]`, `up [btn]`, `wheel <dy> [dx]`. |
 | `set <setting> [value]` | `viewport <w> <h>`, `device <name>`, `geo <lat> <lng>`, `offline [on|off]`, `headers <json>`, `credentials <user> <pass>`, `media [dark|light] [reduced-motion]`. |
-| `network <action>` | `route <url> [--abort|--body <json>]`, `unroute [url]`, `requests [--clear] [--filter <pattern>]`, `har <start|stop> [path]`. |
+| `network <action>` | `route <url> [--abort|--body <json>]`, `unroute [url]`, `requests [--clear] [--filter <pattern>]`, `request <requestId>`, `har <start|stop> [path]`. |
 | `cookies [get|set|clear]` | Manage cookies. `set` supports `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, and `--expires`. |
 | `storage <local|session>` | Manage web storage. |
 
@@ -347,7 +347,7 @@ When these diagnostic commands are invoked through the native `agent_browser` to
 | `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. |
 | `profiles` | List available Chrome profiles. |
 
-When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. Auth, header, token, and other sensitive nested values remain in raw details only when upstream provides them and are not expanded in model-facing text.
+When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text; use upstream HAR or full raw details only when complete data is required.
 
 ## Important global flags, config, and environment
 

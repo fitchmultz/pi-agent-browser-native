@@ -10,7 +10,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 
 import { isRecord, parsePositiveInteger } from "../parsing.js";
-import { parseCommandInfo, type CommandInfo } from "../runtime.js";
+import { parseCommandInfo, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../runtime.js";
 import {
 	type PersistentSessionArtifactEviction,
 	type PersistentSessionArtifactStore,
@@ -58,6 +58,13 @@ const LARGE_OUTPUT_PREVIEW_MAX_LINES = 40;
 const LARGE_OUTPUT_FILE_PREFIX = "pi-agent-browser-output";
 const DIAGNOSTIC_REQUEST_PREVIEW_LIMIT = 40;
 const DIAGNOSTIC_LOG_PREVIEW_LIMIT = 80;
+const NETWORK_BODY_PREVIEW_MAX_CHARS = 280;
+const NETWORK_ERROR_PREVIEW_MAX_CHARS = 220;
+const NETWORK_PREVIEW_FIELD_CANDIDATES = {
+	request: ["postData"] as const,
+	response: ["responseBody"] as const,
+	error: ["error", "failureText", "errorText"] as const,
+};
 const AUTH_SHOW_SAFE_FIELDS = ["name", "profile", "url", "username", "createdAt", "updatedAt"] as const;
 
 interface NavigationSummary {
@@ -245,22 +252,73 @@ function formatAuthShowText(data: Record<string, unknown>): string | undefined {
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
+function getPreviewCandidate(item: Record<string, unknown>, keys: readonly string[]): unknown {
+	for (const key of keys) {
+		const value = item[key];
+		if (value !== undefined && value !== null && value !== "") return value;
+	}
+	return undefined;
+}
+
+function parseJsonPreviewString(value: string): unknown {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+	try {
+		return JSON.parse(trimmed) as unknown;
+	} catch {
+		return value;
+	}
+}
+
+function formatNetworkPreviewValue(value: unknown, maxChars: number): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	const previewValue = typeof value === "string" ? parseJsonPreviewString(value) : value;
+	const redacted = redactSensitiveValue(previewValue);
+	const raw = typeof redacted === "string" ? redacted : stringifyUnknown(redacted);
+	const normalized = raw.replace(/\s+/g, " ").trim();
+	if (normalized.length === 0) return undefined;
+	return truncateText(redactSensitiveText(normalized), maxChars);
+}
+
+function appendNetworkPreview(lines: string[], label: string, value: unknown, maxChars: number): void {
+	const preview = formatNetworkPreviewValue(value, maxChars);
+	if (!preview) return;
+	lines.push(`   ${label}: ${preview}`);
+}
+
+function formatNetworkRequestLine(item: Record<string, unknown>, index: number): string[] {
+	const method = getStringField(item, "method") ?? "GET";
+	const status = typeof item.status === "number" ? String(item.status) : "pending";
+	const type = getStringField(item, "resourceType") ?? getStringField(item, "mimeType");
+	const url = getStringField(item, "url") ?? "(no url)";
+	const requestId = getStringField(item, "requestId") ?? getStringField(item, "id");
+	const idText = requestId ? ` [${redactSensitiveText(requestId)}]` : "";
+	const lines = [`${index + 1}. ${status} ${method} ${truncateText(redactSensitiveText(url), 180)}${type ? ` (${type})` : ""}${idText}`];
+	appendNetworkPreview(lines, "Payload", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.request), NETWORK_BODY_PREVIEW_MAX_CHARS);
+	appendNetworkPreview(lines, "Response", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.response), NETWORK_BODY_PREVIEW_MAX_CHARS);
+	appendNetworkPreview(lines, "Error", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.error), NETWORK_ERROR_PREVIEW_MAX_CHARS);
+	return lines;
+}
+
 function formatNetworkRequestsText(data: Record<string, unknown>): string | undefined {
 	const requests = getArrayField(data, "requests");
 	if (!requests) return undefined;
 	if (requests.length === 0) return "No network requests captured.";
-	const shown = requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).map((item, index) => {
-		if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
-		const method = getStringField(item, "method") ?? "GET";
-		const status = typeof item.status === "number" ? String(item.status) : "pending";
-		const type = getStringField(item, "resourceType") ?? getStringField(item, "mimeType");
-		const url = getStringField(item, "url") ?? "(no url)";
-		return `${index + 1}. ${status} ${method} ${truncateText(url, 180)}${type ? ` (${type})` : ""}`;
+	const shown = requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap((item, index) => {
+		if (!isRecord(item)) return [`${index + 1}. ${stringifyUnknown(item)}`];
+		return formatNetworkRequestLine(item, index);
 	});
-	if (requests.length > shown.length) {
-		shown.push(`... (${requests.length - shown.length} additional requests omitted from preview)`);
+	if (requests.length > DIAGNOSTIC_REQUEST_PREVIEW_LIMIT) {
+		shown.push(`... (${requests.length - DIAGNOSTIC_REQUEST_PREVIEW_LIMIT} additional requests omitted from preview)`);
 	}
 	return shown.join("\n");
+}
+
+function formatNetworkRequestText(data: Record<string, unknown>): string | undefined {
+	if (!getStringField(data, "url") && !getStringField(data, "requestId") && !getStringField(data, "id")) {
+		return undefined;
+	}
+	return formatNetworkRequestLine(data, 0).join("\n");
 }
 
 function formatConsoleText(data: Record<string, unknown>): string | undefined {
@@ -334,6 +392,7 @@ function formatDiagnosticText(commandInfo: CommandInfo, data: Record<string, unk
 		if (commandInfo.subcommand === "show") return formatAuthShowText(data);
 	}
 	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") return formatNetworkRequestsText(data);
+	if (commandInfo.command === "network" && commandInfo.subcommand === "request") return formatNetworkRequestText(data);
 	if (commandInfo.command === "console") return formatConsoleText(data);
 	if (commandInfo.command === "errors") return formatErrorsText(data);
 	if (commandInfo.command === "dashboard") return formatDashboardText(data);
