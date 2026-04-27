@@ -189,52 +189,6 @@
       }
     },
     {
-      "id": "RQ-0034",
-      "status": "todo",
-      "title": "Surface actionable confirm and deny recovery flows",
-      "description": "Opportunity type: reliability. The tracked upstream surface includes guarded-action confirmation primitives such as `confirm <id>`, `deny <id>`, and `--confirm-actions`, but the wrapper does not yet make pending confirmations feel actionable inside Pi. Right now an agent can discover the command family in docs, but not through a first-class recovery experience. Why it matters: guarded actions are a safety feature, and the native tool should help agents finish those flows correctly instead of dropping them into generic details blobs. Proposed approach: after capturing the upstream confirmation-needed result shape, detect confirmation-needed outputs, render the pending action id and next-step commands clearly, and add docs and tests for approval and denial recovery. Risks and mitigations: keep the wrapper thin by surfacing upstream ids and next calls rather than inventing a second confirmation model, and preserve redaction for sensitive action context. Acceptance criteria: pending confirmation results are rendered with the id and follow-up examples, the wrapper keeps redaction intact for sensitive confirmation contexts, and tests cover both confirm and deny paths.",
-      "priority": "medium",
-      "tags": [
-        "innovation",
-        "reliability",
-        "safety",
-        "workflow"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/runtime.ts",
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "test/agent-browser.presentation.test.ts",
-        "test/agent-browser.extension-validation.test.ts",
-        "docs/COMMAND_REFERENCE.md"
-      ],
-      "evidence": [
-        "path: docs/COMMAND_REFERENCE.md :: Batch, auth, confirmations, sessions, chat, dashboard, and setup :: `confirm <id>`, `deny <id>`, and `--confirm-actions` are part of the supported surface",
-        "path: extensions/agent-browser/lib/runtime.ts :: GLOBAL_FLAGS_WITH_VALUES :: the wrapper already accepts `--confirm-actions` as part of raw upstream argument planning",
-        "path: README.md :: Agent quick start :: there is no documented recovery pattern or first-class example for pending confirmation flows"
-      ],
-      "plan": [
-        "Identify the upstream confirmation-needed result shape from real-upstream evidence and the minimum native recovery UX needed for Pi.",
-        "Add rendering that prints the pending confirmation id and the exact follow-up `confirm` or `deny` tool calls without exposing redaction-sensitive context.",
-        "Cover confirm-required success and failure paths in tests, including redaction-sensitive scenarios.",
-        "Document the safety workflow in the command reference or tool contract without expanding into a new wrapper-specific action model.",
-        "Verify by running the new confirmation tests and confirming a pending-action result now contains the id and the correct next-step calls."
-      ],
-      "notes": [],
-      "request": "scan: none",
-      "created_at": "2026-04-27T08:29:39Z",
-      "updated_at": "2026-04-27T13:44:38Z",
-      "depends_on": [
-        "RQ-0030"
-      ],
-      "blocks": [],
-      "relates_to": [
-        "RQ-0031"
-      ],
-      "custom_fields": {
-        "scan_agent": "scan-innovation"
-      }
-    },
-    {
       "id": "RQ-0035",
       "status": "todo",
       "title": "Track session artifact inventory and retention",
