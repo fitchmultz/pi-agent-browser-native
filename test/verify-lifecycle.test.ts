@@ -1,7 +1,7 @@
 /**
  * Purpose: Verify pure helper behavior for the opt-in tmux-driven lifecycle regression harness.
  * Responsibilities: Assert CLI parsing, settings isolation shape, JSONL extraction helpers, sentinel source injection, and direct-run guarding without launching Pi or tmux.
- * Scope: Unit coverage for `scripts/verify-lifecycle.mjs`; the end-to-end lifecycle path runs only through the explicit `npm run verify:lifecycle` maintainer command.
+ * Scope: Unit coverage for `scripts/verify-lifecycle.mjs`; the end-to-end lifecycle path runs only through the explicit `npm run verify -- lifecycle` maintainer command.
  * Usage: Run with `npm test` or as part of `npm run verify`.
  * Invariants/Assumptions: Normal tests must not mutate Pi settings, start tmux, or require a real browser/model configuration.
  */

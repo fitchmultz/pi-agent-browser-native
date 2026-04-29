@@ -2,7 +2,7 @@
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
  * Responsibilities: Run opt-in deterministic runtime contract checks for version, open, snapshot, eval stdin, batch stdin, wait-download, and managed-session reuse shapes.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
- * Usage: Run `PI_AGENT_BROWSER_REAL_UPSTREAM=1 npm run test:real-upstream` after installing the canonical target agent-browser version.
+ * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
  */
 

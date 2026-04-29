@@ -1,7 +1,7 @@
 /**
  * Purpose: Verify the release/package gate helpers that protect the published tarball contract.
  * Responsibilities: Assert CLI option parsing, failure aggregation, publish-contract derivation, and required/forbidden package invariants for the verify-package maintainer script.
- * Scope: Focused unit coverage for `scripts/verify-package.mjs` helper behavior only; full package verification still runs through `npm run verify:package` and `npm run verify:release`.
+ * Scope: Focused unit coverage for `scripts/verify-package.mjs` helper behavior only; full package verification still runs through `npm run verify -- package` and `npm run verify -- release`.
  * Usage: Run with `npm test` or as part of `npm run verify`.
  * Invariants/Assumptions: The retired `.pi/extensions/agent-browser.ts` autoload shim must stay forbidden, and required packed files must be derived from the canonical publish contract rather than duplicated in tests.
  */

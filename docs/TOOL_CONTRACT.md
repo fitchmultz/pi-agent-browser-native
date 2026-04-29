@@ -25,10 +25,10 @@ It also keeps the main UX where it belongs: the agent invokes the tool directly 
 
 The tool guidance should be written for task discovery first, not wrapper implementation first. That means the description should emphasize browser use cases like web research, reading live docs, clicking, filling, screenshots, extraction, and authenticated/profile-based workflows. Low-level wrapper details like `stdin` and exact CLI args belong in the schema and guidelines, not the lead description.
 
-The tool also needs an operating playbook, not just a capability list. The model should not have to rediscover basics each session. The canonical agent-facing playbook lives in `extensions/agent-browser/lib/playbook.ts`; generated Markdown fragments are updated by `npm run docs:playbook:write`, and `npm run docs:playbook:check` fails when checked-in documentation drifts.
+The tool also needs an operating playbook, not just a capability list. The model should not have to rediscover basics each session. The canonical agent-facing playbook lives in `extensions/agent-browser/lib/playbook.ts`; generated Markdown fragments are updated by `npm run docs -- playbook write`, and `npm run docs -- playbook check` fails when checked-in documentation drifts.
 
 <!-- agent-browser-playbook:start shared-guidelines -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs can become stale.
 - When a visible text or accessible-name target should survive ref churn, prefer find locators such as role, text, label, placeholder, alt, title, or testid with the intended action instead of guessing a CSS selector.
 - Do not assume Playwright selector dialects such as text=Close or button:has-text('Close') are supported wrapper syntax unless current upstream agent-browser behavior has been verified.
@@ -115,7 +115,7 @@ The extension should:
 - support those inspection calls unconditionally so the tool contract stays local and predictable
 
 <!-- agent-browser-playbook:start inspection -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
 
 - { "args": ["--help"] }
@@ -221,7 +221,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - treat explicit caller-provided `--session` choices as user-managed
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
 - After a target tab is known for a session, later active-tab commands best-effort pin that tab inside the same upstream invocation when reconnect drift would otherwise move the command to a restored/background tab.
 - After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.

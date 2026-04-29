@@ -113,7 +113,7 @@ Use two local-checkout modes intentionally:
 
   This bypasses Pi settings and any configured checkout/global package sources, so it avoids duplicate `agent_browser` registrations. After editing extension code, restart this `pi` process to validate the new source; do not use this mode as proof that configured-source `/reload` works.
 
-- **Configured-source lifecycle validation:** run `npm run verify:lifecycle` for the opt-in automated tmux harness, or keep exactly one active source for this extension in Pi settings and launch plain `pi` for manual checks. Use this mode when validating `/reload`, full restart, and `/resume` behavior because Pi's reload flow operates on discovered/configured resources.
+- **Configured-source lifecycle validation:** run `npm run verify -- lifecycle` for the opt-in automated tmux harness, or keep exactly one active source for this extension in Pi settings and launch plain `pi` for manual checks. Use this mode when validating `/reload`, full restart, and `/resume` behavior because Pi's reload flow operates on discovered/configured resources.
 
 The native tool exposed to the agent is named `agent_browser`.
 
@@ -215,7 +215,7 @@ pi --no-extensions -e .
 ```
 
 4. Prompt the agent to use `agent_browser`.
-5. For hot-reload or resume validation, run `npm run verify:lifecycle` or configure exactly one active source for this extension in Pi settings, launch plain `pi`, and exercise `/reload` plus restart/`/resume`. Settings matter only in this configured-source mode; they are bypassed by `--no-extensions -e .`. See [`docs/RELEASE.md`](docs/RELEASE.md) for the automated harness behavior, cleanup, and transcript retention details.
+5. For hot-reload or resume validation, run `npm run verify -- lifecycle` or configure exactly one active source for this extension in Pi settings, launch plain `pi`, and exercise `/reload` plus restart/`/resume`. Settings matter only in this configured-source mode; they are bypassed by `--no-extensions -e .`. See [`docs/RELEASE.md`](docs/RELEASE.md) for the automated harness behavior, cleanup, and transcript retention details.
 
 Example prompt:
 
@@ -226,7 +226,7 @@ Use the agent_browser tool to open https://react.dev and then take an interactiv
 For installed-package validation after a release, use exactly one active source. The canonical isolated validation sequence is:
 
 ```bash
-npm run verify:package:pi
+npm run verify -- package-pi
 pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
 
@@ -250,7 +250,7 @@ Validated workflow examples:
 - inspect `details.artifactManifest` / `details.artifactRetentionSummary` during artifact-heavy flows to recover recent saved files, spill files, and visible eviction state after reload/resume
 
 <!-- agent-browser-playbook:start inspection -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
 
 - { "args": ["--help"] }
@@ -267,7 +267,7 @@ Current cautions:
 - for local Unix launches, the wrapper uses a short private socket directory under `/tmp` so extension-generated session names do not trip upstream Unix socket-path limits in longer cwd/session-name combinations
 - for direct headless local Chrome launches to `chat.com`, `chatgpt.com`, and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
 - After a target tab is known for a session, later active-tab commands best-effort pin that tab inside the same upstream invocation when reconnect drift would otherwise move the command to a restored/background tab.
 - After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.

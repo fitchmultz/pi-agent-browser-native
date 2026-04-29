@@ -2,7 +2,7 @@
  * Purpose: Verify the published npm tarball shape, package-path Pi loadability, and key repo release prerequisites for pi-agent-browser.
  * Responsibilities: Parse CLI options, run `npm pack`, validate required and forbidden repo and packed files, catch repo-local auto-discovery shims, smoke-load and deterministically smoke-execute the packed package in an isolated Pi resource loader when requested, and print concise release reports.
  * Scope: Packaging and release verification only; code compilation/tests stay in the normal npm verify scripts.
- * Usage: Run with `node scripts/verify-package.mjs`, `node scripts/verify-package.mjs --smoke-pi`, `npm run verify:package`, `npm run verify:package:pi`, or `npm run verify:release`.
+ * Usage: Run with `node scripts/verify-package.mjs`, `node scripts/verify-package.mjs --smoke-pi`, `npm run verify -- package`, `npm run verify -- package-pi`, or `npm run verify -- release`.
  * Invariants/Assumptions: The package is built directly from the current repo checkout, npm and tar are available on PATH, installed Pi SDK APIs match the current dev dependency, and the package should publish only canonical docs plus the extension source and license.
  */
 
@@ -62,9 +62,9 @@ Checks:
      handler using a temporary fake agent-browser --version binary.
 
 Examples:
-  npm run verify:package
-  npm run verify:package:pi
-  npm run verify:release
+  npm run verify -- package
+  npm run verify -- package-pi
+  npm run verify -- release
   node scripts/verify-package.mjs --list-files
   node scripts/verify-package.mjs --smoke-pi
 

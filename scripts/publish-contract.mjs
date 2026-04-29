@@ -31,6 +31,7 @@ export const FORBIDDEN_PACKED_FILES = Object.freeze([
 ]);
 
 const ALWAYS_INCLUDED_PACKED_FILES = Object.freeze(["package.json"]);
+const NPM_IGNORED_METADATA_FILES = new Set([".DS_Store"]);
 
 function toPackagePath(path) {
 	return path.split(/[\\/]+/).filter(Boolean).join("/");
@@ -61,7 +62,7 @@ async function expandDeclaredPackageFile(cwd, declaredPath) {
 		const childPath = `${normalizedPath}/${entry.name}`;
 		if (entry.isDirectory()) {
 			expandedPaths.push(...(await expandDeclaredPackageFile(cwd, childPath)));
-		} else if (entry.isFile()) {
+		} else if (entry.isFile() && !NPM_IGNORED_METADATA_FILES.has(entry.name)) {
 			expandedPaths.push(toPackagePath(childPath));
 		}
 	}

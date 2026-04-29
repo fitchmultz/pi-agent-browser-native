@@ -3,7 +3,7 @@
  * Purpose: Prevent drift between canonical agent-browser capability metadata and checked-in command-reference generated blocks.
  * Responsibilities: Render versioned baseline Markdown from scripts/agent-browser-capability-baseline.mjs, update marked blocks in write mode, and fail verification when docs are stale.
  * Scope: Documentation synchronization only; it does not execute agent-browser or validate live upstream help.
- * Usage: Run `npm run docs:command-reference:check` or `npm run docs:command-reference:write` after editing the capability baseline.
+ * Usage: Run `npm run docs -- command-reference check` or `npm run docs -- command-reference write` after editing the capability baseline.
  * Invariants/Assumptions: Generated blocks are bounded by stable HTML comments and all capability data comes from the canonical metadata source.
  */
 
@@ -17,7 +17,7 @@ import {
   COMMAND_REFERENCE_DOC_PATH,
 } from "./agent-browser-capability-baseline.mjs";
 
-const GENERATED_NOTICE = `<!-- Generated from ${CAPABILITY_BASELINE_SOURCE}. Run \`npm run docs:command-reference:write\` to update. Do not edit manually. -->`;
+const GENERATED_NOTICE = `<!-- Generated from ${CAPABILITY_BASELINE_SOURCE}. Run \`npm run docs -- command-reference write\` to update. Do not edit manually. -->`;
 
 function printHelp() {
   console.log(`Usage: node ./scripts/check-command-reference-baseline.mjs [--check|--write]
@@ -30,8 +30,8 @@ Options:
   -h, --help  Show this help
 
 Examples:
-  npm run docs:command-reference:check
-  npm run docs:command-reference:write
+  npm run docs -- command-reference check
+  npm run docs -- command-reference write
 
 Exit codes:
   0  generated blocks match, write completed, or help was shown
@@ -56,7 +56,7 @@ export function renderCommandReferenceBaselineBlock(id) {
       return [
         `This reference is baselined to the locally installed \`agent-browser ${CAPABILITY_BASELINE.targetVersion}\` command/help surface. Upstream \`agent-browser\` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.`,
         "",
-        "The lightweight drift check is `npm run verify:command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.",
+        "The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.",
       ].join("\n");
     case "capability-token-baseline":
       return [
@@ -135,7 +135,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   throw new Error(
-    `Generated command-reference baseline blocks are stale. Run \`npm run docs:command-reference:write\`.\n${staleBlocks.map((block) => `- ${block}`).join("\n")}`,
+    `Generated command-reference baseline blocks are stale. Run \`npm run docs -- command-reference write\`.\n${staleBlocks.map((block) => `- ${block}`).join("\n")}`,
   );
 }
 

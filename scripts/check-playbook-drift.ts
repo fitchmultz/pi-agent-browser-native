@@ -3,7 +3,7 @@
  * Purpose: Prevent drift between the canonical agent_browser playbook and checked-in README/docs fragments.
  * Responsibilities: Render marked Markdown blocks from canonical playbook constants, update them in write mode, and fail verification when checked-in docs are stale.
  * Scope: Documentation synchronization only; it does not inspect upstream agent-browser help or execute browser commands.
- * Usage: Run `npm run docs:playbook:check` in local verification or `npm run docs:playbook:write` after editing the canonical playbook.
+ * Usage: Run `npm run docs -- playbook check` in local verification or `npm run docs -- playbook write` after editing the canonical playbook.
  * Invariants/Assumptions: Generated blocks are bounded by stable HTML comments and all source text comes from extensions/agent-browser/lib/playbook.ts.
  */
 
@@ -29,7 +29,7 @@ const TARGETS: Target[] = [
 	{ path: "docs/TOOL_CONTRACT.md", blocks: ["shared-guidelines", "wrapper-tab-recovery", "inspection"] },
 ];
 
-const GENERATED_NOTICE = "<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->";
+const GENERATED_NOTICE = "<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->";
 
 function printHelp(): void {
 	console.log(`Usage: tsx ./scripts/check-playbook-drift.ts [--check|--write]
@@ -42,8 +42,8 @@ Options:
   -h, --help  Show this help
 
 Examples:
-  npm run docs:playbook:check
-  npm run docs:playbook:write
+  npm run docs -- playbook check
+  npm run docs -- playbook write
 
 Exit codes:
   0  generated blocks match, write completed, or help was shown
@@ -129,7 +129,7 @@ async function main(): Promise<void> {
 		console.log(`Updated generated playbook blocks:\n${staleBlocks.map((block) => `- ${block}`).join("\n")}`);
 		return;
 	}
-	throw new Error(`Generated playbook blocks are stale. Run \`npm run docs:playbook:write\`.\n${staleBlocks.map((block) => `- ${block}`).join("\n")}`);
+	throw new Error(`Generated playbook blocks are stale. Run \`npm run docs -- playbook write\`.\n${staleBlocks.map((block) => `- ${block}`).join("\n")}`);
 }
 
 main().catch((error: unknown) => {

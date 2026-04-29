@@ -17,27 +17,27 @@ From the repository root:
 ```bash
 npm install
 npm run doctor
-npm run verify:release
+npm run verify -- release
 ```
 
 `npm run doctor` is a read-only first-run diagnostic for PATH, targeted upstream version, and duplicate package/checkout source conflicts. It does not replace upstream `agent-browser doctor` for browser runtime health and does not edit Pi settings.
 
-`npm run verify:release` runs:
+`npm run verify -- release` runs:
 
 1. `npm run verify` for TypeScript, unit coverage, and command-reference drift detection
-2. `npm run verify:package:pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
+2. `npm run verify -- package-pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
 
 The configured-source lifecycle regression harness is opt-in because it launches an interactive `pi` process under `tmux` and requires a usable local model configuration:
 
 ```bash
-npm run verify:lifecycle
+npm run verify -- lifecycle
 ```
 
-Use `npm run verify:lifecycle:keep-artifacts` when debugging failures.
+Use `npm run verify -- lifecycle --keep-artifacts` when debugging failures.
 
 ## What package verification checks
 
-`npm run verify:package` confirms that:
+`npm run verify -- package` confirms that:
 
 - no repo-local `.pi/extensions/agent-browser.ts` autoload shim is present
 - `LICENSE` exists in the repo and the packed tarball
@@ -46,7 +46,7 @@ Use `npm run verify:lifecycle:keep-artifacts` when debugging failures.
 - extension source files are present, including the split result-rendering modules required by the published facade
 - agent-only and superseded docs are absent from the tarball
 
-`npm run verify:package:pi` runs the same package-content checks and additionally confirms that:
+`npm run verify -- package-pi` runs the same package-content checks and additionally confirms that:
 
 - the packed package can be loaded through Pi SDK resource loading with the same isolation principle as `pi --no-extensions -e <package-source>`
 - exactly one `agent_browser` tool is registered
@@ -67,7 +67,7 @@ Current forbidden packed files include:
 For a full packed file listing:
 
 ```bash
-node scripts/verify-package.mjs --list-files
+npm run verify -- package --list-files
 ```
 
 ## Local development validation
@@ -87,7 +87,7 @@ Before publishing, validate both local-checkout modes without mixing their assum
 Prefer the automated harness for deterministic configured-source lifecycle regression coverage:
 
 ```bash
-npm run verify:lifecycle
+npm run verify -- lifecycle
 ```
 
 The harness creates an isolated `PI_CODING_AGENT_DIR`, writes settings with exactly one temporary configured package source, runs plain `pi` in `tmux`, puts a deterministic fake `agent-browser` first on `PATH`, and drives `/reload`, full restart, and `/resume`. It asserts same-page managed-session continuity, persisted `details.fullOutputPath` reachability after resume, and updated extension-code pickup through a temporary sentinel command. On failure it retains transcripts/session artifacts; on success it performs best-effort cleanup. It does not replace occasional real-browser manual smoke testing.
@@ -97,16 +97,14 @@ Manual validation remains useful for release confidence and installed-package ch
 1. Configure exactly one active source for this extension in Pi settings: this checkout path before publishing, or the installed package after publishing.
 2. Launch plain `pi` so extension discovery is active.
 3. Validate managed-session continuity with `/reload` and a full restart + `/resume`.
-4. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed, then run `npm run verify:command-reference`.
+4. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed, then run `npm run verify -- command-reference`.
 
 ### Real upstream contract validation
 
 The default `npm test` and `npm run verify` paths use fast deterministic tests and fake binaries. When a change touches upstream command planning, result presentation, managed-session behavior, or the canonical capability baseline, also run the opt-in real-upstream contract suite:
 
 ```bash
-PI_AGENT_BROWSER_REAL_UPSTREAM=1 npm run test:real-upstream
-# equivalent release-script alias
-npm run verify:real-upstream
+npm run verify -- real-upstream
 ```
 
 This suite requires the installed `agent-browser --version` to exactly match `scripts/agent-browser-capability-baseline.mjs`. It serves fixture pages from localhost and validates real runtime output shapes for `--version`, `open`, `eval --stdin`, `snapshot -i`, `batch` stdin, `wait --download` metadata, wrapper artifact existence reporting for the requested wait-download path, and implicit managed-session reuse. The current upstream `wait --download <path>` saveAs persistence limitation is tracked at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300); until it is fixed, release validation must treat `details.savedFilePath` as upstream-reported metadata and use `details.artifacts[].exists` as the filesystem truth. If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
@@ -129,11 +127,11 @@ Recommended configured-source lifecycle follow-up:
 
 ## Post-publish install validation
 
-After publishing a release, validate the package-first path in isolation. `npm run verify:release` includes the deterministic fake-binary packaged execution gate, but it does not replace a real-browser installed-package smoke:
+After publishing a release, validate the package-first path in isolation. `npm run verify -- release` includes the deterministic fake-binary packaged execution gate, but it does not replace a real-browser installed-package smoke:
 
 ```bash
 npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor
-npm run verify:release
+npm run verify -- release
 pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
 
@@ -152,11 +150,11 @@ Before publishing:
 - update `CHANGELOG.md`
 - confirm README install guidance still leads with the package-first flow
 - confirm `docs/COMMAND_REFERENCE.md` still matches the effective upstream command/help surface used by the wrapper
-- run `npm run verify:command-reference` if the installed upstream `agent-browser` version or help surface changed
+- run `npm run verify -- command-reference` if the installed upstream `agent-browser` version or help surface changed
 - run `npm run doctor` and confirm any duplicate-source remediation matches the active package/checkout setup
-- run `npm run verify:real-upstream` for upstream runtime, result-presentation, or managed-session changes
+- run `npm run verify -- real-upstream` for upstream runtime, result-presentation, or managed-session changes
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and configured-source lifecycle validation
-- rerun `npm run verify:release`
-- run `npm run verify:lifecycle` for opt-in configured-source `/reload` plus restart/`/resume` regression coverage
+- rerun `npm run verify -- release`
+- run `npm run verify -- lifecycle` for opt-in configured-source `/reload` plus restart/`/resume` regression coverage
 - manually exercise real-browser `/reload` and full restart + `/resume` continuity when release risk warrants browser-level confidence beyond the fake upstream harness
 - publish only after the tarball contents and isolated packaged-extension smoke check match expectations

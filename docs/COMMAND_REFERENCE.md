@@ -15,10 +15,10 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 ## Upstream baseline
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
-<!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs:command-reference:write` to update. Do not edit manually. -->
+<!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 This reference is baselined to the locally installed `agent-browser 0.26.0` command/help surface. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
-The lightweight drift check is `npm run verify:command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
+The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
 ## Core mental model
@@ -239,7 +239,7 @@ The tables below intentionally list more than the recommended workflow. Rare com
 | `close --all` | Close every session. |
 
 <!-- agent-browser-playbook:start inspection -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
 
 - { "args": ["--help"] }
@@ -417,7 +417,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 - The extension may keep following one implicit managed session across later tool calls.
 - If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs:playbook:write` to update. -->
+<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
 - After a target tab is known for a session, later active-tab commands best-effort pin that tab inside the same upstream invocation when reconnect drift would otherwise move the command to a restored/background tab.
 - After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
@@ -429,7 +429,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 ## Generated capability baseline
 
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
-<!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs:command-reference:write` to update. Do not edit manually. -->
+<!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
 <summary>Generated verifier capability baseline for agent-browser 0.26.0</summary>
 
@@ -487,8 +487,8 @@ Whenever the upstream `agent-browser` binary version changes in this project:
 1. run `agent-browser --version`, `agent-browser --help`, `agent-browser tab --help`, `agent-browser snapshot --help`, and `agent-browser wait --help`
 2. update the canonical metadata in `scripts/agent-browser-capability-baseline.mjs`
 3. update the human-authored command reference sections if command semantics or recommended workflows changed
-4. run `npm run docs:command-reference:write` to regenerate capability baseline blocks; do not manually edit generated blocks
-5. run `npm run verify:command-reference`
+4. run `npm run docs -- command-reference write` to regenerate capability baseline blocks; do not manually edit generated blocks
+5. run `npm run verify -- command-reference`
 6. update tool prompt guidance if the recommended agent workflow changed
 7. update README and release docs if user-visible behavior changed
 8. validate the extension still exposes local documentation that is at least as usable as the blocked direct-binary path for normal agent work

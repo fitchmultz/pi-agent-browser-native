@@ -2,7 +2,7 @@
  * Purpose: Verify that docs/COMMAND_REFERENCE.md tracks the installed agent-browser help surface targeted by this package.
  * Responsibilities: Execute upstream help commands, compare canonical command/option tokens against the local reference, and report actionable drift failures.
  * Scope: Documentation drift detection only; it does not validate browser runtime behavior or package contents.
- * Usage: Run with `node scripts/verify-command-reference.mjs`, `npm run verify:command-reference`, or as part of `npm run verify`.
+ * Usage: Run with `node scripts/verify-command-reference.mjs`, `npm run verify -- command-reference`, or as part of `npm run verify`.
  * Invariants/Assumptions: This package targets the current installed agent-browser surface declared in scripts/agent-browser-capability-baseline.mjs and does not provide backwards-compatibility shims for older upstream versions.
  */
 
@@ -50,10 +50,10 @@ Checks:
   4. ${COMMAND_REFERENCE_DOC_PATH} includes the maintained human-authored local reference tokens.
 
 Related runtime contract check:
-  npm run test:real-upstream
+  npm run verify -- real-upstream
 
 Examples:
-  npm run verify:command-reference
+  npm run verify -- command-reference
   npm run verify
 
 Exit codes:
@@ -85,7 +85,7 @@ export async function verifyCommandReference({
   const version = versionOutput.trim().replace(/^agent-browser\s+/, "");
   if (version !== EXPECTED_VERSION) {
     failures.push(
-      `agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version || "<empty>"}. Update ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs:command-reference:write\`, and refresh ${COMMAND_REFERENCE_DOC_PATH}.`,
+      `agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version || "<empty>"}. Update ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, and refresh ${COMMAND_REFERENCE_DOC_PATH}.`,
     );
   }
 

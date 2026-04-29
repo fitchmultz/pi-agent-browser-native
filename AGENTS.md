@@ -31,13 +31,13 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 
 - Use two distinct validation modes and do not mix their assumptions:
   - **Quick isolated mode:** launch `pi --no-extensions -e .` from this repository root. Pi settings and auto-discovered extension sources are intentionally bypassed; use this for checkout-only smoke tests and restart the `pi` process after extension edits instead of treating `/reload` as the validation target.
-  - **Configured-source lifecycle mode:** run the opt-in `npm run verify:lifecycle` harness for deterministic regression coverage, or configure exactly one active source for this extension in Pi settings and launch plain `pi` for manual validation. Use this mode when validating `/reload`, restart, and `/resume` behavior because `/reload` exercises auto-discovered/configured resources.
+  - **Configured-source lifecycle mode:** run the opt-in `npm run verify -- lifecycle` harness for deterministic regression coverage, or configure exactly one active source for this extension in Pi settings and launch plain `pi` for manual validation. Use this mode when validating `/reload`, restart, and `/resume` behavior because `/reload` exercises auto-discovered/configured resources.
 - For code changes, an isolated `pi --no-extensions -e .` smoke session is a pre-commit requirement; whoever made the changes should validate unpublished checkout behavior there before commit/push (a published install alone is not a substitute).
 - For installed-package validation after publish: update the real installed package, then exercise it with only the published package active—either temporarily disable/remove the checkout path and run plain `pi` for lifecycle validation, or use an isolated ephemeral smoke run like `pi --no-extensions -e npm:pi-agent-browser-native@<version>`.
 - Use `tmux` via bash commands.
 - Do **not** use the pi interactive shell extension for this workflow.
 - Drive `pi` like a real user by sending prompts normally.
-- After extension changes in configured-source lifecycle mode, `/reload` is the minimum, but a full close-and-relaunch of `pi` is preferred for higher confidence. The automated `npm run verify:lifecycle` harness creates an isolated `PI_CODING_AGENT_DIR`, configures a temporary package source, drives plain `pi` in `tmux`, uses a deterministic fake upstream `agent-browser`, checks `/reload` plus restart/`/resume`, and captures transcript artifacts on failure.
+- After extension changes in configured-source lifecycle mode, `/reload` is the minimum, but a full close-and-relaunch of `pi` is preferred for higher confidence. The automated `npm run verify -- lifecycle` harness creates an isolated `PI_CODING_AGENT_DIR`, configures a temporary package source, drives plain `pi` in `tmux`, uses a deterministic fake upstream `agent-browser`, checks `/reload` plus restart/`/resume`, and captures transcript artifacts on failure.
 - If continuing the same conversation after restart, use `/resume` or an explicit session path/id.
 - Resumed sessions should reflect the updated configured extension source after restart.
 

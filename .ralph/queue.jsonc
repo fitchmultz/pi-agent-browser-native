@@ -45,7 +45,7 @@
       "id": "RQ-0046",
       "status": "todo",
       "title": "Refresh local docs and prompt guidance for the complete current surface",
-      "description": "Update the repo-readable command reference, README, tool contract, requirements, release notes, and extension prompt playbook so agents can use the complete current agent-browser surface through the native `agent_browser` tool. Translate upstream shell examples into exact native tool-call shapes where this repo instructs agents, while preserving upstream terminology. Acceptance criteria: docs cover all baseline command families, global options, env vars, providers, setup/diagnostic commands, skills, and specialized workflows; `README.md`, `docs/COMMAND_REFERENCE.md`, `docs/TOOL_CONTRACT.md`, `docs/REQUIREMENTS.md`, and `extensions/agent-browser/lib/playbook.ts` agree with each other; drift checks prevent future divergence; `npm run docs:playbook:check` and `npm run verify:command-reference` pass.",
+      "description": "Update the repo-readable command reference, README, tool contract, requirements, release notes, and extension prompt playbook so agents can use the complete current agent-browser surface through the native `agent_browser` tool. Translate upstream shell examples into exact native tool-call shapes where this repo instructs agents, while preserving upstream terminology. Acceptance criteria: docs cover all baseline command families, global options, env vars, providers, setup/diagnostic commands, skills, and specialized workflows; `README.md`, `docs/COMMAND_REFERENCE.md`, `docs/TOOL_CONTRACT.md`, `docs/REQUIREMENTS.md`, and `extensions/agent-browser/lib/playbook.ts` agree with each other; drift checks prevent future divergence; `npm run docs -- playbook check` and `npm run verify -- command-reference` pass.",
       "priority": "high",
       "tags": ["docs", "playbook", "agent-browser", "upstream-sync"],
       "scope": [
@@ -57,8 +57,8 @@
         "extensions/agent-browser/lib/playbook.ts",
         "scripts/check-playbook-drift.ts",
         "scripts/agent-browser-capability-baseline.mjs",
-        "npm run docs:playbook:check",
-        "npm run verify:command-reference"
+        "npm run docs -- playbook check",
+        "npm run verify -- command-reference"
       ],
       "evidence": [
         "path: docs/COMMAND_REFERENCE.md:11-13 :: the command reference promises a repo-readable fallback for blocked direct binary help.",
@@ -200,7 +200,7 @@
       "id": "RQ-0050",
       "status": "todo",
       "title": "Add real-upstream coverage for core page interaction commands",
-      "description": "Build a deterministic fixture-backed real-upstream contract matrix for the normal browser workflow commands in the current version. Cover navigation (`open`, `back`, `forward`, `reload`, `connect` where safe), interaction (`click`, `dblclick`, `type`, `fill`, `press`, `keyboard`, `hover`, `focus`, `check`, `uncheck`, `select`, `drag`, `upload`, `scroll`, `scrollintoview`, `mouse`), extraction (`get` variants, `is` variants, `find` locators), snapshots, screenshots, PDFs, waits, and tabs. Acceptance criteria: the opt-in real-upstream suite exercises representative commands against localhost fixtures without relying on external sites; fake tests cover the rest of the matrix; cleanup closes sessions and deletes temp files; `npm run test:real-upstream` passes when the baseline version is installed.",
+      "description": "Build a deterministic fixture-backed real-upstream contract matrix for the normal browser workflow commands in the current version. Cover navigation (`open`, `back`, `forward`, `reload`, `connect` where safe), interaction (`click`, `dblclick`, `type`, `fill`, `press`, `keyboard`, `hover`, `focus`, `check`, `uncheck`, `select`, `drag`, `upload`, `scroll`, `scrollintoview`, `mouse`), extraction (`get` variants, `is` variants, `find` locators), snapshots, screenshots, PDFs, waits, and tabs. Acceptance criteria: the opt-in real-upstream suite exercises representative commands against localhost fixtures without relying on external sites; fake tests cover the rest of the matrix; cleanup closes sessions and deletes temp files; `npm run verify -- real-upstream` passes when the baseline version is installed.",
       "priority": "high",
       "tags": ["tests", "real-upstream", "core-commands", "browser"],
       "scope": [
@@ -209,7 +209,7 @@
         "test/fixtures/agent-browser-real-output-shapes.json",
         "test/agent-browser.extension-validation.test.ts",
         "extensions/agent-browser/lib/results/presentation.ts",
-        "npm run test:real-upstream",
+        "npm run verify -- real-upstream",
         "npm test"
       ],
       "evidence": [
@@ -355,7 +355,7 @@
       "id": "RQ-0054",
       "status": "todo",
       "title": "Upgrade verification gates for full-surface upstream support",
-      "description": "Turn the expanded support matrix into sustainable verification. Update default and opt-in gates so future upstream changes cannot silently desynchronize the wrapper, docs, prompt guidance, package doctor, real-upstream contract fixture, or packaged Pi smoke tests. Acceptance criteria: `npm run verify` checks generated docs/playbook drift, typecheck, unit/fake tests, and command-reference baseline; `npm run verify:real-upstream` covers the expanded safe real-browser matrix; `npm run verify:package:pi` still loads the package with a fake upstream; doctor reports version drift with clear re-baselining instructions; all scripts have useful help where user-facing; tests are documented in release docs.",
+      "description": "Turn the expanded support matrix into sustainable verification. Update default and opt-in gates so future upstream changes cannot silently desynchronize the wrapper, docs, prompt guidance, package doctor, real-upstream contract fixture, or packaged Pi smoke tests. Acceptance criteria: `npm run verify` checks generated docs/playbook drift, typecheck, unit/fake tests, and command-reference baseline; `npm run verify -- real-upstream` covers the expanded safe real-browser matrix; `npm run verify -- package-pi` still loads the package with a fake upstream; doctor reports version drift with clear re-baselining instructions; all scripts have useful help where user-facing; tests are documented in release docs.",
       "priority": "high",
       "tags": ["verification", "ci", "doctor", "package", "real-upstream"],
       "scope": [
@@ -369,8 +369,8 @@
         "test/agent-browser.real-upstream-contract.test.ts",
         "docs/RELEASE.md",
         "npm run verify",
-        "npm run verify:real-upstream",
-        "npm run verify:package:pi"
+        "npm run verify -- real-upstream",
+        "npm run verify -- package-pi"
       ],
       "evidence": [
         "path: package.json:58-69 :: current verification scripts include docs/playbook, typecheck, tests, command-reference, real-upstream, package, Pi smoke, lifecycle, and release gates.",
@@ -382,7 +382,7 @@
         "Wire the expanded baseline into doctor, command-reference verification, package smoke, and real-upstream fixture expectations.",
         "Ensure every user-facing/reusable script touched has `-h`/`--help` examples and exit codes.",
         "Update release docs with the exact validation commands required after upstream version changes.",
-        "Run and document the results of `npm run verify`, `npm run verify:real-upstream`, and `npm run verify:package:pi`."
+        "Run and document the results of `npm run verify`, `npm run verify -- real-upstream`, and `npm run verify -- package-pi`."
       ],
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
@@ -397,7 +397,7 @@
       "id": "RQ-0055",
       "status": "todo",
       "title": "Run Pi lifecycle smoke validation for the expanded agent_browser surface",
-      "description": "Validate the updated extension in Pi the way agents actually use it. Exercise both quick isolated mode and configured-source lifecycle mode after the expanded surface lands, including `/reload`, restart, and `/resume` behavior. Cover representative calls from every command family through the native `agent_browser` tool rather than bash. Acceptance criteria: `pi --no-extensions -e .` smoke proves unpublished checkout behavior; `npm run verify:lifecycle` passes; manual or scripted transcript evidence covers version/help/skills, open/snapshot/click, batch stdin, eval stdin, screenshot artifact, explicit session passthrough, sessionMode fresh, and at least one representative current command from each newly supported family; no lingering tmux sessions, browser sessions, temp artifacts, or scratch files remain.",
+      "description": "Validate the updated extension in Pi the way agents actually use it. Exercise both quick isolated mode and configured-source lifecycle mode after the expanded surface lands, including `/reload`, restart, and `/resume` behavior. Cover representative calls from every command family through the native `agent_browser` tool rather than bash. Acceptance criteria: `pi --no-extensions -e .` smoke proves unpublished checkout behavior; `npm run verify -- lifecycle` passes; manual or scripted transcript evidence covers version/help/skills, open/snapshot/click, batch stdin, eval stdin, screenshot artifact, explicit session passthrough, sessionMode fresh, and at least one representative current command from each newly supported family; no lingering tmux sessions, browser sessions, temp artifacts, or scratch files remain.",
       "priority": "medium",
       "tags": ["pi", "lifecycle", "smoke", "manual-validation", "tmux"],
       "scope": [
@@ -405,20 +405,20 @@
         "scripts/verify-lifecycle.mjs",
         "README.md",
         "docs/RELEASE.md",
-        "npm run verify:lifecycle",
+        "npm run verify -- lifecycle",
         "pi --no-extensions -e .",
         "tmux"
       ],
       "evidence": [
         "path: AGENTS.md:19-47 :: project testing rules require quick isolated mode and configured-source lifecycle mode to be kept distinct.",
         "path: AGENTS.md:50-71 :: current minimum validation focus lists native invocation, open, snapshot, click, batch, eval, screenshot, sessions, reload, restart, and resume.",
-        "path: package.json:68-69 :: lifecycle harness exists as `npm run verify:lifecycle` and `npm run verify:lifecycle:keep-artifacts`.",
+        "path: package.json scripts :: lifecycle harness is exposed through `npm run verify -- lifecycle`; artifact retention is available with `npm run verify -- lifecycle --keep-artifacts`.",
         "workflow: user request asks for support for everything in the current version, so validation must go beyond docs/unit tests and prove Pi-native invocation paths."
       ],
       "plan": [
         "Prepare a concise Pi smoke script/prompt that drives representative current command families through native `agent_browser` calls.",
         "Run quick isolated `pi --no-extensions -e .` after code/docs changes and capture enough transcript evidence to debug failures.",
-        "Run configured-source lifecycle validation via `npm run verify:lifecycle` and confirm reload/restart/resume behavior still sees the updated extension.",
+        "Run configured-source lifecycle validation via `npm run verify -- lifecycle` and confirm reload/restart/resume behavior still sees the updated extension.",
         "Clean up tmux sessions, browser sessions, temp roots, and any repo-local scratch artifacts before completion."
       ],
       "notes": [],
@@ -434,7 +434,7 @@
       "id": "RQ-0056",
       "status": "todo",
       "title": "Close the current-version support epic with a gap audit and release-ready evidence",
-      "description": "After the implementation tasks land, perform a final support audit against the RQ-0045 baseline and produce release-ready evidence. The goal is to prove that every current command family is either natively supported, intentionally delegated thinly to upstream with docs/tests, or explicitly called out as requiring external setup/credentials. Acceptance criteria: a checklist maps every baseline command/option/env/skill/provider to docs, runtime handling, tests, and validation status; no unresolved high-priority gaps remain in `.ralph/queue.jsonc`; `npm run verify`, `npm run verify:real-upstream`, `npm run verify:package:pi`, and `npm run verify:lifecycle` are green or have documented environment-only skips; cleanup is complete; the task can be archived as the support epic closure.",
+      "description": "After the implementation tasks land, perform a final support audit against the RQ-0045 baseline and produce release-ready evidence. The goal is to prove that every current command family is either natively supported, intentionally delegated thinly to upstream with docs/tests, or explicitly called out as requiring external setup/credentials. Acceptance criteria: a checklist maps every baseline command/option/env/skill/provider to docs, runtime handling, tests, and validation status; no unresolved high-priority gaps remain in `.ralph/queue.jsonc`; `npm run verify`, `npm run verify -- real-upstream`, `npm run verify -- package-pi`, and `npm run verify -- lifecycle` are green or have documented environment-only skips; cleanup is complete; the task can be archived as the support epic closure.",
       "priority": "high",
       "tags": ["audit", "release-readiness", "support-matrix", "verification"],
       "scope": [
@@ -445,9 +445,9 @@
         "test/fixtures/agent-browser-real-output-shapes.json",
         ".ralph/queue.jsonc",
         "npm run verify",
-        "npm run verify:real-upstream",
-        "npm run verify:package:pi",
-        "npm run verify:lifecycle"
+        "npm run verify -- real-upstream",
+        "npm run verify -- package-pi",
+        "npm run verify -- lifecycle"
       ],
       "evidence": [
         "workflow: this queue was created to decompose support for the complete current agent-browser version into implementable Ralph tasks.",
