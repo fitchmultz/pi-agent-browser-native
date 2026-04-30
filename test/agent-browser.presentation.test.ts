@@ -19,6 +19,7 @@ import {
 	DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
 	getSessionArtifactManifestMaxEntries,
 	mergeSessionArtifactManifest,
+	type SessionArtifactManifest,
 	type SessionArtifactManifestEntry,
 } from "../extensions/agent-browser/lib/results/shared.js";
 import {
@@ -147,6 +148,189 @@ test("buildToolPresentation does not classify confirmation-like records without 
 	assert.notEqual(presentation.summary, "Confirmation required: undefined");
 });
 
+test("buildToolPresentation redacts sensitive generic string summaries", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "eval", subcommand: "--stdin" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: "Cookie: sid=summary-secret" },
+	});
+
+	assert.doesNotMatch(presentation.summary, /summary-secret/);
+	assert.match(presentation.summary, /\[REDACTED\]/);
+
+	const urlPresentation = await buildToolPresentation({
+		commandInfo: { command: "get", subcommand: "url" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: "https://example.com/data?key=abc123" },
+	});
+	assert.doesNotMatch(urlPresentation.summary, /abc123/);
+	assert.match(urlPresentation.summary, /\[REDACTED\]|%5BREDACTED%5D/);
+});
+
+test("buildToolPresentation redacts structured secrets in generic fallback text", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "eval", subcommand: "--stdin" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				cookie: "sid=secret-cookie",
+				message: "Authorization: Bearer raw-token Cookie: sid=raw-cookie",
+				nested: { token: "secret-token", url: "https://example.com/?api_key=secret-key" },
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /\[REDACTED\]/);
+	assert.doesNotMatch(text, /secret-cookie|raw-token|raw-cookie|secret-token|secret-key/);
+});
+
+test("buildToolPresentation redacts console and page error diagnostics", async () => {
+	const consolePresentation = await buildToolPresentation({
+		commandInfo: { command: "console" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				messages: [
+					{ type: "log", text: 'payload:\n{\n  "outer": { "token":"console-secret" },\n  "ok":true\n}' },
+					{ type: "log", text: 'payload: {"message":"Cookie: sid=json-cookie","other":1}' },
+				],
+			},
+		},
+	});
+	const consoleText = (consolePresentation.content[0] as { text: string }).text;
+	assert.doesNotMatch(consoleText, /console-secret|json-cookie/);
+	assert.match(consoleText, /\[REDACTED\]/);
+	assert.match(consoleText, /other/);
+
+	const errorsPresentation = await buildToolPresentation({
+		commandInfo: { command: "errors" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				errors: [{ text: "Cookie: sid=error-secret", url: "https://example.com/app?token=url-secret" }],
+			},
+		},
+	});
+	const errorsText = (errorsPresentation.content[0] as { text: string }).text;
+	assert.doesNotMatch(errorsText, /error-secret|url-secret/);
+	assert.match(errorsText, /\[REDACTED\]/);
+});
+
+test("buildToolPresentation renders agent-browser skills as native-tool guidance", async () => {
+	const listPresentation = await buildToolPresentation({
+		commandInfo: { command: "skills", subcommand: "list" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [{ name: "core", description: "Core usage guide" }],
+		},
+	});
+	assert.equal((listPresentation.content[0] as { text: string }).text, "1. core — Core usage guide");
+	assert.equal(listPresentation.summary, "agent-browser skills: 1");
+
+	const getPresentation = await buildToolPresentation({
+		commandInfo: { command: "skills", subcommand: "get" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [{ content: "---\nallowed-tools: Bash(agent-browser:*)\n---\n# Core\n\n```bash\nagent-browser snapshot -i\n```" }],
+		},
+	});
+	const text = (getPresentation.content[0] as { text: string }).text;
+	assert.match(text, /Pi native-tool note/);
+	assert.match(text, /# Core/);
+	assert.match(text, /agent_browser \{ "args": \["snapshot","-i"\] \}/);
+	assert.doesNotMatch(text, /allowed-tools: Bash|```bash|^\[/m);
+});
+
+test("buildToolPresentation adapts quoted and heredoc skill examples to native tool calls", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "skills", subcommand: "get" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				content: [
+					"# Skill",
+					"",
+					"```bash",
+					'agent-browser open "https://example.com/a b?q=hello world" --profile "Default Profile"',
+					"agent-browser eval --stdin <<JS",
+					"document.title",
+					"JS",
+					"agent-browser eval --stdin <<-EOF",
+					"\tdocument.body.innerText",
+					"\tEOF",
+					"```",
+				].join("\n"),
+			},
+		},
+	});
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /agent_browser \{ "args": \["open","https:\/\/example\.com\/a b\?q=hello world","--profile","Default Profile"\] \}/);
+	assert.match(text, /agent_browser \{ "args": \["eval","--stdin"\], "stdin": "document\.title" \}/);
+	assert.match(text, /agent_browser \{ "args": \["eval","--stdin"\], "stdin": "document\.body\.innerText" \}/);
+	assert.doesNotMatch(text, /<<JS|<<-EOF|\nJS\n|\n\tEOF\n/);
+});
+
+test("buildToolPresentation preserves benign Basic docs prose while redacting Basic credentials", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "skills", subcommand: "get" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [{ content: "# Basic Auth Flow\n\nHTTP Basic Authentication\n\nAuthorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" }],
+		},
+	});
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Basic Auth Flow/);
+	assert.match(text, /HTTP Basic Authentication/);
+	assert.doesNotMatch(text, /QWxhZGRpbjpvcGVuIHNlc2FtZQ==/);
+	assert.match(text, /Basic \[REDACTED\]/);
+
+	const consolePresentation = await buildToolPresentation({
+		commandInfo: { command: "console" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { messages: [{ text: "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" }] } },
+	});
+	assert.doesNotMatch((consolePresentation.content[0] as { text: string }).text, /QWxhZGRpbjpvcGVuIHNlc2FtZQ==/);
+});
+
+test("artifact manifest keeps explicit files with the same relative path but different absolute paths", () => {
+	const manifest = mergeSessionArtifactManifest({
+		entries: [
+			{
+				absolutePath: "/tmp/worktree-a/download.txt",
+				createdAtMs: 1_000,
+				kind: "download",
+				path: "download.txt",
+				retentionState: "live",
+				storageScope: "explicit-path",
+			},
+			{
+				absolutePath: "/tmp/worktree-b/download.txt",
+				createdAtMs: 1_001,
+				kind: "download",
+				path: "download.txt",
+				retentionState: "live",
+				storageScope: "explicit-path",
+			},
+		],
+		nowMs: 2_000,
+	});
+
+	assert.deepEqual(
+		manifest?.entries.map((entry) => entry.absolutePath).sort(),
+		["/tmp/worktree-a/download.txt", "/tmp/worktree-b/download.txt"],
+	);
+	assert.equal(manifest?.liveCount, 2);
+});
+
 test("buildToolPresentation appends stale-ref recovery guidance to direct command failures", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "click", subcommand: "@zzz" },
@@ -221,6 +405,27 @@ test("buildToolPresentation does not append selector guidance to non-dialect sel
 		"Element not visible: getByRole('button', { name: 'Submit' })",
 	);
 	assert.equal(presentation.summary, "Element not visible: getByRole('button', { name: 'Submit' })");
+});
+
+test("buildToolPresentation redacts scalar extraction results for eval and get commands", async () => {
+	const evalPresentation = await buildToolPresentation({
+		commandInfo: { command: "eval", subcommand: "--stdin" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { origin: "https://example.com/?token=origin-secret", result: '{"token":"scalar-secret","ok":true}' } },
+	});
+	const evalText = (evalPresentation.content[0] as { text: string }).text;
+	assert.doesNotMatch(evalText, /scalar-secret|origin-secret/);
+	assert.match(evalText, /\[REDACTED\]/);
+	assert.doesNotMatch(evalPresentation.summary, /scalar-secret/);
+
+	const getPresentation = await buildToolPresentation({
+		commandInfo: { command: "get", subcommand: "text" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { result: "Cookie: sid=get-secret" } },
+	});
+	const getText = (getPresentation.content[0] as { text: string }).text;
+	assert.doesNotMatch(getText, /get-secret/);
+	assert.match(getText, /\[REDACTED\]/);
 });
 
 test("buildToolPresentation formats scalar extraction results for eval and get commands", async () => {
@@ -414,6 +619,28 @@ test("buildToolPresentation formats console and errors previews", async () => {
 		(errorsPresentation.content[0] as { text: string }).text,
 		"1. Error: delayed (https://example.com/app.js:line 10:column 5)",
 	);
+});
+
+test("buildToolPresentation redacts dashboard and doctor diagnostic strings", async () => {
+	const dashboardPresentation = await buildToolPresentation({
+		commandInfo: { command: "dashboard" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { port: 9222, reason: "Authorization: Bearer dash-secret Cookie: sid=dash-cookie" } },
+	});
+	const dashboardText = (dashboardPresentation.content[0] as { text: string }).text;
+	assert.doesNotMatch(dashboardText, /dash-secret|dash-cookie/);
+	assert.doesNotMatch(dashboardPresentation.summary, /dash-secret|dash-cookie/);
+	assert.match(dashboardText, /\[REDACTED\]/);
+
+	const doctorPresentation = await buildToolPresentation({
+		commandInfo: { command: "doctor" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { status: "Authorization: Bearer doctor-secret Cookie: sid=doctor-cookie" } },
+	});
+	const doctorText = (doctorPresentation.content[0] as { text: string }).text;
+	assert.doesNotMatch(doctorText, /doctor-secret|doctor-cookie/);
+	assert.doesNotMatch(doctorPresentation.summary, /doctor-secret|doctor-cookie/);
+	assert.match(doctorText, /\[REDACTED\]/);
 });
 
 test("buildToolPresentation formats dashboard and doctor status", async () => {
@@ -619,7 +846,7 @@ test("buildToolPresentation records explicit saved files in the bounded session 
 		assert.equal(presentation.artifactManifest?.entries[0]?.storageScope, "explicit-path");
 		assert.equal(presentation.artifactManifest?.entries[0]?.retentionState, "live");
 		assert.match(presentation.artifactRetentionSummary ?? "", /1 live, 0 evicted/);
-		assert.match((presentation.content[0] as { text: string }).text, /Session artifacts: 1 live, 0 evicted/);
+		assert.doesNotMatch((presentation.content[0] as { text: string }).text, /Session artifacts: 1 live, 0 evicted/);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -679,7 +906,7 @@ test("buildToolPresentation reports the configured artifact manifest recent wind
 
 		assert.equal(presentation.artifactManifest?.maxEntries, 3);
 		assert.match(presentation.artifactRetentionSummary ?? "", /\(1\/3 recent\)/);
-		assert.match((presentation.content[0] as { text: string }).text, /Session artifacts: .*\(1\/3 recent\)/);
+		assert.doesNotMatch((presentation.content[0] as { text: string }).text, /Session artifacts: .*\(1\/3 recent\)/);
 	});
 });
 
@@ -879,6 +1106,46 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 		path: "/tmp/export.csv",
 		subcommand: "--download",
 	});
+});
+
+test("buildToolPresentation does not re-append old artifact retention noise for routine explicit batch files", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-explicit-noise-"));
+	const downloadPath = join(tempDir, "export.csv");
+	await writeFile(downloadPath, "a,b\n1,2\n");
+	const baseManifest: SessionArtifactManifest = {
+		entries: [
+			{
+				createdAtMs: 1_000,
+				evictedAtMs: 2_000,
+				kind: "spill",
+				path: "/tmp/old-spill.json",
+				retentionState: "evicted",
+				storageScope: "persistent-session",
+			},
+		],
+		evictedCount: 1,
+		liveCount: 0,
+		maxEntries: 100,
+		updatedAtMs: 2_000,
+		version: 1,
+	};
+	try {
+		const presentation = await buildToolPresentation({
+			artifactManifest: baseManifest,
+			commandInfo: { command: "batch" },
+			cwd: tempDir,
+			envelope: {
+				success: true,
+				data: [{ command: ["download", "@e1", "export.csv"], result: { path: "export.csv" }, success: true }],
+			},
+		});
+		const text = (presentation.content[0] as { text: string }).text;
+		assert.match(text, /Downloaded file: export\.csv/);
+		assert.doesNotMatch(text, /Session artifacts:/);
+		assert.match(presentation.artifactRetentionSummary ?? "", /1 live, 1 evicted/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
 });
 
 test("buildToolPresentation reuses standalone inline screenshot rendering inside batch output", async () => {

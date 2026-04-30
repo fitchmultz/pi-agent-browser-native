@@ -183,6 +183,8 @@ The tables below intentionally list more than the recommended workflow. Rare com
 
 ### Built-in skills
 
+Native-tool note: upstream skills are written for the standalone `agent-browser` CLI and may show bash/heredoc examples. In pi, convert those examples to `agent_browser` calls: pass CLI tokens in `args`, and pass heredoc/stdin bodies through the tool `stdin` field for `batch` or `eval --stdin`.
+
 | Command | Purpose |
 | --- | --- |
 | `skills list` | List available CLI-bundled skills. |

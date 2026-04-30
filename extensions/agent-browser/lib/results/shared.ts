@@ -141,13 +141,16 @@ export function mergeSessionArtifactManifest(options: {
 }): SessionArtifactManifest | undefined {
 	const nowMs = options.nowMs ?? Date.now();
 	const maxEntries = getSessionArtifactManifestMaxEntries();
+	const getEntryKey = (entry: SessionArtifactManifestEntry) =>
+		entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
 	const byPath = new Map<string, SessionArtifactManifestEntry>();
 	for (const entry of options.base?.entries ?? []) {
-		byPath.set(entry.path, entry);
+		byPath.set(getEntryKey(entry), entry);
 	}
 	for (const entry of options.entries ?? []) {
-		const existing = byPath.get(entry.path);
-		byPath.set(entry.path, {
+		const key = getEntryKey(entry);
+		const existing = byPath.get(key);
+		byPath.set(key, {
 			...existing,
 			...entry,
 			createdAtMs: existing?.createdAtMs ?? entry.createdAtMs,

@@ -210,23 +210,26 @@ function redactUrlToken(token: string): string {
 		return token;
 	}
 
+	let mutated = false;
 	if (parsed.username.length > 0) {
 		parsed.username = "[REDACTED]";
+		mutated = true;
 	}
 	if (parsed.password.length > 0) {
 		parsed.password = "[REDACTED]";
+		mutated = true;
 	}
 
 	for (const [name] of parsed.searchParams) {
 		if (shouldRedactQueryParam(name)) {
 			parsed.searchParams.set(name, "[REDACTED]");
+			mutated = true;
 		}
 	}
 
 	const hashText = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
 	if (hashText.includes("=")) {
 		const hashParams = new URLSearchParams(hashText);
-		let mutated = false;
 		for (const [name] of hashParams) {
 			if (shouldRedactQueryParam(name)) {
 				hashParams.set(name, "[REDACTED]");
@@ -245,10 +248,95 @@ function redactLooseUrlMatches(text: string): string {
 	return text.replace(/\b(?:https?|wss?):\/\/[^\s"'`<>\])]+/g, (match) => redactUrlToken(match));
 }
 
+function findBalancedJsonEnd(text: string, startIndex: number): number | undefined {
+	const opener = text[startIndex];
+	const closer = opener === "{" ? "}" : opener === "[" ? "]" : undefined;
+	if (!closer) return undefined;
+	const stack = [closer];
+	let inString = false;
+	let escaped = false;
+	for (let index = startIndex + 1; index < text.length; index += 1) {
+		const char = text[index];
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+				continue;
+			}
+			if (char === "\\") {
+				escaped = true;
+				continue;
+			}
+			if (char === '"') {
+				inString = false;
+			}
+			continue;
+		}
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+		if (char === "{") {
+			stack.push("}");
+			continue;
+		}
+		if (char === "[") {
+			stack.push("]");
+			continue;
+		}
+		if (char === "}" || char === "]") {
+			if (stack.pop() !== char) return undefined;
+			if (stack.length === 0) return index;
+		}
+	}
+	return undefined;
+}
+
+function redactEmbeddedStructuredText(text: string): string {
+	let output = "";
+	let cursor = 0;
+	while (cursor < text.length) {
+		const char = text[cursor];
+		if (char !== "{" && char !== "[") {
+			output += char;
+			cursor += 1;
+			continue;
+		}
+		const endIndex = findBalancedJsonEnd(text, cursor);
+		if (endIndex === undefined) {
+			output += char;
+			cursor += 1;
+			continue;
+		}
+		const candidate = text.slice(cursor, endIndex + 1);
+		try {
+			const parsed = JSON.parse(candidate) as unknown;
+			const redacted = typeof parsed === "string" ? redactSensitiveText(parsed) : JSON.stringify(redactSensitiveValue(parsed));
+			const original = typeof parsed === "string" ? parsed : JSON.stringify(parsed);
+			output += redacted === original ? candidate : redacted;
+		} catch {
+			output += candidate;
+		}
+		cursor = endIndex + 1;
+	}
+	return output;
+}
+
+function redactStandaloneBasicCredential(text: string): string {
+	return text.replace(/\b(Basic)\s+([A-Za-z0-9+/=]{12,})/gi, (match, label: string, credential: string) => {
+		if (!/[0-9+/=]/.test(credential)) return match;
+		return `${label} [REDACTED]`;
+	});
+}
+
 export function redactSensitiveText(text: string): string {
-	return redactLooseUrlMatches(text)
-		.replace(/\b(Bearer)\s+[^\s",]+/gi, "$1 [REDACTED]")
-		.replace(/\b(Basic)\s+[^\s",]+/gi, "$1 [REDACTED]");
+	return redactEmbeddedStructuredText(
+		redactStandaloneBasicCredential(
+			redactLooseUrlMatches(text)
+				.replace(/\b(Bearer)\s+[^\s",]+/gi, "$1 [REDACTED]")
+				.replace(/\b(Authorization\s*:\s*Basic)\s+[^\s",]+/gi, "$1 [REDACTED]")
+				.replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\n\r"]+/gi, "$1: [REDACTED]"),
+		),
+	);
 }
 
 export function redactSensitiveValue(value: unknown): unknown {

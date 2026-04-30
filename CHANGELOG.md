@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.13 - 2026-04-30
+
+### Fixed
+- improved model-facing redaction across generic output, scalar extraction summaries, diagnostics, console/error previews, and compacted spill files so nested, multiline, and prefixed structured secrets are masked before entering tool content or summaries
+- adapted upstream `agent-browser skills get` output for Pi's native `agent_browser` tool by removing bash-oriented allowlist hints and translating quoted and heredoc CLI examples into native tool-call examples
+- reduced artifact-retention noise for routine explicit saved files while preserving retention metadata in details, and fixed explicit artifact manifest deduplication for same relative paths in different working directories
+
+### Changed
+- documented that oversized spill files contain redacted upstream payloads rather than raw secret-bearing output
+- added command-reference guidance for converting upstream standalone CLI examples into native `agent_browser` tool calls
+
 ## 0.2.12 - 2026-04-23
 
 ### Changed

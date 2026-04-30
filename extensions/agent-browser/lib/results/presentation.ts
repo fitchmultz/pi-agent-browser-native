@@ -95,14 +95,48 @@ function appendPresentationNotice(presentation: ToolPresentation, message: strin
 	};
 }
 
+function shouldAppendArtifactRetentionNotice(entries: SessionArtifactManifestEntry[]): boolean {
+	return entries.some((entry) => entry.retentionState === "evicted" || entry.storageScope !== "explicit-path");
+}
+
+function getManifestEntryKey(entry: SessionArtifactManifestEntry): string {
+	return entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
+}
+
+function manifestHasNewNoticeWorthyEntries(base: SessionArtifactManifest | undefined, current: SessionArtifactManifest | undefined): boolean {
+	if (!current) return false;
+	const baseKeys = new Set((base?.entries ?? []).map(getManifestEntryKey));
+	return current.entries.some((entry) => !baseKeys.has(getManifestEntryKey(entry)) && (entry.retentionState === "evicted" || entry.storageScope !== "explicit-path"));
+}
+
 function applyArtifactManifest(presentation: ToolPresentation, baseManifest: SessionArtifactManifest | undefined, entries: SessionArtifactManifestEntry[]): ToolPresentation {
 	if (entries.length === 0) return presentation;
 	const artifactManifest = mergeSessionArtifactManifest({ base: baseManifest, entries });
 	if (!artifactManifest) return presentation;
 	presentation.artifactManifest = artifactManifest;
 	presentation.artifactRetentionSummary = formatSessionArtifactRetentionSummary(artifactManifest);
-	appendPresentationNotice(presentation, presentation.artifactRetentionSummary);
+	if (shouldAppendArtifactRetentionNotice(entries)) {
+		appendPresentationNotice(presentation, presentation.artifactRetentionSummary);
+	}
 	return presentation;
+}
+
+function stringifyModelFacing(value: unknown): string {
+	return stringifyUnknown(redactSensitiveValue(value));
+}
+
+function redactModelFacingText(text: string): string {
+	const parsed = parseJsonPreviewString(text);
+	if (parsed !== text) {
+		return stringifyModelFacing(parsed);
+	}
+	return redactSensitiveText(text);
+}
+
+function redactModelFacingTextIfSensitive(text: string): string {
+	return /(?:@|\b(?:api[_-]?key|auth|authorization|basic|bearer|cookie|pass(?:word)?|secret|session[_-]?id|token)\b)/i.test(text)
+		? redactModelFacingText(text)
+		: text;
 }
 
 function getTabSummary(data: Record<string, unknown>): string | undefined {
@@ -220,34 +254,166 @@ function formatSessionText(data: Record<string, unknown>): string | undefined {
 		if (sessions.length === 0) return "No active sessions.";
 		return sessions
 			.map((item, index) => {
-				if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
-				const name = getStringField(item, "name") ?? getStringField(item, "session") ?? getStringField(item, "id") ?? `(session ${index + 1})`;
+				if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
+				const name = redactModelFacingText(getStringField(item, "name") ?? getStringField(item, "session") ?? getStringField(item, "id") ?? `(session ${index + 1})`);
 				const active = item.active === true ? " *active*" : "";
-				const details = [getStringField(item, "url"), getStringField(item, "title")].filter(Boolean).join(" — ");
+				const details = [getStringField(item, "url"), getStringField(item, "title")]
+					.flatMap((detail) => (detail ? [redactModelFacingTextIfSensitive(detail)] : []))
+					.join(" — ");
 				return details ? `${index + 1}. ${name}${active} — ${details}` : `${index + 1}. ${name}${active}`;
 			})
 			.join("\n");
 	}
 	const session = getStringField(data, "session");
-	return session ? `Current session: ${session}` : undefined;
+	return session ? `Current session: ${redactModelFacingText(session)}` : undefined;
 }
 
 function formatProfilesText(profiles: unknown[], label: string): string {
 	if (profiles.length === 0) return `No ${label}.`;
 	return profiles
 		.map((item, index) => {
-			if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
-			const name = getStringField(item, "name") ?? getStringField(item, "profile") ?? `(unnamed ${index + 1})`;
+			if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
+			const name = redactModelFacingText(getStringField(item, "name") ?? getStringField(item, "profile") ?? `(unnamed ${index + 1})`);
 			const directory = getStringField(item, "directory") ?? getStringField(item, "path");
-			return directory ? `${index + 1}. ${name} (${directory})` : `${index + 1}. ${name}`;
+			return directory ? `${index + 1}. ${name} (${redactModelFacingText(directory)})` : `${index + 1}. ${name}`;
 		})
 		.join("\n");
+}
+
+function formatSkillsListText(skills: unknown[]): string {
+	if (skills.length === 0) return "No agent-browser skills found.";
+	return skills
+		.map((item, index) => {
+			if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
+			const name = redactModelFacingText(getStringField(item, "name") ?? `(skill ${index + 1})`);
+			const description = getStringField(item, "description");
+			return description ? `${index + 1}. ${name} — ${redactModelFacingText(description)}` : `${index + 1}. ${name}`;
+		})
+		.join("\n");
+}
+
+function getSkillContent(data: unknown): string | undefined {
+	if (typeof data === "string") return data;
+	if (isRecord(data) && typeof data.content === "string") return data.content;
+	if (!Array.isArray(data)) return undefined;
+	const content = data.flatMap((item) => (isRecord(item) && typeof item.content === "string" ? [item.content] : []));
+	return content.length > 0 ? content.join("\n\n") : undefined;
+}
+
+function splitShellWords(input: string): string[] | undefined {
+	const words: string[] = [];
+	let current = "";
+	let quote: 'single' | 'double' | undefined;
+	for (let index = 0; index < input.length; index += 1) {
+		const char = input[index];
+		if (quote === "single") {
+			if (char === "'") quote = undefined;
+			else current += char;
+			continue;
+		}
+		if (quote === "double") {
+			if (char === '"') quote = undefined;
+			else if (char === "\\" && index + 1 < input.length) {
+				index += 1;
+				current += input[index];
+			} else current += char;
+			continue;
+		}
+		if (char === "'") {
+			quote = "single";
+			continue;
+		}
+		if (char === '"') {
+			quote = "double";
+			continue;
+		}
+		if (char === "\\" && index + 1 < input.length) {
+			index += 1;
+			current += input[index];
+			continue;
+		}
+		if (/\s/.test(char)) {
+			if (current.length > 0) {
+				words.push(current);
+				current = "";
+			}
+			continue;
+		}
+		current += char;
+	}
+	if (quote) return undefined;
+	if (current.length > 0) words.push(current);
+	return words;
+}
+
+function formatNativeAgentBrowserCall(args: string[], stdin?: string): string {
+	return stdin === undefined
+		? `agent_browser { "args": ${JSON.stringify(args)} }`
+		: `agent_browser { "args": ${JSON.stringify(args)}, "stdin": ${JSON.stringify(stdin)} }`;
+}
+
+function formatNativeSkillContent(content: string): string {
+	const lines = content.replace(/^allowed-tools:.*agent-browser.*\n?/gim, "").replace(/^```bash\s*$/gim, "```text").split("\n");
+	const output: string[] = [];
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index];
+		const commandMatch = /^(\s*)agent-browser\s+(.+?)\s*$/.exec(line);
+		if (!commandMatch) {
+			output.push(line);
+			continue;
+		}
+		const indent = commandMatch[1];
+		const rawArgsText = commandMatch[2];
+		const heredocMatch = /^(.*?)\s+(<<-?)['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\s*$/.exec(rawArgsText);
+		const argsText = heredocMatch?.[1] ?? rawArgsText;
+		const args = splitShellWords(argsText);
+		if (!args) {
+			output.push(line);
+			continue;
+		}
+		if (!heredocMatch) {
+			output.push(`${indent}${formatNativeAgentBrowserCall(args)}`);
+			continue;
+		}
+		const stripsLeadingTabs = heredocMatch[2] === "<<-";
+		const delimiter = heredocMatch[3];
+		const stdinLines: string[] = [];
+		let cursor = index + 1;
+		while (cursor < lines.length) {
+			const candidate = stripsLeadingTabs ? lines[cursor].replace(/^\t+/, "") : lines[cursor];
+			if (candidate === delimiter) break;
+			stdinLines.push(candidate);
+			cursor += 1;
+		}
+		if (cursor >= lines.length) {
+			output.push(line);
+			continue;
+		}
+		output.push(`${indent}${formatNativeAgentBrowserCall(args, stdinLines.join("\n"))}`);
+		index = cursor;
+	}
+	return output.join("\n");
+}
+
+function formatSkillsText(commandInfo: CommandInfo, data: unknown): string | undefined {
+	if (commandInfo.command !== "skills") return undefined;
+	if (commandInfo.subcommand === "list" && Array.isArray(data)) return formatSkillsListText(data);
+	const content = getSkillContent(data);
+	if (content) {
+		const note = [
+			"Pi native-tool note: upstream skill text was adapted for this native tool.",
+			"Use args for CLI tokens and stdin only for batch or eval --stdin; do not pipe heredocs through bash unless the user explicitly asks for a bash workflow.",
+		].join("\n");
+		return `${note}\n\n${redactModelFacingText(formatNativeSkillContent(content))}`;
+	}
+	if (typeof data === "string") return redactModelFacingText(formatNativeSkillContent(data));
+	return undefined;
 }
 
 function formatAuthShowText(data: Record<string, unknown>): string | undefined {
 	const lines = AUTH_SHOW_SAFE_FIELDS.flatMap((key) => {
 		const value = data[key];
-		return typeof value === "string" && value.trim().length > 0 ? [`${key}: ${value.trim()}`] : [];
+		return typeof value === "string" && value.trim().length > 0 ? [`${key}: ${redactModelFacingText(value.trim())}`] : [];
 	});
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
@@ -305,7 +471,7 @@ function formatNetworkRequestsText(data: Record<string, unknown>): string | unde
 	if (!requests) return undefined;
 	if (requests.length === 0) return "No network requests captured.";
 	const shown = requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap((item, index) => {
-		if (!isRecord(item)) return [`${index + 1}. ${stringifyUnknown(item)}`];
+		if (!isRecord(item)) return [`${index + 1}. ${stringifyModelFacing(item)}`];
 		return formatNetworkRequestLine(item, index);
 	});
 	if (requests.length > DIAGNOSTIC_REQUEST_PREVIEW_LIMIT) {
@@ -326,10 +492,10 @@ function formatConsoleText(data: Record<string, unknown>): string | undefined {
 	if (!messages) return undefined;
 	if (messages.length === 0) return "No console messages.";
 	const shown = messages.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
-		if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
-		const type = getStringField(item, "type") ?? "message";
-		const text = getStringField(item, "text") ?? stringifyUnknown(item);
-		return `${index + 1}. [${type}] ${firstLine(text, 220)}`;
+		if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
+		const type = redactModelFacingText(getStringField(item, "type") ?? "message");
+		const text = getStringField(item, "text") ?? stringifyModelFacing(item);
+		return `${index + 1}. [${type}] ${firstLine(redactModelFacingText(text).replace(/\s+/g, " ").trim(), 220)}`;
 	});
 	if (messages.length > shown.length) {
 		shown.push(`... (${messages.length - shown.length} additional console messages omitted from preview)`);
@@ -342,16 +508,18 @@ function formatErrorsText(data: Record<string, unknown>): string | undefined {
 	if (!errors) return undefined;
 	if (errors.length === 0) return "No page errors.";
 	const shown = errors.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
-		if (!isRecord(item)) return `${index + 1}. ${stringifyUnknown(item)}`;
-		const text = getStringField(item, "text") ?? stringifyUnknown(item);
+		if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
+		const text = getStringField(item, "text") ?? stringifyModelFacing(item);
 		const location = [
 			getStringField(item, "url"),
 			typeof item.line === "number" ? `line ${item.line}` : undefined,
 			typeof item.column === "number" ? `column ${item.column}` : undefined,
 		]
 			.filter(Boolean)
+			.map((item) => redactModelFacingText(String(item)))
 			.join(":");
-		return location ? `${index + 1}. ${firstLine(text, 220)} (${location})` : `${index + 1}. ${firstLine(text, 220)}`;
+		const safeText = firstLine(redactModelFacingText(text), 220);
+		return location ? `${index + 1}. ${safeText} (${location})` : `${index + 1}. ${safeText}`;
 	});
 	if (errors.length > shown.length) {
 		shown.push(`... (${errors.length - shown.length} additional errors omitted from preview)`);
@@ -365,14 +533,14 @@ function formatDashboardText(data: Record<string, unknown>): string | undefined 
 	if (typeof data.pid === "number") lines.push(`PID: ${data.pid}`);
 	if (typeof data.stopped === "boolean") lines.push(`Stopped: ${data.stopped}`);
 	const reason = getStringField(data, "reason");
-	if (reason) lines.push(`Reason: ${reason}`);
+	if (reason) lines.push(`Reason: ${redactModelFacingText(reason)}`);
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
 function formatDoctorText(data: Record<string, unknown>): string | undefined {
 	const lines: string[] = [];
 	const status = getStringField(data, "status") ?? getStringField(data, "result");
-	if (status) lines.push(`Status: ${status}`);
+	if (status) lines.push(`Status: ${redactModelFacingText(status)}`);
 	for (const key of ["checks", "issues", "problems"] as const) {
 		const items = getArrayField(data, key);
 		if (items) lines.push(`${key}: ${items.length}`);
@@ -680,11 +848,13 @@ function formatExtractionSummary(commandInfo: CommandInfo, data: Record<string, 
 	if (!scalarResult) {
 		return undefined;
 	}
+	const safeScalarResult = redactModelFacingText(scalarResult);
+	const firstResultLine = safeScalarResult.split("\n", 1)[0] ?? safeScalarResult;
 	if (commandInfo.command === "get") {
-		return `${formatGetSummaryLabel(commandInfo.subcommand)}: ${scalarResult.split("\n", 1)[0] ?? scalarResult}`;
+		return `${formatGetSummaryLabel(commandInfo.subcommand)}: ${firstResultLine}`;
 	}
 	if (commandInfo.command === "eval") {
-		return `Eval result: ${scalarResult.split("\n", 1)[0] ?? scalarResult}`;
+		return `Eval result: ${firstResultLine}`;
 	}
 	return undefined;
 }
@@ -698,7 +868,9 @@ function formatExtractionText(commandInfo: CommandInfo, data: Record<string, unk
 		return undefined;
 	}
 	const origin = getExtractionOrigin(data);
-	return origin && origin !== scalarResult ? `${scalarResult}\n\nOrigin: ${origin}` : scalarResult;
+	const safeScalarResult = redactModelFacingText(scalarResult);
+	const safeOrigin = origin ? redactModelFacingText(origin) : undefined;
+	return safeOrigin && safeOrigin !== safeScalarResult ? `${safeScalarResult}\n\nOrigin: ${safeOrigin}` : safeScalarResult;
 }
 
 function isNavigationObservableCommand(command: string | undefined): boolean {
@@ -734,7 +906,7 @@ function formatNavigationActionResult(data: Record<string, unknown>): string | u
 		lines.push(`Clicked: ${String(actionData.clicked)}`);
 	}
 	if (typeof actionData.href === "string") {
-		lines.push(`Href: ${actionData.href}`);
+		lines.push(`Href: ${redactModelFacingText(actionData.href)}`);
 	}
 	if (typeof actionData.navigated === "boolean") {
 		lines.push(`Navigated: ${actionData.navigated}`);
@@ -743,7 +915,7 @@ function formatNavigationActionResult(data: Record<string, unknown>): string | u
 		return lines.join("\n");
 	}
 
-	const actionText = stringifyUnknown(actionData).trim();
+	const actionText = stringifyModelFacing(actionData).trim();
 	if (actionText.length === 0 || actionText === "{}") {
 		return undefined;
 	}
@@ -827,7 +999,7 @@ function appendSelectorRecoveryHint(errorText: string): string {
 }
 
 function formatBatchStepError(error: unknown): string {
-	const errorText = stringifyUnknown(error).trim();
+	const errorText = stringifyModelFacing(error).trim();
 	const formattedErrorText = errorText.length > 0 ? `Error: ${errorText}` : "Error: batch step failed.";
 	return appendSelectorRecoveryHint(formattedErrorText);
 }
@@ -988,7 +1160,7 @@ async function buildBatchPresentation(options: {
 	const text = failureHeader ? `${failureHeader}\n\n${stepText}` : stepText;
 
 	const artifactRetentionSummary = currentArtifactManifest ? formatSessionArtifactRetentionSummary(currentArtifactManifest) : undefined;
-	const contentText = artifactRetentionSummary && currentArtifactManifest !== options.artifactManifest ? `${text}\n\n${artifactRetentionSummary}` : text;
+	const contentText = artifactRetentionSummary && manifestHasNewNoticeWorthyEntries(options.artifactManifest, currentArtifactManifest) ? `${text}\n\n${artifactRetentionSummary}` : text;
 
 	return {
 		artifactManifest: currentArtifactManifest,
@@ -1018,6 +1190,12 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 	}
 	if (Array.isArray(data) && commandInfo.command === "profiles") {
 		return `Chrome profiles: ${data.length}`;
+	}
+	if (Array.isArray(data) && commandInfo.command === "skills" && commandInfo.subcommand === "list") {
+		return `agent-browser skills: ${data.length}`;
+	}
+	if (commandInfo.command === "skills" && commandInfo.subcommand === "get") {
+		return "agent-browser skill loaded";
 	}
 	if (isRecord(data)) {
 		const navigationSummary = getNavigationSummary(data);
@@ -1069,7 +1247,7 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	}
 
 	if (typeof data === "string") {
-		return data;
+		return redactModelFacingText(data);
 	}
 	if (typeof data === "number" || typeof data === "boolean") {
 		return String(data);
@@ -1077,8 +1255,11 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	if (Array.isArray(data) && commandInfo.command === "profiles") {
 		return formatProfilesText(data, "Chrome profiles");
 	}
+	if (Array.isArray(data) && commandInfo.command === "skills") {
+		return formatSkillsText(commandInfo, data) ?? stringifyModelFacing(data);
+	}
 	if (!isRecord(data)) {
-		return stringifyUnknown(data);
+		return stringifyModelFacing(data);
 	}
 
 	const navigationSummary = getNavigationSummary(data);
@@ -1105,6 +1286,10 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 		const screenshotSummary = getScreenshotSummary(data);
 		if (screenshotSummary) return screenshotSummary;
 	}
+	const skillsText = formatSkillsText(commandInfo, data);
+	if (skillsText) {
+		return skillsText;
+	}
 	const extractionText = formatExtractionText(commandInfo, data);
 	if (extractionText) {
 		return extractionText;
@@ -1117,10 +1302,10 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 
 	const pageSummary = getPageSummary(data);
 	if (pageSummary) {
-		return pageSummary;
+		return redactModelFacingText(pageSummary);
 	}
 
-	return stringifyUnknown(data);
+	return stringifyModelFacing(data);
 }
 
 function isTrustedScreenshotOutput(commandInfo: CommandInfo): boolean {
@@ -1140,6 +1325,16 @@ function extractImagePath(commandInfo: CommandInfo, cwd: string, data: unknown):
 	}
 	const mimeType = getImageMimeType(data.path);
 	return mimeType ? resolve(cwd, data.path) : undefined;
+}
+
+function sanitizeModelFacingPresentation(presentation: ToolPresentation): ToolPresentation {
+	presentation.content = presentation.content.map((item) => {
+		if (item.type !== "text") return item;
+		const parsed = parseJsonPreviewString(item.text);
+		return parsed === item.text ? item : { ...item, text: stringifyModelFacing(parsed) };
+	});
+	presentation.summary = redactModelFacingText(presentation.summary);
+	return presentation;
 }
 
 async function attachInlineImage(presentation: ToolPresentation, imagePath: string): Promise<ToolPresentation> {
@@ -1208,12 +1403,12 @@ async function writeLargeOutputSpillFile(options: {
 }): Promise<LargeOutputSpillWriteResult> {
 	const payload =
 		typeof options.data === "string"
-			? options.data
+			? redactModelFacingText(options.data)
 			: typeof options.data === "number" || typeof options.data === "boolean"
 				? String(options.data)
 				: options.data === undefined
-					? options.text
-					: stringifyUnknown(options.data);
+					? redactModelFacingText(options.text)
+					: stringifyModelFacing(options.data);
 	const isStructuredPayload = typeof options.data !== "string" && typeof options.data !== "number" && typeof options.data !== "boolean";
 	const fileOptions = {
 		content: payload,
@@ -1335,7 +1530,7 @@ export async function buildToolPresentation(options: {
 }): Promise<ToolPresentation> {
 	const { artifactManifest, commandInfo, cwd, envelope, errorText, persistentArtifactStore } = options;
 	if (errorText) {
-		const hintedErrorText = appendSelectorRecoveryHint(errorText);
+		const hintedErrorText = appendSelectorRecoveryHint(redactModelFacingText(errorText));
 		return {
 			content: [{ type: "text", text: hintedErrorText }],
 			summary: hintedErrorText,
@@ -1378,9 +1573,11 @@ export async function buildToolPresentation(options: {
 		persistentArtifactStore,
 		presentation: presentationWithImage,
 	});
-	return applyArtifactManifest(
-		compactedPresentation,
-		compactedPresentation.artifactManifest ?? artifactManifest,
-		buildManifestEntriesForFileArtifacts(artifacts.filter(isManifestFileArtifact)),
+	return sanitizeModelFacingPresentation(
+		applyArtifactManifest(
+			compactedPresentation,
+			compactedPresentation.artifactManifest ?? artifactManifest,
+			buildManifestEntriesForFileArtifacts(artifacts.filter(isManifestFileArtifact)),
+		),
 	);
 }
