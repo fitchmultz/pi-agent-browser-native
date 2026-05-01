@@ -8,6 +8,7 @@
 
 import { readFile, rm } from "node:fs/promises";
 
+import { StringEnum } from "@mariozechner/pi-ai";
 import { isToolCallEventType, type AgentToolResult, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -71,7 +72,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 	}),
 	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch and eval --stdin." })),
 	sessionMode: Type.Optional(
-		Type.Union([Type.Literal("auto"), Type.Literal("fresh")], {
+		StringEnum(["auto", "fresh"] as const, {
 			description:
 				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --profile, --session-name, --cdp, --state, or --auto-connect apply and later auto calls follow the new browser.",
 			default: DEFAULT_SESSION_MODE,

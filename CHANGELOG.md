@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.2.14 - 2026-05-01
+
+### Changed
+- updated the local pi development baseline to `@mariozechner/pi-coding-agent` `0.71.1`
+- regenerated the npm lockfile against the current stable dependency graph
+
+### Compatibility
+- reviewed the pi `0.71.1` changelog and confirmed the extension is compatible with the current TypeBox 1.x package guidance, session-replacement safety rules, and latest package install/update behavior
+
+
 ## 0.2.13 - 2026-04-30
 
 ### Fixed
