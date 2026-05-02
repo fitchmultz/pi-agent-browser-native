@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.2.16 - 2026-05-02
+
+### Fixed
+- made screenshot artifact paths reliable for agent workflows by normalizing explicit screenshot output paths, including dot-directory paths such as `.dogfood/...`, to absolute paths before invoking upstream `agent-browser`
+- repaired screenshot outputs from upstream temp files when needed and made the requested path the primary visible artifact path
+- extended the screenshot path contract to annotated batch screenshots, so top-level `--annotate` batch calls preserve and verify per-step requested output paths
+- blocked per-step batch `--annotate` screenshot forms that upstream parses unsafely and now point agents to the safe top-level `--annotate batch` form
+- added wrapper-observed trace/profiler owner guards to prevent known conflicting start/stop sequences from corrupting upstream tracing state
+
+### Changed
+- artifact-producing commands now render direct visible artifact metadata, including artifact type, requested path, absolute path, existence, size, status, cwd, session, and temp path when repaired
+- explicit `--json` calls now render valid JSON in visible tool content; `stream status` JSON is enriched with `wsUrl` and frame format metadata
+- documented the artifact contract, batch annotation guidance, trace/profiler caveat, and package-development bash bypass for upstream debugging
+
 ## 0.2.15 - 2026-05-01
 
 ### Changed

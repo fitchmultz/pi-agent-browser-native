@@ -6,7 +6,8 @@
  * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
  */
 
-import { readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 import { StringEnum } from "@mariozechner/pi-ai";
 import { isToolCallEventType, type AgentToolResult, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -64,6 +65,8 @@ import {
 } from "./lib/results/shared.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
+const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
+const PACKAGE_NAME = "pi-agent-browser-native";
 
 const AGENT_BROWSER_PARAMS = Type.Object({
 	args: Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
@@ -292,6 +295,23 @@ function isHarmlessAgentBrowserInspectionCommand(command: string): boolean {
 	return HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN.test(command);
 }
 
+function isTruthyEnvValue(value: string | undefined): boolean {
+	return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+}
+
+async function isPackageDevelopmentCwd(cwd: string): Promise<boolean> {
+	try {
+		const packageJson = JSON.parse(await readFile(join(cwd, "package.json"), "utf8")) as { name?: unknown };
+		return packageJson.name === PACKAGE_NAME;
+	} catch {
+		return false;
+	}
+}
+
+async function isDirectAgentBrowserBashAllowed(cwd: string): Promise<boolean> {
+	return isTruthyEnvValue(process.env[DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV]) || await isPackageDevelopmentCwd(cwd);
+}
+
 const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
 
 interface NavigationSummary {
@@ -301,6 +321,330 @@ interface NavigationSummary {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+const SCREENSHOT_VALUE_FLAGS = new Set(["--screenshot-dir", "--screenshot-format", "--screenshot-quality"]);
+const SCREENSHOT_IMAGE_EXTENSIONS = new Set([".jpeg", ".jpg", ".png", ".webp"]);
+
+interface ScreenshotPathRequest {
+	absolutePath: string;
+	path: string;
+}
+
+interface PreparedAgentBrowserArgs {
+	args: string[];
+	batchScreenshotPathRequests?: Array<ScreenshotPathRequest | undefined>;
+	screenshotPathRequest?: ScreenshotPathRequest;
+	stdin?: string;
+}
+
+interface ScreenshotArtifactRequest extends ScreenshotPathRequest {
+	status?: "missing" | "repaired-from-temp" | "saved" | "upstream-temp-only";
+	tempPath?: string;
+}
+
+type TraceOwner = "profiler" | "trace";
+
+function isImagePathToken(token: string): boolean {
+	const extension = extname(token).toLowerCase();
+	return SCREENSHOT_IMAGE_EXTENSIONS.has(extension);
+}
+
+function getScreenshotPathTokenIndex(commandTokens: string[]): number | undefined {
+	if (commandTokens[0] !== "screenshot") {
+		return undefined;
+	}
+
+	const positionalIndices: number[] = [];
+	for (let index = 1; index < commandTokens.length; index += 1) {
+		const token = commandTokens[index];
+		if (token === "--") {
+			for (let positionalIndex = index + 1; positionalIndex < commandTokens.length; positionalIndex += 1) {
+				positionalIndices.push(positionalIndex);
+			}
+			break;
+		}
+		if (token.startsWith("-")) {
+			const normalizedToken = token.split("=", 1)[0] ?? token;
+			if (SCREENSHOT_VALUE_FLAGS.has(normalizedToken) && !token.includes("=")) {
+				index += 1;
+			}
+			continue;
+		}
+		positionalIndices.push(index);
+	}
+
+	if (positionalIndices.length === 0) {
+		return undefined;
+	}
+	const candidateIndex = positionalIndices[positionalIndices.length - 1];
+	const candidate = commandTokens[candidateIndex];
+	if (positionalIndices.length >= 2 || isImagePathToken(candidate) || isAbsolute(candidate) || candidate.startsWith("./") || candidate.startsWith("../")) {
+		return candidateIndex;
+	}
+	return undefined;
+}
+
+async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: string): Promise<{
+	request?: ScreenshotPathRequest;
+	tokens: string[];
+}> {
+	const screenshotPathTokenIndex = getScreenshotPathTokenIndex(commandTokens);
+	if (screenshotPathTokenIndex === undefined) {
+		return { tokens: commandTokens };
+	}
+
+	const requestedPath = commandTokens[screenshotPathTokenIndex];
+	const absolutePath = resolve(cwd, requestedPath);
+	await mkdir(dirname(absolutePath), { recursive: true });
+
+	const tokens = [...commandTokens];
+	tokens[screenshotPathTokenIndex] = absolutePath;
+	const terminatorIndex = tokens.indexOf("--");
+	if (terminatorIndex >= 0) {
+		tokens.splice(terminatorIndex, 1);
+	}
+
+	return {
+		request: {
+			absolutePath,
+			path: requestedPath,
+		},
+		tokens,
+	};
+}
+
+async function prepareBatchScreenshotPaths(args: string[], stdin: string | undefined, cwd: string): Promise<PreparedAgentBrowserArgs | undefined> {
+	const commandTokens = extractCommandTokens(args);
+	if (commandTokens[0] !== "batch" || stdin === undefined) {
+		return undefined;
+	}
+	let steps: unknown;
+	try {
+		steps = JSON.parse(stdin);
+	} catch {
+		return undefined;
+	}
+	if (!Array.isArray(steps)) {
+		return undefined;
+	}
+
+	let changed = false;
+	const batchScreenshotPathRequests: Array<ScreenshotPathRequest | undefined> = [];
+	const preparedSteps = await Promise.all(steps.map(async (step, index) => {
+		if (!Array.isArray(step) || !step.every((item) => typeof item === "string") || step[0] !== "screenshot") {
+			return step;
+		}
+		const normalized = await normalizeScreenshotPathInTokens(step, cwd);
+		batchScreenshotPathRequests[index] = normalized.request;
+		if (normalized.request) {
+			changed = true;
+		}
+		return normalized.tokens;
+	}));
+
+	return changed
+		? {
+				args,
+				batchScreenshotPathRequests,
+				stdin: JSON.stringify(preparedSteps),
+		  }
+		: undefined;
+}
+
+async function prepareAgentBrowserArgs(args: string[], stdin: string | undefined, cwd: string): Promise<PreparedAgentBrowserArgs> {
+	const preparedBatch = await prepareBatchScreenshotPaths(args, stdin, cwd);
+	if (preparedBatch) {
+		return preparedBatch;
+	}
+
+	const commandTokens = extractCommandTokens(args);
+	const normalized = await normalizeScreenshotPathInTokens(commandTokens, cwd);
+	if (!normalized.request) {
+		return { args };
+	}
+
+	const commandStartIndex = args.length - commandTokens.length;
+	return {
+		args: [...args.slice(0, commandStartIndex), ...normalized.tokens],
+		screenshotPathRequest: normalized.request,
+	};
+}
+
+async function pathExists(path: string): Promise<boolean> {
+	try {
+		await stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function repairScreenshotData(options: {
+	cwd: string;
+	data: Record<string, unknown>;
+	request: ScreenshotPathRequest;
+}): Promise<{ data: Record<string, unknown>; request: ScreenshotArtifactRequest }> {
+	const { cwd, data, request } = options;
+	const reportedPath = typeof data.path === "string" ? data.path : undefined;
+	const reportedAbsolutePath = reportedPath ? resolve(cwd, reportedPath) : undefined;
+	let status: ScreenshotArtifactRequest["status"] = await pathExists(request.absolutePath) ? "saved" : "missing";
+	let tempPath: string | undefined;
+
+	if (reportedAbsolutePath && reportedAbsolutePath !== request.absolutePath) {
+		tempPath = reportedAbsolutePath;
+		if (status === "missing" && await pathExists(reportedAbsolutePath)) {
+			await mkdir(dirname(request.absolutePath), { recursive: true });
+			await copyFile(reportedAbsolutePath, request.absolutePath);
+			status = "repaired-from-temp";
+		}
+	}
+
+	return {
+		data: {
+			...data,
+			path: request.absolutePath,
+		},
+		request: {
+			...request,
+			status,
+			tempPath,
+		},
+	};
+}
+
+async function repairScreenshotArtifact(options: {
+	cwd: string;
+	envelope?: AgentBrowserEnvelope;
+	request?: ScreenshotPathRequest;
+}): Promise<{ envelope?: AgentBrowserEnvelope; request?: ScreenshotArtifactRequest }> {
+	const { cwd, envelope, request } = options;
+	if (!request || !envelope || !isRecord(envelope.data)) {
+		return { envelope, request };
+	}
+
+	const repaired = await repairScreenshotData({ cwd, data: envelope.data, request });
+	return {
+		envelope: { ...envelope, data: repaired.data },
+		request: repaired.request,
+	};
+}
+
+async function repairBatchScreenshotArtifacts(options: {
+	cwd: string;
+	envelope?: AgentBrowserEnvelope;
+	requests?: Array<ScreenshotPathRequest | undefined>;
+}): Promise<{ envelope?: AgentBrowserEnvelope; requests?: Array<ScreenshotArtifactRequest | undefined> }> {
+	const { cwd, envelope, requests } = options;
+	if (!envelope || !Array.isArray(envelope.data) || !requests?.some((request) => request !== undefined)) {
+		return { envelope, requests };
+	}
+
+	const repairedRequests: Array<ScreenshotArtifactRequest | undefined> = [];
+	const repairedData = await Promise.all(envelope.data.map(async (item, index) => {
+		const request = requests[index];
+		if (!request || !isRecord(item) || !isRecord(item.result)) {
+			return item;
+		}
+		const repaired = await repairScreenshotData({ cwd, data: item.result, request });
+		repairedRequests[index] = repaired.request;
+		return {
+			...item,
+			result: repaired.data,
+		};
+	}));
+
+	return {
+		envelope: { ...envelope, data: repairedData },
+		requests: repairedRequests,
+	};
+}
+
+function buildJsonVisibleContent(options: {
+	error: unknown;
+	presentation: Awaited<ReturnType<typeof buildToolPresentation>>;
+	succeeded: boolean;
+	warnings?: string[];
+}): Array<{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }> {
+	const { error, presentation, succeeded, warnings } = options;
+	const payload = redactSensitiveValue({
+		artifacts: presentation.artifacts,
+		data: presentation.data,
+		error,
+		success: succeeded,
+		warnings: warnings && warnings.length > 0 ? warnings : undefined,
+	});
+	if (isRecord(payload) && isRecord(payload.data) && isRecord(presentation.data) && typeof presentation.data.wsUrl === "string") {
+		payload.data.wsUrl = presentation.data.wsUrl;
+	}
+	const images = presentation.content.filter((item): item is { data: string; mimeType: string; type: "image" } => item.type === "image");
+	return [{ type: "text", text: JSON.stringify(payload, null, 2) }, ...images];
+}
+
+function getBatchAnnotateValidationError(args: string[], stdin: string | undefined): string | undefined {
+	const commandTokens = extractCommandTokens(args);
+	if (commandTokens[0] !== "batch" || stdin === undefined) {
+		return undefined;
+	}
+	let steps: unknown;
+	try {
+		steps = JSON.parse(stdin);
+	} catch {
+		return undefined;
+	}
+	if (!Array.isArray(steps)) {
+		return undefined;
+	}
+	const badStepIndex = steps.findIndex((step) => Array.isArray(step) && step[0] === "screenshot" && step.includes("--annotate"));
+	if (badStepIndex < 0) {
+		return undefined;
+	}
+	return [
+		`Unsupported batch screenshot annotation in step ${badStepIndex + 1}: put --annotate in top-level args, not inside the batch step.`,
+		`Use: { "args": ["--annotate", "batch"], "stdin": "[[\\"screenshot\\",\\"/path/to/image.png\\"]]" }`,
+	].join("\n");
+}
+
+function getTraceOwner(command: string | undefined): TraceOwner | undefined {
+	return command === "trace" || command === "profiler" ? command : undefined;
+}
+
+function getTraceOwnerGuardMessage(options: {
+	command: string | undefined;
+	sessionName: string | undefined;
+	subcommand: string | undefined;
+	traceOwners: Map<string, TraceOwner>;
+}): string | undefined {
+	const owner = getTraceOwner(options.command);
+	if (!owner || !options.sessionName || (options.subcommand !== "start" && options.subcommand !== "stop")) {
+		return undefined;
+	}
+	const activeOwner = options.traceOwners.get(options.sessionName);
+	if (!activeOwner || activeOwner === owner) {
+		return undefined;
+	}
+	return options.subcommand === "start"
+		? `Wrapper believes ${activeOwner} tracing is active for session ${options.sessionName}; stop ${activeOwner} before starting ${owner}.`
+		: `Wrapper believes tracing for session ${options.sessionName} is owned by ${activeOwner}; run ${activeOwner} stop instead of ${owner} stop.`;
+}
+
+function updateTraceOwnerState(options: {
+	command: string | undefined;
+	sessionName: string | undefined;
+	subcommand: string | undefined;
+	succeeded: boolean;
+	traceOwners: Map<string, TraceOwner>;
+}): void {
+	const owner = getTraceOwner(options.command);
+	if (!owner || !options.sessionName || !options.succeeded) {
+		return;
+	}
+	if (options.subcommand === "start") {
+		options.traceOwners.set(options.sessionName, owner);
+	}
+	if (options.subcommand === "stop" && options.traceOwners.get(options.sessionName) === owner) {
+		options.traceOwners.delete(options.sessionName);
+	}
 }
 
 function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {
@@ -1025,6 +1369,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let freshSessionOrdinal = 0;
 	let sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
 	let sessionTabTargetUpdateOrder = 0;
+	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 
@@ -1044,6 +1389,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		managedSessionActive = false;
 		sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
 		sessionTabTargetUpdateOrder = 0;
+		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
 		await cleanupSecureTempArtifacts();
 	});
@@ -1063,7 +1409,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			isToolCallEventType("bash", event) &&
 			!promptPolicy.allowLegacyAgentBrowserBash &&
 			looksLikeDirectAgentBrowserBash(event.input.command) &&
-			!isHarmlessAgentBrowserInspectionCommand(event.input.command)
+			!isHarmlessAgentBrowserInspectionCommand(event.input.command) &&
+			!(await isDirectAgentBrowserBashAllowed(ctx.cwd))
 		) {
 			return {
 				block: true,
@@ -1083,7 +1430,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		parameters: AGENT_BROWSER_PARAMS,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const redactedArgs = redactInvocationArgs(params.args);
-			const validationError = validateToolArgs(params.args);
+			const validationError = validateToolArgs(params.args) ?? getBatchAnnotateValidationError(params.args, params.stdin);
 			if (validationError) {
 				return {
 					content: [{ type: "text", text: validationError }],
@@ -1091,12 +1438,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					isError: true,
 				};
 			}
+			const preparedArgs = await prepareAgentBrowserArgs(params.args, params.stdin, ctx.cwd);
+			const userRequestedJson = params.args.includes("--json");
 
 			const tabTargetUpdateOrder = ++sessionTabTargetUpdateOrder;
 			const runTool = async (): Promise<AgentBrowserToolResult> => {
 				const sessionMode = params.sessionMode ?? DEFAULT_SESSION_MODE;
 				const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
-				const executionPlan = buildExecutionPlan(params.args, {
+				const executionPlan = buildExecutionPlan(preparedArgs.args, {
 					freshSessionName,
 					managedSessionActive,
 					managedSessionName,
@@ -1124,7 +1473,28 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					};
 				}
 
-				const commandTokens = extractCommandTokens(params.args);
+				const commandTokens = extractCommandTokens(preparedArgs.args);
+				const traceOwnerGuardMessage = getTraceOwnerGuardMessage({
+					command: executionPlan.commandInfo.command,
+					sessionName: executionPlan.sessionName,
+					subcommand: executionPlan.commandInfo.subcommand,
+					traceOwners,
+				});
+				if (traceOwnerGuardMessage) {
+					return {
+						content: [{ type: "text", text: traceOwnerGuardMessage }],
+						details: {
+							args: redactedArgs,
+							command: executionPlan.commandInfo.command,
+							compatibilityWorkaround,
+							effectiveArgs: redactedEffectiveArgs,
+							sessionMode,
+							validationError: traceOwnerGuardMessage,
+							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+						},
+						isError: true,
+					};
+				}
 				const stdinValidationError = validateStdinCommandContract({
 					command: executionPlan.commandInfo.command,
 					commandTokens,
@@ -1152,7 +1522,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				let includePinnedNavigationSummary = false;
 				let sessionTabCorrection: OpenResultTabCorrection | undefined;
 				let processArgs = executionPlan.effectiveArgs;
-				let processStdin = params.stdin;
+				let processStdin = preparedArgs.stdin ?? params.stdin;
 				if (
 					priorSessionTabTarget &&
 					shouldPinSessionTabForCommand({
@@ -1283,6 +1653,20 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						presentationEnvelope = pinnedBatchResult.envelope ?? presentationEnvelope;
 						navigationSummary = pinnedBatchResult.navigationSummary;
 					}
+					const repairedScreenshot = await repairScreenshotArtifact({
+						cwd: ctx.cwd,
+						envelope: presentationEnvelope,
+						request: preparedArgs.screenshotPathRequest,
+					});
+					presentationEnvelope = repairedScreenshot.envelope;
+					const repairedBatchScreenshots = await repairBatchScreenshotArtifacts({
+						cwd: ctx.cwd,
+						envelope: presentationEnvelope,
+						requests: preparedArgs.batchScreenshotPathRequests,
+					});
+					presentationEnvelope = repairedBatchScreenshots.envelope;
+					const screenshotArtifactRequest = repairedScreenshot.request;
+					const batchScreenshotArtifactRequests = repairedBatchScreenshots.requests;
 					const parseFailureOutput = parseError
 						? await preserveParseFailureOutput({
 								artifactManifest,
@@ -1296,6 +1680,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const envelopeSuccess = plainTextInspection ? true : presentationEnvelope?.success !== false;
 					const succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
 					const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
+					updateTraceOwnerState({
+						command: executionPlan.commandInfo.command,
+						sessionName: executionPlan.sessionName,
+						subcommand: executionPlan.commandInfo.subcommand,
+						succeeded,
+						traceOwners,
+					});
 
 					if (succeeded && !navigationSummary && shouldCaptureNavigationSummary(executionPlan.commandInfo.command, presentationEnvelope?.data)) {
 						navigationSummary = await collectNavigationSummary({
@@ -1477,11 +1868,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						  }
 						: await buildToolPresentation({
 								artifactManifest,
+								artifactRequest: screenshotArtifactRequest,
+								batchArtifactRequests: batchScreenshotArtifactRequests,
 								commandInfo: executionPlan.commandInfo,
 								cwd: ctx.cwd,
 								envelope: presentationEnvelope,
 								errorText,
 								persistentArtifactStore,
+								sessionName: executionPlan.sessionName,
 						  });
 					if (parseFailureOutput.artifactManifest) {
 						presentation.artifactManifest = parseFailureOutput.artifactManifest;
@@ -1504,20 +1898,29 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (presentation.artifactManifest) {
 						artifactManifest = presentation.artifactManifest;
 					}
-					const contentWithSessionWarnings = aboutBlankSessionMismatch ? [...presentation.content] : presentation.content;
-					if (aboutBlankSessionMismatch) {
-						const warning = buildAboutBlankWarning(aboutBlankSessionMismatch);
+					const warningText = aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
+					const contentWithSessionWarnings = userRequestedJson && !plainTextInspection
+						? buildJsonVisibleContent({
+								error: presentationEnvelope?.error,
+								presentation,
+								succeeded,
+								warnings: warningText ? [warningText] : undefined,
+						  })
+						: warningText
+							? [...presentation.content]
+							: presentation.content;
+					if (warningText && !userRequestedJson) {
 						if (contentWithSessionWarnings[0]?.type === "text") {
 							contentWithSessionWarnings[0] = {
 								...contentWithSessionWarnings[0],
-								text: `${warning}\n\n${contentWithSessionWarnings[0].text}`,
+								text: `${warningText}\n\n${contentWithSessionWarnings[0].text}`,
 							};
 						} else {
-							contentWithSessionWarnings.unshift({ type: "text", text: warning });
+							contentWithSessionWarnings.unshift({ type: "text", text: warningText });
 						}
 					}
 					const redactedContent = contentWithSessionWarnings.map((item) =>
-						item.type === "text" ? { ...item, text: redactSensitiveText(item.text) } : item,
+						item.type === "text" && !(userRequestedJson && !plainTextInspection) ? { ...item, text: redactSensitiveText(item.text) } : item,
 					);
 
 					return {

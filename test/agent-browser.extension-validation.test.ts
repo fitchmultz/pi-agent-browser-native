@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -85,8 +85,9 @@ test("agentBrowserExtension keeps the full browser playbook in tool metadata and
 	});
 });
 
-test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless the prompt explicitly allows it", async () => {
-	const defaultHarness = createExtensionHarness({ cwd: process.cwd(), prompt: "Open a page and summarize it." });
+test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless the prompt, env, or package dev cwd explicitly allows it", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bash-policy-"));
+	const defaultHarness = createExtensionHarness({ cwd: tempDir, prompt: "Open a page and summarize it." });
 	for (const command of [
 		"agent-browser open https://example.com",
 		"FOO=bar agent-browser --version",
@@ -134,7 +135,7 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 		assert.deepEqual(innocuousResults, [], command);
 	}
 
-	const debugHarness = createExtensionHarness({ cwd: process.cwd(), prompt: "Please debug the browser integration via bash." });
+	const debugHarness = createExtensionHarness({ cwd: tempDir, prompt: "Please debug the browser integration via bash." });
 	const debugAllowed = await runExtensionEventResults(
 		debugHarness.handlers,
 		"tool_call",
@@ -142,6 +143,30 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 		debugHarness.ctx,
 	);
 	assert.deepEqual(debugAllowed, []);
+
+	await withPatchedEnv({ PI_AGENT_BROWSER_ALLOW_DIRECT_BASH: "1" }, async () => {
+		const envAllowed = await runExtensionEventResults(
+			defaultHarness.handlers,
+			"tool_call",
+			{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
+			defaultHarness.ctx,
+		);
+		assert.deepEqual(envAllowed, []);
+	});
+
+	const packageDevDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-dev-"));
+	await writeFile(join(packageDevDir, "package.json"), JSON.stringify({ name: "pi-agent-browser-native" }), "utf8");
+	const packageDevHarness = createExtensionHarness({ cwd: packageDevDir, prompt: "Open a page and summarize it." });
+	const packageDevAllowed = await runExtensionEventResults(
+		packageDevHarness.handlers,
+		"tool_call",
+		{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
+		packageDevHarness.ctx,
+	);
+	assert.deepEqual(packageDevAllowed, []);
+
+	await rm(tempDir, { force: true, recursive: true });
+	await rm(packageDevDir, { force: true, recursive: true });
 });
 
 test("agentBrowserExtension keeps successful plain-text inspection stateless and machine-readable", { concurrency: false }, async () => {
@@ -174,6 +199,179 @@ process.stdout.write("agent-browser 9.9.9\\n");`,
 			assert.equal(result.details?.sessionName, undefined);
 			assert.equal(result.details?.usedImplicitSession, undefined);
 			assert.deepEqual(await readInvocationLog(logPath), [{ args: ["--version"] }]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension normalizes and repairs explicit screenshot artifact paths", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-screenshot-path-"));
+	const logPath = join(tempDir, "invocations.log");
+	const upstreamTempPath = join(tempDir, "upstream-temp.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const commandIndex = args.indexOf("screenshot");
+const requestedPath = args[commandIndex + 1];
+fs.mkdirSync(path.dirname(${JSON.stringify(upstreamTempPath)}), { recursive: true });
+fs.writeFileSync(${JSON.stringify(upstreamTempPath)}, "fake-png");
+process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.stringify(upstreamTempPath)} }, error: null }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Take a screenshot." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "warden-vfr", "screenshot", ".dogfood/run/foo.png"],
+			});
+
+			const expectedPath = join(tempDir, ".dogfood/run/foo.png");
+			assert.equal(result.isError, false);
+			assert.equal(await readFile(expectedPath, "utf8"), "fake-png");
+			const text = result.content[0]?.type === "text" ? result.content[0].text ?? "" : "";
+			assert.match(text, /Saved image: \.dogfood\/run\/foo\.png/);
+			assert.match(text, /Artifact type: image/);
+			assert.match(text, /Requested path: \.dogfood\/run\/foo\.png/);
+			assert.match(text, new RegExp(`Absolute path: ${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(text, /Exists: true/);
+			assert.match(text, /Status: repaired-from-temp/);
+			assert.match(text, new RegExp(`Temp path: ${upstreamTempPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(text, /Session: warden-vfr/);
+			assert.match(text, new RegExp(`CWD: ${tempDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+			const artifacts = result.details?.artifacts as Array<Record<string, unknown>> | undefined;
+			assert.equal(artifacts?.[0]?.requestedPath, ".dogfood/run/foo.png");
+			assert.equal(artifacts?.[0]?.absolutePath, expectedPath);
+			assert.equal(artifacts?.[0]?.cwd, tempDir);
+			assert.equal(artifacts?.[0]?.session, "warden-vfr");
+			assert.equal(artifacts?.[0]?.status, "repaired-from-temp");
+
+			const [invocation] = await readInvocationLog(logPath);
+			assert.equal(invocation.args.at(-1), expectedPath);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension renders explicit --json tool content as JSON", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-json-visible-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: true, data: { connected: true, enabled: true, port: 9223, screencasting: false }, error: null }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Check stream status." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["stream", "status", "--json"],
+			});
+
+			const text = result.content[0]?.type === "text" ? result.content[0].text ?? "" : "";
+			const parsed = JSON.parse(text) as { data?: { wsUrl?: string; frameFormat?: string } };
+			assert.equal(parsed.data?.wsUrl, "ws://127.0.0.1:9223");
+			assert.equal(parsed.data?.frameFormat, "JSON messages with base64 JPEG frame data");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension blocks per-step batch screenshot annotation foot-guns", async () => {
+	const harness = createExtensionHarness({ cwd: process.cwd(), prompt: "Take annotated screenshots." });
+	const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+		args: ["batch"],
+		stdin: '[["screenshot","--annotate","/tmp/foo.png"]]',
+	});
+
+	assert.equal(result.isError, true);
+	assert.match(result.content[0]?.type === "text" ? result.content[0].text ?? "" : "", /put --annotate in top-level args/i);
+});
+
+test("agentBrowserExtension normalizes and repairs batch screenshot artifact paths", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-screenshot-path-"));
+	const logPath = join(tempDir, "invocations.log");
+	const upstreamTempPath = join(tempDir, "upstream-batch-temp.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.on("data", chunk => stdin += chunk);
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin: JSON.parse(stdin) }) + "\\n");
+  fs.mkdirSync(path.dirname(${JSON.stringify(upstreamTempPath)}), { recursive: true });
+  fs.writeFileSync(${JSON.stringify(upstreamTempPath)}, "fake-batch-png");
+  process.stdout.write(JSON.stringify([{ command: ["screenshot", ".dogfood/run/good-batch.png"], success: true, error: null, result: { path: ${JSON.stringify(upstreamTempPath)} } }]));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Take a batch screenshot." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--annotate", "batch"],
+				stdin: '[["screenshot",".dogfood/run/good-batch.png"]]',
+			});
+
+			const expectedPath = join(tempDir, ".dogfood/run/good-batch.png");
+			assert.equal(result.isError, false);
+			assert.equal(await readFile(expectedPath, "utf8"), "fake-batch-png");
+			const text = result.content[0]?.type === "text" ? result.content[0].text ?? "" : "";
+			assert.match(text, /Step 1 — screenshot/);
+			assert.match(text, /Saved image: \.dogfood\/run\/good-batch\.png/);
+			assert.match(text, /Requested path: \.dogfood\/run\/good-batch\.png/);
+			assert.match(text, /Status: repaired-from-temp/);
+			assert.match(text, new RegExp(`Temp path: ${upstreamTempPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+			const artifacts = result.details?.artifacts as Array<Record<string, unknown>> | undefined;
+			assert.equal(artifacts?.[0]?.requestedPath, ".dogfood/run/good-batch.png");
+			assert.equal(artifacts?.[0]?.absolutePath, expectedPath);
+			assert.equal(artifacts?.[0]?.status, "repaired-from-temp");
+
+			const [invocation] = await readInvocationLog(logPath);
+			assert.deepEqual(invocation.stdin, [["screenshot", expectedPath]]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension guards wrapper-known trace and profiler ownership", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-trace-owner-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: true, data: { started: true }, error: null }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Capture a trace." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const traceStart = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "trace", "start"],
+			});
+			assert.equal(traceStart.isError, false);
+
+			const profilerStart = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "profiler", "start"],
+			});
+			assert.equal(profilerStart.isError, true);
+			assert.match(profilerStart.content[0]?.type === "text" ? profilerStart.content[0].text ?? "" : "", /Wrapper believes trace tracing is active/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

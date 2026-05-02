@@ -37,6 +37,7 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 - Use `tmux` via bash commands.
 - Do **not** use the pi interactive shell extension for this workflow.
 - Drive `pi` like a real user by sending prompts normally.
+- The extension blocks direct `agent-browser` bash calls by default to push agents toward the native tool. During this package's own development, the guard is bypassed when the session cwd is this package root (`package.json` name `pi-agent-browser-native`) or when `PI_AGENT_BROWSER_ALLOW_DIRECT_BASH=1` is set, so upstream CLI behavior can be debugged directly.
 - After extension changes in configured-source lifecycle mode, `/reload` is the minimum, but a full close-and-relaunch of `pi` is preferred for higher confidence. The automated `npm run verify -- lifecycle` harness creates an isolated `PI_CODING_AGENT_DIR`, configures a temporary package source, drives plain `pi` in `tmux`, uses a deterministic fake upstream `agent-browser`, checks `/reload` plus restart/`/resume`, and captures transcript artifacts on failure.
 - If continuing the same conversation after restart, use `/resume` or an explicit session path/id.
 - Resumed sessions should reflect the updated configured extension source after restart.

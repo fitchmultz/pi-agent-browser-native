@@ -171,7 +171,7 @@ Additional structured fields can appear when relevant:
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `imagePath` / `imagePaths` for screenshots and batched image outputs
-- `artifacts` for upstream saved files such as screenshots, PDFs, downloads, `wait --download` files, traces, CPU profiles, completed WebM recordings, path-bearing HAR captures, and future recording output paths reported by `record start`. Each artifact includes the original saved or requested `path`, resolved `absolutePath`, `kind`, optional `mediaType`, optional `extension`, and best-effort disk metadata such as `exists` and `sizeBytes`.
+- `artifacts` for upstream saved files such as screenshots, PDFs, downloads, `wait --download` files, traces, CPU profiles, completed WebM recordings, path-bearing HAR captures, and future recording output paths reported by `record start`. Each artifact includes the original saved or requested `path`, resolved `absolutePath`, `kind`/`artifactType`, optional `mediaType`, optional `extension`, best-effort disk metadata such as `exists` and `sizeBytes`, plus `requestedPath`, `status`, `cwd`, `session`, and `tempPath` when applicable.
 - `savedFilePath` / `savedFile` for direct `download`, `pdf`, and `wait --download` saved-file workflows; batch results preserve the same fields on the relevant `batchSteps` entry.
 - `batchSteps[].artifacts` for per-step artifacts in `batch` output; top-level `artifacts` aggregates all step artifacts in order
 - `fullOutputPath` / `fullOutputPaths` when large snapshot output or other oversized tool output is compacted and spilled to a private file; persisted sessions keep that path under a private session-scoped artifact directory with a bounded per-session budget so it survives reload/resume without unbounded growth
@@ -189,15 +189,16 @@ For oversized snapshots and other oversized tool outputs, details should switch 
 "Rendering" here means how results appear inside `pi`, not embedding a browser UI.
 
 Worth doing in v1:
-- screenshots → saved-path summary, `details.artifacts` metadata, and inline image attachment when safe
+- screenshots → saved-path summary, visible artifact metadata, `details.artifacts` metadata, and inline image attachment when safe; screenshot paths that upstream would treat ambiguously, such as `.dogfood/run/foo.png`, are normalized to absolute paths before launch and repaired from upstream temp output when possible
 - file artifacts such as PDFs, downloads, `wait --download` files, traces, CPU profiles, completed WebM recordings, and path-bearing HAR captures → concise saved-path summaries plus metadata in `details.artifacts` and bounded recent metadata in `details.artifactManifest`; `record start` reports recording lifecycle state and the future output path without adding a missing manifest entry; direct saved-file workflows also expose `details.savedFilePath` / `details.savedFile`; large or binary artifacts are not inlined into model context; the recent manifest cap can age out explicit-file metadata but does not remove explicit saved files from disk
 - snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path printed directly in content and kept in `details.fullOutputPath` plus `details.artifactManifest` when the inline result would otherwise be too large
 - oversized generic outputs such as large `eval --stdin` payloads → compact preview plus the actual spill file path instead of dumping the whole payload into model context
 - extraction-style commands like `eval --stdin` and `get title` → scalar-first text with lightweight origin context when available
 - navigation actions like `click`, `back`, `forward`, and `reload` → lightweight post-action title/url summary when available
 - tab lists → compact summary/table
-- stream status → enabled/connected/port summary
+- stream status → enabled/connected/port summary plus WebSocket URL and frame format when a port is known; if the caller explicitly passed `--json`, visible text is valid JSON instead of a prose summary
 - diagnostic/status families (`session`, `session list`, `profiles`, `doctor`, `auth list`/`show`, `network requests`, `console`, `errors`, and dashboard start/stop/status outputs) → compact readable summaries with counts and stable fields; large log/request/error outputs use previews plus `fullOutputPath` spill files; sensitive nested auth/header/token fields are not expanded in the model-facing text
+- trace/profiler owner conflicts → when the wrapper has observed one owner active for a session, block conflicting starts/stops with "wrapper believes ..." wording because upstream or external CLI use can desynchronize wrapper-local state
 
 ## Missing binary behavior
 

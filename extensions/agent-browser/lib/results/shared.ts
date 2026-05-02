@@ -21,16 +21,24 @@ export interface AgentBrowserBatchResult {
 
 export type FileArtifactKind = "download" | "file" | "har" | "image" | "pdf" | "profile" | "trace" | "video";
 
+export type FileArtifactStatus = "missing" | "repaired-from-temp" | "saved" | "upstream-temp-only";
+
 export interface FileArtifactMetadata {
 	absolutePath: string;
+	artifactType?: FileArtifactKind;
 	command?: string;
+	cwd?: string;
 	exists?: boolean;
 	extension?: string;
 	kind: FileArtifactKind;
 	mediaType?: string;
 	path: string;
+	requestedPath?: string;
+	session?: string;
 	sizeBytes?: number;
+	status?: FileArtifactStatus;
 	subcommand?: string;
+	tempPath?: string;
 }
 
 export interface SavedFilePresentationDetails {
@@ -49,13 +57,16 @@ export interface SessionArtifactManifestEntry {
 	absolutePath?: string;
 	command?: string;
 	createdAtMs: number;
+	cwd?: string;
 	evictedAtMs?: number;
 	exists?: boolean;
 	extension?: string;
 	kind: FileArtifactKind | "spill";
 	mediaType?: string;
 	path: string;
+	requestedPath?: string;
 	retentionState: ArtifactRetentionState;
+	session?: string;
 	sizeBytes?: number;
 	storageScope: ArtifactStorageScope;
 	subcommand?: string;

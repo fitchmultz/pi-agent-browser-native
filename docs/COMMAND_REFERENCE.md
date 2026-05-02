@@ -128,10 +128,18 @@ A successful wait-based download renders a readable summary such as `Download co
 Prefer `download <selector> <path>` when the target element itself is the downloadable link/control. Use `click` plus `wait --download [path]` when a previous action starts the download indirectly.
 
 Wrapper result rendering is metadata-first for saved files:
-- screenshots return a saved-path summary, structured `details.artifacts` metadata, and an inline image attachment when safe
+- screenshots return a saved-path summary, visible artifact metadata, structured `details.artifacts` metadata, and an inline image attachment when safe; the visible block includes artifact type, requested path, absolute path, existence, size, cwd, session, and repair/copy status when applicable
 - downloads, PDFs, `wait --download` files, traces, CPU profiles, completed WebM recordings from `record stop`, and path-bearing HAR captures return concise saved-path summaries plus structured `details.artifacts` metadata without inlining large files
 - `record start <path>` reports that recording started and that output will be written on `record stop`; the target file may not exist until recording stops
 - `batch` keeps each step's artifacts in `details.batchSteps[].artifacts` and aggregates them in top-level `details.artifacts` in step order
+
+For screenshot paths under dot-directories such as `.dogfood/run/foo.png`, the wrapper normalizes the requested path to an absolute path before invoking upstream `agent-browser`, verifies the requested file exists, and repairs from an upstream temp screenshot when possible. The requested path remains visible as `Requested path`, while `Absolute path` shows the actual on-disk location.
+
+For annotated screenshots in `batch`, put `--annotate` in top-level args instead of inside the screenshot step:
+
+```json
+{ "args": ["--annotate", "batch"], "stdin": "[[\"screenshot\",\"/tmp/page.png\"]]" }
+```
 
 #### Artifact retention and dogfood-heavy QA runs
 
@@ -324,6 +332,8 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `stream status` | Show streaming status and active port. |
 
 When these diagnostic commands are invoked through the native `agent_browser` tool, structured console and page-error outputs render as compact summaries with counts and key fields. Large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context.
+
+`trace` and `profiler` share upstream Chrome tracing machinery. Do not run them at the same time. The wrapper tracks owner state it observes in the current Pi session and blocks conflicting starts/stops with "wrapper believes ..." wording because direct upstream CLI use or browser restarts can desynchronize wrapper-local state.
 
 ### Batch, auth, confirmations, sessions, chat, dashboard, and setup
 

@@ -173,8 +173,25 @@ function getStreamSummary(data: Record<string, unknown>): string | undefined {
 	];
 	if (typeof data.port === "number") {
 		lines.push(`Port: ${data.port}`);
+		lines.push(`WebSocket URL: ${getStreamWebSocketUrl(data.port)}`);
+		lines.push(`Frame format: JSON messages with base64 JPEG frame data`);
 	}
 	return lines.join("\n");
+}
+
+function getStreamWebSocketUrl(port: number): string {
+	return `ws://127.0.0.1:${port}`;
+}
+
+function enrichStreamStatusData(commandInfo: CommandInfo, data: unknown): unknown {
+	if (commandInfo.command !== "stream" || commandInfo.subcommand !== "status" || !isRecord(data) || typeof data.port !== "number") {
+		return data;
+	}
+	return {
+		...data,
+		frameFormat: "JSON messages with base64 JPEG frame data",
+		wsUrl: getStreamWebSocketUrl(data.port),
+	};
 }
 
 function getArrayField(data: Record<string, unknown>, key: string): unknown[] | undefined {
@@ -662,18 +679,28 @@ function extractPathStrings(data: unknown): string[] {
 	return [...new Set(paths)];
 }
 
+interface ArtifactRequestContext {
+	absolutePath: string;
+	path: string;
+	status?: FileArtifactMetadata["status"];
+	tempPath?: string;
+}
+
 async function buildFileArtifactMetadata(options: {
+	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
 	cwd: string;
 	path: string;
+	sessionName?: string;
 }): Promise<FileArtifactMetadata | undefined> {
 	const kind = getArtifactKind(options.commandInfo);
 	if (!kind) {
 		return undefined;
 	}
 
-	const absolutePath = resolve(options.cwd, options.path);
-	const extension = extname(options.path).toLowerCase() || undefined;
+	const absolutePath = options.artifactRequest?.absolutePath ?? resolve(options.cwd, options.path);
+	const displayPath = options.artifactRequest?.path ?? options.path;
+	const extension = extname(absolutePath || options.path).toLowerCase() || undefined;
 	let exists: boolean | undefined;
 	let sizeBytes: number | undefined;
 	try {
@@ -686,20 +713,32 @@ async function buildFileArtifactMetadata(options: {
 
 	return {
 		absolutePath,
+		artifactType: kind,
 		command: options.commandInfo.command,
+		cwd: options.cwd,
 		exists,
 		extension,
 		kind,
 		mediaType: extension ? ARTIFACT_EXTENSION_TO_MEDIA_TYPE[extension] : undefined,
-		path: options.path,
+		path: displayPath,
+		requestedPath: options.artifactRequest?.path,
+		session: options.sessionName,
 		sizeBytes,
+		status: options.artifactRequest?.status ?? (exists === false ? "missing" : "saved"),
 		subcommand: options.commandInfo.subcommand,
+		tempPath: options.artifactRequest?.tempPath,
 	};
 }
 
-async function extractFileArtifacts(commandInfo: CommandInfo, cwd: string, data: unknown): Promise<FileArtifactMetadata[]> {
-	const candidates = extractPathStrings(data);
-	const artifacts = await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ commandInfo, cwd, path })));
+async function extractFileArtifacts(options: {
+	artifactRequest?: ArtifactRequestContext;
+	commandInfo: CommandInfo;
+	cwd: string;
+	data: unknown;
+	sessionName?: string;
+}): Promise<FileArtifactMetadata[]> {
+	const candidates = extractPathStrings(options.data);
+	const artifacts = await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ ...options, path })));
 	return artifacts.filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
 }
 
@@ -708,12 +747,15 @@ function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMetadata[],
 		absolutePath: artifact.absolutePath,
 		command: artifact.command,
 		createdAtMs: nowMs,
+		cwd: artifact.cwd,
 		exists: artifact.exists,
 		extension: artifact.extension,
 		kind: artifact.kind,
 		mediaType: artifact.mediaType,
 		path: artifact.path,
+		requestedPath: artifact.requestedPath,
 		retentionState: artifact.exists === false ? "missing" : "live",
+		session: artifact.session,
 		sizeBytes: artifact.sizeBytes,
 		storageScope: "explicit-path",
 		subcommand: artifact.subcommand,
@@ -761,17 +803,37 @@ function formatArtifactSummary(artifacts: FileArtifactMetadata[]): string | unde
 }
 
 function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): string[] {
-	return artifacts.map((artifact) => {
+	return artifacts.map((artifact, index) => {
 		if (isRecordingStartArtifact(artifact)) {
-			return `${formatArtifactLabel(artifact)}: ${artifact.path}`;
+			return [
+				`${formatArtifactLabel(artifact)}: ${artifact.path}`,
+				`Artifact type: ${artifact.kind}`,
+				`Requested path: ${artifact.requestedPath ?? artifact.path}`,
+				`Absolute path: ${artifact.absolutePath}`,
+				`Exists: ${artifact.exists === true}`,
+				`Status: ${artifact.status ?? (artifact.exists === false ? "missing" : "saved")}`,
+				artifact.session ? `Session: ${artifact.session}` : undefined,
+				artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
+				`Machine data: details.artifacts[${index}]`,
+			].filter((item): item is string => item !== undefined).join("\n");
 		}
 
-		const suffix = [
-			artifact.mediaType,
-			typeof artifact.sizeBytes === "number" ? formatByteCount(artifact.sizeBytes) : undefined,
+		return [
+			`${formatArtifactLabel(artifact)}: ${artifact.path}`,
+			`Artifact type: ${artifact.kind}`,
+			`Requested path: ${artifact.requestedPath ?? artifact.path}`,
+			`Absolute path: ${artifact.absolutePath}`,
+			`Exists: ${artifact.exists === true}`,
 			artifact.exists === false ? "not found on disk" : undefined,
-		].filter((item): item is string => item !== undefined).join(", ");
-		return suffix ? `${formatArtifactLabel(artifact)}: ${artifact.path} (${suffix})` : `${formatArtifactLabel(artifact)}: ${artifact.path}`;
+			typeof artifact.sizeBytes === "number" ? `Size: ${formatByteCount(artifact.sizeBytes)}` : undefined,
+			typeof artifact.sizeBytes === "number" ? `Size bytes: ${artifact.sizeBytes}` : undefined,
+			`Status: ${artifact.status ?? (artifact.exists === false ? "missing" : "saved")}`,
+			artifact.tempPath ? `Temp path: ${artifact.tempPath}` : undefined,
+			artifact.mediaType ? `Media type: ${artifact.mediaType}` : undefined,
+			artifact.session ? `Session: ${artifact.session}` : undefined,
+			artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
+			`Machine data: details.artifacts[${index}]`,
+		].filter((item): item is string => item !== undefined).join("\n");
 	});
 }
 
@@ -1020,12 +1082,14 @@ function getBatchFailureDetails(steps: Array<{ details: BatchStepPresentationDet
 
 async function buildBatchStepPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactRequest?: ArtifactRequestContext;
 	cwd: string;
 	index: number;
 	item: AgentBrowserBatchResult;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
+	sessionName?: string;
 }): Promise<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> {
-	const { artifactManifest, cwd, index, item, persistentArtifactStore } = options;
+	const { artifactManifest, artifactRequest, cwd, index, item, persistentArtifactStore, sessionName } = options;
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const commandText = formatBatchStepCommand(command, index);
 
@@ -1052,10 +1116,12 @@ async function buildBatchStepPresentation(options: {
 
 	const presentation = await buildToolPresentation({
 		artifactManifest,
+		artifactRequest,
 		commandInfo: parseCommandInfo(command ?? []),
 		cwd,
 		envelope: { data: item.result, success: true },
 		persistentArtifactStore,
+		sessionName,
 	});
 	const fullOutputPaths = getPresentationPaths({
 		primaryPath: presentation.fullOutputPath,
@@ -1090,24 +1156,28 @@ async function buildBatchStepPresentation(options: {
 
 async function buildBatchPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactRequests?: Array<ArtifactRequestContext | undefined>;
 	cwd: string;
 	data: AgentBrowserBatchResult[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
+	sessionName?: string;
 	summary: string;
 }): Promise<ToolPresentation> {
-	const { cwd, data, persistentArtifactStore, summary } = options;
+	const { artifactRequests, cwd, data, persistentArtifactStore, sessionName, summary } = options;
 	const steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> = [];
 	const protectedPersistentPaths: string[] = [];
 	let currentArtifactManifest = options.artifactManifest;
 	for (const [index, item] of data.entries()) {
 		const step = await buildBatchStepPresentation({
 			artifactManifest: currentArtifactManifest,
+			artifactRequest: artifactRequests?.[index],
 			cwd,
 			index,
 			item,
 			persistentArtifactStore: persistentArtifactStore
 				? { ...persistentArtifactStore, protectedPaths: protectedPersistentPaths }
 				: undefined,
+			sessionName,
 		});
 		steps.push(step);
 		currentArtifactManifest = step.presentation.artifactManifest ?? currentArtifactManifest;
@@ -1522,13 +1592,16 @@ async function compactLargePresentationOutput(options: {
 
 export async function buildToolPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactRequest?: ArtifactRequestContext;
+	batchArtifactRequests?: Array<ArtifactRequestContext | undefined>;
 	commandInfo: CommandInfo;
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
 	errorText?: string;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
+	sessionName?: string;
 }): Promise<ToolPresentation> {
-	const { artifactManifest, commandInfo, cwd, envelope, errorText, persistentArtifactStore } = options;
+	const { artifactManifest, artifactRequest, commandInfo, cwd, envelope, errorText, persistentArtifactStore, sessionName } = options;
 	if (errorText) {
 		const hintedErrorText = appendSelectorRecoveryHint(redactModelFacingText(errorText));
 		return {
@@ -1537,14 +1610,14 @@ export async function buildToolPresentation(options: {
 		};
 	}
 
-	const data = envelope?.data;
-	const artifacts = await extractFileArtifacts(commandInfo, cwd, data);
+	const data = enrichStreamStatusData(commandInfo, envelope?.data);
+	const artifacts = await extractFileArtifacts({ artifactRequest, commandInfo, cwd, data, sessionName });
 	const artifactSummary = formatArtifactSummary(artifacts);
 	const summary = artifactSummary ?? formatSummary(commandInfo, data);
 	const artifactText = artifacts.length > 0 ? formatArtifactMetadataLines(artifacts).join("\n") : undefined;
 	const presentation =
 		commandInfo.command === "batch" && Array.isArray(data)
-			? await buildBatchPresentation({ artifactManifest, cwd, data: data as AgentBrowserBatchResult[], persistentArtifactStore, summary })
+			? await buildBatchPresentation({ artifactManifest, artifactRequests: options.batchArtifactRequests, cwd, data: data as AgentBrowserBatchResult[], persistentArtifactStore, sessionName, summary })
 			: commandInfo.command === "snapshot" && isRecord(data)
 				? await buildSnapshotPresentation(data, persistentArtifactStore, artifactManifest)
 				: {
@@ -1564,7 +1637,7 @@ export async function buildToolPresentation(options: {
 		}
 	}
 
-	const imagePath = extractImagePath(commandInfo, cwd, data);
+	const imagePath = artifactRequest?.absolutePath ?? extractImagePath(commandInfo, cwd, data);
 	const presentationWithImage = imagePath ? await attachInlineImage(presentation, imagePath) : presentation;
 	const compactedPresentation = await compactLargePresentationOutput({
 		artifactManifest,

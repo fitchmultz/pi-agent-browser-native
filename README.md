@@ -242,9 +242,10 @@ Validated workflow examples:
 - in configured-source lifecycle mode, verify `/reload` and full restart + `/resume` keep following the same implicit managed browser session
 - run `batch` with JSON via `stdin`
 - run `eval --stdin`
-- take a screenshot with inline attachment support
+- take a screenshot with inline attachment support and visible artifact metadata: artifact type, requested path, absolute path, existence, size, cwd, session, and repair/copy status when applicable
 - inspect upstream help/version through native tool calls like `{ "args": ["--help"] }` and `{ "args": ["--version"] }` via the tool's stateless plain-text inspection fallback
 - use `download <selector> <path>` for direct attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
+- for `.dogfood/...` or other dot-directory screenshot paths, rely on the wrapper's path normalization/repair contract; the visible result reports the requested path and absolute path rather than only an upstream temp path
 - use `click` plus `wait --download <path>` for asynchronous export flows, confirm `details.savedFilePath`/`details.savedFile` are present on the wait result or batch wait step, and check `details.artifacts[].exists` before relying on requested-path persistence
 - confirm oversized outputs show the actual spill file path directly in tool content, not just a details key name
 - inspect `details.artifactManifest` / `details.artifactRetentionSummary` during artifact-heavy flows to recover recent saved files, spill files, and visible eviction state after reload/resume
@@ -274,6 +275,9 @@ Current cautions:
 - If a known session target unexpectedly reports about:blank, agent_browser preserves the prior intended target, best-effort re-selects it when it still exists, and reports exact recovery guidance when it cannot be re-selected.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
 - oversized snapshots and oversized generic outputs compact inline content and print the actual spill file path directly in the tool result when a spill file exists; recent spills and explicit saved artifacts are also summarized in `details.artifactManifest`, including `evicted` entries when retention budgets remove older persisted files
+- artifact-producing commands render direct readable artifact metadata in visible content and `details.artifacts`: `kind`/`artifactType`, `path`, `requestedPath`, `absolutePath`, `exists`, `sizeBytes`, `status`, `cwd`, `session`, and `tempPath` when the wrapper repaired an upstream temp fallback
+- if the caller explicitly passes `--json`, the visible text content is valid JSON; for `stream status`, the wrapper enriches data with `wsUrl` and `frameFormat`
+- `trace` and `profiler` share upstream tracing machinery; the wrapper blocks starts/stops that conflict with owner state it observed in the current Pi session, but the message says "wrapper believes" because upstream or external CLI calls can desynchronize that local state
 - explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension
 - explicit caller-provided `--user-agent` values win over the ChatGPT/OpenAI compatibility workaround
 - tool progress/details redact sensitive invocation values such as `--headers`, proxy credentials, and auth-bearing URL parameters before echoing them back into Pi
