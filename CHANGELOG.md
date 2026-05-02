@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.15 - 2026-05-01
+
+### Changed
+- updated the local pi development baseline to `@mariozechner/pi-coding-agent` / `@mariozechner/pi-ai` `0.72.0`
+- regenerated the npm lockfile against the current stable dependency graph
+- aligned pi core peer metadata with current pi package guidance
+
+### Compatibility
+- reviewed the pi `0.72.0` changelog and confirmed the extension does not use the removed `compat.reasoningEffortMap` provider shape or depend on the new Xiaomi MiMo/provider base URL behavior
+
+
 ## 0.2.14 - 2026-05-01
 
 ### Changed

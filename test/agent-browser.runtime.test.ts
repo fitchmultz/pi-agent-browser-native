@@ -439,9 +439,12 @@ test("stale temp pruning only removes explicitly owned roots", { concurrency: fa
 	await chmod(unownedRoot, 0o700);
 	await chmod(ownedRoot, 0o700);
 	await writeFile(join(unownedRoot, "leftover.txt"), "keep", "utf8");
-	await writeSecureTempRootOwnershipMarker(ownedRoot, { createdAtMs: staleTime.getTime(), ownerPid: 99_999_999 });
 	await utimes(unownedRoot, staleTime, staleTime);
-	await utimes(ownedRoot, staleTime, staleTime);
+	// Write the stale ownership marker immediately before triggering pruning. Any
+	// secure temp root creation in a concurrent test file can legitimately prune
+	// stale owned roots as soon as the marker exists, so avoid yielding again
+	// before this test performs the pruning assertion itself.
+	await writeSecureTempRootOwnershipMarker(ownedRoot, { createdAtMs: staleTime.getTime(), ownerPid: 99_999_999 });
 
 	try {
 		const tempFile = await openSecureTempFile("prune-check", ".txt");

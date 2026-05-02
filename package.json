@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "description": "pi extension that exposes agent-browser as a native tool for browser automation",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
@@ -49,11 +49,12 @@
   },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
-    "typebox": "*"
+    "typebox": "*",
+    "@mariozechner/pi-coding-agent": "*"
   },
   "devDependencies": {
-    "@mariozechner/pi-ai": "^0.71.1",
-    "@mariozechner/pi-coding-agent": "^0.71.1",
+    "@mariozechner/pi-ai": "^0.72.0",
+    "@mariozechner/pi-coding-agent": "^0.72.0",
     "@types/node": "^25.6.0",
     "tsx": "^4.21.0",
     "typebox": "^1.1.37",
