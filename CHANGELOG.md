@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.18 - 2026-05-03
+
+### Fixed
+- persist oversized parse-failure spill files when Pi provides a session directory without a session file
+- isolate the opt-in real-upstream download contract test from the user's global Downloads folder and avoid killing unrelated `agent-browser` processes
+
+### Changed
+- clarified the README and repo guidance for the current published package state
+- marked the completed implementation plan as superseded so current design guidance stays canonical
+- tightened the implicit-session idle-timeout helper to return milliseconds as a number and convert to an environment string only at the process boundary
+
 ## 0.2.17 - 2026-05-03
 
 ### Fixed

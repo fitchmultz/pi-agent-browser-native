@@ -8,18 +8,15 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import test from "node:test";
 
 import { CAPABILITY_BASELINE, expectedVersionLabel } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
 	createExtensionHarness,
-	DOWNLOAD_FIXTURE_CONTENT,
-	DOWNLOAD_FIXTURE_FILENAME,
 	executeRegisteredTool,
 	startAgentBrowserContractFixtureServer,
 	withPatchedEnv,
@@ -43,6 +40,13 @@ function assertHasKeys(record: Record<string, unknown> | undefined, keys: readon
 	assert.ok(record, `expected ${label} details`);
 	for (const key of keys) {
 		assert.ok(Object.hasOwn(record, key), `expected ${label} to include ${key}`);
+	}
+}
+
+function assertJsonIncludes(value: unknown, tokens: readonly string[], label: string): void {
+	const serialized = JSON.stringify(value) ?? "";
+	for (const token of tokens) {
+		assert.ok(serialized.includes(token), `expected ${label} to include ${token}`);
 	}
 }
 
@@ -70,12 +74,6 @@ async function readFileIfPresent(path: string): Promise<string | undefined> {
 	}
 }
 
-async function removeDefaultFixtureDownloadIfPresent(): Promise<void> {
-	const defaultDownloadPath = join(homedir(), "Downloads", DOWNLOAD_FIXTURE_FILENAME);
-	if ((await readFileIfPresent(defaultDownloadPath)) !== DOWNLOAD_FIXTURE_CONTENT) return;
-	await rm(defaultDownloadPath, { force: true });
-}
-
 async function assertInstalledAgentBrowserVersion(): Promise<void> {
 	let stdout: string;
 	try {
@@ -100,66 +98,6 @@ async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?
 	});
 }
 
-async function listProcessTable(): Promise<Map<number, { command: string; ppid: number }>> {
-	try {
-		const { stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid=,command="], { maxBuffer: 10 * 1024 * 1024, timeout: 10_000 });
-		const processes = new Map<number, { command: string; ppid: number }>();
-		for (const line of stdout.split("\n")) {
-			const match = /^(\s*\d+)\s+(\d+)\s+(.+)$/.exec(line);
-			if (!match) continue;
-			processes.set(Number.parseInt(match[1], 10), { command: match[3], ppid: Number.parseInt(match[2], 10) });
-		}
-		return processes;
-	} catch {
-		return new Map();
-	}
-}
-
-function collectAgentBrowserRootPids(processes: Map<number, { command: string; ppid: number }>): Set<number> {
-	const pids = new Set<number>();
-	for (const [pid, entry] of processes) {
-		if (entry.command.includes("/agent-browser/bin/agent-browser") || entry.command.includes("agent-browser-darwin")) {
-			pids.add(pid);
-		}
-	}
-	return pids;
-}
-
-async function terminateNewAgentBrowserProcesses(previousRoots: Set<number>): Promise<void> {
-	const processes = await listProcessTable();
-	const roots = [...collectAgentBrowserRootPids(processes)].filter((pid) => !previousRoots.has(pid));
-	if (roots.length === 0) return;
-	const targets = new Set(roots);
-	let changed = true;
-	while (changed) {
-		changed = false;
-		for (const [pid, entry] of processes) {
-			if (!targets.has(pid) && targets.has(entry.ppid)) {
-				targets.add(pid);
-				changed = true;
-			}
-		}
-	}
-	for (const pid of [...targets].reverse()) {
-		if (pid === process.pid) continue;
-		try {
-			process.kill(pid, "SIGTERM");
-		} catch {
-			// The process may have already exited after the close command.
-		}
-	}
-	await delay(500);
-	for (const pid of [...targets].reverse()) {
-		if (pid === process.pid) continue;
-		try {
-			process.kill(pid, 0);
-			process.kill(pid, "SIGKILL");
-		} catch {
-			// The process exited after SIGTERM or before the liveness check.
-		}
-	}
-}
-
 if (!REAL_UPSTREAM_ENABLED) {
 	test("real upstream agent-browser contract suite is opt-in", { skip: "Set PI_AGENT_BROWSER_REAL_UPSTREAM=1 to run against the installed upstream binary." }, () => undefined);
 } else {
@@ -168,9 +106,9 @@ if (!REAL_UPSTREAM_ENABLED) {
 		const shapes = await readOutputShapesFixture();
 		assert.equal(shapes.targetVersion, CAPABILITY_BASELINE.targetVersion, "output-shape fixture must track the canonical target version");
 
-		const agentBrowserRootsBeforeTest = collectAgentBrowserRootPids(await listProcessTable());
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-upstream-"));
 		const socketDir = join(tempDir, "sockets");
+		await mkdir(join(tempDir, "Downloads"), { recursive: true });
 		let fixtureServer: FixtureServer | undefined;
 		let managedSessionName: string | undefined;
 		try {
@@ -179,6 +117,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 				{
 					AGENT_BROWSER_SOCKET_DIR: socketDir,
 					AGENT_BROWSER_SCREENSHOT_DIR: join(tempDir, "screenshots"),
+					HOME: tempDir,
 				},
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
@@ -214,7 +153,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					const snapshotDetails = assertSuccessfulResult(snapshot, shapes.commands.snapshot, "snapshot -i");
 					assert.equal(snapshotDetails.sessionName, managedSessionName);
 					assert.equal(snapshotDetails.usedImplicitSession, true);
-					assert.match(JSON.stringify(snapshotDetails.data), /Agent Browser Contract Fixture|mark-ready|Ready for real upstream/);
+					assertJsonIncludes(snapshotDetails.data, ["Agent Browser Contract Fixture"], "snapshot data");
 
 					const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["batch"],
@@ -223,7 +162,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					const batchDetails = assertSuccessfulResult(batch, shapes.commands.batch, "batch via stdin");
 					assert.equal(batchDetails.sessionName, managedSessionName);
 					assert.equal(batchDetails.usedImplicitSession, true);
-					assert.match(JSON.stringify(batchDetails.data), /Ready for real upstream contract validation|Agent Browser Contract Fixture/);
+					assertJsonIncludes(batchDetails.data, ["Ready for real upstream contract validation", "Agent Browser Contract Fixture"], "batch data");
 
 					const downloadPath = join(tempDir, "wait-download-report.txt");
 					const downloadPage = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `${fixtureServer?.baseUrl}/download`] });
@@ -254,9 +193,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 			);
 		} finally {
 			await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: managedSessionName, socketDir });
-			await terminateNewAgentBrowserProcesses(agentBrowserRootsBeforeTest);
 			await fixtureServer?.close();
-			await removeDefaultFixtureDownloadIfPresent();
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	});

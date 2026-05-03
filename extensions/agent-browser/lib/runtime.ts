@@ -421,12 +421,10 @@ function parseTimeoutMs(rawValue: string | undefined, minimumValue: number): num
 	return parsedValue;
 }
 
-export function getImplicitSessionIdleTimeoutMs(env: NodeJS.ProcessEnv = process.env): string {
-	return String(
-		parseTimeoutMs(env[IMPLICIT_SESSION_IDLE_TIMEOUT_ENV], 0) ??
-			parseTimeoutMs(env[AGENT_BROWSER_IDLE_TIMEOUT_ENV], 0) ??
-			DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS,
-	);
+export function getImplicitSessionIdleTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+	return parseTimeoutMs(env[IMPLICIT_SESSION_IDLE_TIMEOUT_ENV], 0) ??
+		parseTimeoutMs(env[AGENT_BROWSER_IDLE_TIMEOUT_ENV], 0) ??
+		DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS;
 }
 
 export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {

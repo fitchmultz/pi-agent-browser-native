@@ -4,9 +4,9 @@ Native `pi` integration for [`agent-browser`](https://agent-browser.dev/).
 
 ## Status
 
-Early working scaffold.
+Published pre-1.0 package.
 
-The package scaffold, native `agent_browser` tool, local typecheck/test setup, and release/package verification workflow are in place.
+The native `agent_browser` tool, local verification workflow, package-content checks, and release checks are in place. Package install is the default path; checkout loading is for development and validation.
 
 ## Goal
 
@@ -45,7 +45,7 @@ A native `pi` integration can improve on the current skill by adding:
 
 ## Install and try
 
-The product direction is package-first. Prefer the package source once a release exists, while keeping the local-checkout flow for current development and pre-release validation.
+The product direction is package-first. Prefer the package source for normal use; keep the local-checkout flow for development and pre-release validation.
 
 ### Preferred package install
 

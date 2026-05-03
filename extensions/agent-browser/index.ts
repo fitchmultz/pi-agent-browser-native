@@ -1216,17 +1216,12 @@ function buildSessionDetailFields(sessionName: string | undefined, usedImplicitS
 function getPersistentSessionArtifactStore(ctx: {
 	sessionManager: {
 		getSessionDir?: () => string;
-		getSessionFile?: () => string | undefined;
 		getSessionId: () => string | undefined;
 	};
 }): PersistentSessionArtifactStore | undefined {
-	const sessionFile = typeof ctx.sessionManager.getSessionFile === "function" ? ctx.sessionManager.getSessionFile() : undefined;
 	const sessionDir = typeof ctx.sessionManager.getSessionDir === "function" ? ctx.sessionManager.getSessionDir() : undefined;
 	const sessionId = ctx.sessionManager.getSessionId();
-	if (!sessionFile || !sessionDir || !sessionId) {
-		return undefined;
-	}
-	return { sessionDir, sessionId };
+	return sessionDir && sessionId ? { sessionDir, sessionId } : undefined;
 }
 
 async function preserveParseFailureOutput(options: {
@@ -1360,7 +1355,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	const hasBraveApiKey = hasUsableBraveApiKey();
 	const toolPromptGuidelines = buildToolPromptGuidelines({ includeBraveSearch: hasBraveApiKey });
-	const implicitSessionIdleTimeoutMs = getImplicitSessionIdleTimeoutMs();
+	const implicitSessionIdleTimeoutMs = String(getImplicitSessionIdleTimeoutMs());
 	const implicitSessionCloseTimeoutMs = getImplicitSessionCloseTimeoutMs();
 	let managedSessionActive = false;
 	let managedSessionBaseName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);

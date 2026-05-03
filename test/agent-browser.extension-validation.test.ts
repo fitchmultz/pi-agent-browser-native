@@ -762,6 +762,45 @@ test("agentBrowserExtension preserves full spilled stdout for oversized parse fa
 	}
 });
 
+test("agentBrowserExtension persists parse-failure output when only a session directory is available", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-only-"));
+	const basePath = process.env.PATH ?? "";
+	const sentinel = "RQ-0006-session-dir-only-sentinel";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write("x".repeat(600000) + ${JSON.stringify(sentinel)});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["snapshot", "-i"],
+			});
+
+			assert.equal(result.isError, true);
+			const fullOutputPath = result.details?.fullOutputPath;
+			assert.equal(typeof fullOutputPath, "string");
+			if (typeof fullOutputPath !== "string") assert.fail("expected fullOutputPath to be a string");
+			assert.equal(fullOutputPath.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
+			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
+			assert.equal(manifest?.liveCount, 1);
+			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
+			assert.equal(manifest?.entries?.[0]?.retentionState, "live");
+			assert.equal(manifest?.entries?.[0]?.storageScope, "persistent-session");
+			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+		});
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(tempDir, { force: true, recursive: true });
+		await rm(sessionDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension returns temp full-output path for oversized parse failures without session artifacts", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));

@@ -1,6 +1,6 @@
-# pi-agent-browser
+# pi-agent-browser-native
 
-Dedicated `pi` integration of `agent-browser` as a native tool.
+Native `pi` integration of `agent-browser` as a `pi` tool.
 
 ## Product-specific guidance
 
