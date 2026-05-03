@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "description": "pi extension that exposes agent-browser as a native tool for browser automation",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",

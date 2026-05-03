@@ -125,7 +125,7 @@ function isPathLikeSource(source) {
 	return source.startsWith("/") || source.startsWith("./") || source.startsWith("../") || source.startsWith("~");
 }
 
-function sourceLooksLikeThisPackage(source, cwd) {
+function sourceLooksLikeThisPackage(source, cwd, sourceBaseDir = cwd) {
 	const text = String(source ?? "").trim();
 	if (text.length === 0) return false;
 	if (/^npm:pi-agent-browser-native(?:@|$)/.test(text)) return true;
@@ -133,12 +133,13 @@ function sourceLooksLikeThisPackage(source, cwd) {
 	if (text.includes(REPO_URL_FRAGMENT)) return true;
 
 	if (!isPathLikeSource(text)) return false;
-	const resolvedSource = resolve(cwd, expandUserPath(text));
+	const resolvedSource = resolve(sourceBaseDir, expandUserPath(text));
 	const cwdEntrypoint = resolve(cwd, EXTENSION_ENTRYPOINT);
 	const packageEntrypoint = resolve(THIS_PACKAGE_ROOT, EXTENSION_ENTRYPOINT);
 	return (
 		resolvedSource === cwd ||
 		resolvedSource === cwdEntrypoint ||
+		resolvedSource === THIS_PACKAGE_ROOT ||
 		resolvedSource === packageEntrypoint ||
 		isInsidePath(cwdEntrypoint, resolvedSource) ||
 		isInsidePath(packageEntrypoint, resolvedSource)
@@ -223,15 +224,16 @@ function entrySource(entry) {
 
 function collectSettingsSources(settings, settingsPath, cwd) {
 	const sources = [];
+	const sourceBaseDir = dirname(settingsPath);
 	for (const [index, entry] of arrayEntries(settings?.packages)) {
 		const source = entrySource(entry);
-		if (sourceLooksLikeThisPackage(source, cwd)) {
+		if (sourceLooksLikeThisPackage(source, cwd, sourceBaseDir)) {
 			sources.push({ kind: "package", source: String(source), location: `${settingsPath} packages[${index}]` });
 		}
 	}
 	for (const [index, entry] of arrayEntries(settings?.extensions)) {
 		const source = entrySource(entry);
-		if (sourceLooksLikeThisPackage(source, cwd)) {
+		if (sourceLooksLikeThisPackage(source, cwd, sourceBaseDir)) {
 			sources.push({ kind: "extension", source: String(source), location: `${settingsPath} extensions[${index}]` });
 		}
 	}

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.19 - 2026-05-03
+
+### Fixed
+- resolve relative Pi package sources from the settings file directory in `pi-agent-browser-doctor`, so global settings that point at a local checkout are detected correctly
+
 ## 0.2.18 - 2026-05-03
 
 ### Fixed
