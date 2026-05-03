@@ -213,8 +213,9 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - derive the base implicit session name from the official `pi` session id plus a cwd hash so same-named checkouts do not collide
 - respect explicit upstream `--session` with minimal interference
 - treat the extension-managed session as convenience state owned by the wrapper
-- preserve the current extension-managed session across normal `pi` shutdown/reload so persisted sessions can keep following the live browser on `/reload` or `/resume`
-- set an idle timeout on extension-managed sessions so abandoned daemons eventually self-clean
+- preserve the current extension-managed session across `/reload` and resumable session transitions so persisted sessions can keep following the live browser on `/reload` or `/resume`
+- close the active extension-managed session when the originating `pi` process quits, while leaving explicit caller-provided sessions alone
+- set an idle timeout on extension-managed sessions as a backstop for abnormal exits or cleanup failures
 - clean up process-private temp spill artifacts on shutdown, while keeping persisted-session snapshot spill files in a private session-scoped artifact directory so `details.fullOutputPath` survives reload/restart and the oldest spill files are evicted if the per-session artifact budget is exceeded
 - reconstruct the current extension-managed session and latest `artifactManifest` from persisted tool details on resume/reload so later default calls keep following the active managed browser and can continue reporting artifact retention state
 - when an unnamed `sessionMode: "fresh"` launch succeeds, make it the new extension-managed session so later default calls keep using it

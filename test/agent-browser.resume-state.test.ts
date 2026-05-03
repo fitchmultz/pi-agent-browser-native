@@ -66,7 +66,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				args: ["open", "https://example.com/first"],
 			});
 			assert.equal(firstOpen.isError, false);
-			await runExtensionEvent(firstHarness.handlers, "session_shutdown");
+			await runExtensionEvent(firstHarness.handlers, "session_shutdown", { reason: "resume" });
 			assert.equal((await readInvocationLog(logPath)).length, 1);
 
 			const resumedBranch = [
@@ -84,6 +84,79 @@ process.stdout.write(JSON.stringify(envelope));`,
 			assert.equal(blocked.isError, true);
 			assert.match(String(blocked.details?.validationError ?? ""), /launch-scoped flags/i);
 			assert.equal((await readInvocationLog(logPath)).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension closes the active managed session when pi quits", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: "Example Domain", url: args[args.length - 1] } };
+process.stdout.write(JSON.stringify(envelope));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/quit-cleanup"],
+			});
+			assert.equal(open.isError, false, JSON.stringify(open));
+			const sessionName = open.details?.sessionName;
+			assert.equal(typeof sessionName, "string");
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" });
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations.map((entry) => entry.args), [
+				["--json", "--session", String(sessionName), "open", "https://example.com/quit-cleanup"],
+				["--session", String(sessionName), "close"],
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves the active managed session across reload shutdown", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: args[args.length - 1] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/reload-preserve"],
+			});
+			assert.equal(open.isError, false, JSON.stringify(open));
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" });
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.length, 1);
+			assert.equal(invocations.some((entry) => entry.args.includes("close")), false);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

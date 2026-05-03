@@ -1385,7 +1385,17 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		artifactManifest = restoreArtifactManifestFromBranch(ctx.sessionManager.getBranch());
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event) => {
+		if (event?.reason === "quit") {
+			await managedSessionExecutionQueue.run(async () => {
+				if (!managedSessionActive) return;
+				await closeManagedSession({
+					cwd: managedSessionCwd,
+					sessionName: managedSessionName,
+					timeoutMs: implicitSessionCloseTimeoutMs,
+				});
+			});
+		}
 		managedSessionActive = false;
 		sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
 		sessionTabTargetUpdateOrder = 0;

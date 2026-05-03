@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.17 - 2026-05-03
+
+### Fixed
+- close the active extension-managed `piab-*` browser session when the originating `pi` process quits, while preserving managed browser continuity across `/reload` and resumable session transitions
+- added lifecycle regression coverage for quit-time managed-session cleanup and reload-time preservation
+
+### Changed
+- clarified that the managed-session idle timeout is now an abnormal-exit backstop, not the primary cleanup path for normal `pi` exits
+
 ## 0.2.16 - 2026-05-02
 
 ### Fixed
