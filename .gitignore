@@ -3,6 +3,12 @@ node_modules/
 .pi/
 *.tgz
 
-.ralph/*
-!.ralph/done.jsonc
-!.ralph/queue.jsonc
+# CueLoop machine-local artifacts (do not commit)
+.cueloop/cache/
+.cueloop/logs/
+.cueloop/workspaces/
+.cueloop/lock/
+.cueloop/undo/
+.cueloop/webhooks/
+.cueloop/trust.json
+.cueloop/trust.jsonc

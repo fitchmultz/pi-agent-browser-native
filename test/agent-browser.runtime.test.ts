@@ -27,6 +27,7 @@ import {
 	hasLaunchScopedTabCorrectionFlag,
 	hasUsableBraveApiKey,
 	redactInvocationArgs,
+	redactSensitiveText,
 	redactSensitiveValue,
 	resolveManagedSessionState,
 	restoreManagedSessionStateFromBranch,
@@ -772,6 +773,20 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"open",
 		"https://example.com/",
 	]);
+});
+
+test("redactSensitiveText preserves help placeholders while redacting bearer credentials", () => {
+	assert.equal(
+		redactSensitiveText('Headers help: --headers <json> (e.g., Authorization bearer token)'),
+		'Headers help: --headers <json> (e.g., Authorization bearer token)',
+	);
+	assert.equal(redactSensitiveText("Error: Authorization: Bearer raw-token)"), "Error: Authorization: Bearer [REDACTED])");
+	assert.equal(redactSensitiveText("Authorization bearer raw-token."), "Authorization bearer [REDACTED].");
+	assert.equal(redactSensitiveText("Authorization bearer secrettoken"), "Authorization bearer [REDACTED]");
+	assert.equal(redactSensitiveText("Authorization bearer token,"), "Authorization bearer [REDACTED],");
+	assert.equal(redactSensitiveText("curl -H 'Bearer secrettoken'"), "curl -H 'Bearer [REDACTED]'");
+	assert.equal(redactSensitiveText("curl -H 'Bearer abc123'"), "curl -H 'Bearer [REDACTED]'");
+	assert.equal(redactSensitiveText("curl -H 'Bearer token.'"), "curl -H 'Bearer [REDACTED].'");
 });
 
 test("redactSensitiveValue masks obvious secret-bearing object keys", () => {

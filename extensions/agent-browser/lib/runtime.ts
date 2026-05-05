@@ -328,11 +328,33 @@ function redactStandaloneBasicCredential(text: string): string {
 	});
 }
 
+function credentialTrailingPunctuation(credential: string): string {
+	return credential.match(/^(.+?)([,.]+)$/)?.[2] ?? "";
+}
+
+function isBearerHelpPlaceholder(label: string, credential: string, trailing: string): boolean {
+	return label.toLowerCase() === "authorization bearer" && credential.toLowerCase() === "token" && trailing === ")";
+}
+
+function formatRedactedCredential(label: string, credential: string, trailing = ""): string {
+	return `${label} [REDACTED]${credentialTrailingPunctuation(credential)}${trailing}`;
+}
+
+function redactBearerCredentials(text: string): string {
+	return text
+		.replace(/\b(Authorization\s*:\s*Bearer)\s+([^\s"',)\[\]]+)([),.]?)/gi, (_match, label: string, credential: string, trailing: string) => {
+			return formatRedactedCredential(label, credential, trailing);
+		})
+		.replace(/\b((?:Authorization\s+)?Bearer)\s+([^\s"',)\[\]]+)([),.]?)/gi, (match, label: string, credential: string, trailing: string) => {
+			if (isBearerHelpPlaceholder(label, credential, trailing)) return match;
+			return formatRedactedCredential(label, credential, trailing);
+		});
+}
+
 export function redactSensitiveText(text: string): string {
 	return redactEmbeddedStructuredText(
 		redactStandaloneBasicCredential(
-			redactLooseUrlMatches(text)
-				.replace(/\b(Bearer)\s+[^\s",]+/gi, "$1 [REDACTED]")
+			redactBearerCredentials(redactLooseUrlMatches(text))
 				.replace(/\b(Authorization\s*:\s*Basic)\s+[^\s",]+/gi, "$1 [REDACTED]")
 				.replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\n\r"]+/gi, "$1: [REDACTED]"),
 		),
