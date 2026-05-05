@@ -301,13 +301,13 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | Mode | Purpose |
 | --- | --- |
 | `wait <selector>` | Wait for an element to appear. |
-| `wait <ms>` | Wait for a fixed number of milliseconds. |
+| `wait <ms>` | Wait for a fixed number of milliseconds. In the native Pi wrapper, keep each fixed wait at `25000` ms or less and split longer waits into multiple tool calls. |
 | `wait --url <pattern>` | Wait for the URL to match a pattern. |
 | `wait --load <state>` | Wait for load state: `load`, `domcontentloaded`, or `networkidle`. |
 | `wait --fn <expression>` | Wait for a JavaScript expression to become truthy. |
 | `wait --text <text>` | Wait for text to appear on the page. |
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
-| `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. |
+| `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. In the native Pi wrapper, use `25000` ms or less per call to stay under the upstream CLI IPC budget. |
 | `wait <selector> --state hidden` | Wait for an element to become hidden. |
 | `wait <selector> --state detached` | Wait for an element to detach. |
 
@@ -435,6 +435,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 - After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
 - If a known session target unexpectedly reports about:blank, agent_browser preserves the prior intended target, best-effort re-selects it when it still exists, and reports exact recovery guidance when it cannot be re-selected.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
+- Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to 25 seconds and use a 28-second child-process watchdog so one upstream CLI call does not cross the upstream 30-second IPC read-timeout/retry path.
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result. Recent artifact metadata is bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES` (default 100); persisted spill files are separately bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` (default 32 MiB).
 - The wrapper keeps `--help` and `--version` stateless so they do not consume the implicit managed-session slot.
 

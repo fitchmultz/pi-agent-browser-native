@@ -591,6 +591,46 @@ test("agentBrowserExtension rejects malformed JSON envelopes that omit success",
 	}
 });
 
+test("agentBrowserExtension rejects waits that would cross the upstream IPC read-timeout budget", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-timeout-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin: null }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const directWait = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["wait", "31000"],
+			});
+			const downloadWait = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["wait", "--download", "/tmp/export.csv", "--timeout", "30000"],
+			});
+			const batchWait = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["wait", "26000"]]),
+			});
+
+			for (const result of [directWait, downloadWait, batchWait]) {
+				assert.equal(result.isError, true);
+				assert.equal(result.content[0]?.type, "text");
+				assert.match((result.content[0] as { text: string }).text, /30s IPC read timeout/);
+				assert.match(String(result.details?.validationError ?? ""), /25000ms or less/);
+			}
+			assert.deepEqual(await readInvocationLog(logPath), []);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension forwards wait --download saved-file metadata in details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-download-"));
 	const basePath = process.env.PATH ?? "";

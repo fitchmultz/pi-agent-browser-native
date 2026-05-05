@@ -13,7 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
+import {
+	buildAgentBrowserProcessEnv,
+	getAgentBrowserProcessTimeoutMs,
+	getAgentBrowserSocketDir,
+	runAgentBrowserProcess,
+} from "../extensions/agent-browser/lib/process.js";
 import {
 	parseAgentBrowserEnvelope
 } from "../extensions/agent-browser/lib/results.js";
@@ -28,6 +33,15 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+test("process helpers clamp upstream operation timeouts below the CLI IPC read timeout", () => {
+	assert.equal(getAgentBrowserProcessTimeoutMs({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "1234" }), 1234);
+	assert.equal(getAgentBrowserProcessTimeoutMs({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "invalid" }), 28_000);
+
+	assert.equal(buildAgentBrowserProcessEnv({ AGENT_BROWSER_DEFAULT_TIMEOUT: "45000" }).AGENT_BROWSER_DEFAULT_TIMEOUT, "25000");
+	assert.equal(buildAgentBrowserProcessEnv({ AGENT_BROWSER_DEFAULT_TIMEOUT: "12000" }).AGENT_BROWSER_DEFAULT_TIMEOUT, "12000");
+	assert.equal(buildAgentBrowserProcessEnv({}).AGENT_BROWSER_DEFAULT_TIMEOUT, "25000");
+});
 
 test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
@@ -51,6 +65,33 @@ test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls"
 		assert.equal(processResult.aborted, true);
 		assert.equal(processResult.spawnError, undefined);
 		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess stops a hung upstream client before the upstream IPC retry path", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-timeout-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdin.resume(); setTimeout(() => process.stdout.write(JSON.stringify({ success: true, data: "late" })), 5000);`,
+	);
+
+	try {
+		const startedAt = Date.now();
+		const processResult = await runAgentBrowserProcess({
+			args: ["wait", "5000"],
+			cwd: tempDir,
+			env: { PATH: `${tempDir}:${basePath}` },
+			timeoutMs: 100,
+		});
+
+		assert.equal(processResult.timedOut, true);
+		assert.equal(processResult.timeoutMs, 100);
+		assert.equal(processResult.aborted, false);
+		assert.equal(processResult.exitCode, 124);
+		assert.ok(Date.now() - startedAt < 2_000);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -331,6 +372,7 @@ const envelope = {
     agentBrowserActionPolicy: readEnv("AGENT_BROWSER_ACTION_POLICY"),
     agentBrowserConfig: readEnv("AGENT_BROWSER_CONFIG"),
     agentBrowserConfirmActions: readEnv("AGENT_BROWSER_CONFIRM_ACTIONS"),
+    agentBrowserDefaultTimeout: readEnv("AGENT_BROWSER_DEFAULT_TIMEOUT"),
     agentBrowserEncryptionKey: readEnv("AGENT_BROWSER_ENCRYPTION_KEY"),
     agentBrowserScreenshotDir: readEnv("AGENT_BROWSER_SCREENSHOT_DIR"),
     agentBrowserSession: readEnv("AGENT_BROWSER_SESSION"),
@@ -362,6 +404,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				AGENT_BROWSER_ACTION_POLICY: "/tmp/action-policy.json",
 				AGENT_BROWSER_CONFIG: "/tmp/agent-browser.json",
 				AGENT_BROWSER_CONFIRM_ACTIONS: "1",
+				AGENT_BROWSER_DEFAULT_TIMEOUT: "45000",
 				AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64),
 				AGENT_BROWSER_SCREENSHOT_DIR: "/tmp/agent-browser-screenshots",
 				AGENT_BROWSER_SESSION: "from-parent-session",
@@ -398,6 +441,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 					agentBrowserActionPolicy: string | null;
 					agentBrowserConfig: string | null;
 					agentBrowserConfirmActions: string | null;
+					agentBrowserDefaultTimeout: string | null;
 					agentBrowserEncryptionKey: string | null;
 					agentBrowserScreenshotDir: string | null;
 					agentBrowserSession: string | null;
@@ -422,6 +466,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.agentBrowserActionPolicy, "/tmp/action-policy.json");
 				assert.equal(data.agentBrowserConfig, "/tmp/agent-browser.json");
 				assert.equal(data.agentBrowserConfirmActions, "1");
+				assert.equal(data.agentBrowserDefaultTimeout, "25000");
 				assert.equal(data.agentBrowserEncryptionKey, "a".repeat(64));
 				assert.equal(data.agentBrowserScreenshotDir, "/tmp/agent-browser-screenshots");
 				assert.equal(data.agentBrowserSession, "from-parent-session");

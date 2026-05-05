@@ -148,6 +148,41 @@ test("parseAgentBrowserEnvelope accepts valid object envelopes with boolean succ
 	assert.equal(parsed.envelope?.success, true);
 });
 
+test("getAgentBrowserErrorText explains wrapper watchdog timeouts", () => {
+	const errorText = getAgentBrowserErrorText({
+		aborted: false,
+		exitCode: 124,
+		plainTextInspection: false,
+		stderr: "",
+		timedOut: true,
+		timeoutMs: 28000,
+	});
+
+	assert.match(errorText ?? "", /28000ms wrapper watchdog/);
+	assert.match(errorText ?? "", /30s IPC retry path/);
+});
+
+test("getAgentBrowserErrorText explains upstream IPC read timeouts", () => {
+	for (const upstreamError of [
+		"Failed to read: Resource temporarily unavailable (os error 35) (after 5 retries - daemon may be busy or unresponsive)",
+		"Failed to read: Resource temporarily unavailable (os error 11) (after 5 retries - daemon may be busy or unresponsive)",
+	]) {
+		const errorText = getAgentBrowserErrorText({
+			aborted: false,
+			envelope: {
+				success: false,
+				error: upstreamError,
+			},
+			exitCode: 1,
+			plainTextInspection: false,
+			stderr: "",
+		});
+
+		assert.match(errorText ?? "", /30s IPC read timeout/);
+		assert.match(errorText ?? "", /daemon may still be alive/);
+	}
+});
+
 test("getAgentBrowserErrorText prefers envelope errors over generic exit codes", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,

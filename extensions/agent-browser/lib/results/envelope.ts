@@ -116,6 +116,25 @@ function buildExitCodeFallback(options: { command?: string; effectiveArgs?: stri
 	return appendWrapperRecoveryHint(`${invocation} exited with code ${options.exitCode}.`, options.wrapperRecoveryHint);
 }
 
+function buildWatchdogTimeoutMessage(options: { timeoutMs?: number }): string {
+	const timeoutText = options.timeoutMs === undefined ? "the wrapper watchdog" : `the ${options.timeoutMs}ms wrapper watchdog`;
+	return [
+		`agent-browser exceeded ${timeoutText} and was stopped before the upstream CLI entered its 30s IPC retry path.`,
+		"Keep a single agent-browser command under 30 seconds; split long waits into shorter waits or retry with sessionMode: \"fresh\" if the session state looks stale.",
+	].join(" ");
+}
+
+function isUpstreamIpcReadTimeoutMessage(message: string): boolean {
+	return /Failed to read: Resource temporarily unavailable(?: \(os error \d+\))?.*daemon may be busy or unresponsive/i.test(message);
+}
+
+function buildUpstreamIpcReadTimeoutMessage(): string {
+	return [
+		"agent-browser hit the upstream CLI 30s IPC read timeout while waiting for the daemon response.",
+		"The daemon may still be alive; do not blindly retry a non-idempotent command. Prefer a shorter command, split long waits, or retry with sessionMode: \"fresh\" after checking tab list.",
+	].join(" ");
+}
+
 export function getAgentBrowserErrorText(options: {
 	aborted: boolean;
 	command?: string;
@@ -126,10 +145,13 @@ export function getAgentBrowserErrorText(options: {
 	plainTextInspection: boolean;
 	spawnError?: Error;
 	stderr: string;
+	timedOut?: boolean;
+	timeoutMs?: number;
 	wrapperRecoveryHint?: string;
 }): string | undefined {
-	const { aborted, envelope, exitCode, parseError, plainTextInspection, spawnError, stderr } = options;
+	const { aborted, envelope, exitCode, parseError, plainTextInspection, spawnError, stderr, timedOut } = options;
 	if (plainTextInspection) return undefined;
+	if (timedOut) return buildWatchdogTimeoutMessage(options);
 	if (aborted) return "agent-browser was aborted.";
 	if (spawnError) return spawnError.message;
 	if (parseError) return parseError;
@@ -137,7 +159,11 @@ export function getAgentBrowserErrorText(options: {
 		if ((hasStructuredBatchStepFailure(envelope.data) || detectConfirmationRequired(envelope.data)) && envelope.error === undefined) {
 			return undefined;
 		}
-		return extractEnvelopeErrorText(envelope.error) ?? (stderr.trim() || buildFailureFallback(options));
+		const envelopeErrorText = extractEnvelopeErrorText(envelope.error);
+		if (envelopeErrorText && isUpstreamIpcReadTimeoutMessage(envelopeErrorText)) {
+			return buildUpstreamIpcReadTimeoutMessage();
+		}
+		return envelopeErrorText ?? (stderr.trim() || buildFailureFallback(options));
 	}
 	if (exitCode !== 0) {
 		return stderr.trim() || buildExitCodeFallback(options);

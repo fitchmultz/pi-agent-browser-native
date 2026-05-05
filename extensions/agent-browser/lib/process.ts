@@ -17,7 +17,11 @@ const MAX_BUFFERED_STDERR_CHARS = 32_000;
 const MAX_BUFFERED_STDOUT_TAIL_CHARS = 32_000;
 const PROCESS_STDOUT_SPILL_FILE_PREFIX = "process-stdout";
 const AGENT_BROWSER_SOCKET_DIR_ENV = "AGENT_BROWSER_SOCKET_DIR";
+const AGENT_BROWSER_DEFAULT_TIMEOUT_ENV = "AGENT_BROWSER_DEFAULT_TIMEOUT";
+const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS";
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
+export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
+const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 28_000;
 const httpProxyEnvName = "http_proxy";
 const httpsProxyEnvName = "https_proxy";
 const allProxyEnvName = "all_proxy";
@@ -92,11 +96,32 @@ export interface ProcessRunResult {
 	stderr: string;
 	stdout: string;
 	stdoutSpillPath?: string;
+	timedOut: boolean;
+	timeoutMs?: number;
 }
 
 function appendTail(text: string, addition: string, maxChars: number): string {
 	const combined = text + addition;
 	return combined.length <= maxChars ? combined : combined.slice(combined.length - maxChars);
+}
+
+function parsePositiveIntegerEnv(value: string | undefined): number | undefined {
+	if (value === undefined || !/^\d+$/.test(value.trim())) {
+		return undefined;
+	}
+	const parsed = Number(value.trim());
+	return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function clampUpstreamDefaultTimeout(childEnv: NodeJS.ProcessEnv): void {
+	const requestedTimeout = parsePositiveIntegerEnv(childEnv[AGENT_BROWSER_DEFAULT_TIMEOUT_ENV]);
+	if (requestedTimeout === undefined || requestedTimeout > SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS) {
+		childEnv[AGENT_BROWSER_DEFAULT_TIMEOUT_ENV] = String(SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS);
+	}
+}
+
+export function getAgentBrowserProcessTimeoutMs(env: NodeJS.ProcessEnv = processEnv): number {
+	return parsePositiveIntegerEnv(env[PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV]) ?? DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS;
 }
 
 export function getAgentBrowserSocketDir(
@@ -134,6 +159,7 @@ export function buildAgentBrowserProcessEnv(
 	}
 
 	if (!overrides) {
+		clampUpstreamDefaultTimeout(childEnv);
 		return childEnv;
 	}
 
@@ -144,6 +170,7 @@ export function buildAgentBrowserProcessEnv(
 			childEnv[name] = value;
 		}
 	}
+	clampUpstreamDefaultTimeout(childEnv);
 	return childEnv;
 }
 
@@ -153,8 +180,10 @@ export async function runAgentBrowserProcess(options: {
 	env?: NodeJS.ProcessEnv;
 	signal?: AbortSignal;
 	stdin?: string;
+	timeoutMs?: number;
 }): Promise<ProcessRunResult> {
 	const { args, cwd, env, signal, stdin } = options;
+	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
 	const explicitSocketDir = env?.[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...env, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : env;
 	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
@@ -175,7 +204,9 @@ export async function runAgentBrowserProcess(options: {
 		let pendingStdoutWrite = Promise.resolve();
 		let stdoutSpillError: Error | undefined;
 		let killTimer: NodeJS.Timeout | undefined;
+		let timeoutTimer: NodeJS.Timeout | undefined;
 		let abortListener: (() => void) | undefined;
+		let timedOut = false;
 
 		const queueStdoutChunk = (buffer: Buffer) => {
 			stdoutTail = appendTail(stdoutTail, buffer.toString("utf8"), MAX_BUFFERED_STDOUT_TAIL_CHARS);
@@ -224,6 +255,9 @@ export async function runAgentBrowserProcess(options: {
 				if (killTimer) {
 					clearTimeout(killTimer);
 				}
+				if (timeoutTimer) {
+					clearTimeout(timeoutTimer);
+				}
 				if (stdoutSpillHandle) {
 					await stdoutSpillHandle.close().catch(() => undefined);
 				}
@@ -237,6 +271,8 @@ export async function runAgentBrowserProcess(options: {
 					stderr,
 					stdout: stdoutSpillPath ? stdoutTail : Buffer.concat(stdoutBuffers).toString("utf8"),
 					stdoutSpillPath,
+					timedOut,
+					timeoutMs: timedOut ? timeoutMs : undefined,
 				});
 			});
 		};
@@ -247,8 +283,13 @@ export async function runAgentBrowserProcess(options: {
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 
-		const abortChild = () => {
-			aborted = true;
+		const terminateChild = (reason: "abort" | "timeout") => {
+			if (settled) return;
+			if (reason === "abort") {
+				aborted = true;
+			} else {
+				timedOut = true;
+			}
 			child.kill("SIGTERM");
 			killTimer = setTimeout(() => {
 				child.kill("SIGKILL");
@@ -286,7 +327,7 @@ export async function runAgentBrowserProcess(options: {
 			finish(127);
 		});
 		child.once("close", (code) => {
-			finish(code ?? (spawnError ? 127 : 0));
+			finish(code ?? (timedOut ? 124 : spawnError ? 127 : 0));
 		});
 		child.stdout.on("data", (chunk: Buffer | string) => {
 			queueStdoutChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -295,11 +336,16 @@ export async function runAgentBrowserProcess(options: {
 			stderr = appendTail(stderr, chunk.toString(), MAX_BUFFERED_STDERR_CHARS);
 		});
 
+		if (timeoutMs > 0) {
+			timeoutTimer = setTimeout(() => terminateChild("timeout"), timeoutMs);
+			timeoutTimer.unref?.();
+		}
+
 		if (signal) {
 			if (signal.aborted) {
-				abortChild();
+				terminateChild("abort");
 			} else {
-				abortListener = abortChild;
+				abortListener = () => terminateChild("abort");
 				signal.addEventListener("abort", abortListener, { once: true });
 			}
 		}

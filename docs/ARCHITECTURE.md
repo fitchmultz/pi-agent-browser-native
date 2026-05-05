@@ -98,6 +98,7 @@ Practical policy:
 - once the wrapper knows which tab the agent is operating on, later active-tab commands may synthesize a tiny upstream `batch` that re-selects that tab and then runs the requested command in the same upstream invocation; this stays thin while avoiding reconnect-time drift on profile-restored sessions
 - after a successful command on a known tab target, the wrapper may best-effort restore that same target again if restored/background tabs steal focus after the command returns
 - for local Unix launches, set a short private socket directory so extension-generated session names do not fail on the upstream Unix socket-path length limit
+- keep wrapper-spawned upstream CLI calls inside the upstream IPC budget by clamping `AGENT_BROWSER_DEFAULT_TIMEOUT` to 25 seconds and stopping a stuck child process before the upstream 30-second read-timeout retry loop begins
 
 This is primarily about ownership clarity and avoiding surprise, not adding a heavy safety wrapper. If the extension invented the session, the extension should own its lifecycle without breaking reload/resume semantics. If the caller explicitly chose the upstream session model, the extension should stay out of the way.
 

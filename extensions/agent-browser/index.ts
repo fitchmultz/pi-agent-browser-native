@@ -17,7 +17,7 @@ import {
 	PROJECT_RULE_PROMPT,
 	buildToolPromptGuidelines,
 } from "./lib/playbook.js";
-import { runAgentBrowserProcess } from "./lib/process.js";
+import { SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS, runAgentBrowserProcess } from "./lib/process.js";
 import {
 	buildToolPresentation,
 	getAgentBrowserErrorText,
@@ -450,6 +450,73 @@ async function prepareBatchScreenshotPaths(args: string[], stdin: string | undef
 				stdin: JSON.stringify(preparedSteps),
 		  }
 		: undefined;
+}
+
+function parseMillisecondsToken(token: string | undefined): number | undefined {
+	if (token === undefined || !/^\d+$/.test(token)) {
+		return undefined;
+	}
+	const parsed = Number(token);
+	return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function findWaitTimeoutMs(commandTokens: string[]): { timeoutMs: number; source: string } | undefined {
+	if (commandTokens[0] !== "wait") {
+		return undefined;
+	}
+	for (let index = 1; index < commandTokens.length; index += 1) {
+		const token = commandTokens[index];
+		if (token === "--timeout") {
+			const timeoutMs = parseMillisecondsToken(commandTokens[index + 1]);
+			return timeoutMs === undefined ? undefined : { source: "wait --timeout", timeoutMs };
+		}
+		if (token.startsWith("--timeout=")) {
+			const timeoutMs = parseMillisecondsToken(token.slice("--timeout=".length));
+			return timeoutMs === undefined ? undefined : { source: "wait --timeout", timeoutMs };
+		}
+		if (!token.startsWith("-")) {
+			const timeoutMs = parseMillisecondsToken(token);
+			if (timeoutMs !== undefined) {
+				return { source: "wait", timeoutMs };
+			}
+		}
+	}
+	return undefined;
+}
+
+function buildIpcUnsafeWaitError(source: string, timeoutMs: number, batchStep?: number): string {
+	const location = batchStep === undefined ? source : `batch step ${batchStep + 1} (${source})`;
+	return `${location} requests ${timeoutMs}ms, but upstream agent-browser CLI calls must stay under its 30s IPC read timeout. Use ${SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS}ms or less per wait, split long waits into multiple tool calls, or use a page-specific shorter condition.`;
+}
+
+function validateWaitIpcTimeoutContract(commandTokens: string[], stdin: string | undefined): string | undefined {
+	const directWaitTimeout = findWaitTimeoutMs(commandTokens);
+	if (directWaitTimeout && directWaitTimeout.timeoutMs > SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS) {
+		return buildIpcUnsafeWaitError(directWaitTimeout.source, directWaitTimeout.timeoutMs);
+	}
+	if (commandTokens[0] !== "batch" || stdin === undefined) {
+		return undefined;
+	}
+	let steps: unknown;
+	try {
+		steps = JSON.parse(stdin);
+	} catch {
+		return undefined;
+	}
+	if (!Array.isArray(steps)) {
+		return undefined;
+	}
+	for (let index = 0; index < steps.length; index += 1) {
+		const step = steps[index];
+		if (!Array.isArray(step) || !step.every((item) => typeof item === "string")) {
+			continue;
+		}
+		const waitTimeout = findWaitTimeoutMs(step);
+		if (waitTimeout && waitTimeout.timeoutMs > SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS) {
+			return buildIpcUnsafeWaitError(waitTimeout.source, waitTimeout.timeoutMs, index);
+		}
+	}
+	return undefined;
 }
 
 async function prepareAgentBrowserArgs(args: string[], stdin: string | undefined, cwd: string): Promise<PreparedAgentBrowserArgs> {
@@ -1520,6 +1587,22 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						isError: true,
 					};
 				}
+				const waitIpcTimeoutError = validateWaitIpcTimeoutContract(commandTokens, params.stdin);
+				if (waitIpcTimeoutError) {
+					return {
+						content: [{ type: "text", text: waitIpcTimeoutError }],
+						details: {
+							args: redactedArgs,
+							command: executionPlan.commandInfo.command,
+							compatibilityWorkaround,
+							effectiveArgs: redactedEffectiveArgs,
+							sessionMode,
+							validationError: waitIpcTimeoutError,
+							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+						},
+						isError: true,
+					};
+				}
 
 				const priorSessionTabTargetState = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
 				const priorSessionTabTarget = priorSessionTabTargetState?.target;
@@ -1853,6 +1936,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						plainTextInspection,
 						spawnError: processResult.spawnError,
 						stderr: processResult.stderr,
+						timedOut: processResult.timedOut,
+						timeoutMs: processResult.timeoutMs,
 						wrapperRecoveryHint: buildWrapperRecoveryHint({ pinnedBatchUnwrapMode, sessionTabCorrection }),
 					});
 
@@ -1969,6 +2054,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 									? undefined
 									: redactSensitiveText(processResult.stdout),
 							summary: redactSensitiveText(presentation.summary),
+							timedOut: processResult.timedOut || undefined,
+							timeoutMs: processResult.timeoutMs,
 						},
 						isError: !succeeded,
 					};
