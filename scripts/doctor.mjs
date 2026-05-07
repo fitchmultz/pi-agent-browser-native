@@ -8,6 +8,7 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
@@ -415,7 +416,16 @@ export async function main(argv = process.argv.slice(2)) {
 	return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+export function isDirectRun(metaUrl, argv1 = process.argv[1], resolveRealPath = realpathSync) {
+	if (!argv1) return false;
+	try {
+		return resolveRealPath(argv1) === fileURLToPath(metaUrl);
+	} catch {
+		return false;
+	}
+}
+
+if (isDirectRun(import.meta.url)) {
 	main().then((exitCode) => {
 		process.exitCode = exitCode;
 	});

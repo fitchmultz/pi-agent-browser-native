@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.21 - 2026-05-07
+
+### Fixed
+- fixed the published `pi-agent-browser-doctor` bin entrypoint so it runs when invoked through npm's `.bin` symlink
+
 ## 0.2.20 - 2026-05-07
 
 ### Compatibility

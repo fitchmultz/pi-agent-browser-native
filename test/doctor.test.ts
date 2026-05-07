@@ -23,10 +23,11 @@ const doctorModule = (await import(doctorModulePath)) as {
 		skipSourceCheck?: boolean;
 	}) => Promise<{ checks: Array<{ status: string; title: string; lines?: string[] }>; failures: unknown[]; warnings: string[] }>;
 	formatDoctorReport: (report: { checks: Array<{ status: string; title: string; lines?: string[] }>; failures: unknown[]; warnings?: string[] }) => string;
+	isDirectRun: (metaUrl: string, argv1?: string, resolveRealPath?: (path: string) => string) => boolean;
 	normalizeAgentBrowserVersion: (output: string) => string;
 	parseCliArgs: (argv?: string[]) => { agentDir?: string; cwd?: string; settingsPaths: string[]; showHelp: boolean; skipSourceCheck: boolean };
 };
-const { evaluateDoctor, formatDoctorReport, normalizeAgentBrowserVersion, parseCliArgs } = doctorModule;
+const { evaluateDoctor, formatDoctorReport, isDirectRun, normalizeAgentBrowserVersion, parseCliArgs } = doctorModule;
 
 function passingVersion() {
 	return `agent-browser ${CAPABILITY_BASELINE.targetVersion}\n`;
@@ -181,6 +182,18 @@ test("doctor remains read-only through injected I/O", async () => {
 	assert.equal(report.failures.length, 0);
 	assert.deepEqual(calls.filter((call) => call.startsWith("run:")), ["run:--version"]);
 	assert.equal(calls.some((call) => /write|fix|doctor/.test(call)), false);
+});
+
+test("isDirectRun resolves npm bin symlinks before comparing the entrypoint", () => {
+	const metaUrl = "file:///package/scripts/doctor.mjs";
+	const resolveRealPath = (path: string) => {
+		if (path === "/tmp/node_modules/.bin/pi-agent-browser-doctor") return "/package/scripts/doctor.mjs";
+		return path;
+	};
+
+	assert.equal(isDirectRun(metaUrl, "/tmp/node_modules/.bin/pi-agent-browser-doctor", resolveRealPath), true);
+	assert.equal(isDirectRun(metaUrl, "/other/script.mjs", resolveRealPath), false);
+	assert.equal(isDirectRun(metaUrl, undefined, resolveRealPath), false);
 });
 
 test("parseCliArgs supports help, paths, repeated settings, and skip-source-check", () => {
