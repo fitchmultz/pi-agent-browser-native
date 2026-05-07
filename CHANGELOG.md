@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.22 - 2026-05-07
+
+### Compatibility
+- migrated the local pi development baseline and peer metadata from deprecated `@mariozechner/*` packages to maintained `@earendil-works/*` `0.74.0`
+- regenerated the npm lockfile against the current stable dependency graph and confirmed package verification remains green
+
 ## 0.2.21 - 2026-05-07
 
 ### Fixed
