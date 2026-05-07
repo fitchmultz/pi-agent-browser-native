@@ -120,7 +120,7 @@ The native tool exposed to the agent is named `agent_browser`.
 The primary session control parameter is `sessionMode`:
 
 - `"auto"` (default) reuses the extension-managed `pi`-scoped session when possible
-- `"fresh"` switches that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, and `--auto-connect` apply and later auto calls follow the new browser
+- `"fresh"` switches that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, and `--enable` apply and later auto calls follow the new browser
 
 ## Agent quick start
 
@@ -166,7 +166,7 @@ Download a file from a known link/control directly:
 { "args": ["download", "@e5", "/tmp/report.pdf"] }
 ```
 
-For dashboards that start an export asynchronously after a click or navigation, click first and then wait for the download. The wrapper reports `Download completed: /tmp/report.csv` and exposes upstream-reported `details.savedFilePath` plus `details.savedFile` for the `wait` result; with upstream `agent-browser 0.26.0`, confirm `details.artifacts[].exists` before relying on a requested `wait --download <path>` file being present on disk (tracked upstream at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300)):
+For dashboards that start an export asynchronously after a click or navigation, click first and then wait for the download. The wrapper reports `Download completed: /tmp/report.csv` and exposes upstream-reported `details.savedFilePath` plus `details.savedFile` for the `wait` result; with upstream `agent-browser 0.27.0`, confirm `details.artifacts[].exists` before relying on a requested `wait --download <path>` file being present on disk (tracked upstream at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300)):
 
 ```json
 { "args": ["click", "@export"] }
@@ -186,6 +186,28 @@ Start a fresh profiled launch after you already used the implicit session:
 ```
 
 After a successful unnamed fresh launch, later `sessionMode: "auto"` calls follow that new browser automatically.
+
+React and SPA tooling added upstream in `agent-browser` v0.27.0 is passed through as native tool calls. Launch React introspection with the DevTools hook before first navigation, then use the `react` commands; `vitals` and `pushstate` work as regular command tokens:
+
+```json
+{ "args": ["open", "--enable", "react-devtools", "https://example.com"], "sessionMode": "fresh" }
+{ "args": ["react", "tree"] }
+{ "args": ["react", "inspect", "<fiberId>"] }
+{ "args": ["react", "renders", "start"] }
+{ "args": ["react", "renders", "stop"] }
+{ "args": ["react", "suspense", "--only-dynamic"] }
+{ "args": ["vitals", "https://example.com", "--json"] }
+{ "args": ["pushstate", "/dashboard"] }
+```
+
+For first-navigation setup, launch a fresh blank page before staging routes, cookies, or scripts:
+
+```json
+{ "args": ["open"], "sessionMode": "fresh" }
+{ "args": ["network", "route", "**/*.js", "--abort", "--resource-type", "script"] }
+{ "args": ["cookies", "set", "--curl", "/path/to/cookies.txt", "--domain", "example.com"] }
+{ "args": ["navigate", "https://example.com"] }
+```
 
 Name a new upstream session explicitly when you want to keep reusing it yourself:
 
@@ -262,7 +284,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 
 Current cautions:
 - passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
-- launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, and `--auto-connect` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
+- launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, and `--enable` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
 - implicit `piab-*` sessions are extension-managed convenience sessions; they stay alive across `/reload` and resumable session transitions so later default calls can keep following the active managed browser on `/reload` or `/resume`, close when the originating `pi` process quits, rely on the configured idle timeout only as an abnormal-exit backstop, store persisted-session large snapshot spill files under a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` and metadata-only `details.artifactManifest` survive reload/resume without unbounded growth, and still clean up process-private temp spill artifacts on shutdown
 - `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
 - for local Unix launches, the wrapper uses a short private socket directory under `/tmp` so extension-generated session names do not trip upstream Unix socket-path limits in longer cwd/session-name combinations

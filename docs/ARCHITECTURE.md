@@ -107,7 +107,7 @@ This is primarily about ownership clarity and avoiding surprise, not adding a he
 `agent-browser` startup flags are sticky once a session is already running.
 The extension should surface that clearly and avoid hidden restart behavior in v1.
 
-That means explicit startup-scoping flags like `--profile`, `--session-name`, and `--cdp` should remain explicit upstream choices instead of being wrapped in extra hidden restart or cloning logic.
+That means explicit startup-scoping flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, and `--enable` should remain explicit upstream choices instead of being wrapped in extra hidden restart or cloning logic.
 
 The wrapper may still apply narrow compatibility normalizations when observed behavior justifies them and the result remains thin, local, and opt-out. For example, if a specific site starts rejecting the default local headless Chrome user agent while the same flow works with a normal Chrome UA, the extension may inject a domain-specific fallback UA only when the caller did not already choose `--user-agent`, `--headed`, `--cdp`, `--auto-connect`, or a provider-backed launch.
 

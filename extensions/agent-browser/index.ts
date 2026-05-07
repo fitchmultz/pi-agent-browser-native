@@ -77,7 +77,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:
-				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --profile, --session-name, --cdp, --state, or --auto-connect apply and later auto calls follow the new browser.",
+				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable apply and later auto calls follow the new browser.",
 			default: DEFAULT_SESSION_MODE,
 		}),
 	),

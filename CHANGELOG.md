@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.20 - 2026-05-07
+
+### Compatibility
+- updated the extension's upstream capability baseline and command reference for `agent-browser` `0.27.0`
+- documented and passed through the new React introspection commands (`react tree`, `react inspect`, `react renders`, `react suspense`), Web Vitals (`vitals`), SPA navigation (`pushstate`), init-script flags (`--init-script`, `--enable react-devtools`), `network route --resource-type`, and `cookies set --curl`
+- treat `--init-script` and `--enable` as launch-scoped flags in managed-session planning so agents get the same clear `sessionMode: "fresh"` recovery path as profile/state/CDP launches
+
 ## 0.2.19 - 2026-05-03
 
 ### Fixed

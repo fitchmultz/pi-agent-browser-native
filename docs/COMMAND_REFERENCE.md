@@ -16,7 +16,7 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.26.0` command/help surface. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.27.0` command/help surface. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
@@ -37,7 +37,7 @@ Tool parameters:
 - `stdin`: only for `batch` and `eval --stdin`; other command/stdin combinations are rejected before `agent-browser` is launched.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
-  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` apply.
+  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` apply.
 
 ## Recommended workflow
 
@@ -50,6 +50,35 @@ Keep routine browser work simple: open a page, inspect it with `snapshot -i`, in
 { "args": ["snapshot", "-i", "--urls"] }
 { "args": ["click", "@e2"] }
 { "args": ["snapshot", "-i"] }
+```
+
+### React, SPA, and Web Vitals flows
+
+React introspection requires the React DevTools init hook to be installed before the page's first JavaScript runs. Launch or relaunch that browser session with `--enable react-devtools`; if the implicit session is already active, use `sessionMode: "fresh"`.
+
+```json
+{ "args": ["open", "--enable", "react-devtools", "https://example.com"], "sessionMode": "fresh" }
+{ "args": ["react", "tree"] }
+{ "args": ["react", "inspect", "<fiberId>"] }
+{ "args": ["react", "renders", "start"] }
+{ "args": ["react", "renders", "stop"] }
+{ "args": ["react", "suspense", "--only-dynamic"] }
+```
+
+Use `vitals [url]` for Core Web Vitals plus React hydration timing when available, and `pushstate <url>` for client-side SPA navigation without a full reload:
+
+```json
+{ "args": ["vitals", "https://example.com", "--json"] }
+{ "args": ["pushstate", "/dashboard?tab=settings"] }
+```
+
+For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant v0.27.0 surfaces are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
+
+```json
+{ "args": ["open"], "sessionMode": "fresh" }
+{ "args": ["network", "route", "**/*.js", "--abort", "--resource-type", "script"] }
+{ "args": ["cookies", "set", "--curl", "/path/to/cookies.txt", "--domain", "example.com"] }
+{ "args": ["navigate", "https://example.com"] }
 ```
 
 ### Selector strategy
@@ -115,7 +144,7 @@ For one-call flows, put the click and wait in `batch`; the wait step keeps the s
 { "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
 ```
 
-A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.26.0`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
+A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.27.0`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
 
 ### Download, screenshot, and PDF files
 
@@ -267,8 +296,8 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, `testid`, `first`, `last`, and `nth`. |
 | `mouse <action> [args]` | `move <x> <y>`, `down [btn]`, `up [btn]`, `wheel <dy> [dx]`. |
 | `set <setting> [value]` | `viewport <w> <h>`, `device <name>`, `geo <lat> <lng>`, `offline [on|off]`, `headers <json>`, `credentials <user> <pass>`, `media [dark|light] [reduced-motion]`. |
-| `network <action>` | `route <url> [--abort|--body <json>]`, `unroute [url]`, `requests [--clear] [--filter <pattern>]`, `request <requestId>`, `har <start|stop> [path]`. |
-| `cookies [get|set|clear]` | Manage cookies. `set` supports `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, and `--expires`. |
+| `network <action>` | `route <url> [--abort|--body <json>] [--resource-type <csv>]`, `unroute [url]`, `requests [--clear] [--filter <pattern>]`, `request <requestId>`, `har <start|stop> [path]`. `--resource-type` filters intercepted requests by CDP resource type, such as `script`, `image`, `font`, `xhr`, or `fetch`. |
+| `cookies [get|set|clear]` | Manage cookies. `set` supports `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, `--expires`, and `--curl <file>` for JSON, cURL, or bare Cookie-header bulk imports. |
 | `storage <local|session>` | Manage web storage. |
 
 ### Tabs
@@ -330,8 +359,16 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `stream enable [--port <n>]` | Start runtime WebSocket streaming for this session. |
 | `stream disable` | Stop runtime WebSocket streaming. |
 | `stream status` | Show streaming status and active port. |
+| `react tree` | Print the full React component tree. Requires the page to have been launched with `--enable react-devtools`. |
+| `react inspect <id>` | Inspect one React fiber's props, hooks, state, and source. |
+| `react renders start` | Start recording React render activity. |
+| `react renders stop [--json]` | Stop render recording and print mount/re-render counts and changed details. |
+| `react suspense [--only-dynamic] [--json]` | Classify Suspense boundaries with grouped root-cause recommendations. |
+| `vitals [url] [--json]` | Report Core Web Vitals: LCP, CLS, TTFB, FCP, INP, plus React hydration timing when available. |
+| `pushstate <url>` | Perform SPA client-side navigation; detects Next.js router pushes and falls back to history navigation events. |
+| `removeinitscript <id>` | Remove an init script registered through upstream init-script mechanisms. |
 
-When these diagnostic commands are invoked through the native `agent_browser` tool, structured console and page-error outputs render as compact summaries with counts and key fields. Large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context.
+When these diagnostic commands are invoked through the native `agent_browser` tool, structured console, page-error, React, Web Vitals, and SPA outputs render as compact summaries when possible, with large outputs previewed and spilled instead of dumped into context. Large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context.
 
 `trace` and `profiler` share upstream Chrome tracing machinery. Do not run them at the same time. The wrapper tracks owner state it observes in the current Pi session and blocks conflicting starts/stops with "wrapper believes ..." wording because direct upstream CLI use or browser restarts can desynchronize wrapper-local state.
 
@@ -372,6 +409,8 @@ When these commands are invoked through the native `agent_browser` tool, structu
 - `--state <path>`: load saved auth state from JSON. Environment: `AGENT_BROWSER_STATE`.
 - `--auto-connect`: connect to a running Chrome to reuse auth state. Environment: `AGENT_BROWSER_AUTO_CONNECT`.
 - `--headers <json>`: apply HTTP headers scoped to the opened URL's origin.
+- `--init-script <path>`: register a script before first navigation; repeatable. Environment: `AGENT_BROWSER_INIT_SCRIPTS`.
+- `--enable <feature>`: enable built-in init scripts such as `react-devtools`; repeatable or comma-separated. Environment: `AGENT_BROWSER_ENABLE`.
 
 ### Browser launch and runtime flags
 
@@ -427,7 +466,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 ## Wrapper-specific behavior worth knowing
 
 - The extension may keep following one implicit managed session across later tool calls.
-- If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, or `--auto-connect` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
+- If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
@@ -444,7 +483,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.26.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.27.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
@@ -477,6 +516,18 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `inspect`
 - root help: `clipboard <op> [text]`
 - root help: `stream enable [--port <n>]`
+- root help: `react tree`
+- root help: `react inspect <id>`
+- root help: `react renders start`
+- root help: `react renders stop [--json]`
+- root help: `react suspense [--only-dynamic] [--json]`
+- root help: `vitals [url] [--json]`
+- root help: `pushstate <url>`
+- root help: `removeinitscript <id>`
+- root help: `--init-script <path>`
+- root help: `--enable <feature>`
+- root help: `--resource-type <csv>`
+- root help: `cookies set --curl <file>`
 - root help: `auth save <name>`
 - root help: `confirm <id>`
 - root help: `deny <id>`

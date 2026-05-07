@@ -14,10 +14,10 @@ export const TOOL_PROMPT_GUIDELINES_PREFIX = [
 ] as const;
 
 export const QUICK_START_GUIDELINES = [
-	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin, and other command/stdin combinations are rejected before launch; sessionMode=fresh switches the extension-managed pi-scoped session to a fresh upstream launch when you need new --profile, --session-name, --cdp, --state, or --auto-connect state.",
+	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin, and other command/stdin combinations are rejected before launch; sessionMode=fresh switches the extension-managed pi-scoped session to a fresh upstream launch when you need new --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable state.",
 	"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }; after navigation, use { args: [\"click\", \"@e2\"] } then { args: [\"snapshot\", \"-i\"] }.",
-	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, and { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }.",
-	"High-value command reference: download <selector> <path> saves a file triggered by a click; get title/url/text/html/value/attr/count reads page state; screenshot [path] captures an image; pdf <path> saves a PDF; tab list and tab <tab-id-or-label> inspect or recover the active tab.",
+	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }, and { args: [\"open\", \"--enable\", \"react-devtools\", \"https://example.com\"], sessionMode: \"fresh\" }.",
+	"High-value command reference: download <selector> <path> saves a file triggered by a click; get title/url/text/html/value/attr/count reads page state; screenshot [path] captures an image; pdf <path> saves a PDF; tab list and tab <tab-id-or-label> inspect or recover the active tab; react tree/inspect/renders/suspense introspect React after --enable react-devtools; vitals [url] measures Core Web Vitals; pushstate <url> performs SPA navigation.",
 	"For artifact-producing commands, read the visible artifact block for requested path, absolute path, existence, size, type, cwd, and session; details.artifacts contains the same machine-readable metadata. For annotated screenshots inside batch, put --annotate in top-level args (for example { args: [\"--annotate\", \"batch\"], stdin: \"[[\\\"screenshot\\\",\\\"/tmp/page.png\\\"]]\" }) rather than inside the screenshot step.",
 ] as const;
 
@@ -30,8 +30,10 @@ export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Do not assume Playwright selector dialects such as text=Close or button:has-text('Close') are supported wrapper syntax unless current upstream agent-browser behavior has been verified.",
 	"For authenticated or user-specific content like feeds, inboxes, dashboards, and accounts, prefer --profile Default on the first browser call and let the implicit session carry continuity. Use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.",
 	"Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.",
-	"When using --profile, --session-name, --cdp, --state, or --auto-connect, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
-	"If you already used the implicit session and now need launch-scoped flags like --profile, --session-name, --cdp, --state, or --auto-connect, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.",
+	"When using --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
+	"If you already used the implicit session and now need launch-scoped flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.",
+	"For React introspection, launch the page with --enable react-devtools before first navigation, then use react tree, react inspect <fiberId>, react renders start/stop, or react suspense; use vitals [url] for Core Web Vitals and hydration timing, and pushstate <url> for client-side SPA navigation.",
+	"For first-navigation setup, use open without a URL plus network route --resource-type <csv>, cookies set --curl <file>, or --init-script/--enable before navigate/opening the target page.",
 	"If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <tab-id-or-label> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load <state>, --url <matcher>, --fn <js>, or --text <matcher>.",
 	"For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.",
 	"For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.",
@@ -46,8 +48,8 @@ export const TOOL_PROMPT_GUIDELINES_SUFFIX = [
 	"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when agent_browser can do the job.",
 	"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
 	"Use stdin only for eval --stdin and batch instead of shell heredocs; other command/stdin combinations are rejected before launch.",
-	"Let the extension-managed session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, --cdp, --state, or --auto-connect.",
-	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
+	"Let the extension-managed session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable.",
+	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug/init-script launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
 ] as const;
 
 export const INSPECTION_TOOL_CALL_EXAMPLES = [

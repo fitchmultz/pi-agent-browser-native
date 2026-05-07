@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -164,6 +164,43 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(batchDetails.usedImplicitSession, true);
 					assertJsonIncludes(batchDetails.data, ["Ready for real upstream contract validation", "Agent Browser Contract Fixture"], "batch data");
 
+					const pushstate = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pushstate", `${fixtureServer?.baseUrl}/spa-route`] });
+					const pushstateDetails = assertSuccessfulResult(pushstate, shapes.commands.pushstate, "pushstate");
+					assert.equal(pushstateDetails.sessionName, managedSessionName);
+					assert.equal(pushstateDetails.usedImplicitSession, true);
+					assert.equal((pushstateDetails.data as { url?: string }).url, `${fixtureServer?.baseUrl}/spa-route`);
+
+					const vitals = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["vitals", contractUrl, "--json"] });
+					const vitalsDetails = assertSuccessfulResult(vitals, shapes.commands.vitals, "vitals");
+					assert.equal(vitalsDetails.sessionName, managedSessionName);
+					assert.match((vitalsDetails.data as { report?: string }).report ?? "", /Core Web Vitals/);
+
+					const networkRoute = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["network", "route", "**/*.js", "--abort", "--resource-type", "script"],
+					});
+					const networkRouteDetails = assertSuccessfulResult(networkRoute, shapes.commands.networkRoute, "network route --resource-type");
+					assert.equal((networkRouteDetails.data as { routed?: string }).routed, "**/*.js");
+
+					const cookieFile = join(tempDir, "cookies.curl");
+					await writeFile(cookieFile, "Cookie: piab_session=abc; piab_theme=dark\n", "utf8");
+					const cookiesCurl = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["cookies", "set", "--curl", cookieFile, "--url", contractUrl],
+					});
+					const cookiesCurlDetails = assertSuccessfulResult(cookiesCurl, shapes.commands.cookiesCurl, "cookies set --curl");
+					assert.equal((cookiesCurlDetails.data as { set?: boolean }).set, true);
+
+					const reactWithoutReactApp = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["open", "--enable", "react-devtools", contractUrl],
+						sessionMode: "fresh",
+					});
+					const reactSessionName = typeof reactWithoutReactApp.details?.sessionName === "string" ? reactWithoutReactApp.details.sessionName : undefined;
+					managedSessionName = reactSessionName ?? managedSessionName;
+					const reactTree = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["react", "tree"] });
+					assert.equal(reactTree.isError, true, `react tree should report missing React renderer on the non-React fixture: ${reactTree.content[0]?.text ?? ""}`);
+					assertHasKeys(reactTree.details, shapes.commands.reactMissingRenderer.detailKeys, "react tree missing-renderer details");
+					assert.equal(reactTree.details?.sessionName, reactSessionName);
+					assert.match(String(reactTree.details?.error ?? reactTree.content[0]?.text ?? ""), /No React renderer|React DevTools hook/);
+
 					const downloadPath = join(tempDir, "wait-download-report.txt");
 					const downloadPage = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `${fixtureServer?.baseUrl}/download`] });
 					assertSuccessfulResult(downloadPage, shapes.commands.open, "open download fixture");
@@ -178,7 +215,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.match(waitedDownload.content[0]?.text ?? "", /Download completed/);
 
 					// Upstream tracking: https://github.com/vercel-labs/agent-browser/issues/1300.
-					// Current upstream agent-browser 0.26.0 reports the requested saveAs path but leaves the
+					// Current upstream agent-browser 0.27.0 reports the requested saveAs path but leaves the
 					// file in the browser's default download directory. Keep this explicit so release docs do
 					// not overstate savedFilePath as a verified on-disk artifact.
 					const artifacts = waitDownloadDetails.artifacts as Array<{ exists?: boolean; path?: string; sizeBytes?: number }> | undefined;
@@ -187,7 +224,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(
 						await readFileIfPresent(downloadPath),
 						undefined,
-						"agent-browser 0.26.0 reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
+						"agent-browser 0.27.0 reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
 					);
 				},
 			);

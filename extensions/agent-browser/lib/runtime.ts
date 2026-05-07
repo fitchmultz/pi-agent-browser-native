@@ -27,7 +27,8 @@ import { isRecord } from "./parsing.js";
  *
  * Other flags like `--headed`, `--engine`, `--executable-path`, `--user-agent`, and
  * `--download-path` are first-launch-sensitive but not alternate session/auth attach
- * mechanisms, so they are intentionally excluded from the full launch-scoped set.
+ * mechanisms and do not inject pre-page JavaScript, so they are intentionally excluded
+ * from the full launch-scoped set.
  */
 const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 	{
@@ -37,6 +38,14 @@ const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 	{
 		flag: "--cdp",
 		reason: "selects the browser/CDP endpoint used when an upstream session is launched",
+	},
+	{
+		flag: "--enable",
+		reason: "selects built-in page init scripts before the upstream browser session is launched",
+	},
+	{
+		flag: "--init-script",
+		reason: "registers page init scripts before the upstream browser session is launched",
 	},
 	{
 		flag: "--profile",
@@ -77,6 +86,7 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 ];
 const BROWSER_PROMPT_PATTERNS = [
 	/\b(?:agent[_ -]?browser|browser automation|eval\s+--stdin|screenshot|snapshot|tab\s+list)\b/i,
+	/\b(?:react\s+(?:tree|inspect|renders|suspense)|web\s+vitals|core\s+web\s+vitals|pushstate)\b/i,
 	/\bbrowser\b.*\b(?:automation|click|fill|navigate|open|page|screenshot|site|snapshot|tab|url|visit|web(?:site| page)?)\b/i,
 	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
 ];
@@ -98,6 +108,8 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
 	"--headers",
 	"--executable-path",
 	"--extension",
+	"--init-script",
+	"--enable",
 	"--provider",
 	"-p",
 	"--engine",
@@ -1000,9 +1012,31 @@ export function chooseOpenResultTabCorrection(options: {
 		: undefined;
 }
 
+function getOpenCommandTarget(commandTokens: string[]): string | undefined {
+	for (let index = 1; index < commandTokens.length; index += 1) {
+		const token = commandTokens[index];
+		if (token === "--init-script" || token === "--enable") {
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("--init-script=") || token.startsWith("--enable=")) {
+			continue;
+		}
+		if (token.startsWith("-")) {
+			continue;
+		}
+		return token;
+	}
+	return undefined;
+}
+
 export function parseCommandInfo(args: string[]): CommandInfo {
 	const commandTokens = extractCommandTokens(args);
-	return { command: commandTokens[0], subcommand: commandTokens[1] };
+	const command = commandTokens[0];
+	return {
+		command,
+		subcommand: command && OPEN_COMMANDS.has(command) ? getOpenCommandTarget(commandTokens) : commandTokens[1],
+	};
 }
 
 export function extractCommandTokens(args: string[]): string[] {

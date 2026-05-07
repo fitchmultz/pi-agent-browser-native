@@ -34,8 +34,10 @@ The tool also needs an operating playbook, not just a capability list. The model
 - Do not assume Playwright selector dialects such as text=Close or button:has-text('Close') are supported wrapper syntax unless current upstream agent-browser behavior has been verified.
 - For authenticated or user-specific content like feeds, inboxes, dashboards, and accounts, prefer --profile Default on the first browser call and let the implicit session carry continuity. Use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.
 - Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.
-- When using --profile, --session-name, --cdp, --state, or --auto-connect, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.
-- If you already used the implicit session and now need launch-scoped flags like --profile, --session-name, --cdp, --state, or --auto-connect, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.
+- When using --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.
+- If you already used the implicit session and now need launch-scoped flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.
+- For React introspection, launch the page with --enable react-devtools before first navigation, then use react tree, react inspect <fiberId>, react renders start/stop, or react suspense; use vitals [url] for Core Web Vitals and hydration timing, and pushstate <url> for client-side SPA navigation.
+- For first-navigation setup, use open without a URL plus network route --resource-type <csv>, cookies set --curl <file>, or --init-script/--enable before navigate/opening the target page.
 - If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <tab-id-or-label> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load <state>, --url <matcher>, --fn <js>, or --text <matcher>.
 - For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.
 - For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.
@@ -98,7 +100,7 @@ Examples:
 Behavior:
 - if `args` already include `--session`, upstream session choice wins
 - `"auto"` prepends the current extension-managed active session when appropriate
-- `"fresh"` rotates that managed session to a fresh upstream launch so startup-scoped flags like `--profile`, `--session-name`, or `--cdp` apply and later default calls follow the new browser
+- `"fresh"` rotates that managed session to a fresh upstream launch so startup-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` apply and later default calls follow the new browser
 
 Recommended use:
 - use `"auto"` for the common browse/snapshot/click flow inside one `pi` session
@@ -232,7 +234,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - on local Unix launches, set a short private socket directory for wrapper-spawned `agent-browser` processes so extension-generated session names do not fail the upstream Unix socket-path length limit in longer cwd/session-name combinations
 - keep wrapper-spawned commands below the upstream CLI IPC read-timeout budget by clamping `AGENT_BROWSER_DEFAULT_TIMEOUT` to 25 seconds and stopping a stuck child process before the upstream 30-second retry path begins
 - treat successful plain-text inspection commands like `--help` and `--version` as stateless: do not inject the implicit managed session and do not let those calls claim the managed-session slot
-- if startup-scoped flags like `--profile`, `--session-name`, or `--cdp` are supplied after the implicit session is already active while `sessionMode` is `"auto"`, return a validation error with a structured recovery hint that recommends `sessionMode: "fresh"`
+- if startup-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` are supplied after the implicit session is already active while `sessionMode` is `"auto"`, return a validation error with a structured recovery hint that recommends `sessionMode: "fresh"`
 - for direct headless local Chrome launches to `chat.com` / `chatgpt.com` / `chat.openai.com`, allow a narrow compatibility fallback that injects a normal Chrome `--user-agent` only when the caller did not explicitly provide one and did not choose `--headed`, `--cdp`, `--auto-connect`, or a provider-backed launch
 
 ## Non-goals

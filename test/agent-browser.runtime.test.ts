@@ -25,6 +25,7 @@ import {
 	getImplicitSessionIdleTimeoutMs,
 	getLatestUserPrompt,
 	hasLaunchScopedTabCorrectionFlag,
+	parseCommandInfo,
 	hasUsableBraveApiKey,
 	redactInvocationArgs,
 	redactSensitiveText,
@@ -605,7 +606,7 @@ test("buildExecutionPlan keeps inspection commands stateless", () => {
 });
 
 test("buildExecutionPlan rejects missing values for value-taking flags before parsing commands", () => {
-	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"], ["--state"]] as const) {
+	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -639,12 +640,14 @@ test("buildExecutionPlan rejects value-taking flags followed by another flag", (
 });
 
 test("buildExecutionPlan blocks startup-scoped flags from silently reusing an active implicit session", () => {
-	for (const args of [
-		["--profile", "Default", "open", "https://example.com"],
-		["--session-name", "saved-auth", "open", "https://example.com"],
-		["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"],
-		["--state", "/tmp/auth.json", "open", "https://example.com"],
-		["--auto-connect", "open", "https://example.com"],
+	for (const { args, flag } of [
+		{ args: ["--profile", "Default", "open", "https://example.com"], flag: "--profile" },
+		{ args: ["--session-name", "saved-auth", "open", "https://example.com"], flag: "--session-name" },
+		{ args: ["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"], flag: "--cdp" },
+		{ args: ["--state", "/tmp/auth.json", "open", "https://example.com"], flag: "--state" },
+		{ args: ["--auto-connect", "open", "https://example.com"], flag: "--auto-connect" },
+		{ args: ["open", "--enable", "react-devtools", "https://example.com"], flag: "--enable" },
+		{ args: ["open", "--init-script", "/tmp/setup.js", "https://example.com"], flag: "--init-script" },
 	] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -655,7 +658,7 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 
 		assert.match(plan.validationError ?? "", /launch-scoped flags/i);
 		assert.equal(plan.startupScopedFlags.length, 1);
-		assert.equal(plan.startupScopedFlags[0], args[0]);
+		assert.equal(plan.startupScopedFlags[0], flag);
 		assert.equal(plan.usedImplicitSession, false);
 		assert.equal(plan.recoveryHint?.recommendedSessionMode, "fresh");
 		assert.deepEqual(plan.recoveryHint?.exampleParams, { args: [...args], sessionMode: "fresh" });
@@ -672,6 +675,21 @@ test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state 
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--auto-connect", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["open", "https://example.com"]), false);
+});
+
+test("parseCommandInfo recognizes open targets after command-scoped init flags", () => {
+	assert.deepEqual(parseCommandInfo(["open", "--enable", "react-devtools", "https://example.com"]), {
+		command: "open",
+		subcommand: "https://example.com",
+	});
+	assert.deepEqual(parseCommandInfo(["open", "--init-script", "/tmp/setup.js", "https://example.com"]), {
+		command: "open",
+		subcommand: "https://example.com",
+	});
+	assert.deepEqual(parseCommandInfo(["--enable", "react-devtools", "open", "https://example.com"]), {
+		command: "open",
+		subcommand: "https://example.com",
+	});
 });
 
 test("buildExecutionPlan assigns a new managed session for fresh session mode", () => {
