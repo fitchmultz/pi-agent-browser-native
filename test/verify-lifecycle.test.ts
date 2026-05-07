@@ -113,7 +113,7 @@ test("parseJsonl reports malformed session transcript lines", () => {
 });
 
 test("injectLifecycleSentinelSource inserts and replaces deterministic command token", () => {
-	const source = 'import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";\n\nexport default function agentBrowserExtension(pi: ExtensionAPI) {\n\tpi.registerTool({ name: "agent_browser" });\n}\n';
+	const source = 'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\n\nexport default function agentBrowserExtension(pi: ExtensionAPI) {\n\tpi.registerTool({ name: "agent_browser" });\n}\n';
 	const v1 = injectLifecycleSentinelSource(source, "v1");
 	assert.match(v1, /registerCommand\("piab-lifecycle-sentinel"/);
 	assert.match(v1, /token: "v1"/);

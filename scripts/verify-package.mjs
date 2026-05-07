@@ -13,7 +13,7 @@ import { delimiter, join, resolve, sep } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { createAgentSession, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import {
 	FORBIDDEN_PACKED_FILES,
 	FORBIDDEN_REPO_FILES,

@@ -9,8 +9,8 @@
 import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 
-import { StringEnum } from "@mariozechner/pi-ai";
-import { isToolCallEventType, type AgentToolResult, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { isToolCallEventType, type AgentToolResult, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import {
