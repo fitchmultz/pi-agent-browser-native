@@ -278,6 +278,31 @@ test("buildToolPresentation adapts quoted and heredoc skill examples to native t
 	assert.doesNotMatch(text, /<<JS|<<-EOF|\nJS\n|\n\tEOF\n/);
 });
 
+test("buildToolPresentation drops shell comments from adapted skill command args", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "skills", subcommand: "get" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				content: [
+					"# Skill",
+					"",
+					"```bash",
+					"agent-browser open https://example.com # 1. Open a page",
+					"agent-browser snapshot -i       # 2. See what's on it",
+					"```",
+				].join("\n"),
+			},
+		},
+	});
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /agent_browser \{ "args": \["open","https:\/\/example\.com\/?"\] \}/);
+	assert.match(text, /agent_browser \{ "args": \["snapshot","-i"\] \}/);
+	assert.doesNotMatch(text, /"#"/);
+	assert.doesNotMatch(text, /"1\."|"2\."/);
+});
+
 test("buildToolPresentation preserves benign Basic docs prose while redacting Basic credentials", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "skills", subcommand: "get" },

@@ -639,6 +639,19 @@ test("buildExecutionPlan rejects value-taking flags followed by another flag", (
 	assert.equal(plan.usedImplicitSession, false);
 });
 
+test("buildExecutionPlan allows dash-starting --args values", () => {
+	const plan = buildExecutionPlan(["--args", "--disable-gpu,--lang=en-US", "open", "https://example.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+
+	assert.equal(plan.validationError, undefined);
+	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
+	assert.deepEqual(plan.effectiveArgs.slice(-4), ["--args", "--disable-gpu,--lang=en-US", "open", "https://example.com"]);
+});
+
 test("buildExecutionPlan blocks startup-scoped flags from silently reusing an active implicit session", () => {
 	for (const { args, flag } of [
 		{ args: ["--profile", "Default", "open", "https://example.com"], flag: "--profile" },
@@ -646,6 +659,7 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		{ args: ["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"], flag: "--cdp" },
 		{ args: ["--state", "/tmp/auth.json", "open", "https://example.com"], flag: "--state" },
 		{ args: ["--auto-connect", "open", "https://example.com"], flag: "--auto-connect" },
+		{ args: ["--auto-connect", "true", "open", "https://example.com"], flag: "--auto-connect" },
 		{ args: ["open", "--enable", "react-devtools", "https://example.com"], flag: "--enable" },
 		{ args: ["open", "--init-script", "/tmp/setup.js", "https://example.com"], flag: "--init-script" },
 	] as const) {
@@ -663,6 +677,20 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		assert.equal(plan.recoveryHint?.recommendedSessionMode, "fresh");
 		assert.deepEqual(plan.recoveryHint?.exampleParams, { args: [...args], sessionMode: "fresh" });
 	}
+});
+
+test("buildExecutionPlan allows disabled auto-connect after an active implicit session", () => {
+	const plan = buildExecutionPlan(["--auto-connect", "false", "open", "https://example.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+
+	assert.equal(plan.validationError, undefined);
+	assert.deepEqual(plan.startupScopedFlags, []);
+	assert.equal(plan.usedImplicitSession, true);
+	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
 });
 
 test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state but not cdp or auto-connect", () => {
@@ -689,6 +717,17 @@ test("parseCommandInfo recognizes open targets after command-scoped init flags",
 	assert.deepEqual(parseCommandInfo(["--enable", "react-devtools", "open", "https://example.com"]), {
 		command: "open",
 		subcommand: "https://example.com",
+	});
+});
+
+test("parseCommandInfo skips optional boolean flag values before commands", () => {
+	assert.deepEqual(parseCommandInfo(["--headed", "false", "open", "https://chatgpt.com"]), {
+		command: "open",
+		subcommand: "https://chatgpt.com",
+	});
+	assert.deepEqual(parseCommandInfo(["--debug", "true", "tab", "list"]), {
+		command: "tab",
+		subcommand: "list",
 	});
 });
 
@@ -750,6 +789,22 @@ test("buildExecutionPlan injects the ChatGPT headless compatibility user-agent o
 		sessionMode: "auto",
 	});
 	assert.equal(headedPlan.compatibilityWorkaround, undefined);
+
+	const disabledAutoConnectPlan = buildExecutionPlan(["--auto-connect", "false", "open", "https://chatgpt.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(disabledAutoConnectPlan.compatibilityWorkaround?.id, "chatgpt-headless-user-agent");
+
+	const enabledAutoConnectPlan = buildExecutionPlan(["--auto-connect", "open", "https://chatgpt.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(enabledAutoConnectPlan.compatibilityWorkaround, undefined);
 });
 
 test("buildPromptPolicy and getLatestUserPrompt derive legacy bash policy from prompt text without globals", () => {
@@ -790,6 +845,25 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"--proxy=[REDACTED]",
 		"open",
 		"https://example.com/",
+	]);
+	assert.deepEqual(redactInvocationArgs(["auth", "save", "demo", "--password", "secret-value"]), [
+		"auth",
+		"save",
+		"demo",
+		"--password",
+		"[REDACTED]",
+	]);
+	assert.deepEqual(redactInvocationArgs(["auth", "save", "demo", "--password=secret-value"]), [
+		"auth",
+		"save",
+		"demo",
+		"--password=[REDACTED]",
+	]);
+	assert.deepEqual(redactInvocationArgs(["set", "credentials", "user@example.com", "secret-value"]), [
+		"set",
+		"credentials",
+		"[REDACTED]",
+		"[REDACTED]",
 	]);
 });
 
@@ -832,6 +906,8 @@ test("redactSensitiveValue masks obvious secret-bearing object keys", () => {
 
 test("shouldAppendBrowserSystemPrompt only targets clearly browser-oriented prompts", () => {
 	assert.equal(shouldAppendBrowserSystemPrompt("Open https://example.com and take a snapshot."), true);
+	assert.equal(shouldAppendBrowserSystemPrompt("Do web research and read the live docs for this API."), true);
+	assert.equal(shouldAppendBrowserSystemPrompt("Search online for the current browser automation docs."), true);
 	assert.equal(shouldAppendBrowserSystemPrompt("Please review browser compatibility docs."), false);
 	assert.equal(shouldAppendBrowserSystemPrompt("Summarize the article at https://example.com/blog/post for the changelog."), false);
 	assert.equal(shouldAppendBrowserSystemPrompt("Please review the repository architecture."), false);

@@ -73,7 +73,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 		description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators.",
 		minItems: 1,
 	}),
-	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch and eval --stdin." })),
+	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, and auth save --password-stdin." })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:
@@ -936,6 +936,45 @@ function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactMa
 	return restoredManifest;
 }
 
+function isPasswordStdinAuthSave(options: { command?: string; commandTokens: string[] }): boolean {
+	return options.command === "auth" && options.commandTokens[1] === "save" && options.commandTokens.includes("--password-stdin");
+}
+
+function getExactSensitiveStdinValues(options: { command?: string; commandTokens: string[]; stdin?: string }): string[] {
+	if (options.stdin === undefined || !isPasswordStdinAuthSave(options)) {
+		return [];
+	}
+	return [...new Set([options.stdin, options.stdin.trimEnd(), options.stdin.trim()].filter((value) => value.length > 0))];
+}
+
+function redactExactSensitiveText(text: string, sensitiveValues: string[]): string {
+	let redacted = text;
+	for (const value of sensitiveValues) {
+		redacted = redacted.split(value).join("[REDACTED]");
+	}
+	return redacted;
+}
+
+function redactExactSensitiveValue(value: unknown, sensitiveValues: string[]): unknown {
+	if (sensitiveValues.length === 0) {
+		return value;
+	}
+	if (typeof value === "string") {
+		return redactExactSensitiveText(value, sensitiveValues);
+	}
+	if (Array.isArray(value)) {
+		return value.map((item) => redactExactSensitiveValue(item, sensitiveValues));
+	}
+	if (!isRecord(value)) {
+		return value;
+	}
+	return Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [key, redactExactSensitiveValue(entryValue, sensitiveValues)]));
+}
+
+function redactToolDetails(details: Record<string, unknown>, sensitiveValues: string[]): Record<string, unknown> {
+	return redactSensitiveValue(redactExactSensitiveValue(details, sensitiveValues)) as Record<string, unknown>;
+}
+
 function validateStdinCommandContract(options: { command?: string; commandTokens: string[]; stdin?: string }): string | undefined {
 	if (options.stdin === undefined) {
 		return undefined;
@@ -946,8 +985,11 @@ function validateStdinCommandContract(options: { command?: string; commandTokens
 	if (options.command === "eval" && options.commandTokens.includes("--stdin")) {
 		return undefined;
 	}
+	if (isPasswordStdinAuthSave(options)) {
+		return undefined;
+	}
 	const commandLabel = options.command ? `\`${options.command}\`` : "the requested command";
-	return `agent_browser stdin is only supported for \`batch\` and \`eval --stdin\`; remove stdin from ${commandLabel} or use one of those command forms.`;
+	return `agent_browser stdin is only supported for \`batch\`, \`eval --stdin\`, and \`auth save --password-stdin\`; remove stdin from ${commandLabel} or use one of those command forms.`;
 }
 
 function supportsPinnedStdinCommand(options: { command?: string; commandTokens: string[]; stdin?: string }): boolean {
@@ -1027,6 +1069,17 @@ function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps
 		const message = error instanceof Error ? error.message : String(error);
 		return { error: `agent_browser batch stdin could not be parsed as JSON: ${message}` };
 	}
+}
+
+function getStaleRefArgs(commandTokens: string[], stdin?: string): string[] {
+	if (commandTokens[0] !== "batch" || stdin === undefined) {
+		return commandTokens;
+	}
+	const parsed = parseUserBatchStdin(stdin);
+	if (parsed.error || parsed.steps === undefined) {
+		return commandTokens;
+	}
+	return parsed.steps.flatMap((step) => step);
 }
 
 function buildPinnedBatchPlan(options: {
@@ -1293,6 +1346,7 @@ function getPersistentSessionArtifactStore(ctx: {
 
 async function preserveParseFailureOutput(options: {
 	artifactManifest?: SessionArtifactManifest;
+	exactSensitiveValues?: string[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	stdoutSpillPath?: string;
 }): Promise<{
@@ -1306,7 +1360,7 @@ async function preserveParseFailureOutput(options: {
 	}
 
 	try {
-		const rawOutput = await readFile(options.stdoutSpillPath);
+		const rawOutput = redactExactSensitiveText(await readFile(options.stdoutSpillPath, "utf8"), options.exactSensitiveValues ?? []);
 		const nowMs = Date.now();
 		let evictedArtifacts: PersistentSessionArtifactEviction[] = [];
 		let fullOutputPath: string;
@@ -1546,6 +1600,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				}
 
 				const commandTokens = extractCommandTokens(preparedArgs.args);
+				const exactSensitiveValues = getExactSensitiveStdinValues({
+					command: executionPlan.commandInfo.command,
+					commandTokens,
+					stdin: params.stdin,
+				});
 				const traceOwnerGuardMessage = getTraceOwnerGuardMessage({
 					command: executionPlan.commandInfo.command,
 					sessionName: executionPlan.sessionName,
@@ -1755,9 +1814,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					presentationEnvelope = repairedBatchScreenshots.envelope;
 					const screenshotArtifactRequest = repairedScreenshot.request;
 					const batchScreenshotArtifactRequests = repairedBatchScreenshots.requests;
+					if (presentationEnvelope && exactSensitiveValues.length > 0) {
+						presentationEnvelope = redactExactSensitiveValue(presentationEnvelope, exactSensitiveValues) as AgentBrowserEnvelope;
+					}
 					const parseFailureOutput = parseError
 						? await preserveParseFailureOutput({
 								artifactManifest,
+								exactSensitiveValues,
 								persistentArtifactStore,
 								stdoutSpillPath: processResult.stdoutSpillPath,
 							})
@@ -1934,6 +1997,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						exitCode: processResult.exitCode,
 						parseError,
 						plainTextInspection,
+						staleRefArgs: getStaleRefArgs(commandTokens, params.stdin),
 						spawnError: processResult.spawnError,
 						stderr: processResult.stderr,
 						timedOut: processResult.timedOut,
@@ -2009,54 +2073,55 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							contentWithSessionWarnings.unshift({ type: "text", text: warningText });
 						}
 					}
-					const redactedContent = contentWithSessionWarnings.map((item) =>
-						item.type === "text" && !(userRequestedJson && !plainTextInspection) ? { ...item, text: redactSensitiveText(item.text) } : item,
-					);
+					const redactedContent = contentWithSessionWarnings.map((item) => {
+						if (item.type !== "text") return item;
+						const exactRedactedText = redactExactSensitiveText(item.text, exactSensitiveValues);
+						return userRequestedJson && !plainTextInspection
+							? { ...item, text: exactRedactedText }
+							: { ...item, text: redactSensitiveText(exactRedactedText) };
+					});
+					const details = {
+						args: redactedArgs,
+						artifactManifest: presentation.artifactManifest,
+						artifactRetentionSummary: presentation.artifactRetentionSummary,
+						artifacts: presentation.artifacts,
+						batchFailure: presentation.batchFailure,
+						batchSteps: presentation.batchSteps,
+						command: executionPlan.commandInfo.command,
+						compatibilityWorkaround,
+						subcommand: executionPlan.commandInfo.subcommand,
+						data: presentation.data,
+						error: plainTextInspection ? undefined : presentationEnvelope?.error,
+						inspection: plainTextInspection || undefined,
+						navigationSummary,
+						aboutBlankSessionMismatch,
+						openResultTabCorrection,
+						effectiveArgs: redactedProcessArgs,
+						exitCode: processResult.exitCode,
+						fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
+						fullOutputPaths: presentation.fullOutputPaths,
+						fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
+						imagePath: presentation.imagePath,
+						imagePaths: presentation.imagePaths,
+						parseError: plainTextInspection ? undefined : parseError,
+						savedFile: presentation.savedFile,
+						savedFilePath: presentation.savedFilePath,
+						sessionMode,
+						sessionTabCorrection,
+						sessionTabTarget: currentSessionTabTarget,
+						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+						sessionRecoveryHint: redactedRecoveryHint,
+						startupScopedFlags: executionPlan.startupScopedFlags,
+						stderr: processResult.stderr,
+						stdout: plainTextInspection ? inspectionText ?? "" : parseSucceeded ? undefined : processResult.stdout,
+						summary: presentation.summary,
+						timedOut: processResult.timedOut || undefined,
+						timeoutMs: processResult.timeoutMs,
+					};
 
 					return {
 						content: redactedContent,
-						details: {
-							args: redactedArgs,
-							artifactManifest: redactSensitiveValue(presentation.artifactManifest),
-							artifactRetentionSummary: presentation.artifactRetentionSummary,
-							artifacts: redactSensitiveValue(presentation.artifacts),
-							batchFailure: redactSensitiveValue(presentation.batchFailure),
-							batchSteps: redactSensitiveValue(presentation.batchSteps),
-							command: executionPlan.commandInfo.command,
-							compatibilityWorkaround,
-							subcommand: executionPlan.commandInfo.subcommand,
-							data: redactSensitiveValue(presentation.data),
-							error: plainTextInspection ? undefined : redactSensitiveValue(presentationEnvelope?.error),
-							inspection: plainTextInspection || undefined,
-							navigationSummary: redactSensitiveValue(navigationSummary),
-							aboutBlankSessionMismatch: redactSensitiveValue(aboutBlankSessionMismatch),
-							openResultTabCorrection: redactSensitiveValue(openResultTabCorrection),
-							effectiveArgs: redactedProcessArgs,
-							exitCode: processResult.exitCode,
-							fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
-							fullOutputPaths: presentation.fullOutputPaths,
-							fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
-							imagePath: presentation.imagePath,
-							imagePaths: presentation.imagePaths,
-							parseError: plainTextInspection ? undefined : parseError,
-							savedFile: redactSensitiveValue(presentation.savedFile),
-							savedFilePath: presentation.savedFilePath ? redactSensitiveText(presentation.savedFilePath) : undefined,
-							sessionMode,
-							sessionTabCorrection: redactSensitiveValue(sessionTabCorrection),
-							sessionTabTarget: redactSensitiveValue(currentSessionTabTarget),
-							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-							sessionRecoveryHint: redactedRecoveryHint,
-							startupScopedFlags: executionPlan.startupScopedFlags,
-							stderr: processResult.stderr ? redactSensitiveText(processResult.stderr) : undefined,
-							stdout: plainTextInspection
-								? redactSensitiveText(inspectionText ?? "")
-								: parseSucceeded
-									? undefined
-									: redactSensitiveText(processResult.stdout),
-							summary: redactSensitiveText(presentation.summary),
-							timedOut: processResult.timedOut || undefined,
-							timeoutMs: processResult.timeoutMs,
-						},
+						details: redactToolDetails(details, exactSensitiveValues),
 						isError: !succeeded,
 					};
 				} finally {

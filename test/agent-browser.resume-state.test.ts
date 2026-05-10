@@ -858,6 +858,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Wrong", url
 			assert.match(String(result.details?.validationError ?? ""), /stdin/i);
 			assert.match(String(result.details?.validationError ?? ""), /batch/i);
 			assert.match(String(result.details?.validationError ?? ""), /eval --stdin/i);
+			assert.match(String(result.details?.validationError ?? ""), /auth save --password-stdin/i);
 			assert.match(String((result.content[0] as { text: string }).text ?? ""), /stdin/i);
 			assert.equal(result.details?.sessionName, "named");
 

@@ -78,7 +78,7 @@ Examples:
 
 - type: `string`
 - optional
-- raw stdin for `eval --stdin` and `batch`
+- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`
 - rejected before launch for any other command/stdin combination, including commands such as `click`, `snapshot`, or `open`
 
 Examples:
@@ -89,6 +89,10 @@ Examples:
 
 ```json
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
+```
+
+```json
+{ "args": ["auth", "save", "my-login", "--password-stdin"], "stdin": "password from the user-approved secret source" }
 ```
 
 ### `sessionMode`
@@ -222,7 +226,7 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - reconstruct the current extension-managed session and latest `artifactManifest` from persisted tool details on resume/reload so later default calls keep following the active managed browser and can continue reporting artifact retention state
 - when an unnamed `sessionMode: "fresh"` launch succeeds, make it the new extension-managed session so later default calls keep using it
 - if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds
-- treat explicit caller-provided `--session` choices as user-managed
+- treat explicit caller-provided `--session` choices as user-managed; `--session` isolates a live browser session but is not a persisted tab/auth restore mechanism after `close`, so use `--profile`, `--session-name`, or `--state` when persisted auth/tab state is required
 - pass explicit `--profile` straight through to upstream `agent-browser`; no profile-cloning or isolation layer is added in v1
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->

@@ -31,7 +31,7 @@ The extension should:
 - resolve `agent-browser` from `PATH`
 - invoke it directly, not through a shell
 - inject `--json`
-- support optional stdin only for `eval --stdin` and `batch`, rejecting other command/stdin combinations before launch
+- support optional stdin only for `eval --stdin`, `batch`, and `auth save --password-stdin`, rejecting other command/stdin combinations before launch
 
 ### Agent-first UX
 

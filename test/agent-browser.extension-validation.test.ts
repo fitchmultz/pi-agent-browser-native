@@ -450,6 +450,114 @@ test("agentBrowserExtension redacts sensitive args in updates and persisted deta
 	}
 });
 
+test("agentBrowserExtension allows auth password stdin without echoing the secret in tool details", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-stdin-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+process.stderr.write("stderr echo: " + stdin);
+process.stdout.write(JSON.stringify({ success: true, data: { saved: true, echoed: stdin, nested: { arbitrary: stdin } } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const updates: unknown[] = [];
+			const result = (await harness.tool.execute(
+				"test-tool-call",
+				{ args: ["auth", "save", "demo", "--password-stdin"], stdin: "pin" },
+				new AbortController().signal,
+				(update) => updates.push(update),
+				harness.ctx,
+			)) as { content: Array<{ type: string; text?: string }>; details?: Record<string, unknown>; isError?: boolean };
+
+			assert.equal(result.isError, false);
+			const [invocation] = await readInvocationLog(logPath);
+			assert.deepEqual(invocation?.args, ["--json", "--session", result.details?.sessionName, "auth", "save", "demo", "--password-stdin"]);
+			assert.equal(invocation?.stdin, "pin");
+			assert.equal(JSON.stringify(updates).includes("pin"), false);
+			assert.equal(JSON.stringify(result.details).includes("pin"), false);
+			assert.equal(JSON.stringify(result.content).includes("pin"), false);
+			assert.equal(JSON.stringify(result.details).includes("[REDACTED]"), true);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension redacts auth password stdin echoed in upstream failures", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-error-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+process.stderr.write("stderr echo: " + stdin);
+process.stdout.write(JSON.stringify({ success: false, error: "error echo: " + stdin, data: { arbitrary: stdin } }));
+process.exit(1);`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["auth", "save", "demo", "--password-stdin"],
+				stdin: "super-secret-password",
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(JSON.stringify(result.content).includes("super-secret-password"), false);
+			assert.equal(JSON.stringify(result.details).includes("super-secret-password"), false);
+			assert.match(JSON.stringify(result.content), /\[REDACTED\]/);
+			assert.match(JSON.stringify(result.details), /\[REDACTED\]/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension redacts auth password stdin in preserved parse-failure spill files", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-parse-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+process.stdout.write("invalid-json " + stdin + " " + "x".repeat(600000));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["auth", "save", "demo", "--password-stdin"],
+				stdin: "super-secret-password",
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(JSON.stringify(result.content).includes("super-secret-password"), false);
+			assert.equal(JSON.stringify(result.details).includes("super-secret-password"), false);
+			assert.equal(typeof result.details?.fullOutputPath, "string");
+			const fullOutput = await readFile(String(result.details?.fullOutputPath), "utf8");
+			assert.doesNotMatch(fullOutput, /super-secret-password/);
+			assert.match(fullOutput, /\[REDACTED\]/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension renders confirmation recovery and redacts sensitive confirmation context", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-confirm-"));
 	const basePath = process.env.PATH ?? "";
@@ -659,6 +767,114 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 				path: "/tmp/export.csv",
 				subcommand: "--download",
 			});
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps stale-ref guidance when tab pinning wraps a command in batch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-ref-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
+    { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
+  ]));
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
+  { tabId: "t2", title: "Other", url: "https://other.example/", active: true }
+] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "click", "@e4"],
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.type, "text");
+			const text = (result.content[0] as { text: string }).text;
+			assert.match(text, /Could not locate element/);
+			assert.match(text, /@ref may be stale/);
+			assert.match(text, /snapshot/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps stale-ref guidance for user batch stdin wrapped by tab pinning", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-batch-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
+    { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
+  ]));
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
+  { tabId: "t2", title: "Other", url: "https://other.example/", active: true }
+] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "batch"],
+				stdin: JSON.stringify([["click", "@e4"]]),
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.type, "text");
+			const text = (result.content[0] as { text: string }).text;
+			assert.match(text, /Could not locate element/);
+			assert.match(text, /@ref may be stale/);
+			assert.match(text, /snapshot/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

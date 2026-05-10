@@ -127,7 +127,7 @@ The primary session control parameter is `sessionMode`:
 ### Mental model
 
 - `args` — exact CLI args after `agent-browser`
-- `stdin` — raw stdin only for `batch` and `eval --stdin` (other command/stdin combinations are rejected before `agent-browser` is launched)
+- `stdin` — raw stdin only for `batch`, `eval --stdin`, and `auth save --password-stdin` (other command/stdin combinations are rejected before `agent-browser` is launched)
 - `sessionMode`
   - `"auto"` — default, reuse the extension-managed `pi`-scoped session
   - `"fresh"` — switch that managed session to a new profile/debug launch
@@ -301,7 +301,7 @@ Current cautions:
 - artifact-producing commands render direct readable artifact metadata in visible content and `details.artifacts`: `kind`/`artifactType`, `path`, `requestedPath`, `absolutePath`, `exists`, `sizeBytes`, `status`, `cwd`, `session`, and `tempPath` when the wrapper repaired an upstream temp fallback
 - if the caller explicitly passes `--json`, the visible text content is valid JSON; for `stream status`, the wrapper enriches data with `wsUrl` and `frameFormat`
 - `trace` and `profiler` share upstream tracing machinery; the wrapper blocks starts/stops that conflict with owner state it observed in the current Pi session, but the message says "wrapper believes" because upstream or external CLI calls can desynchronize that local state
-- explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension
+- explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension; `--session` isolates a live browser session but is not a persisted tab/auth restore mechanism after `close`, so use `--profile`, `--session-name`, or `--state` when persisted auth/tab state is required
 - explicit caller-provided `--user-agent` values win over the ChatGPT/OpenAI compatibility workaround
 - tool progress/details redact sensitive invocation values such as `--headers`, proxy credentials, and auth-bearing URL parameters before echoing them back into Pi
 

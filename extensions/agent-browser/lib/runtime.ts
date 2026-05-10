@@ -87,11 +87,29 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 const BROWSER_PROMPT_PATTERNS = [
 	/\b(?:agent[_ -]?browser|browser automation|eval\s+--stdin|screenshot|snapshot|tab\s+list)\b/i,
 	/\b(?:react\s+(?:tree|inspect|renders|suspense)|web\s+vitals|core\s+web\s+vitals|pushstate)\b/i,
+	/\b(?:live\s+docs?|online\s+research|research\s+(?:online|the\s+web)|search\s+(?:online|the\s+web)|web\s+research)\b/i,
 	/\bbrowser\b.*\b(?:automation|click|fill|navigate|open|page|screenshot|site|snapshot|tab|url|visit|web(?:site| page)?)\b/i,
 	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
 ];
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
-const SENSITIVE_VALUE_FLAGS = new Set(["--headers", "--proxy"]);
+const SENSITIVE_VALUE_FLAGS = new Set(["--headers", "--password", "--proxy"]);
+const GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE = new Set(["--args"]);
+const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES = new Set([
+	"--allow-file-access",
+	"--annotate",
+	"--auto-connect",
+	"--confirm-interactive",
+	"--content-boundaries",
+	"--debug",
+	"--headed",
+	"--ignore-https-errors",
+	"--json",
+	"--no-auto-dialog",
+	"--quiet",
+	"-q",
+	"--verbose",
+	"-v",
+]);
 const SENSITIVE_QUERY_PARAM_PATTERN =
 	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth|authorization|bearer|client(?:_|-)?secret|code|cookie|id(?:_|-)?token|key|pass(?:word)?|refresh(?:_|-)?token|secret|session(?:_|-)?id|sig(?:nature)?|token)$/i;
 const SENSITIVE_FIELD_NAME_PATTERN =
@@ -425,6 +443,15 @@ export function redactInvocationArgs(args: string[]): string[] {
 		redacted.push(redactUrlToken(token));
 	}
 
+	const commandStartIndex = findCommandStartIndex(args);
+	if (commandStartIndex !== undefined && args[commandStartIndex] === "set" && args[commandStartIndex + 1] === "credentials") {
+		for (const index of [commandStartIndex + 2, commandStartIndex + 3]) {
+			if (redacted[index] !== undefined) {
+				redacted[index] = "[REDACTED]";
+			}
+		}
+	}
+
 	return redacted;
 }
 
@@ -654,8 +681,14 @@ export function validateToolArgs(args: string[]): string | undefined {
 	return undefined;
 }
 
+function isBooleanLiteral(token: string | undefined): boolean {
+	const normalized = token?.trim().toLowerCase();
+	return normalized === "true" || normalized === "false";
+}
+
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {
-	for (const [index, token] of args.entries()) {
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index];
 		if (!token.startsWith("-")) {
 			continue;
 		}
@@ -682,7 +715,7 @@ function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | u
 				reason: "missing-value",
 			};
 		}
-		if (receivedToken.startsWith("-")) {
+		if (receivedToken.startsWith("-") && !GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE.has(normalizedToken)) {
 			return {
 				flag: normalizedToken,
 				index,
@@ -690,7 +723,7 @@ function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | u
 				receivedToken,
 			};
 		}
-		continue;
+		index += 1;
 	}
 	return undefined;
 }
@@ -794,7 +827,7 @@ function getCompatibilityWorkaround(args: string[], commandInfo: CommandInfo): C
 	if (isBooleanFlagEnabled(args, "--headed")) {
 		return undefined;
 	}
-	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p") || hasFlagToken(args, "--auto-connect")) {
+	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p") || isBooleanFlagEnabled(args, "--auto-connect")) {
 		return undefined;
 	}
 	const engine = getFlagValue(args, "--engine");
@@ -831,7 +864,7 @@ export function extractExplicitSessionName(args: string[]): string | undefined {
 export function getStartupScopedFlags(args: string[]): string[] {
 	return LAUNCH_SCOPED_FLAG_DEFINITIONS
 		.map((definition) => definition.flag)
-		.filter((flag) => hasFlagToken(args, flag));
+		.filter((flag) => flag === "--auto-connect" ? isBooleanFlagEnabled(args, flag) : hasFlagToken(args, flag));
 }
 
 export function hasLaunchScopedTabCorrectionFlag(args: string[]): boolean {
@@ -1039,7 +1072,7 @@ export function parseCommandInfo(args: string[]): CommandInfo {
 	};
 }
 
-export function extractCommandTokens(args: string[]): string[] {
+function findCommandStartIndex(args: string[]): number | undefined {
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
 		if (token.startsWith("--session=")) {
@@ -1049,10 +1082,21 @@ export function extractCommandTokens(args: string[]): string[] {
 			const normalizedToken = token.split("=", 1)[0] ?? token;
 			if (GLOBAL_FLAGS_WITH_VALUES.has(normalizedToken) && !token.includes("=")) {
 				index += 1;
+			} else if (
+				GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken) &&
+				!token.includes("=") &&
+				isBooleanLiteral(args[index + 1])
+			) {
+				index += 1;
 			}
 			continue;
 		}
-		return args.slice(index);
+		return index;
 	}
-	return [];
+	return undefined;
+}
+
+export function extractCommandTokens(args: string[]): string[] {
+	const commandStartIndex = findCommandStartIndex(args);
+	return commandStartIndex === undefined ? [] : args.slice(commandStartIndex);
 }

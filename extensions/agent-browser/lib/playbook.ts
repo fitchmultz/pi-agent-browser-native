@@ -3,7 +3,7 @@
  * Responsibilities: Define stable guidance bullets, native tool-call examples, and wrapper-behavior notes without importing runtime/browser process code.
  * Scope: Agent-facing documentation and prompt-guidance text only; command execution and wrapper state behavior live in runtime modules.
  * Usage: Imported by the extension entrypoint for promptGuidelines and by the documentation drift-check script for generated Markdown blocks.
- * Invariants/Assumptions: The native pi tool receives args after the agent-browser binary, stdin is only for batch/eval --stdin, and wrapper behavior documented here must match implemented behavior.
+ * Invariants/Assumptions: The native pi tool receives args after the agent-browser binary, stdin is only for batch/eval --stdin/auth save --password-stdin, and wrapper behavior documented here must match implemented behavior.
  */
 
 export const PROJECT_RULE_PROMPT =
@@ -14,9 +14,9 @@ export const TOOL_PROMPT_GUIDELINES_PREFIX = [
 ] as const;
 
 export const QUICK_START_GUIDELINES = [
-	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch and eval --stdin, and other command/stdin combinations are rejected before launch; sessionMode=fresh switches the extension-managed pi-scoped session to a fresh upstream launch when you need new --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable state.",
+	"Quick start mental model: args are the exact agent-browser CLI args after the binary; stdin is only for batch, eval --stdin, and auth save --password-stdin, and other command/stdin combinations are rejected before launch; sessionMode=fresh switches the extension-managed pi-scoped session to a fresh upstream launch when you need new --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable state.",
 	"Common first calls: { args: [\"open\", \"https://example.com\"] } then { args: [\"snapshot\", \"-i\"] }; after navigation, use { args: [\"click\", \"@e2\"] } then { args: [\"snapshot\", \"-i\"] }.",
-	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }, and { args: [\"open\", \"--enable\", \"react-devtools\", \"https://example.com\"], sessionMode: \"fresh\" }.",
+	"Common advanced calls: { args: [\"batch\"], stdin: \"[[\\\"open\\\",\\\"https://example.com\\\"],[\\\"snapshot\\\",\\\"-i\\\"]]\" }, { args: [\"eval\", \"--stdin\"], stdin: \"document.title\" }, { args: [\"auth\", \"save\", \"name\", \"--password-stdin\"], stdin: \"<password from user-approved secret source>\" }, { args: [\"--profile\", \"Default\", \"open\", \"https://example.com/account\"], sessionMode: \"fresh\" }, and { args: [\"open\", \"--enable\", \"react-devtools\", \"https://example.com\"], sessionMode: \"fresh\" }.",
 	"High-value command reference: download <selector> <path> saves a file triggered by a click; get title/url/text/html/value/attr/count reads page state; screenshot [path] captures an image; pdf <path> saves a PDF; tab list and tab <tab-id-or-label> inspect or recover the active tab; react tree/inspect/renders/suspense introspect React after --enable react-devtools; vitals [url] measures Core Web Vitals; pushstate <url> performs SPA navigation.",
 	"For artifact-producing commands, read the visible artifact block for requested path, absolute path, existence, size, type, cwd, and session; details.artifacts contains the same machine-readable metadata. For annotated screenshots inside batch, put --annotate in top-level args (for example { args: [\"--annotate\", \"batch\"], stdin: \"[[\\\"screenshot\\\",\\\"/tmp/page.png\\\"]]\" }) rather than inside the screenshot step.",
 ] as const;
@@ -47,7 +47,7 @@ export const TOOL_PROMPT_GUIDELINES_SUFFIX = [
 	"Prefer agent_browser over bash for opening sites, reading docs on the web, clicking, filling, screenshots, eval, and batch workflows.",
 	"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when agent_browser can do the job.",
 	"Pass exact agent-browser CLI arguments in args, excluding the binary name.",
-	"Use stdin only for eval --stdin and batch instead of shell heredocs; other command/stdin combinations are rejected before launch.",
+	"Use stdin only for eval --stdin, batch, and auth save --password-stdin instead of shell heredocs or password args; other command/stdin combinations are rejected before launch.",
 	"Let the extension-managed session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, or --enable.",
 	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug/init-script launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
 ] as const;

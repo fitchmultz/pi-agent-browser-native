@@ -349,6 +349,9 @@ function splitShellWords(input: string): string[] | undefined {
 			current += input[index];
 			continue;
 		}
+		if (char === "#" && current.length === 0) {
+			break;
+		}
 		if (/\s/.test(char)) {
 			if (current.length > 0) {
 				words.push(current);
@@ -384,7 +387,7 @@ function formatNativeSkillContent(content: string): string {
 		const heredocMatch = /^(.*?)\s+(<<-?)['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\s*$/.exec(rawArgsText);
 		const argsText = heredocMatch?.[1] ?? rawArgsText;
 		const args = splitShellWords(argsText);
-		if (!args) {
+		if (!args || args.length === 0) {
 			output.push(line);
 			continue;
 		}
@@ -419,7 +422,7 @@ function formatSkillsText(commandInfo: CommandInfo, data: unknown): string | und
 	if (content) {
 		const note = [
 			"Pi native-tool note: upstream skill text was adapted for this native tool.",
-			"Use args for CLI tokens and stdin only for batch or eval --stdin; do not pipe heredocs through bash unless the user explicitly asks for a bash workflow.",
+			"Use args for CLI tokens and stdin only for batch, eval --stdin, or auth save --password-stdin; do not pipe heredocs through bash unless the user explicitly asks for a bash workflow.",
 		].join("\n");
 		return `${note}\n\n${redactModelFacingText(formatNativeSkillContent(content))}`;
 	}

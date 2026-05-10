@@ -195,6 +195,21 @@ test("getAgentBrowserErrorText prefers envelope errors over generic exit codes",
 	assert.equal(errorText, "Navigation failed: net::ERR_BLOCKED_BY_CLIENT");
 });
 
+test("getAgentBrowserErrorText adds stale-ref recovery guidance for failed @refs", () => {
+	const errorText = getAgentBrowserErrorText({
+		aborted: false,
+		effectiveArgs: ["--json", "--session", "named", "get", "text", "@e4"],
+		envelope: { success: false, error: "Could not locate element with role=heading name=Old page" },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+	});
+
+	assert.match(errorText ?? "", /Could not locate element/);
+	assert.match(errorText ?? "", /@ref may be stale/);
+	assert.match(errorText ?? "", /snapshot/);
+});
+
 test("getAgentBrowserErrorText extracts nested envelope error messages", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,

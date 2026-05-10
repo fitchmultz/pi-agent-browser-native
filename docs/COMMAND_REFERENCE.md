@@ -34,7 +34,7 @@ Tool parameters:
 ```
 
 - `args`: exact `agent-browser` CLI tokens after the binary name.
-- `stdin`: only for `batch` and `eval --stdin`; other command/stdin combinations are rejected before `agent-browser` is launched.
+- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` apply.
@@ -220,7 +220,7 @@ The tables below intentionally list more than the recommended workflow. Rare com
 
 ### Built-in skills
 
-Native-tool note: upstream skills are written for the standalone `agent-browser` CLI and may show bash/heredoc examples. In pi, convert those examples to `agent_browser` calls: pass CLI tokens in `args`, and pass heredoc/stdin bodies through the tool `stdin` field for `batch` or `eval --stdin`.
+Native-tool note: upstream skills are written for the standalone `agent-browser` CLI and may show bash/heredoc examples. In pi, convert those examples to `agent_browser` calls: pass CLI tokens in `args`, and pass heredoc/stdin bodies through the tool `stdin` field for `batch`, `eval --stdin`, or `auth save --password-stdin`.
 
 | Command | Purpose |
 | --- | --- |
@@ -300,9 +300,11 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `cookies [get|set|clear]` | Manage cookies. `set` supports `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, `--expires`, and `--curl <file>` for JSON, cURL, or bare Cookie-header bulk imports. |
 | `storage <local|session>` | Manage web storage. |
 
+Privacy note: `cookies get` can expose real profile cookies. Do not run it against `--profile Default` or other authenticated profiles unless the user explicitly needs cookie inspection; prefer task-specific page actions and storage checks.
+
 ### Tabs
 
-Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `docs` or `app` are interchangeable with ids wherever a tab reference is accepted.
+Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `docs` or `app` are interchangeable with ids wherever a tab reference is accepted. Upstream help may refer to numeric tab positions, but this wrapper guidance uses stable `t<N>` ids because positional integers are not accepted by current upstream `agent-browser`.
 
 | Command | Purpose |
 | --- | --- |
@@ -377,7 +379,7 @@ When these diagnostic commands are invoked through the native `agent_browser` to
 | Command | Purpose |
 | --- | --- |
 | `batch [--bail] ["cmd" ...]` | Execute multiple commands sequentially from args or stdin. |
-| `auth save <name> [opts]` | Save an auth profile with options such as `--url`, `--username`, `--password`, or `--password-stdin`. |
+| `auth save <name> [opts]` | Save an auth profile with options such as `--url`, `--username`, `--password`, or `--password-stdin`. Prefer `--password-stdin` with the tool `stdin` field; avoid putting passwords in `args`. |
 | `auth login <name>` | Login using saved credentials. |
 | `auth list` | List saved auth profiles. |
 | `auth show <name>` | Show auth profile metadata. |

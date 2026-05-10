@@ -135,6 +135,17 @@ function buildUpstreamIpcReadTimeoutMessage(): string {
 	].join(" ");
 }
 
+function maybeAppendStaleRefHint(message: string, args?: string[]): string {
+	const usedRef = args?.some((arg) => /^@e\d+\b/.test(arg)) ?? false;
+	if (!usedRef || !/could not locate element|element not found|no element/i.test(message)) {
+		return message;
+	}
+	return [
+		message,
+		"This @ref may be stale after navigation, scrolling, or a DOM update. Run `agent_browser` with `{ \"args\": [\"snapshot\", \"-i\"] }` again and retry with a current ref, or use a stable `find` locator.",
+	].join("\n");
+}
+
 export function getAgentBrowserErrorText(options: {
 	aborted: boolean;
 	command?: string;
@@ -144,6 +155,7 @@ export function getAgentBrowserErrorText(options: {
 	parseError?: string;
 	plainTextInspection: boolean;
 	spawnError?: Error;
+	staleRefArgs?: string[];
 	stderr: string;
 	timedOut?: boolean;
 	timeoutMs?: number;
@@ -163,7 +175,8 @@ export function getAgentBrowserErrorText(options: {
 		if (envelopeErrorText && isUpstreamIpcReadTimeoutMessage(envelopeErrorText)) {
 			return buildUpstreamIpcReadTimeoutMessage();
 		}
-		return envelopeErrorText ?? (stderr.trim() || buildFailureFallback(options));
+		const fallback = envelopeErrorText ?? (stderr.trim() || buildFailureFallback(options));
+		return maybeAppendStaleRefHint(fallback, options.staleRefArgs ?? options.effectiveArgs);
 	}
 	if (exitCode !== 0) {
 		return stderr.trim() || buildExitCodeFallback(options);
