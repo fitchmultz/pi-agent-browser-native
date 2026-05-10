@@ -1,61 +1,85 @@
 # pi-agent-browser-native
 
-Native `pi` integration for [`agent-browser`](https://agent-browser.dev/).
+A Pi extension that lets coding agents drive real browser sessions with a native `agent_browser` tool instead of brittle shell commands.
 
-## Status
+It is for Pi users who want agents to browse sites, inspect pages, click through flows, capture screenshots, use persistent profiles, and handle authenticated web apps without spending context on `agent-browser` CLI ceremony.
 
-Published pre-1.0 package.
+## What this looks like in Pi
 
-The native `agent_browser` tool, local verification workflow, package-content checks, and release checks are in place. Package install is the default path; checkout loading is for development and validation.
+You prompt the agent in plain English:
 
-## Goal
+```text
+Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
+```
 
-Expose `agent-browser` to `pi` as a native tool so agents can automate the browser without going through a bash-backed skill.
+The agent gets a native tool, not a bash workaround:
 
-## Product stance
+```json
+{ "args": ["open", "https://react.dev"] }
+{ "args": ["snapshot", "-i"] }
+```
 
-- **Not bundled**: users install `agent-browser` separately and keep it on `PATH`
-- **Latest-version only**: no backward-compatibility support or shims for older `agent-browser` versions
-- **Thin wrapper**: stay close to upstream `agent-browser` instead of re-implementing its CLI
-- **Agent-invoked first**: the main UX is the agent calling the tool directly, like `read` or `write`
-- **Global-install first**: package behavior matters more than repo-local development wiring
+The result is optimized for agent work:
 
-Upstream install/docs:
+- compact page snapshots that lead with useful page content instead of chrome/sidebar noise
+- interactive `@eN` refs for follow-up clicks and form fills
+- screenshots and downloaded files surfaced as Pi artifacts
+- structured details for titles, URLs, saved files, sessions, and errors
+- spill files for oversized raw output instead of dumping pages into context
+- recovery hints when a tab, selector, stale `@ref`, or launch mode needs a different next step
+
+## Who this is for
+
+- **Pi users** who want browser automation available as a normal tool beside `read`, `write`, and `bash`.
+- **Coding agents** that need low-context browser workflows for docs, QA, research, dashboards, and web apps.
+- **Maintainers** who want a thin integration that tracks the current upstream [`agent-browser`](https://agent-browser.dev/) CLI without bundling or re-implementing it.
+
+## The problem
+
+`agent-browser` is powerful, but plain CLI use is awkward inside an agent harness:
+
+- shell strings are easy for agents to quote wrong
+- large page snapshots can waste model context
+- screenshots and downloads need artifact metadata, not just text paths
+- implicit browser sessions need predictable reuse and cleanup
+- profile/debug launches need a clear way to start fresh after public browsing
+- secrets and auth material must not be echoed into model-visible output
+- stale element refs need actionable recovery guidance, not generic failures
+
+`pi-agent-browser-native` keeps upstream `agent-browser` as the browser engine and adds the Pi-native wrapper behavior needed for reliable agent use.
+
+## What it does
+
+| Pain | Native wrapper capability | Proof surface |
+|---|---|---|
+| Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, controlled `stdin`, and `sessionMode` fields | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
+| Page snapshots are too large | Shows compact, main-content-first summaries and stores full raw output in spill files when needed | `test/agent-browser.presentation.test.ts` |
+| Screenshots/downloads get lost in text | Normalizes artifact paths and reports existence, size, cwd, session, and repair status | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#download-screenshot-and-pdf-files) |
+| Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
+| Auth/profile workflows can leak secrets | Supports `auth save --password-stdin` and redacts sensitive args, URLs, stdout/stderr, details, and parse-failure spills | `test/agent-browser.extension-validation.test.ts` |
+| Stale `@eN` refs fail mysteriously | Adds recovery guidance to rerun `snapshot -i` or use stable `find` locators | `test/agent-browser.results.test.ts` |
+| Direct binary help may be blocked in agent sessions | Publishes a repo-readable command reference and verifies it against the target upstream version | `npm run verify` |
+
+## Fastest way to try it
+
+Install upstream `agent-browser` first and make sure it is on `PATH`:
+
 - https://agent-browser.dev/
 - https://github.com/vercel-labs/agent-browser
 
-## Why this exists
-
-A native `pi` integration can improve on the current skill by adding:
-
-- structured tool calls instead of shell strings
-- parsed results instead of bash stdout
-- compact model-facing snapshot shaping with full raw spill files for oversized pages
-- main-content-first snapshot previews so the model sees the important page region before unrelated chrome or sidebar noise
-- inline screenshots and artifacts
-- lightweight session convenience inside `pi`
-- a better base for serious browser automation
-
-## Example use cases
-
-- UI testing and exploratory QA
-- web research
-- driving web UIs for ChatGPT, Grok, Gemini, and Claude
-- authenticated browser sessions and persistent profiles
-
-## Install and try
-
-The product direction is package-first. Prefer the package source for normal use; keep the local-checkout flow for development and pre-release validation.
-
-### Preferred package install
-
-Install `agent-browser` separately, then install this package into `pi`:
+Then install this Pi package:
 
 ```bash
 pi install npm:pi-agent-browser-native
 ```
 
-To try a published package without installing it permanently, isolate that temporary package source from any configured checkout or global install:
+Start Pi and ask for a browser action:
+
+```text
+Use the agent_browser tool to open https://example.com and then take an interactive snapshot.
+```
+
+For a one-off trial that does not touch your configured Pi extensions:
 
 ```bash
 pi --no-extensions -e npm:pi-agent-browser-native
@@ -67,127 +91,123 @@ For a specific published version:
 pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
 
-### First-run doctor
-
-Run the package doctor before first use or when `agent_browser` is missing or duplicated:
-
-```bash
-pi-agent-browser-doctor
-# one-off without installing the package source permanently:
-npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor
-# from a checkout:
-npm run doctor
-```
-
-The doctor is read-only. It checks that upstream `agent-browser` is on `PATH`, that `agent-browser --version` matches the wrapper's capability baseline, and that Pi settings do not point at multiple active `pi-agent-browser-native` sources. It does not run upstream `agent-browser doctor --fix` or edit Pi settings.
-
-If it reports duplicate sources, keep exactly one active source. For normal use, keep `pi install npm:pi-agent-browser-native` and remove checkout paths from Pi settings. For temporary package or checkout trials, use `pi --no-extensions -e npm:pi-agent-browser-native[@<version>]` or `pi --no-extensions -e /path/to/checkout` so configured sources are bypassed.
-
-### GitHub install
-
-For the source install path, prefer the repository URL:
+To install directly from source instead of npm:
 
 ```bash
 pi install https://github.com/fitchmultz/pi-agent-browser-native
 ```
 
-To try the GitHub source without installing it permanently, isolate that temporary source extension from your normal installed package set:
+For a temporary source trial, keep it isolated from your normal package sources:
 
 ```bash
 pi --no-extensions -e https://github.com/fitchmultz/pi-agent-browser-native
 ```
 
-This avoids duplicate `agent_browser` registrations when you already have `pi-agent-browser-native` installed globally.
+## First-run health check
 
-### Current practical local-checkout flows
+Run the read-only doctor when installing, upgrading, or debugging missing/duplicated tools:
 
-This repository's `package.json` is itself a publishable pi package manifest that points at `extensions/agent-browser/index.ts`. That file is the real extension entrypoint for both the checkout and the published package.
+```bash
+pi-agent-browser-doctor
+# one-off without permanent install:
+npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor
+# from this checkout:
+npm run doctor
+```
 
-Use two local-checkout modes intentionally:
+The doctor checks:
 
-- **Quick isolated smoke test:** run the checkout explicitly with `-e` and disable extension discovery:
+- upstream `agent-browser` exists on `PATH`
+- the installed upstream version matches this wrapper's command-reference baseline
+- Pi settings do not point at multiple active `pi-agent-browser-native` sources
 
-  ```bash
-  pi --no-extensions -e /absolute/path/to/pi-agent-browser-native
-  ```
+It does **not** edit Pi settings and does **not** run upstream `agent-browser doctor --fix`.
 
-  This bypasses Pi settings and any configured checkout/global package sources, so it avoids duplicate `agent_browser` registrations. After editing extension code, restart this `pi` process to validate the new source; do not use this mode as proof that configured-source `/reload` works.
+## Common agent calls
 
-- **Configured-source lifecycle validation:** run `npm run verify -- lifecycle` for the opt-in automated tmux harness, or keep exactly one active source for this extension in Pi settings and launch plain `pi` for manual checks. Use this mode when validating `/reload`, full restart, and `/resume` behavior because Pi's reload flow operates on discovered/configured resources.
+You usually prompt the agent in natural language. These JSON snippets show the exact native tool shape the agent should use.
 
-The native tool exposed to the agent is named `agent_browser`.
-
-The primary session control parameter is `sessionMode`:
-
-- `"auto"` (default) reuses the extension-managed `pi`-scoped session when possible
-- `"fresh"` switches that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, and `--enable` apply and later auto calls follow the new browser
-
-## Agent quick start
-
-### Mental model
-
-- `args` — exact CLI args after `agent-browser`
-- `stdin` — raw stdin only for `batch`, `eval --stdin`, and `auth save --password-stdin` (other command/stdin combinations are rejected before `agent-browser` is launched)
-- `sessionMode`
-  - `"auto"` — default, reuse the extension-managed `pi`-scoped session
-  - `"fresh"` — switch that managed session to a new profile/debug launch
-
-### Common call shapes
-
-Open a page, then take an interactive snapshot:
+Open a page and inspect it:
 
 ```json
 { "args": ["open", "https://example.com"] }
 { "args": ["snapshot", "-i"] }
 ```
 
-Click a ref, then re-snapshot after navigation or a major DOM change:
+Click a visible ref, then refresh refs after navigation or a DOM update:
 
 ```json
 { "args": ["click", "@e2"] }
 { "args": ["snapshot", "-i"] }
 ```
 
-Run a multi-step browser flow in one tool call:
+Run a multi-step flow in one tool call:
 
 ```json
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
 ```
 
-Evaluate page JavaScript via stdin:
+Evaluate page JavaScript through stdin:
 
 ```json
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
 
-Download a file from a known link/control directly:
+Save an auth profile without putting the password in `args`:
+
+```json
+{ "args": ["auth", "save", "demo", "--password-stdin"], "stdin": "<password>" }
+```
+
+Download a file from a known link or control:
 
 ```json
 { "args": ["download", "@e5", "/tmp/report.pdf"] }
 ```
 
-For dashboards that start an export asynchronously after a click or navigation, click first and then wait for the download. The wrapper reports `Download completed: /tmp/report.csv` and exposes upstream-reported `details.savedFilePath` plus `details.savedFile` for the `wait` result; with upstream `agent-browser 0.27.0`, confirm `details.artifacts[].exists` before relying on a requested `wait --download <path>` file being present on disk (tracked upstream at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300)):
+For asynchronous exports, click first and then wait for the download:
 
 ```json
 { "args": ["click", "@export"] }
 { "args": ["wait", "--download", "/tmp/report.csv"] }
 ```
 
-Batch flows preserve the same saved-file metadata on the wait step:
+With upstream `agent-browser 0.27.0`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` before relying on the requested `wait --download <path>` file being present on disk.
 
-```json
-{ "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
-```
-
-Start a fresh profiled launch after you already used the implicit session:
+Start a fresh profiled browser after the implicit public-browsing session already exists:
 
 ```json
 { "args": ["--profile", "Default", "open", "https://example.com/account"], "sessionMode": "fresh" }
 ```
 
-After a successful unnamed fresh launch, later `sessionMode: "auto"` calls follow that new browser automatically.
+After a successful unnamed fresh launch, later default `sessionMode: "auto"` calls follow that browser automatically.
 
-React and SPA tooling added upstream in `agent-browser` v0.27.0 is passed through as native tool calls. Launch React introspection with the DevTools hook before first navigation, then use the `react` commands; `vitals` and `pushstate` work as regular command tokens:
+## Authenticated/profile workflows
+
+The wrapper does not clone profiles or hide what upstream Chrome profile you chose. Passing `--profile` is an explicit upstream `agent-browser` choice.
+
+Use these rules:
+
+- Use public/temp profiles for tests and examples.
+- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable`.
+- Use `--session` when you want to manage a live upstream session name yourself.
+- Do not treat `--session` as persisted auth or tab restore after `close`; use `--profile`, `--session-name`, or `--state` for persistence.
+- Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.
+- Prefer `auth save --password-stdin` over putting passwords in `args`.
+
+Example explicit session plus profile launch:
+
+```json
+{
+  "args": ["--session", "auth-flow", "--profile", "Default", "open", "https://example.com/account"]
+}
+```
+
+## React, SPA, and first-navigation setup
+
+React and SPA tooling from upstream `agent-browser` is passed through directly.
+
+Launch React introspection before first navigation:
 
 ```json
 { "args": ["open", "--enable", "react-devtools", "https://example.com"], "sessionMode": "fresh" }
@@ -196,11 +216,16 @@ React and SPA tooling added upstream in `agent-browser` v0.27.0 is passed throug
 { "args": ["react", "renders", "start"] }
 { "args": ["react", "renders", "stop"] }
 { "args": ["react", "suspense", "--only-dynamic"] }
-{ "args": ["vitals", "https://example.com", "--json"] }
-{ "args": ["pushstate", "/dashboard"] }
 ```
 
-For first-navigation setup, launch a fresh blank page before staging routes, cookies, or scripts:
+Use SPA and Web Vitals helpers as normal command tokens:
+
+```json
+{ "args": ["pushstate", "/dashboard"] }
+{ "args": ["vitals", "https://example.com", "--json"] }
+```
+
+For setup that must happen before first navigation, open a blank fresh page, stage routes/cookies/scripts, then navigate:
 
 ```json
 { "args": ["open"], "sessionMode": "fresh" }
@@ -209,68 +234,93 @@ For first-navigation setup, launch a fresh blank page before staging routes, coo
 { "args": ["navigate", "https://example.com"] }
 ```
 
-Name a new upstream session explicitly when you want to keep reusing it yourself:
+## Proof and verification
 
-```json
-{ "args": ["--session", "auth-flow", "open", "https://example.com"] }
+The local verification gate is:
+
+```bash
+npm run verify
 ```
 
-### First useful prompt in a fresh `pi` session
+It runs:
 
-```text
-Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
+- generated playbook/documentation drift checks
+- `tsc --noEmit`
+- the test suite
+- command-reference baseline checks
+- live command-reference verification against the targeted installed upstream `agent-browser`
+
+The opt-in real-upstream suite is separate because it drives a real browser installation:
+
+```bash
+npm run verify -- real-upstream
 ```
+
+For package release confidence, follow [`docs/RELEASE.md`](docs/RELEASE.md). The release gate is:
+
+```bash
+npm run doctor
+npm run verify -- release
+```
+
+`npm run verify -- release` includes the default verification gate plus packaged Pi smoke coverage. The package also has a `prepublishOnly` hook that runs default verification and `npm pack --dry-run` during `npm publish`.
+
+## How it works
+
+`pi-agent-browser-native` is intentionally thin:
+
+1. Pi loads `extensions/agent-browser/index.ts` from the package manifest.
+2. The extension registers one native tool named `agent_browser`.
+3. Tool calls are translated into upstream `agent-browser` CLI invocations with controlled args, stdin, environment, timeout, and session planning.
+4. Upstream JSON/plain-text output is parsed into model-friendly content and structured details.
+5. Screenshots, downloads, recordings, traces, profiles, and spill files are normalized as Pi-visible artifacts where possible.
+6. Generated playbook text in docs and tool metadata stays aligned with `extensions/agent-browser/lib/playbook.ts`.
+
+The upstream browser engine remains [`agent-browser`](https://agent-browser.dev/). This package does not bundle it and does not maintain compatibility shims for old upstream versions.
+
+## Current limits
+
+- Published pre-1.0 package.
+- Targets the current locally installed upstream `agent-browser` version only.
+- Does not bundle `agent-browser`; users install it separately.
+- Does not provide a human browser UI inside Pi; the primary UX is agent-invoked tool calls.
+- Real authenticated profile use is powerful but sensitive. Treat profile and cookie access as user-approved, task-specific behavior.
+- Wrapper tab/session recovery is best effort around observed upstream behavior, not a replacement for explicit profile/session design.
 
 ## Local development
 
-Do not track or rely on a repo-local `.pi/extensions/agent-browser.ts` autoload shim for this package. That creates an unnecessary second registration path.
+Install upstream `agent-browser`, then install dependencies:
 
-The published entrypoint lives at `extensions/agent-browser/index.ts` and is referenced directly from this repo's `package.json`.
+```bash
+npm install
+```
 
-Recommended local development setup:
-1. Install `agent-browser` separately via the upstream project.
-2. Run `npm install`.
-3. For a quick checkout-only smoke test, launch `pi` from this repository root with discovery disabled:
+Quick isolated checkout smoke test:
 
 ```bash
 pi --no-extensions -e .
 ```
 
-4. Prompt the agent to use `agent_browser`.
-5. For hot-reload or resume validation, run `npm run verify -- lifecycle` or configure exactly one active source for this extension in Pi settings, launch plain `pi`, and exercise `/reload` plus restart/`/resume`. Settings matter only in this configured-source mode; they are bypassed by `--no-extensions -e .`. See [`docs/RELEASE.md`](docs/RELEASE.md) for the automated harness behavior, cleanup, and transcript retention details.
+This bypasses Pi settings and configured extensions. After editing extension code, restart that Pi process to test the new checkout.
 
-Example prompt:
+Configured-source lifecycle validation:
 
-```text
-Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
+```bash
+npm run verify -- lifecycle
 ```
 
-For installed-package validation after a release, use exactly one active source. The canonical isolated validation sequence is:
+Use lifecycle validation when testing `/reload`, full restart, `/resume`, managed-session continuity, or persisted artifact behavior.
+
+Installed-package validation after publish:
 
 ```bash
 npm run verify -- package-pi
 pi --no-extensions -e npm:pi-agent-browser-native@<version>
 ```
 
-Only use plain `pi` for installed-package validation after disabling or removing the checkout source from Pi settings.
+## Generated native-tool playbook notes
 
-Validated workflow examples:
-
-- open a page and snapshot it
-- click a link and confirm the destination title
-- use an explicit `--session` across multiple tool calls
-- use an explicit `--profile` and verify persisted browser storage across restarts
-- open `chat.com` or `chatgpt.com` headlessly with `--profile Default` without forcing `--headed` or `--auto-connect`
-- in configured-source lifecycle mode, verify `/reload` and full restart + `/resume` keep following the same implicit managed browser session
-- run `batch` with JSON via `stdin`
-- run `eval --stdin`
-- take a screenshot with inline attachment support and visible artifact metadata: artifact type, requested path, absolute path, existence, size, cwd, session, and repair/copy status when applicable
-- inspect upstream help/version through native tool calls like `{ "args": ["--help"] }` and `{ "args": ["--version"] }` via the tool's stateless plain-text inspection fallback
-- use `download <selector> <path>` for direct attachment/file-save workflows instead of trying to infer downloads from generic clicks or large eval dumps
-- for `.dogfood/...` or other dot-directory screenshot paths, rely on the wrapper's path normalization/repair contract; the visible result reports the requested path and absolute path rather than only an upstream temp path
-- use `click` plus `wait --download <path>` for asynchronous export flows, confirm `details.savedFilePath`/`details.savedFile` are present on the wait result or batch wait step, and check `details.artifacts[].exists` before relying on requested-path persistence
-- confirm oversized outputs show the actual spill file path directly in tool content, not just a details key name
-- inspect `details.artifactManifest` / `details.artifactRetentionSummary` during artifact-heavy flows to recover recent saved files, spill files, and visible eviction state after reload/resume
+These sections are generated from `extensions/agent-browser/lib/playbook.ts`. Run `npm run docs -- playbook write` after changing the canonical playbook source.
 
 <!-- agent-browser-playbook:start inspection -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
@@ -282,14 +332,6 @@ Native inspection calls use the `agent_browser` tool shape, not shell-like direc
 These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, or auto-connect launches.
 <!-- agent-browser-playbook:end inspection -->
 
-Current cautions:
-- passing `--profile` is an explicit upstream choice; this extension does not add its own profile-cloning or isolation layer
-- launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, and `--enable` are for the first command that launches a session; if the implicit session is already active, retry that call with `sessionMode: "fresh"` or provide an explicit `--session ...` for the new launch
-- implicit `piab-*` sessions are extension-managed convenience sessions; they stay alive across `/reload` and resumable session transitions so later default calls can keep following the active managed browser on `/reload` or `/resume`, close when the originating `pi` process quits, rely on the configured idle timeout only as an abnormal-exit backstop, store persisted-session large snapshot spill files under a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` and metadata-only `details.artifactManifest` survive reload/resume without unbounded growth, and still clean up process-private temp spill artifacts on shutdown
-- `sessionMode: "fresh"` without an explicit `--session` rotates that extension-managed session to the new browser so later auto calls keep using it
-- for local Unix launches, the wrapper uses a short private socket directory under `/tmp` so extension-generated session names do not trip upstream Unix socket-path limits in longer cwd/session-name combinations
-- wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to 25 seconds and use a 28-second process watchdog so a single upstream CLI call does not cross the upstream 30-second IPC read-timeout/retry path; split intentionally long waits into shorter tool calls
-- for direct headless local Chrome launches to `chat.com`, `chatgpt.com`, and `chat.openai.com`, the extension injects a normal Chrome user agent when the caller did not explicitly provide `--user-agent`; this keeps the default headless workflow usable without forcing `--headed` or `--auto-connect`
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
@@ -297,59 +339,32 @@ Current cautions:
 - After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
 - If a known session target unexpectedly reports about:blank, agent_browser preserves the prior intended target, best-effort re-selects it when it still exists, and reports exact recovery guidance when it cannot be re-selected.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
-- oversized snapshots and oversized generic outputs compact inline content and print the actual spill file path directly in the tool result when a spill file exists; recent spills and explicit saved artifacts are also summarized in `details.artifactManifest`, including `evicted` entries when retention budgets remove older persisted files
-- artifact-producing commands render direct readable artifact metadata in visible content and `details.artifacts`: `kind`/`artifactType`, `path`, `requestedPath`, `absolutePath`, `exists`, `sizeBytes`, `status`, `cwd`, `session`, and `tempPath` when the wrapper repaired an upstream temp fallback
-- if the caller explicitly passes `--json`, the visible text content is valid JSON; for `stream status`, the wrapper enriches data with `wsUrl` and `frameFormat`
-- `trace` and `profiler` share upstream tracing machinery; the wrapper blocks starts/stops that conflict with owner state it observed in the current Pi session, but the message says "wrapper believes" because upstream or external CLI calls can desynchronize that local state
-- explicit caller-provided `--session` values are treated as user-managed and are not auto-closed by the extension; `--session` isolates a live browser session but is not a persisted tab/auth restore mechanism after `close`, so use `--profile`, `--session-name`, or `--state` when persisted auth/tab state is required
-- explicit caller-provided `--user-agent` values win over the ChatGPT/OpenAI compatibility workaround
-- tool progress/details redact sensitive invocation values such as `--headers`, proxy credentials, and auth-bearing URL parameters before echoing them back into Pi
 
-### Switching from public browsing to a fresh profile/debug launch
+## Project map
 
-A common agent workflow is:
+| Path | Purpose |
+|---|---|
+| `extensions/agent-browser/index.ts` | Pi extension entrypoint and native tool wrapper |
+| `extensions/agent-browser/lib/runtime.ts` | Args, session planning, redaction, process, and runtime helpers |
+| `extensions/agent-browser/lib/results/` | Model-facing result rendering and error guidance |
+| `extensions/agent-browser/lib/playbook.ts` | Canonical generated agent/browser guidance |
+| `docs/COMMAND_REFERENCE.md` | Repo-readable native command reference |
+| `docs/TOOL_CONTRACT.md` | Tool parameters, result shape, and behavior contract |
+| `docs/ARCHITECTURE.md` | Design decisions and implementation structure |
+| `docs/REQUIREMENTS.md` | Product requirements and constraints |
+| `docs/RELEASE.md` | Release, package, and lifecycle verification workflow |
+| `test/` | Wrapper, runtime, presentation, lifecycle, and package tests |
 
-1. browse a public page with the default implicit session
-2. then switch to a fresh authenticated/profile/debug launch
+## More docs
 
-Use `sessionMode: "fresh"` for that transition instead of relying on the implicit session:
+- [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md) — full native command reference and upstream capability baseline
+- [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) — exact tool contract
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the wrapper is designed
+- [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — product constraints and non-goals
+- [`docs/RELEASE.md`](docs/RELEASE.md) — maintainer release workflow
 
-```json
-{
-  "args": ["--profile", "Default", "open", "https://example.com/account"],
-  "sessionMode": "fresh"
-}
-```
+## Next action
 
-After that call succeeds, later default `sessionMode: "auto"` calls continue in the new fresh browser.
+If you are a user, install the package and ask Pi to open a public page with `agent_browser`.
 
-If you want to name the new upstream session yourself, pass an explicit session instead:
-
-```json
-{
-  "args": ["--session", "auth-flow", "--profile", "Default", "open", "https://example.com/account"]
-}
-```
-
-## Docs
-
-- [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — product requirements and constraints
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — current architecture decision
-- [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) — proposed v1 tool shape
-- [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md) — local repo-readable command reference for the blocked direct-binary path
-- [`docs/RELEASE.md`](docs/RELEASE.md) — maintainer release and package verification workflow
-
-## Documentation rule
-
-When requirements change in chat:
-
-1. update `docs/REQUIREMENTS.md`
-2. update the affected design docs
-3. update this README if user-facing expectations changed
-
-When the upstream `agent-browser` binary changes:
-
-1. re-check the upstream command/help surface
-2. update `docs/COMMAND_REFERENCE.md`
-3. update tool guidance, README, and release docs if behavior or recommended usage changed
-4. verify the blocked direct-binary path still has an equally usable local extension-side documentation path
+If you are evaluating the implementation, read [`extensions/agent-browser/index.ts`](extensions/agent-browser/index.ts), then run `npm run verify`.
