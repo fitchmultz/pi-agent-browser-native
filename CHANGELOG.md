@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.23 - 2026-05-10
+
+### Fixed
+- added safe `auth save --password-stdin` support for native tool calls and redacted password stdin from model-visible content, tool details, upstream failure output, and preserved parse-failure spill files
+- improved session and launch-flag handling for agent workflows, including disabled `--auto-connect`, optional boolean flag values, dash-starting `--args` values, and stale `@ref` recovery guidance through pinned commands and user batch stdin
+- expanded sensitive argument redaction for password and credential command forms
+
+### Changed
+- rewrote the public README around outcome-first usage, fastest install paths, profile/auth workflow guidance, and release verification proof
+- clarified native-tool command guidance for password stdin, cookie/privacy handling, stable tab ids, and explicit session persistence limits
+
 ## 0.2.22 - 2026-05-07
 
 ### Compatibility
