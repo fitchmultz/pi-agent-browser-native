@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
+
 import {
 	BRAVE_SEARCH_PROMPT_GUIDELINE,
 	QUICK_START_GUIDELINES,
@@ -32,8 +34,42 @@ import {
 	runExtensionEvent,
 	runExtensionEventResults,
 	withPatchedEnv,
-	writeFakeAgentBrowserBinary
+	writeFakeAgentBrowserBinary,
+	type AgentBrowserToolParams,
+	type AgentBrowserToolRenderContext,
 } from "./helpers/agent-browser-harness.js";
+
+const PLAIN_RENDER_THEME = {
+	fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+	bg: (_color: string, text: string) => text,
+	bold: (text: string) => `**${text}**`,
+	italic: (text: string) => text,
+	underline: (text: string) => text,
+	inverse: (text: string) => text,
+	strikethrough: (text: string) => text,
+} as unknown as Theme;
+
+function createRenderContext(options: {
+	args: AgentBrowserToolParams;
+	expanded?: boolean;
+	isError?: boolean;
+	lastComponent?: AgentBrowserToolRenderContext["lastComponent"];
+}): AgentBrowserToolRenderContext {
+	return {
+		args: options.args,
+		argsComplete: true,
+		cwd: process.cwd(),
+		executionStarted: true,
+		expanded: options.expanded ?? false,
+		invalidate: () => undefined,
+		isError: options.isError ?? false,
+		isPartial: false,
+		lastComponent: options.lastComponent,
+		showImages: true,
+		state: {},
+		toolCallId: "render-test",
+	};
+}
 
 test("agentBrowserExtension keeps the full browser playbook in tool metadata and only injects a minimal browser prompt when relevant", async () => {
 	await withPatchedEnv({ BRAVE_API_KEY: "demo-key" }, async () => {
@@ -83,6 +119,105 @@ test("agentBrowserExtension keeps the full browser playbook in tool metadata and
 		assert.equal(browserTurn?.systemPrompt.includes("Quick start:"), false);
 		assert.equal(browserTurn?.systemPrompt.includes("Browser operating playbook:"), false);
 	});
+});
+
+test("agentBrowserExtension renders long TUI output compactly without changing model-facing content", async () => {
+	const harness = createExtensionHarness({ cwd: process.cwd(), prompt: "Inspect a page." });
+	const renderCall = harness.tool.renderCall;
+	const renderResult = harness.tool.renderResult;
+	assert.ok(renderCall, "expected agent_browser to register custom call rendering");
+	assert.ok(renderResult, "expected agent_browser to register custom result rendering");
+
+	const params: AgentBrowserToolParams = {
+		args: ["eval", "--stdin"],
+		sessionMode: "fresh",
+		stdin: "document.body.innerText",
+	};
+	const callText = renderCall(params, PLAIN_RENDER_THEME, createRenderContext({ args: params })).render(200).join("\n");
+	assert.match(callText, /<toolTitle>\*\*agent_browser\*\*<\/toolTitle>/);
+	assert.match(callText, /<accent>eval --stdin<\/accent>/);
+	assert.match(callText, /sessionMode=fresh/);
+	assert.match(callText, /\+ stdin/);
+	assert.doesNotMatch(callText, /document\.body/);
+
+	const maliciousParams: AgentBrowserToolParams = {
+		args: ["open", "\x1B]0;pwned\x07https://example.com/\x1B[31m"],
+		stdin: "secret stdin must not render",
+	};
+	const maliciousCallText = renderCall(maliciousParams, PLAIN_RENDER_THEME, createRenderContext({ args: maliciousParams }))
+		.render(200)
+		.join("\n");
+	assert.doesNotMatch(maliciousCallText, /[\x00\x07\x1B]/);
+	assert.match(maliciousCallText, /https:\/\/example\.com\//);
+	assert.doesNotMatch(maliciousCallText, /secret stdin/);
+
+	const longText = JSON.stringify(
+		{
+			origin: "https://example.com/",
+			result: Array.from({ length: 25 }, (_, index) => ({
+				href: `https://example.com/${index}`,
+				i: index,
+				text: `item-${index}`,
+			})),
+		},
+		null,
+		2,
+	);
+	const longResult: AgentToolResult<unknown> = {
+		content: [{ type: "text", text: longText }],
+		details: { summary: "large JSON result" },
+	};
+	const collapsedComponent = renderResult(
+		longResult,
+		{ expanded: false, isPartial: false },
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: params }),
+	);
+	const collapsedText = collapsedComponent.render(80).join("\n");
+	assert.match(collapsedText, /\.\.\. \(\d+ more lines, \d+ total,/);
+	assert.doesNotMatch(collapsedText, /item-24/);
+	assert.match(longText, /item-24/, "renderer must not mutate model-facing content");
+
+	const expandedComponent = renderResult(
+		longResult,
+		{ expanded: true, isPartial: false },
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: params, expanded: true, lastComponent: collapsedComponent }),
+	);
+	const expandedText = expandedComponent.render(80).join("\n");
+	assert.match(expandedText, /item-24/);
+	assert.doesNotMatch(expandedText, /\.\.\. \(\d+ more lines/);
+
+	const scalarResult: AgentToolResult<unknown> = {
+		content: [{ type: "text", text: "Clicked: true\x1B[31m red\x1B[0m\nHref: https://example.com/next\x1B]0;pwned\x07\nNull\x00byte" }],
+		details: { summary: "click completed" },
+	};
+	const scalarText = renderResult(
+		scalarResult,
+		{ expanded: false, isPartial: false },
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: params }),
+	)
+		.render(120)
+		.join("\n");
+	assert.doesNotMatch(scalarText, /[\x00\x07\x1B]/);
+	assert.match(scalarText, /<toolOutput>Clicked: true red<\/toolOutput>/);
+	assert.match(scalarText, /Null�byte/);
+
+	const fallbackResult: AgentToolResult<unknown> = {
+		content: [{ type: "text", text: "\x1B[31m\x1B[0m" }],
+		details: { summary: "\x1B]0;pwned\x07summary ok" },
+	};
+	const fallbackText = renderResult(
+		fallbackResult,
+		{ expanded: false, isPartial: false },
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: params }),
+	)
+		.render(120)
+		.join("\n");
+	assert.doesNotMatch(fallbackText, /[\x00\x07\x1B]/);
+	assert.match(fallbackText, /<success>summary ok<\/success>/);
 });
 
 test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless the prompt, env, or package dev cwd explicitly allows it", async () => {

@@ -194,9 +194,12 @@ For oversized snapshots and other oversized tool outputs, details should switch 
 
 "Rendering" here means how results appear inside `pi`, not embedding a browser UI.
 
+The TUI renderer is user-facing only. It may compact or colorize what the human sees in the Pi transcript, but it must not further truncate, summarize, or remove the model-facing `content` returned by the tool. Use the existing `details.fullOutputPath` / spill-file contracts for content that is too large for the model.
+
 Worth doing in v1:
 - screenshots → saved-path summary, visible artifact metadata, `details.artifacts` metadata, and inline image attachment when safe; screenshot paths that upstream would treat ambiguously, such as `.dogfood/run/foo.png`, are normalized to absolute paths before launch and repaired from upstream temp output when possible
 - file artifacts such as PDFs, downloads, `wait --download` files, traces, CPU profiles, completed WebM recordings, and path-bearing HAR captures → concise saved-path summaries plus metadata in `details.artifacts` and bounded recent metadata in `details.artifactManifest`; `record start` reports recording lifecycle state and the future output path without adding a missing manifest entry; direct saved-file workflows also expose `details.savedFilePath` / `details.savedFile`; large or binary artifacts are not inlined into model context; the recent manifest cap can age out explicit-file metadata but does not remove explicit saved files from disk
+- TUI display → custom `agent_browser` call/result rendering with colorized command/output text and a built-in-style collapsed view for long visible output; `ctrl+o` expansion reveals the full rendered tool result without changing the model-facing content
 - snapshots → origin + ref count + main-content-first compact preview, with the raw snapshot spill path printed directly in content and kept in `details.fullOutputPath` plus `details.artifactManifest` when the inline result would otherwise be too large
 - oversized generic outputs such as large `eval --stdin` payloads → compact preview plus the actual spill file path instead of dumping the whole payload into model context
 - extraction-style commands like `eval --stdin` and `get title` → scalar-first text with lightweight origin context when available

@@ -10,7 +10,15 @@ import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 import { StringEnum } from "@earendil-works/pi-ai";
-import { isToolCallEventType, type AgentToolResult, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	highlightCode,
+	isToolCallEventType,
+	keyHint,
+	type AgentToolResult,
+	type ExtensionAPI,
+	type Theme,
+} from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import {
@@ -95,6 +103,154 @@ function buildMissingBinaryMessage(): string {
 function buildInvocationPreview(effectiveArgs: string[]): string {
 	const preview = effectiveArgs.join(" ");
 	return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
+}
+
+const TUI_COLLAPSED_OUTPUT_MAX_LINES = 10;
+const TUI_INVOCATION_PREVIEW_MAX_CHARS = 120;
+const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B]*(?:\x1B\\)|_[^\x1B]*(?:\x1B\\)|\^[^\x1B]*(?:\x1B\\)|[@-Z\\-_])/g;
+const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
+
+function sanitizeDisplayText(text: string): string {
+	return text
+		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "")
+		.replace(/\r/g, "")
+		.replace(UNSAFE_DISPLAY_CONTROL_PATTERN, "�");
+}
+
+function replaceTabsForDisplay(text: string): string {
+	return text.replaceAll("\t", "    ");
+}
+
+function trimTrailingBlankLines(lines: string[]): string[] {
+	let end = lines.length;
+	while (end > 0 && lines[end - 1].trim().length === 0) {
+		end -= 1;
+	}
+	return lines.slice(0, end);
+}
+
+function isJsonDocumentText(text: string): boolean {
+	const trimmed = text.trim();
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+		return false;
+	}
+	try {
+		JSON.parse(trimmed);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function getPrimaryTextContent(result: AgentToolResult<unknown>): string {
+	const textContent = result.content.find((item) => item.type === "text");
+	return textContent?.type === "text" ? textContent.text : "";
+}
+
+function colorizeToolOutputLines(text: string, theme: Theme, isError: boolean): string[] {
+	const normalizedLines = trimTrailingBlankLines(replaceTabsForDisplay(sanitizeDisplayText(text)).split("\n"));
+	const normalizedText = normalizedLines.join("\n");
+	if (normalizedText.length === 0) {
+		return [];
+	}
+	if (isJsonDocumentText(normalizedText)) {
+		return highlightCode(normalizedText, "json");
+	}
+	return normalizedLines.map((line) => {
+		if (line.length === 0) {
+			return "";
+		}
+		return isError ? theme.fg("error", line) : theme.fg("toolOutput", line);
+	});
+}
+
+function formatExpandHint(theme: Theme): string {
+	try {
+		return keyHint("app.tools.expand", "to expand");
+	} catch {
+		return `${theme.fg("dim", "ctrl+o")} ${theme.fg("muted", "to expand")}`;
+	}
+}
+
+function formatVisualTruncationNotice(remainingLines: number, totalLines: number, theme: Theme): string {
+	return `${theme.fg("muted", `... (${remainingLines} more lines, ${totalLines} total, `)}${formatExpandHint(theme)}${theme.fg("muted", ")")}`;
+}
+
+function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
+	const input = isRecord(args) ? args : {};
+	const rawArgs = Array.isArray(input.args) ? input.args.filter((value): value is string => typeof value === "string") : [];
+	const redactedArgs = redactInvocationArgs(rawArgs);
+	const invocation = sanitizeDisplayText(redactedArgs.join(" ")).replace(/\s+/g, " ").trim();
+	const invocationPreview =
+		invocation.length > TUI_INVOCATION_PREVIEW_MAX_CHARS
+			? `${invocation.slice(0, TUI_INVOCATION_PREVIEW_MAX_CHARS - 3)}...`
+			: invocation;
+	let text = theme.fg("toolTitle", theme.bold("agent_browser"));
+	if (invocationPreview.length > 0) {
+		text += ` ${theme.fg("accent", invocationPreview)}`;
+	}
+	if (input.sessionMode === "fresh") {
+		text += theme.fg("dim", " sessionMode=fresh");
+	}
+	if (typeof input.stdin === "string") {
+		text += theme.fg("dim", " + stdin");
+	}
+	return text;
+}
+
+function formatAgentBrowserRenderResult(
+	result: AgentToolResult<unknown>,
+	options: { expanded: boolean; isPartial: boolean },
+	theme: Theme,
+	isError: boolean,
+): string {
+	if (options.isPartial) {
+		return theme.fg("warning", "Running agent-browser...");
+	}
+
+	const outputText = getPrimaryTextContent(result);
+	const outputLines = colorizeToolOutputLines(outputText, theme, isError);
+	if (outputLines.length === 0) {
+		const details = isRecord(result.details) ? result.details : undefined;
+		const rawSummary = typeof details?.summary === "string" ? details.summary : isError ? "agent-browser failed" : "Done";
+		const sanitizedSummary = sanitizeDisplayText(rawSummary).trim();
+		const summary = sanitizedSummary.length > 0 ? sanitizedSummary : isError ? "agent-browser failed" : "Done";
+		return isError ? theme.fg("error", summary) : theme.fg("success", summary);
+	}
+
+	return `\n${outputLines.join("\n")}`;
+}
+
+class AgentBrowserResultComponent {
+	private expanded = false;
+	private theme: Theme | undefined;
+	private readonly text = new Text("", 0, 0);
+
+	setState(value: string, expanded: boolean, theme: Theme): void {
+		this.text.setText(value);
+		this.expanded = expanded;
+		this.theme = theme;
+	}
+
+	render(width: number): string[] {
+		const lines = this.text.render(width);
+		if (this.expanded || lines.length <= TUI_COLLAPSED_OUTPUT_MAX_LINES) {
+			return lines;
+		}
+		const theme = this.theme;
+		if (!theme) {
+			return lines.slice(0, TUI_COLLAPSED_OUTPUT_MAX_LINES);
+		}
+		const hiddenLineCount = lines.length - TUI_COLLAPSED_OUTPUT_MAX_LINES;
+		return [
+			...lines.slice(0, TUI_COLLAPSED_OUTPUT_MAX_LINES),
+			formatVisualTruncationNotice(hiddenLineCount, lines.length, theme),
+		];
+	}
+
+	invalidate(): void {
+		this.text.invalidate();
+	}
 }
 
 function buildWrapperRecoveryHint(options: {
@@ -1554,6 +1710,18 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			"Browse websites, read live docs, click and fill pages, extract browser content, take screenshots, and automate real web workflows.",
 		promptGuidelines: toolPromptGuidelines,
 		parameters: AGENT_BROWSER_PARAMS,
+		renderCall(args, theme, context) {
+			const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+			text.setText(formatAgentBrowserRenderCall(args, theme));
+			return text;
+		},
+		renderResult(result, options, theme, context) {
+			const component = context.lastComponent instanceof AgentBrowserResultComponent
+				? context.lastComponent
+				: new AgentBrowserResultComponent();
+			component.setState(formatAgentBrowserRenderResult(result, options, theme, context.isError), options.expanded, theme);
+			return component;
+		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const redactedArgs = redactInvocationArgs(params.args);
 			const validationError = validateToolArgs(params.args) ?? getBatchAnnotateValidationError(params.args, params.stdin);

@@ -14,6 +14,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 
+import type {
+	AgentToolResult,
+	Theme,
+	ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
+
 import agentBrowserExtension from "../../extensions/agent-browser/index.js";
 
 export const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
@@ -150,11 +157,28 @@ export function createToolBranchEntry(options: { details: Record<string, unknown
 	};
 }
 
+export type AgentBrowserToolParams = { args: string[]; sessionMode?: "auto" | "fresh"; stdin?: string };
+
+export interface AgentBrowserToolRenderContext {
+	args: AgentBrowserToolParams;
+	argsComplete: boolean;
+	cwd: string;
+	executionStarted: boolean;
+	expanded: boolean;
+	invalidate: () => void;
+	isError: boolean;
+	isPartial: boolean;
+	lastComponent: Component | undefined;
+	showImages: boolean;
+	state: unknown;
+	toolCallId: string;
+}
+
 export type RegisteredTool = {
 	description: string;
 	execute: (
 		toolCallId: string,
-		params: { args: string[]; sessionMode?: "auto" | "fresh"; stdin?: string },
+		params: AgentBrowserToolParams,
 		signal: AbortSignal | undefined,
 		onUpdate: ((update: unknown) => void) | undefined,
 		ctx: unknown,
@@ -162,6 +186,13 @@ export type RegisteredTool = {
 	name: string;
 	promptGuidelines: string[];
 	promptSnippet: string;
+	renderCall?: (args: AgentBrowserToolParams, theme: Theme, context: AgentBrowserToolRenderContext) => Component;
+	renderResult?: (
+		result: AgentToolResult<unknown>,
+		options: ToolRenderResultOptions,
+		theme: Theme,
+		context: AgentBrowserToolRenderContext,
+	) => Component;
 };
 
 export function createExtensionHarness(options: {

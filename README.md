@@ -26,6 +26,7 @@ The result is optimized for agent work:
 - screenshots and downloaded files surfaced as Pi artifacts
 - structured details for titles, URLs, saved files, sessions, and errors
 - spill files for oversized raw output instead of dumping pages into context
+- compact, colorized Pi TUI rows that can be expanded without changing what the agent receives
 - recovery hints when a tab, selector, stale `@ref`, or launch mode needs a different next step
 
 ## Who this is for
