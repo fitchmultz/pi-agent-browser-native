@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.24 - 2026-05-11
+
 ### Added
 - added custom `agent_browser` TUI rendering with colorized call/output text and built-in-style visual truncation for long visible output while preserving model-facing tool content
 
