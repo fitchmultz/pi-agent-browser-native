@@ -193,6 +193,8 @@ For `batch`, top-level `details` still carries `resultCategory` plus `successCat
 
 For `batch`, each `batchSteps[]` entry can carry its own `nextActions` for that step’s success or failure. Top-level `details.nextActions` on a failed batch duplicates `batchFailure.failedStep.nextActions` so callers can read one aggregate object. On a fully successful batch, top-level `nextActions` may still list artifact follow-ups derived from the combined step artifacts.
 
+`pageChangeSummary` is an optional compact summary for mutation-prone and artifact-producing commands. It includes `changeType` (`"navigation"`, `"mutation"`, `"artifact"`, or `"confirmation"`), `command`, a readable `summary`, optional `title`/`url`, optional `artifactCount` or `savedFilePath`, and `nextActionIds` that link the observed change to `nextActions` without repeating full payloads. Read-only inspection commands omit it unless they produce an artifact.
+
 Example shape (fields vary by scenario):
 
 ```json
@@ -217,6 +219,7 @@ Implementation and precedence:
 Additional structured fields can appear when relevant:
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
+- `pageChangeSummary` for compact mutation/artifact/navigation summaries on commands that can change browser state
 - `imagePath` / `imagePaths` for screenshots and batched image outputs
 - `artifacts` for upstream saved files such as screenshots, PDFs, downloads, `wait --download` files, traces, CPU profiles, completed WebM recordings, path-bearing HAR captures, and future recording output paths reported by `record start`. Each artifact includes the original saved or requested `path`, resolved `absolutePath`, `kind`/`artifactType`, optional `mediaType`, optional `extension`, best-effort disk metadata such as `exists` and `sizeBytes`, plus `requestedPath`, `status`, `cwd`, `session`, and `tempPath` when applicable.
 - `savedFilePath` / `savedFile` for direct `download`, `pdf`, and `wait --download` saved-file workflows; batch results preserve the same fields on the relevant `batchSteps` entry.

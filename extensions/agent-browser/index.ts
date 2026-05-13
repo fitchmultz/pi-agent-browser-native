@@ -2305,6 +2305,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						imagePath: presentation.imagePath,
 						imagePaths: presentation.imagePaths,
 						nextActions: presentation.nextActions,
+						pageChangeSummary: presentation.pageChangeSummary,
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,
 						savedFilePath: presentation.savedFilePath,

@@ -918,6 +918,8 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 			});
 			assert.equal(result.details?.resultCategory, "success");
 			assert.equal(result.details?.successCategory, "artifact-saved");
+			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.changeType, "artifact");
+			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.savedFilePath, "/tmp/export.csv");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

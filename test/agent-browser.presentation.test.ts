@@ -53,6 +53,45 @@ test("buildToolPresentation formats snapshot output for the model", async () => 
 	assert.match(presentation.summary, /Snapshot: 2 refs/);
 });
 
+test("buildToolPresentation omits page-change summaries for read-only inspection results", async () => {
+	const snapshot = await buildToolPresentation({
+		commandInfo: { command: "snapshot", subcommand: "-i" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { origin: "https://example.com/", snapshot: "- button [ref=e1]" } },
+	});
+	assert.equal(snapshot.pageChangeSummary, undefined);
+
+	const getTitle = await buildToolPresentation({
+		commandInfo: { command: "get", subcommand: "title" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { title: "Example Domain" } },
+	});
+	assert.equal(getTitle.pageChangeSummary, undefined);
+
+	const batch = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: [
+			{ command: ["snapshot", "-i"], result: { origin: "https://example.com/", snapshot: "- button [ref=e1]" }, success: true },
+			{ command: ["get", "title"], result: { title: "Example Domain" }, success: true },
+		] },
+	});
+	assert.equal(batch.pageChangeSummary, undefined);
+});
+
+test("buildToolPresentation enriches open results with a compact page-change summary", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "open", subcommand: "https://example.com" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { title: "Example Domain", url: "https://example.com/" } },
+	});
+
+	assert.equal(presentation.pageChangeSummary?.changeType, "navigation");
+	assert.equal(presentation.pageChangeSummary?.title, "Example Domain");
+	assert.equal(presentation.pageChangeSummary?.url, "https://example.com/");
+	assert.deepEqual(presentation.pageChangeSummary?.nextActionIds, ["inspect-opened-page"]);
+});
+
 test("buildToolPresentation enriches click results with a current-page navigation summary", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "click" },
@@ -78,6 +117,14 @@ test("buildToolPresentation enriches click results with a current-page navigatio
 	assert.match((presentation.content[0] as { text: string }).text, /https:\/\/example.com\/docs/);
 	assert.match(presentation.summary, /click → Destination Docs/);
 	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
+	assert.deepEqual(presentation.pageChangeSummary, {
+		changeType: "navigation",
+		command: "click",
+		nextActionIds: ["inspect-after-mutation"],
+		summary: "click → navigation → Destination Docs → https://example.com/docs",
+		title: "Destination Docs",
+		url: "https://example.com/docs",
+	});
 });
 
 test("buildToolPresentation renders pending confirmations with approve and deny recovery calls", async () => {
@@ -1040,6 +1087,8 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 	assert.equal(presentation.batchFailure?.successCount, 1);
 	assert.equal(presentation.batchFailure?.totalCount, 2);
 	assert.match(presentation.summary, /Batch failed: 1\/2 succeeded/);
+	assert.equal(presentation.pageChangeSummary?.changeType, "mutation");
+	assert.equal(presentation.pageChangeSummary?.command, "batch");
 });
 
 test("buildToolPresentation keeps eval image-like string results text-only", async () => {
@@ -1158,6 +1207,8 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 		subcommand: "--download",
 	});
 	assert.equal(presentation.batchSteps?.[1]?.nextActions?.[0]?.artifactPath, "/tmp/export.csv");
+	assert.equal(presentation.batchSteps?.[1]?.pageChangeSummary?.changeType, "artifact");
+	assert.equal(presentation.batchSteps?.[1]?.pageChangeSummary?.savedFilePath, "/tmp/export.csv");
 });
 
 test("buildToolPresentation does not re-append old artifact retention noise for routine explicit batch files", async () => {
