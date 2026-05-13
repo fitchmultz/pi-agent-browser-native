@@ -137,6 +137,7 @@ This keeps the product centered on native tool usage instead of auxiliary skill 
 - inline screenshots/images
 - lightweight session convenience
 - docs, including a repo-readable command reference that mirrors the blocked direct-binary help path closely enough for normal agent work
+- a deterministic **agent efficiency benchmark** (`scripts/agent-browser-efficiency-benchmark.mjs`) used to quantify representative agent-facing workflows without invoking upstream; maintainer commands and constraints are in [`AGENTS.md`](../AGENTS.md) under “Agent browser efficiency benchmark”
 
 ### Upstream `agent-browser` owns
 

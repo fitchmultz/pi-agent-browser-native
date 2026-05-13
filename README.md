@@ -260,6 +260,8 @@ npm run benchmark:agent-browser
 npm run verify -- benchmark
 ```
 
+Save a JSON baseline (for example before changing playbook or wrapper behavior), then compare later runs: `npm run benchmark:agent-browser -- --json > /tmp/agent-browser-benchmark.json` and `npm run benchmark:agent-browser -- --compare /tmp/agent-browser-benchmark.json`.
+
 It does not launch a browser or mutate local profiles; it models representative raw workflows and provides a stable baseline for later comparisons.
 
 The opt-in real-upstream suite is separate because it drives a real browser installation:
