@@ -68,8 +68,27 @@ export function renderCommandReferenceBaselineBlock(id) {
         "#### Upstream help commands sampled",
         bullets(CAPABILITY_BASELINE.helpCommands.map((command) => `${command.label}: \`agent-browser ${command.args.join(" ")}\``)),
         "",
+        "#### Inventory sections",
+        bullets(
+          CAPABILITY_BASELINE.inventorySections.map(
+            (entry) => `${entry.title}: ${entry.docTokens.length} human-doc token(s), ${entry.upstreamExpectations.length} upstream token(s)`,
+          ),
+        ),
+        "",
+        "#### Human-authored doc tokens required",
+        CAPABILITY_BASELINE.inventorySections
+          .map((entry) => [`##### ${entry.title}`, bullets(entry.docTokens.map((token) => `\`${token}\``))].join("\n"))
+          .join("\n\n"),
+        "",
         "#### Upstream help tokens expected",
-        bullets(CAPABILITY_BASELINE.upstreamExpectations.map((entry) => `${entry.help}: \`${entry.token}\``)),
+        CAPABILITY_BASELINE.inventorySections
+          .map((entry) =>
+            [
+              `##### ${entry.title}`,
+              bullets(entry.upstreamExpectations.map((expectation) => `${expectation.help}: \`${expectation.token}\``)),
+            ].join("\n"),
+          )
+          .join("\n\n"),
         "",
         `</details>`,
       ].join("\n");

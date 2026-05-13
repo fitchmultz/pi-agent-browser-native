@@ -33,13 +33,13 @@ function completeDoc(): string {
 }
 
 function fakeRunWithVersion(version: string): (args: readonly string[]) => Promise<string> {
+  const helpByCommand = new Map(CAPABILITY_BASELINE.helpCommands.map((command) => [command.args.join(" "), fakeHelpFor(command.label)]));
+
   return async (args: readonly string[]) => {
     const key = args.join(" ");
     if (key === "--version") return `agent-browser ${version}`;
-    if (key === "--help") return fakeHelpFor("root help");
-    if (key === "tab --help") return fakeHelpFor("tab help");
-    if (key === "snapshot --help") return fakeHelpFor("snapshot help");
-    if (key === "wait --help") return fakeHelpFor("wait help");
+    const output = helpByCommand.get(key);
+    if (output !== undefined) return output;
     throw new Error(`Unexpected command in fake run: ${key}`);
   };
 }
@@ -102,10 +102,11 @@ test("verifyCommandReference reports missing upstream token", async () => {
   const run = async (args: readonly string[]) => {
     const key = args.join(" ");
     if (key === "--version") return `agent-browser ${CAPABILITY_BASELINE.targetVersion}`;
-    if (key === "--help") return fakeHelpFor("root help").replace("skills", "");
-    if (key === "tab --help") return fakeHelpFor("tab help");
-    if (key === "snapshot --help") return fakeHelpFor("snapshot help");
-    if (key === "wait --help") return fakeHelpFor("wait help");
+    const command = CAPABILITY_BASELINE.helpCommands.find((entry) => entry.args.join(" ") === key);
+    if (command) {
+      const text = fakeHelpFor(command.label);
+      return command.label === "root help" ? text.replace("skills get core --full", "") : text;
+    }
     throw new Error(`Unexpected command in fake run: ${key}`);
   };
 
