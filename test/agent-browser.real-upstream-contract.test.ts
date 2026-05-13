@@ -1,6 +1,6 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for version, open, snapshot, eval stdin, batch stdin, wait-download, and managed-session reuse shapes.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for inspection, skills, open, snapshot, eval stdin, batch stdin, wait-download, and managed-session reuse shapes.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
@@ -128,6 +128,39 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(versionDetails.stdout, expectedVersionLabel());
 					assert.equal(versionDetails.inspection, true);
 					assert.deepEqual(versionDetails.effectiveArgs, ["--version"]);
+
+					const rootHelp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--help"] });
+					const rootHelpDetails = assertSuccessfulResult(rootHelp, shapes.commands.rootHelp, "--help");
+					assert.equal(rootHelpDetails.inspection, true);
+					assert.deepEqual(rootHelpDetails.effectiveArgs, ["--help"]);
+					assert.match(rootHelp.content[0]?.text ?? "", /Usage: agent-browser/);
+
+					const commandHelp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "--help"] });
+					const commandHelpDetails = assertSuccessfulResult(commandHelp, shapes.commands.commandHelp, "snapshot --help");
+					assert.equal(commandHelpDetails.inspection, true);
+					assert.deepEqual(commandHelpDetails.effectiveArgs, ["snapshot", "--help"]);
+					assert.match(commandHelp.content[0]?.text ?? "", /snapshot/);
+
+					const skillsList = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "list"] });
+					const skillsListDetails = assertSuccessfulResult(skillsList, shapes.commands.skillsList, "skills list");
+					assert.equal(skillsListDetails.sessionName, undefined);
+					assert.equal(skillsListDetails.usedImplicitSession, undefined);
+					assert.deepEqual(skillsListDetails.effectiveArgs, ["--json", "skills", "list"]);
+					assert.match(skillsList.content[0]?.text ?? "", /core/);
+
+					const skillsGetFull = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "get", "core", "--full"] });
+					const skillsGetFullDetails = assertSuccessfulResult(skillsGetFull, shapes.commands.skillsGetFull, "skills get core --full");
+					assert.equal(skillsGetFullDetails.sessionName, undefined);
+					assert.equal(skillsGetFullDetails.usedImplicitSession, undefined);
+					assert.deepEqual(skillsGetFullDetails.effectiveArgs, ["--json", "skills", "get", "core", "--full"]);
+					assert.match(skillsGetFull.content[0]?.text ?? "", /agent_browser/);
+
+					const skillsPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "path", "core"] });
+					const skillsPathDetails = assertSuccessfulResult(skillsPath, shapes.commands.skillsPath, "skills path core");
+					assert.equal(skillsPathDetails.sessionName, undefined);
+					assert.equal(skillsPathDetails.usedImplicitSession, undefined);
+					assert.deepEqual(skillsPathDetails.effectiveArgs, ["--json", "skills", "path", "core"]);
+					assert.match(skillsPath.content[0]?.text ?? "", /core/);
 
 					const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", contractUrl], sessionMode: "fresh" });
 					const openDetails = assertSuccessfulResult(opened, shapes.commands.open, "open");

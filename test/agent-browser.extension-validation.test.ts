@@ -313,7 +313,11 @@ test("agentBrowserExtension keeps successful plain-text inspection stateless and
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-process.stdout.write("agent-browser 9.9.9\\n");`,
+if (args.includes("--version")) {
+  process.stdout.write("agent-browser 9.9.9\\n");
+} else {
+  process.stdout.write("Usage: agent-browser " + args.join(" ") + "\\nExample: agent-browser open https://example.com\\n");
+}`,
 	);
 
 	try {
@@ -321,19 +325,85 @@ process.stdout.write("agent-browser 9.9.9\\n");`,
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Open a page and summarize it." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const version = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--version"],
 			});
+			const rootHelp = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--help"],
+			});
+			const commandHelp = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["snapshot", "--help"],
+			});
 
-			assert.equal(result.isError, false);
-			assert.equal(result.content[0]?.type, "text");
-			assert.match((result.content[0] as { text: string }).text, /agent-browser 9\.9\.9/);
-			assert.equal(result.details?.inspection, true);
-			assert.equal(result.details?.stdout, "agent-browser 9.9.9");
-			assert.equal(result.details?.parseError, undefined);
-			assert.equal(result.details?.sessionName, undefined);
-			assert.equal(result.details?.usedImplicitSession, undefined);
-			assert.deepEqual(await readInvocationLog(logPath), [{ args: ["--version"] }]);
+			assert.equal(version.isError, false);
+			assert.equal(version.content[0]?.type, "text");
+			assert.match((version.content[0] as { text: string }).text, /agent-browser 9\.9\.9/);
+			assert.equal(version.details?.inspection, true);
+			assert.equal(version.details?.stdout, "agent-browser 9.9.9");
+			assert.equal(version.details?.parseError, undefined);
+			assert.equal(version.details?.sessionName, undefined);
+			assert.equal(version.details?.usedImplicitSession, undefined);
+			assert.equal(rootHelp.isError, false);
+			assert.equal(rootHelp.details?.inspection, true);
+			assert.equal(rootHelp.details?.sessionName, undefined);
+			assert.match((rootHelp.content[0] as { text: string }).text, /Usage: agent-browser --help/);
+			assert.equal(commandHelp.isError, false);
+			assert.equal(commandHelp.details?.inspection, true);
+			assert.equal(commandHelp.details?.sessionName, undefined);
+			assert.match((commandHelp.content[0] as { text: string }).text, /Usage: agent-browser snapshot --help/);
+			assert.deepEqual(await readInvocationLog(logPath), [{ args: ["--version"] }, { args: ["--help"] }, { args: ["snapshot", "--help"] }]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps skills inspection flows stateless and useful", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-skills-inspection-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const commandStart = args.indexOf("skills");
+const subcommand = args[commandStart + 1];
+if (subcommand === "list") {
+  process.stdout.write(JSON.stringify({ success: true, data: [{ name: "core", description: "Core usage guide" }] }));
+} else if (subcommand === "get") {
+  process.stdout.write(JSON.stringify({ success: true, data: { content: ${JSON.stringify("# Core\n\n```bash\nagent-browser snapshot -i\n```")} } }));
+} else if (subcommand === "path") {
+  process.stdout.write(JSON.stringify({ success: true, data: "/tmp/agent-browser-skills/core" }));
+} else {
+  process.stdout.write(JSON.stringify({ success: false, error: "unexpected skills command" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Inspect agent-browser skills." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const list = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "list"] });
+			const get = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "get", "core", "--full"] });
+			const path = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "path", "core"] });
+
+			assert.equal(list.isError, false);
+			assert.match((list.content[0] as { text: string }).text, /1\. core — Core usage guide/);
+			assert.equal(list.details?.sessionName, undefined);
+			assert.equal(list.details?.usedImplicitSession, undefined);
+			assert.equal(get.isError, false);
+			assert.match((get.content[0] as { text: string }).text, /agent_browser \{ "args": \["snapshot","-i"\] \}/);
+			assert.equal(path.isError, false);
+			assert.equal(path.details?.summary, "agent-browser skill path");
+			assert.match((path.content[0] as { text: string }).text, /\/tmp\/agent-browser-skills\/core/);
+
+			assert.deepEqual(await readInvocationLog(logPath), [
+				{ args: ["--json", "skills", "list"] },
+				{ args: ["--json", "skills", "get", "core", "--full"] },
+				{ args: ["--json", "skills", "path", "core"] },
+			]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

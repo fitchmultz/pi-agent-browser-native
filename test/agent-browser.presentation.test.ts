@@ -295,6 +295,48 @@ test("buildToolPresentation renders agent-browser skills as native-tool guidance
 	assert.match(text, /# Core/);
 	assert.match(text, /agent_browser \{ "args": \["snapshot","-i"\] \}/);
 	assert.doesNotMatch(text, /allowed-tools: Bash|```bash|^\[/m);
+
+	const stringSkillPresentation = await buildToolPresentation({
+		commandInfo: { command: "skills", subcommand: "get" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: "# Core\n\n```bash\nagent-browser snapshot -i\n```" },
+	});
+	assert.match((stringSkillPresentation.content[0] as { text: string }).text, /Pi native-tool note/);
+	assert.match((stringSkillPresentation.content[0] as { text: string }).text, /agent_browser \{ "args": \["snapshot","-i"\] \}/);
+
+	const pathPresentation = await buildToolPresentation({
+		commandInfo: { command: "skills", subcommand: "path" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: "/tmp/agent-browser-skills/core" },
+	});
+	assert.equal(pathPresentation.summary, "agent-browser skill path");
+	assert.equal((pathPresentation.content[0] as { text: string }).text, "/tmp/agent-browser-skills/core");
+});
+
+test("buildToolPresentation compacts large full skill payloads while preserving native guidance", async () => {
+	const largeSkill = [
+		"# Full Skill",
+		"",
+		"```bash",
+		"agent-browser snapshot -i",
+		"```",
+		...Array.from({ length: 260 }, (_, index) => `Skill reference row ${index + 1}: ${"x".repeat(80)}`),
+	].join("\n");
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "skills", subcommand: "get" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { content: largeSkill } },
+	});
+
+	assert.equal(presentation.summary, "agent-browser skill loaded (compact)");
+	assert.equal(typeof presentation.fullOutputPath, "string");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Full output path:/);
+	assert.match(text, /Pi native-tool note/);
+	assert.match(text, /agent_browser \{ "args": \["snapshot","-i"\] \}/);
+	const fullOutput = await readFile(String(presentation.fullOutputPath), "utf8");
+	assert.match(fullOutput, /Skill reference row 260/);
+	await rm(String(presentation.fullOutputPath), { force: true });
 });
 
 test("buildToolPresentation adapts quoted and heredoc skill examples to native tool calls", async () => {

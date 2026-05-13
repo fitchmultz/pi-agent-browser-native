@@ -490,6 +490,10 @@ export function isPlainTextInspectionArgs(args: string[]): boolean {
 	return args.some((token) => INSPECTION_FLAGS.has(token));
 }
 
+function isStatelessInspectionCommand(commandInfo: CommandInfo): boolean {
+	return commandInfo.command === "skills" && ["list", "get", "path"].includes(commandInfo.subcommand ?? "");
+}
+
 export function hasUsableBraveApiKey(apiKey: string | null | undefined = process.env[BRAVE_API_KEY_ENV]): boolean {
 	return typeof apiKey === "string" && apiKey.trim().length > 0;
 }
@@ -959,6 +963,7 @@ export function buildExecutionPlan(
 	const startupScopedFlags = getStartupScopedFlags(args);
 	const plainTextInspection = isPlainTextInspectionArgs(args);
 	const commandInfo = parseCommandInfo(args);
+	const statelessInspection = plainTextInspection || isStatelessInspectionCommand(commandInfo);
 	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
 	if (invalidValueFlag) {
 		return {
@@ -992,7 +997,7 @@ export function buildExecutionPlan(
 	let usedImplicitSession = false;
 	let validationError: string | undefined;
 
-	if (!explicitSessionName && options.sessionMode === "auto") {
+	if (!explicitSessionName && options.sessionMode === "auto" && !statelessInspection) {
 		if (options.managedSessionActive && startupScopedFlags.length > 0) {
 			recoveryHint = {
 				exampleArgs: args,
@@ -1011,7 +1016,7 @@ export function buildExecutionPlan(
 			sessionName = options.managedSessionName;
 			usedImplicitSession = true;
 		}
-	} else if (shouldCreateFreshManagedSession) {
+	} else if (shouldCreateFreshManagedSession && !statelessInspection) {
 		effectiveArgs.push("--session", options.freshSessionName);
 		managedSessionName = options.freshSessionName;
 		sessionName = options.freshSessionName;
