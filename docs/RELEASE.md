@@ -125,6 +125,19 @@ This suite requires the installed `agent-browser --version` to exactly match `sc
 - **Failure shape:** `react tree` on a page opened with `--enable react-devtools` but without a React app (expects a clear missing-renderer error with session-bound `details`).
 - **Async download:** anchor-triggered download plus `wait --download <path>` metadata and wrapper artifact reporting for the requested path.
 
+### Real upstream suite mechanics, isolation, and troubleshooting
+
+- **Single bundled test:** `test/agent-browser.real-upstream-contract.test.ts` registers one long-running case (120s timeout) so browser startup, the command matrix, and teardown stay in one place.
+- **Output-shape locking:** Expected `details` / `data` keys per step live in `test/fixtures/agent-browser-real-output-shapes.json`, keyed by logical groups such as `coreCommand`, `eval`, and `batch`. Keep `targetVersion` in that file aligned with `scripts/agent-browser-capability-baseline.mjs`, and extend entries whenever the suite starts asserting on new presentation fields.
+- **Isolation:** The harness allocates a throwaway directory under the system temp folder, points `HOME`, `AGENT_BROWSER_SOCKET_DIR`, and `AGENT_BROWSER_SCREENSHOT_DIR` at that tree, serves HTML fixtures from loopback (`startAgentBrowserContractFixtureServer` in `test/helpers/agent-browser-harness.ts`), and closes the managed session before deleting the temp tree. The main matrix does not reuse your normal profile or socket locations.
+- **React DevTools branch:** After the core matrix, the suite performs another `open` with `--enable react-devtools` and `sessionMode: "fresh"`, then expects `react tree` to fail with a missing-renderer style error on the same non-React contract page.
+
+**Troubleshooting**
+
+- **Version mismatch:** Install the `agent-browser` version declared in the capability baseline, or follow the maintainer rebaselining sequence in `AGENTS.md` if you intentionally move the target.
+- **Missing or extra `details` / `data` keys:** Update `test/fixtures/agent-browser-real-output-shapes.json` in the same change as the wrapper or presentation code that shifts those keys.
+- **Timeouts:** A 120s bound covers the full matrix; repeated timeouts usually mean a hung browser, blocked loopback, or an environment preventing headful/headless launch—check upstream logs and local security tooling before loosening timeouts.
+
 The current upstream `agent-browser 0.27.0` `wait --download <path>` saveAs persistence limitation is tracked at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300); until it is fixed, release validation must treat `details.savedFilePath` as upstream-reported metadata and use `details.artifacts[].exists` as the filesystem truth (the contract asserts the requested path is absent on disk while upstream still reports success). If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
 
 Example smoke prompt:
