@@ -118,6 +118,8 @@ The default `npm test` and `npm run verify` paths use fast deterministic tests a
 npm run verify -- real-upstream
 ```
 
+That npm script sets `PI_AGENT_BROWSER_REAL_UPSTREAM=1` for the test process. To run `test/agent-browser.real-upstream-contract.test.ts` directly (for example with `node --test` and `tsx`), set the same variable yourself; the suite is skipped when it is unset.
+
 This suite requires the installed `agent-browser --version` to exactly match `scripts/agent-browser-capability-baseline.mjs`. It serves fixture pages from localhost and checks stable `details`/`data` keys via `test/fixtures/agent-browser-real-output-shapes.json`. Coverage groups:
 
 - **Inspection and skills (stateless JSON):** `--version`, `--help`, `snapshot --help`, `skills list`, `skills get … --full`, `skills path …` (no managed `sessionName` / `usedImplicitSession`).
