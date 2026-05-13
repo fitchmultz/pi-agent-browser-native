@@ -17,7 +17,10 @@ The agent gets a native tool, not a bash workaround:
 ```json
 { "args": ["open", "https://react.dev"] }
 { "args": ["snapshot", "-i"] }
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Learn React" } }
 ```
+
+The last form compiles to upstream `find` argv; see [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#semanticaction) for the full field rules and for using raw `args` when you need anything outside that shorthand.
 
 The result is optimized for agent work:
 
