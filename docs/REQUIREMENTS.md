@@ -99,6 +99,7 @@ The design should comfortably support workflows such as:
 - isolated authenticated browser sessions
 - headless authenticated `chat.com` / ChatGPT / OpenAI browsing without forcing `--headed` or `--auto-connect`
 - upstream profile/debug workflows without adding a local profile-cloning layer in this package
+- provider-backed or iOS device launches where upstream owns credentials, env, and setup; the wrapper forwards argv and a curated provider-related environment without emulating those backends
 
 ## Implications for the implementation
 
@@ -116,6 +117,8 @@ The design should comfortably support workflows such as:
 - Once a tab target is known for a session, later active-tab commands should best-effort pin that same tab inside the same upstream invocation when reconnect drift would otherwise land on a restored/background tab.
 - If a restored/background tab steals focus after a successful command, the wrapper should best-effort restore the intended target tab again before handing control back.
 - On local Unix launches, extension-generated session names should not fail just because the upstream default socket path is too long; the wrapper should choose a shorter socket directory when needed.
+- Provider selection flags (`-p`, `--provider`) and provider device flags (`--device`) are launch-scoped like profile, CDP, and persisted state: if an extension-managed implicit session is already active, the planner must fail fast with the same recovery guidance as other startup-scoped flags instead of silently forwarding argv upstream would ignore; contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#sessionmode) and session model in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+- Read-only upstream `skills list`, `skills get …`, and `skills path …` must stay free of implicit managed `--session` under default `sessionMode: "auto"` (still with `--json`), matching plain-text `--help` / `--version` inspection semantics so bundled skill text does not pin or rotate the active browser session; new `skills` subcommands pick up that behavior only after allowlisting in `extensions/agent-browser/lib/runtime.ts` with regression coverage.
 
 ## Open design questions
 
