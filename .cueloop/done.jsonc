@@ -2442,6 +2442,62 @@
       "custom_fields": {
         "source": "manual-upstream-refresh"
       }
+    },
+    {
+      "id": "RQ-0047",
+      "status": "done",
+      "title": "Make skills and inspection commands first-class native tool flows",
+      "description": "Ensure the wrapper handles upstream inspection surfaces cleanly: `--help`, `--version`, `<command> --help`, `skills list`, `skills get <name> [--full]`, and `skills path [name]`. These commands should be stateless when appropriate, produce readable model-facing output, spill large skill/reference payloads with stable full-output paths, and avoid corrupting harmless documentation examples with over-broad redaction while still redacting real secrets. Acceptance criteria: tests cover skill list/get/path, root and subcommand help, large full-skill compaction, and redaction behavior; outputs remain useful through the native tool without requiring bash; `npm test` passes.",
+      "priority": "high",
+      "tags": [
+        "runtime",
+        "skills",
+        "help",
+        "redaction",
+        "presentation"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/runtime.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/envelope.ts",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.presentation.test.ts",
+        "test/agent-browser.runtime.test.ts",
+        "test/fixtures/agent-browser-real-output-shapes.json",
+        "npm test"
+      ],
+      "evidence": [
+        "workflow: agent_browser { args: [\"skills\", \"list\"] } :: native passthrough already returns JSON skill metadata, but no dedicated contract asserts the shape or presentation.",
+        "workflow: agent_browser { args: [\"skills\", \"get\", \"core\", \"--full\"] } :: output compacts to a full-output path, which should become an explicit supported contract.",
+        "workflow: agent_browser { args: [\"--help\"] } :: current model-facing help output redacts harmless example text such as bearer-token/proxy examples, showing inspection output redaction needs a narrower contract.",
+        "path: extensions/agent-browser/lib/runtime.ts:88-91 :: plain-text inspection is limited to help/version flags and does not explicitly model upstream `skills` inspection commands.",
+        "path: extensions/agent-browser/lib/results/presentation.ts:1328-1386 :: presentation is generic unless command-specific handling is added."
+      ],
+      "plan": [
+        "Classify `skills` and help/version flows as safe inspection-style calls where they should not allocate or mutate the managed browser session unless upstream requires it.",
+        "Add presentation summaries for skill lists, skill documents, and skill paths, with large-output spill behavior preserved.",
+        "Tighten redaction so documentation/example tokens are readable while actual secrets in args, env-derived details, and result fields remain masked.",
+        "Add fake-upstream tests plus a real-upstream shape fixture update for the inspection/skills surface."
+      ],
+      "notes": [],
+      "request": "Add support for everything in the current version of agent-browser.",
+      "created_at": "2026-04-29T13:43:31Z",
+      "updated_at": "2026-05-13T20:18:59.911469000Z",
+      "completed_at": "2026-05-13T20:18:59.911469000Z",
+      "started_at": "2026-05-13T19:47:37.970371000Z",
+      "depends_on": [
+        "RQ-0046",
+        "RQ-0048"
+      ],
+      "blocks": [
+        "RQ-0054",
+        "RQ-0056"
+      ],
+      "relates_to": [],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     }
   ]
 }
