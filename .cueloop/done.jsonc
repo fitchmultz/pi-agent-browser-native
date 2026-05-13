@@ -1976,8 +1976,8 @@
       ],
       "relates_to": [],
       "custom_fields": {
-        "source": "manual-upstream-refresh",
-        "target_upstream_version": "0.27.0"
+        "target_upstream_version": "0.27.0",
+        "source": "manual-upstream-refresh"
       }
     },
     {
@@ -2226,6 +2226,65 @@
       "blocks": [],
       "relates_to": [],
       "custom_fields": {}
+    },
+    {
+      "id": "RQ-0048",
+      "status": "done",
+      "title": "Broaden runtime planning for all current commands, options, and interactive-risk cases",
+      "description": "Audit and update argument parsing, command identification, value-flag validation, session planning, and non-interactive behavior against the full current surface. The wrapper should continue to be thin, but it must not misclassify new command families or accidentally run interactive/long-lived/destructive flows without clear docs and safe contracts. Cover command-level flags with values (`find --name`, wait predicates, tab labels, network filters/bodies, profiler categories, cookie attributes, auth options, dashboard/stream ports, chat model/quiet/verbose flags, etc.), launch-scoped global options, provider flags, and setup commands such as `install`, `upgrade`, and `doctor --fix`. Acceptance criteria: runtime tests pin command/subcommand extraction and validation across the full baseline; unsupported `stdin` remains rejected; long-running or interactive flows have explicit behavior and recovery guidance; `npm test` passes.",
+      "priority": "high",
+      "tags": [
+        "runtime",
+        "arguments",
+        "sessions",
+        "safety",
+        "agent-browser"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/runtime.ts",
+        "extensions/agent-browser/index.ts",
+        "docs/TOOL_CONTRACT.md",
+        "test/agent-browser.runtime.test.ts",
+        "test/agent-browser.extension-validation.test.ts",
+        "npm test"
+      ],
+      "evidence": [
+        "path: extensions/agent-browser/lib/runtime.ts:101-127 :: value-flag validation currently covers a curated global set, not the complete command-level flag surface from the core skill/reference.",
+        "path: extensions/agent-browser/lib/runtime.ts:524-535 :: raw validation only checks empty args and shell operators.",
+        "path: extensions/agent-browser/lib/runtime.ts:900-916 :: command extraction depends on the value-flag list for leading options, so new leading flags can affect command identification.",
+        "workflow: agent_browser { args: [\"--help\"] } :: current root help includes provider, config, confirmation, dashboard, chat, setup, and iOS surfaces that need explicit planning decisions."
+      ],
+      "plan": [
+        "Derive a complete value-flag and boolean-flag matrix from the RQ-0045 baseline and update parsing helpers without mirroring the whole upstream CLI as an action enum.",
+        "Add table-driven tests for command/subcommand extraction and missing-value errors across all current command families and global options.",
+        "Document and test behavior for interactive or long-running commands (`chat` with no message, `dashboard start`, `inspect`, `install`, `upgrade`, `doctor --fix`, `confirm-interactive`).",
+        "Keep explicit upstream sessions/provider choices minimally wrapped, and preserve `sessionMode: fresh` recovery for launch-scoped options."
+      ],
+      "notes": [],
+      "request": "Add support for everything in the current version of agent-browser.",
+      "created_at": "2026-04-29T13:43:31Z",
+      "updated_at": "2026-05-13T18:42:02.441533000Z",
+      "completed_at": "2026-05-13T18:42:02.441533000Z",
+      "started_at": "2026-05-13T18:14:15.636491000Z",
+      "depends_on": [
+        "RQ-0057"
+      ],
+      "blocks": [
+        "RQ-0049",
+        "RQ-0050",
+        "RQ-0051",
+        "RQ-0052",
+        "RQ-0054",
+        "RQ-0056"
+      ],
+      "relates_to": [
+        "RQ-0002",
+        "RQ-0009",
+        "RQ-0010"
+      ],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     }
   ]
 }
