@@ -1976,8 +1976,8 @@
       ],
       "relates_to": [],
       "custom_fields": {
-        "source": "manual-upstream-refresh",
-        "target_upstream_version": "0.27.0"
+        "target_upstream_version": "0.27.0",
+        "source": "manual-upstream-refresh"
       }
     },
     {
@@ -2019,6 +2019,45 @@
       "started_at": "2026-05-13T14:37:47.558658000Z",
       "depends_on": [
         "RQ-0045"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0058",
+      "status": "done",
+      "title": "Expose stable machine-readable result and failure categories",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "errors",
+        "tool-contract",
+        "machine-readable"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Agents need deterministic signals for stale refs, selector failures, timeouts, confirmations, tab drift, missing binaries, parse failures, downloads, and upstream errors instead of parsing prose.",
+        "Existing guidance and done tasks added targeted hints, but the next layer should stabilize a contract that other recommendations and recovery flows can key off."
+      ],
+      "plan": [
+        "Define a bounded category vocabulary for success states and common failure modes, preserving raw upstream error text separately.",
+        "Add category fields to structured details/envelopes for direct commands, stdin commands, batch step failures, and wrapper preflight failures.",
+        "Add contract tests that lock category selection for stale refs, unsupported selectors, selector not found, timeout, download not verified, tab drift, confirmation required, missing binary, parse failure, and generic upstream error.",
+        "Document category semantics and compatibility expectations for agents."
+      ],
+      "notes": [],
+      "request": "Infer and queue the stable failure/result category work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T15:55:11.626512000Z",
+      "completed_at": "2026-05-13T15:55:11.626512000Z",
+      "started_at": "2026-05-13T15:15:27.787994000Z",
+      "depends_on": [
+        "RQ-0057"
       ],
       "blocks": [],
       "relates_to": [],
