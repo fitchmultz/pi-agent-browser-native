@@ -46,6 +46,10 @@ Tool parameters (use either `args` **or** `semanticAction`, not both):
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` apply.
 
+### Debug, diff, stream, dashboard, and chat families
+
+Upstream also exposes non-core families (`network`, `diff`, `trace` / `profiler` / `record`, `console` / `errors` / `highlight` / `inspect` / `clipboard`, `stream`, `dashboard`, `chat`, and related subcommands). The wrapper still owns argv planning, `--json`, managed sessions where applicable, artifact metadata, and model-facing presentation: structured results are compacted and scrubbed in `extensions/agent-browser/lib/results/presentation.ts`, and echoed argv uses the same `redactInvocationArgs` rules as core commands (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details) for the field contract). Deterministic fake-upstream coverage for representative JSON shapes and redaction lives in `test/agent-browser.extension-validation.test.ts` under `agentBrowserExtension passes through non-core network debug diff stream dashboard and chat families`.
+
 ## Recommended workflow
 
 Keep routine browser work simple: open a page, inspect it with `snapshot -i`, interact with current `@ref` values from that snapshot, then inspect again. Re-run `snapshot -i` after navigation, scrolling, rerendering, or other major DOM changes because refs can become stale.
