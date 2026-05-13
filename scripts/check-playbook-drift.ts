@@ -70,7 +70,7 @@ function renderBlock(id: BlockId): string {
 				"",
 				bullets(INSPECTION_TOOL_CALL_EXAMPLES),
 				"",
-				"These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, or auto-connect launches.",
+				"These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, auto-connect, or provider-backed launches.",
 			].join("\n");
 		case "shared-guidelines":
 			return bullets(SHARED_BROWSER_PLAYBOOK_GUIDELINES);

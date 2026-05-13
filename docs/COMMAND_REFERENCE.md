@@ -341,7 +341,7 @@ Native inspection calls use the `agent_browser` tool shape, not shell-like direc
 - { "args": ["--help"] }
 - { "args": ["--version"] }
 
-These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, or auto-connect launches.
+These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, auto-connect, or provider-backed launches.
 <!-- agent-browser-playbook:end inspection -->
 
 ### Page state, finding, mouse, settings, network, and storage
