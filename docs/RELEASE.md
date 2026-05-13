@@ -5,6 +5,7 @@ Related docs:
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
+- Bounded `agent_browser` outcome categories on `details` (`resultCategory`, `successCategory`, `failureCategory`): contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details); maintainer checklist under “Tool result categories” in [`../AGENTS.md`](../AGENTS.md)
 
 ## Purpose
 

@@ -2,8 +2,12 @@
 
 ## Unreleased
 
+### Added
+- bounded machine-readable outcome fields on native `agent_browser` tool `details`: `resultCategory` (`success` | `failure`) with `successCategory` or `failureCategory` for stable agent branching without parsing prose; contract in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), types and classifiers in `extensions/agent-browser/lib/results/shared.ts`, regression coverage in `test/agent-browser.results.test.ts` and related extension tests
+
 ### Changed
 - documented how `npm run docs` differs from the default `npm run verify` gate, and linked checkout maintainers to `AGENTS.md` for capability baseline rebaselining and operational testing notes alongside the shipped `docs/` set
+- linked [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) to the stable `agent_browser` result-category contract in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) and the TypeScript source in `extensions/agent-browser/lib/results/shared.ts`
 
 ## 0.2.24 - 2026-05-11
 

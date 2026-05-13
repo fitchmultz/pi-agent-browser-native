@@ -166,6 +166,8 @@ Recommended details:
   "sessionMode": "auto",
   "sessionName": "pi-abc123",
   "usedImplicitSession": true,
+  "resultCategory": "success",
+  "successCategory": "completed",
   "data": {
     "origin": "https://example.com/",
     "refs": {
@@ -176,6 +178,23 @@ Recommended details:
   "summary": "Snapshot: 1 refs on https://example.com/"
 }
 ```
+
+Stable category fields are part of the machine-readable contract:
+
+- `resultCategory`: always either `"success"` or `"failure"`.
+- `successCategory`: present on successful results. Current values are `"completed"`, `"artifact-saved"`, and `"inspection"`.
+- `failureCategory`: present on failed results. Current values are `"aborted"`, `"confirmation-required"`, `"download-not-verified"`, `"missing-binary"`, `"parse-failure"`, `"selector-not-found"`, `"selector-unsupported"`, `"stale-ref"`, `"tab-drift"`, `"timeout"`, `"upstream-error"`, and `"validation-error"`.
+
+These categories are intentionally bounded and stable so agents can branch on them instead of parsing prose. They do not replace raw diagnostics: `details.error`, `details.stderr`, `details.parseError`, `details.validationError`, and visible content still preserve the specific upstream or wrapper message after normal redaction.
+
+For `batch`, top-level `details` still carries `resultCategory` plus `successCategory` or `failureCategory` for the **aggregate** tool outcome: if any step fails, the overall result is a failure (`resultCategory: "failure"`) even when later steps succeed—inspect `batchSteps[]` for per-step outcomes. Each `batchSteps[]` entry includes its own `resultCategory` and either `successCategory` or `failureCategory` for that step. `batchFailure.failedStep` duplicates the first failing step’s details, including its `failureCategory`.
+
+Implementation and precedence:
+
+- Types and classifiers live in `extensions/agent-browser/lib/results/shared.ts`: `classifyAgentBrowserSuccessCategory`, `classifyAgentBrowserFailureCategory`, and `buildAgentBrowserResultCategoryDetails` (the last prefers an explicit `failureCategory` when the caller already knows the bucket, otherwise it runs the classifier).
+- Success: if `inspection` is true → `"inspection"`; else if there is a `savedFile` or any `artifacts` → `"artifact-saved"`; else → `"completed"`.
+- Failure: the classifier walks a single ordered chain (first match wins): `confirmation-required` → `timeout` → `missing-binary` → `parse-failure` → `aborted` → `tab-drift` → `stale-ref` (including “unknown ref” text and a narrow `@eN` plus “element not found” heuristic) → `selector-unsupported` → `selector-not-found` → `download-not-verified` (download / wait-download style failures) → `validation-error` when a wrapper `validationError` is present → default `upstream-error`.
+- The main tool implementation merges these fields into Pi-facing `details` from `extensions/agent-browser/index.ts` and from `extensions/agent-browser/lib/results/presentation.ts` for presentation-time failures.
 
 Additional structured fields can appear when relevant:
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
