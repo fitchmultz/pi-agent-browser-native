@@ -343,7 +343,7 @@
     },
     {
       "id": "RQ-0048",
-      "status": "todo",
+      "status": "doing",
       "title": "Broaden runtime planning for all current commands, options, and interactive-risk cases",
       "description": "Audit and update argument parsing, command identification, value-flag validation, session planning, and non-interactive behavior against the full current surface. The wrapper should continue to be thin, but it must not misclassify new command families or accidentally run interactive/long-lived/destructive flows without clear docs and safe contracts. Cover command-level flags with values (`find --name`, wait predicates, tab labels, network filters/bodies, profiler categories, cookie attributes, auth options, dashboard/stream ports, chat model/quiet/verbose flags, etc.), launch-scoped global options, provider flags, and setup commands such as `install`, `upgrade`, and `doctor --fix`. Acceptance criteria: runtime tests pin command/subcommand extraction and validation across the full baseline; unsupported `stdin` remains rejected; long-running or interactive flows have explicit behavior and recovery guidance; `npm test` passes.",
       "priority": "high",
@@ -377,7 +377,8 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T18:14:15.636491000Z",
+      "started_at": "2026-05-13T18:14:15.636491000Z",
       "depends_on": [
         "RQ-0057"
       ],
