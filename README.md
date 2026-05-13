@@ -60,6 +60,7 @@ The result is optimized for agent work:
 | Auth/profile workflows can leak secrets | Supports `auth save --password-stdin` and redacts sensitive args, URLs, stdout/stderr, details, and parse-failure spills | `test/agent-browser.extension-validation.test.ts` |
 | Stale `@eN` refs fail mysteriously | Adds recovery guidance to rerun `snapshot -i` or use stable `find` locators | `test/agent-browser.results.test.ts` |
 | Agents need stable success/failure buckets | Exposes bounded `resultCategory`, `successCategory`, and `failureCategory` on tool `details` for branching without parsing prose | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/shared.ts`, `test/agent-browser.results.test.ts` |
+| Models re-snapshot after every click without new URL/title context | Adds optional `details.pageChangeSummary` (and per-batch-step summaries) with `changeType`, compact text, optional `title`/`url`, artifact hints, and `nextActionIds` aligned to `nextActions` | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/presentation.ts`, `test/agent-browser.presentation.test.ts` |
 | Direct binary help may be blocked in agent sessions | Publishes a repo-readable command reference and verifies it against the target upstream version | `npm run verify` |
 
 ## Fastest way to try it
