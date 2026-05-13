@@ -280,7 +280,7 @@ async function checkAgentBrowserVersion({ runAgentBrowser }) {
 				title: `agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version || "<empty>"}.`,
 				lines: [
 					`This wrapper targets the current baseline from ${CAPABILITY_BASELINE_SOURCE} and does not provide backwards-compatibility shims.`,
-					`Update upstream agent-browser to ${EXPECTED_VERSION}, or if you intentionally re-baselined upstream, update ${CAPABILITY_BASELINE_SOURCE} and refresh docs.`,
+					`Update upstream agent-browser to ${EXPECTED_VERSION}, or if you intentionally re-baselined upstream, update ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, refresh docs/COMMAND_REFERENCE.md, and rerun \`npm run verify -- command-reference\` plus \`npm run verify -- real-upstream\` with test/fixtures/agent-browser-real-output-shapes.json aligned to the new target version.`,
 				],
 			};
 		}

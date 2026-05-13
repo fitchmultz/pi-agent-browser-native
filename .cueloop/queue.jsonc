@@ -195,7 +195,7 @@
     },
     {
       "id": "RQ-0054",
-      "status": "todo",
+      "status": "doing",
       "title": "Upgrade verification gates for full-surface upstream support",
       "description": "Turn the expanded support matrix into sustainable verification. Update default and opt-in gates so future upstream changes cannot silently desynchronize the wrapper, docs, prompt guidance, package doctor, real-upstream contract fixture, or packaged Pi smoke tests. Acceptance criteria: `npm run verify` checks generated docs/playbook drift, typecheck, unit/fake tests, and command-reference baseline; `npm run verify -- real-upstream` covers the expanded safe real-browser matrix; `npm run verify -- package-pi` still loads the package with a fake upstream; doctor reports version drift with clear re-baselining instructions; all scripts have useful help where user-facing; tests are documented in release docs.",
       "priority": "high",
@@ -235,7 +235,8 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T23:18:46.564586000Z",
+      "started_at": "2026-05-13T23:18:46.564586000Z",
       "depends_on": [
         "RQ-0047",
         "RQ-0049",
