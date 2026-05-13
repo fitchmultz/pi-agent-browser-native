@@ -11,6 +11,8 @@ import test from "node:test";
 
 import {
 	buildToolPresentation,
+	classifyAgentBrowserFailureCategory,
+	classifyAgentBrowserSuccessCategory,
 	getAgentBrowserErrorText,
 	parseAgentBrowserEnvelope,
 } from "../extensions/agent-browser/lib/results.js";
@@ -22,6 +24,25 @@ import {
 
 const MISSING_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: missing boolean success field.";
 const NON_BOOLEAN_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: success field must be boolean.";
+
+test("classifyAgentBrowserFailureCategory locks common machine-readable failure categories", () => {
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Unknown ref: e4", args: ["click", "@e4"] }), "stale-ref");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Failed to parse selector text=Close" }), "selector-unsupported");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "No elements found for selector .missing" }), "selector-not-found");
+	assert.equal(classifyAgentBrowserFailureCategory({ timedOut: true }), "timeout");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Download not verified: file missing", command: "download" }), "download-not-verified");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "agent-browser is required but was not found on PATH" }), "missing-binary");
+	assert.equal(classifyAgentBrowserFailureCategory({ parseError: "agent-browser returned invalid JSON" }), "parse-failure");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Confirmation required: c_demo" }), "confirmation-required");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "agent-browser could not re-select the intended tab before running the command." }), "tab-drift");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), "upstream-error");
+});
+
+test("classifyAgentBrowserSuccessCategory locks common machine-readable success categories", () => {
+	assert.equal(classifyAgentBrowserSuccessCategory({}), "completed");
+	assert.equal(classifyAgentBrowserSuccessCategory({ inspection: true }), "inspection");
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", kind: "image", path: "/tmp/a.png" }] }), "artifact-saved");
+});
 
 test("parseCommandInfo skips global flags with values", () => {
 	const commandInfo = parseCommandInfo(["--session", "named", "--profile", "./profile", "tab", "list"]);

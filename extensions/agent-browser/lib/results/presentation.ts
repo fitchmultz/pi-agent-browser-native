@@ -22,6 +22,9 @@ import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary
 import {
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
+	buildAgentBrowserResultCategoryDetails,
+	classifyAgentBrowserFailureCategory,
+	classifyAgentBrowserSuccessCategory,
 	type BatchFailurePresentationDetails,
 	type BatchStepPresentationDetails,
 	type ArtifactStorageScope,
@@ -1098,8 +1101,15 @@ async function buildBatchStepPresentation(options: {
 
 	if (item.success === false) {
 		const errorText = formatBatchStepError(item.error);
+		const failureCategory = classifyAgentBrowserFailureCategory({
+			args: command,
+			command: command?.[0],
+			errorText,
+		});
 		const presentation: ToolPresentation = {
 			content: [{ type: "text", text: errorText }],
+			failureCategory,
+			resultCategory: "failure",
 			summary: errorText,
 		};
 		return {
@@ -1108,7 +1118,9 @@ async function buildBatchStepPresentation(options: {
 				command,
 				commandText,
 				data: item.error,
+				failureCategory,
 				index,
+				resultCategory: "failure",
 				success: false,
 				summary: errorText,
 				text: errorText,
@@ -1147,9 +1159,11 @@ async function buildBatchStepPresentation(options: {
 			imagePath: imagePaths[0],
 			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
 			index,
+			resultCategory: "success",
 			savedFile: presentation.savedFile,
 			savedFilePath: presentation.savedFilePath,
 			success: true,
+			successCategory: classifyAgentBrowserSuccessCategory({ artifacts: presentation.artifacts, savedFile: presentation.savedFile }),
 			summary: presentation.summary,
 			text,
 		},
@@ -1242,11 +1256,14 @@ async function buildBatchPresentation(options: {
 		batchFailure,
 		batchSteps: steps.map((step) => step.details),
 		content: [{ type: "text", text: contentText }, ...images],
+		failureCategory: batchFailure?.failedStep.failureCategory,
 		data,
 		fullOutputPath: fullOutputPaths[0],
 		fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
 		imagePath: imagePaths[0],
 		imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+		resultCategory: batchFailure ? "failure" : "success",
+		successCategory: batchFailure ? undefined : classifyAgentBrowserSuccessCategory({ artifacts }),
 		summary,
 	};
 }
@@ -1608,6 +1625,7 @@ export async function buildToolPresentation(options: {
 	if (errorText) {
 		const hintedErrorText = appendSelectorRecoveryHint(redactModelFacingText(errorText));
 		return {
+			...buildAgentBrowserResultCategoryDetails({ args: [commandInfo.command, commandInfo.subcommand].filter((item): item is string => item !== undefined), command: commandInfo.command, errorText: hintedErrorText, succeeded: false }),
 			content: [{ type: "text", text: hintedErrorText }],
 			summary: hintedErrorText,
 		};

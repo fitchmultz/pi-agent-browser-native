@@ -1008,8 +1008,12 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 	assert.match((presentation.content[0] as { text: string }).text, /snapshot -i/);
 	assert.match((presentation.content[0] as { text: string }).text, /find role\|text\|label/);
 	assert.match((presentation.content[0] as { text: string }).text, /scrollintoview/);
+	assert.equal(presentation.resultCategory, "failure");
+	assert.equal(presentation.failureCategory, "stale-ref");
 	assert.equal(presentation.batchFailure?.failedStep.index, 1);
 	assert.equal(presentation.batchFailure?.failedStep.commandText, "click @zzz");
+	assert.equal(presentation.batchFailure?.failedStep.resultCategory, "failure");
+	assert.equal(presentation.batchFailure?.failedStep.failureCategory, "stale-ref");
 	assert.equal(presentation.batchFailure?.failureCount, 1);
 	assert.equal(presentation.batchFailure?.successCount, 1);
 	assert.equal(presentation.batchFailure?.totalCount, 2);

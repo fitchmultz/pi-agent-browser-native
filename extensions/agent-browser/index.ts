@@ -27,6 +27,7 @@ import {
 } from "./lib/playbook.js";
 import { SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS, runAgentBrowserProcess } from "./lib/process.js";
 import {
+	buildAgentBrowserResultCategoryDetails,
 	buildToolPresentation,
 	getAgentBrowserErrorText,
 	parseAgentBrowserEnvelope,
@@ -1728,7 +1729,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			if (validationError) {
 				return {
 					content: [{ type: "text", text: validationError }],
-					details: { args: redactedArgs, validationError },
+					details: {
+						args: redactedArgs,
+						...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, errorText: validationError, succeeded: false, validationError }),
+						validationError,
+					},
 					isError: true,
 				};
 			}
@@ -1761,6 +1766,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							sessionMode,
 							sessionRecoveryHint: redactedRecoveryHint,
 							startupScopedFlags: executionPlan.startupScopedFlags,
+							...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, command: executionPlan.commandInfo.command, errorText: executionPlan.validationError, succeeded: false, validationError: executionPlan.validationError }),
 							validationError: executionPlan.validationError,
 						},
 						isError: true,
@@ -1788,6 +1794,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							compatibilityWorkaround,
 							effectiveArgs: redactedEffectiveArgs,
 							sessionMode,
+							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: traceOwnerGuardMessage, succeeded: false, validationError: traceOwnerGuardMessage }),
 							validationError: traceOwnerGuardMessage,
 							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 						},
@@ -1808,6 +1815,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							compatibilityWorkaround,
 							effectiveArgs: redactedEffectiveArgs,
 							sessionMode,
+							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: stdinValidationError, succeeded: false, validationError: stdinValidationError }),
 							validationError: stdinValidationError,
 							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 						},
@@ -1824,6 +1832,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							compatibilityWorkaround,
 							effectiveArgs: redactedEffectiveArgs,
 							sessionMode,
+							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: waitIpcTimeoutError, succeeded: false, timedOut: true, validationError: waitIpcTimeoutError }),
 							validationError: waitIpcTimeoutError,
 							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 						},
@@ -1872,6 +1881,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 										effectiveArgs: redactedEffectiveArgs,
 										sessionMode,
 										sessionTabCorrection: plannedSessionTabSelection,
+										...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: error }),
 										validationError: error,
 										...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 									},
@@ -1896,6 +1906,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 										effectiveArgs: redactedEffectiveArgs,
 										sessionMode,
 										sessionTabCorrection: plannedSessionTabSelection,
+										...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: pinnedBatchPlan.error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: pinnedBatchPlan.error }),
 										validationError: pinnedBatchPlan.error,
 										...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 									},
@@ -1943,6 +1954,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							effectiveArgs: redactedProcessArgs,
 							sessionMode,
 							sessionTabCorrection,
+							...buildAgentBrowserResultCategoryDetails({ args: redactedProcessArgs, command: executionPlan.commandInfo.command, errorText, failureCategory: "missing-binary", spawnError: processResult.spawnError.message, succeeded: false }),
 							spawnError: processResult.spawnError.message,
 						},
 						isError: true,
@@ -2248,6 +2260,22 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							? { ...item, text: exactRedactedText }
 							: { ...item, text: redactSensitiveText(exactRedactedText) };
 					});
+					const categoryDetails = buildAgentBrowserResultCategoryDetails({
+						artifacts: presentation.artifacts,
+						args: redactedProcessArgs,
+						command: executionPlan.commandInfo.command,
+						confirmationRequired: presentation.summary.startsWith("Confirmation required"),
+						errorText: errorText ?? presentation.summary,
+						failureCategory: presentation.failureCategory ?? presentation.batchFailure?.failedStep.failureCategory,
+						inspection: plainTextInspection,
+						parseError,
+						savedFile: presentation.savedFile,
+						spawnError: processResult.spawnError?.message,
+						succeeded,
+						tabDrift: !succeeded && (aboutBlankSessionMismatch !== undefined || sessionTabCorrection !== undefined),
+						timedOut: processResult.timedOut,
+						validationError: undefined,
+					});
 					const details = {
 						args: redactedArgs,
 						artifactManifest: presentation.artifactManifest,
@@ -2262,6 +2290,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						error: plainTextInspection ? undefined : presentationEnvelope?.error,
 						inspection: plainTextInspection || undefined,
 						navigationSummary,
+						...categoryDetails,
 						aboutBlankSessionMismatch,
 						openResultTabCorrection,
 						effectiveArgs: redactedProcessArgs,

@@ -8,9 +8,18 @@
 
 export { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "./results/envelope.js";
 export { buildToolPresentation } from "./results/presentation.js";
+export {
+	buildAgentBrowserResultCategoryDetails,
+	classifyAgentBrowserFailureCategory,
+	classifyAgentBrowserSuccessCategory,
+} from "./results/shared.js";
 export type {
 	AgentBrowserBatchResult,
 	AgentBrowserEnvelope,
+	AgentBrowserFailureCategory,
+	AgentBrowserResultCategory,
+	AgentBrowserResultCategoryDetails,
+	AgentBrowserSuccessCategory,
 	FileArtifactKind,
 	FileArtifactMetadata,
 	ToolPresentation,

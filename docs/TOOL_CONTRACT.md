@@ -177,6 +177,14 @@ Recommended details:
 }
 ```
 
+Stable category fields are part of the machine-readable contract:
+
+- `resultCategory`: always either `"success"` or `"failure"`.
+- `successCategory`: present on successful results. Current values are `"completed"`, `"artifact-saved"`, and `"inspection"`.
+- `failureCategory`: present on failed results. Current values are `"aborted"`, `"confirmation-required"`, `"download-not-verified"`, `"missing-binary"`, `"parse-failure"`, `"selector-not-found"`, `"selector-unsupported"`, `"stale-ref"`, `"tab-drift"`, `"timeout"`, `"upstream-error"`, and `"validation-error"`.
+
+These categories are intentionally bounded and stable so agents can branch on them instead of parsing prose. They do not replace raw diagnostics: `details.error`, `details.stderr`, `details.parseError`, `details.validationError`, and visible content still preserve the specific upstream or wrapper message after normal redaction. Batch results apply the same fields to `batchSteps[]`, and `batchFailure.failedStep.failureCategory` identifies the first failing step.
+
 Additional structured fields can appear when relevant:
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`

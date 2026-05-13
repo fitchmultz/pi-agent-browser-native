@@ -19,6 +19,30 @@ export interface AgentBrowserBatchResult {
 	success?: boolean;
 }
 
+export type AgentBrowserResultCategory = "failure" | "success";
+
+export type AgentBrowserSuccessCategory = "artifact-saved" | "completed" | "inspection";
+
+export type AgentBrowserFailureCategory =
+	| "aborted"
+	| "confirmation-required"
+	| "download-not-verified"
+	| "missing-binary"
+	| "parse-failure"
+	| "selector-not-found"
+	| "selector-unsupported"
+	| "stale-ref"
+	| "tab-drift"
+	| "timeout"
+	| "upstream-error"
+	| "validation-error";
+
+export interface AgentBrowserResultCategoryDetails {
+	failureCategory?: AgentBrowserFailureCategory;
+	resultCategory: AgentBrowserResultCategory;
+	successCategory?: AgentBrowserSuccessCategory;
+}
+
 export type FileArtifactKind = "download" | "file" | "har" | "image" | "pdf" | "profile" | "trace" | "video";
 
 export type FileArtifactStatus = "missing" | "repaired-from-temp" | "saved" | "upstream-temp-only";
@@ -191,14 +215,17 @@ export interface BatchStepPresentationDetails {
 	command?: string[];
 	commandText: string;
 	data?: unknown;
+	failureCategory?: AgentBrowserFailureCategory;
 	fullOutputPath?: string;
 	fullOutputPaths?: string[];
 	imagePath?: string;
 	imagePaths?: string[];
 	index: number;
+	resultCategory: AgentBrowserResultCategory;
 	savedFile?: SavedFilePresentationDetails;
 	savedFilePath?: string;
 	success: boolean;
+	successCategory?: AgentBrowserSuccessCategory;
 	summary: string;
 	text: string;
 }
@@ -218,13 +245,97 @@ export interface ToolPresentation {
 	batchSteps?: BatchStepPresentationDetails[];
 	content: Array<{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }>;
 	data?: unknown;
+	failureCategory?: AgentBrowserFailureCategory;
 	fullOutputPath?: string;
 	fullOutputPaths?: string[];
 	imagePath?: string;
 	imagePaths?: string[];
+	resultCategory?: AgentBrowserResultCategory;
 	savedFile?: SavedFilePresentationDetails;
 	savedFilePath?: string;
+	successCategory?: AgentBrowserSuccessCategory;
 	summary: string;
+}
+
+export function classifyAgentBrowserSuccessCategory(options: {
+	artifacts?: FileArtifactMetadata[];
+	inspection?: boolean;
+	savedFile?: SavedFilePresentationDetails;
+}): AgentBrowserSuccessCategory {
+	if (options.inspection) return "inspection";
+	if (options.savedFile || (options.artifacts ?? []).length > 0) return "artifact-saved";
+	return "completed";
+}
+
+export function classifyAgentBrowserFailureCategory(options: {
+	args?: string[];
+	command?: string;
+	confirmationRequired?: boolean;
+	errorText?: string;
+	parseError?: string;
+	spawnError?: string;
+	stderr?: string;
+	tabDrift?: boolean;
+	timedOut?: boolean;
+	validationError?: string;
+}): AgentBrowserFailureCategory {
+	const text = [options.errorText, options.validationError, options.parseError, options.spawnError, options.stderr].filter(Boolean).join("\n");
+	const command = options.command ?? "";
+	const usedRef = options.args?.some((arg) => /^@e\d+\b/.test(arg)) ?? false;
+	if (options.confirmationRequired || /confirmation required|pending confirmation|requires confirmation/i.test(text)) return "confirmation-required";
+	if (options.timedOut || /timeout|timed out|watchdog|IPC read timeout|must stay under its 30s IPC read timeout/i.test(text)) return "timeout";
+	if (/ENOENT|not found on PATH|could not find.*agent-browser|agent-browser is required but was not found/i.test(text)) return "missing-binary";
+	if (options.parseError || /invalid JSON|missing boolean success|success field must be boolean|returned no JSON output/i.test(text)) return "parse-failure";
+	if (/aborted/i.test(text)) return "aborted";
+	if (options.tabDrift || /could not re-select the intended tab|about:blank|selected tab looks wrong|tab drift|tab.*wrong/i.test(text)) return "tab-drift";
+	if (/\bUnknown ref\b|\bstale ref\b|@ref may be stale|\bref\b.*\b(?:not found|missing|expired)\b/i.test(text)) return "stale-ref";
+	if (usedRef && /could not locate element|element not found|no element/i.test(text)) return "stale-ref";
+	const mentionsPlaywrightSelectorDialect = /(?:\btext=|:has-text\(|\bgetByRole\b|\bgetByText\b)/i.test(text);
+	const reportsSelectorMatchFailure =
+		/\b(?:no elements? found|failed to find|could not find|unable to find)\b.*\b(?:selector|locator)\b/i.test(text) ||
+		/\b(?:selector|locator)\b.*\b(?:no elements? found|not found|missing|failed to find|could not find|unable to find)\b/i.test(text);
+	if (
+		/\b(?:unsupported|unknown|invalid)\s+(?:selector|locator)\b/i.test(text) ||
+		/\bfailed to parse selector\b/i.test(text) ||
+		/\bselector\b.*\b(?:parse|syntax|unsupported|invalid)\b/i.test(text) ||
+		(mentionsPlaywrightSelectorDialect && reportsSelectorMatchFailure)
+	) {
+		return "selector-unsupported";
+	}
+	if (reportsSelectorMatchFailure) return "selector-not-found";
+	if ((command === "download" || text.includes("wait --download") || /\bdownload\b/i.test(text)) && /missing|not verified|not found|failed|timeout|timed out/i.test(text)) {
+		return "download-not-verified";
+	}
+	if (options.validationError) return "validation-error";
+	return "upstream-error";
+}
+
+export function buildAgentBrowserResultCategoryDetails(options: {
+	artifacts?: FileArtifactMetadata[];
+	args?: string[];
+	command?: string;
+	confirmationRequired?: boolean;
+	errorText?: string;
+	failureCategory?: AgentBrowserFailureCategory;
+	inspection?: boolean;
+	parseError?: string;
+	savedFile?: SavedFilePresentationDetails;
+	spawnError?: string;
+	succeeded: boolean;
+	tabDrift?: boolean;
+	timedOut?: boolean;
+	validationError?: string;
+}): AgentBrowserResultCategoryDetails {
+	if (options.succeeded) {
+		return {
+			resultCategory: "success",
+			successCategory: classifyAgentBrowserSuccessCategory(options),
+		};
+	}
+	return {
+		failureCategory: options.failureCategory ?? classifyAgentBrowserFailureCategory(options),
+		resultCategory: "failure",
+	};
 }
 
 export function stringifyUnknown(value: unknown): string {

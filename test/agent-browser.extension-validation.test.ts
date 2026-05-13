@@ -535,6 +535,8 @@ test("agentBrowserExtension reports the documented missing agent-browser binary 
 			assert.match(text, /https:\/\/agent-browser\.dev\//);
 			assert.match(text, /https:\/\/github\.com\/vercel-labs\/agent-browser/);
 			assert.match(String(result.details?.spawnError ?? ""), /ENOENT/);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(result.details?.failureCategory, "missing-binary");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -654,6 +656,8 @@ process.exit(1);`,
 			assert.equal(JSON.stringify(result.details).includes("super-secret-password"), false);
 			assert.match(JSON.stringify(result.content), /\[REDACTED\]/);
 			assert.match(JSON.stringify(result.details), /\[REDACTED\]/);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(result.details?.failureCategory, "upstream-error");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -719,6 +723,8 @@ process.exit(1);`,
 			assert.match(text, /\["confirm", "c_sensitive"\]/);
 			assert.match(text, /\["deny", "c_sensitive"\]/);
 			assert.match(String(result.details?.summary ?? ""), /Confirmation required: c_sensitive/);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(result.details?.failureCategory, "confirmation-required");
 			assert.doesNotMatch(JSON.stringify(result.content), /user:pass|raw-token|token=secret/);
 			assert.doesNotMatch(JSON.stringify(result.details), /user:pass|raw-token|token=secret/);
 		});
@@ -795,6 +801,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { args } }));`,
 				(result.details?.invalidValueFlag as { flag?: string; reason?: string } | undefined)?.reason,
 				"missing-value",
 			);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(result.details?.failureCategory, "validation-error");
 			assert.deepEqual(await readInvocationLog(logPath), []);
 		});
 	} finally {
@@ -828,6 +836,8 @@ test("agentBrowserExtension rejects malformed JSON envelopes that omit success",
 			assert.equal(result.details?.summary, MISSING_SUCCESS_PARSE_ERROR);
 			assert.doesNotMatch(String(result.details?.summary ?? ""), /^open completed$/i);
 			assert.equal(result.details?.error, undefined);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(result.details?.failureCategory, "parse-failure");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -866,6 +876,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 				assert.equal(result.content[0]?.type, "text");
 				assert.match((result.content[0] as { text: string }).text, /30s IPC read timeout/);
 				assert.match(String(result.details?.validationError ?? ""), /25000ms or less/);
+				assert.equal(result.details?.resultCategory, "failure");
+				assert.equal(result.details?.failureCategory, "timeout");
 			}
 			assert.deepEqual(await readInvocationLog(logPath), []);
 		});
@@ -902,6 +914,35 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 				path: "/tmp/export.csv",
 				subcommand: "--download",
 			});
+			assert.equal(result.details?.resultCategory, "success");
+			assert.equal(result.details?.successCategory, "artifact-saved");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension categorizes failed wait --download verification", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-download-failure-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: false, error: "Download not verified: file missing at /tmp/export.csv" }));
+process.exit(1);`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["wait", "--download", "/tmp/export.csv"],
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(result.details?.failureCategory, "download-not-verified");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -956,6 +997,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 			assert.match(text, /Could not locate element/);
 			assert.match(text, /@ref may be stale/);
 			assert.match(text, /snapshot/);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(result.details?.failureCategory, "stale-ref");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1040,6 +1083,8 @@ process.exit(1);`,
 			assert.match(text, /^agent-browser --json --session \S+ open https:\/\/example\.com\/? reported failure \(exit code 1\)\.$/);
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(0, 3), ["--json", "--session", result.details?.sessionName]);
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-2), ["open", "https://example.com/"]);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(result.details?.failureCategory, "upstream-error");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
