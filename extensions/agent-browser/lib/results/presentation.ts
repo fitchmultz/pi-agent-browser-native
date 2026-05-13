@@ -302,10 +302,48 @@ function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<string, 
 		if (stateName) return `State ${commandInfo.subcommand ?? "result"}: ${stateName}`;
 	}
 
-	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") {
-		const requests = getArrayField(data, "requests");
-		if (requests) return `Network requests: ${requests.length}`;
+	if (commandInfo.command === "network") {
+		if (commandInfo.subcommand === "requests") {
+			const requests = getArrayField(data, "requests");
+			if (requests) return `Network requests: ${requests.length}`;
+		}
+		if (commandInfo.subcommand === "route") {
+			const routed = getStringField(data, "routed") ?? getStringField(data, "url") ?? getStringField(data, "pattern");
+			return routed ? `Network route: ${redactModelFacingTextIfSensitive(routed)}` : "Network route configured";
+		}
+		if (commandInfo.subcommand === "unroute") {
+			const unrouted = getStringField(data, "unrouted") ?? getStringField(data, "url") ?? getStringField(data, "pattern");
+			return unrouted ? `Network unroute: ${redactModelFacingTextIfSensitive(unrouted)}` : "Network route removed";
+		}
+		if (commandInfo.subcommand === "har") {
+			const state = getStringField(data, "state") ?? getStringField(data, "status") ?? commandInfo.subcommand;
+			return `Network HAR: ${state}`;
+		}
 	}
+
+	if (commandInfo.command === "diff") {
+		if (commandInfo.subcommand === "snapshot") return "Snapshot diff completed";
+		if (commandInfo.subcommand === "url") return "URL diff completed";
+	}
+
+	if (["trace", "profiler"].includes(commandInfo.command ?? "")) {
+		const state = getStringField(data, "state") ?? getStringField(data, "status") ?? commandInfo.subcommand;
+		if (state) return `${commandInfo.command === "trace" ? "Trace" : "Profiler"}: ${state}`;
+	}
+
+	if (commandInfo.command === "highlight") return "Element highlighted";
+	if (commandInfo.command === "inspect") return "DevTools inspect opened";
+	if (commandInfo.command === "clipboard") return `Clipboard ${commandInfo.subcommand ?? "completed"}`;
+
+	if (commandInfo.command === "stream") {
+		if (commandInfo.subcommand === "enable") {
+			const port = typeof data.port === "number" ? ` on port ${data.port}` : "";
+			return `Stream enabled${port}`;
+		}
+		if (commandInfo.subcommand === "disable") return "Stream disabled";
+	}
+
+	if (commandInfo.command === "chat") return "Chat response";
 
 	if (commandInfo.command === "console") {
 		const messages = getArrayField(data, "messages");
@@ -629,6 +667,15 @@ function formatDashboardText(data: Record<string, unknown>): string | undefined 
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
+function formatChatText(data: Record<string, unknown>): string | undefined {
+	const response = getStringField(data, "response") ?? getStringField(data, "message") ?? getStringField(data, "text") ?? getStringField(data, "result");
+	if (response) return redactModelFacingText(response);
+	const model = getStringField(data, "model");
+	const provider = getStringField(data, "provider");
+	const lines = [model ? `Model: ${redactModelFacingText(model)}` : undefined, provider ? `Provider: ${redactModelFacingText(provider)}` : undefined].filter(Boolean);
+	return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
 function formatDoctorText(data: Record<string, unknown>): string | undefined {
 	const lines: string[] = [];
 	const status = getStringField(data, "status") ?? getStringField(data, "result");
@@ -724,9 +771,25 @@ function formatStateText(data: Record<string, unknown>): string | undefined {
 	return undefined;
 }
 
+function isSensitivePresentationField(key: string): boolean {
+	return /^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|x(?:_|-)?api(?:_|-)?key)$/i.test(key);
+}
+
+function redactStructuredPresentationValue(value: unknown): unknown {
+	if (typeof value === "string") return redactModelFacingTextIfSensitive(value);
+	if (Array.isArray(value)) return value.map((item) => redactStructuredPresentationValue(item));
+	if (!isRecord(value)) return value;
+	return Object.fromEntries(
+		Object.entries(value).map(([key, entryValue]) => [
+			key,
+			isSensitivePresentationField(key) ? "[REDACTED]" : redactStructuredPresentationValue(entryValue),
+		]),
+	);
+}
+
 function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unknown {
 	if (Array.isArray(value)) return value.map((item) => redactStatefulValues(item, sensitiveKeys));
-	if (!isRecord(value)) return redactSensitiveValue(value);
+	if (!isRecord(value)) return redactStructuredPresentationValue(value);
 	return Object.fromEntries(
 		Object.entries(value).map(([key, entryValue]) => [
 			key,
@@ -735,11 +798,10 @@ function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unkno
 	);
 }
 
-function redactStatefulPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
+function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
 	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
 	if (commandInfo.command === "storage") return redactStatefulValues(data, new Set(["value"]));
-	if (["auth", "dialog", "frame", "state"].includes(commandInfo.command ?? "")) return redactSensitiveValue(data);
-	return data;
+	return redactStructuredPresentationValue(data);
 }
 
 function formatDiagnosticText(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
@@ -760,6 +822,16 @@ function formatDiagnosticText(commandInfo: CommandInfo, data: Record<string, unk
 	if (commandInfo.command === "state") return formatStateText(data);
 	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") return formatNetworkRequestsText(data);
 	if (commandInfo.command === "network" && commandInfo.subcommand === "request") return formatNetworkRequestText(data);
+	if (commandInfo.command === "diff") return stringifyModelFacing(data);
+	if (commandInfo.command === "clipboard") {
+		const text = getStringField(data, "text") ?? getStringField(data, "value") ?? getStringField(data, "result");
+		if (text) return redactModelFacingText(text);
+	}
+	if (commandInfo.command === "stream") {
+		const streamSummary = getStreamSummary(data);
+		if (streamSummary) return streamSummary;
+	}
+	if (commandInfo.command === "chat") return formatChatText(data);
 	if (commandInfo.command === "console") return formatConsoleText(data);
 	if (commandInfo.command === "errors") return formatErrorsText(data);
 	if (commandInfo.command === "dashboard") return formatDashboardText(data);
@@ -2076,7 +2148,7 @@ export async function buildToolPresentation(options: {
 	}
 
 	const data = enrichStreamStatusData(commandInfo, envelope?.data);
-	const presentationData = redactStatefulPresentationData(commandInfo, data);
+	const presentationData = redactPresentationData(commandInfo, data);
 	const artifacts = await extractFileArtifacts({ artifactRequest, commandInfo, cwd, data, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);

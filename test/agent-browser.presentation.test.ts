@@ -921,6 +921,109 @@ test("buildToolPresentation formats dashboard and doctor status", async () => {
 	assert.equal((doctor.content[0] as { text: string }).text, "Status: ok\nchecks: 1");
 });
 
+test("buildToolPresentation summarizes non-core command families and redacts diagnostic data", async () => {
+	const cases = [
+		{
+			commandInfo: { command: "network", subcommand: "route" },
+			data: { body: { token: "route-secret" }, routed: "https://api.example.test/**?token=route-url-secret" },
+			expectedSummary: "Network route: https://api.example.test/**?token=%5BREDACTED%5D",
+			expectedText: /routed.*api\.example\.test/,
+			forbidden: /route-secret|route-url-secret/,
+		},
+		{
+			commandInfo: { command: "network", subcommand: "unroute" },
+			data: { unrouted: "**/*.js" },
+			expectedSummary: "Network unroute: **/*.js",
+			expectedText: /unrouted.*\*\*\/\*\.js/,
+			forbidden: /never-match-secret/,
+		},
+		{
+			commandInfo: { command: "diff", subcommand: "snapshot" },
+			data: { added: 1, removed: 0, token: "diff-secret" },
+			expectedSummary: "Snapshot diff completed",
+			expectedText: /added.*1/,
+			forbidden: /diff-secret/,
+		},
+		{
+			commandInfo: { command: "diff", subcommand: "url" },
+			data: { differenceCount: 2, url: "https://example.test/?token=diff-url-secret" },
+			expectedSummary: "URL diff completed",
+			expectedText: /differenceCount.*2/,
+			forbidden: /diff-url-secret/,
+		},
+		{
+			commandInfo: { command: "trace", subcommand: "start" },
+			data: { status: "started" },
+			expectedSummary: "Trace: started",
+			expectedText: /started/,
+			forbidden: /never-match-secret/,
+		},
+		{
+			commandInfo: { command: "profiler", subcommand: "start" },
+			data: { status: "started" },
+			expectedSummary: "Profiler: started",
+			expectedText: /started/,
+			forbidden: /never-match-secret/,
+		},
+		{
+			commandInfo: { command: "highlight", subcommand: "#pay" },
+			data: { highlighted: "#pay" },
+			expectedSummary: "Element highlighted",
+			expectedText: /highlighted.*#pay/,
+			forbidden: /never-match-secret/,
+		},
+		{
+			commandInfo: { command: "inspect" },
+			data: { opened: true },
+			expectedSummary: "DevTools inspect opened",
+			expectedText: /opened.*true/,
+			forbidden: /never-match-secret/,
+		},
+		{
+			commandInfo: { command: "clipboard", subcommand: "read" },
+			data: { text: "clipboard Authorization: Bearer clipboard-secret" },
+			expectedSummary: "Clipboard read",
+			expectedText: /\[REDACTED\]/,
+			forbidden: /clipboard-secret/,
+		},
+		{
+			commandInfo: { command: "stream", subcommand: "enable" },
+			data: { connected: true, enabled: true, port: 7788, screencasting: true },
+			expectedSummary: "Stream enabled on port 7788",
+			expectedText: /WebSocket URL: ws:\/\/127\.0\.0\.1:7788/,
+			forbidden: /never-match-secret/,
+		},
+		{
+			commandInfo: { command: "stream", subcommand: "disable" },
+			data: { connected: false, enabled: false, screencasting: false },
+			expectedSummary: "Stream disabled",
+			expectedText: /Enabled: false/,
+			forbidden: /never-match-secret/,
+		},
+		{
+			commandInfo: { command: "chat", subcommand: "summarize" },
+			data: { model: "anthropic/claude", response: "Done with Bearer chat-secret" },
+			expectedSummary: "Chat response",
+			expectedText: /Bearer \[REDACTED\]/,
+			forbidden: /chat-secret/,
+		},
+	] as const;
+
+	for (const item of cases) {
+		const presentation = await buildToolPresentation({
+			commandInfo: item.commandInfo,
+			cwd: process.cwd(),
+			envelope: { success: true, data: item.data },
+		});
+		const text = (presentation.content[0] as { text: string }).text;
+		const serialized = JSON.stringify({ data: presentation.data, summary: presentation.summary, text });
+		const label = `${item.commandInfo.command} ${"subcommand" in item.commandInfo ? item.commandInfo.subcommand : ""}`;
+		assert.equal(presentation.summary, item.expectedSummary, label);
+		assert.match(text, item.expectedText, label);
+		assert.doesNotMatch(serialized, item.forbidden, label);
+	}
+});
+
 test("buildToolPresentation compacts large diagnostic output and preserves spill path", async () => {
 	const messages = Array.from({ length: 180 }, (_, index) => ({ text: `diagnostic console row ${index + 1} ${"x".repeat(120)}`, type: "log" }));
 	const presentation = await buildToolPresentation({

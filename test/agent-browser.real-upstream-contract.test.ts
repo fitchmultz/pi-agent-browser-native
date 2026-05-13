@@ -346,6 +346,36 @@ if (!REAL_UPSTREAM_ENABLED) {
 					});
 					const networkRouteDetails = assertSuccessfulResult(networkRoute, shapes.commands.networkRoute, "network route --resource-type");
 					assert.equal((networkRouteDetails.data as { routed?: string }).routed, "**/*.js");
+					await runCoreCommand(harness, ["network", "requests"], shapes.commands.nonCoreStatus, managedSessionName, "network requests");
+					await runCoreCommand(harness, ["network", "har", "start"], shapes.commands.nonCoreStatus, managedSessionName, "network har start");
+					const harPath = join(tempDir, "contract.har");
+					await runCoreCommand(harness, ["network", "har", "stop", harPath], shapes.commands.nonCoreArtifact, managedSessionName, "network har stop");
+					assert.ok(await readFileIfPresent(harPath), "HAR should be saved");
+
+					await runCoreCommand(harness, ["snapshot"], shapes.commands.snapshot, managedSessionName, "snapshot before diff");
+					await runCoreCommand(harness, ["diff", "snapshot"], shapes.commands.nonCoreStatus, managedSessionName, "diff snapshot");
+					await runCoreCommand(harness, ["diff", "screenshot", "--baseline", screenshotPath], shapes.commands.diffScreenshotArtifact, managedSessionName, "diff screenshot");
+					await runCoreCommand(harness, ["diff", "url", contractUrl, `${fixtureServer?.baseUrl}/next`], shapes.commands.nonCoreStatus, managedSessionName, "diff url");
+
+					await runCoreCommand(harness, ["trace", "start"], shapes.commands.nonCoreStatus, managedSessionName, "trace start");
+					const tracePath = join(tempDir, "contract-trace.zip");
+					await runCoreCommand(harness, ["trace", "stop", tracePath], shapes.commands.nonCoreArtifact, managedSessionName, "trace stop");
+					assert.ok(await readFileIfPresent(tracePath), "trace should be saved");
+					await runCoreCommand(harness, ["profiler", "start"], shapes.commands.nonCoreStatus, managedSessionName, "profiler start");
+					const profilePath = join(tempDir, "contract.cpuprofile");
+					await runCoreCommand(harness, ["profiler", "stop", profilePath], shapes.commands.nonCoreArtifact, managedSessionName, "profiler stop");
+					assert.ok(await readFileIfPresent(profilePath), "profile should be saved");
+					await runCoreCommand(harness, ["open", contractUrl], shapes.commands.open, managedSessionName, "restore contract fixture after diff/debug flows");
+					await runCoreCommand(harness, ["console"], shapes.commands.nonCoreStatus, managedSessionName, "console");
+					await runCoreCommand(harness, ["errors"], shapes.commands.nonCoreStatus, managedSessionName, "errors");
+					await runCoreCommand(harness, ["highlight", "#mark-ready"], shapes.commands.nonCoreStatus, managedSessionName, "highlight");
+					const priorStreamStatus = await runCoreCommand(harness, ["stream", "status"], shapes.commands.streamStatus, managedSessionName, "stream status preflight");
+					if ((priorStreamStatus.data as { enabled?: boolean }).enabled === true) {
+						await runCoreCommand(harness, ["stream", "disable"], shapes.commands.streamControl, managedSessionName, "stream disable preflight");
+					}
+					await runCoreCommand(harness, ["stream", "enable"], shapes.commands.streamControl, managedSessionName, "stream enable");
+					await runCoreCommand(harness, ["stream", "status"], shapes.commands.streamStatus, managedSessionName, "stream status");
+					await runCoreCommand(harness, ["stream", "disable"], shapes.commands.streamControl, managedSessionName, "stream disable");
 
 					const cookieFile = join(tempDir, "cookies.curl");
 					await writeFile(cookieFile, "Cookie: piab_session=abc; piab_theme=dark\n", "utf8");
