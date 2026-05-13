@@ -124,6 +124,8 @@ Implementation detail lives in `extensions/agent-browser/lib/runtime.ts` (`findC
 - **`--state` disambiguation:** Persisted browser `--state` before the command participates in launch-scoped validation and tab-correction hints. The same flag spelling after a `wait` command (for example `wait @ref --state hidden`) is a wait predicate, not a launch flag, and is excluded from startup-scoped detection so it does not spuriously require `sessionMode: "fresh"` while an implicit session is active.
 - **`--auto-connect`:** Treated as launch-scoped only when enabled (`--auto-connect` bare or `true`). `--auto-connect false` is ignored for startup-scoped blocking so disabled attach hints do not force a fresh launch.
 
+**Stateless inspection and read-only skills:** Plain-text global help and version probes (`--help`, `-h`, `--version`, `-V`) must never allocate or bind the extension-managed session. The same session-ownership rules apply to read-only upstream `skills list`, `skills get …`, and `skills path …`: those calls still run with `--json` for machine-readable output, but the planner treats them like other stateless inspection work so an agent can load bundled skill text without pinning a browser session or consuming the implicit session slot before a real `open`. Planning and allowlisting live in `extensions/agent-browser/lib/runtime.ts` (`isPlainTextInspectionArgs`, `isStatelessInspectionCommand`, `buildExecutionPlan`).
+
 A successful unnamed `sessionMode: "fresh"` launch should become the new extension-managed session so later default calls follow that browser instead of silently snapping back to the older managed session.
 
 ## Preferring the native tool

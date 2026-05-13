@@ -450,6 +450,7 @@ function formatNativeSkillContent(content: string): string {
 
 function formatSkillsText(commandInfo: CommandInfo, data: unknown): string | undefined {
 	if (commandInfo.command !== "skills") return undefined;
+	if (commandInfo.subcommand === "path") return typeof data === "string" ? redactModelFacingText(data) : undefined;
 	if (commandInfo.subcommand === "list" && Array.isArray(data)) return formatSkillsListText(data);
 	const content = getSkillContent(data);
 	if (content) {
@@ -1545,6 +1546,9 @@ function formatSummary(commandInfo: CommandInfo, data: unknown): string {
 	if (commandInfo.command === "skills" && commandInfo.subcommand === "get") {
 		return "agent-browser skill loaded";
 	}
+	if (commandInfo.command === "skills" && commandInfo.subcommand === "path") {
+		return "agent-browser skill path";
+	}
 	if (isRecord(data)) {
 		const navigationSummary = getNavigationSummary(data);
 		if (navigationSummary && isNavigationObservableCommand(commandInfo.command)) {
@@ -1594,6 +1598,10 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 		return formatConfirmationRequiredText(confirmationRequired);
 	}
 
+	const skillsText = formatSkillsText(commandInfo, data);
+	if (skillsText) {
+		return skillsText;
+	}
 	if (typeof data === "string") {
 		return redactModelFacingText(data);
 	}
@@ -1602,9 +1610,6 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	}
 	if (Array.isArray(data) && commandInfo.command === "profiles") {
 		return formatProfilesText(data, "Chrome profiles");
-	}
-	if (Array.isArray(data) && commandInfo.command === "skills") {
-		return formatSkillsText(commandInfo, data) ?? stringifyModelFacing(data);
 	}
 	if (!isRecord(data)) {
 		return stringifyModelFacing(data);
@@ -1633,10 +1638,6 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	if (commandInfo.command === "screenshot") {
 		const screenshotSummary = getScreenshotSummary(data);
 		if (screenshotSummary) return screenshotSummary;
-	}
-	const skillsText = formatSkillsText(commandInfo, data);
-	if (skillsText) {
-		return skillsText;
 	}
 	const extractionText = formatExtractionText(commandInfo, data);
 	if (extractionText) {

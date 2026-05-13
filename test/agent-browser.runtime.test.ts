@@ -590,19 +590,51 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 });
 
 test("buildExecutionPlan keeps inspection commands stateless", () => {
-	const plan = buildExecutionPlan(["--version"], {
+	for (const args of [["--version"], ["--help"], ["snapshot", "--help"]] as const) {
+		const plan = buildExecutionPlan([...args], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+
+		assert.equal(plan.plainTextInspection, true);
+		assert.deepEqual(plan.effectiveArgs, [...args]);
+		assert.equal(plan.managedSessionName, undefined);
+		assert.equal(plan.sessionName, undefined);
+		assert.equal(plan.usedImplicitSession, false);
+		assert.equal(plan.validationError, undefined);
+	}
+});
+
+test("buildExecutionPlan keeps skills inspection commands stateless while preserving JSON output", () => {
+	for (const args of [["skills", "list"], ["skills", "get", "core", "--full"], ["skills", "path", "core"]] as const) {
+		const plan = buildExecutionPlan([...args], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+
+		assert.equal(plan.plainTextInspection, false);
+		assert.deepEqual(plan.effectiveArgs, ["--json", ...args]);
+		assert.equal(plan.managedSessionName, undefined);
+		assert.equal(plan.sessionName, undefined);
+		assert.equal(plan.usedImplicitSession, false);
+		assert.equal(plan.validationError, undefined);
+	}
+});
+
+test("buildExecutionPlan limits stateless skills inspection to documented subcommands", () => {
+	const plan = buildExecutionPlan(["skills", "future-mutating-subcommand"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: true,
 		managedSessionName: "piab-demo-123",
 		sessionMode: "auto",
 	});
 
-	assert.equal(plan.plainTextInspection, true);
-	assert.deepEqual(plan.effectiveArgs, ["--version"]);
-	assert.equal(plan.managedSessionName, undefined);
-	assert.equal(plan.sessionName, undefined);
-	assert.equal(plan.usedImplicitSession, false);
-	assert.equal(plan.validationError, undefined);
+	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "piab-demo-123", "skills", "future-mutating-subcommand"]);
+	assert.equal(plan.usedImplicitSession, true);
 });
 
 test("buildExecutionPlan rejects missing values for value-taking flags before parsing commands", () => {

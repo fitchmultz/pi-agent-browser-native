@@ -5,6 +5,21 @@
     "version": {
       "detailKeys": ["args", "command", "effectiveArgs", "exitCode", "inspection", "sessionMode", "summary"]
     },
+    "rootHelp": {
+      "detailKeys": ["args", "command", "effectiveArgs", "exitCode", "inspection", "sessionMode", "summary"]
+    },
+    "commandHelp": {
+      "detailKeys": ["args", "command", "effectiveArgs", "exitCode", "inspection", "sessionMode", "summary"]
+    },
+    "skillsList": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "subcommand", "summary"]
+    },
+    "skillsGetFull": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "subcommand", "summary"]
+    },
+    "skillsPath": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "subcommand", "summary"]
+    },
     "open": {
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "summary", "usedImplicitSession"],
       "dataKeys": ["title", "url"]

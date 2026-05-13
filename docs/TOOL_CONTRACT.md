@@ -149,6 +149,7 @@ Behavior:
 - if `args` already include `--session`, upstream session choice wins
 - `"auto"` prepends the current extension-managed active session when appropriate
 - `"fresh"` rotates that managed session to a fresh upstream launch so startup-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` apply and later default calls follow the new browser
+- stateless paths skip that injection even under `"auto"`: plain-text `--help` / `-h` / `--version` / `-V` (see the generated inspection playbook fragment below) and read-only `skills list`, `skills get …`, and `skills path …` keep `effectiveArgs` free of the implicit managed `--session` unless the caller supplied `--session` explicitly; successful results therefore omit `usedImplicitSession` and the extension-managed `sessionName` for those calls (`extensions/agent-browser/lib/runtime.ts`, `buildExecutionPlan`)
 
 Recommended use:
 - use `"auto"` for the common browse/snapshot/click flow inside one `pi` session

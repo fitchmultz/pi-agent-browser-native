@@ -195,7 +195,7 @@
     },
     {
       "id": "RQ-0047",
-      "status": "todo",
+      "status": "doing",
       "title": "Make skills and inspection commands first-class native tool flows",
       "description": "Ensure the wrapper handles upstream inspection surfaces cleanly: `--help`, `--version`, `<command> --help`, `skills list`, `skills get <name> [--full]`, and `skills path [name]`. These commands should be stateless when appropriate, produce readable model-facing output, spill large skill/reference payloads with stable full-output paths, and avoid corrupting harmless documentation examples with over-broad redaction while still redacting real secrets. Acceptance criteria: tests cover skill list/get/path, root and subcommand help, large full-skill compaction, and redaction behavior; outputs remain useful through the native tool without requiring bash; `npm test` passes.",
       "priority": "high",
@@ -233,7 +233,8 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T19:47:37.970371000Z",
+      "started_at": "2026-05-13T19:47:37.970371000Z",
       "depends_on": [
         "RQ-0046",
         "RQ-0048"

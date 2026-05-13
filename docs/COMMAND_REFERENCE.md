@@ -240,6 +240,8 @@ The tables below intentionally list more than the recommended workflow. Rare com
 
 Native-tool note: upstream skills are written for the standalone `agent-browser` CLI and may show bash/heredoc examples. In pi, convert those examples to `agent_browser` calls: pass CLI tokens in `args`, and pass heredoc/stdin bodies through the tool `stdin` field for `batch`, `eval --stdin`, or `auth save --password-stdin`.
 
+Session note: `skills list`, `skills get …`, and `skills path …` are **stateless** in this wrapper. Even with default `sessionMode: "auto"`, the extension does not prepend the implicit managed `--session` for those commands, so reading bundled skills does not attach to or rotate the active browser session (same intent as plain-text `--help` / `--version` inspection). Other `skills` subcommands follow normal session rules until explicitly allowlisted in `extensions/agent-browser/lib/runtime.ts` alongside regression coverage in `test/agent-browser.runtime.test.ts`.
+
 | Command | Purpose |
 | --- | --- |
 | `skills list` | List available CLI-bundled skills. |
