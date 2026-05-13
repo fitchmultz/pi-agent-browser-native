@@ -53,6 +53,11 @@ Release-oriented notes also live in [`docs/RELEASE.md`](docs/RELEASE.md) under p
 - **When changing next-action recommendations:** update `buildAgentBrowserNextActions` and its unit coverage in `test/agent-browser.results.test.ts`, keep presentation and extension-validation expectations in sync, and align the human contract in `docs/TOOL_CONTRACT.md`.
 - **When changing page-change summaries:** extend `AgentBrowserPageChangeSummary` and `buildPageChangeSummary` together, adjust `PAGE_CHANGE_SUMMARY_COMMANDS` only when the upstream command surface changes, update `test/agent-browser.presentation.test.ts` and any `pageChangeSummary` assertions in `test/agent-browser.extension-validation.test.ts`, and align `docs/TOOL_CONTRACT.md`.
 
+### `semanticAction` shorthand (top-level tool input)
+
+- **Compilation and validation:** `compileAgentBrowserSemanticAction` in `extensions/agent-browser/index.ts` turns the optional `semanticAction` object into upstream `find` argv; it is mutually exclusive with `args` on the same call. Changing allowed actions, locators, or argv shape requires updating the schema beside that helper, the human contract in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#semanticaction), examples in [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md), and playbook strings in `extensions/agent-browser/lib/playbook.ts` (then `npm run docs -- playbook write`).
+- **Regression tests:** `test/agent-browser.extension-validation.test.ts` asserts compiled argv and pre-spawn validation errors for `semanticAction`.
+
 ### Agent browser efficiency benchmark
 
 `scripts/agent-browser-efficiency-benchmark.mjs` is a **deterministic accounting benchmark**: it does not shell out to `agent-browser`, does not launch a browser, and does not read or write Pi sessions. It models representative `agent_browser` call shapes (including optional `stdin` for `batch`) and synthetic model-visible strings to produce comparable totals: scenario success rate, total tool calls, UTF-8 byte volume of model-visible output, stale-ref failure and recovery counts, artifact success count, distinct failure-category coverage, and summed elapsed-time estimates.
