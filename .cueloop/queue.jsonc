@@ -194,65 +194,6 @@
       "custom_fields": {}
     },
     {
-      "id": "RQ-0051",
-      "status": "doing",
-      "title": "Support auth, state, cookies, storage, dialogs, frames, and confirmation workflows",
-      "description": "Close gaps for current stateful/browser-context command families that are easy to misuse through a native wrapper. Cover `auth save/login/list/show/delete`, `state save/load`, `cookies get/set/clear`, `storage local|session`, `dialog accept/dismiss/status`, `frame ...`, and upstream confirmation `confirm`/`deny`. Acceptance criteria: docs and prompt guidance explain safe native usage; runtime tests cover stdin/password handling and secret redaction; presentation tests summarize auth/state/storage/cookie/dialog/frame results without leaking credentials; real-upstream or fake-upstream contracts prove representative flows work; `npm test` passes.",
-      "priority": "high",
-      "tags": [
-        "auth",
-        "state",
-        "storage",
-        "security",
-        "presentation"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/runtime.ts",
-        "extensions/agent-browser/lib/process.ts",
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "extensions/agent-browser/lib/results/confirmation.ts",
-        "docs/COMMAND_REFERENCE.md",
-        "docs/TOOL_CONTRACT.md",
-        "test/agent-browser.presentation.test.ts",
-        "test/agent-browser.process.test.ts",
-        "test/agent-browser.real-upstream-contract.test.ts",
-        "npm test"
-      ],
-      "evidence": [
-        "workflow: agent_browser { args: [\"--help\"] } :: root help lists Storage, Auth Vault, Confirmation, and state-related auth options/env.",
-        "workflow: agent_browser { args: [\"skills\", \"get\", \"core\", \"--full\"] } :: core skill documents auth vault, state save/load, frames, and dialogs even though not all are in root help.",
-        "path: extensions/agent-browser/lib/results/presentation.ts:176-199,389-398 :: current presentation has partial auth/dashboard handling but no complete state/storage/dialog/frame contract.",
-        "path: extensions/agent-browser/lib/process.ts:78-85 :: AGENT_BROWSER_* env passthrough exists and needs tests for current auth/session/env variables."
-      ],
-      "plan": [
-        "Define native-tool-safe examples for auth/state/cookie/storage/dialog/frame workflows, including when stdin is allowed and how secrets are redacted.",
-        "Add presentation summaries for state/storage/cookies/dialog/frame results and tighten auth profile redaction.",
-        "Add fake-binary tests for secret-bearing flows and real-upstream fixture tests for safe non-secret representative cases.",
-        "Confirm confirmation-required results still surface approve/deny next steps through current upstream shapes."
-      ],
-      "notes": [],
-      "request": "Add support for everything in the current version of agent-browser.",
-      "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T21:05:00.344569000Z",
-      "started_at": "2026-05-13T21:05:00.344569000Z",
-      "depends_on": [
-        "RQ-0048",
-        "RQ-0049",
-        "RQ-0058",
-        "RQ-0059"
-      ],
-      "blocks": [
-        "RQ-0054",
-        "RQ-0056"
-      ],
-      "relates_to": [
-        "RQ-0004"
-      ],
-      "custom_fields": {
-        "source": "manual-upstream-refresh"
-      }
-    },
-    {
       "id": "RQ-0052",
       "status": "todo",
       "title": "Support network, debug, diff, streaming, dashboard, and chat command families",
