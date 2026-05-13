@@ -1979,6 +1979,50 @@
         "source": "manual-upstream-refresh",
         "target_upstream_version": "0.27.0"
       }
+    },
+    {
+      "id": "RQ-0057",
+      "status": "done",
+      "title": "Measure agent-browser workflow efficiency before new agent-facing abstractions",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "benchmark",
+        "agent-efficiency",
+        "regression"
+      ],
+      "scope": [
+        "scripts",
+        "test",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "package.json"
+      ],
+      "evidence": [
+        "User request: add inferred tasks for improving common browser work with fewer calls, fewer stale-ref failures, better artifact handling, and exact recovery guidance.",
+        "Current queue RQ-0045 through RQ-0056 already targets current upstream surface coverage; this benchmark should become the proving ground for later UX changes rather than inventing unmeasured abstractions."
+      ],
+      "plan": [
+        "Define a small deterministic benchmark suite for representative browser workflows: open plus snapshot, click plus verify, fill plus assert, stale-ref failure/recovery, artifact/download handling, and batch flow.",
+        "Record metrics that matter to agents: task success, native tool calls, model-visible output size, stale-ref failures, recovery success, artifact success, elapsed runtime, and failure category coverage.",
+        "Make the benchmark runnable locally without mutating the operator's normal browser/profile state, using fake upstream where determinism is required and real upstream only for opt-in smoke coverage.",
+        "Document how future tasks must use this benchmark to prove call-count or success-rate improvements."
+      ],
+      "notes": [
+        "Started PR 2 after PR #7 merged; corrected loop to fetch and fast-forward after Cursor automation before merge.",
+        "Merged PR #8 after reviewer pass, Cursor automation follow-up sync, local validation, and post-automation fast-forward."
+      ],
+      "request": "Infer and queue the first milestone for agent-browser improvements from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T15:15:03.892874000Z",
+      "completed_at": "2026-05-13T15:15:03.892874000Z",
+      "started_at": "2026-05-13T14:37:47.558658000Z",
+      "depends_on": [
+        "RQ-0045"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
     }
   ]
 }
