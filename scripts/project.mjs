@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Provide the small public npm-script facade for maintainer docs and verification workflows.
- * Responsibilities: Dispatch consolidated `npm run docs -- ...` and `npm run verify -- ...` commands to the underlying focused scripts, preserve exit codes, and print discoverable help.
+ * Responsibilities: Dispatch consolidated `npm run docs -- ...` and `npm run verify -- ...` commands to the underlying focused scripts, preserve exit codes, and print discoverable help. Default/release/docs verify step wiring is regression-locked in `test/project-verify.test.ts`.
  * Scope: Local maintainer orchestration only; individual verifier scripts continue to own their domain-specific checks.
  * Usage: Called from package.json scripts (`npm run docs`, `npm run verify -- package-pi`) or directly as `node scripts/project.mjs <docs|verify> ...`.
  * Invariants/Assumptions: `npm install` has populated local `node_modules/.bin` tools, and Pi/tmux are available in the maintainer environment only for lifecycle/package smoke modes.
