@@ -33,6 +33,7 @@ The extension should:
 - invoke it directly, not through a shell
 - inject `--json`
 - support optional stdin only for `eval --stdin`, `batch`, and `auth save --password-stdin`, rejecting other command/stdin combinations before launch
+- accept an optional native `semanticAction` object as a mutually exclusive alternative to `args` on a single tool call, compile it into upstream `find` argv, and echo the compiled shape in `details.compiledSemanticAction` for observability (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction))
 
 ### Agent-first UX
 
@@ -130,7 +131,7 @@ This keeps the product centered on native tool usage instead of auxiliary skill 
 
 ### `pi-agent-browser-native` owns
 
-- tool registration and schema
+- tool registration and schema (including the optional `semanticAction` → `find` compilation path)
 - subprocess execution and JSON parsing
 - clear missing-binary errors
 - compact result summaries

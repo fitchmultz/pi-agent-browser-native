@@ -17,7 +17,10 @@ The agent gets a native tool, not a bash workaround:
 ```json
 { "args": ["open", "https://react.dev"] }
 { "args": ["snapshot", "-i"] }
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Learn React" } }
 ```
+
+The last form compiles to upstream `find` argv; see [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#semanticaction) for the full field rules and for using raw `args` when you need anything outside that shorthand.
 
 The result is optimized for agent work:
 
@@ -53,7 +56,7 @@ The result is optimized for agent work:
 
 | Pain | Native wrapper capability | Proof surface |
 |---|---|---|
-| Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, controlled `stdin`, and `sessionMode` fields | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
+| Agents build fragile shell commands | Exposes `agent_browser` with exact `args` or an optional `semanticAction` shorthand for common `find` flows, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
 | Page snapshots are too large | Shows compact, main-content-first summaries and stores full raw output in spill files when needed | `test/agent-browser.presentation.test.ts` |
 | Screenshots/downloads get lost in text | Normalizes artifact paths and reports existence, size, cwd, session, and repair status | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#download-screenshot-and-pdf-files) |
 | Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
@@ -167,6 +170,21 @@ Download a file from a known link or control:
 ```json
 { "args": ["download", "@e5", "/tmp/report.pdf"] }
 ```
+
+### Locator shorthand (`semanticAction`)
+
+For supported upstream `find` flows you can omit hand-built `args` and pass a top-level `semanticAction` object instead. The wrapper compiles it to the same `find` argv upstream already understands; compiled argv is echoed as `details.compiledSemanticAction` when the unified result includes that field. Full field rules live in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction).
+
+```json
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Submit" } }
+{ "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
+```
+
+Typical pitfalls:
+
+- Supply **exactly one** of `args` or `semanticAction` per call (not both, not neither).
+- `semanticAction` is **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
+- Commands or locators outside the supported shorthand still require explicit `args`.
 
 For asynchronous exports, click first and then wait for the download:
 

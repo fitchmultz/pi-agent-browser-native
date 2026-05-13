@@ -771,6 +771,110 @@ else process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 	}
 });
 
+test("agentBrowserExtension compiles semantic actions to upstream find commands", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Clicked", url: "https://example.test/" } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const clickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "role", value: "button", name: "Export" },
+			});
+			assert.equal(clickResult.isError, false);
+			assert.deepEqual(clickResult.details?.compiledSemanticAction, {
+				action: "click",
+				locator: "role",
+				args: ["find", "role", "button", "click", "--name", "Export"],
+			});
+
+			const fillResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "fill", locator: "label", value: "Email", text: "user@example.test" },
+			});
+			assert.equal(fillResult.isError, false);
+			assert.deepEqual(fillResult.details?.compiledSemanticAction, {
+				action: "fill",
+				locator: "label",
+				args: ["find", "label", "Email", "fill", "user@example.test"],
+			});
+
+			const textClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "text", value: "Close" },
+			});
+			assert.equal(textClickResult.isError, false);
+			assert.deepEqual(textClickResult.details?.compiledSemanticAction, {
+				action: "click",
+				locator: "text",
+				args: ["find", "text", "Close", "click"],
+			});
+
+			const invocations = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("find"));
+			assert.deepEqual(invocations[0]?.args.slice(-6), ["find", "role", "button", "click", "--name", "Export"]);
+			assert.deepEqual(invocations[1]?.args.slice(-5), ["find", "label", "Email", "fill", "user@example.test"]);
+			assert.deepEqual(invocations[2]?.args.slice(-4), ["find", "text", "Close", "click"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rejects ambiguous or incomplete semantic actions before spawning agent-browser", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-invalid-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const ambiguous = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["click", "@e1"],
+				semanticAction: { action: "click", locator: "text", value: "Export" },
+			});
+			assert.equal(ambiguous.isError, true);
+			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args or semanticAction/);
+			assert.equal(ambiguous.details?.resultCategory, "failure");
+			assert.equal(ambiguous.details?.failureCategory, "validation-error");
+
+			const missingText = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "fill", locator: "label", value: "Email" },
+			});
+			assert.equal(missingText.isError, true);
+			assert.match((missingText.content[0] as { text: string }).text, /semanticAction\.text is required for fill/);
+			assert.equal(missingText.details?.failureCategory, "validation-error");
+
+			const unsupportedRoleName = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "text", value: "Export", name: "Export" },
+			});
+			assert.equal(unsupportedRoleName.isError, true);
+			assert.match((unsupportedRoleName.content[0] as { text: string }).text, /semanticAction\.name is only supported/);
+			assert.equal(unsupportedRoleName.details?.failureCategory, "validation-error");
+
+			const invocations = await readInvocationLog(logPath).catch(() => []);
+			assert.deepEqual(invocations.filter((entry) => entry.args.includes("find")), []);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects dangling value-taking flags before spawning agent-browser", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");

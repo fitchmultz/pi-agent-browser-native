@@ -78,11 +78,48 @@ const DEFAULT_SESSION_MODE = "auto" as const;
 const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
 const PACKAGE_NAME = "pi-agent-browser-native";
 
+const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select", "uncheck"] as const;
+const AGENT_BROWSER_SEMANTIC_LOCATORS = ["alt", "label", "placeholder", "role", "testid", "text", "title"] as const;
+
+type AgentBrowserSemanticActionName = (typeof AGENT_BROWSER_SEMANTIC_ACTIONS)[number];
+type AgentBrowserSemanticLocator = (typeof AGENT_BROWSER_SEMANTIC_LOCATORS)[number];
+
+interface AgentBrowserSemanticActionInput {
+	action: AgentBrowserSemanticActionName;
+	locator: AgentBrowserSemanticLocator;
+	value: string;
+	text?: string;
+	role?: string;
+	name?: string;
+}
+
+interface CompiledAgentBrowserSemanticAction {
+	action: AgentBrowserSemanticActionName;
+	locator: AgentBrowserSemanticLocator;
+	args: string[];
+}
+
 const AGENT_BROWSER_PARAMS = Type.Object({
-	args: Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
-		description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators.",
-		minItems: 1,
-	}),
+	args: Type.Optional(
+		Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
+			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction is provided.",
+			minItems: 1,
+		}),
+	),
+	semanticAction: Type.Optional(
+		Type.Object({
+			action: StringEnum(AGENT_BROWSER_SEMANTIC_ACTIONS, {
+				description: "Intent action to compile to an existing agent-browser find command.",
+			}),
+			locator: StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, {
+				description: "Upstream find locator family to use.",
+			}),
+			value: Type.String({ description: "Locator value, such as visible text, label text, placeholder text, test id, title, alt text, or role." }),
+			text: Type.Optional(Type.String({ description: "Text/value argument for fill or select actions." })),
+			role: Type.Optional(Type.String({ description: "Role locator value; when set it must match value for locator=role." })),
+			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
+		}),
+	),
 	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, and auth save --password-stdin." })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
@@ -105,6 +142,50 @@ function buildMissingBinaryMessage(): string {
 function buildInvocationPreview(effectiveArgs: string[]): string {
 	const preview = effectiveArgs.join(" ");
 	return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
+}
+
+function compileAgentBrowserSemanticAction(input: unknown): { compiled?: CompiledAgentBrowserSemanticAction; error?: string } {
+	if (!isRecord(input)) {
+		return { error: "semanticAction must be an object." };
+	}
+	const action = input.action;
+	const locator = input.locator;
+	const value = input.value;
+	const text = input.text;
+	const role = input.role;
+	const name = input.name;
+	if (typeof action !== "string" || !AGENT_BROWSER_SEMANTIC_ACTIONS.includes(action as AgentBrowserSemanticActionName)) {
+		return { error: `semanticAction.action must be one of: ${AGENT_BROWSER_SEMANTIC_ACTIONS.join(", ")}.` };
+	}
+	if (typeof locator !== "string" || !AGENT_BROWSER_SEMANTIC_LOCATORS.includes(locator as AgentBrowserSemanticLocator)) {
+		return { error: `semanticAction.locator must be one of: ${AGENT_BROWSER_SEMANTIC_LOCATORS.join(", ")}.` };
+	}
+	if (typeof value !== "string" || value.trim().length === 0) {
+		return { error: "semanticAction.value must be a non-empty string." };
+	}
+	if (text !== undefined && typeof text !== "string") {
+		return { error: "semanticAction.text must be a string when provided." };
+	}
+	if ((action === "fill" || action === "select") && (typeof text !== "string" || text.length === 0)) {
+		return { error: `semanticAction.text is required for ${action}.` };
+	}
+	if (action !== "fill" && action !== "select" && text !== undefined) {
+		return { error: `semanticAction.text is only supported for fill and select actions.` };
+	}
+	if (role !== undefined && (locator !== "role" || role !== value)) {
+		return { error: "semanticAction.role is only supported for locator=role and must match value." };
+	}
+	if (name !== undefined && (locator !== "role" || typeof name !== "string" || name.length === 0)) {
+		return { error: "semanticAction.name is only supported as a non-empty string for locator=role." };
+	}
+	const args = ["find", locator, value, action];
+	if (action === "fill" || action === "select") {
+		args.push(text as string);
+	}
+	if (locator === "role" && typeof name === "string") {
+		args.push("--name", name);
+	}
+	return { compiled: { action: action as AgentBrowserSemanticActionName, locator: locator as AgentBrowserSemanticLocator, args } };
 }
 
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 10;
@@ -180,7 +261,10 @@ function formatVisualTruncationNotice(remainingLines: number, totalLines: number
 
 function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
 	const input = isRecord(args) ? args : {};
-	const rawArgs = Array.isArray(input.args) ? input.args.filter((value): value is string => typeof value === "string") : [];
+	const semanticAction = compileAgentBrowserSemanticAction(input.semanticAction);
+	const rawArgs = Array.isArray(input.args)
+		? input.args.filter((value): value is string => typeof value === "string")
+		: (semanticAction.compiled?.args ?? []);
 	const redactedArgs = redactInvocationArgs(rawArgs);
 	const invocation = sanitizeDisplayText(redactedArgs.join(" ")).replace(/\s+/g, " ").trim();
 	const invocationPreview =
@@ -1725,21 +1809,33 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			return component;
 		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const redactedArgs = redactInvocationArgs(params.args);
-			const validationError = validateToolArgs(params.args) ?? getBatchAnnotateValidationError(params.args, params.stdin);
+			const semanticActionResult = params.semanticAction === undefined ? {} : compileAgentBrowserSemanticAction(params.semanticAction);
+			const hasExplicitArgs = Array.isArray(params.args);
+			const semanticActionError = semanticActionResult.error;
+			const inputModeError = hasExplicitArgs === Boolean(semanticActionResult.compiled)
+				? "Provide exactly one of args or semanticAction."
+				: undefined;
+			const compiledSemanticAction = semanticActionResult.compiled;
+			const toolArgs = compiledSemanticAction?.args ?? params.args ?? [];
+			const redactedArgs = redactInvocationArgs(toolArgs);
+			const validationError = semanticActionError ?? inputModeError ?? validateToolArgs(toolArgs) ?? getBatchAnnotateValidationError(toolArgs, params.stdin);
+			const redactedCompiledSemanticAction = compiledSemanticAction
+				? { ...compiledSemanticAction, args: redactInvocationArgs(compiledSemanticAction.args) }
+				: undefined;
 			if (validationError) {
 				return {
 					content: [{ type: "text", text: validationError }],
 					details: {
 						args: redactedArgs,
+						compiledSemanticAction: redactedCompiledSemanticAction,
 						...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, errorText: validationError, succeeded: false, validationError }),
 						validationError,
 					},
 					isError: true,
 				};
 			}
-			const preparedArgs = await prepareAgentBrowserArgs(params.args, params.stdin, ctx.cwd);
-			const userRequestedJson = params.args.includes("--json");
+			const preparedArgs = await prepareAgentBrowserArgs(toolArgs, params.stdin, ctx.cwd);
+			const userRequestedJson = toolArgs.includes("--json");
 
 			const tabTargetUpdateOrder = ++sessionTabTargetUpdateOrder;
 			const runTool = async (): Promise<AgentBrowserToolResult> => {
@@ -2040,7 +2136,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (
 						succeeded &&
 						executionPlan.sessionName &&
-						hasLaunchScopedTabCorrectionFlag(params.args) &&
+						hasLaunchScopedTabCorrectionFlag(toolArgs) &&
 						(executionPlan.commandInfo.command === "goto" ||
 							executionPlan.commandInfo.command === "navigate" ||
 							executionPlan.commandInfo.command === "open")
@@ -2288,6 +2384,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						batchFailure: presentation.batchFailure,
 						batchSteps: presentation.batchSteps,
 						command: executionPlan.commandInfo.command,
+						compiledSemanticAction: redactedCompiledSemanticAction,
 						compatibilityWorkaround,
 						subcommand: executionPlan.commandInfo.subcommand,
 						data: presentation.data,
@@ -2334,7 +2431,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				}
 			};
 
-			return extractExplicitSessionName(params.args)
+			return extractExplicitSessionName(toolArgs)
 				? runTool()
 				: managedSessionExecutionQueue.run(runTool);
 		},

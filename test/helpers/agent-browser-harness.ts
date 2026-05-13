@@ -157,7 +157,19 @@ export function createToolBranchEntry(options: { details: Record<string, unknown
 	};
 }
 
-export type AgentBrowserToolParams = { args: string[]; sessionMode?: "auto" | "fresh"; stdin?: string };
+export type AgentBrowserToolParams = {
+	args?: string[];
+	semanticAction?: {
+		action: "check" | "click" | "fill" | "select" | "uncheck";
+		locator: "alt" | "label" | "placeholder" | "role" | "testid" | "text" | "title";
+		value: string;
+		text?: string;
+		role?: string;
+		name?: string;
+	};
+	sessionMode?: "auto" | "fresh";
+	stdin?: string;
+};
 
 export interface AgentBrowserToolRenderContext {
 	args: AgentBrowserToolParams;
@@ -261,7 +273,7 @@ export async function runExtensionEventResults<T>(
 export async function executeRegisteredTool(
 	tool: NonNullable<ReturnType<typeof createExtensionHarness>["tool"]>,
 	ctx: ReturnType<typeof createExtensionHarness>["ctx"],
-	params: { args: string[]; sessionMode?: "auto" | "fresh"; stdin?: string },
+	params: AgentBrowserToolParams,
 ) {
 	return (await tool.execute("test-tool-call", params, new AbortController().signal, undefined, ctx)) as {
 		content: Array<{ type: string; text?: string }>;

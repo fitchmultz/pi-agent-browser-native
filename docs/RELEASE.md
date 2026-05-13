@@ -108,7 +108,7 @@ Manual validation remains useful for release confidence and installed-package ch
 1. Configure exactly one active source for this extension in Pi settings: this checkout path before publishing, or the installed package after publishing.
 2. Launch plain `pi` so extension discovery is active.
 3. Validate managed-session continuity with `/reload` and a full restart + `/resume`.
-4. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, and prompt guidance) if the upstream `agent-browser` version/help surface changed, then run `npm run verify -- command-reference`.
+4. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, `docs/TOOL_CONTRACT.md`, including the [`semanticAction`](TOOL_CONTRACT.md#semanticaction) rules when that shorthand or upstream `find` behavior changes) and regenerated prompt fragments from `extensions/agent-browser/lib/playbook.ts` via `npm run docs -- playbook check` or `npm run docs`. When the upstream `agent-browser` version or help surface changed, run `npm run verify -- command-reference`.
 
 ### Real upstream contract validation
 

@@ -25,17 +25,22 @@ Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before an
 
 ## Core mental model
 
-Tool parameters:
+Tool parameters (use either `args` **or** `semanticAction`, not both):
 
 ```json
-{
-  "args": ["open", "https://example.com"],
-  "stdin": "optional raw stdin content",
-  "sessionMode": "auto"
-}
+{ "args": ["open", "https://example.com"], "sessionMode": "auto" }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name.
+```json
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Submit" }, "sessionMode": "auto" }
+```
+
+```json
+{ "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
+```
+
+- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction` instead (mutually exclusive).
+- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args` on the same call.
 - `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
@@ -98,9 +103,14 @@ Examples:
 { "args": ["find", "role", "button", "click", "--name", "Close"] }
 { "args": ["find", "text", "Close", "click"] }
 { "args": ["find", "label", "Email", "fill", "user@example.com"] }
+{ "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Close" } }
+{ "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
+{ "semanticAction": { "action": "uncheck", "locator": "label", "value": "Remember me" } }
 { "args": ["scrollintoview", "@e12"] }
 { "args": ["snapshot", "-i"] }
 ```
+
+The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, not a nested shape inside `batch` stdin arrays.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 
