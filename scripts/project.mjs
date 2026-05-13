@@ -10,6 +10,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 const nodeCommand = process.execPath;
 const binSuffix = process.platform === "win32" ? ".cmd" : "";
@@ -139,7 +140,7 @@ function localToolStep(command, args, env) {
 	return { command: join(process.cwd(), "node_modules", ".bin", `${command}${binSuffix}`), args, env };
 }
 
-function parseDocsArgs(argv) {
+export function parseDocsArgs(argv) {
 	if (argv.includes("-h") || argv.includes("--help")) return { showHelp: true };
 
 	let target = "all";
@@ -159,7 +160,7 @@ function parseDocsArgs(argv) {
 	return { mode, showHelp: false, target };
 }
 
-function docsSteps(options) {
+export function docsSteps(options) {
 	const modeFlag = `--${options.mode}`;
 	const steps = [];
 	if (options.target === "all" || options.target === "playbook") {
@@ -171,7 +172,7 @@ function docsSteps(options) {
 	return steps;
 }
 
-function parseVerifyArgs(argv) {
+export function parseVerifyArgs(argv) {
 	if (argv.includes("-h") || argv.includes("--help")) return { mode: "default", passthrough: [], showHelp: true };
 	const [rawMode, ...rest] = argv;
 	const mode = rawMode ?? "default";
@@ -225,7 +226,7 @@ function commandReferenceSteps() {
 	];
 }
 
-function verifySteps(options) {
+export function verifySteps(options) {
 	validatePassthrough(options.mode, options.passthrough);
 	switch (options.mode) {
 		case "default":
@@ -260,7 +261,7 @@ function verifySteps(options) {
 	}
 }
 
-async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
 	const [command, ...rest] = argv;
 	if (!command || command === "-h" || command === "--help") {
 		printTopLevelHelp();
@@ -287,13 +288,19 @@ async function main(argv = process.argv.slice(2)) {
 	throw new UsageError(`Unknown project command: ${command}`);
 }
 
-main().then(
-	(exitCode) => {
-		process.exitCode = exitCode;
-	},
-	(error) => {
-		const message = error instanceof Error ? error.message : String(error);
-		console.error(message);
-		process.exitCode = error instanceof UsageError ? 2 : 1;
-	},
-);
+function isDirectRun(metaUrl, argv = process.argv) {
+	return Boolean(argv[1]) && metaUrl === pathToFileURL(argv[1]).href;
+}
+
+if (isDirectRun(import.meta.url)) {
+	main().then(
+		(exitCode) => {
+			process.exitCode = exitCode;
+		},
+		(error) => {
+			const message = error instanceof Error ? error.message : String(error);
+			console.error(message);
+			process.exitCode = error instanceof UsageError ? 2 : 1;
+		},
+	);
+}

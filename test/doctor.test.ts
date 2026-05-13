@@ -69,6 +69,10 @@ test("doctor reports version drift from the canonical baseline", async () => {
 	assert.match(text, /found 0\.25\.0/);
 	assert.match(text, /backwards-compatibility shims/);
 	assert.match(text, /scripts\/agent-browser-capability-baseline\.mjs/);
+	assert.match(text, /npm run docs -- command-reference write/);
+	assert.match(text, /npm run verify -- command-reference/);
+	assert.match(text, /npm run verify -- real-upstream/);
+	assert.match(text, /test\/fixtures\/agent-browser-real-output-shapes\.json/);
 });
 
 test("doctor reports duplicate package and checkout sources with remediation", async () => {
