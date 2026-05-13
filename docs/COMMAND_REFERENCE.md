@@ -256,6 +256,7 @@ Operational notes:
 - `cookies get` can expose real authenticated-profile cookies; prefer task-specific page actions and only inspect cookies when the user needs cookie data.
 - `storage local|session` summaries redact sensitive keys and values; still avoid broad storage dumps unless necessary.
 - `dialog accept/dismiss/status`, `frame <selector|main>`, and guarded-action `confirm <id>` / `deny <id>` pass through the native tool. Prefer `details.nextActions` for exact confirmation recovery payloads.
+- `batch` mirrors the same redaction on every step: top-level `details.data` is a compact `{ success, command, result?, error? }[]` matrix (argv-redacted `command`, stateful `result`, scrubbed `error` text). Use `details.batchSteps[]` when you need per-step artifacts, categories, spill paths, or full structured errors beyond the roll-up.
 
 ## Full supported surface
 
