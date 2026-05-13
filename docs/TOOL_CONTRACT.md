@@ -54,18 +54,14 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 
 ## Parameters
 
+Illustrative shapes (each real call uses **either** `args` **or** `semanticAction`, not both):
+
 ```json
-{
-  "args": ["open", "https://example.com"],
-  "semanticAction": {
-    "action": "click",
-    "locator": "role",
-    "value": "button",
-    "name": "Export"
-  },
-  "stdin": "optional raw stdin content",
-  "sessionMode": "auto"
-}
+{ "args": ["open", "https://example.com"], "stdin": "optional raw stdin content", "sessionMode": "auto" }
+```
+
+```json
+{ "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Export" }, "sessionMode": "auto" }
 ```
 
 ### `args`
@@ -88,13 +84,25 @@ Examples:
 ### `semanticAction`
 
 - type: object
-- optional; mutually exclusive with `args`
-- thin intent schema compiled by this wrapper into existing upstream `find <locator> <value> <action> [text]` commands
+- optional; mutually exclusive with `args` (omit `args` entirely when using this field)
+- top-level tool input only: `batch` stdin remains upstream argv arrays; express find steps inside batch as string arrays such as `["find","role","button","click","--name","Export"]`, not nested `semanticAction` objects
+- thin intent schema compiled by this wrapper into existing upstream `find` commands; behavior and locator semantics stay upstream-owned
 - supported actions: `click`, `fill`, `select`, `check`, `uncheck`
 - supported locators: `role`, `text`, `label`, `placeholder`, `alt`, `title`, `testid`
-- `fill` and `select` require `text`
-- `role` actions can include `name`, compiled to `--name <name>`
-- successful and validation-failure results include `details.compiledSemanticAction.args` when compilation happened
+- `value` is the locator argument (for example ARIA role token `"button"`, label text, or visible substring), must be a non-empty string after trim
+- `fill` and `select` require non-empty `text` (compiled as the trailing value argument to `find`)
+- optional `name` is only valid with `locator: "role"` and compiles to `--name <name>` after the action (and after `text` when present)
+- optional `role` is accepted only when `locator` is `role` and must equal `value` if set (redundant with `value`; prefer `value` alone)
+
+Compilation (then `--json` and session handling apply like any other call):
+
+| Fields | Compiled `args` (conceptually) |
+| --- | --- |
+| `click` + non-role locator | `["find", <locator>, <value>, "click"]` |
+| `click` / `check` / `uncheck` + `role` + optional `name` | `["find","role",<value>,<action>]` plus `["--name",<name>]` when `name` is set |
+| `fill` or `select` | `["find",<locator>,<value>,<action>,<text>]` plus optional `["--name",<name>]` for `role` |
+
+On both success and pre-launch validation failure, when compilation ran, `details.compiledSemanticAction` echoes `{ action, locator, args }` with `args` redacted the same way as other invocation details.
 
 Examples:
 
@@ -254,6 +262,7 @@ Implementation and precedence:
 - The main tool implementation merges these fields into Pi-facing `details` from `extensions/agent-browser/index.ts` and from `extensions/agent-browser/lib/results/presentation.ts` for presentation-time failures.
 
 Additional structured fields can appear when relevant:
+- `compiledSemanticAction` when the call used `semanticAction`: `{ action, locator, args }` with the same redaction rules as `args` / `effectiveArgs`; omitted when the tool used plain `args` only
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `pageChangeSummary` for compact mutation/artifact/navigation summaries on commands that can change browser state
