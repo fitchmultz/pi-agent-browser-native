@@ -2,46 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0061",
-      "status": "doing",
-      "title": "Add a thin semantic action schema that compiles to existing locator commands",
-      "priority": "high",
-      "tags": [
-        "agent-browser",
-        "semantic-actions",
-        "find",
-        "thin-wrapper"
-      ],
-      "scope": [
-        "extensions/agent-browser",
-        "docs/COMMAND_REFERENCE.md",
-        "docs/TOOL_CONTRACT.md",
-        "test"
-      ],
-      "evidence": [
-        "Agents are good at describing intent such as clicking a button named Export or filling a field labeled Email, but brittle CLI token order causes avoidable failures.",
-        "The repository already exposes native args/stdin and upstream `find` locators; this task should compile a small intent schema to those primitives rather than build a complex resolver."
-      ],
-      "plan": [
-        "Design a small explicit schema for click/fill/select/check actions using locator families already supported upstream: role, text, label, placeholder, alt, title, and testid.",
-        "Compile schema inputs to current `find ... <action>` or equivalent agent-browser commands, returning the exact compiled command in details for debuggability.",
-        "Reject ambiguous or unsupported intent with stable categories and exact nextActions rather than guessing.",
-        "Add examples and tests for button-by-name, field-by-label, visible-text click, and unsupported/ambiguous targets."
-      ],
-      "notes": [],
-      "request": "Infer and queue simple target-by-meaning support from the user's ABN task list.",
-      "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T16:58:27.617738000Z",
-      "started_at": "2026-05-13T16:58:27.617738000Z",
-      "depends_on": [
-        "RQ-0058",
-        "RQ-0059"
-      ],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {}
-    },
-    {
       "id": "RQ-0062",
       "status": "todo",
       "title": "Recover from stale refs only when retry safety is provable",
