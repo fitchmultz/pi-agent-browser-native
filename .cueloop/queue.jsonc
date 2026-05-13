@@ -194,56 +194,6 @@
       "custom_fields": {}
     },
     {
-      "id": "RQ-0050",
-      "status": "doing",
-      "title": "Add real-upstream coverage for core page interaction commands",
-      "description": "Build a deterministic fixture-backed real-upstream contract matrix for the normal browser workflow commands in the current version. Cover navigation (`open`, `back`, `forward`, `reload`, `connect` where safe), interaction (`click`, `dblclick`, `type`, `fill`, `press`, `keyboard`, `hover`, `focus`, `check`, `uncheck`, `select`, `drag`, `upload`, `scroll`, `scrollintoview`, `mouse`), extraction (`get` variants, `is` variants, `find` locators), snapshots, screenshots, PDFs, waits, and tabs. Acceptance criteria: the opt-in real-upstream suite exercises representative commands against localhost fixtures without relying on external sites; fake tests cover the rest of the matrix; cleanup closes sessions and deletes temp files; `npm run verify -- real-upstream` passes when the baseline version is installed.",
-      "priority": "high",
-      "tags": [
-        "tests",
-        "real-upstream",
-        "core-commands",
-        "browser"
-      ],
-      "scope": [
-        "test/agent-browser.real-upstream-contract.test.ts",
-        "test/helpers/agent-browser-harness.ts",
-        "test/fixtures/agent-browser-real-output-shapes.json",
-        "test/agent-browser.extension-validation.test.ts",
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "npm run verify -- real-upstream",
-        "npm test"
-      ],
-      "evidence": [
-        "path: test/agent-browser.real-upstream-contract.test.ts:166-257 :: current real-upstream suite covers version, open, eval --stdin, snapshot -i, batch, wait --download, and implicit reuse only.",
-        "workflow: agent_browser { args: [\"--help\"] } :: current root help lists many unexercised core commands such as keyboard, hover, focus, check/uncheck, select, drag, upload, scroll, scrollintoview, `is`, `find`, and `mouse`.",
-        "path: AGENTS.md:56-71 :: project validation focus expects native invocation, open, snapshot, click, batch, eval, screenshot, session reuse, explicit session passthrough, reload, restart, and resume; the expanded current surface needs similar coverage."
-      ],
-      "plan": [
-        "Expand the localhost fixture app with stable controls for forms, checkbox/select/upload, drag targets, scroll targets, modal/dialog behavior, and downloadable/generated files.",
-        "Add table-driven real-upstream scenarios for representative current core commands while keeping runtime bounded and cleanup strict.",
-        "Use fake-upstream tests for commands that are redundant, environment-sensitive, or unsafe to run in the normal suite.",
-        "Refresh output-shape fixtures and docs when real upstream returns new structures."
-      ],
-      "notes": [],
-      "request": "Add support for everything in the current version of agent-browser.",
-      "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T20:19:46.061418000Z",
-      "started_at": "2026-05-13T20:19:46.061418000Z",
-      "depends_on": [
-        "RQ-0048",
-        "RQ-0049"
-      ],
-      "blocks": [
-        "RQ-0054",
-        "RQ-0056"
-      ],
-      "relates_to": [],
-      "custom_fields": {
-        "source": "manual-upstream-refresh"
-      }
-    },
-    {
       "id": "RQ-0051",
       "status": "todo",
       "title": "Support auth, state, cookies, storage, dialogs, frames, and confirmation workflows",
