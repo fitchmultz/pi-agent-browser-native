@@ -21,7 +21,7 @@ export interface AgentBrowserBatchResult {
 
 export type AgentBrowserResultCategory = "failure" | "success";
 
-export type AgentBrowserSuccessCategory = "artifact-saved" | "completed" | "inspection";
+export type AgentBrowserSuccessCategory = "artifact-saved" | "artifact-unverified" | "completed" | "inspection";
 
 export type AgentBrowserFailureCategory =
 	| "aborted"
@@ -87,6 +87,32 @@ export interface FileArtifactMetadata {
 	status?: FileArtifactStatus;
 	subcommand?: string;
 	tempPath?: string;
+}
+
+export type ArtifactVerificationState = "missing" | "pending" | "unverified" | "verified";
+
+export interface ArtifactVerificationEntry {
+	absolutePath?: string;
+	exists?: boolean;
+	kind: FileArtifactKind | "spill";
+	limitation?: string;
+	mediaType?: string;
+	path: string;
+	requestedPath?: string;
+	retentionState?: ArtifactRetentionState;
+	sizeBytes?: number;
+	state: ArtifactVerificationState;
+	status?: FileArtifactStatus;
+	storageScope?: ArtifactStorageScope;
+}
+
+export interface ArtifactVerificationSummary {
+	artifacts: ArtifactVerificationEntry[];
+	missingCount: number;
+	pendingCount: number;
+	unverifiedCount: number;
+	verified: boolean;
+	verifiedCount: number;
 }
 
 export interface SavedFilePresentationDetails {
@@ -235,6 +261,7 @@ export function mergeSessionArtifactManifest(options: {
 }
 
 export interface BatchStepPresentationDetails {
+	artifactVerification?: ArtifactVerificationSummary;
 	artifacts?: FileArtifactMetadata[];
 	command?: string[];
 	commandText: string;
@@ -266,6 +293,7 @@ export interface BatchFailurePresentationDetails {
 export interface ToolPresentation {
 	artifactManifest?: SessionArtifactManifest;
 	artifactRetentionSummary?: string;
+	artifactVerification?: ArtifactVerificationSummary;
 	artifacts?: FileArtifactMetadata[];
 	batchFailure?: BatchFailurePresentationDetails;
 	batchSteps?: BatchStepPresentationDetails[];
@@ -285,13 +313,22 @@ export interface ToolPresentation {
 	summary: string;
 }
 
+function isPendingFileArtifact(artifact: FileArtifactMetadata): boolean {
+	return artifact.command === "record" && artifact.subcommand === "start" && artifact.kind === "video";
+}
+
+function hasUnverifiedFileArtifact(artifacts: FileArtifactMetadata[] | undefined): boolean {
+	return (artifacts ?? []).some((artifact) => !isPendingFileArtifact(artifact) && artifact.exists !== true);
+}
+
 export function classifyAgentBrowserSuccessCategory(options: {
 	artifacts?: FileArtifactMetadata[];
 	inspection?: boolean;
 	savedFile?: SavedFilePresentationDetails;
 }): AgentBrowserSuccessCategory {
 	if (options.inspection) return "inspection";
-	if (options.savedFile || (options.artifacts ?? []).length > 0) return "artifact-saved";
+	if ((options.artifacts ?? []).length > 0) return hasUnverifiedFileArtifact(options.artifacts) ? "artifact-unverified" : "artifact-saved";
+	if (options.savedFile) return "artifact-saved";
 	return "completed";
 }
 
@@ -369,6 +406,16 @@ function buildArtifactAction(path: string): AgentBrowserNextAction {
 	};
 }
 
+function buildArtifactVerificationAction(artifact: FileArtifactMetadata): AgentBrowserNextAction {
+	return {
+		artifactPath: artifact.path,
+		id: "verify-artifact-path",
+		reason: "The wrapper has artifact metadata but did not verify this file as present on disk.",
+		safety: "Check details.artifactVerification and the filesystem before treating the artifact as durable.",
+		tool: "agent_browser",
+	};
+}
+
 const MUTATING_COMMANDS = new Set([
 	"back",
 	"check",
@@ -431,10 +478,28 @@ export function buildAgentBrowserNextActions(options: {
 				safety: "Do not reuse prior @refs until a fresh snapshot confirms they still exist.",
 			}));
 		}
-		if (options.savedFilePath) {
+		const artifacts = options.artifacts ?? [];
+		const savedFileArtifact = options.savedFilePath ? artifacts.find((artifact) => artifact.path === options.savedFilePath) : undefined;
+		if (options.savedFilePath && savedFileArtifact?.exists !== false) {
 			actions.push(buildArtifactAction(options.savedFilePath));
 		}
-		for (const artifact of options.artifacts ?? []) {
+		for (const artifact of artifacts) {
+			if (isPendingFileArtifact(artifact)) {
+				continue;
+			}
+			if (artifact.exists === false) {
+				if (artifact.kind === "download") {
+					actions.push(buildNextToolAction({
+						args: ["wait", "--download", artifact.path],
+						id: "wait-for-download",
+						reason: "Upstream reported a download path, but the wrapper did not verify the file on disk.",
+						safety: "Use a bounded wait timeout that stays below the native wrapper IPC budget.",
+					}));
+				} else {
+					actions.push(buildArtifactVerificationAction(artifact));
+				}
+				continue;
+			}
 			if (artifact.path !== options.savedFilePath) {
 				actions.push(buildArtifactAction(artifact.path));
 			}

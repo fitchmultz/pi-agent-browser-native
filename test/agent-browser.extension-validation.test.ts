@@ -1055,7 +1055,10 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 				subcommand: "--download",
 			});
 			assert.equal(result.details?.resultCategory, "success");
-			assert.equal(result.details?.successCategory, "artifact-saved");
+			assert.equal(result.details?.successCategory, "artifact-unverified");
+			assert.equal((result.details?.artifactVerification as { missingCount?: number; verified?: boolean } | undefined)?.missingCount, 1);
+			assert.equal((result.details?.artifactVerification as { missingCount?: number; verified?: boolean } | undefined)?.verified, false);
+			assert.deepEqual((result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
 			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.changeType, "artifact");
 			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.savedFilePath, "/tmp/export.csv");
 		});

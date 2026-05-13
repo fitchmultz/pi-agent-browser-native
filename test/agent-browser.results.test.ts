@@ -42,7 +42,8 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 test("classifyAgentBrowserSuccessCategory locks common machine-readable success categories", () => {
 	assert.equal(classifyAgentBrowserSuccessCategory({}), "completed");
 	assert.equal(classifyAgentBrowserSuccessCategory({ inspection: true }), "inspection");
-	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", kind: "image", path: "/tmp/a.png" }] }), "artifact-saved");
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", exists: true, kind: "image", path: "/tmp/a.png" }] }), "artifact-saved");
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", exists: false, kind: "image", path: "/tmp/a.png" }] }), "artifact-unverified");
 });
 
 test("buildAgentBrowserNextActions returns exact native-tool recommendations for common states", () => {
@@ -60,6 +61,8 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--download", "/tmp/export.csv"], resultCategory: "failure", failureCategory: "download-not-verified" })?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["download", "@e1", "/tmp/export.csv"], resultCategory: "failure", failureCategory: "download-not-verified" })?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
 	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/page.png", kind: "image", path: "/tmp/page.png" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.artifactPath, "/tmp/page.png");
+	assert.deepEqual(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/export.csv", exists: false, kind: "download", path: "/tmp/export.csv" }], resultCategory: "success", savedFilePath: "/tmp/export.csv", successCategory: "artifact-saved" })?.map((action) => action.id), ["wait-for-download"]);
+	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/state.json", exists: false, kind: "file", path: "/tmp/state.json" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.id, "verify-artifact-path");
 	assert.equal(buildAgentBrowserNextActions({ resultCategory: "success", successCategory: "completed" }), undefined);
 });
 
