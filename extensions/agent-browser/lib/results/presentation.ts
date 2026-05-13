@@ -23,6 +23,8 @@ import {
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
 	type AgentBrowserPageChangeSummary,
+	type ArtifactVerificationEntry,
+	type ArtifactVerificationSummary,
 	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
@@ -809,6 +811,114 @@ function isManifestFileArtifact(artifact: FileArtifactMetadata): boolean {
 	return !isRecordingStartArtifact(artifact);
 }
 
+function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactVerificationEntry {
+	if (isRecordingStartArtifact(artifact)) {
+		return {
+			absolutePath: artifact.absolutePath,
+			exists: artifact.exists,
+			kind: artifact.kind,
+			limitation: "Recording output is pending until record stop completes.",
+			mediaType: artifact.mediaType,
+			path: artifact.path,
+			requestedPath: artifact.requestedPath,
+			retentionState: undefined,
+			sizeBytes: artifact.sizeBytes,
+			state: "pending",
+			status: artifact.status,
+			storageScope: undefined,
+		};
+	}
+	const state = artifact.exists === true
+		? "verified"
+		: artifact.exists === false
+			? "missing"
+			: "unverified";
+	return {
+		absolutePath: artifact.absolutePath,
+		exists: artifact.exists,
+		kind: artifact.kind,
+		limitation: state === "missing"
+			? "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated."
+			: state === "unverified"
+				? "The wrapper could not prove local filesystem existence for this artifact."
+				: undefined,
+		mediaType: artifact.mediaType,
+		path: artifact.path,
+		requestedPath: artifact.requestedPath,
+		retentionState: artifact.exists === false ? "missing" : "live",
+		sizeBytes: artifact.sizeBytes,
+		state,
+		status: artifact.status,
+		storageScope: "explicit-path",
+	};
+}
+
+function getManifestVerificationEntry(entry: SessionArtifactManifestEntry): ArtifactVerificationEntry | undefined {
+	if (entry.storageScope === "explicit-path") return undefined;
+	const state = entry.retentionState === "live"
+		? "verified"
+		: entry.retentionState === "missing" || entry.retentionState === "evicted"
+			? "missing"
+			: "unverified";
+	return {
+		absolutePath: entry.absolutePath,
+		exists: entry.exists,
+		kind: entry.kind,
+		limitation: entry.retentionState === "ephemeral"
+			? "This spill file is process-temporary and may not survive reload or restart."
+			: entry.retentionState === "evicted"
+				? "This persisted spill file was evicted from the bounded session artifact store."
+				: undefined,
+		mediaType: entry.mediaType,
+		path: entry.path,
+		requestedPath: entry.requestedPath,
+		retentionState: entry.retentionState,
+		sizeBytes: entry.sizeBytes,
+		state,
+		storageScope: entry.storageScope,
+	};
+}
+
+function buildArtifactVerificationSummary(
+	artifacts: FileArtifactMetadata[],
+	manifest?: SessionArtifactManifest,
+	manifestPaths?: ReadonlySet<string>,
+): ArtifactVerificationSummary | undefined {
+	const entries = [
+		...artifacts.map(getArtifactVerificationEntry),
+		...(manifest?.entries.flatMap((entry) => {
+			if (manifestPaths && !manifestPaths.has(entry.path)) return [];
+			const verificationEntry = getManifestVerificationEntry(entry);
+			return verificationEntry ? [verificationEntry] : [];
+		}) ?? []),
+	];
+	if (entries.length === 0) return undefined;
+	const verifiedCount = entries.filter((entry) => entry.state === "verified").length;
+	const missingCount = entries.filter((entry) => entry.state === "missing").length;
+	const pendingCount = entries.filter((entry) => entry.state === "pending").length;
+	const unverifiedCount = entries.filter((entry) => entry.state === "unverified").length;
+	return {
+		artifacts: entries,
+		missingCount,
+		pendingCount,
+		unverifiedCount,
+		verified: entries.length > 0 && verifiedCount === entries.length,
+		verifiedCount,
+	};
+}
+
+function classifyPresentationSuccessCategory(options: {
+	artifactVerification?: ArtifactVerificationSummary;
+	artifacts?: FileArtifactMetadata[];
+	inspection?: boolean;
+	savedFile?: SavedFilePresentationDetails;
+}) {
+	if ((options.artifactVerification?.missingCount ?? 0) > 0 || (options.artifactVerification?.unverifiedCount ?? 0) > 0) {
+		return "artifact-unverified" as const;
+	}
+	return classifyAgentBrowserSuccessCategory(options);
+}
+
 function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 	switch (artifact.kind) {
 		case "download":
@@ -1215,6 +1325,7 @@ async function buildBatchStepPresentation(options: {
 		};
 		return {
 			details: {
+				artifactVerification: presentation.artifactVerification,
 				artifacts: presentation.artifacts,
 				command,
 				commandText,
@@ -1269,6 +1380,7 @@ async function buildBatchStepPresentation(options: {
 
 	return {
 		details: {
+			artifactVerification: presentation.artifactVerification,
 			artifacts: presentation.artifacts,
 			command,
 			commandText,
@@ -1284,7 +1396,7 @@ async function buildBatchStepPresentation(options: {
 			savedFile: presentation.savedFile,
 			savedFilePath: presentation.savedFilePath,
 			success: true,
-			successCategory: classifyAgentBrowserSuccessCategory({ artifacts: presentation.artifacts, savedFile: presentation.savedFile }),
+			successCategory: classifyPresentationSuccessCategory({ artifactVerification: presentation.artifactVerification, artifacts: presentation.artifacts, savedFile: presentation.savedFile }),
 			summary: presentation.summary,
 			text,
 		},
@@ -1330,6 +1442,7 @@ async function buildBatchPresentation(options: {
 	const batchFailure = getBatchFailureDetails(steps);
 	const images = steps.flatMap((step) => getPresentationImages(step.presentation));
 	const artifacts = steps.flatMap((step) => step.presentation.artifacts ?? []);
+	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const fullOutputPaths = steps.flatMap((step) => getPresentationPaths({
 		primaryPath: step.presentation.fullOutputPath,
 		secondaryPaths: step.presentation.fullOutputPaths,
@@ -1394,6 +1507,7 @@ async function buildBatchPresentation(options: {
 	return {
 		artifactManifest: currentArtifactManifest,
 		artifactRetentionSummary,
+		artifactVerification,
 		artifacts: artifacts.length > 0 ? artifacts : undefined,
 		batchFailure,
 		batchSteps: steps.map((step) => step.details),
@@ -1407,7 +1521,7 @@ async function buildBatchPresentation(options: {
 		nextActions,
 		pageChangeSummary,
 		resultCategory: batchFailure ? "failure" : "success",
-		successCategory: batchFailure ? undefined : classifyAgentBrowserSuccessCategory({ artifacts }),
+		successCategory: batchFailure ? undefined : classifyPresentationSuccessCategory({ artifactVerification, artifacts }),
 		summary,
 	};
 }
@@ -1780,6 +1894,7 @@ export async function buildToolPresentation(options: {
 
 	const data = enrichStreamStatusData(commandInfo, envelope?.data);
 	const artifacts = await extractFileArtifacts({ artifactRequest, commandInfo, cwd, data, sessionName });
+	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);
 	const summary = artifactSummary ?? formatSummary(commandInfo, data);
 	const artifactText = artifacts.length > 0 ? formatArtifactMetadataLines(artifacts).join("\n") : undefined;
@@ -1789,6 +1904,7 @@ export async function buildToolPresentation(options: {
 			: commandInfo.command === "snapshot" && isRecord(data)
 				? await buildSnapshotPresentation(data, persistentArtifactStore, artifactManifest)
 				: {
+						artifactVerification,
 						artifacts: artifacts.length > 0 ? artifacts : undefined,
 						content: [{ type: "text" as const, text: artifactText ?? formatContentText(commandInfo, data) }],
 						data,
@@ -1797,6 +1913,7 @@ export async function buildToolPresentation(options: {
 	if (artifacts.length > 0 && !presentation.artifacts) {
 		presentation.artifacts = artifacts;
 	}
+	presentation.artifactVerification = presentation.artifactVerification ?? artifactVerification;
 	if (isRecord(data)) {
 		const savedFile = getSavedFileDetails(commandInfo, data);
 		if (savedFile) {
@@ -1819,6 +1936,15 @@ export async function buildToolPresentation(options: {
 		compactedPresentation.artifactManifest ?? artifactManifest,
 		buildManifestEntriesForFileArtifacts(artifacts.filter(isManifestFileArtifact)),
 	);
+	const currentSpillPaths = new Set(getPresentationPaths({
+		primaryPath: presentationWithManifest.fullOutputPath,
+		secondaryPaths: presentationWithManifest.fullOutputPaths,
+	}));
+	presentationWithManifest.artifactVerification = buildArtifactVerificationSummary(
+		artifacts,
+		presentationWithManifest.artifactManifest,
+		currentSpillPaths,
+	) ?? presentationWithManifest.artifactVerification;
 	const confirmationRequired = detectConfirmationRequired(data);
 	if (!presentationWithManifest.resultCategory) {
 		const categoryDetails = buildAgentBrowserResultCategoryDetails({
@@ -1830,8 +1956,21 @@ export async function buildToolPresentation(options: {
 			succeeded: envelope?.success !== false,
 		});
 		presentationWithManifest.resultCategory = categoryDetails.resultCategory;
-		presentationWithManifest.successCategory = categoryDetails.successCategory;
+		presentationWithManifest.successCategory = categoryDetails.resultCategory === "success"
+			? classifyPresentationSuccessCategory({
+				artifactVerification: presentationWithManifest.artifactVerification,
+				artifacts: presentationWithManifest.artifacts,
+				savedFile: presentationWithManifest.savedFile,
+			})
+			: categoryDetails.successCategory;
 		presentationWithManifest.failureCategory = categoryDetails.failureCategory;
+	}
+	if (presentationWithManifest.resultCategory === "success") {
+		presentationWithManifest.successCategory = classifyPresentationSuccessCategory({
+			artifactVerification: presentationWithManifest.artifactVerification,
+			artifacts: presentationWithManifest.artifacts,
+			savedFile: presentationWithManifest.savedFile,
+		});
 	}
 	presentationWithManifest.nextActions = presentationWithManifest.nextActions ?? buildAgentBrowserNextActions({
 		artifacts: presentationWithManifest.artifacts,

@@ -883,6 +883,10 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 		assert.equal(presentation.artifacts?.[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", item.data.path));
 		assert.equal(presentation.artifacts?.[0]?.mediaType, item.expectedMediaType);
 		assert.equal(presentation.artifacts?.[0]?.exists, false);
+		assert.equal(presentation.artifactVerification?.missingCount, 1);
+		assert.equal(presentation.artifactVerification?.verified, false);
+		assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "missing");
+		assert.equal(presentation.artifactVerification?.artifacts[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", item.data.path));
 		assert.equal(presentation.imagePath, undefined);
 		assert.equal(presentation.imagePaths, undefined);
 		if (item.commandInfo.command === "pdf") {
@@ -910,6 +914,7 @@ test("buildToolPresentation does not classify state load paths as saved artifact
 
 	assert.equal(presentation.artifacts, undefined);
 	assert.equal(presentation.artifactManifest, undefined);
+	assert.equal(presentation.artifactVerification, undefined);
 	assert.equal(presentation.summary, "state completed");
 	assert.match((presentation.content[0] as { text: string }).text, /auth-state\.json/);
 });
@@ -931,6 +936,8 @@ test("buildToolPresentation records path-bearing diff screenshots without inlini
 	assert.equal(presentation.artifacts?.[0]?.kind, "image");
 	assert.equal(presentation.artifacts?.[0]?.path, "diff.png");
 	assert.equal(presentation.artifacts?.[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", "diff.png"));
+	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "missing");
+	assert.equal(presentation.artifactVerification?.artifacts[0]?.path, "diff.png");
 	assert.equal(presentation.imagePath, undefined);
 	assert.equal(presentation.imagePaths, undefined);
 });
@@ -957,6 +964,10 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 	assert.equal(presentation.artifacts?.[0]?.exists, false);
 	assert.equal(presentation.artifactManifest, undefined);
 	assert.equal(presentation.artifactRetentionSummary, undefined);
+	assert.equal(presentation.artifactVerification?.pendingCount, 1);
+	assert.equal(presentation.artifactVerification?.verified, false);
+	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "pending");
+	assert.equal(presentation.nextActions, undefined);
 });
 
 test("buildToolPresentation records explicit saved files in the bounded session artifact manifest", async () => {
@@ -980,6 +991,37 @@ test("buildToolPresentation records explicit saved files in the bounded session 
 		assert.equal(presentation.artifactManifest?.entries[0]?.retentionState, "live");
 		assert.match(presentation.artifactRetentionSummary ?? "", /1 live, 0 evicted/);
 		assert.doesNotMatch((presentation.content[0] as { text: string }).text, /Session artifacts: 1 live, 0 evicted/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation scopes artifact verification to current-result artifacts and spills", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-verification-scope-"));
+	const downloadPath = join(tempDir, "download.txt");
+	await writeFile(downloadPath, "verified artifact");
+	try {
+		const artifactManifest: SessionArtifactManifest = {
+			entries: [{ createdAtMs: Date.now() - 1, kind: "spill", path: "/tmp/old-spill.txt", retentionState: "evicted", storageScope: "persistent-session" }],
+			evictedCount: 1,
+			liveCount: 0,
+			maxEntries: 100,
+			updatedAtMs: Date.now(),
+			version: 1,
+		};
+		const presentation = await buildToolPresentation({
+			artifactManifest,
+			commandInfo: { command: "download" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: "download.txt" } },
+		});
+
+		assert.equal(presentation.artifactVerification?.verified, true);
+		assert.equal(presentation.artifactVerification?.verifiedCount, 1);
+		assert.equal(presentation.artifactVerification?.missingCount, 0);
+		assert.equal(presentation.artifactVerification?.artifacts.length, 1);
+		assert.equal(presentation.artifactVerification?.artifacts[0]?.path, "download.txt");
+		assert.equal(presentation.successCategory, "artifact-saved");
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -1063,6 +1105,9 @@ test("buildToolPresentation compacts oversized generic outputs and prints the ac
 	assert.match(text, /Full output path: /);
 	assert.equal(typeof presentation.fullOutputPath, "string");
 	assert.equal((presentation.data as { compacted: boolean }).compacted, true);
+	assert.equal(presentation.successCategory, "artifact-unverified");
+	assert.equal(presentation.artifactVerification?.unverifiedCount, 1);
+	assert.equal(presentation.artifactVerification?.artifacts[0]?.kind, "spill");
 
 	const spillPath = presentation.fullOutputPath;
 	assert.ok(spillPath);
@@ -1247,7 +1292,9 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 		path: "/tmp/export.csv",
 		subcommand: "--download",
 	});
-	assert.equal(presentation.batchSteps?.[1]?.nextActions?.[0]?.artifactPath, "/tmp/export.csv");
+	assert.equal(presentation.batchSteps?.[1]?.artifactVerification?.missingCount, 1);
+	assert.equal(presentation.artifactVerification?.missingCount, 1);
+	assert.deepEqual(presentation.batchSteps?.[1]?.nextActions?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
 	assert.equal(presentation.batchSteps?.[1]?.pageChangeSummary?.changeType, "artifact");
 	assert.equal(presentation.batchSteps?.[1]?.pageChangeSummary?.savedFilePath, "/tmp/export.csv");
 });

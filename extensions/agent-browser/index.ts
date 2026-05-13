@@ -2390,6 +2390,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						args: redactedArgs,
 						artifactManifest: presentation.artifactManifest,
 						artifactRetentionSummary: presentation.artifactRetentionSummary,
+						artifactVerification: presentation.artifactVerification,
 						artifacts: presentation.artifacts,
 						batchFailure: presentation.batchFailure,
 						batchSteps: presentation.batchSteps,
