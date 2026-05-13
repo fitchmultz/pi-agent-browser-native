@@ -539,6 +539,111 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	}
 });
 
+test("agentBrowserExtension passes through non-core network debug diff stream dashboard and chat families", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-non-core-matrix-"));
+	const logPath = join(tempDir, "invocations.log");
+	const harPath = join(tempDir, "network.har");
+	const tracePath = join(tempDir, "trace.zip");
+	const profilePath = join(tempDir, "profile.cpuprofile");
+	const recordingPath = join(tempDir, "recording.webm");
+	const diffPath = join(tempDir, "diff.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, model: process.env.AI_GATEWAY_MODEL || null, apiKey: process.env.AI_GATEWAY_API_KEY || null }) + "\\n");
+const valueFlags = new Set(["--session", "--model", "--port", "--body", "--resource-type", "--baseline"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+function ensureFile(file, content) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content); }
+let data = { ok: true, command, subcommand };
+if (command === "network" && subcommand === "route") data = { routed: args[commandIndex + 2] };
+if (command === "network" && subcommand === "requests") data = { requests: [{ method: "GET", requestId: "n1", status: 200, url: "https://example.test/app.js" }] };
+if (command === "network" && subcommand === "har") {
+  const action = args[commandIndex + 2];
+  data = action === "stop" ? { path: args[commandIndex + 3] || ${JSON.stringify(harPath)}, requestCount: 1, state: "stopped" } : { state: "started" };
+  if (data.path) ensureFile(data.path, "{}");
+}
+if (command === "diff" && subcommand === "snapshot") data = { added: 1, removed: 0 };
+if (command === "diff" && subcommand === "screenshot") { data = { diffPath: ${JSON.stringify(diffPath)}, mismatchPixels: 0 }; ensureFile(data.diffPath, "fake-png"); }
+if (command === "diff" && subcommand === "url") data = { differenceCount: 0 };
+if (command === "trace") { data = subcommand === "stop" ? { path: args[commandIndex + 2] || ${JSON.stringify(tracePath)}, state: "stopped" } : { state: "started" }; if (data.path) ensureFile(data.path, "trace"); }
+if (command === "profiler") { data = subcommand === "stop" ? { path: args[commandIndex + 2] || ${JSON.stringify(profilePath)}, state: "stopped" } : { state: "started" }; if (data.path) ensureFile(data.path, "profile"); }
+if (command === "record") { data = subcommand === "start" ? { path: args[commandIndex + 2] || ${JSON.stringify(recordingPath)} } : { path: ${JSON.stringify(recordingPath)} }; if (subcommand === "stop") ensureFile(data.path, "video"); }
+if (command === "console") data = { messages: [{ text: "hello", type: "log" }] };
+if (command === "errors") data = { errors: [{ text: "boom", url: "https://example.test/app.js", line: 1 }] };
+if (command === "highlight") data = { highlighted: subcommand };
+if (command === "inspect") data = { opened: true };
+if (command === "clipboard") data = { text: subcommand === "read" ? "clipboard text" : "written" };
+if (command === "stream") data = { connected: subcommand === "enable" || subcommand === "status", enabled: subcommand !== "disable", port: 7777, screencasting: subcommand !== "disable" };
+if (command === "dashboard") data = subcommand === "stop" ? { stopped: true } : { pid: 123, port: 4848 };
+if (command === "chat") data = { response: "chat done", model: args[args.indexOf("--model") + 1] || process.env.AI_GATEWAY_MODEL || "default" };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	const commands = [
+		["network", "route", "**/api", "--body", '{"token":"route-secret"}', "--resource-type", "fetch"],
+		["network", "requests", "--filter", "example"],
+		["network", "har", "start"],
+		["network", "har", "stop", harPath],
+		["diff", "snapshot"],
+		["diff", "screenshot", "--baseline", join(tempDir, "baseline.png")],
+		["diff", "url", "https://example.test/a", "https://example.test/b"],
+		["trace", "start"],
+		["trace", "stop", tracePath],
+		["profiler", "start"],
+		["profiler", "stop", profilePath],
+		["record", "start", recordingPath],
+		["record", "stop"],
+		["console"],
+		["errors"],
+		["highlight", "#target"],
+		["inspect"],
+		["clipboard", "write", "Authorization: Bearer clipboard-secret"],
+		["clipboard", "read"],
+		["stream", "enable", "--port", "7777"],
+		["stream", "status"],
+		["stream", "disable"],
+		["--model", "anthropic/model-flag", "dashboard", "start", "--port", "4848"],
+		["dashboard", "stop"],
+		["chat", "Summarize Authorization: Bearer chat-secret", "--model", "anthropic/chat-flag"],
+	] as const;
+
+	try {
+		await withPatchedEnv({ AI_GATEWAY_API_KEY: "ai-gateway-key", AI_GATEWAY_MODEL: "anthropic/env-model", PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise non-core browser workflows." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			for (const args of commands) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
+				assert.equal(result.isError, false, args.join(" "));
+				assert.doesNotMatch(result.content[0]?.text ?? "", /route-secret|clipboard-secret|chat-secret/);
+				assert.doesNotMatch(JSON.stringify(result.details), /route-secret|clipboard-secret|chat-secret/);
+			}
+
+			const invocations = await readInvocationLog(logPath);
+			const userInvocations = invocations.map((entry) => entry.args.slice(3));
+			assert.deepEqual(userInvocations, commands.map((args) => [...args]));
+			assert.ok(invocations.every((entry) => entry.args.includes("--json") && entry.args.includes("--session")));
+			assert.ok(invocations.some((entry) => entry.args.includes("chat") && entry.args.includes("--model") && entry.model === "anthropic/env-model"));
+			assert.ok(invocations.some((entry) => entry.args.includes("dashboard") && entry.apiKey === "ai-gateway-key"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension normalizes and repairs explicit screenshot artifact paths", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-screenshot-path-"));
 	const logPath = join(tempDir, "invocations.log");

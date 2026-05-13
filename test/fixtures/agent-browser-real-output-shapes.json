@@ -55,6 +55,23 @@
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"],
       "dataKeys": ["routed"]
     },
+    "nonCoreStatus": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"]
+    },
+    "nonCoreArtifact": {
+      "detailKeys": ["args", "artifacts", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"],
+      "dataKeys": ["path"]
+    },
+    "diffScreenshotArtifact": {
+      "detailKeys": ["args", "artifacts", "artifactVerification", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"]
+    },
+    "streamControl": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"]
+    },
+    "streamStatus": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"],
+      "dataKeys": ["enabled"]
+    },
     "cookiesCurl": {
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"],
       "dataKeys": ["set"]

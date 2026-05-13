@@ -195,7 +195,7 @@
     },
     {
       "id": "RQ-0052",
-      "status": "todo",
+      "status": "doing",
       "title": "Support network, debug, diff, streaming, dashboard, and chat command families",
       "description": "Make the non-core command families in the current root help reliable through the native wrapper. Cover network routing/requests/HAR, diff snapshot/screenshot/url, trace/profiler/record, console/errors/highlight/inspect/clipboard, stream enable/disable/status, dashboard start/stop, chat single-shot, and chat/dashboard AI env/model flags. Acceptance criteria: result presentation summarizes diagnostics and saved artifacts; interactive or long-running commands have documented behavior and timeout/cleanup expectations; credential-bearing values are redacted; fake-upstream tests cover every family and real-upstream tests cover safe representative flows; `npm test` passes.",
       "priority": "medium",
@@ -233,7 +233,8 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T22:06:21.073098000Z",
+      "started_at": "2026-05-13T22:06:21.073098000Z",
       "depends_on": [
         "RQ-0048",
         "RQ-0049",

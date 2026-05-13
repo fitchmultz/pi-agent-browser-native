@@ -92,7 +92,7 @@ const BROWSER_PROMPT_PATTERNS = [
 	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
 ];
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
-const SENSITIVE_VALUE_FLAGS = new Set(["--headers", "--password", "--proxy"]);
+const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
 const GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE = new Set(["--args"]);
 const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES = new Set([
 	"--allow-file-access",
@@ -463,7 +463,7 @@ export function redactInvocationArgs(args: string[]): string[] {
 			continue;
 		}
 
-		redacted.push(redactUrlToken(token));
+		redacted.push(redactSensitiveText(redactUrlToken(token)));
 	}
 
 	const commandStartIndex = findCommandStartIndex(args);

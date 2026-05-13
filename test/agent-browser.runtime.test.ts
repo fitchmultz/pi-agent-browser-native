@@ -930,6 +930,13 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"open",
 		"https://example.com/",
 	]);
+	assert.deepEqual(redactInvocationArgs(["network", "route", "**/api", "--body", '{"token":"route-secret"}']), [
+		"network",
+		"route",
+		"**/api",
+		"--body",
+		"[REDACTED]",
+	]);
 	assert.deepEqual(redactInvocationArgs(["auth", "save", "demo", "--password", "secret-value"]), [
 		"auth",
 		"save",
@@ -966,6 +973,10 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"set",
 		"authToken",
 		"[REDACTED]",
+	]);
+	assert.deepEqual(redactInvocationArgs(["chat", "Summarize Authorization: Bearer chat-secret"]), [
+		"chat",
+		"Summarize Authorization: Bearer [REDACTED]",
 	]);
 });
 

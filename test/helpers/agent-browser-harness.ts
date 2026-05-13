@@ -338,9 +338,11 @@ export async function writeFakeAgentBrowserBinary(tempDir: string, scriptBody: s
 }
 
 export interface InvocationLogEntry {
+	apiKey?: string | null;
 	args: string[];
 	event?: string;
 	idleTimeout?: string | null;
+	model?: string | null;
 	sessionName?: string;
 	socketDir?: string | null;
 	stdin?: string | null;

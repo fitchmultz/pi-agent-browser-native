@@ -379,6 +379,7 @@ const envelope = {
     agentBrowserSessionName: readEnv("AGENT_BROWSER_SESSION_NAME"),
     agentcoreRegion: readEnv("AGENTCORE_REGION"),
     aiGatewayApiKey: readEnv("AI_GATEWAY_API_KEY"),
+    aiGatewayModel: readEnv("AI_GATEWAY_MODEL"),
     awsAccessKeyId: readEnv("AWS_ACCESS_KEY_ID"),
     awsSecretAccessKey: readEnv("AWS_SECRET_ACCESS_KEY"),
     browserbaseApiKey: readEnv("BROWSERBASE_API_KEY"),
@@ -412,6 +413,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				AGENT_BROWSER_SOCKET_DIR: "/tmp/from-parent-should-not-leak",
 				AGENTCORE_REGION: "us-west-2",
 				AI_GATEWAY_API_KEY: "ai-gateway-key",
+				AI_GATEWAY_MODEL: "anthropic/test-model",
 				AWS_ACCESS_KEY_ID: "aws-access-key-id",
 				AWS_SECRET_ACCESS_KEY: "aws-secret-access-key",
 				BROWSERBASE_API_KEY: "browserbase-key",
@@ -448,6 +450,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 					agentBrowserSessionName: string | null;
 					agentcoreRegion: string | null;
 					aiGatewayApiKey: string | null;
+					aiGatewayModel: string | null;
 					awsAccessKeyId: string | null;
 					awsSecretAccessKey: string | null;
 					browserbaseApiKey: string | null;
@@ -473,6 +476,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.agentBrowserSessionName, "from-parent-session-name");
 				assert.equal(data.agentcoreRegion, "us-west-2");
 				assert.equal(data.aiGatewayApiKey, "ai-gateway-key");
+				assert.equal(data.aiGatewayModel, "anthropic/test-model");
 				assert.equal(data.awsAccessKeyId, "aws-access-key-id");
 				assert.equal(data.awsSecretAccessKey, "aws-secret-access-key");
 				assert.equal(data.browserbaseApiKey, "browserbase-key");
