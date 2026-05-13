@@ -44,7 +44,7 @@ Tool parameters (use either `args` **or** `semanticAction`, not both):
 - `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
-  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` apply.
+  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
 
 ### Debug, diff, stream, dashboard, and chat families
 
