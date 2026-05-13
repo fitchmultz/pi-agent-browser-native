@@ -178,6 +178,8 @@ Wrapper result rendering is metadata-first for saved files:
 - `record start <path>` reports that recording started and that output will be written on `record stop`; the target file may not exist until recording stops
 - `batch` keeps each step's artifacts in `details.batchSteps[].artifacts` and aggregates them in top-level `details.artifacts` in step order
 
+`diff screenshot` follows the file-artifact path above for the **diff** image: model-visible text and `details.artifacts` focus on that output, while baseline paths stay out of the artifact summary block, and Pi does **not** auto-inline the diff the way it inlines trusted `screenshot` captures. `state load` may print the loaded path in prose but does not add a saved-file artifact entry the way `state save` does.
+
 For screenshot paths under dot-directories such as `.dogfood/run/foo.png`, the wrapper normalizes the requested path to an absolute path before invoking upstream `agent-browser`, verifies the requested file exists, and repairs from an upstream temp screenshot when possible. The requested path remains visible as `Requested path`, while `Absolute path` shows the actual on-disk location.
 
 For annotated screenshots in `batch`, put `--annotate` in top-level args instead of inside the screenshot step:
