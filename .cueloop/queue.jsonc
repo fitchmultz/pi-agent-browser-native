@@ -195,7 +195,7 @@
     },
     {
       "id": "RQ-0050",
-      "status": "todo",
+      "status": "doing",
       "title": "Add real-upstream coverage for core page interaction commands",
       "description": "Build a deterministic fixture-backed real-upstream contract matrix for the normal browser workflow commands in the current version. Cover navigation (`open`, `back`, `forward`, `reload`, `connect` where safe), interaction (`click`, `dblclick`, `type`, `fill`, `press`, `keyboard`, `hover`, `focus`, `check`, `uncheck`, `select`, `drag`, `upload`, `scroll`, `scrollintoview`, `mouse`), extraction (`get` variants, `is` variants, `find` locators), snapshots, screenshots, PDFs, waits, and tabs. Acceptance criteria: the opt-in real-upstream suite exercises representative commands against localhost fixtures without relying on external sites; fake tests cover the rest of the matrix; cleanup closes sessions and deletes temp files; `npm run verify -- real-upstream` passes when the baseline version is installed.",
       "priority": "high",
@@ -228,7 +228,8 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T20:19:46.061418000Z",
+      "started_at": "2026-05-13T20:19:46.061418000Z",
       "depends_on": [
         "RQ-0048",
         "RQ-0049"
