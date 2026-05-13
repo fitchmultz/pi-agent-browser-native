@@ -49,6 +49,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 - When using eval --stdin, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics.
 - When using eval --stdin for extraction, return the value you want instead of relying on console.log as the primary result channel.
 - When details.pageChangeSummary is present, use changeType and summary as a compact signal for navigation, DOM mutation, confirmations, or artifacts; when nextActionIds is set, match those ids to entries in details.nextActions (or per-step nextActions inside batch) for concrete follow-up payloads instead of inferring from prose alone.
+- When commands save or spill files (screenshots, downloads, PDFs, traces, recordings, HAR, large snapshot spills), treat paths as provisional until details.artifactVerification shows every row verified: branch on missingCount, pendingCount, unverifiedCount, per-entry state, and optional limitation before downstream file use.
 - Do not call --help or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.
 <!-- agent-browser-playbook:end shared-guidelines -->
 
