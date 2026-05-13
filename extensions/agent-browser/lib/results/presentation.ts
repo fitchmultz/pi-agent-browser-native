@@ -658,7 +658,10 @@ const PATH_FIELD_CANDIDATES = [
 	"filePath",
 	"outputPath",
 	"downloadPath",
+	"diffPath",
 	"harPath",
+	"savedPath",
+	"statePath",
 	"tracePath",
 	"profilePath",
 	"videoPath",
@@ -678,9 +681,11 @@ const ARTIFACT_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
 
 function getArtifactKind(commandInfo: CommandInfo): FileArtifactKind | undefined {
 	if (commandInfo.command === "screenshot") return "image";
+	if (commandInfo.command === "diff" && commandInfo.subcommand === "screenshot") return "image";
 	if (commandInfo.command === "pdf") return "pdf";
 	if (commandInfo.command === "download") return "download";
 	if (commandInfo.command === "wait" && commandInfo.subcommand === "--download") return "download";
+	if (commandInfo.command === "state" && commandInfo.subcommand === "save") return "file";
 	if (commandInfo.command === "trace") return "trace";
 	if (commandInfo.command === "profiler") return "profile";
 	if (commandInfo.command === "record") return "video";
@@ -809,11 +814,11 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 		case "download":
 			return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download completed" : "Downloaded file";
 		case "file":
-			return "Saved file";
+			return artifact.command === "state" ? "State file" : "Saved file";
 		case "har":
 			return "Saved HAR";
 		case "image":
-			return "Saved image";
+			return artifact.command === "diff" && artifact.subcommand === "screenshot" ? "Saved diff image" : "Saved image";
 		case "pdf":
 			return "Saved PDF";
 		case "profile":
