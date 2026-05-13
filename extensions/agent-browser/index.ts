@@ -2376,6 +2376,16 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						timedOut: processResult.timedOut,
 						validationError: undefined,
 					});
+					let nextActions = presentation.nextActions ? [...presentation.nextActions] : undefined;
+					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction) {
+						(nextActions ??= []).push({
+							id: "retry-semantic-action-after-stale-ref",
+							params: { args: redactedCompiledSemanticAction.args },
+							reason: "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.",
+							safety: "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.",
+							tool: "agent_browser" as const,
+						});
+					}
 					const details = {
 						args: redactedArgs,
 						artifactManifest: presentation.artifactManifest,
@@ -2401,7 +2411,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
 						imagePath: presentation.imagePath,
 						imagePaths: presentation.imagePaths,
-						nextActions: presentation.nextActions,
+						nextActions,
 						pageChangeSummary: presentation.pageChangeSummary,
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,

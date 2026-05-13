@@ -875,6 +875,40 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	}
 });
 
+test("agentBrowserExtension returns a safe semantic retry action for stale-ref failures with compiled targets", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-stale-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("find")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "Unknown ref @e4 while resolving locator" }));
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "text", value: "Export" },
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "stale-ref");
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; safety?: string }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.id), ["refresh-interactive-refs", "retry-semantic-action-after-stale-ref"]);
+			assert.deepEqual(nextActions?.[1]?.params?.args, ["find", "text", "Export", "click"]);
+			assert.match(nextActions?.[1]?.safety ?? "", /prior action did not execute|direct stale @refs/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects dangling value-taking flags before spawning agent-browser", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");

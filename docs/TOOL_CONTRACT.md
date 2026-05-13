@@ -104,6 +104,8 @@ Compilation (then `--json` and session handling apply like any other call):
 
 When `semanticAction` compiles successfully, `details.compiledSemanticAction` echoes `{ action, locator, args }` with `args` redacted the same way as other invocation details. Expect it on the initial wrapper validation return (when that path still builds the early `details` object) and on the unified result after `agent-browser` runs. It is omitted when the call used `args` only, when compilation never produced argv, and on some in-`execute` error returns that attach a slimmer `details` shape before the unified merge (for example certain session-plan, stdin-contract, tab-pinning, or missing-binary guard paths); compare `extensions/agent-browser/index.ts` where `compiledSemanticAction` is assigned.
 
+If a compiled `semanticAction` fails with `failureCategory: "stale-ref"`, `details.nextActions` includes `retry-semantic-action-after-stale-ref` with the exact compiled `find` argv. That retry is only offered because the semantic target is stable and the stale-ref error proves the previous action did not execute; direct stale `@e…` commands still return snapshot/find recovery guidance instead of an unsafe blind retry.
+
 Examples:
 
 ```json
