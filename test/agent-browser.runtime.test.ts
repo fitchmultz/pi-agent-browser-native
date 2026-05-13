@@ -606,7 +606,7 @@ test("buildExecutionPlan keeps inspection commands stateless", () => {
 });
 
 test("buildExecutionPlan rejects missing values for value-taking flags before parsing commands", () => {
-	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"]] as const) {
+	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["find", "role", "button", "click", "--name"], ["network", "route", "**/*.js", "--resource-type"], ["cookies", "set", "--curl"], ["wait", "--load"], ["wait", "--fn"], ["wait", "--text"], ["dashboard", "start", "--port"], ["tab", "new", "--label"], ["diff", "screenshot", "--baseline"], ["auth", "save", "demo", "--password"], ["profiler", "start", "--categories"], ["snapshot", "--depth"], ["snapshot", "-d"], ["snapshot", "--selector"], ["snapshot", "-s"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -614,8 +614,9 @@ test("buildExecutionPlan rejects missing values for value-taking flags before pa
 			sessionMode: "auto",
 		});
 
+		const expectedFlag = [...args].reverse().find((token) => token.startsWith("-"));
 		assert.match(plan.validationError ?? "", /requires a value/i);
-		assert.equal(plan.invalidValueFlag?.flag, args[0]);
+		assert.equal(plan.invalidValueFlag?.flag, expectedFlag);
 		assert.equal(plan.invalidValueFlag?.reason, "missing-value");
 		assert.deepEqual(plan.commandInfo, {});
 		assert.equal(plan.sessionName, undefined);
@@ -637,6 +638,19 @@ test("buildExecutionPlan rejects value-taking flags followed by another flag", (
 	assert.equal(plan.invalidValueFlag?.receivedToken, "--profile");
 	assert.deepEqual(plan.commandInfo, {});
 	assert.equal(plan.usedImplicitSession, false);
+});
+
+test("buildExecutionPlan allows optional wait download path to be omitted", () => {
+	const plan = buildExecutionPlan(["wait", "--download", "--timeout", "25000"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+
+	assert.equal(plan.validationError, undefined);
+	assert.deepEqual(plan.commandInfo, { command: "wait", subcommand: "--download" });
+	assert.deepEqual(plan.effectiveArgs.slice(-4), ["wait", "--download", "--timeout", "25000"]);
 });
 
 test("buildExecutionPlan allows dash-starting --args values", () => {
@@ -679,6 +693,21 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 	}
 });
 
+test("buildExecutionPlan treats wait --state as command-scoped after the command", () => {
+	const plan = buildExecutionPlan(["wait", "@button", "--state", "hidden"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+
+	assert.equal(plan.validationError, undefined);
+	assert.deepEqual(plan.startupScopedFlags, []);
+	assert.deepEqual(plan.commandInfo, { command: "wait", subcommand: "@button" });
+	assert.equal(plan.usedImplicitSession, true);
+	assert.deepEqual(plan.effectiveArgs.slice(-4), ["wait", "@button", "--state", "hidden"]);
+});
+
 test("buildExecutionPlan allows disabled auto-connect after an active implicit session", () => {
 	const plan = buildExecutionPlan(["--auto-connect", "false", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -703,6 +732,29 @@ test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state 
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--auto-connect", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["open", "https://example.com"]), false);
+});
+
+test("parseCommandInfo recognizes representative current command families", () => {
+	for (const { args, expected } of [
+		{ args: ["open", "https://example.com"], expected: { command: "open", subcommand: "https://example.com" } },
+		{ args: ["find", "role", "button", "click", "--name", "Export"], expected: { command: "find", subcommand: "role" } },
+		{ args: ["wait", "--download", "/tmp/report.csv", "--timeout", "25000"], expected: { command: "wait", subcommand: "--download" } },
+		{ args: ["wait", "@button", "--state", "hidden"], expected: { command: "wait", subcommand: "@button" } },
+		{ args: ["network", "route", "**/*.js", "--resource-type", "script"], expected: { command: "network", subcommand: "route" } },
+		{ args: ["cookies", "set", "--curl", "/tmp/cookies.txt", "--domain", "example.com"], expected: { command: "cookies", subcommand: "set" } },
+		{ args: ["auth", "save", "demo", "--password-stdin"], expected: { command: "auth", subcommand: "save" } },
+		{ args: ["dashboard", "start", "--port", "4567"], expected: { command: "dashboard", subcommand: "start" } },
+		{ args: ["doctor", "--offline", "--quick"], expected: { command: "doctor", subcommand: "--offline" } },
+		{ args: ["install", "--with-deps"], expected: { command: "install", subcommand: "--with-deps" } },
+		{ args: ["upgrade"], expected: { command: "upgrade", subcommand: undefined } },
+		{ args: ["chat", "Summarize", "--model", "gpt-5.1"], expected: { command: "chat", subcommand: "Summarize" } },
+		{ args: ["react", "renders", "stop", "--json"], expected: { command: "react", subcommand: "renders" } },
+		{ args: ["vitals", "https://example.com", "--json"], expected: { command: "vitals", subcommand: "https://example.com" } },
+		{ args: ["stream", "enable", "--port", "7777"], expected: { command: "stream", subcommand: "enable" } },
+		{ args: ["tab", "new", "--label", "Docs", "https://example.com"], expected: { command: "tab", subcommand: "new" } },
+	] as const) {
+		assert.deepEqual(parseCommandInfo([...args]), expected);
+	}
 });
 
 test("parseCommandInfo recognizes open targets after command-scoped init flags", () => {

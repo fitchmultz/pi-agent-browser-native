@@ -118,6 +118,12 @@ If the implicit session is already active and one of those startup-scoped flags 
 
 That failure should include a structured recovery hint pointing to `sessionMode: "fresh"` as the first-line fix, while still allowing an explicit `--session` when the caller wants to name the new upstream session.
 
+Implementation detail lives in `extensions/agent-browser/lib/runtime.ts` (`findCommandStartIndex`, `VALUE_FLAGS`, `getStartupScopedFlags`, `buildExecutionPlan`):
+
+- **Command discovery:** Leading argv is scanned with a value-taking allowlist so tokens such as `--timeout` on `wait`, `--resource-type` on `network route`, or `--curl` / `--domain` on `cookies set` consume their values before the upstream command word is identified. When upstream adds new global flags that take values ahead of the command, extend that allowlist; otherwise the wrapper can mis-classify the command or mis-validate value flags. A smaller set of global boolean flags may be followed by an optional `true`/`false` literal; when present, that literal is consumed as the flag value before command discovery continues.
+- **`--state` disambiguation:** Persisted browser `--state` before the command participates in launch-scoped validation and tab-correction hints. The same flag spelling after a `wait` command (for example `wait @ref --state hidden`) is a wait predicate, not a launch flag, and is excluded from startup-scoped detection so it does not spuriously require `sessionMode: "fresh"` while an implicit session is active.
+- **`--auto-connect`:** Treated as launch-scoped only when enabled (`--auto-connect` bare or `true`). `--auto-connect false` is ignored for startup-scoped blocking so disabled attach hints do not force a fresh launch.
+
 A successful unnamed `sessionMode: "fresh"` launch should become the new extension-managed session so later default calls follow that browser instead of silently snapping back to the older managed session.
 
 ## Preferring the native tool

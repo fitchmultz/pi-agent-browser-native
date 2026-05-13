@@ -115,7 +115,7 @@ const SENSITIVE_QUERY_PARAM_PATTERN =
 const SENSITIVE_FIELD_NAME_PATTERN =
 	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|x(?:_|-)?api(?:_|-)?key)$/i;
 
-const GLOBAL_FLAGS_WITH_VALUES = new Set([
+const VALUE_FLAGS = new Set([
 	"--session",
 	"--cdp",
 	"--config",
@@ -146,6 +146,29 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
 	"--confirm-actions",
 	"--max-output",
 	"--model",
+	"--baseline",
+	"--body",
+	"--categories",
+	"--curl",
+	"--depth",
+	"-d",
+	"--domain",
+	"--expires",
+	"--filter",
+	"--fn",
+	"--label",
+	"--load",
+	"--name",
+	"--path",
+	"--resource-type",
+	"--sameSite",
+	"--selector",
+	"-s",
+	"--text",
+	"--timeout",
+	"--url",
+	"--username",
+	"--password",
 ]);
 const DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM: Partial<Record<NodeJS.Platform, string>> = {
 	darwin: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -693,7 +716,7 @@ function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | u
 			continue;
 		}
 		const normalizedToken = token.split("=", 1)[0] ?? token;
-		if (!GLOBAL_FLAGS_WITH_VALUES.has(normalizedToken)) {
+		if (!VALUE_FLAGS.has(normalizedToken)) {
 			continue;
 		}
 		if (token.includes("=")) {
@@ -861,10 +884,23 @@ export function extractExplicitSessionName(args: string[]): string | undefined {
 	return undefined;
 }
 
+function hasLaunchScopedFlagToken(args: string[], flag: string): boolean {
+	const commandStartIndex = findCommandStartIndex(args);
+	const command = commandStartIndex === undefined ? undefined : args[commandStartIndex];
+	return args.some((token, index) => {
+		if (token !== flag && !token.startsWith(`${flag}=`)) return false;
+		if (flag === "--auto-connect") return isBooleanFlagEnabled(args, flag);
+		if (flag === "--state" && command === "wait" && commandStartIndex !== undefined && index > commandStartIndex) {
+			return false;
+		}
+		return true;
+	});
+}
+
 export function getStartupScopedFlags(args: string[]): string[] {
 	return LAUNCH_SCOPED_FLAG_DEFINITIONS
 		.map((definition) => definition.flag)
-		.filter((flag) => flag === "--auto-connect" ? isBooleanFlagEnabled(args, flag) : hasFlagToken(args, flag));
+		.filter((flag) => hasLaunchScopedFlagToken(args, flag));
 }
 
 export function hasLaunchScopedTabCorrectionFlag(args: string[]): boolean {
@@ -1080,7 +1116,7 @@ function findCommandStartIndex(args: string[]): number | undefined {
 		}
 		if (token.startsWith("-")) {
 			const normalizedToken = token.split("=", 1)[0] ?? token;
-			if (GLOBAL_FLAGS_WITH_VALUES.has(normalizedToken) && !token.includes("=")) {
+			if (VALUE_FLAGS.has(normalizedToken) && !token.includes("=")) {
 				index += 1;
 			} else if (
 				GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken) &&

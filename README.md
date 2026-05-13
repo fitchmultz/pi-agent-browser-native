@@ -380,7 +380,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 | Path | Purpose |
 |---|---|
 | `extensions/agent-browser/index.ts` | Pi extension entrypoint and native tool wrapper |
-| `extensions/agent-browser/lib/runtime.ts` | Args, session planning, redaction, process, and runtime helpers |
+| `extensions/agent-browser/lib/runtime.ts` | Argv parsing, session planning, redaction, and execution-plan helpers (pure planning; subprocess wiring lives beside the entrypoint) |
 | `extensions/agent-browser/lib/results/` | Model-facing result rendering and error guidance |
 | `extensions/agent-browser/lib/playbook.ts` | Canonical generated agent/browser guidance |
 | `scripts/agent-browser-capability-baseline.mjs` | Target upstream version, help samples, and doc/token inventory for drift checks |
