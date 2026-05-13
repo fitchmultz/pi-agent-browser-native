@@ -77,6 +77,7 @@ test("buildToolPresentation enriches click results with a current-page navigatio
 	assert.match((presentation.content[0] as { text: string }).text, /Destination Docs/);
 	assert.match((presentation.content[0] as { text: string }).text, /https:\/\/example.com\/docs/);
 	assert.match(presentation.summary, /click → Destination Docs/);
+	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
 });
 
 test("buildToolPresentation renders pending confirmations with approve and deny recovery calls", async () => {
@@ -100,6 +101,7 @@ test("buildToolPresentation renders pending confirmations with approve and deny 
 	assert.match(text, /Action: click @e7/);
 	assert.match(text, /\{ "args": \["confirm", "c_8f3a1234"\] \}/);
 	assert.match(text, /\{ "args": \["deny", "c_8f3a1234"\] \}/);
+	assert.deepEqual(presentation.nextActions?.map((action) => action.params?.args), [["confirm", "c_8f3a1234"], ["deny", "c_8f3a1234"]]);
 	assert.equal(presentation.summary, "Confirmation required: c_8f3a1234");
 });
 
@@ -403,6 +405,24 @@ test("buildToolPresentation appends selector-dialect guidance to Playwright-styl
 	assert.match(text, /snapshot -i/);
 	assert.match(text, /find role\|text\|label/);
 	assert.match(text, /scrollintoview/);
+});
+
+test("buildToolPresentation returns exact next actions for selector failures and tab drift", async () => {
+	const selectorFailure = await buildToolPresentation({
+		commandInfo: { command: "click", subcommand: "text=Close" },
+		cwd: process.cwd(),
+		errorText: "Failed to parse selector text=Close",
+	});
+	assert.equal(selectorFailure.failureCategory, "selector-unsupported");
+	assert.deepEqual(selectorFailure.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
+
+	const tabDrift = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		errorText: "agent-browser could not re-select the intended tab before running the command.",
+	});
+	assert.equal(tabDrift.failureCategory, "tab-drift");
+	assert.deepEqual(tabDrift.nextActions?.map((action) => action.params?.args), [["tab", "list"], ["snapshot", "-i"]]);
 });
 
 test("buildToolPresentation does not append selector guidance to unrelated errors", async () => {
@@ -1014,6 +1034,8 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 	assert.equal(presentation.batchFailure?.failedStep.commandText, "click @zzz");
 	assert.equal(presentation.batchFailure?.failedStep.resultCategory, "failure");
 	assert.equal(presentation.batchFailure?.failedStep.failureCategory, "stale-ref");
+	assert.deepEqual(presentation.batchFailure?.failedStep.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
+	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.equal(presentation.batchFailure?.failureCount, 1);
 	assert.equal(presentation.batchFailure?.successCount, 1);
 	assert.equal(presentation.batchFailure?.totalCount, 2);
@@ -1135,6 +1157,7 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 		path: "/tmp/export.csv",
 		subcommand: "--download",
 	});
+	assert.equal(presentation.batchSteps?.[1]?.nextActions?.[0]?.artifactPath, "/tmp/export.csv");
 });
 
 test("buildToolPresentation does not re-append old artifact retention noise for routine explicit batch files", async () => {

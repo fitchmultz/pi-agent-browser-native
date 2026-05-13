@@ -43,6 +43,19 @@ export interface AgentBrowserResultCategoryDetails {
 	successCategory?: AgentBrowserSuccessCategory;
 }
 
+export interface AgentBrowserNextAction {
+	artifactPath?: string;
+	id: string;
+	params?: {
+		args: string[];
+		sessionMode?: "auto" | "fresh";
+		stdin?: string;
+	};
+	reason: string;
+	safety?: string;
+	tool: "agent_browser";
+}
+
 export type FileArtifactKind = "download" | "file" | "har" | "image" | "pdf" | "profile" | "trace" | "video";
 
 export type FileArtifactStatus = "missing" | "repaired-from-temp" | "saved" | "upstream-temp-only";
@@ -216,6 +229,7 @@ export interface BatchStepPresentationDetails {
 	commandText: string;
 	data?: unknown;
 	failureCategory?: AgentBrowserFailureCategory;
+	nextActions?: AgentBrowserNextAction[];
 	fullOutputPath?: string;
 	fullOutputPaths?: string[];
 	imagePath?: string;
@@ -250,6 +264,7 @@ export interface ToolPresentation {
 	fullOutputPaths?: string[];
 	imagePath?: string;
 	imagePaths?: string[];
+	nextActions?: AgentBrowserNextAction[];
 	resultCategory?: AgentBrowserResultCategory;
 	savedFile?: SavedFilePresentationDetails;
 	savedFilePath?: string;
@@ -308,6 +323,166 @@ export function classifyAgentBrowserFailureCategory(options: {
 	}
 	if (options.validationError) return "validation-error";
 	return "upstream-error";
+}
+
+function buildNextToolAction(options: {
+	args: string[];
+	id: string;
+	reason: string;
+	safety?: string;
+	sessionMode?: "auto" | "fresh";
+	stdin?: string;
+}): AgentBrowserNextAction {
+	return {
+		id: options.id,
+		params: {
+			args: options.args,
+			...(options.sessionMode ? { sessionMode: options.sessionMode } : {}),
+			...(options.stdin ? { stdin: options.stdin } : {}),
+		},
+		reason: options.reason,
+		...(options.safety ? { safety: options.safety } : {}),
+		tool: "agent_browser",
+	};
+}
+
+function buildArtifactAction(path: string): AgentBrowserNextAction {
+	return {
+		artifactPath: path,
+		id: "use-saved-artifact",
+		reason: "Use the saved artifact path from the structured result instead of scraping it from text.",
+		safety: "Verify artifact metadata such as exists/status before treating the file as durable.",
+		tool: "agent_browser",
+	};
+}
+
+const MUTATING_COMMANDS = new Set([
+	"back",
+	"check",
+	"click",
+	"dblclick",
+	"dialog",
+	"fill",
+	"forward",
+	"hover",
+	"press",
+	"pushstate",
+	"reload",
+	"scroll",
+	"scrollintoview",
+	"select",
+	"swipe",
+	"tap",
+	"type",
+	"uncheck",
+]);
+
+function getDownloadRetryPath(args: string[] | undefined, fallback: string | undefined): string | undefined {
+	if (fallback) return fallback;
+	if (!args || args.length === 0) return undefined;
+	const downloadFlagIndex = args.indexOf("--download");
+	if (downloadFlagIndex >= 0) {
+		const candidate = args[downloadFlagIndex + 1];
+		return candidate && !candidate.startsWith("-") ? candidate : undefined;
+	}
+	const downloadCommandIndex = args.indexOf("download");
+	if (downloadCommandIndex >= 0 && args.length > downloadCommandIndex + 2) {
+		return args[args.length - 1];
+	}
+	return undefined;
+}
+
+export function buildAgentBrowserNextActions(options: {
+	artifacts?: FileArtifactMetadata[];
+	args?: string[];
+	command?: string;
+	confirmationId?: string;
+	failureCategory?: AgentBrowserFailureCategory;
+	resultCategory: AgentBrowserResultCategory;
+	savedFilePath?: string;
+	successCategory?: AgentBrowserSuccessCategory;
+}): AgentBrowserNextAction[] | undefined {
+	const actions: AgentBrowserNextAction[] = [];
+	if (options.resultCategory === "success") {
+		if (options.command === "open") {
+			actions.push(buildNextToolAction({
+				args: ["snapshot", "-i"],
+				id: "inspect-opened-page",
+				reason: "Inspect the opened page before choosing interactive refs.",
+			}));
+		} else if (options.command && MUTATING_COMMANDS.has(options.command)) {
+			actions.push(buildNextToolAction({
+				args: ["snapshot", "-i"],
+				id: "inspect-after-mutation",
+				reason: "Refresh interactive refs after a browser mutation, navigation, scroll, or rerender.",
+				safety: "Do not reuse prior @refs until a fresh snapshot confirms they still exist.",
+			}));
+		}
+		if (options.savedFilePath) {
+			actions.push(buildArtifactAction(options.savedFilePath));
+		}
+		for (const artifact of options.artifacts ?? []) {
+			if (artifact.path !== options.savedFilePath) {
+				actions.push(buildArtifactAction(artifact.path));
+			}
+		}
+	} else {
+		switch (options.failureCategory) {
+			case "confirmation-required":
+				if (options.confirmationId) {
+					actions.push(
+						buildNextToolAction({
+							args: ["confirm", options.confirmationId],
+							id: "approve-confirmation",
+							reason: "Approve the pending upstream confirmation when the requested action is safe.",
+							safety: "Only confirm after reviewing the guarded action shown in the result.",
+						}),
+						buildNextToolAction({
+							args: ["deny", options.confirmationId],
+							id: "deny-confirmation",
+							reason: "Deny the pending upstream confirmation when the guarded action is unsafe or unintended.",
+						}),
+					);
+				}
+				break;
+			case "stale-ref":
+			case "selector-not-found":
+			case "selector-unsupported":
+				actions.push(buildNextToolAction({
+					args: ["snapshot", "-i"],
+					id: "refresh-interactive-refs",
+					reason: "Get current interactive refs before retrying the element action.",
+					safety: "Prefer a current @ref or a stable find locator; do not retry stale refs blindly.",
+				}));
+				break;
+			case "download-not-verified":
+				{
+					const retryPath = getDownloadRetryPath(options.args, options.savedFilePath);
+					actions.push(buildNextToolAction({
+						args: retryPath ? ["wait", "--download", retryPath] : ["wait", "--download"],
+						id: "wait-for-download",
+						reason: "Wait for the browser download and let the wrapper verify saved-file metadata.",
+						safety: "Use a bounded wait timeout that stays below the native wrapper IPC budget.",
+					}));
+				}
+				break;
+			case "tab-drift":
+				actions.push(
+					buildNextToolAction({
+						args: ["tab", "list"],
+						id: "list-tabs-for-recovery",
+						reason: "Inspect available tabs before selecting the intended target.",
+					}),
+					buildNextToolAction({
+						args: ["snapshot", "-i"],
+						id: "inspect-current-tab",
+						reason: "Inspect the currently selected tab after tab recovery.",
+					}),
+				);
+				break;
+		}
+	}
+	return actions.length > 0 ? actions : undefined;
 }
 
 export function buildAgentBrowserResultCategoryDetails(options: {

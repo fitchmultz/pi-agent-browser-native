@@ -22,6 +22,7 @@ import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary
 import {
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
+	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
@@ -1106,9 +1107,18 @@ async function buildBatchStepPresentation(options: {
 			command: command?.[0],
 			errorText,
 		});
+		const confirmationRequired = detectConfirmationRequired(item.error);
+		const nextActions = buildAgentBrowserNextActions({
+			args: command,
+			command: command?.[0],
+			confirmationId: confirmationRequired?.id,
+			failureCategory,
+			resultCategory: "failure",
+		});
 		const presentation: ToolPresentation = {
 			content: [{ type: "text", text: errorText }],
 			failureCategory,
+			nextActions,
 			resultCategory: "failure",
 			summary: errorText,
 		};
@@ -1120,6 +1130,7 @@ async function buildBatchStepPresentation(options: {
 				data: item.error,
 				failureCategory,
 				index,
+				nextActions,
 				resultCategory: "failure",
 				success: false,
 				summary: errorText,
@@ -1134,6 +1145,7 @@ async function buildBatchStepPresentation(options: {
 		artifactRequest,
 		commandInfo: parseCommandInfo(command ?? []),
 		cwd,
+		args: command,
 		envelope: { data: item.result, success: true },
 		persistentArtifactStore,
 		sessionName,
@@ -1147,6 +1159,14 @@ async function buildBatchStepPresentation(options: {
 		secondaryPaths: presentation.imagePaths,
 	});
 	const text = getPresentationText(presentation) || presentation.summary;
+	const nextActions = buildAgentBrowserNextActions({
+		artifacts: presentation.artifacts,
+		args: command,
+		command: command?.[0],
+		resultCategory: "success",
+		savedFilePath: presentation.savedFilePath,
+		successCategory: presentation.successCategory,
+	});
 
 	return {
 		details: {
@@ -1159,6 +1179,7 @@ async function buildBatchStepPresentation(options: {
 			imagePath: imagePaths[0],
 			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
 			index,
+			nextActions,
 			resultCategory: "success",
 			savedFile: presentation.savedFile,
 			savedFilePath: presentation.savedFilePath,
@@ -1262,6 +1283,9 @@ async function buildBatchPresentation(options: {
 		fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
 		imagePath: imagePaths[0],
 		imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+		nextActions: batchFailure
+			? batchFailure.failedStep.nextActions
+			: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success" }),
 		resultCategory: batchFailure ? "failure" : "success",
 		successCategory: batchFailure ? undefined : classifyAgentBrowserSuccessCategory({ artifacts }),
 		summary,
@@ -1612,6 +1636,7 @@ async function compactLargePresentationOutput(options: {
 
 export async function buildToolPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	args?: string[];
 	artifactRequest?: ArtifactRequestContext;
 	batchArtifactRequests?: Array<ArtifactRequestContext | undefined>;
 	commandInfo: CommandInfo;
@@ -1621,12 +1646,14 @@ export async function buildToolPresentation(options: {
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 }): Promise<ToolPresentation> {
-	const { artifactManifest, artifactRequest, commandInfo, cwd, envelope, errorText, persistentArtifactStore, sessionName } = options;
+	const { args, artifactManifest, artifactRequest, commandInfo, cwd, envelope, errorText, persistentArtifactStore, sessionName } = options;
 	if (errorText) {
 		const hintedErrorText = appendSelectorRecoveryHint(redactModelFacingText(errorText));
+		const categoryDetails = buildAgentBrowserResultCategoryDetails({ args: [commandInfo.command, commandInfo.subcommand].filter((item): item is string => item !== undefined), command: commandInfo.command, errorText: hintedErrorText, succeeded: false });
 		return {
-			...buildAgentBrowserResultCategoryDetails({ args: [commandInfo.command, commandInfo.subcommand].filter((item): item is string => item !== undefined), command: commandInfo.command, errorText: hintedErrorText, succeeded: false }),
+			...categoryDetails,
 			content: [{ type: "text", text: hintedErrorText }],
+			nextActions: buildAgentBrowserNextActions({ args, command: commandInfo.command, failureCategory: categoryDetails.failureCategory, resultCategory: "failure" }),
 			summary: hintedErrorText,
 		};
 	}
@@ -1667,11 +1694,34 @@ export async function buildToolPresentation(options: {
 		persistentArtifactStore,
 		presentation: presentationWithImage,
 	});
-	return sanitizeModelFacingPresentation(
-		applyArtifactManifest(
-			compactedPresentation,
-			compactedPresentation.artifactManifest ?? artifactManifest,
-			buildManifestEntriesForFileArtifacts(artifacts.filter(isManifestFileArtifact)),
-		),
+	const presentationWithManifest = applyArtifactManifest(
+		compactedPresentation,
+		compactedPresentation.artifactManifest ?? artifactManifest,
+		buildManifestEntriesForFileArtifacts(artifacts.filter(isManifestFileArtifact)),
 	);
+	const confirmationRequired = detectConfirmationRequired(data);
+	if (!presentationWithManifest.resultCategory) {
+		const categoryDetails = buildAgentBrowserResultCategoryDetails({
+			artifacts: presentationWithManifest.artifacts,
+			command: commandInfo.command,
+			confirmationRequired: confirmationRequired !== undefined,
+			errorText: envelope?.success === false ? presentationWithManifest.summary : undefined,
+			savedFile: presentationWithManifest.savedFile,
+			succeeded: envelope?.success !== false,
+		});
+		presentationWithManifest.resultCategory = categoryDetails.resultCategory;
+		presentationWithManifest.successCategory = categoryDetails.successCategory;
+		presentationWithManifest.failureCategory = categoryDetails.failureCategory;
+	}
+	presentationWithManifest.nextActions = presentationWithManifest.nextActions ?? buildAgentBrowserNextActions({
+		artifacts: presentationWithManifest.artifacts,
+		args,
+		command: commandInfo.command,
+		confirmationId: confirmationRequired?.id,
+		failureCategory: presentationWithManifest.failureCategory,
+		resultCategory: presentationWithManifest.resultCategory ?? "success",
+		savedFilePath: presentationWithManifest.savedFilePath,
+		successCategory: presentationWithManifest.successCategory,
+	});
+	return sanitizeModelFacingPresentation(presentationWithManifest);
 }
