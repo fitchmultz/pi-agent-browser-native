@@ -194,62 +194,6 @@
       "custom_fields": {}
     },
     {
-      "id": "RQ-0052",
-      "status": "doing",
-      "title": "Support network, debug, diff, streaming, dashboard, and chat command families",
-      "description": "Make the non-core command families in the current root help reliable through the native wrapper. Cover network routing/requests/HAR, diff snapshot/screenshot/url, trace/profiler/record, console/errors/highlight/inspect/clipboard, stream enable/disable/status, dashboard start/stop, chat single-shot, and chat/dashboard AI env/model flags. Acceptance criteria: result presentation summarizes diagnostics and saved artifacts; interactive or long-running commands have documented behavior and timeout/cleanup expectations; credential-bearing values are redacted; fake-upstream tests cover every family and real-upstream tests cover safe representative flows; `npm test` passes.",
-      "priority": "medium",
-      "tags": [
-        "network",
-        "debug",
-        "stream",
-        "dashboard",
-        "chat",
-        "diff"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/runtime.ts",
-        "extensions/agent-browser/lib/process.ts",
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "docs/COMMAND_REFERENCE.md",
-        "docs/TOOL_CONTRACT.md",
-        "test/agent-browser.presentation.test.ts",
-        "test/agent-browser.process.test.ts",
-        "test/agent-browser.real-upstream-contract.test.ts",
-        "npm test"
-      ],
-      "evidence": [
-        "workflow: agent_browser { args: [\"--help\"] } :: current root help lists Network, Diff, Debug, Streaming, Chat, and Dashboard sections.",
-        "path: extensions/agent-browser/lib/results/presentation.ts:154-220 :: diagnostic summaries currently cover some session/profile/auth/network requests/console/errors/dashboard/doctor cases but not every current command family.",
-        "path: extensions/agent-browser/lib/results/presentation.ts:409-432 :: artifact detection covers some debug outputs but should be validated against current `diff`, `trace`, `profiler`, `record`, and HAR shapes.",
-        "path: extensions/agent-browser/lib/process.ts:78-85 :: AI_GATEWAY_ and provider env prefixes are forwarded, which matters for `chat` and dashboard AI features."
-      ],
-      "plan": [
-        "Add command-family presentation tests for network, diff, debug, stream, dashboard, and chat result shapes.",
-        "Confirm artifact metadata and manifests for HAR, trace, profile, recording, screenshot diff, and other path-bearing outputs.",
-        "Document safe usage and cleanup for stream/dashboard/record/inspect flows so they do not leave resources running unexpectedly.",
-        "Add representative real-upstream tests where deterministic and fake-upstream coverage where external credentials or UI would be required."
-      ],
-      "notes": [],
-      "request": "Add support for everything in the current version of agent-browser.",
-      "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T22:06:21.073098000Z",
-      "started_at": "2026-05-13T22:06:21.073098000Z",
-      "depends_on": [
-        "RQ-0048",
-        "RQ-0049",
-        "RQ-0058"
-      ],
-      "blocks": [
-        "RQ-0054",
-        "RQ-0056"
-      ],
-      "relates_to": [],
-      "custom_fields": {
-        "source": "manual-upstream-refresh"
-      }
-    },
-    {
       "id": "RQ-0053",
       "status": "todo",
       "title": "Document and validate provider and specialized-skill passthrough",
