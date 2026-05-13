@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "RQ-0062",
-      "status": "todo",
+      "status": "doing",
       "title": "Recover from stale refs only when retry safety is provable",
       "priority": "high",
       "tags": [
@@ -31,7 +31,8 @@
       "notes": [],
       "request": "Infer and queue conservative stale-ref recovery work from the user's ABN task list.",
       "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T17:54:11.556947000Z",
+      "started_at": "2026-05-13T17:54:11.556947000Z",
       "depends_on": [
         "RQ-0058",
         "RQ-0059",

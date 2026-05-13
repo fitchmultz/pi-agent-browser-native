@@ -104,6 +104,8 @@ Compilation (then `--json` and session handling apply like any other call):
 
 When `semanticAction` compiles successfully, `details.compiledSemanticAction` echoes `{ action, locator, args }` with `args` redacted the same way as other invocation details. Expect it on the initial wrapper validation return (when that path still builds the early `details` object) and on the unified result after `agent-browser` runs. It is omitted when the call used `args` only, when compilation never produced argv, and on some in-`execute` error returns that attach a slimmer `details` shape before the unified merge (for example certain session-plan, stdin-contract, tab-pinning, or missing-binary guard paths); compare `extensions/agent-browser/index.ts` where `compiledSemanticAction` is assigned.
 
+If a compiled `semanticAction` fails with `failureCategory: "stale-ref"`, `details.nextActions` includes `retry-semantic-action-after-stale-ref` with the exact compiled `find` argv in `params.args`. The wrapper appends that entry **after** any `refresh-interactive-refs` snapshot step from `buildAgentBrowserNextActions` in `extensions/agent-browser/lib/results/shared.ts` (see `extensions/agent-browser/index.ts` where `nextActions` is merged). That retry is only offered because the semantic target is stable and the stale-ref error proves the previous action did not execute; direct stale `@e…` commands still return snapshot/find recovery guidance instead of an unsafe blind retry.
+
 Examples:
 
 ```json
@@ -226,7 +228,7 @@ These categories are intentionally bounded and stable so agents can branch on th
 
 For `batch`, top-level `details` still carries `resultCategory` plus `successCategory` or `failureCategory` for the **aggregate** tool outcome: if any step fails, the overall result is a failure (`resultCategory: "failure"`) even when later steps succeed—inspect `batchSteps[]` for per-step outcomes. Each `batchSteps[]` entry includes its own `resultCategory` and either `successCategory` or `failureCategory` for that step. `batchFailure.failedStep` duplicates the first failing step’s details, including its `failureCategory` and any `nextActions`.
 
-`nextActions` is an optional machine-readable list of exact native `agent_browser` follow-ups. Each entry includes `tool: "agent_browser"`, an `id`, a short `reason`, optional `safety`, and either `params` (`args`, optional `stdin`, optional `sessionMode`) or an `artifactPath` for saved-file workflows. Agents should prefer these payloads over prose when present. Current recommendations include: `open` success → `snapshot -i`; mutating/navigation commands (see `buildAgentBrowserNextActions` in source for the exact command set) → `snapshot -i`; stale refs and selector failures → `snapshot -i`; confirmations → exact `confirm <id>` and `deny <id>` choices; tab drift → `tab list` then `snapshot -i`; download verification failures → `wait --download [path]`; saved artifacts → the artifact path to inspect/consume after checking metadata. When nothing applies, the field is omitted.
+`nextActions` is an optional machine-readable list of exact native `agent_browser` follow-ups. Each entry includes `tool: "agent_browser"`, an `id`, a short `reason`, optional `safety`, and either `params` (`args`, optional `stdin`, optional `sessionMode`) or an `artifactPath` for saved-file workflows. Agents should prefer these payloads over prose when present. Current recommendations include: `open` success → `snapshot -i`; mutating/navigation commands (see `buildAgentBrowserNextActions` in source for the exact command set) → `snapshot -i`; stale refs and selector failures → `snapshot -i` via `refresh-interactive-refs`; semantic `stale-ref` failures that compiled from `semanticAction` may also include `retry-semantic-action-after-stale-ref` after that snapshot step (see the `semanticAction` section above); confirmations → exact `confirm <id>` and `deny <id>` choices; tab drift → `tab list` then `snapshot -i`; download verification failures → `wait --download [path]`; saved artifacts → the artifact path to inspect/consume after checking metadata. When nothing applies, the field is omitted.
 
 For `batch`, each `batchSteps[]` entry can carry its own `nextActions` for that step’s success or failure. Top-level `details.nextActions` on a failed batch duplicates `batchFailure.failedStep.nextActions` so callers can read one aggregate object. On a fully successful batch, top-level `nextActions` may still list artifact follow-ups derived from the combined step artifacts.
 
@@ -242,6 +244,27 @@ Example shape (fields vary by scenario):
     "reason": "Refresh interactive refs after a browser mutation, navigation, scroll, or rerender.",
     "safety": "Do not reuse prior @refs until a fresh snapshot confirms they still exist.",
     "params": { "args": ["snapshot", "-i"], "sessionMode": "auto" }
+  }
+]
+```
+
+When `semanticAction` produced compiled argv but the unified result is `failureCategory: "stale-ref"` with `details.compiledSemanticAction` still present, `nextActions` chains snapshot refresh then the compiled `find` retry; `reason` / `safety` strings match `buildAgentBrowserNextActions` in `extensions/agent-browser/lib/results/shared.ts` and the append in `extensions/agent-browser/index.ts`:
+
+```json
+"nextActions": [
+  {
+    "tool": "agent_browser",
+    "id": "refresh-interactive-refs",
+    "reason": "Get current interactive refs before retrying the element action.",
+    "safety": "Prefer a current @ref or a stable find locator; do not retry stale refs blindly.",
+    "params": { "args": ["snapshot", "-i"] }
+  },
+  {
+    "tool": "agent_browser",
+    "id": "retry-semantic-action-after-stale-ref",
+    "reason": "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.",
+    "safety": "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.",
+    "params": { "args": ["find", "text", "Submit", "click"] }
   }
 ]
 ```

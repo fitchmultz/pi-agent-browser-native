@@ -34,6 +34,7 @@ The extension should:
 - inject `--json`
 - support optional stdin only for `eval --stdin`, `batch`, and `auth save --password-stdin`, rejecting other command/stdin combinations before launch
 - accept an optional native `semanticAction` object as a mutually exclusive alternative to `args` on a single tool call, compile it into upstream `find` argv, and echo the compiled shape in `details.compiledSemanticAction` for observability (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction))
+- when that compiled path fails as `stale-ref`, optionally append a `retry-semantic-action-after-stale-ref` entry to `details.nextActions` after the usual `refresh-interactive-refs` snapshot step so agents can re-issue the same compiled `find` argv only when the failure implies the interaction did not run (contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction))
 
 ### Agent-first UX
 
