@@ -23,6 +23,24 @@ Native `pi` integration of `agent-browser` as a `pi` tool.
 - Put agent-specific operational notes, workflows, and testing procedures in this `AGENTS.md`.
 - Write documents as complete documents, not iterative logs, unless the document is explicitly meant to be iterative such as `CHANGELOG.md`.
 
+## Upstream capability baseline and command reference
+
+When upstream `agent-browser` changes version or help text, keep three layers aligned:
+
+1. **Canonical metadata** — `scripts/agent-browser-capability-baseline.mjs` defines the targeted upstream version, which `agent-browser <args>` help outputs are sampled for drift checks, and which literal tokens must appear in upstream help and in human-written sections of `docs/COMMAND_REFERENCE.md` (grouped as inventory sections). Nothing in this file shells out to `agent-browser`; rebaselining is an explicit maintainer edit after comparing real `--help` output from the installed binary.
+
+2. **Human command guide** — `docs/COMMAND_REFERENCE.md` holds the readable workflows, examples, and constraints. Outside the two HTML-comment bounded generated regions (`upstream-baseline`, `capability-token-baseline`), edits are normal prose. Every human-authored token listed in the baseline must appear somewhere in the doc body so agents searching the repo see real usage, not only generated lists.
+
+3. **Generated blocks** — The baseline checker renders versioned boilerplate into `docs/COMMAND_REFERENCE.md`. After changing the baseline metadata, run `npm run docs -- command-reference write`. Do not hand-edit inside the `<!-- agent-browser-capability-baseline:start ... -->` / `<!-- ...:end ... -->` markers.
+
+Verification stack:
+
+- `npm run docs` (or `npm run docs -- command-reference check`) — generated blocks match `agent-browser-capability-baseline.mjs`.
+- `npm run verify -- command-reference` — the above plus live `agent-browser --version` and help sampling against the same baseline (requires the targeted upstream on `PATH`).
+- Unit coverage for the verifier and block renderer lives in `test/verify-command-reference.test.ts`.
+
+Release-oriented notes also live in [`docs/RELEASE.md`](docs/RELEASE.md) under pre-release and real-upstream sections.
+
 ## Preferred testing workflow
 
 Use an end-to-end interactive `pi` run inside `tmux`.
