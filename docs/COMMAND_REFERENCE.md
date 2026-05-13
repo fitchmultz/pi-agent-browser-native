@@ -524,7 +524,7 @@ When these commands are invoked through the native `agent_browser` tool, structu
 
 Use `--config <path>` to load a specific config file. Boolean flags accept optional `true` or `false` values, such as `--headed false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
 
-Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, and `AI_GATEWAY_API_KEY`. Provider credential prefixes forwarded by the wrapper include `BROWSERBASE_`, `KERNEL_`, `BROWSER_USE_`, `BROWSERLESS_`, and `AGENTCORE_`.
+Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, and `AI_GATEWAY_API_KEY`. The upstream child also receives every parent variable whose name starts with `AGENT_BROWSER_`, `AGENTCORE_`, `AI_GATEWAY_`, `BROWSERBASE_`, `BROWSERLESS_`, `BROWSER_USE_`, `KERNEL_`, or `XDG_`, plus the explicit inherited-name allowlist in `buildAgentBrowserProcessEnv` (`extensions/agent-browser/lib/process.ts`).
 
 ## Wrapper-specific behavior worth knowing
 
