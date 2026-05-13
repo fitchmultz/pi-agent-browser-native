@@ -858,6 +858,13 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 			expectedMediaType: "application/json",
 			expectedText: "Saved HAR: network.har",
 		},
+		{
+			commandInfo: { command: "state", subcommand: "save" },
+			data: { path: "auth-state.json" },
+			expectedKind: "file",
+			expectedMediaType: "application/json",
+			expectedText: "State file: auth-state.json",
+		},
 	] as const;
 
 	for (const item of cases) {
@@ -892,6 +899,40 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 			});
 		}
 	}
+});
+
+test("buildToolPresentation does not classify state load paths as saved artifacts", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "state", subcommand: "load" },
+		cwd: "/tmp/pi-agent-browser-artifact-tests",
+		envelope: { success: true, data: { path: "auth-state.json" } },
+	});
+
+	assert.equal(presentation.artifacts, undefined);
+	assert.equal(presentation.artifactManifest, undefined);
+	assert.equal(presentation.summary, "state completed");
+	assert.match((presentation.content[0] as { text: string }).text, /auth-state\.json/);
+});
+
+test("buildToolPresentation records path-bearing diff screenshots without inlining them as trusted screenshots", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "diff", subcommand: "screenshot" },
+		cwd: "/tmp/pi-agent-browser-artifact-tests",
+		envelope: { success: true, data: { baselinePath: "baseline.png", diffPath: "diff.png", mismatchPixels: 12 } },
+	});
+
+	assert.equal(presentation.summary, "Saved diff image: diff.png");
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Saved diff image: diff\.png/);
+	assert.match(text, /Artifact type: image/);
+	assert.doesNotMatch(text, /baseline\.png/);
+	assert.equal(presentation.artifacts?.length, 1);
+	assert.equal(presentation.artifacts?.[0]?.kind, "image");
+	assert.equal(presentation.artifacts?.[0]?.path, "diff.png");
+	assert.equal(presentation.artifacts?.[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", "diff.png"));
+	assert.equal(presentation.imagePath, undefined);
+	assert.equal(presentation.imagePaths, undefined);
 });
 
 test("buildToolPresentation renders record start as a lifecycle state without missing-file copy", async () => {

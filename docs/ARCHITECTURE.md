@@ -143,7 +143,7 @@ This keeps the product centered on native tool usage instead of auxiliary skill 
 - clear missing-binary errors
 - compact result summaries
 - bounded machine-readable outcome metadata on tool `details` (`resultCategory`, `successCategory`, `failureCategory`, optional `nextActions`, optional `pageChangeSummary` with per-step summaries on `batch`) so agents can branch without parsing prose; enums, classifier precedence, and follow-up payloads are assembled in `extensions/agent-browser/lib/results/shared.ts`, compact page-change summaries are built in `extensions/agent-browser/lib/results/presentation.ts` (`buildPageChangeSummary`), and the human contract lives in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)
-- inline screenshots/images
+- inline screenshots/images for the plain `screenshot` command; other image-like saves (for example `diff screenshot`) still appear in `details.artifacts` and summaries but are not auto-inlined as Pi image attachments (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details))
 - lightweight session convenience
 - docs, including a repo-readable command reference that mirrors the blocked direct-binary help path closely enough for normal agent work
 - a deterministic **agent efficiency benchmark** (`scripts/agent-browser-efficiency-benchmark.mjs`) used to quantify representative agent-facing workflows without invoking upstream; maintainer commands and constraints are in [`AGENTS.md`](../AGENTS.md) under “Agent browser efficiency benchmark”
