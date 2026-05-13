@@ -98,9 +98,9 @@ Compilation (then `--json` and session handling apply like any other call):
 
 | Fields | Compiled `args` (conceptually) |
 | --- | --- |
-| `click` + non-role locator | `["find", <locator>, <value>, "click"]` |
+| `click`, `check`, or `uncheck` + non-`role` locator | `["find", <locator>, <value>, <action>]` |
 | `click` / `check` / `uncheck` + `role` + optional `name` | `["find","role",<value>,<action>]` plus `["--name",<name>]` when `name` is set |
-| `fill` or `select` | `["find",<locator>,<value>,<action>,<text>]` plus optional `["--name",<name>]` for `role` |
+| `fill` or `select` | `["find",<locator>,<value>,<action>,<text>]` plus optional `["--name",<name>]` after `text` when `locator` is `role` and `name` is set |
 
 When `semanticAction` compiles successfully, `details.compiledSemanticAction` echoes `{ action, locator, args }` with `args` redacted the same way as other invocation details. Expect it on the initial wrapper validation return (when that path still builds the early `details` object) and on the unified result after `agent-browser` runs. It is omitted when the call used `args` only, when compilation never produced argv, and on some in-`execute` error returns that attach a slimmer `details` shape before the unified merge (for example certain session-plan, stdin-contract, tab-pinning, or missing-binary guard paths); compare `extensions/agent-browser/index.ts` where `compiledSemanticAction` is assigned.
 

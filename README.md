@@ -171,6 +171,21 @@ Download a file from a known link or control:
 { "args": ["download", "@e5", "/tmp/report.pdf"] }
 ```
 
+### Locator shorthand (`semanticAction`)
+
+For supported upstream `find` flows you can omit hand-built `args` and pass a top-level `semanticAction` object instead. The wrapper compiles it to the same `find` argv upstream already understands; compiled argv is echoed as `details.compiledSemanticAction` when the unified result includes that field. Full field rules live in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction).
+
+```json
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Submit" } }
+{ "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
+```
+
+Typical pitfalls:
+
+- Supply **exactly one** of `args` or `semanticAction` per call (not both, not neither).
+- `semanticAction` is **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
+- Commands or locators outside the supported shorthand still require explicit `args`.
+
 For asynchronous exports, click first and then wait for the download:
 
 ```json
