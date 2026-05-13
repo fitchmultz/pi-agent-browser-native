@@ -27,6 +27,7 @@ import {
 } from "./lib/playbook.js";
 import { SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS, runAgentBrowserProcess } from "./lib/process.js";
 import {
+	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	buildToolPresentation,
 	getAgentBrowserErrorText,
@@ -1882,6 +1883,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 										sessionMode,
 										sessionTabCorrection: plannedSessionTabSelection,
 										...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: error }),
+										nextActions: buildAgentBrowserNextActions({ failureCategory: "tab-drift", resultCategory: "failure" }),
 										validationError: error,
 										...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 									},
@@ -1907,6 +1909,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 										sessionMode,
 										sessionTabCorrection: plannedSessionTabSelection,
 										...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: pinnedBatchPlan.error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: pinnedBatchPlan.error }),
+										nextActions: buildAgentBrowserNextActions({ failureCategory: "tab-drift", resultCategory: "failure" }),
 										validationError: pinnedBatchPlan.error,
 										...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 									},
@@ -2201,6 +2204,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							summary: `${redactedArgs.join(" ")} completed`,
 						  }
 						: await buildToolPresentation({
+								args: redactedProcessArgs,
 								artifactManifest,
 								artifactRequest: screenshotArtifactRequest,
 								batchArtifactRequests: batchScreenshotArtifactRequests,
@@ -2300,6 +2304,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
 						imagePath: presentation.imagePath,
 						imagePaths: presentation.imagePaths,
+						nextActions: presentation.nextActions,
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,
 						savedFilePath: presentation.savedFilePath,

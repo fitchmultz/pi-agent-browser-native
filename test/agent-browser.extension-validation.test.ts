@@ -725,6 +725,8 @@ process.exit(1);`,
 			assert.match(String(result.details?.summary ?? ""), /Confirmation required: c_sensitive/);
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "confirmation-required");
+			const nextActions = result.details?.nextActions as Array<{ params?: { args: string[] } }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.params?.args), [["confirm", "c_sensitive"], ["deny", "c_sensitive"]]);
 			assert.doesNotMatch(JSON.stringify(result.content), /user:pass|raw-token|token=secret/);
 			assert.doesNotMatch(JSON.stringify(result.details), /user:pass|raw-token|token=secret/);
 		});
@@ -922,8 +924,59 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 	}
 });
 
-test("agentBrowserExtension categorizes failed wait --download verification", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-download-failure-"));
+test("agentBrowserExtension returns tab-drift next actions for early tab re-selection failures", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tab-drift-next-actions-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "target", title: "Example Domain", url: "https://example.com/", active: false }
+  ] } }));
+} else if (args.includes("tab") && args.includes("target")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "tab vanished" }));
+  process.exit(1);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://example.com"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "eval", "--stdin"],
+				stdin: "document.title",
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "tab-drift");
+			const nextActions = result.details?.nextActions as Array<{ params?: { args: string[] } }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.params?.args), [["tab", "list"], ["snapshot", "-i"]]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension returns retry next actions for failed direct download verification", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-direct-download-failure-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -937,12 +990,14 @@ process.exit(1);`,
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["wait", "--download", "/tmp/export.csv"],
+				args: ["download", "@e1", "/tmp/export.csv"],
 			});
 
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "download-not-verified");
+			const nextActions = result.details?.nextActions as Array<{ params?: { args: string[] } }> | undefined;
+			assert.deepEqual(nextActions?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

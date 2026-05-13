@@ -46,8 +46,10 @@ Release-oriented notes also live in [`docs/RELEASE.md`](docs/RELEASE.md) under p
 `agent_browser` results include stable machine-readable fields on `details`: `resultCategory` (`success` | `failure`), plus `successCategory` or `failureCategory` with small fixed enums. The human-facing contract and field list live in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
 
 - **Source of truth for enums and classifiers:** `extensions/agent-browser/lib/results/shared.ts` (`classifyAgentBrowserSuccessCategory`, `classifyAgentBrowserFailureCategory`, `buildAgentBrowserResultCategoryDetails`). The tool entrypoint merges category details in `extensions/agent-browser/index.ts`; presentation-layer failures also attach categories from `extensions/agent-browser/lib/results/presentation.ts`.
-- **Regression tests:** `test/agent-browser.results.test.ts` locks classifier behavior; `test/agent-browser.extension-validation.test.ts` asserts `details` on representative tool outcomes; `test/agent-browser.presentation.test.ts` covers batch and presentation wiring.
+- **Structured follow-ups:** optional `details.nextActions` (and per-step `batchSteps[].nextActions`) are built by `buildAgentBrowserNextActions` in the same `shared.ts` module, then merged into Pi-facing `details` from `extensions/agent-browser/index.ts` and `extensions/agent-browser/lib/results/presentation.ts`. See [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) for the field contract.
+- **Regression tests:** `test/agent-browser.results.test.ts` locks classifier and next-action behavior; `test/agent-browser.extension-validation.test.ts` asserts `details` on representative tool outcomes; `test/agent-browser.presentation.test.ts` covers batch and presentation wiring.
 - **When changing categories:** extend the TypeScript unions and classifier in `shared.ts`, update the prose list in `docs/TOOL_CONTRACT.md`, add or adjust tests above, and refresh any benchmark or docs that mention failure-category coverage if the taxonomy changes.
+- **When changing next-action recommendations:** update `buildAgentBrowserNextActions` and its unit coverage in `test/agent-browser.results.test.ts`, keep presentation and extension-validation expectations in sync, and align the human contract in `docs/TOOL_CONTRACT.md`.
 
 ### Agent browser efficiency benchmark
 

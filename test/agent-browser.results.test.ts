@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	buildAgentBrowserNextActions,
 	buildToolPresentation,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
@@ -42,6 +43,24 @@ test("classifyAgentBrowserSuccessCategory locks common machine-readable success 
 	assert.equal(classifyAgentBrowserSuccessCategory({}), "completed");
 	assert.equal(classifyAgentBrowserSuccessCategory({ inspection: true }), "inspection");
 	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", kind: "image", path: "/tmp/a.png" }] }), "artifact-saved");
+});
+
+test("buildAgentBrowserNextActions returns exact native-tool recommendations for common states", () => {
+	assert.deepEqual(buildAgentBrowserNextActions({ command: "open", resultCategory: "success", successCategory: "completed" }), [
+		{
+			id: "inspect-opened-page",
+			params: { args: ["snapshot", "-i"] },
+			reason: "Inspect the opened page before choosing interactive refs.",
+			tool: "agent_browser",
+		},
+	]);
+	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
+	assert.deepEqual(buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "confirmation-required", confirmationId: "c_demo" })?.map((action) => action.params?.args), [["confirm", "c_demo"], ["deny", "c_demo"]]);
+	assert.deepEqual(buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "tab-drift" })?.map((action) => action.params?.args), [["tab", "list"], ["snapshot", "-i"]]);
+	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--download", "/tmp/export.csv"], resultCategory: "failure", failureCategory: "download-not-verified" })?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
+	assert.deepEqual(buildAgentBrowserNextActions({ args: ["download", "@e1", "/tmp/export.csv"], resultCategory: "failure", failureCategory: "download-not-verified" })?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
+	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/page.png", kind: "image", path: "/tmp/page.png" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.artifactPath, "/tmp/page.png");
+	assert.equal(buildAgentBrowserNextActions({ resultCategory: "success", successCategory: "completed" }), undefined);
 });
 
 test("parseCommandInfo skips global flags with values", () => {
