@@ -111,6 +111,7 @@ Examples:
 { "semanticAction": { "action": "click", "locator": "text", "value": "Close" } }
 { "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
 { "semanticAction": { "action": "check", "locator": "label", "value": "Remember me" } }
+{ "semanticAction": { "action": "uncheck", "locator": "label", "value": "Remember me" } }
 { "semanticAction": { "action": "select", "locator": "label", "value": "Country", "text": "United States" } }
 ```
 

@@ -105,6 +105,7 @@ Examples:
 { "args": ["find", "label", "Email", "fill", "user@example.com"] }
 { "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Close" } }
 { "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
+{ "semanticAction": { "action": "uncheck", "locator": "label", "value": "Remember me" } }
 { "args": ["scrollintoview", "@e12"] }
 { "args": ["snapshot", "-i"] }
 ```
