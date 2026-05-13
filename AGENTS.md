@@ -41,6 +41,14 @@ Verification stack:
 
 Release-oriented notes also live in [`docs/RELEASE.md`](docs/RELEASE.md) under pre-release and real-upstream sections.
 
+### Tool result categories
+
+`agent_browser` results include stable machine-readable fields on `details`: `resultCategory` (`success` | `failure`), plus `successCategory` or `failureCategory` with small fixed enums. The human-facing contract and field list live in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
+
+- **Source of truth for enums and classifiers:** `extensions/agent-browser/lib/results/shared.ts` (`classifyAgentBrowserSuccessCategory`, `classifyAgentBrowserFailureCategory`, `buildAgentBrowserResultCategoryDetails`). The tool entrypoint merges category details in `extensions/agent-browser/index.ts`; presentation-layer failures also attach categories from `extensions/agent-browser/lib/results/presentation.ts`.
+- **Regression tests:** `test/agent-browser.results.test.ts` locks classifier behavior; `test/agent-browser.extension-validation.test.ts` asserts `details` on representative tool outcomes; `test/agent-browser.presentation.test.ts` covers batch and presentation wiring.
+- **When changing categories:** extend the TypeScript unions and classifier in `shared.ts`, update the prose list in `docs/TOOL_CONTRACT.md`, add or adjust tests above, and refresh any benchmark or docs that mention failure-category coverage if the taxonomy changes.
+
 ### Agent browser efficiency benchmark
 
 `scripts/agent-browser-efficiency-benchmark.mjs` is a **deterministic accounting benchmark**: it does not shell out to `agent-browser`, does not launch a browser, and does not read or write Pi sessions. It models representative `agent_browser` call shapes (including optional `stdin` for `batch`) and synthetic model-visible strings to produce comparable totals: scenario success rate, total tool calls, UTF-8 byte volume of model-visible output, stale-ref failure and recovery counts, artifact success count, distinct failure-category coverage, and summed elapsed-time estimates.
