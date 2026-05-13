@@ -2,45 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0059",
-      "status": "doing",
-      "title": "Return exact native-tool next actions for common browser states",
-      "priority": "high",
-      "tags": [
-        "agent-browser",
-        "next-actions",
-        "ux",
-        "tool-contract"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/results",
-        "extensions/agent-browser/lib/playbook.ts",
-        "docs/TOOL_CONTRACT.md",
-        "test"
-      ],
-      "evidence": [
-        "Agents follow exact tool-call shapes more reliably than prose guidance.",
-        "Stable categories should let the wrapper recommend exact calls after open, click, stale refs, downloads, confirmations, and tab drift without guessing from text."
-      ],
-      "plan": [
-        "Define a structured nextActions shape that can express exact `agent_browser` args, optional stdin, sessionMode, reason, and safety notes.",
-        "Emit recommendations after common states: open suggests `snapshot -i`; mutating actions suggest wait/snapshot; stale refs suggest fresh snapshot or find locator; downloads point to artifact paths; confirmations suggest confirm/deny; tab drift suggests tab list/tab/snapshot recovery.",
-        "Keep recommendations concise and machine-readable while preserving readable summaries for humans.",
-        "Add tests that assert exact recommendation payloads and update prompt/playbook docs so agents use them first."
-      ],
-      "notes": [],
-      "request": "Infer and queue exact next-action recommendation work from the user's ABN task list.",
-      "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T15:55:32.401749000Z",
-      "started_at": "2026-05-13T15:55:32.401749000Z",
-      "depends_on": [
-        "RQ-0057"
-      ],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {}
-    },
-    {
       "id": "RQ-0060",
       "status": "todo",
       "title": "Summarize page changes after mutating browser actions",
