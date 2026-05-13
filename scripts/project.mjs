@@ -71,7 +71,7 @@ Modes:
   typecheck           Run TypeScript typecheck only.
   command-reference   Check generated command-reference block and live upstream help drift.
   benchmark           Run the deterministic agent-browser efficiency benchmark and focused tests.
-  real-upstream       Run the opt-in real upstream browser contract suite.
+  real-upstream       Run the opt-in real upstream browser contract suite (localhost fixtures, broad core commands).
   package             Verify package contents.
   package-pi          Verify package contents plus isolated Pi package smoke.
   lifecycle           Run the tmux-driven configured-source lifecycle harness.

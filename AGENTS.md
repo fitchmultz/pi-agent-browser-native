@@ -41,6 +41,8 @@ Verification stack:
 
 Release-oriented notes also live in [`docs/RELEASE.md`](docs/RELEASE.md) under pre-release and real-upstream sections.
 
+**Opt-in real upstream contract:** `npm run verify -- real-upstream` runs `test/agent-browser.real-upstream-contract.test.ts` with `PI_AGENT_BROWSER_REAL_UPSTREAM=1` against the real `agent-browser` on `PATH` (must match `scripts/agent-browser-capability-baseline.mjs`). Besides inspection, skills, `open`/`eval --stdin`/`snapshot -i`/`batch`, and managed-session continuity, the suite exercises a representative core command matrix on localhost fixtures (`test/helpers/agent-browser-harness.ts` contract pages), plus `pushstate`, `vitals`, `network route`, `cookies set --curl`, a `react tree` missing-renderer case, and `wait --download` with explicit assertions around upstream save-path reporting versus on-disk presence; see [`docs/RELEASE.md`](docs/RELEASE.md#real-upstream-contract-validation) for the async download caveat and when to refresh `test/fixtures/agent-browser-real-output-shapes.json`.
+
 ### Tool result categories
 
 `agent_browser` results include stable machine-readable fields on `details`: `resultCategory` (`success` | `failure`), plus `successCategory` or `failureCategory` with small fixed enums. The human-facing contract and field list live in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).

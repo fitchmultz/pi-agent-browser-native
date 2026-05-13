@@ -292,6 +292,8 @@ The opt-in real-upstream suite is separate because it drives a real browser inst
 npm run verify -- real-upstream
 ```
 
+That mode sets `PI_AGENT_BROWSER_REAL_UPSTREAM=1` and runs `test/agent-browser.real-upstream-contract.test.ts` against the real `agent-browser` on `PATH` (version must match the capability baseline). It covers inspection, skills, a broad core interaction and navigation matrix on localhost fixtures, plus `vitals`, `network route`, `cookies set --curl`, a `react tree` missing-renderer path, and `wait --download` with the on-disk caveat documented in release notes. For prerequisites and maintainer workflow, see [`docs/RELEASE.md`](docs/RELEASE.md#real-upstream-contract-validation).
+
 For package release confidence, follow [`docs/RELEASE.md`](docs/RELEASE.md). The release gate is:
 
 ```bash
