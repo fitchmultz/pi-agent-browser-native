@@ -134,7 +134,7 @@ This keeps the product centered on native tool usage instead of auxiliary skill 
 - subprocess execution and JSON parsing
 - clear missing-binary errors
 - compact result summaries
-- bounded machine-readable outcome metadata on tool `details` (`resultCategory`, `successCategory`, `failureCategory`) so agents can branch without parsing prose; enums and classifier precedence live in `extensions/agent-browser/lib/results/shared.ts` while the human contract lives in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)
+- bounded machine-readable outcome metadata on tool `details` (`resultCategory`, `successCategory`, `failureCategory`, optional `nextActions`) so agents can branch without parsing prose; enums, classifier precedence, and follow-up payloads are assembled in `extensions/agent-browser/lib/results/shared.ts` while the human contract lives in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)
 - inline screenshots/images
 - lightweight session convenience
 - docs, including a repo-readable command reference that mirrors the blocked direct-binary help path closely enough for normal agent work

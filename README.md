@@ -381,7 +381,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — product constraints and non-goals
 - [`docs/RELEASE.md`](docs/RELEASE.md) — maintainer release workflow
 
-## Next action
+## Where to go next
 
 If you are a user, install the package and ask Pi to open a public page with `agent_browser`.
 
