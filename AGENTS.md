@@ -41,6 +41,16 @@ Verification stack:
 
 Release-oriented notes also live in [`docs/RELEASE.md`](docs/RELEASE.md) under pre-release and real-upstream sections.
 
+### Maintainer rebaselining workflow
+
+Use this sequence when upstream ships a new `agent-browser` version or help text changes enough to break the live verifier:
+
+1. Capture real `agent-browser … --help` output from the binary you intend to target, then edit `scripts/agent-browser-capability-baseline.mjs`. That file is import-only metadata; it never shells out to `agent-browser`, so rebaselining stays an explicit maintainer decision.
+2. Keep `docs/COMMAND_REFERENCE.md` human prose aligned with the baseline: every inventory token the baseline expects in the doc must appear **outside** the two generated regions (`upstream-baseline`, `capability-token-baseline`). `scripts/verify-command-reference.mjs` strips those generated blocks and fails if any required token is missing from the remaining Markdown.
+3. Regenerate the HTML-comment bounded blocks with `npm run docs -- command-reference write`. If you also changed playbook source in `extensions/agent-browser/lib/playbook.ts`, refresh every generated doc fragment in one shot with `npm run docs -- write` (runs playbook drift rewrite plus command-reference rewrite).
+4. Before committing, run `npm run docs` (or `npm run docs -- command-reference check`) so checked-in blocks cannot drift from the baseline file.
+5. When the targeted `agent-browser` is available on `PATH`, run `npm run verify -- command-reference`. It enforces `agent-browser --version` against the baseline, re-samples each `helpCommands` invocation for expected upstream tokens, and repeats the human-token scan against `docs/COMMAND_REFERENCE.md`.
+
 ## Preferred testing workflow
 
 Use an end-to-end interactive `pi` run inside `tmux`.
