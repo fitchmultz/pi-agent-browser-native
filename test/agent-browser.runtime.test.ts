@@ -754,7 +754,7 @@ test("buildExecutionPlan allows disabled auto-connect after an active implicit s
 	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
 });
 
-test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state but not cdp or auto-connect", () => {
+test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state but not cdp, provider, or auto-connect", () => {
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile", "Default", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile=Default", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name", "saved", "open", "https://example.com"]), true);
@@ -762,6 +762,8 @@ test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state 
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state", "/tmp/auth.json", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state=/tmp/auth.json", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"]), false);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["-p", "ios", "open", "https://example.com"]), false);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--provider", "browserbase", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--auto-connect", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["open", "https://example.com"]), false);
 });
@@ -813,6 +815,24 @@ test("parseCommandInfo skips optional boolean flag values before commands", () =
 		command: "tab",
 		subcommand: "list",
 	});
+});
+
+test("buildExecutionPlan treats provider and iOS device flags as launch-scoped", () => {
+	for (const args of [
+		["-p", "ios", "open", "https://example.com"],
+		["--provider", "browserbase", "open", "https://example.com"],
+		["-p", "ios", "--device", "iPhone 15 Pro", "open", "https://example.com"],
+	] as const) {
+		const plan = buildExecutionPlan([...args], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+
+		assert.match(plan.validationError ?? "", /launch-scoped flags/i, args.join(" "));
+		assert.equal(plan.recoveryHint?.recommendedSessionMode, "fresh", args.join(" "));
+	}
 });
 
 test("buildExecutionPlan assigns a new managed session for fresh session mode", () => {

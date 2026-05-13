@@ -35,7 +35,7 @@ The result is optimized for agent work:
 ## Who this is for
 
 - **Pi users** who want browser automation available as a normal tool beside `read`, `write`, and `bash`.
-- **Coding agents** that need low-context browser workflows for docs, QA, research, dashboards, and web apps.
+- **Coding agents** that need low-context browser workflows for docs, QA, research, dashboards, provider-backed browsers, and web apps.
 - **Maintainers** who want a thin integration that tracks the current upstream [`agent-browser`](https://agent-browser.dev/) CLI without bundling or re-implementing it.
 
 ## The problem
@@ -66,7 +66,7 @@ The result is optimized for agent work:
 | Agents need stable success/failure buckets | Exposes bounded `resultCategory`, `successCategory`, and `failureCategory` on tool `details` for branching without parsing prose | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/shared.ts`, `test/agent-browser.results.test.ts` |
 | Models re-snapshot after every click without new URL/title context | Adds optional `details.pageChangeSummary` (and per-batch-step summaries) with `changeType`, compact text, optional `title`/`url`, artifact hints, and `nextActionIds` aligned to `nextActions` | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/presentation.ts`, `test/agent-browser.presentation.test.ts` |
 | Direct binary help may be blocked in agent sessions | Publishes a repo-readable command reference and verifies it against the target upstream version | `npm run verify` |
-| Agents need bundled `skills` text without touching the live session | Treats `skills list`, `skills get …`, and `skills path …` as stateless JSON reads: no implicit managed `--session` under default `sessionMode: "auto"` (same session-ownership goal as plain-text `--help` / `--version`) | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#built-in-skills), `extensions/agent-browser/lib/runtime.ts` |
+| Agents need bundled `skills` text without touching the live session | Treats `skills list`, `skills get …`, and `skills path …` as stateless JSON reads: no implicit managed `--session` under default `sessionMode: "auto"` (same session-ownership goal as plain-text `--help` / `--version`), while provider workflows stay thin passthroughs that require upstream setup and credentials | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#built-in-skills), `extensions/agent-browser/lib/runtime.ts` |
 
 ## Fastest way to try it
 
@@ -213,7 +213,7 @@ The wrapper does not clone profiles or hide what upstream Chrome profile you cho
 Use these rules:
 
 - Use public/temp profiles for tests and examples.
-- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable`.
+- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
 - Use `--session` when you want to manage a live upstream session name yourself.
 - Do not treat `--session` as persisted auth or tab restore after `close`; use `--profile`, `--session-name`, or `--state` for persistence.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.
@@ -384,7 +384,7 @@ Native inspection calls use the `agent_browser` tool shape, not shell-like direc
 - { "args": ["--help"] }
 - { "args": ["--version"] }
 
-These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, or auto-connect launches.
+These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, auto-connect, or provider-backed launches.
 <!-- agent-browser-playbook:end inspection -->
 
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->

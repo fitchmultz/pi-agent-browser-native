@@ -376,13 +376,17 @@ const envelope = {
     agentBrowserEncryptionKey: readEnv("AGENT_BROWSER_ENCRYPTION_KEY"),
     agentBrowserScreenshotDir: readEnv("AGENT_BROWSER_SCREENSHOT_DIR"),
     agentBrowserSession: readEnv("AGENT_BROWSER_SESSION"),
+    agentBrowserIosDevice: readEnv("AGENT_BROWSER_IOS_DEVICE"),
+    agentBrowserIosUdid: readEnv("AGENT_BROWSER_IOS_UDID"),
     agentBrowserSessionName: readEnv("AGENT_BROWSER_SESSION_NAME"),
+    agentcoreApiKey: readEnv("AGENTCORE_API_KEY"),
     agentcoreRegion: readEnv("AGENTCORE_REGION"),
     aiGatewayApiKey: readEnv("AI_GATEWAY_API_KEY"),
     aiGatewayModel: readEnv("AI_GATEWAY_MODEL"),
     awsAccessKeyId: readEnv("AWS_ACCESS_KEY_ID"),
     awsSecretAccessKey: readEnv("AWS_SECRET_ACCESS_KEY"),
     browserbaseApiKey: readEnv("BROWSERBASE_API_KEY"),
+    browserbaseProjectId: readEnv("BROWSERBASE_PROJECT_ID"),
     browserlessApiKey: readEnv("BROWSERLESS_API_KEY"),
     browserUseApiKey: readEnv("BROWSER_USE_API_KEY"),
     databaseUrl: readEnv("DATABASE_URL"),
@@ -409,14 +413,18 @@ process.stdout.write(JSON.stringify(envelope));`,
 				AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64),
 				AGENT_BROWSER_SCREENSHOT_DIR: "/tmp/agent-browser-screenshots",
 				AGENT_BROWSER_SESSION: "from-parent-session",
+				AGENT_BROWSER_IOS_DEVICE: "iPhone 15 Pro",
+				AGENT_BROWSER_IOS_UDID: "ios-udid-123",
 				AGENT_BROWSER_SESSION_NAME: "from-parent-session-name",
 				AGENT_BROWSER_SOCKET_DIR: "/tmp/from-parent-should-not-leak",
+				AGENTCORE_API_KEY: "agentcore-key",
 				AGENTCORE_REGION: "us-west-2",
 				AI_GATEWAY_API_KEY: "ai-gateway-key",
 				AI_GATEWAY_MODEL: "anthropic/test-model",
 				AWS_ACCESS_KEY_ID: "aws-access-key-id",
 				AWS_SECRET_ACCESS_KEY: "aws-secret-access-key",
 				BROWSERBASE_API_KEY: "browserbase-key",
+				BROWSERBASE_PROJECT_ID: "browserbase-project",
 				BROWSERLESS_API_KEY: "browserless-key",
 				BROWSER_USE_API_KEY: "browser-use-key",
 				DATABASE_URL: "postgres://should-not-leak",
@@ -446,14 +454,18 @@ process.stdout.write(JSON.stringify(envelope));`,
 					agentBrowserDefaultTimeout: string | null;
 					agentBrowserEncryptionKey: string | null;
 					agentBrowserScreenshotDir: string | null;
+					agentBrowserIosDevice: string | null;
+					agentBrowserIosUdid: string | null;
 					agentBrowserSession: string | null;
 					agentBrowserSessionName: string | null;
+					agentcoreApiKey: string | null;
 					agentcoreRegion: string | null;
 					aiGatewayApiKey: string | null;
 					aiGatewayModel: string | null;
 					awsAccessKeyId: string | null;
 					awsSecretAccessKey: string | null;
 					browserbaseApiKey: string | null;
+					browserbaseProjectId: string | null;
 					browserlessApiKey: string | null;
 					browserUseApiKey: string | null;
 					databaseUrl: string | null;
@@ -472,14 +484,18 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.agentBrowserDefaultTimeout, "25000");
 				assert.equal(data.agentBrowserEncryptionKey, "a".repeat(64));
 				assert.equal(data.agentBrowserScreenshotDir, "/tmp/agent-browser-screenshots");
+				assert.equal(data.agentBrowserIosDevice, "iPhone 15 Pro");
+				assert.equal(data.agentBrowserIosUdid, "ios-udid-123");
 				assert.equal(data.agentBrowserSession, "from-parent-session");
 				assert.equal(data.agentBrowserSessionName, "from-parent-session-name");
+				assert.equal(data.agentcoreApiKey, "agentcore-key");
 				assert.equal(data.agentcoreRegion, "us-west-2");
 				assert.equal(data.aiGatewayApiKey, "ai-gateway-key");
 				assert.equal(data.aiGatewayModel, "anthropic/test-model");
 				assert.equal(data.awsAccessKeyId, "aws-access-key-id");
 				assert.equal(data.awsSecretAccessKey, "aws-secret-access-key");
 				assert.equal(data.browserbaseApiKey, "browserbase-key");
+				assert.equal(data.browserbaseProjectId, "browserbase-project");
 				assert.equal(data.browserlessApiKey, "browserless-key");
 				assert.equal(data.browserUseApiKey, "browser-use-key");
 				assert.equal(data.databaseUrl, null);

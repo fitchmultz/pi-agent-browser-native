@@ -48,8 +48,20 @@ const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "registers page init scripts before the upstream browser session is launched",
 	},
 	{
+		flag: "--device",
+		reason: "selects the provider device for the upstream launch",
+	},
+	{
 		flag: "--profile",
 		reason: "selects Chrome profile state for the upstream launch",
+	},
+	{
+		flag: "--provider",
+		reason: "selects the upstream browser provider for the launch",
+	},
+	{
+		flag: "-p",
+		reason: "selects the upstream browser provider for the launch",
 	},
 	{
 		flag: "--session-name",
