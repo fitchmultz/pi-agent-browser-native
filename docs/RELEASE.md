@@ -35,6 +35,16 @@ npm run verify -- lifecycle
 
 Use `npm run verify -- lifecycle --keep-artifacts` when debugging failures.
 
+## Deterministic agent efficiency benchmark
+
+[`scripts/agent-browser-efficiency-benchmark.mjs`](../scripts/agent-browser-efficiency-benchmark.mjs) is an accounting-only benchmark: it does not shell out to `agent-browser`, launch a browser, or read or write Pi sessions. It models representative `agent_browser` call shapes (including optional `stdin` for `batch`) and aggregates success rate, tool-call counts, UTF-8 size of model-visible strings, stale-ref failure and recovery counts, artifact success, distinct failure-category coverage, and summed elapsed-time estimates.
+
+- **During development:** `npm run benchmark:agent-browser` prints a Markdown report; `npm run benchmark:agent-browser -- --json` saves machine-readable metrics; `npm run benchmark:agent-browser -- --compare path/to/prior.json` fails with exit code `1` on regressions (see the script’s `--help` for exit codes).
+- **Default gate:** `npm run verify` runs the full unit suite under `test/**/*.test.ts`, which includes [`test/agent-browser.efficiency-benchmark.test.ts`](../test/agent-browser.efficiency-benchmark.test.ts) for scenario coverage and comparison behavior.
+- **Opt-in slice:** `npm run verify -- benchmark` runs the benchmark script once with `--json` and then that same test module alone. It is intentionally **not** part of `npm run verify -- release`, so routine publish gates stay decoupled from benchmark churn while still allowing a focused check after editing scenarios or `CURRENT_BENCHMARK_VERSION`.
+
+Maintainer constraints for evolving scenarios and version bumps are summarized under “Agent browser efficiency benchmark” in [`../AGENTS.md`](../AGENTS.md).
+
 ## What package verification checks
 
 `npm run verify -- package` confirms that:
