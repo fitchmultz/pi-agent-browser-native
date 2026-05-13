@@ -237,6 +237,8 @@ For setup that must happen before first navigation, open a blank fresh page, sta
 
 ## Proof and verification
 
+`npm run docs` checks that generated playbook fragments and command-reference baseline blocks match their canonical sources (`extensions/agent-browser/lib/playbook.ts` and `scripts/agent-browser-capability-baseline.mjs`) without invoking upstream `agent-browser`.
+
 The local verification gate is:
 
 ```bash
@@ -360,6 +362,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 
 ## More docs
 
+- [`AGENTS.md`](AGENTS.md) — maintainer and agent runbooks, including upstream capability baseline rebaselining and Pi smoke testing in `tmux`
 - [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md) — full native command reference and upstream capability baseline
 - [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) — exact tool contract
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the wrapper is designed
