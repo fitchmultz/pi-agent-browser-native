@@ -9,6 +9,7 @@
 - optional `details.pageChangeSummary` (and per-step `batchSteps[].pageChangeSummary` on `batch`) with `changeType`, human-readable `summary`, optional `title`/`url`, artifact hints, and `nextActionIds` aligned to `details.nextActions`; assembly in `extensions/agent-browser/lib/results/presentation.ts` (`buildPageChangeSummary`, `PAGE_CHANGE_SUMMARY_COMMANDS`); contract and examples in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), regression coverage in `test/agent-browser.presentation.test.ts` and `test/agent-browser.extension-validation.test.ts`
 
 ### Changed
+- added a concrete `details.nextActions` JSON example in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) for the `refresh-interactive-refs` + `retry-semantic-action-after-stale-ref` chain on semantic `stale-ref` failures, aligned with `extensions/agent-browser/index.ts` and `extensions/agent-browser/lib/results/shared.ts`
 - documented how `npm run docs` differs from the default `npm run verify` gate, and linked checkout maintainers to `AGENTS.md` for capability baseline rebaselining and operational testing notes alongside the shipped `docs/` set
 - linked [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) to the stable `agent_browser` result-category contract in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) and the TypeScript source in `extensions/agent-browser/lib/results/shared.ts`
 

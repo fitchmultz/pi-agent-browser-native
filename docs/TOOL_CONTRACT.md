@@ -248,6 +248,27 @@ Example shape (fields vary by scenario):
 ]
 ```
 
+When `semanticAction` produced compiled argv but the unified result is `failureCategory: "stale-ref"` with `details.compiledSemanticAction` still present, `nextActions` chains snapshot refresh then the compiled `find` retry; `reason` / `safety` strings match `buildAgentBrowserNextActions` in `extensions/agent-browser/lib/results/shared.ts` and the append in `extensions/agent-browser/index.ts`:
+
+```json
+"nextActions": [
+  {
+    "tool": "agent_browser",
+    "id": "refresh-interactive-refs",
+    "reason": "Get current interactive refs before retrying the element action.",
+    "safety": "Prefer a current @ref or a stable find locator; do not retry stale refs blindly.",
+    "params": { "args": ["snapshot", "-i"] }
+  },
+  {
+    "tool": "agent_browser",
+    "id": "retry-semantic-action-after-stale-ref",
+    "reason": "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.",
+    "safety": "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.",
+    "params": { "args": ["find", "text", "Submit", "click"] }
+  }
+]
+```
+
 ```json
 "pageChangeSummary": {
   "changeType": "navigation",
