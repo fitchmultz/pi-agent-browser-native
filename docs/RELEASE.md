@@ -96,6 +96,8 @@ Before publishing, validate both local-checkout modes without mixing their assum
 
 For expanded-surface validation, the smoke prompt should cover native tool invocation rather than shelling out to `agent-browser`: `--version`, `--help`, `skills list`, `skills get core --full`, `open` with `sessionMode: "fresh"`, `snapshot -i`, `click`, `eval --stdin`, `batch` via stdin, `screenshot <path>`, explicit `--session … open` plus `--session … close`, `network requests`, `console` / `errors`, `diff snapshot`, `stream status` plus `stream disable`, `dashboard start` plus `dashboard stop`, and `chat <message>` (credential failure is acceptable evidence of wrapper pass-through when `AI_GATEWAY_API_KEY` is intentionally unset). Clean up any opened browser session with `close`, remove temporary files, and kill the tmux session before ending validation.
 
+This checklist assumes a real `agent-browser` on `PATH`. It complements, but does not overlap, `npm run verify -- lifecycle`: that harness swaps in a fake upstream binary and focuses on `/reload`, full restart, `/resume`, managed-session continuity, and spill-path persistence (`scripts/verify-lifecycle.mjs`), not the full command matrix above.
+
 ### Configured-source lifecycle validation
 
 Prefer the automated harness for deterministic configured-source lifecycle regression coverage:
