@@ -48,13 +48,37 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 				response,
 				`<!doctype html>
 <html lang="en">
-<head><title>Agent Browser Contract Fixture</title></head>
+<head>
+	<title>Agent Browser Contract Fixture</title>
+	<style>
+		body { min-height: 2200px; }
+		#drop-target { border: 2px dashed #666; margin-top: 1rem; padding: 1rem; }
+		#far-target { margin-top: 1600px; }
+	</style>
+</head>
 <body>
 	<main id="main">
 		<h1>Agent Browser Contract Fixture</h1>
 		<p id="status">Ready for real upstream contract validation.</p>
 		<a id="next-link" href="/next">Go to next fixture page</a>
 		<button id="mark-ready" type="button" onclick="document.body.dataset.clicked='yes'; document.getElementById('status').textContent='Clicked';">Mark ready</button>
+		<button id="double-action" type="button" ondblclick="document.getElementById('status').textContent='Double clicked';">Double action</button>
+		<label for="name-input">Name</label>
+		<input id="name-input" placeholder="Name input" />
+		<label for="notes-input">Notes</label>
+		<textarea id="notes-input"></textarea>
+		<button id="focus-target" type="button" onfocus="document.body.dataset.focused='yes';">Focus target</button>
+		<label><input id="agree-checkbox" type="checkbox" /> Agree to terms</label>
+		<select id="flavor-select" aria-label="Flavor">
+			<option value="vanilla">Vanilla</option>
+			<option value="chocolate">Chocolate</option>
+		</select>
+		<input id="file-input" type="file" aria-label="Upload file" />
+		<div id="drag-source" draggable="true" ondragstart="event.dataTransfer.setData('text/plain', 'fixture-dragged')">Drag source</div>
+		<div id="drop-target" ondragover="event.preventDefault()" ondrop="event.preventDefault(); document.body.dataset.dropped=event.dataTransfer.getData('text/plain') || 'yes'; this.textContent='Dropped';">Drop target</div>
+		<button id="hover-target" type="button" onmouseover="document.body.dataset.hovered='yes';">Hover target</button>
+		<button id="keyboard-target" type="button" onclick="document.getElementById('name-input').focus();">Keyboard target</button>
+		<div id="far-target" tabindex="0">Far scroll target</div>
 	</main>
 </body>
 </html>`,

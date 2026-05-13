@@ -410,6 +410,53 @@ if (subcommand === "list") {
 	}
 });
 
+test("agentBrowserExtension passes through core command coverage fallback matrix", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-core-matrix-"));
+	const logPath = join(tempDir, "invocations.log");
+	const downloadPath = join(tempDir, "download.txt");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const command = args.find((arg, index) => arg !== "--json" && args[index - 1] !== "--session" && arg !== "--session" && args[index - 2] !== "--session") || "unknown";
+const data = command === "download" ? { path: args[args.length - 1] } : { ok: true, command };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	const commands = [
+		["connect", "9222"],
+		["download", "#direct-download", downloadPath],
+		["get", "url"],
+		["snapshot", "--compact"],
+		["tab", "new"],
+		["tab", "0"],
+		["tab", "close"],
+	] as const;
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise core browser commands." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			for (const args of commands) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
+				assert.equal(result.isError, false, args.join(" "));
+			}
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(
+				invocations.map((entry) => entry.args.slice(3)),
+				commands.map((args) => [...args]),
+			);
+			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension normalizes and repairs explicit screenshot artifact paths", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-screenshot-path-"));
 	const logPath = join(tempDir, "invocations.log");

@@ -64,6 +64,40 @@ function assertSuccessfulResult(
 	return result.details ?? {};
 }
 
+function getResultValue(details: Record<string, unknown>, keys: readonly string[]): unknown {
+	const data = details.data;
+	if (data && typeof data === "object") {
+		const record = data as Record<string, unknown>;
+		for (const key of keys) {
+			if (Object.hasOwn(record, key)) return record[key];
+		}
+	}
+	return data;
+}
+
+function assertCoreCommandResult(
+	result: Awaited<ReturnType<typeof executeRegisteredTool>>,
+	shape: { dataKeys?: string[]; detailKeys: string[] },
+	label: string,
+	managedSessionName: string,
+): Record<string, unknown> {
+	const details = assertSuccessfulResult(result, shape, label);
+	assert.equal(details.sessionName, managedSessionName, `${label} sessionName`);
+	assert.equal(details.usedImplicitSession, true, `${label} usedImplicitSession`);
+	return details;
+}
+
+async function runCoreCommand(
+	harness: ReturnType<typeof createExtensionHarness>,
+	args: string[],
+	shape: { dataKeys?: string[]; detailKeys: string[] },
+	managedSessionName: string,
+	label = args.join(" "),
+): Promise<Record<string, unknown>> {
+	const result = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+	return assertCoreCommandResult(result, shape, label, managedSessionName);
+}
+
 async function readFileIfPresent(path: string): Promise<string | undefined> {
 	try {
 		return await readFile(path, "utf8");
@@ -187,6 +221,105 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(snapshotDetails.sessionName, managedSessionName);
 					assert.equal(snapshotDetails.usedImplicitSession, true);
 					assertJsonIncludes(snapshotDetails.data, ["Agent Browser Contract Fixture"], "snapshot data");
+
+					const uploadPath = join(tempDir, "upload-fixture.txt");
+					const screenshotPath = join(tempDir, "contract.png");
+					const pdfPath = join(tempDir, "contract.pdf");
+					await writeFile(uploadPath, "upload contract fixture\n");
+
+					await runCoreCommand(harness, ["click", "#mark-ready"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "text", "#status"], shapes.commands.coreSubcommand, managedSessionName), ["text"]),
+						"Clicked",
+					);
+					await runCoreCommand(harness, ["dblclick", "#double-action"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "text", "#status"], shapes.commands.coreSubcommand, managedSessionName), ["text"]),
+						"Double clicked",
+					);
+					await runCoreCommand(harness, ["fill", "#name-input", "Ada"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["type", "#name-input", " Lovelace"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#name-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"Ada Lovelace",
+					);
+					await runCoreCommand(harness, ["focus", "#notes-input"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["keyboard", "type", "keyboard text"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["keyboard", "inserttext", " inserted"], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#notes-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"keyboard text inserted",
+					);
+					await runCoreCommand(harness, ["press", "Tab"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["hover", "#hover-target"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["eval", "document.body.dataset.hovered"], shapes.commands.eval, managedSessionName), ["result"]),
+						"yes",
+					);
+					await runCoreCommand(harness, ["check", "#agree-checkbox"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["is", "checked", "#agree-checkbox"], shapes.commands.coreSubcommand, managedSessionName), ["checked"]),
+						true,
+					);
+					await runCoreCommand(harness, ["uncheck", "#agree-checkbox"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["is", "checked", "#agree-checkbox"], shapes.commands.coreSubcommand, managedSessionName), ["checked"]),
+						false,
+					);
+					await runCoreCommand(harness, ["select", "#flavor-select", "chocolate"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"chocolate",
+					);
+					await runCoreCommand(harness, ["upload", "#file-input", uploadPath], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["eval", "document.querySelector('#file-input').files[0]?.name"], shapes.commands.eval, managedSessionName), ["result"]),
+						"upload-fixture.txt",
+					);
+					await runCoreCommand(harness, ["drag", "#drag-source", "#drop-target"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "text", "#drop-target"], shapes.commands.coreSubcommand, managedSessionName), ["text"]),
+						"Dropped",
+					);
+					await runCoreCommand(harness, ["mouse", "move", "20", "20"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["mouse", "down"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["mouse", "up"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["mouse", "wheel", "240"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["scroll", "down", "400"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["scrollintoview", "#far-target"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["wait", "#far-target"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["find", "label", "Name", "fill", "Grace"], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#name-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"Grace",
+					);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "attr", "#mark-ready", "id"], shapes.commands.coreSubcommand, managedSessionName), ["value", "attribute"]),
+						"mark-ready",
+					);
+					await runCoreCommand(harness, ["get", "html", "#main"], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "count", "button"], shapes.commands.coreSubcommand, managedSessionName), ["count"]),
+						5,
+					);
+					await runCoreCommand(harness, ["get", "box", "#mark-ready"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["get", "styles", "#far-target"], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["is", "visible", "#mark-ready"], shapes.commands.coreSubcommand, managedSessionName), ["visible"]), true);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["is", "enabled", "#mark-ready"], shapes.commands.coreSubcommand, managedSessionName), ["enabled"]), true);
+					await runCoreCommand(harness, ["screenshot", screenshotPath], shapes.commands.coreFileArtifact, managedSessionName);
+					await runCoreCommand(harness, ["pdf", pdfPath], shapes.commands.coreFileArtifact, managedSessionName);
+					assert.ok(await readFileIfPresent(screenshotPath), "screenshot should be saved");
+					assert.ok(await readFileIfPresent(pdfPath), "PDF should be saved");
+
+					await runCoreCommand(harness, ["click", "#next-link"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Next Contract Fixture");
+					await runCoreCommand(harness, ["back"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Agent Browser Contract Fixture");
+					await runCoreCommand(harness, ["forward"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Next Contract Fixture");
+					await runCoreCommand(harness, ["reload"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["tab", "list"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["open", contractUrl], shapes.commands.open, managedSessionName);
 
 					const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["batch"],

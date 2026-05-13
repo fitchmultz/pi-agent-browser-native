@@ -20,6 +20,16 @@
     "skillsPath": {
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "subcommand", "summary"]
     },
+    "coreCommand": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "summary", "usedImplicitSession"]
+    },
+    "coreSubcommand": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"]
+    },
+    "coreFileArtifact": {
+      "detailKeys": ["args", "artifacts", "command", "data", "effectiveArgs", "exitCode", "savedFile", "savedFilePath", "sessionMode", "sessionName", "summary", "usedImplicitSession"],
+      "dataKeys": ["path"]
+    },
     "open": {
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "summary", "usedImplicitSession"],
       "dataKeys": ["title", "url"]
