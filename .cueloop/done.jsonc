@@ -2344,6 +2344,48 @@
       "custom_fields": {
         "source": "manual-upstream-refresh"
       }
+    },
+    {
+      "id": "RQ-0063",
+      "status": "done",
+      "title": "Make artifact verification a shared result contract for browser workflows",
+      "priority": "medium",
+      "tags": [
+        "agent-browser",
+        "artifacts",
+        "downloads",
+        "verification"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results",
+        "extensions/agent-browser/lib/temp.ts",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "The wrapper already has artifact metadata, saved-file summaries, and retention handling; the missing goal is to make workflows depend on verified artifact state instead of scattered one-off checks.",
+        "This should feed page-change summaries and one-call jobs rather than becoming a separate automation subsystem."
+      ],
+      "plan": [
+        "Normalize artifact verification fields for screenshots, PDFs, downloads, recordings, spill files, and wait-based downloads: requested path, actual path, existence, size, type, retention state, and limitations.",
+        "Surface verification failures through stable categories and nextActions, including when upstream reports success but local existence is unverified.",
+        "Update tests to cover artifact-producing direct commands, batch steps, and session artifact manifest interactions.",
+        "Document how jobs and agents should consume verified artifact metadata."
+      ],
+      "notes": [],
+      "request": "Infer and queue artifact/download verification work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T19:34:55.816805000Z",
+      "completed_at": "2026-05-13T19:34:55.816805000Z",
+      "started_at": "2026-05-13T19:04:13.230845000Z",
+      "depends_on": [
+        "RQ-0049",
+        "RQ-0058",
+        "RQ-0060"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
     }
   ]
 }
