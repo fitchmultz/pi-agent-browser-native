@@ -20,6 +20,7 @@ export type {
 	AgentBrowserFailureCategory,
 	AgentBrowserResultCategory,
 	AgentBrowserNextAction,
+	AgentBrowserPageChangeSummary,
 	AgentBrowserResultCategoryDetails,
 	AgentBrowserSuccessCategory,
 	FileArtifactKind,

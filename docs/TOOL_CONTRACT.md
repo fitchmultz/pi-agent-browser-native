@@ -48,6 +48,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 - For downloads, prefer download <selector> <path> when an element click should save a file. Do not rely on click alone when you need the downloaded file on disk.
 - When using eval --stdin, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics.
 - When using eval --stdin for extraction, return the value you want instead of relying on console.log as the primary result channel.
+- When details.pageChangeSummary is present, use changeType and summary as a compact signal for navigation, DOM mutation, confirmations, or artifacts; when nextActionIds is set, match those ids to entries in details.nextActions (or per-step nextActions inside batch) for concrete follow-up payloads instead of inferring from prose alone.
 - Do not call --help or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.
 <!-- agent-browser-playbook:end shared-guidelines -->
 
@@ -193,6 +194,8 @@ For `batch`, top-level `details` still carries `resultCategory` plus `successCat
 
 For `batch`, each `batchSteps[]` entry can carry its own `nextActions` for that step’s success or failure. Top-level `details.nextActions` on a failed batch duplicates `batchFailure.failedStep.nextActions` so callers can read one aggregate object. On a fully successful batch, top-level `nextActions` may still list artifact follow-ups derived from the combined step artifacts.
 
+`pageChangeSummary` is an optional compact summary for mutation-prone and artifact-producing commands. It includes `changeType` (`"navigation"`, `"mutation"`, `"artifact"`, or `"confirmation"`), `command`, a readable `summary`, optional `title`/`url`, optional `artifactCount` or `savedFilePath`, and `nextActionIds` that link the observed change to `nextActions` without repeating full payloads. The wrapper maintains an explicit allowlist of mutation-prone commands in `extensions/agent-browser/lib/results/presentation.ts` (`PAGE_CHANGE_SUMMARY_COMMANDS`): those commands still emit a `mutation`-typed summary when upstream JSON lacks navigation metadata, as long as no stronger signal (artifact, saved path, navigation fields, or pending confirmation) applies. Commands outside that set omit `pageChangeSummary` unless the parsed payload shows navigation, a confirmation prompt, saved files, or artifacts—including read-only inspection commands, which normally have no summary unless one of those signals appears. For `batch`, the top-level summary favors artifact rollups when any step produced artifacts; otherwise it may synthesize a `mutation` summary from steps that carried their own `pageChangeSummary`.
+
 Example shape (fields vary by scenario):
 
 ```json
@@ -207,6 +210,17 @@ Example shape (fields vary by scenario):
 ]
 ```
 
+```json
+"pageChangeSummary": {
+  "changeType": "navigation",
+  "command": "open",
+  "summary": "Opened Example Domain",
+  "title": "Example Domain",
+  "url": "https://example.com/",
+  "nextActionIds": ["inspect-opened-page"]
+}
+```
+
 Implementation and precedence:
 
 - Types, classifiers, and follow-up assembly live in `extensions/agent-browser/lib/results/shared.ts`: `classifyAgentBrowserSuccessCategory`, `classifyAgentBrowserFailureCategory`, `buildAgentBrowserResultCategoryDetails` (the last prefers an explicit `failureCategory` when the caller already knows the bucket, otherwise it runs the classifier), and `buildAgentBrowserNextActions`.
@@ -217,6 +231,7 @@ Implementation and precedence:
 Additional structured fields can appear when relevant:
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
+- `pageChangeSummary` for compact mutation/artifact/navigation summaries on commands that can change browser state
 - `imagePath` / `imagePaths` for screenshots and batched image outputs
 - `artifacts` for upstream saved files such as screenshots, PDFs, downloads, `wait --download` files, traces, CPU profiles, completed WebM recordings, path-bearing HAR captures, and future recording output paths reported by `record start`. Each artifact includes the original saved or requested `path`, resolved `absolutePath`, `kind`/`artifactType`, optional `mediaType`, optional `extension`, best-effort disk metadata such as `exists` and `sizeBytes`, plus `requestedPath`, `status`, `cwd`, `session`, and `tempPath` when applicable.
 - `savedFilePath` / `savedFile` for direct `download`, `pdf`, and `wait --download` saved-file workflows; batch results preserve the same fields on the relevant `batchSteps` entry.

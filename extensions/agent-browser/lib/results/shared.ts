@@ -43,6 +43,17 @@ export interface AgentBrowserResultCategoryDetails {
 	successCategory?: AgentBrowserSuccessCategory;
 }
 
+export interface AgentBrowserPageChangeSummary {
+	artifactCount?: number;
+	changeType: "artifact" | "confirmation" | "mutation" | "navigation";
+	command?: string;
+	nextActionIds?: string[];
+	savedFilePath?: string;
+	summary: string;
+	title?: string;
+	url?: string;
+}
+
 export interface AgentBrowserNextAction {
 	artifactPath?: string;
 	id: string;
@@ -230,6 +241,7 @@ export interface BatchStepPresentationDetails {
 	data?: unknown;
 	failureCategory?: AgentBrowserFailureCategory;
 	nextActions?: AgentBrowserNextAction[];
+	pageChangeSummary?: AgentBrowserPageChangeSummary;
 	fullOutputPath?: string;
 	fullOutputPaths?: string[];
 	imagePath?: string;
@@ -265,6 +277,7 @@ export interface ToolPresentation {
 	imagePath?: string;
 	imagePaths?: string[];
 	nextActions?: AgentBrowserNextAction[];
+	pageChangeSummary?: AgentBrowserPageChangeSummary;
 	resultCategory?: AgentBrowserResultCategory;
 	savedFile?: SavedFilePresentationDetails;
 	savedFilePath?: string;

@@ -5,7 +5,7 @@ Related docs:
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
-- Bounded `agent_browser` outcome categories on `details` (`resultCategory`, `successCategory`, `failureCategory`): contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details); maintainer checklist under “Tool result categories” in [`../AGENTS.md`](../AGENTS.md)
+- Bounded `agent_browser` outcome metadata on `details` (`resultCategory`, `successCategory`, `failureCategory`, optional `nextActions`, optional `pageChangeSummary` with per-step summaries on `batch`): contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details); maintainer checklists under “Tool result categories” and “Page-change summaries” in [`../AGENTS.md`](../AGENTS.md)
 
 ## Purpose
 

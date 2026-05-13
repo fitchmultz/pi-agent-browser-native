@@ -22,6 +22,7 @@ import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary
 import {
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
+	type AgentBrowserPageChangeSummary,
 	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
@@ -54,6 +55,32 @@ const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
 const INLINE_IMAGE_MAX_BYTES_ENV = "PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES";
 const DEFAULT_INLINE_IMAGE_MAX_BYTES = 5 * 1_024 * 1_024;
 const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
+const PAGE_CHANGE_SUMMARY_COMMANDS = new Set([
+	"back",
+	"check",
+	"click",
+	"dblclick",
+	"dialog",
+	"download",
+	"fill",
+	"forward",
+	"goto",
+	"hover",
+	"navigate",
+	"open",
+	"pdf",
+	"press",
+	"pushstate",
+	"reload",
+	"screenshot",
+	"scroll",
+	"scrollintoview",
+	"select",
+	"swipe",
+	"tap",
+	"type",
+	"uncheck",
+]);
 const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
 const LARGE_OUTPUT_INLINE_MAX_CHARS = 8_000;
 const LARGE_OUTPUT_INLINE_MAX_LINES = 120;
@@ -955,12 +982,71 @@ function getNavigationSummary(data: Record<string, unknown>): NavigationSummary 
 	return isNavigationSummary(candidate) ? candidate : undefined;
 }
 
+function getTopLevelNavigationSummary(data: Record<string, unknown>): NavigationSummary | undefined {
+	return isNavigationSummary(data)
+		? {
+			title: typeof data.title === "string" ? data.title : undefined,
+			url: typeof data.url === "string" ? data.url : undefined,
+		}
+		: undefined;
+}
+
+function getNormalizedNavigationSummary(summary: NavigationSummary | undefined): { title?: string; url?: string } | undefined {
+	const title = typeof summary?.title === "string" && summary.title.trim().length > 0 ? summary.title.trim() : undefined;
+	const url = typeof summary?.url === "string" && summary.url.trim().length > 0 ? summary.url.trim() : undefined;
+	return title || url ? { title, url } : undefined;
+}
+
 function formatNavigationSummary(summary: NavigationSummary): string | undefined {
-	const title = typeof summary.title === "string" && summary.title.trim().length > 0 ? summary.title.trim() : undefined;
-	const url = typeof summary.url === "string" && summary.url.trim().length > 0 ? summary.url.trim() : undefined;
-	if (!title && !url) return undefined;
-	if (title && url) return `${title}\n${url}`;
-	return title ?? url;
+	const normalized = getNormalizedNavigationSummary(summary);
+	if (!normalized) return undefined;
+	if (normalized.title && normalized.url) return `${normalized.title}\n${normalized.url}`;
+	return normalized.title ?? normalized.url;
+}
+
+function isPageChangeSummaryCommand(command: string | undefined): boolean {
+	return command !== undefined && PAGE_CHANGE_SUMMARY_COMMANDS.has(command);
+}
+
+function buildPageChangeSummary(options: {
+	artifacts?: FileArtifactMetadata[];
+	commandInfo: CommandInfo;
+	data: unknown;
+	nextActions?: Array<{ id: string }>;
+	savedFilePath?: string;
+	summary: string;
+}): AgentBrowserPageChangeSummary | undefined {
+	const { artifacts, commandInfo, data, nextActions, savedFilePath } = options;
+	const artifactCount = artifacts?.length ?? 0;
+	const navigation = isRecord(data)
+		? getNormalizedNavigationSummary(getNavigationSummary(data) ?? (isPageChangeSummaryCommand(commandInfo.command) ? getTopLevelNavigationSummary(data) : undefined))
+		: undefined;
+	const confirmationRequired = detectConfirmationRequired(data) !== undefined;
+	if (!navigation && !confirmationRequired && artifactCount === 0 && !savedFilePath && !isPageChangeSummaryCommand(commandInfo.command)) {
+		return undefined;
+	}
+	const changeType: AgentBrowserPageChangeSummary["changeType"] = savedFilePath || artifactCount > 0
+		? "artifact"
+		: navigation
+			? "navigation"
+			: confirmationRequired
+				? "confirmation"
+				: "mutation";
+	const parts = [commandInfo.command ?? "agent-browser", changeType];
+	if (navigation?.title) parts.push(navigation.title);
+	if (navigation?.url) parts.push(navigation.url);
+	if (savedFilePath) parts.push(savedFilePath);
+	else if (artifactCount > 0) parts.push(`${artifactCount} artifact${artifactCount === 1 ? "" : "s"}`);
+	return {
+		...(artifactCount > 0 ? { artifactCount } : {}),
+		changeType,
+		...(commandInfo.command ? { command: commandInfo.command } : {}),
+		...(nextActions ? { nextActionIds: nextActions.map((action) => action.id) } : {}),
+		...(savedFilePath ? { savedFilePath } : {}),
+		summary: parts.join(" → "),
+		...(navigation?.title ? { title: navigation.title } : {}),
+		...(navigation?.url ? { url: navigation.url } : {}),
+	};
 }
 
 function stripNavigationSummary(data: Record<string, unknown>): Record<string, unknown> {
@@ -1167,6 +1253,14 @@ async function buildBatchStepPresentation(options: {
 		savedFilePath: presentation.savedFilePath,
 		successCategory: presentation.successCategory,
 	});
+	const pageChangeSummary = buildPageChangeSummary({
+		artifacts: presentation.artifacts,
+		commandInfo: parseCommandInfo(command ?? []),
+		data: presentation.data,
+		nextActions,
+		savedFilePath: presentation.savedFilePath,
+		summary: presentation.summary,
+	});
 
 	return {
 		details: {
@@ -1180,6 +1274,7 @@ async function buildBatchStepPresentation(options: {
 			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
 			index,
 			nextActions,
+			pageChangeSummary,
 			resultCategory: "success",
 			savedFile: presentation.savedFile,
 			savedFilePath: presentation.savedFilePath,
@@ -1270,6 +1365,27 @@ async function buildBatchPresentation(options: {
 	const artifactRetentionSummary = currentArtifactManifest ? formatSessionArtifactRetentionSummary(currentArtifactManifest) : undefined;
 	const contentText = artifactRetentionSummary && manifestHasNewNoticeWorthyEntries(options.artifactManifest, currentArtifactManifest) ? `${text}\n\n${artifactRetentionSummary}` : text;
 
+	const nextActions = batchFailure
+		? batchFailure.failedStep.nextActions
+		: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success" });
+	const changedSteps = steps.map((step) => step.details).filter((details) => details.pageChangeSummary !== undefined);
+	const pageChangeSummary = artifacts.length > 0
+		? buildPageChangeSummary({
+			artifacts,
+			commandInfo: { command: "batch" },
+			data,
+			nextActions,
+			summary,
+		})
+		: changedSteps.length > 0
+			? {
+				changeType: "mutation" as const,
+				command: "batch",
+				nextActionIds: nextActions?.map((action) => action.id),
+				summary: `batch → mutation → ${changedSteps.length} changed step${changedSteps.length === 1 ? "" : "s"}`,
+			}
+			: undefined;
+
 	return {
 		artifactManifest: currentArtifactManifest,
 		artifactRetentionSummary,
@@ -1283,9 +1399,8 @@ async function buildBatchPresentation(options: {
 		fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
 		imagePath: imagePaths[0],
 		imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
-		nextActions: batchFailure
-			? batchFailure.failedStep.nextActions
-			: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success" }),
+		nextActions,
+		pageChangeSummary,
 		resultCategory: batchFailure ? "failure" : "success",
 		successCategory: batchFailure ? undefined : classifyAgentBrowserSuccessCategory({ artifacts }),
 		summary,
@@ -1722,6 +1837,14 @@ export async function buildToolPresentation(options: {
 		resultCategory: presentationWithManifest.resultCategory ?? "success",
 		savedFilePath: presentationWithManifest.savedFilePath,
 		successCategory: presentationWithManifest.successCategory,
+	});
+	presentationWithManifest.pageChangeSummary = presentationWithManifest.pageChangeSummary ?? buildPageChangeSummary({
+		artifacts: presentationWithManifest.artifacts,
+		commandInfo,
+		data,
+		nextActions: presentationWithManifest.nextActions,
+		savedFilePath: presentationWithManifest.savedFilePath,
+		summary: presentationWithManifest.summary,
 	});
 	return sanitizeModelFacingPresentation(presentationWithManifest);
 }
