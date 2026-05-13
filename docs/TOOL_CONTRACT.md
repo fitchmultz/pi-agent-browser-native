@@ -27,6 +27,8 @@ The tool guidance should be written for task discovery first, not wrapper implem
 
 The tool also needs an operating playbook, not just a capability list. The model should not have to rediscover basics each session. The canonical agent-facing playbook lives in `extensions/agent-browser/lib/playbook.ts`; generated Markdown fragments are updated by `npm run docs -- playbook write`, and `npm run docs -- playbook check` fails when checked-in documentation drifts.
 
+The native command reference in `docs/COMMAND_REFERENCE.md` is driven by the same pattern: canonical metadata lives in `scripts/agent-browser-capability-baseline.mjs`, selected regions are generated into the Markdown by `npm run docs -- command-reference write`, and `npm run docs` plus `npm run verify -- command-reference` catch drift (the latter also samples the installed `agent-browser` on `PATH`). Maintainer workflow details live in `AGENTS.md` under upstream capability baseline.
+
 <!-- agent-browser-playbook:start shared-guidelines -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs can become stale.

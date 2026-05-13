@@ -350,6 +350,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `extensions/agent-browser/lib/results/` | Model-facing result rendering and error guidance |
 | `extensions/agent-browser/lib/playbook.ts` | Canonical generated agent/browser guidance |
 | `scripts/agent-browser-capability-baseline.mjs` | Target upstream version, help samples, and doc/token inventory for drift checks |
+| `scripts/check-command-reference-baseline.mjs` | Regenerates or verifies HTML-bounded baseline blocks in `docs/COMMAND_REFERENCE.md` (via `npm run docs -- command-reference …`) |
 | `docs/COMMAND_REFERENCE.md` | Repo-readable native command reference |
 | `docs/TOOL_CONTRACT.md` | Tool parameters, result shape, and behavior contract |
 | `docs/ARCHITECTURE.md` | Design decisions and implementation structure |
