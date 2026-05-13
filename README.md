@@ -253,6 +253,15 @@ It runs:
 - command-reference baseline checks
 - live command-reference verification against the targeted installed upstream `agent-browser`
 
+The deterministic agent-efficiency benchmark is separate from the verification gate so future agent-facing abstractions can prove call-count, output-size, stale-ref, artifact, failure-category coverage, success-rate, and elapsed-time effects before changing the wrapper UX:
+
+```bash
+npm run benchmark:agent-browser
+npm run verify -- benchmark
+```
+
+It does not launch a browser or mutate local profiles; it models representative raw workflows and provides a stable baseline for later comparisons.
+
 The opt-in real-upstream suite is separate because it drives a real browser installation:
 
 ```bash

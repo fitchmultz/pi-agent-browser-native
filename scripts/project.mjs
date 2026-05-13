@@ -70,6 +70,7 @@ Modes:
   default             Docs check, typecheck, unit tests, and live command-reference check (default).
   typecheck           Run TypeScript typecheck only.
   command-reference   Check generated command-reference block and live upstream help drift.
+  benchmark           Run the deterministic agent-browser efficiency benchmark and focused tests.
   real-upstream       Run the opt-in real upstream browser contract suite.
   package             Verify package contents.
   package-pi          Verify package contents plus isolated Pi package smoke.
@@ -178,6 +179,7 @@ function parseVerifyArgs(argv) {
 		"default",
 		"typecheck",
 		"command-reference",
+		"benchmark",
 		"real-upstream",
 		"package",
 		"package-pi",
@@ -195,6 +197,7 @@ function validatePassthrough(mode, passthrough) {
 		default: new Set(),
 		typecheck: new Set(),
 		"command-reference": new Set(),
+		benchmark: new Set(),
 		"real-upstream": new Set(),
 		package: new Set(["--list-files"]),
 		"package-pi": new Set(["--list-files"]),
@@ -236,6 +239,11 @@ function verifySteps(options) {
 			return [localToolStep("tsc", ["--noEmit"])];
 		case "command-reference":
 			return commandReferenceSteps();
+		case "benchmark":
+			return [
+				scriptStep(["./scripts/agent-browser-efficiency-benchmark.mjs", "--json"]),
+				localToolStep("tsx", ["--test", "test/agent-browser.efficiency-benchmark.test.ts"]),
+			];
 		case "real-upstream":
 			return [localToolStep("tsx", ["--test", "test/agent-browser.real-upstream-contract.test.ts"], { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" })];
 		case "package":

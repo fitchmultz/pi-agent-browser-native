@@ -29,6 +29,8 @@ The tool also needs an operating playbook, not just a capability list. The model
 
 The native command reference in `docs/COMMAND_REFERENCE.md` is driven by the same pattern: canonical metadata lives in `scripts/agent-browser-capability-baseline.mjs`, selected regions are generated into the Markdown by `npm run docs -- command-reference write`, and `npm run docs` plus `npm run verify -- command-reference` catch drift (the latter also samples the installed `agent-browser` on `PATH`). Maintainer workflow details live in `AGENTS.md` under upstream capability baseline.
 
+Agent-facing efficiency claims are measured with `npm run benchmark:agent-browser` or `npm run verify -- benchmark`. The benchmark is deterministic and does not launch a browser; it tracks representative workflow success, tool calls, model-visible output size, stale-ref failures and recoveries, artifact success, failure-category coverage, and elapsed-time estimates so future abstractions can prove they reduce agent work before replacing raw tool use.
+
 <!-- agent-browser-playbook:start shared-guidelines -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs can become stale.

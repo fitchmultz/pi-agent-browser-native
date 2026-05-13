@@ -19,6 +19,8 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 This reference is baselined to the locally installed `agent-browser 0.27.0` command/help surface. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
+
+Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
 ## Core mental model
