@@ -127,6 +127,8 @@ This suite requires the installed `agent-browser --version` to exactly match `sc
 - **Failure shape:** `react tree` on a page opened with `--enable react-devtools` but without a React app (expects a clear missing-renderer error with session-bound `details`).
 - **Async download:** `open` on the `/download` fixture, anchor-triggered export, then `wait --download <path>` metadata and wrapper artifact reporting for the requested path.
 
+The default unit suite also runs `agentBrowserExtension passes through core command coverage fallback matrix` in [`test/agent-browser.extension-validation.test.ts`](../test/agent-browser.extension-validation.test.ts): a fake upstream records argv so `connect`, `download`, `get url`, `snapshot --compact`, and basic `tab` steps still prove `--json` plus implicit `--session` ordering without a browser. Extend that matrix when adding passthrough coverage that should stay out of the slow real-upstream loop.
+
 ### Real upstream suite mechanics, isolation, and troubleshooting
 
 - **Single bundled test:** `test/agent-browser.real-upstream-contract.test.ts` registers one long-running case (120s timeout) so browser startup, the command matrix, and teardown stay in one place.
