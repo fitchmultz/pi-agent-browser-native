@@ -194,63 +194,6 @@
       "custom_fields": {}
     },
     {
-      "id": "RQ-0053",
-      "status": "doing",
-      "title": "Document and validate provider and specialized-skill passthrough",
-      "description": "Add explicit support guidance and smoke contracts for current provider and specialized-skill workflows: iOS simulator/Appium commands, Browserbase, Kernel, BrowserUse, Browserless, AWS AgentCore, Electron, Slack, dogfood, and Vercel Sandbox. The wrapper should stay thin and should not emulate provider behavior, but it must forward the right flags/env, avoid managed-session interference where providers own the browser, and tell agents how to load version-matched upstream skills. Acceptance criteria: provider flags/env are included in the baseline and docs; runtime planning treats provider/CDP/auto-connect as launch-scoped where appropriate; process-env tests cover current provider credential prefixes; package docs state which workflows require external setup; fake smoke tests prove args/env passthrough; `npm test` passes.",
-      "priority": "medium",
-      "tags": [
-        "providers",
-        "skills",
-        "ios",
-        "cloud",
-        "electron",
-        "slack"
-      ],
-      "scope": [
-        "scripts/agent-browser-capability-baseline.mjs",
-        "extensions/agent-browser/lib/runtime.ts",
-        "extensions/agent-browser/lib/process.ts",
-        "extensions/agent-browser/lib/playbook.ts",
-        "docs/COMMAND_REFERENCE.md",
-        "README.md",
-        "test/agent-browser.runtime.test.ts",
-        "test/agent-browser.process.test.ts",
-        "test/agent-browser.extension-validation.test.ts",
-        "npm test"
-      ],
-      "evidence": [
-        "workflow: agent_browser { args: [\"--help\"] } :: root help documents provider values `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, and `agentcore`, plus iOS examples for `device list`, `swipe`, and `tap`.",
-        "workflow: agent_browser { args: [\"skills\", \"list\"] } :: current version ships specialized skills: agentcore, core, dogfood, electron, slack, and vercel-sandbox.",
-        "path: extensions/agent-browser/lib/process.ts:78-85 :: env prefix passthrough already includes AGENTCORE_, BROWSERBASE_, BROWSERLESS_, BROWSER_USE_, KERNEL_, and AI_GATEWAY_, but docs/tests should prove the full current provider surface.",
-        "path: extensions/agent-browser/lib/runtime.ts:677-679 :: provider and CDP flags opt out of the ChatGPT user-agent workaround, indicating provider-owned launch behavior already matters."
-      ],
-      "plan": [
-        "Add provider/specialized-skill inventory tokens and docs that explain how agents should load upstream skills through the native tool.",
-        "Audit launch-scoped behavior for provider/CDP/auto-connect/iOS device flags and update runtime tests where needed.",
-        "Expand env passthrough tests for provider credentials and current AGENT_BROWSER_IOS_* variables without leaking secrets in details.",
-        "Add fake-binary smoke tests for representative provider command shapes such as `-p ios device list`, `-p ios tap @e1`, and cloud-provider launches."
-      ],
-      "notes": [],
-      "request": "Add support for everything in the current version of agent-browser.",
-      "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T22:46:38.308943000Z",
-      "started_at": "2026-05-13T22:46:38.308943000Z",
-      "depends_on": [
-        "RQ-0046",
-        "RQ-0048",
-        "RQ-0047"
-      ],
-      "blocks": [
-        "RQ-0054",
-        "RQ-0056"
-      ],
-      "relates_to": [],
-      "custom_fields": {
-        "source": "manual-upstream-refresh"
-      }
-    },
-    {
       "id": "RQ-0054",
       "status": "todo",
       "title": "Upgrade verification gates for full-surface upstream support",
