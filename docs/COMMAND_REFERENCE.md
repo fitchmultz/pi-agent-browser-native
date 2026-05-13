@@ -232,6 +232,31 @@ If the result says `Pending confirmation id: c_8f3a1234`, choose one follow-up:
 
 Confirmation context may be redacted when it contains credentials, tokens, cookies, or auth-bearing URLs. Use the id exactly as printed.
 
+### Use stateful browser-context commands safely
+
+Stateful commands are native `agent_browser` calls, not shell commands. Keep secrets out of `args` whenever upstream supports stdin, and expect model-facing summaries to redact auth, cookie, password, secret, session, and token-like values.
+
+```json
+{ "args": ["auth", "save", "demo", "--password-stdin"], "stdin": "password from the user-approved secret source" }
+{ "args": ["auth", "login", "demo"] }
+{ "args": ["state", "save", "/tmp/demo-state.json"] }
+{ "args": ["state", "load", "/tmp/demo-state.json"], "sessionMode": "fresh" }
+{ "args": ["cookies", "set", "theme", "dark", "--url", "https://example.com"] }
+{ "args": ["storage", "local", "get", "theme"] }
+{ "args": ["dialog", "status"] }
+{ "args": ["dialog", "accept", "prompt text"] }
+{ "args": ["frame", "main"] }
+```
+
+Operational notes:
+
+- `stdin` is accepted only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other stdin-bearing calls are rejected before launch.
+- `auth list/show/save/login/delete` summaries avoid expanding profile secrets. Prefer `auth save --password-stdin` over `--password <value>`.
+- `state save <path>` is a verified file-artifact workflow; inspect `details.artifactVerification` before relying on the file. `state load <path>` is not treated as a newly saved artifact.
+- `cookies get` can expose real authenticated-profile cookies; prefer task-specific page actions and only inspect cookies when the user needs cookie data.
+- `storage local|session` summaries redact sensitive keys and values; still avoid broad storage dumps unless necessary.
+- `dialog accept/dismiss/status`, `frame <selector|main>`, and guarded-action `confirm <id>` / `deny <id>` pass through the native tool. Prefer `details.nextActions` for exact confirmation recovery payloads.
+
 ## Full supported surface
 
 The tables below intentionally list more than the recommended workflow. Rare commands are included so agents can discover that the installed upstream supports them without direct `agent-browser --help` access.

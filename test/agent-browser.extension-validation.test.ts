@@ -457,6 +457,88 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	}
 });
 
+test("agentBrowserExtension passes through stateful browser-context workflow commands", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stateful-matrix-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const commandIndex = args.findIndex((arg) => !arg.startsWith("--") && args[args.indexOf("--session") + 1] !== arg);
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+if (command === "state" && subcommand === "save") fs.writeFileSync(args[commandIndex + 2], "{}");
+const data = command === "auth" && subcommand === "list" ? { profiles: [{ name: "demo" }] }
+  : command === "auth" && subcommand === "show" ? { name: "demo", url: "https://example.test", username: "user@example.test" }
+  : command === "cookies" && (subcommand === undefined || subcommand === "get") ? { cookies: [{ name: "sid", domain: "example.test", path: "/", value: "cookie-get-secret" }] }
+  : command === "cookies" && subcommand === "set" ? { name: args[commandIndex + 2], value: args[commandIndex + 3], domain: "example.test" }
+  : command === "storage" ? { type: args[commandIndex + 1], entries: [{ key: args[commandIndex + 3] || "theme", value: args[commandIndex + 4] || "storage-secret" }] }
+  : command === "dialog" ? { open: subcommand === "status", accepted: subcommand === "accept", dismissed: subcommand === "dismiss" }
+  : command === "frame" ? { frame: subcommand }
+  : command === "state" && subcommand === "list" ? { states: [{ name: "state.json" }] }
+  : command === "state" ? { path: args[commandIndex + 2], loaded: subcommand === "load" }
+  : { ok: true, command, subcommand };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	const commands = [
+		["auth", "save", "demo", "--url", "https://example.test", "--username", "user@example.test"],
+		["auth", "login", "demo"],
+		["auth", "list"],
+		["auth", "show", "demo"],
+		["auth", "delete", "demo"],
+		["state", "save", statePath],
+		["state", "load", statePath],
+		["state", "list"],
+		["cookies", "get"],
+		["cookies", "set", "sid", "cookie-secret", "--url", "https://example.test"],
+		["cookies", "clear"],
+		["storage", "local", "set", "theme", "dark"],
+		["storage", "session", "get", "theme"],
+		["storage", "local", "clear"],
+		["dialog", "status"],
+		["dialog", "accept", "prompt text"],
+		["dialog", "dismiss"],
+		["frame", "#child-frame"],
+		["frame", "main"],
+		["confirm", "c_demo"],
+		["deny", "c_demo"],
+	] as const;
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise stateful browser workflows." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			for (const args of commands) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
+				assert.equal(result.isError, false, args.join(" "));
+				assert.doesNotMatch(result.content[0]?.text ?? "", /cookie-secret|cookie-get-secret|storage-secret|dark/);
+				assert.doesNotMatch(JSON.stringify(result.details), /cookie-secret|cookie-get-secret|storage-secret|dark/);
+			}
+
+			const jsonResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--json", "cookies", "set", "sid", "json-cookie-secret", "--url", "https://example.test"] });
+			assert.equal(jsonResult.isError, false);
+			for (const item of jsonResult.content) {
+				if (item.type === "text") assert.doesNotMatch(item.text ?? "", /json-cookie-secret/);
+			}
+
+			const invocations = await readInvocationLog(logPath);
+			const userInvocations = invocations
+				.map((entry) => entry.args.slice(3))
+				.filter((args) => !(args[0] === "tab" && args[1] === "list"))
+				.filter((args) => !(args[0] === "cookies" && args[1] === "set" && args[3] === "json-cookie-secret"));
+			assert.deepEqual(userInvocations, commands.map((args) => [...args]));
+			assert.ok(invocations.every((entry) => entry.args.includes("--json") && entry.args.includes("--session")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension normalizes and repairs explicit screenshot artifact paths", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-screenshot-path-"));
 	const logPath = join(tempDir, "invocations.log");

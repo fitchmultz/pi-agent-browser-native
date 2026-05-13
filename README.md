@@ -216,7 +216,23 @@ Use these rules:
 - Use `--session` when you want to manage a live upstream session name yourself.
 - Do not treat `--session` as persisted auth or tab restore after `close`; use `--profile`, `--session-name`, or `--state` for persistence.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.
-- Prefer `auth save --password-stdin` over putting passwords in `args`.
+- Prefer `auth save --password-stdin` over putting passwords in `args`; the wrapper only accepts `stdin` for `batch`, `eval --stdin`, and `auth save --password-stdin`.
+- Use `state save <path>` / `state load <path>` for portable test state. `state save` is reported as a file artifact with verification metadata; `state load` may mention a path but is not treated as a newly saved artifact.
+- Treat `cookies get`, `storage local|session`, and `auth show` output as sensitive. The native presentation summarizes and redacts credential-like values, but avoid requesting these dumps unless the task needs them.
+- Use `dialog status`, `dialog accept [text]`, `dialog dismiss`, and `frame <selector|main>` through native `args`; use exact `confirm <id>` / `deny <id>` next actions for guarded-action confirmations.
+
+Safe stateful examples:
+
+```json
+{ "args": ["auth", "save", "demo", "--password-stdin"], "stdin": "password from the user-approved secret source" }
+{ "args": ["auth", "login", "demo"] }
+{ "args": ["state", "save", "/tmp/demo-state.json"] }
+{ "args": ["state", "load", "/tmp/demo-state.json"], "sessionMode": "fresh" }
+{ "args": ["cookies", "set", "theme", "dark", "--url", "https://example.com"] }
+{ "args": ["storage", "local", "get", "theme"] }
+{ "args": ["dialog", "accept", "prompt text"] }
+{ "args": ["frame", "main"] }
+```
 
 Example explicit session plus profile launch:
 

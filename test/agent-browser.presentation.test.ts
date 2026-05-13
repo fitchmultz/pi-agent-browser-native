@@ -658,6 +658,124 @@ test("buildToolPresentation formats auth profile lists and show output without e
 	assert.doesNotMatch(showText, /secret|password|bearer-token|token/);
 });
 
+test("buildToolPresentation formats stateful browser-context results without leaking credentials", async () => {
+	const cases = [
+		{
+			commandInfo: { command: "cookies", subcommand: "get" },
+			data: { cookies: [{ domain: "example.test", httpOnly: true, name: "session_id", path: "/", value: "cookie-secret" }] },
+			summary: "Cookies: 1",
+			matches: [/session_id/, /example\.test/],
+			missing: /cookie-secret/,
+		},
+		{
+			commandInfo: { command: "cookies", subcommand: "set" },
+			data: { domain: "example.test", name: "sid", path: "/", value: "cookie-set-secret" },
+			summary: "sid",
+			matches: [/sid/, /example\.test/],
+			missing: /cookie-set-secret/,
+		},
+		{
+			commandInfo: { command: "storage", subcommand: "local" },
+			data: { entries: [{ key: "theme", value: "dark" }, { key: "jwt", value: "eyJhbGciOiJIUzI1NiJ9.supersecret.signature" }, { key: "authToken", value: "storage-secret-token" }], type: "local" },
+			summary: "Storage entries: 3",
+			matches: [/theme: \[REDACTED\]/, /jwt: \[REDACTED\]/, /authToken: \[REDACTED\]/],
+			missing: /dark|supersecret|storage-secret-token|eyJhbGci/,
+		},
+		{
+			commandInfo: { command: "storage", subcommand: "local" },
+			data: { key: "sessionToken", type: "local", value: "direct-storage-secret" },
+			summary: "Storage set: sessionToken",
+			matches: [/local sessionToken: \[REDACTED\]/],
+			missing: /direct-storage-secret/,
+		},
+		{
+			commandInfo: { command: "dialog", subcommand: "status" },
+			data: { message: "Authorization: Bearer dialog-secret", open: true, type: "prompt" },
+			summary: "Dialog open",
+			matches: [/Dialog open/, /Type: prompt/, /Message: \[REDACTED\]/],
+			missing: /dialog-secret/,
+		},
+		{
+			commandInfo: { command: "frame", subcommand: "main" },
+			data: { frame: "main", title: "Main Frame", url: "https://example.test/frame" },
+			summary: "Frame: main",
+			matches: [/Frame: main/, /Main Frame/],
+			missing: undefined,
+		},
+		{
+			commandInfo: { command: "state", subcommand: "list" },
+			data: { states: [{ name: "prod-state.json", url: "https://example.test/?token=state-secret" }] },
+			summary: "States: 1",
+			matches: [/prod-state\.json/, /REDACTED/],
+			missing: /state-secret/,
+		},
+	] as const;
+
+	for (const testCase of cases) {
+		const presentation = await buildToolPresentation({
+			commandInfo: testCase.commandInfo,
+			cwd: process.cwd(),
+			envelope: { success: true, data: testCase.data },
+		});
+		assert.equal(presentation.summary, testCase.summary);
+		const text = (presentation.content[0] as { text: string }).text;
+		for (const pattern of testCase.matches) assert.match(text, pattern);
+		if (testCase.missing) {
+			assert.doesNotMatch(text, testCase.missing);
+			assert.doesNotMatch(JSON.stringify(presentation.data), testCase.missing);
+		}
+	}
+});
+
+test("buildToolPresentation redacts stateful batch details", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [
+				{
+					command: ["cookies", "set", "sid", "cookie-secret"],
+					result: { domain: "example.test", name: "sid", value: "cookie-secret" },
+					success: true,
+				},
+				{
+					command: ["storage", "local", "set", "authToken", "storage-secret"],
+					result: { entries: [{ key: "authToken", value: "storage-secret" }], type: "local" },
+					success: true,
+				},
+			],
+		},
+	});
+
+	const serialized = JSON.stringify({ batchSteps: presentation.batchSteps, data: presentation.data });
+	assert.doesNotMatch((presentation.content[0] as { text: string }).text, /cookie-secret|storage-secret/);
+	assert.doesNotMatch(serialized, /cookie-secret|storage-secret/);
+	assert.match(serialized, /\[REDACTED\]/);
+});
+
+test("buildToolPresentation redacts failed stateful batch details", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: false,
+			data: [
+				{
+					command: ["cookies", "set", "sid", "cookie-secret"],
+					error: { message: "failed cookie-secret", value: "cookie-secret" },
+					success: false,
+				},
+			],
+		},
+	});
+
+	const serialized = JSON.stringify({ batchFailure: presentation.batchFailure, batchSteps: presentation.batchSteps, data: presentation.data });
+	assert.doesNotMatch((presentation.content[0] as { text: string }).text, /cookie-secret/);
+	assert.doesNotMatch(serialized, /cookie-secret/);
+	assert.match(serialized, /\[REDACTED\]/);
+});
+
 test("buildToolPresentation formats redacted network payload, response, and error previews", async () => {
 	const longResponse = `{"items":["${"x".repeat(400)}"],"token":"response-secret"}`;
 	const presentation = await buildToolPresentation({
