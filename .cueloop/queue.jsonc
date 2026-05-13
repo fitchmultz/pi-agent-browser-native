@@ -342,64 +342,6 @@
       }
     },
     {
-      "id": "RQ-0049",
-      "status": "doing",
-      "title": "Complete artifact and presentation support for all output-producing commands",
-      "description": "Extend result presentation so every current command that saves files or emits large diagnostic data has a clear, safe native-tool contract. Cover screenshots including `--annotate` and `--full`, PDFs, downloads and `wait --download`, `state save/load` metadata, `network har start|stop`, `trace`, `profiler`, `record`, `diff screenshot --baseline`, diagnostic logs/requests/errors, and future path-bearing outputs from batch steps. Acceptance criteria: saved artifacts are summarized with `details.artifacts`/manifest entries; large outputs spill to readable full-output paths; inline images are limited to trusted screenshot outputs; sensitive state/auth/header contents are not printed; batch preserves per-step artifacts; `npm test` passes.",
-      "priority": "high",
-      "tags": [
-        "presentation",
-        "artifacts",
-        "results",
-        "security",
-        "batch"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "extensions/agent-browser/lib/results/shared.ts",
-        "extensions/agent-browser/lib/results/envelope.ts",
-        "extensions/agent-browser/index.ts",
-        "test/agent-browser.presentation.test.ts",
-        "test/agent-browser.results.test.ts",
-        "test/agent-browser.extension-tabs.test.ts",
-        "test/fixtures/agent-browser-real-output-shapes.json",
-        "npm test"
-      ],
-      "evidence": [
-        "path: extensions/agent-browser/lib/results/presentation.ts:409-432 :: artifact kind detection covers screenshot/pdf/download/wait/trace/profiler/record/network har, but not every current path-producing command such as state or diff screenshot.",
-        "path: docs/TOOL_CONTRACT.md:174-200 :: the intended contract already mentions traces, profiles, recordings, HAR captures, diagnostics, and manifests.",
-        "workflow: agent_browser { args: [\"--help\"] } :: current root help lists output-producing commands across Diff, Debug, Network, Storage, Auth Vault, and Dashboard families.",
-        "workflow: agent_browser { args: [\"skills\", \"get\", \"core\", \"--full\"] } :: core skill documents `state save/load`, frame/dialog commands, annotated screenshots, video recording, and network HAR workflows."
-      ],
-      "plan": [
-        "Map every current path-bearing command and result shape to a safe artifact kind, manifest policy, and summary format.",
-        "Add or update presentation helpers for `state`, `diff`, HAR/trace/profile/video, and diagnostics while preserving existing screenshot and download behavior.",
-        "Add batch-step regressions for mixed artifacts and large outputs.",
-        "Update real-upstream output-shape fixtures for newly covered commands where practical."
-      ],
-      "notes": [],
-      "request": "Add support for everything in the current version of agent-browser.",
-      "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T18:42:22.669152000Z",
-      "started_at": "2026-05-13T18:42:22.669152000Z",
-      "depends_on": [
-        "RQ-0048",
-        "RQ-0058"
-      ],
-      "blocks": [
-        "RQ-0051",
-        "RQ-0054",
-        "RQ-0056"
-      ],
-      "relates_to": [
-        "RQ-0006",
-        "RQ-0007"
-      ],
-      "custom_fields": {
-        "source": "manual-upstream-refresh"
-      }
-    },
-    {
       "id": "RQ-0050",
       "status": "todo",
       "title": "Add real-upstream coverage for core page interaction commands",
