@@ -166,6 +166,8 @@ Recommended details:
   "sessionMode": "auto",
   "sessionName": "pi-abc123",
   "usedImplicitSession": true,
+  "resultCategory": "success",
+  "successCategory": "completed",
   "data": {
     "origin": "https://example.com/",
     "refs": {
@@ -183,7 +185,9 @@ Stable category fields are part of the machine-readable contract:
 - `successCategory`: present on successful results. Current values are `"completed"`, `"artifact-saved"`, and `"inspection"`.
 - `failureCategory`: present on failed results. Current values are `"aborted"`, `"confirmation-required"`, `"download-not-verified"`, `"missing-binary"`, `"parse-failure"`, `"selector-not-found"`, `"selector-unsupported"`, `"stale-ref"`, `"tab-drift"`, `"timeout"`, `"upstream-error"`, and `"validation-error"`.
 
-These categories are intentionally bounded and stable so agents can branch on them instead of parsing prose. They do not replace raw diagnostics: `details.error`, `details.stderr`, `details.parseError`, `details.validationError`, and visible content still preserve the specific upstream or wrapper message after normal redaction. Batch results apply the same fields to `batchSteps[]`, and `batchFailure.failedStep.failureCategory` identifies the first failing step.
+These categories are intentionally bounded and stable so agents can branch on them instead of parsing prose. They do not replace raw diagnostics: `details.error`, `details.stderr`, `details.parseError`, `details.validationError`, and visible content still preserve the specific upstream or wrapper message after normal redaction.
+
+For `batch`, top-level `details` still carries `resultCategory` plus `successCategory` or `failureCategory` for the **aggregate** tool outcome: if any step fails, the overall result is a failure (`resultCategory: "failure"`) even when later steps succeed—inspect `batchSteps[]` for per-step outcomes. Each `batchSteps[]` entry includes its own `resultCategory` and either `successCategory` or `failureCategory` for that step. `batchFailure.failedStep` duplicates the first failing step’s details, including its `failureCategory`.
 
 Implementation and precedence:
 
