@@ -102,7 +102,7 @@ Compilation (then `--json` and session handling apply like any other call):
 | `click` / `check` / `uncheck` + `role` + optional `name` | `["find","role",<value>,<action>]` plus `["--name",<name>]` when `name` is set |
 | `fill` or `select` | `["find",<locator>,<value>,<action>,<text>]` plus optional `["--name",<name>]` for `role` |
 
-On both success and pre-launch validation failure, when compilation ran, `details.compiledSemanticAction` echoes `{ action, locator, args }` with `args` redacted the same way as other invocation details.
+When `semanticAction` compiles successfully, `details.compiledSemanticAction` echoes `{ action, locator, args }` with `args` redacted the same way as other invocation details. Expect it on the initial wrapper validation return (when that path still builds the early `details` object) and on the unified result after `agent-browser` runs. It is omitted when the call used `args` only, when compilation never produced argv, and on some in-`execute` error returns that attach a slimmer `details` shape before the unified merge (for example certain session-plan, stdin-contract, tab-pinning, or missing-binary guard paths); compare `extensions/agent-browser/index.ts` where `compiledSemanticAction` is assigned.
 
 Examples:
 
@@ -262,7 +262,7 @@ Implementation and precedence:
 - The main tool implementation merges these fields into Pi-facing `details` from `extensions/agent-browser/index.ts` and from `extensions/agent-browser/lib/results/presentation.ts` for presentation-time failures.
 
 Additional structured fields can appear when relevant:
-- `compiledSemanticAction` when the call used `semanticAction`: `{ action, locator, args }` with the same redaction rules as `args` / `effectiveArgs`; omitted when the tool used plain `args` only
+- `compiledSemanticAction` when the call used `semanticAction` and the result includes the unified `details` merge: `{ action, locator, args }` with the same redaction rules as `args` / `effectiveArgs`; omitted for plain `args` calls and omitted on some early error returns that omit this field (see the `semanticAction` section above)
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `pageChangeSummary` for compact mutation/artifact/navigation summaries on commands that can change browser state
