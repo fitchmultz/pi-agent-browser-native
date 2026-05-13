@@ -195,7 +195,7 @@
     },
     {
       "id": "RQ-0046",
-      "status": "todo",
+      "status": "doing",
       "title": "Refresh local docs and prompt guidance for the complete current surface",
       "description": "Update the repo-readable command reference, README, tool contract, requirements, release notes, and extension prompt playbook so agents can use the complete current agent-browser surface through the native `agent_browser` tool. Translate upstream shell examples into exact native tool-call shapes where this repo instructs agents, while preserving upstream terminology. Acceptance criteria: docs cover all baseline command families, global options, env vars, providers, setup/diagnostic commands, skills, and specialized workflows; `README.md`, `docs/COMMAND_REFERENCE.md`, `docs/TOOL_CONTRACT.md`, `docs/REQUIREMENTS.md`, and `extensions/agent-browser/lib/playbook.ts` agree with each other; drift checks prevent future divergence; `npm run docs -- playbook check` and `npm run verify -- command-reference` pass.",
       "priority": "high",
@@ -232,7 +232,8 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T19:35:12.851361000Z",
+      "started_at": "2026-05-13T19:35:12.851361000Z",
       "depends_on": [
         "RQ-0057"
       ],
