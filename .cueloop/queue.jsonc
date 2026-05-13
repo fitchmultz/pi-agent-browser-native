@@ -195,7 +195,7 @@
     },
     {
       "id": "RQ-0053",
-      "status": "todo",
+      "status": "doing",
       "title": "Document and validate provider and specialized-skill passthrough",
       "description": "Add explicit support guidance and smoke contracts for current provider and specialized-skill workflows: iOS simulator/Appium commands, Browserbase, Kernel, BrowserUse, Browserless, AWS AgentCore, Electron, Slack, dogfood, and Vercel Sandbox. The wrapper should stay thin and should not emulate provider behavior, but it must forward the right flags/env, avoid managed-session interference where providers own the browser, and tell agents how to load version-matched upstream skills. Acceptance criteria: provider flags/env are included in the baseline and docs; runtime planning treats provider/CDP/auto-connect as launch-scoped where appropriate; process-env tests cover current provider credential prefixes; package docs state which workflows require external setup; fake smoke tests prove args/env passthrough; `npm test` passes.",
       "priority": "medium",
@@ -234,7 +234,8 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T22:46:38.308943000Z",
+      "started_at": "2026-05-13T22:46:38.308943000Z",
       "depends_on": [
         "RQ-0046",
         "RQ-0048",

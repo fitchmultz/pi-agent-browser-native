@@ -338,10 +338,16 @@ export async function writeFakeAgentBrowserBinary(tempDir: string, scriptBody: s
 }
 
 export interface InvocationLogEntry {
+	agentcoreApiKey?: string | null;
 	apiKey?: string | null;
 	args: string[];
+	browserbaseApiKey?: string | null;
+	browserlessApiKey?: string | null;
+	browserUseApiKey?: string | null;
 	event?: string;
 	idleTimeout?: string | null;
+	iosDevice?: string | null;
+	kernelApiKey?: string | null;
 	model?: string | null;
 	sessionName?: string;
 	socketDir?: string | null;

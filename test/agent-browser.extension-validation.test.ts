@@ -410,6 +410,96 @@ if (subcommand === "list") {
 	}
 });
 
+test("agentBrowserExtension passes through provider and specialized skill workflows", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-provider-matrix-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({
+  args,
+  agentcoreApiKey: process.env.AGENTCORE_API_KEY || null,
+  browserbaseApiKey: process.env.BROWSERBASE_API_KEY || null,
+  browserlessApiKey: process.env.BROWSERLESS_API_KEY || null,
+  browserUseApiKey: process.env.BROWSER_USE_API_KEY || null,
+  iosDevice: process.env.AGENT_BROWSER_IOS_DEVICE || null,
+  kernelApiKey: process.env.KERNEL_API_KEY || null
+}) + "\\n");
+const skillIndex = args.indexOf("skills");
+if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
+  process.stdout.write(JSON.stringify({ success: true, data: { name: args[skillIndex + 2], body: "Use native agent_browser args for provider setup." } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true, args } }));
+}`,
+	);
+
+	const providerCommands = [
+		["-p", "ios", "device", "list"],
+		["-p", "ios", "--device", "iPhone 15 Pro", "tap", "@e1"],
+		["--provider", "browserbase", "open", "https://example.com"],
+		["--provider", "kernel", "open", "https://example.com"],
+		["--provider", "browseruse", "open", "https://example.com"],
+		["--provider", "browserless", "open", "https://example.com"],
+		["--provider", "agentcore", "open", "https://example.com"],
+	] as const;
+	const skillCommands = [
+		["skills", "get", "electron"],
+		["skills", "get", "slack"],
+		["skills", "get", "dogfood"],
+		["skills", "get", "vercel-sandbox"],
+		["skills", "get", "agentcore"],
+	] as const;
+
+	try {
+		await withPatchedEnv(
+			{
+				AGENT_BROWSER_IOS_DEVICE: "iPhone 15 Pro",
+				AGENTCORE_API_KEY: "agentcore-key",
+				BROWSERBASE_API_KEY: "browserbase-key",
+				BROWSERLESS_API_KEY: "browserless-key",
+				BROWSER_USE_API_KEY: "browser-use-key",
+				KERNEL_API_KEY: "kernel-key",
+				PATH: `${tempDir}:${basePath}`,
+			},
+			async () => {
+				const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise provider and specialized skill passthrough." });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+				for (const args of providerCommands) {
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args], sessionMode: "fresh" });
+					assert.equal(result.isError, false, args.join(" "));
+					assert.doesNotMatch(JSON.stringify(result.details), /agentcore-key|browserbase-key|browserless-key|browser-use-key|kernel-key/);
+				}
+				for (const args of skillCommands) {
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
+					assert.equal(result.isError, false, args.join(" "));
+					assert.equal(result.details?.sessionName, undefined, args.join(" "));
+					assert.equal(result.details?.usedImplicitSession, undefined, args.join(" "));
+				}
+
+				const invocations = await readInvocationLog(logPath);
+				const providerInvocations = invocations.filter((entry) => {
+					const userArgs = entry.args.slice(3);
+					return entry.args[1] === "--session" && userArgs.length > 0 && userArgs[0] !== "close";
+				});
+				assert.deepEqual(providerInvocations.map((entry) => entry.args.slice(3)), providerCommands.map((args) => [...args]));
+				assert.ok(providerInvocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));
+				assert.ok(providerInvocations.some((entry) => entry.iosDevice === "iPhone 15 Pro"));
+				assert.ok(providerInvocations.some((entry) => entry.agentcoreApiKey === "agentcore-key"));
+				assert.ok(providerInvocations.some((entry) => entry.browserbaseApiKey === "browserbase-key"));
+				assert.ok(providerInvocations.some((entry) => entry.browserlessApiKey === "browserless-key"));
+				assert.ok(providerInvocations.some((entry) => entry.browserUseApiKey === "browser-use-key"));
+				assert.ok(providerInvocations.some((entry) => entry.kernelApiKey === "kernel-key"));
+				assert.deepEqual(invocations.filter((entry) => entry.args[1] === "skills").map((entry) => entry.args), skillCommands.map((args) => ["--json", ...args]));
+			},
+		);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension passes through core command coverage fallback matrix", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-core-matrix-"));
 	const logPath = join(tempDir, "invocations.log");

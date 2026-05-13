@@ -506,7 +506,7 @@ When these commands are invoked through the native `agent_browser` tool, structu
 - `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
 - `-p, --provider <name>`: provider such as `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.
 - `--device <name>`: iOS device name. Environment: `AGENT_BROWSER_IOS_DEVICE`.
-- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash.
+- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash. iOS requires external Xcode/Appium setup, and cloud providers (`browserbase`, `kernel`, `browseruse`, `browserless`, `agentcore`) require their upstream accounts, credentials, and provider-specific environment variables. The wrapper forwards provider flags/env and stays thin; it does not emulate provider setup or cloud browser behavior.
 - `--model <name>`: AI model for `chat`. Environment: `AI_GATEWAY_MODEL`.
 - `-v, --verbose`: show tool commands and raw output.
 - `-q, --quiet`: show only AI text responses.
@@ -524,12 +524,12 @@ When these commands are invoked through the native `agent_browser` tool, structu
 
 Use `--config <path>` to load a specific config file. Boolean flags accept optional `true` or `false` values, such as `--headed false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
 
-Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, and `AI_GATEWAY_API_KEY`.
+Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, and `AI_GATEWAY_API_KEY`. Provider credential prefixes forwarded by the wrapper include `BROWSERBASE_`, `KERNEL_`, `BROWSER_USE_`, `BROWSERLESS_`, and `AGENTCORE_`.
 
 ## Wrapper-specific behavior worth knowing
 
 - The extension may keep following one implicit managed session across later tool calls.
-- If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
+- If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
