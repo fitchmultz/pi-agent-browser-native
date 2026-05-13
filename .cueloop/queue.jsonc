@@ -2,47 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0062",
-      "status": "doing",
-      "title": "Recover from stale refs only when retry safety is provable",
-      "priority": "high",
-      "tags": [
-        "agent-browser",
-        "stale-refs",
-        "recovery",
-        "safety"
-      ],
-      "scope": [
-        "extensions/agent-browser",
-        "extensions/agent-browser/lib/playbook.ts",
-        "docs/TOOL_CONTRACT.md",
-        "test"
-      ],
-      "evidence": [
-        "Stale refs are a common agent failure mode after navigation, scroll, and rerender.",
-        "Automatic recovery is useful only if the wrapper can prove the original action did not execute; destructive or ambiguous actions should return exact recovery calls instead."
-      ],
-      "plan": [
-        "Detect stale-ref failures through the stable category layer across direct actions and batch steps.",
-        "Refresh snapshot and attempt to re-identify the intended target using explicit prior ref context or semantic target information when available.",
-        "Auto-retry only for safe/idempotent actions or when upstream failure proves the action did not execute; otherwise return nextActions with snapshot/find recovery instructions.",
-        "Add regression tests for safe retry, unsafe no-retry, batch behavior, and benchmark impact on stale-ref recovery rate."
-      ],
-      "notes": [],
-      "request": "Infer and queue conservative stale-ref recovery work from the user's ABN task list.",
-      "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T17:54:11.556947000Z",
-      "started_at": "2026-05-13T17:54:11.556947000Z",
-      "depends_on": [
-        "RQ-0058",
-        "RQ-0059",
-        "RQ-0061"
-      ],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {}
-    },
-    {
       "id": "RQ-0063",
       "status": "todo",
       "title": "Make artifact verification a shared result contract for browser workflows",
