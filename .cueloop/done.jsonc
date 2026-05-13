@@ -1976,8 +1976,8 @@
       ],
       "relates_to": [],
       "custom_fields": {
-        "target_upstream_version": "0.27.0",
-        "source": "manual-upstream-refresh"
+        "source": "manual-upstream-refresh",
+        "target_upstream_version": "0.27.0"
       }
     },
     {
@@ -2386,6 +2386,62 @@
       "blocks": [],
       "relates_to": [],
       "custom_fields": {}
+    },
+    {
+      "id": "RQ-0046",
+      "status": "done",
+      "title": "Refresh local docs and prompt guidance for the complete current surface",
+      "description": "Update the repo-readable command reference, README, tool contract, requirements, release notes, and extension prompt playbook so agents can use the complete current agent-browser surface through the native `agent_browser` tool. Translate upstream shell examples into exact native tool-call shapes where this repo instructs agents, while preserving upstream terminology. Acceptance criteria: docs cover all baseline command families, global options, env vars, providers, setup/diagnostic commands, skills, and specialized workflows; `README.md`, `docs/COMMAND_REFERENCE.md`, `docs/TOOL_CONTRACT.md`, `docs/REQUIREMENTS.md`, and `extensions/agent-browser/lib/playbook.ts` agree with each other; drift checks prevent future divergence; `npm run docs -- playbook check` and `npm run verify -- command-reference` pass.",
+      "priority": "high",
+      "tags": [
+        "docs",
+        "playbook",
+        "agent-browser",
+        "upstream-sync"
+      ],
+      "scope": [
+        "README.md",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "docs/REQUIREMENTS.md",
+        "docs/RELEASE.md",
+        "extensions/agent-browser/lib/playbook.ts",
+        "scripts/check-playbook-drift.ts",
+        "scripts/agent-browser-capability-baseline.mjs",
+        "npm run docs -- playbook check",
+        "npm run verify -- command-reference"
+      ],
+      "evidence": [
+        "path: docs/COMMAND_REFERENCE.md:11-13 :: the command reference promises a repo-readable fallback for blocked direct binary help.",
+        "path: docs/REQUIREMENTS.md:69-104 :: requirements say the command reference and prompt guidance must stay in sync with upstream changes.",
+        "path: extensions/agent-browser/lib/playbook.ts:17-59 :: current prompt guidance is a curated subset and does not enumerate the full version-matched command surface.",
+        "workflow: agent_browser { args: [\"skills\", \"get\", \"core\", \"--full\"] } :: upstream's recommended starting point is the version-matched core skill, which this repo should reflect locally for sessions where direct binary help is discouraged."
+      ],
+      "plan": [
+        "Use the inventory from RQ-0045 as the only source of truth for docs coverage.",
+        "Refresh command-reference sections for core commands, nested families, command-specific options, providers, setup, env/config, skills, and specialized workflows.",
+        "Keep prompt guidance concise but add high-value command family references and native JSON tool-call examples for new surfaces.",
+        "Update docs/playbook drift checks so future surface changes cannot leave stale copies behind."
+      ],
+      "notes": [],
+      "request": "Add support for everything in the current version of agent-browser.",
+      "created_at": "2026-04-29T13:43:31Z",
+      "updated_at": "2026-05-13T19:47:02.245629000Z",
+      "completed_at": "2026-05-13T19:47:02.245629000Z",
+      "started_at": "2026-05-13T19:35:12.851361000Z",
+      "depends_on": [
+        "RQ-0057"
+      ],
+      "blocks": [
+        "RQ-0055"
+      ],
+      "relates_to": [
+        "RQ-0013",
+        "RQ-0019"
+      ],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     }
   ]
 }
