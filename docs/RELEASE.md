@@ -94,6 +94,8 @@ Before publishing, validate both local-checkout modes without mixing their assum
 4. Run a smoke prompt that exercises `agent_browser`.
 5. Restart the `pi` process after extension edits; Pi settings and `/reload` are not the validation target in this isolated mode.
 
+For expanded-surface validation, the smoke prompt should cover native tool invocation rather than shelling out to `agent-browser`: `--version`, `--help`, `skills list`, `skills get core --full`, `open` with `sessionMode: "fresh"`, `snapshot -i`, `click`, `eval --stdin`, `batch` via stdin, `screenshot <path>`, explicit `--session … open` plus `--session … close`, `network requests`, `console` / `errors`, `diff snapshot`, `stream status` plus `stream disable`, `dashboard start` plus `dashboard stop`, and `chat <message>` (credential failure is acceptable evidence of wrapper pass-through when `AI_GATEWAY_API_KEY` is intentionally unset). Clean up any opened browser session with `close`, remove temporary files, and kill the tmux session before ending validation.
+
 ### Configured-source lifecycle validation
 
 Prefer the automated harness for deterministic configured-source lifecycle regression coverage:
