@@ -475,6 +475,20 @@ export function redactInvocationArgs(args: string[]): string[] {
 		}
 	}
 
+	if (commandStartIndex !== undefined && args[commandStartIndex] === "cookies" && args[commandStartIndex + 1] === "set" && redacted[commandStartIndex + 3] !== undefined) {
+		redacted[commandStartIndex + 3] = "[REDACTED]";
+	}
+
+	if (
+		commandStartIndex !== undefined
+		&& args[commandStartIndex] === "storage"
+		&& ["local", "session"].includes(args[commandStartIndex + 1] ?? "")
+		&& args[commandStartIndex + 2] === "set"
+		&& redacted[commandStartIndex + 4] !== undefined
+	) {
+		redacted[commandStartIndex + 4] = "[REDACTED]";
+	}
+
 	return redacted;
 }
 

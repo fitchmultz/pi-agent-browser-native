@@ -949,6 +949,24 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"[REDACTED]",
 		"[REDACTED]",
 	]);
+	assert.deepEqual(redactInvocationArgs(["--json", "--session", "demo", "cookies", "set", "sid", "cookie-secret", "--url", "https://example.com"]), [
+		"--json",
+		"--session",
+		"demo",
+		"cookies",
+		"set",
+		"sid",
+		"[REDACTED]",
+		"--url",
+		"https://example.com/",
+	]);
+	assert.deepEqual(redactInvocationArgs(["storage", "local", "set", "authToken", "storage-secret"]), [
+		"storage",
+		"local",
+		"set",
+		"authToken",
+		"[REDACTED]",
+	]);
 });
 
 test("redactSensitiveText preserves help placeholders while redacting bearer credentials", () => {

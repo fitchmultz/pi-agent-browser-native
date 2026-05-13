@@ -61,6 +61,7 @@ The result is optimized for agent work:
 | Screenshots/downloads get lost in text | Normalizes artifact paths and reports existence, size, cwd, session, and repair status | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#download-screenshot-and-pdf-files) |
 | Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
 | Auth/profile workflows can leak secrets | Supports `auth save --password-stdin` and redacts sensitive args, URLs, stdout/stderr, details, and parse-failure spills | `test/agent-browser.extension-validation.test.ts` |
+| Stateful cookies/storage/auth output bloats or leaks context | Presentation layer redacts `details.data` for those commands, masks cookie/storage value argv tokens, scrubs secrets from failed batch step errors, and exposes a compact redacted `batch` matrix on top-level `details.data` | `extensions/agent-browser/lib/results/presentation.ts`, `test/agent-browser.presentation.test.ts` |
 | Stale `@eN` refs fail mysteriously | Adds recovery guidance to rerun `snapshot -i` or use stable `find` locators | `test/agent-browser.results.test.ts` |
 | Agents need stable success/failure buckets | Exposes bounded `resultCategory`, `successCategory`, and `failureCategory` on tool `details` for branching without parsing prose | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/shared.ts`, `test/agent-browser.results.test.ts` |
 | Models re-snapshot after every click without new URL/title context | Adds optional `details.pageChangeSummary` (and per-batch-step summaries) with `changeType`, compact text, optional `title`/`url`, artifact hints, and `nextActionIds` aligned to `nextActions` | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/presentation.ts`, `test/agent-browser.presentation.test.ts` |
@@ -216,7 +217,23 @@ Use these rules:
 - Use `--session` when you want to manage a live upstream session name yourself.
 - Do not treat `--session` as persisted auth or tab restore after `close`; use `--profile`, `--session-name`, or `--state` for persistence.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.
-- Prefer `auth save --password-stdin` over putting passwords in `args`.
+- Prefer `auth save --password-stdin` over putting passwords in `args`; the wrapper only accepts `stdin` for `batch`, `eval --stdin`, and `auth save --password-stdin`.
+- Use `state save <path>` / `state load <path>` for portable test state. `state save` is reported as a file artifact with verification metadata; `state load` may mention a path but is not treated as a newly saved artifact.
+- Treat `cookies get`, `storage local|session`, and `auth show` output as sensitive. The native presentation summarizes and redacts credential-like values, but avoid requesting these dumps unless the task needs them.
+- Use `dialog status`, `dialog accept [text]`, `dialog dismiss`, and `frame <selector|main>` through native `args`; use exact `confirm <id>` / `deny <id>` next actions for guarded-action confirmations.
+
+Safe stateful examples:
+
+```json
+{ "args": ["auth", "save", "demo", "--password-stdin"], "stdin": "password from the user-approved secret source" }
+{ "args": ["auth", "login", "demo"] }
+{ "args": ["state", "save", "/tmp/demo-state.json"] }
+{ "args": ["state", "load", "/tmp/demo-state.json"], "sessionMode": "fresh" }
+{ "args": ["cookies", "set", "theme", "dark", "--url", "https://example.com"] }
+{ "args": ["storage", "local", "get", "theme"] }
+{ "args": ["dialog", "accept", "prompt text"] }
+{ "args": ["frame", "main"] }
+```
 
 Example explicit session plus profile launch:
 

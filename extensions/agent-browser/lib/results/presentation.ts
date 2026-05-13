@@ -10,7 +10,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 
 import { isRecord, parsePositiveInteger } from "../parsing.js";
-import { parseCommandInfo, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../runtime.js";
+import { extractCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../runtime.js";
 import {
 	type PersistentSessionArtifactEviction,
 	type PersistentSessionArtifactStore,
@@ -262,6 +262,44 @@ function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<string, 
 		if (profiles) return `Auth profiles: ${profiles.length}`;
 		const name = getStringField(data, "name") ?? getStringField(data, "profile") ?? commandInfo.subcommand;
 		if (name && commandInfo.subcommand === "show") return `Auth profile: ${name}`;
+		if (name && ["save", "login", "delete"].includes(commandInfo.subcommand ?? "")) return `Auth ${commandInfo.subcommand}: ${name}`;
+	}
+
+	if (commandInfo.command === "cookies") {
+		const cookies = getArrayField(data, "cookies");
+		if (cookies) return `Cookies: ${cookies.length}`;
+		const name = getStringField(data, "name");
+		if (name) return name;
+		if (data.set === true) return "Cookie set";
+		if (data.cleared === true || data.clear === true) return "Cookies cleared";
+	}
+
+	if (commandInfo.command === "storage") {
+		const entries = getArrayField(data, "entries") ?? getArrayField(data, "items");
+		if (entries) return `Storage entries: ${entries.length}`;
+		const key = getStringField(data, "key");
+		if (key && (commandInfo.subcommand === "set" || data.set === true || Object.hasOwn(data, "value"))) return `Storage set: ${key}`;
+		if (data.cleared === true || data.clear === true) return "Storage cleared";
+	}
+
+	if (commandInfo.command === "dialog") {
+		const open = typeof data.open === "boolean" ? data.open : undefined;
+		if (open !== undefined) return open ? "Dialog open" : "No dialog open";
+		if (data.accepted === true) return "Dialog accepted";
+		if (data.dismissed === true) return "Dialog dismissed";
+	}
+
+	if (commandInfo.command === "frame") {
+		const frame = getStringField(data, "frame") ?? getStringField(data, "name") ?? getStringField(data, "selector") ?? commandInfo.subcommand;
+		if (frame) return `Frame: ${frame}`;
+	}
+
+	if (commandInfo.command === "state") {
+		const states = getArrayField(data, "states") ?? getArrayField(data, "files");
+		if (states) return `States: ${states.length}`;
+		if (commandInfo.subcommand === "load") return undefined;
+		const stateName = getStringField(data, "name") ?? getStringField(data, "file") ?? getStringField(data, "path") ?? commandInfo.subcommand;
+		if (stateName) return `State ${commandInfo.subcommand ?? "result"}: ${stateName}`;
 	}
 
 	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") {
@@ -602,6 +640,108 @@ function formatDoctorText(data: Record<string, unknown>): string | undefined {
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
+function formatCookieRecordText(item: Record<string, unknown>, fallbackName: string): string {
+	const name = redactModelFacingText(getStringField(item, "name") ?? fallbackName);
+	const domain = getStringField(item, "domain");
+	const path = getStringField(item, "path");
+	const flags = [item.httpOnly === true ? "httpOnly" : undefined, item.secure === true ? "secure" : undefined].filter(Boolean).join(", ");
+	const location = [domain, path].filter(Boolean).join("");
+	return [name, location ? `(${redactModelFacingText(location)})` : undefined, flags ? `[${flags}]` : undefined].filter(Boolean).join(" ");
+}
+
+function formatCookiesText(data: Record<string, unknown>): string | undefined {
+	const cookies = getArrayField(data, "cookies");
+	if (cookies) {
+		if (cookies.length === 0) return "No cookies.";
+		return cookies
+			.map((item, index) => (isRecord(item) ? formatCookieRecordText(item, `(cookie ${index + 1})`) : `${index + 1}. [REDACTED]`))
+			.join("\n");
+	}
+	if (getStringField(data, "name") || getStringField(data, "domain") || getStringField(data, "path") || Object.hasOwn(data, "value")) {
+		return formatCookieRecordText(data, "cookie");
+	}
+	if (data.set === true) return "Cookie set.";
+	if (data.cleared === true || data.clear === true) return "Cookies cleared.";
+	return undefined;
+}
+
+function formatStorageText(data: Record<string, unknown>): string | undefined {
+	const type = getStringField(data, "type") ?? getStringField(data, "storage") ?? "storage";
+	const entries = getArrayField(data, "entries") ?? getArrayField(data, "items");
+	if (entries) {
+		if (entries.length === 0) return `${type}: no entries.`;
+		return entries
+			.map((item, index) => {
+				if (!isRecord(item)) return `${index + 1}. [REDACTED]`;
+				const rawKey = getStringField(item, "key") ?? getStringField(item, "name") ?? `(entry ${index + 1})`;
+				const key = redactModelFacingText(rawKey);
+				return Object.hasOwn(item, "value") ? `${key}: [REDACTED]` : key;
+			})
+			.join("\n");
+	}
+	const key = getStringField(data, "key");
+	if (key && Object.hasOwn(data, "value")) return `${type} ${redactModelFacingText(key)}: [REDACTED]`;
+	if (key && data.set === true) return `${type} set: ${redactModelFacingText(key)}`;
+	if (data.cleared === true || data.clear === true) return `${type} cleared.`;
+	return undefined;
+}
+
+function formatDialogText(data: Record<string, unknown>): string | undefined {
+	const lines: string[] = [];
+	if (typeof data.open === "boolean") lines.push(data.open ? "Dialog open." : "No dialog open.");
+	const type = getStringField(data, "type");
+	if (type) lines.push(`Type: ${redactModelFacingText(type)}`);
+	const message = getStringField(data, "message");
+	if (message) lines.push(`Message: ${/(?:auth|authorization|bearer|cookie|pass(?:word)?|secret|session|token)/i.test(message) ? "[REDACTED]" : redactModelFacingText(message)}`);
+	if (data.accepted === true) lines.push("Accepted.");
+	if (data.dismissed === true) lines.push("Dismissed.");
+	return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function formatFrameText(data: Record<string, unknown>): string | undefined {
+	const frame = getStringField(data, "frame") ?? getStringField(data, "name") ?? getStringField(data, "selector");
+	const url = getStringField(data, "url");
+	const title = getStringField(data, "title");
+	const lines = [frame ? `Frame: ${redactModelFacingText(frame)}` : undefined, title ? `Title: ${redactModelFacingText(title)}` : undefined, url ? `URL: ${redactModelFacingTextIfSensitive(url)}` : undefined].filter(Boolean);
+	return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function formatStateText(data: Record<string, unknown>): string | undefined {
+	const states = getArrayField(data, "states") ?? getArrayField(data, "files");
+	if (states) {
+		if (states.length === 0) return "No saved states.";
+		return states
+			.map((item, index) => {
+				if (!isRecord(item)) return `${index + 1}. ${redactModelFacingTextIfSensitive(stringifyModelFacing(item))}`;
+				const name = getStringField(item, "name") ?? getStringField(item, "file") ?? getStringField(item, "path") ?? `(state ${index + 1})`;
+				const url = getStringField(item, "url");
+				return url ? `${index + 1}. ${redactModelFacingText(name)} — ${redactModelFacingTextIfSensitive(url)}` : `${index + 1}. ${redactModelFacingText(name)}`;
+			})
+			.join("\n");
+	}
+	if (data.loaded === true) return `State loaded: ${redactModelFacingText(getStringField(data, "path") ?? getStringField(data, "name") ?? "ok")}`;
+	if (data.cleared === true || data.clear === true) return "State cleared.";
+	return undefined;
+}
+
+function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unknown {
+	if (Array.isArray(value)) return value.map((item) => redactStatefulValues(item, sensitiveKeys));
+	if (!isRecord(value)) return redactSensitiveValue(value);
+	return Object.fromEntries(
+		Object.entries(value).map(([key, entryValue]) => [
+			key,
+			sensitiveKeys.has(key.toLowerCase()) ? "[REDACTED]" : redactStatefulValues(entryValue, sensitiveKeys),
+		]),
+	);
+}
+
+function redactStatefulPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
+	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
+	if (commandInfo.command === "storage") return redactStatefulValues(data, new Set(["value"]));
+	if (["auth", "dialog", "frame", "state"].includes(commandInfo.command ?? "")) return redactSensitiveValue(data);
+	return data;
+}
+
 function formatDiagnosticText(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
 	if (commandInfo.command === "session") return formatSessionText(data);
 	if (commandInfo.command === "profiles") {
@@ -613,6 +753,11 @@ function formatDiagnosticText(commandInfo: CommandInfo, data: Record<string, unk
 		if (profiles) return formatProfilesText(profiles, "auth profiles");
 		if (commandInfo.subcommand === "show") return formatAuthShowText(data);
 	}
+	if (commandInfo.command === "cookies") return formatCookiesText(data);
+	if (commandInfo.command === "storage") return formatStorageText(data);
+	if (commandInfo.command === "dialog") return formatDialogText(data);
+	if (commandInfo.command === "frame") return formatFrameText(data);
+	if (commandInfo.command === "state") return formatStateText(data);
 	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") return formatNetworkRequestsText(data);
 	if (commandInfo.command === "network" && commandInfo.subcommand === "request") return formatNetworkRequestText(data);
 	if (commandInfo.command === "console") return formatConsoleText(data);
@@ -1289,6 +1434,36 @@ function getBatchFailureDetails(steps: Array<{ details: BatchStepPresentationDet
 	};
 }
 
+function hasModelFacingArgRedaction(args: string[] | undefined): boolean {
+	return args?.some((arg) => arg === "[REDACTED]" || arg.includes("%5BREDACTED%5D") || arg.includes("[REDACTED]")) === true;
+}
+
+function getStatefulCommandSensitiveValues(command: string[] | undefined): string[] {
+	if (!command) return [];
+	const tokens = extractCommandTokens(command);
+	const values: string[] = [];
+	if (tokens[0] === "cookies" && tokens[1] === "set" && tokens[3]) values.push(tokens[3]);
+	if (tokens[0] === "storage" && ["local", "session"].includes(tokens[1] ?? "") && tokens[2] === "set" && tokens[4]) values.push(tokens[4]);
+	for (let index = 0; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (token === "--password" && tokens[index + 1]) values.push(tokens[index + 1]);
+		else if (token?.startsWith("--password=")) values.push(token.slice("--password=".length));
+	}
+	return values.filter((value) => value.length > 0);
+}
+
+function redactExactValues(value: unknown, sensitiveValues: string[]): unknown {
+	if (sensitiveValues.length === 0) return redactSensitiveValue(value);
+	if (typeof value === "string") {
+		let redacted = value;
+		for (const sensitiveValue of sensitiveValues) redacted = redacted.split(sensitiveValue).join("[REDACTED]");
+		return redactSensitiveText(redacted);
+	}
+	if (Array.isArray(value)) return value.map((item) => redactExactValues(item, sensitiveValues));
+	if (!isRecord(value)) return value;
+	return redactSensitiveValue(Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [key, redactExactValues(entryValue, sensitiveValues)])));
+}
+
 async function buildBatchStepPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
 	artifactRequest?: ArtifactRequestContext;
@@ -1300,10 +1475,12 @@ async function buildBatchStepPresentation(options: {
 }): Promise<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> {
 	const { artifactManifest, artifactRequest, cwd, index, item, persistentArtifactStore, sessionName } = options;
 	const command = isStringArray(item.command) ? item.command : undefined;
-	const commandText = formatBatchStepCommand(command, index);
+	const redactedCommand = command ? redactInvocationArgs(command) : undefined;
+	const commandText = formatBatchStepCommand(hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command, index);
 
 	if (item.success === false) {
-		const errorText = formatBatchStepError(item.error);
+		const redactedErrorData = redactExactValues(item.error, getStatefulCommandSensitiveValues(command));
+		const errorText = formatBatchStepError(redactedErrorData);
 		const failureCategory = classifyAgentBrowserFailureCategory({
 			args: command,
 			command: command?.[0],
@@ -1328,9 +1505,9 @@ async function buildBatchStepPresentation(options: {
 			details: {
 				artifactVerification: presentation.artifactVerification,
 				artifacts: presentation.artifacts,
-				command,
+				command: redactedCommand,
 				commandText,
-				data: item.error,
+				data: redactedErrorData,
 				failureCategory,
 				index,
 				nextActions,
@@ -1383,7 +1560,7 @@ async function buildBatchStepPresentation(options: {
 		details: {
 			artifactVerification: presentation.artifactVerification,
 			artifacts: presentation.artifacts,
-			command,
+			command: redactedCommand,
 			commandText,
 			data: presentation.data,
 			fullOutputPath: fullOutputPaths[0],
@@ -1452,6 +1629,11 @@ async function buildBatchPresentation(options: {
 		primaryPath: step.presentation.imagePath,
 		secondaryPaths: step.presentation.imagePaths,
 	}));
+	const redactedBatchData = steps.map(({ details }) => (
+		details.success
+			? { command: details.command, result: details.data, success: true }
+			: { command: details.command, error: details.text, success: false }
+	));
 	const stepText =
 		steps.length === 0
 			? "(no batch steps)"
@@ -1514,7 +1696,7 @@ async function buildBatchPresentation(options: {
 		batchSteps: steps.map((step) => step.details),
 		content: [{ type: "text", text: contentText }, ...images],
 		failureCategory: batchFailure?.failedStep.failureCategory,
-		data,
+		data: redactedBatchData,
 		fullOutputPath: fullOutputPaths[0],
 		fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
 		imagePath: imagePaths[0],
@@ -1894,6 +2076,7 @@ export async function buildToolPresentation(options: {
 	}
 
 	const data = enrichStreamStatusData(commandInfo, envelope?.data);
+	const presentationData = redactStatefulPresentationData(commandInfo, data);
 	const artifacts = await extractFileArtifacts({ artifactRequest, commandInfo, cwd, data, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);
@@ -1908,7 +2091,7 @@ export async function buildToolPresentation(options: {
 						artifactVerification,
 						artifacts: artifacts.length > 0 ? artifacts : undefined,
 						content: [{ type: "text" as const, text: artifactText ?? formatContentText(commandInfo, data) }],
-						data,
+						data: presentationData,
 						summary,
 				  };
 	if (artifacts.length > 0 && !presentation.artifacts) {
@@ -1928,7 +2111,7 @@ export async function buildToolPresentation(options: {
 	const compactedPresentation = await compactLargePresentationOutput({
 		artifactManifest,
 		commandInfo,
-		data,
+		data: presentationData,
 		persistentArtifactStore,
 		presentation: presentationWithImage,
 	});
