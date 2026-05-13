@@ -237,6 +237,8 @@ For setup that must happen before first navigation, open a blank fresh page, sta
 
 ## Proof and verification
 
+`npm run docs` checks that generated playbook fragments and command-reference baseline blocks match their canonical sources (`extensions/agent-browser/lib/playbook.ts` and `scripts/agent-browser-capability-baseline.mjs`) without invoking upstream `agent-browser`.
+
 The local verification gate is:
 
 ```bash
@@ -349,6 +351,8 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `extensions/agent-browser/lib/runtime.ts` | Args, session planning, redaction, process, and runtime helpers |
 | `extensions/agent-browser/lib/results/` | Model-facing result rendering and error guidance |
 | `extensions/agent-browser/lib/playbook.ts` | Canonical generated agent/browser guidance |
+| `scripts/agent-browser-capability-baseline.mjs` | Target upstream version, help samples, and doc/token inventory for drift checks |
+| `scripts/check-command-reference-baseline.mjs` | Regenerates or verifies HTML-bounded baseline blocks in `docs/COMMAND_REFERENCE.md` (via `npm run docs -- command-reference …`) |
 | `docs/COMMAND_REFERENCE.md` | Repo-readable native command reference |
 | `docs/TOOL_CONTRACT.md` | Tool parameters, result shape, and behavior contract |
 | `docs/ARCHITECTURE.md` | Design decisions and implementation structure |
@@ -358,6 +362,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 
 ## More docs
 
+- [`AGENTS.md`](AGENTS.md) — maintainer and agent runbooks, including upstream capability baseline rebaselining and Pi smoke testing in `tmux`
 - [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md) — full native command reference and upstream capability baseline
 - [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) — exact tool contract
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the wrapper is designed

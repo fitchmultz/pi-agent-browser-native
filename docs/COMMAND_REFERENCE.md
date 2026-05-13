@@ -151,8 +151,12 @@ A successful wait-based download renders a readable summary such as `Download co
 ```json
 { "args": ["download", "@e5", "/tmp/report.pdf"] }
 { "args": ["screenshot", "/tmp/page.png"] }
+{ "args": ["screenshot", "--full", "/tmp/full-page.png"] }
+{ "args": ["screenshot", "--annotate", "/tmp/annotated.png"] }
 { "args": ["pdf", "/tmp/page.pdf"] }
 ```
+
+The upstream screenshot aliases are `screenshot --full` for full-page capture and `screenshot --annotate` for labeled screenshots.
 
 Prefer `download <selector> <path>` when the target element itself is the downloadable link/control. Use `click` plus `wait --download [path]` when a previous action starts the download indirectly.
 
@@ -227,7 +231,7 @@ Native-tool note: upstream skills are written for the standalone `agent-browser`
 | `skills list` | List available CLI-bundled skills. |
 | `skills get core` | Print the core usage guide. |
 | `skills get core --full` | Print the full version-matched core command reference and templates. |
-| `skills get <name>` | Load a specialized skill such as `electron` or `slack`. |
+| `skills get <name>` | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, and `skills get agentcore`. |
 | `skills path [name]` | Print a skill directory path. |
 
 ### Core page and element commands
@@ -239,7 +243,7 @@ Native-tool note: upstream skills are written for the standalone `agent-browser`
 | `dblclick <sel>` | Double-click an element. |
 | `type <sel> <text>` | Type into an element. |
 | `fill <sel> <text>` | Clear and fill an element. |
-| `press <key>` | Press a key such as `Enter`, `Tab`, or `Control+a`. |
+| `press <key>` | Press a key such as `Enter`, `Tab`, or `Control+a`. Related key-hold aliases include `keydown Shift` and `keyup Shift`. |
 | `keyboard type <text>` | Type text with real keystrokes and no selector. |
 | `keyboard inserttext <text>` | Insert text without key events. |
 | `hover <sel>` | Hover an element. |
@@ -268,12 +272,19 @@ Native-tool note: upstream skills are written for the standalone `agent-browser`
 | `forward` | Go forward. |
 | `reload` | Reload the current page. |
 
-### Session and inspection commands
+### Session, state, frames, dialogs, windows, and inspection commands
 
 | Command | Purpose |
 | --- | --- |
 | `session` | Show current session name. |
 | `session list` | List active sessions. |
+| `state save <path>` | Save cookies, local storage, and session storage to a state file. |
+| `state load <path>` | Load cookies and storage from a state file. |
+| `frame <selector|main>` | Switch iframe context by selector/ref/name/URL, or return to the main frame. |
+| `dialog accept [text]` | Accept an alert, confirm, or prompt dialog, optionally supplying prompt text. |
+| `dialog dismiss` | Dismiss or cancel the current dialog. |
+| `dialog status` | Check whether a dialog is pending. |
+| `window new` | Open a new browser window. |
 | `close` | Close the current browser session. |
 | `close --all` | Close every session. |
 
@@ -353,6 +364,7 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `profiler start|stop [path]` | Record a Chrome DevTools profile. |
 | `record start <path> [url]` | Start WebM video recording; output is written on `record stop`. |
 | `record stop` | Stop and save video. |
+| `record restart <path> [url]` | Stop any current recording and start a new WebM recording. |
 | `console [--clear]` | View or clear console logs. |
 | `errors [--clear]` | View or clear page errors. |
 | `highlight <sel>` | Highlight an element. |
@@ -379,7 +391,7 @@ When these diagnostic commands are invoked through the native `agent_browser` to
 | Command | Purpose |
 | --- | --- |
 | `batch [--bail] ["cmd" ...]` | Execute multiple commands sequentially from args or stdin. |
-| `auth save <name> [opts]` | Save an auth profile with options such as `--url`, `--username`, `--password`, or `--password-stdin`. Prefer `--password-stdin` with the tool `stdin` field; avoid putting passwords in `args`. |
+| `auth save <name> [opts]` | Save an auth profile with options such as `--url`, `--username`, `--password`, or `--password-stdin`. Prefer `auth save <name> --password-stdin` with the tool `stdin` field; avoid putting passwords in `args`. |
 | `auth login <name>` | Login using saved credentials. |
 | `auth list` | List saved auth profiles. |
 | `auth show <name>` | Show auth profile metadata. |
@@ -396,7 +408,7 @@ When these diagnostic commands are invoked through the native `agent_browser` to
 | `install` | Install browser binaries. |
 | `install --with-deps` | Install browser binaries plus Linux system dependencies. |
 | `upgrade` | Upgrade `agent-browser` to the latest version. |
-| `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. |
+| `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. Use `doctor --offline --quick` for a fast local-only check and `doctor --json` for structured output. |
 | `profiles` | List available Chrome profiles. |
 
 When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text; use upstream HAR or full raw details only when complete data is required.
@@ -433,7 +445,7 @@ When these commands are invoked through the native `agent_browser` tool, structu
 
 ### Output, provider, policy, and AI flags
 
-- `--json`: JSON output. The wrapper injects this automatically for normal tool execution.
+- `--json`: JSON output. The wrapper injects this automatically for normal tool execution. Environment: `AGENT_BROWSER_JSON`.
 - `--annotate`: annotated screenshot with numbered labels and legend. Environment: `AGENT_BROWSER_ANNOTATE`.
 - `--screenshot-dir <path>`: default screenshot output directory. Environment: `AGENT_BROWSER_SCREENSHOT_DIR`.
 - `--screenshot-quality <n>`: JPEG quality `0-100`. Environment: `AGENT_BROWSER_SCREENSHOT_QUALITY`.
@@ -446,6 +458,7 @@ When these commands are invoked through the native `agent_browser` tool, structu
 - `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
 - `-p, --provider <name>`: provider such as `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.
 - `--device <name>`: iOS device name. Environment: `AGENT_BROWSER_IOS_DEVICE`.
+- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash.
 - `--model <name>`: AI model for `chat`. Environment: `AI_GATEWAY_MODEL`.
 - `-v, --verbose`: show tool commands and raw output.
 - `-q, --quiet`: show only AI text responses.
@@ -491,46 +504,362 @@ This generated block is review data for maintainers. The human-authored referenc
 
 #### Upstream help commands sampled
 - root help: `agent-browser --help`
+- skills help: `agent-browser skills --help`
+- skills list: `agent-browser skills list`
+- core skill full: `agent-browser skills get core --full`
 - tab help: `agent-browser tab --help`
 - snapshot help: `agent-browser snapshot --help`
 - wait help: `agent-browser wait --help`
+- screenshot help: `agent-browser screenshot --help`
+- find help: `agent-browser find --help`
+- network help: `agent-browser network --help`
+- cookies help: `agent-browser cookies --help`
+- storage help: `agent-browser storage --help`
+- state help: `agent-browser state --help`
+- frame help: `agent-browser frame --help`
+- dialog help: `agent-browser dialog --help`
+- window help: `agent-browser window --help`
+- keyboard help: `agent-browser keyboard --help`
+- batch help: `agent-browser batch --help`
+- auth help: `agent-browser auth --help`
+- stream help: `agent-browser stream --help`
+- dashboard help: `agent-browser dashboard --help`
+- chat help: `agent-browser chat --help`
+- doctor help: `agent-browser doctor --help`
+- diff help: `agent-browser diff --help`
+- trace help: `agent-browser trace --help`
+- profiler help: `agent-browser profiler --help`
+- record help: `agent-browser record --help`
+
+#### Inventory sections
+- Built-in skills: 10 human-doc token(s), 11 upstream token(s)
+- Core page, element, navigation, and extraction commands: 38 human-doc token(s), 40 upstream token(s)
+- Sessions, state, tabs, frames, dialogs, and windows: 12 human-doc token(s), 8 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 29 human-doc token(s), 33 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, and AI commands: 19 human-doc token(s), 17 upstream token(s)
+- Global flags, config, providers, policy, and environment: 95 human-doc token(s), 90 upstream token(s)
+
+#### Human-authored doc tokens required
+##### Built-in skills
+- `skills list`
+- `skills get core`
+- `skills get core --full`
+- `skills get <name>`
+- `skills get electron`
+- `skills get slack`
+- `skills get dogfood`
+- `skills get vercel-sandbox`
+- `skills get agentcore`
+- `skills path [name]`
+
+##### Core page, element, navigation, and extraction commands
+- `open <url>`
+- `click <sel>`
+- `dblclick <sel>`
+- `type <sel> <text>`
+- `fill <sel> <text>`
+- `press <key>`
+- `keyboard type <text>`
+- `keyboard inserttext <text>`
+- `keydown Shift`
+- `keyup Shift`
+- `hover <sel>`
+- `focus <sel>`
+- `check <sel>`
+- `uncheck <sel>`
+- `select <sel> <val...>`
+- `drag <src> <dst>`
+- `upload <sel> <files...>`
+- `download <sel> <path>`
+- `scroll <dir> [px]`
+- `scrollintoview <sel>`
+- `wait <sel|ms>`
+- `screenshot [path]`
+- `screenshot --full`
+- `screenshot --annotate`
+- `pdf <path>`
+- `snapshot`
+- `eval <js>`
+- `connect <port|url>`
+- `close [--all]`
+- `back`
+- `forward`
+- `reload`
+- `pushstate <url>`
+- `get <what> [selector]`
+- `is <what> <selector>`
+- `find <locator> <value> <action>`
+- `mouse <action> [args]`
+- `set <setting> [value]`
+
+##### Sessions, state, tabs, frames, dialogs, and windows
+- `session`
+- `session list`
+- `state save <path>`
+- `state load <path>`
+- `tab list`
+- `tab new --label <name> [url]`
+- `tab <t<N>|label>`
+- `frame <selector|main>`
+- `dialog accept [text]`
+- `dialog dismiss`
+- `dialog status`
+- `window new`
+
+##### Network, storage, artifacts, diagnostics, and performance
+- `network <action>`
+- `network route <url> [--abort|--body <json>] [--resource-type <csv>]`
+- `network request <requestId>`
+- `cookies [get|set|clear]`
+- `cookies set --curl <file>`
+- `storage <local|session>`
+- `diff snapshot`
+- `diff screenshot --baseline`
+- `diff url <u1> <u2>`
+- `trace start|stop [path]`
+- `profiler start|stop [path]`
+- `record start <path> [url]`
+- `record restart <path> [url]`
+- `record stop`
+- `console [--clear]`
+- `errors [--clear]`
+- `highlight <sel>`
+- `inspect`
+- `clipboard <op> [text]`
+- `stream enable [--port <n>]`
+- `stream disable`
+- `stream status`
+- `react tree`
+- `react inspect <id>`
+- `react renders start`
+- `react renders stop [--json]`
+- `react suspense [--only-dynamic] [--json]`
+- `vitals [url] [--json]`
+- `removeinitscript <id>`
+
+##### Batch, auth, confirmations, setup, dashboard, and AI commands
+- `batch [--bail]`
+- `auth save <name>`
+- `auth save <name> --password-stdin`
+- `auth login <name>`
+- `auth list`
+- `auth show <name>`
+- `auth delete <name>`
+- `confirm <id>`
+- `deny <id>`
+- `chat <message>`
+- `dashboard start --port <n>`
+- `dashboard stop`
+- `install`
+- `install --with-deps`
+- `upgrade`
+- `doctor [--fix]`
+- `doctor --offline --quick`
+- `doctor --json`
+- `profiles`
+
+##### Global flags, config, providers, policy, and environment
+- `--profile <name|path>`
+- `AGENT_BROWSER_PROFILE`
+- `--session <name>`
+- `AGENT_BROWSER_SESSION`
+- `--session-name <name>`
+- `AGENT_BROWSER_SESSION_NAME`
+- `--state <path>`
+- `AGENT_BROWSER_STATE`
+- `--auto-connect`
+- `AGENT_BROWSER_AUTO_CONNECT`
+- `--headers <json>`
+- `--init-script <path>`
+- `AGENT_BROWSER_INIT_SCRIPTS`
+- `--enable <feature>`
+- `AGENT_BROWSER_ENABLE`
+- `--executable-path <path>`
+- `AGENT_BROWSER_EXECUTABLE_PATH`
+- `--extension <path>`
+- `AGENT_BROWSER_EXTENSIONS`
+- `--args <args>`
+- `AGENT_BROWSER_ARGS`
+- `--user-agent <ua>`
+- `AGENT_BROWSER_USER_AGENT`
+- `--proxy <server>`
+- `AGENT_BROWSER_PROXY`
+- `HTTP_PROXY`
+- `HTTPS_PROXY`
+- `ALL_PROXY`
+- `--proxy-bypass <hosts>`
+- `AGENT_BROWSER_PROXY_BYPASS`
+- `NO_PROXY`
+- `--ignore-https-errors`
+- `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`
+- `--allow-file-access`
+- `AGENT_BROWSER_ALLOW_FILE_ACCESS`
+- `--headed`
+- `AGENT_BROWSER_HEADED`
+- `--cdp <port>`
+- `--color-scheme <scheme>`
+- `AGENT_BROWSER_COLOR_SCHEME`
+- `--download-path <path>`
+- `AGENT_BROWSER_DOWNLOAD_PATH`
+- `--engine <name>`
+- `AGENT_BROWSER_ENGINE`
+- `--no-auto-dialog`
+- `AGENT_BROWSER_NO_AUTO_DIALOG`
+- `--json`
+- `AGENT_BROWSER_JSON`
+- `--annotate`
+- `AGENT_BROWSER_ANNOTATE`
+- `--screenshot-dir <path>`
+- `AGENT_BROWSER_SCREENSHOT_DIR`
+- `--screenshot-quality <n>`
+- `AGENT_BROWSER_SCREENSHOT_QUALITY`
+- `--screenshot-format <fmt>`
+- `AGENT_BROWSER_SCREENSHOT_FORMAT`
+- `--content-boundaries`
+- `AGENT_BROWSER_CONTENT_BOUNDARIES`
+- `--max-output <chars>`
+- `AGENT_BROWSER_MAX_OUTPUT`
+- `--allowed-domains <list>`
+- `AGENT_BROWSER_ALLOWED_DOMAINS`
+- `--action-policy <path>`
+- `AGENT_BROWSER_ACTION_POLICY`
+- `--confirm-actions <list>`
+- `AGENT_BROWSER_CONFIRM_ACTIONS`
+- `--confirm-interactive`
+- `AGENT_BROWSER_CONFIRM_INTERACTIVE`
+- `-p, --provider <name>`
+- `AGENT_BROWSER_PROVIDER`
+- `browserbase`
+- `kernel`
+- `browseruse`
+- `browserless`
+- `agentcore`
+- `--device <name>`
+- `AGENT_BROWSER_IOS_DEVICE`
+- `agent-browser -p ios device list`
+- `agent-browser -p ios swipe up`
+- `agent-browser -p ios tap @e1`
+- `--model <name>`
+- `AI_GATEWAY_MODEL`
+- `-v, --verbose`
+- `-q, --quiet`
+- `--debug`
+- `AGENT_BROWSER_DEBUG`
+- `AGENT_BROWSER_CONFIG`
+- `AGENT_BROWSER_DEFAULT_TIMEOUT`
+- `AGENT_BROWSER_STREAM_PORT`
+- `AGENT_BROWSER_IDLE_TIMEOUT_MS`
+- `AGENT_BROWSER_ENCRYPTION_KEY`
+- `AGENT_BROWSER_STATE_EXPIRE_DAYS`
+- `AGENT_BROWSER_IOS_UDID`
+- `AI_GATEWAY_URL`
+- `AI_GATEWAY_API_KEY`
 
 #### Upstream help tokens expected
-- root help: `skills`
-- root help: `keyboard`
-- root help: `scroll`
-- root help: `scrollintoview`
-- root help: `connect`
-- root help: `is`
-- root help: `find`
-- root help: `mouse`
-- root help: `set`
-- root help: `network`
+##### Built-in skills
+- root help: `skills get core --full`
+- skills help: `get <name> --full`
+- skills list: `core`
+- skills list: `electron`
+- skills list: `slack`
+- skills list: `dogfood`
+- skills list: `vercel-sandbox`
+- skills list: `agentcore`
+- core skill full: `agent-browser frame @e3`
+- core skill full: `agent-browser dialog accept`
+- core skill full: `agent-browser state save ./auth.json`
+
+##### Core page, element, navigation, and extraction commands
+- root help: `open <url>`
+- root help: `click <sel>`
+- root help: `dblclick <sel>`
+- root help: `type <sel> <text>`
+- root help: `fill <sel> <text>`
+- root help: `press <key>`
+- root help: `keyboard type <text>`
+- root help: `keyboard inserttext <text>`
+- root help: `hover <sel>`
+- root help: `focus <sel>`
+- root help: `check <sel>`
+- root help: `uncheck <sel>`
+- root help: `select <sel> <val...>`
+- root help: `drag <src> <dst>`
+- root help: `upload <sel> <files...>`
+- root help: `download <sel> <path>`
+- root help: `scroll <dir> [px]`
+- root help: `scrollintoview <sel>`
+- root help: `wait <sel|ms>`
+- root help: `screenshot [path]`
+- root help: `pdf <path>`
+- root help: `snapshot`
+- root help: `eval <js>`
+- root help: `connect <port|url>`
+- root help: `close [--all]`
+- root help: `back`
+- root help: `forward`
+- root help: `reload`
+- root help: `pushstate <url>`
+- root help: `Get Info:  agent-browser get <what> [selector]`
+- root help: `Check State:  agent-browser is <what> <selector>`
+- root help: `Find Elements:  agent-browser find <locator> <value> <action> [text]`
+- root help: `Mouse:  agent-browser mouse <action> [args]`
+- root help: `Browser Settings:  agent-browser set <setting> [value]`
+- keyboard help: `type <text>`
+- keyboard help: `inserttext <text>`
+- screenshot help: `--full, -f`
+- screenshot help: `--annotate`
+- find help: `role <role>`
+- find help: `testid <id>`
+
+##### Sessions, state, tabs, frames, dialogs, and windows
+- root help: `session list`
+- state help: `save <path>`
+- state help: `load <path>`
+- tab help: `new --label <name> [url]`
+- tab help: `Stable tab ids`
+- frame help: `frame <selector|main>`
+- dialog help: `dialog <accept|dismiss|status> [text]`
+- window help: `window <operation>`
+
+##### Network, storage, artifacts, diagnostics, and performance
+- root help: `network <action>`
+- root help: `--resource-type <csv>`
 - root help: `cookies [get|set|clear]`
-- root help: `storage`
+- root help: `cookies set --curl <file>`
+- root help: `storage <local|session>`
 - root help: `diff snapshot`
+- root help: `diff screenshot --baseline`
 - root help: `trace start|stop [path]`
 - root help: `profiler start|stop [path]`
 - root help: `record start <path> [url]`
+- root help: `record stop`
 - root help: `console [--clear]`
 - root help: `errors [--clear]`
 - root help: `highlight <sel>`
 - root help: `inspect`
 - root help: `clipboard <op> [text]`
 - root help: `stream enable [--port <n>]`
+- root help: `stream disable`
+- root help: `stream status`
 - root help: `react tree`
 - root help: `react inspect <id>`
 - root help: `react renders start`
 - root help: `react renders stop [--json]`
 - root help: `react suspense [--only-dynamic] [--json]`
 - root help: `vitals [url] [--json]`
-- root help: `pushstate <url>`
 - root help: `removeinitscript <id>`
-- root help: `--init-script <path>`
-- root help: `--enable <feature>`
-- root help: `--resource-type <csv>`
-- root help: `cookies set --curl <file>`
+- network help: `request <requestId>`
+- network help: `har <start|stop>`
+- storage help: `set <key> <value>`
+- diff help: `diff screenshot --baseline <f>`
+- trace help: `trace <operation> [path]`
+- profiler help: `--categories <list>`
+- record help: `record restart <path.webm> [url]`
+
+##### Batch, auth, confirmations, setup, dashboard, and AI commands
+- root help: `batch [--bail]`
 - root help: `auth save <name>`
+- root help: `auth login <name>`
 - root help: `confirm <id>`
 - root help: `deny <id>`
 - root help: `chat <message>`
@@ -539,9 +868,104 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `upgrade`
 - root help: `doctor [--fix]`
 - root help: `profiles`
-- snapshot help: `-u, --urls`
-- wait help: `--download [path]`
-- tab help: `new --label <name> [url]`
+- batch help: `--bail`
+- auth help: `--password-stdin`
+- dashboard help: `dashboard [start|stop] [options]`
+- chat help: `chat <message>`
+- doctor help: `--offline`
+- doctor help: `--json`
+
+##### Global flags, config, providers, policy, and environment
+- root help: `--profile <name|path>`
+- root help: `AGENT_BROWSER_PROFILE`
+- root help: `--session <name>`
+- root help: `AGENT_BROWSER_SESSION`
+- root help: `--session-name <name>`
+- root help: `AGENT_BROWSER_SESSION_NAME`
+- root help: `--state <path>`
+- root help: `AGENT_BROWSER_STATE`
+- root help: `--auto-connect`
+- root help: `AGENT_BROWSER_AUTO_CONNECT`
+- root help: `--headers <json>`
+- root help: `--init-script <path>`
+- root help: `AGENT_BROWSER_INIT_SCRIPTS`
+- root help: `--enable <feature>`
+- root help: `AGENT_BROWSER_ENABLE`
+- root help: `--executable-path <path>`
+- root help: `AGENT_BROWSER_EXECUTABLE_PATH`
+- root help: `--extension <path>`
+- root help: `AGENT_BROWSER_EXTENSIONS`
+- root help: `--args <args>`
+- root help: `AGENT_BROWSER_ARGS`
+- root help: `--user-agent <ua>`
+- root help: `AGENT_BROWSER_USER_AGENT`
+- root help: `--proxy <server>`
+- root help: `AGENT_BROWSER_PROXY`
+- root help: `HTTP_PROXY / HTTPS_PROXY`
+- root help: `ALL_PROXY`
+- root help: `--proxy-bypass <hosts>`
+- root help: `AGENT_BROWSER_PROXY_BYPASS`
+- root help: `NO_PROXY`
+- root help: `--ignore-https-errors`
+- root help: `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`
+- root help: `--allow-file-access`
+- root help: `AGENT_BROWSER_ALLOW_FILE_ACCESS`
+- root help: `--headed`
+- root help: `AGENT_BROWSER_HEADED`
+- root help: `--cdp <port>`
+- root help: `--color-scheme <scheme>`
+- root help: `AGENT_BROWSER_COLOR_SCHEME`
+- root help: `--download-path <path>`
+- root help: `AGENT_BROWSER_DOWNLOAD_PATH`
+- root help: `--engine <name>`
+- root help: `AGENT_BROWSER_ENGINE`
+- root help: `--no-auto-dialog`
+- root help: `AGENT_BROWSER_NO_AUTO_DIALOG`
+- root help: `--json`
+- root help: `AGENT_BROWSER_JSON`
+- root help: `--annotate`
+- root help: `AGENT_BROWSER_ANNOTATE`
+- root help: `--screenshot-dir <path>`
+- root help: `AGENT_BROWSER_SCREENSHOT_DIR`
+- root help: `--screenshot-quality <n>`
+- root help: `AGENT_BROWSER_SCREENSHOT_QUALITY`
+- root help: `--screenshot-format <fmt>`
+- root help: `AGENT_BROWSER_SCREENSHOT_FORMAT`
+- root help: `--content-boundaries`
+- root help: `AGENT_BROWSER_CONTENT_BOUNDARIES`
+- root help: `--max-output <chars>`
+- root help: `AGENT_BROWSER_MAX_OUTPUT`
+- root help: `--allowed-domains <list>`
+- root help: `AGENT_BROWSER_ALLOWED_DOMAINS`
+- root help: `--action-policy <path>`
+- root help: `AGENT_BROWSER_ACTION_POLICY`
+- root help: `--confirm-actions <list>`
+- root help: `AGENT_BROWSER_CONFIRM_ACTIONS`
+- root help: `--confirm-interactive`
+- root help: `AGENT_BROWSER_CONFIRM_INTERACTIVE`
+- root help: `--provider <name>`
+- root help: `AGENT_BROWSER_PROVIDER`
+- root help: `agent-browser -p ios device list`
+- root help: `agent-browser -p ios swipe up`
+- root help: `agent-browser -p ios tap @e1`
+- root help: `--device <name>`
+- root help: `AGENT_BROWSER_IOS_DEVICE`
+- root help: `--model <name>`
+- root help: `AI_GATEWAY_MODEL`
+- root help: `--verbose`
+- root help: `--quiet`
+- root help: `--debug`
+- root help: `AGENT_BROWSER_DEBUG`
+- root help: `--config <path>`
+- root help: `AGENT_BROWSER_CONFIG`
+- root help: `AGENT_BROWSER_DEFAULT_TIMEOUT`
+- root help: `AGENT_BROWSER_STREAM_PORT`
+- root help: `AGENT_BROWSER_IDLE_TIMEOUT_MS`
+- root help: `AGENT_BROWSER_ENCRYPTION_KEY`
+- root help: `AGENT_BROWSER_STATE_EXPIRE_DAYS`
+- root help: `AGENT_BROWSER_IOS_UDID`
+- root help: `AI_GATEWAY_URL`
+- root help: `AI_GATEWAY_API_KEY`
 
 </details>
 <!-- agent-browser-capability-baseline:end capability-token-baseline -->

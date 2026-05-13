@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- documented how `npm run docs` differs from the default `npm run verify` gate, and linked checkout maintainers to `AGENTS.md` for capability baseline rebaselining and operational testing notes alongside the shipped `docs/` set
+
 ## 0.2.24 - 2026-05-11
 
 ### Added

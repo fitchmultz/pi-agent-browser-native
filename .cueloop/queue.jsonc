@@ -2,44 +2,468 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0045",
+      "id": "RQ-0057",
       "status": "todo",
-      "title": "Inventory the full current agent-browser surface from version-matched sources",
-      "description": "Build the source-of-truth capability inventory for the currently installed upstream agent-browser before changing wrapper behavior. Do not rely on root `--help` alone: include `agent-browser skills list`, `agent-browser skills get core --full`, root help, and relevant subcommand help for command families that have nested options. Capture commands that root help omits but the core skill documents, such as `state`, `frame`, `dialog`, `window`, key down/up aliases, wait predicates, snapshot URL output, tab labels, and screenshot annotation/full-page options. Acceptance criteria: the canonical baseline lists the target version and the complete command/flag/env/skill surface this package intends to support; verifier tests fail on version drift, missing required human-authored doc tokens, and missing upstream tokens; no browser-runtime support changes are made in this inventory task.",
+      "title": "Measure agent-browser workflow efficiency before new agent-facing abstractions",
       "priority": "high",
-      "tags": ["agent-browser", "upstream-sync", "baseline", "docs", "verification"],
+      "tags": [
+        "agent-browser",
+        "benchmark",
+        "agent-efficiency",
+        "regression"
+      ],
       "scope": [
-        "scripts/agent-browser-capability-baseline.mjs",
-        "scripts/check-command-reference-baseline.mjs",
-        "scripts/verify-command-reference.mjs",
-        "test/verify-command-reference.test.ts",
+        "scripts",
+        "test",
         "docs/COMMAND_REFERENCE.md",
-        "agent_browser { args: [\"--version\"] }",
-        "agent_browser { args: [\"--help\"] }",
-        "agent_browser { args: [\"skills\", \"list\"] }",
-        "agent_browser { args: [\"skills\", \"get\", \"core\", \"--full\"] }"
+        "docs/TOOL_CONTRACT.md",
+        "package.json"
       ],
       "evidence": [
-        "workflow: agent_browser { args: [\"--version\"] } :: current installed upstream is `agent-browser 0.26.0`.",
-        "workflow: agent_browser { args: [\"--help\"] } :: root help includes current command families such as `skills`, `keyboard`, `stream`, `auth`, `chat`, `dashboard`, setup commands, providers, config/env, and iOS examples.",
-        "workflow: agent_browser { args: [\"skills\", \"get\", \"core\", \"--full\"] } :: version-matched core skill documents additional surface not visible in the pasted root help, including `state`, `frame`, `dialog`, `window`, wait predicate flags, tab labels, and detailed auth/session patterns.",
-        "path: scripts/agent-browser-capability-baseline.mjs:15-63 :: current canonical metadata samples only root/tab/snapshot/wait help and a finite token list, so the full skill/subcommand surface is not yet the source of truth.",
-        "path: scripts/verify-command-reference.mjs:83-107 :: verifier checks only the tokens declared in the canonical baseline and therefore cannot catch omissions outside that token list."
+        "User request: add inferred tasks for improving common browser work with fewer calls, fewer stale-ref failures, better artifact handling, and exact recovery guidance.",
+        "Current queue RQ-0045 through RQ-0056 already targets current upstream surface coverage; this benchmark should become the proving ground for later UX changes rather than inventing unmeasured abstractions."
       ],
       "plan": [
-        "Collect root help, skills list, core full skill, and targeted subcommand help needed to enumerate the complete surface for the installed version.",
-        "Refactor the capability baseline into explicit sections for commands, command groups, global options, environment variables, providers, setup/diagnostic commands, and version-matched upstream skills.",
-        "Expand verifier coverage so both upstream expectations and human-authored docs are checked against the complete baseline, not only a small root-help sample.",
-        "Update generated baseline blocks and tests without changing runtime behavior in this task."
+        "Define a small deterministic benchmark suite for representative browser workflows: open plus snapshot, click plus verify, fill plus assert, stale-ref failure/recovery, artifact/download handling, and batch flow.",
+        "Record metrics that matter to agents: task success, native tool calls, model-visible output size, stale-ref failures, recovery success, artifact success, elapsed runtime, and failure category coverage.",
+        "Make the benchmark runnable locally without mutating the operator's normal browser/profile state, using fake upstream where determinism is required and real upstream only for opt-in smoke coverage.",
+        "Document how future tasks must use this benchmark to prove call-count or success-rate improvements."
       ],
       "notes": [],
-      "request": "Add support for everything in the current version of agent-browser.",
-      "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": [],
-      "blocks": ["RQ-0046", "RQ-0047", "RQ-0048", "RQ-0049", "RQ-0050", "RQ-0051", "RQ-0052", "RQ-0053", "RQ-0054", "RQ-0055", "RQ-0056"],
+      "request": "Infer and queue the first milestone for agent-browser improvements from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0045"
+      ],
+      "blocks": [],
       "relates_to": [],
-      "custom_fields": { "source": "manual-upstream-refresh", "target_upstream_version": "0.26.0" }
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0058",
+      "status": "todo",
+      "title": "Expose stable machine-readable result and failure categories",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "errors",
+        "tool-contract",
+        "machine-readable"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Agents need deterministic signals for stale refs, selector failures, timeouts, confirmations, tab drift, missing binaries, parse failures, downloads, and upstream errors instead of parsing prose.",
+        "Existing guidance and done tasks added targeted hints, but the next layer should stabilize a contract that other recommendations and recovery flows can key off."
+      ],
+      "plan": [
+        "Define a bounded category vocabulary for success states and common failure modes, preserving raw upstream error text separately.",
+        "Add category fields to structured details/envelopes for direct commands, stdin commands, batch step failures, and wrapper preflight failures.",
+        "Add contract tests that lock category selection for stale refs, unsupported selectors, selector not found, timeout, download not verified, tab drift, confirmation required, missing binary, parse failure, and generic upstream error.",
+        "Document category semantics and compatibility expectations for agents."
+      ],
+      "notes": [],
+      "request": "Infer and queue the stable failure/result category work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0057"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0059",
+      "status": "todo",
+      "title": "Return exact native-tool next actions for common browser states",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "next-actions",
+        "ux",
+        "tool-contract"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results",
+        "extensions/agent-browser/lib/playbook.ts",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Agents follow exact tool-call shapes more reliably than prose guidance.",
+        "Stable categories should let the wrapper recommend exact calls after open, click, stale refs, downloads, confirmations, and tab drift without guessing from text."
+      ],
+      "plan": [
+        "Define a structured nextActions shape that can express exact `agent_browser` args, optional stdin, sessionMode, reason, and safety notes.",
+        "Emit recommendations after common states: open suggests `snapshot -i`; mutating actions suggest wait/snapshot; stale refs suggest fresh snapshot or find locator; downloads point to artifact paths; confirmations suggest confirm/deny; tab drift suggests tab list/tab/snapshot recovery.",
+        "Keep recommendations concise and machine-readable while preserving readable summaries for humans.",
+        "Add tests that assert exact recommendation payloads and update prompt/playbook docs so agents use them first."
+      ],
+      "notes": [],
+      "request": "Infer and queue exact next-action recommendation work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0057"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0060",
+      "status": "todo",
+      "title": "Summarize page changes after mutating browser actions",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "summaries",
+        "token-efficiency",
+        "qa"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results",
+        "extensions/agent-browser/index.ts",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "The goal is to help agents tell whether a click navigated, opened a modal, created an artifact, caused console/page errors, or failed silently without needing another full dump.",
+        "Page-change summaries are a direct way to reduce model-visible output and redundant follow-up calls."
+      ],
+      "plan": [
+        "Identify the reliable before/after signals available around mutating commands: URL, title, tab identity, visible useful controls when available, artifacts, console/page errors, and failed network requests.",
+        "Return a compact change summary after click, fill/submit, navigation, batch, download, and other mutation-prone commands without bloating read-only commands.",
+        "Integrate summaries with categories and nextActions so changes and recommended follow-up are consistent.",
+        "Add benchmark assertions for output-size and call-count effects."
+      ],
+      "notes": [],
+      "request": "Infer and queue compact page-change summary work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0058",
+        "RQ-0059"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0061",
+      "status": "todo",
+      "title": "Add a thin semantic action schema that compiles to existing locator commands",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "semantic-actions",
+        "find",
+        "thin-wrapper"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Agents are good at describing intent such as clicking a button named Export or filling a field labeled Email, but brittle CLI token order causes avoidable failures.",
+        "The repository already exposes native args/stdin and upstream `find` locators; this task should compile a small intent schema to those primitives rather than build a complex resolver."
+      ],
+      "plan": [
+        "Design a small explicit schema for click/fill/select/check actions using locator families already supported upstream: role, text, label, placeholder, alt, title, and testid.",
+        "Compile schema inputs to current `find ... <action>` or equivalent agent-browser commands, returning the exact compiled command in details for debuggability.",
+        "Reject ambiguous or unsupported intent with stable categories and exact nextActions rather than guessing.",
+        "Add examples and tests for button-by-name, field-by-label, visible-text click, and unsupported/ambiguous targets."
+      ],
+      "notes": [],
+      "request": "Infer and queue simple target-by-meaning support from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0058",
+        "RQ-0059"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0062",
+      "status": "todo",
+      "title": "Recover from stale refs only when retry safety is provable",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "stale-refs",
+        "recovery",
+        "safety"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "extensions/agent-browser/lib/playbook.ts",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Stale refs are a common agent failure mode after navigation, scroll, and rerender.",
+        "Automatic recovery is useful only if the wrapper can prove the original action did not execute; destructive or ambiguous actions should return exact recovery calls instead."
+      ],
+      "plan": [
+        "Detect stale-ref failures through the stable category layer across direct actions and batch steps.",
+        "Refresh snapshot and attempt to re-identify the intended target using explicit prior ref context or semantic target information when available.",
+        "Auto-retry only for safe/idempotent actions or when upstream failure proves the action did not execute; otherwise return nextActions with snapshot/find recovery instructions.",
+        "Add regression tests for safe retry, unsafe no-retry, batch behavior, and benchmark impact on stale-ref recovery rate."
+      ],
+      "notes": [],
+      "request": "Infer and queue conservative stale-ref recovery work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0058",
+        "RQ-0059",
+        "RQ-0061"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0063",
+      "status": "todo",
+      "title": "Make artifact verification a shared result contract for browser workflows",
+      "priority": "medium",
+      "tags": [
+        "agent-browser",
+        "artifacts",
+        "downloads",
+        "verification"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results",
+        "extensions/agent-browser/lib/temp.ts",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "The wrapper already has artifact metadata, saved-file summaries, and retention handling; the missing goal is to make workflows depend on verified artifact state instead of scattered one-off checks.",
+        "This should feed page-change summaries and one-call jobs rather than becoming a separate automation subsystem."
+      ],
+      "plan": [
+        "Normalize artifact verification fields for screenshots, PDFs, downloads, recordings, spill files, and wait-based downloads: requested path, actual path, existence, size, type, retention state, and limitations.",
+        "Surface verification failures through stable categories and nextActions, including when upstream reports success but local existence is unverified.",
+        "Update tests to cover artifact-producing direct commands, batch steps, and session artifact manifest interactions.",
+        "Document how jobs and agents should consume verified artifact metadata."
+      ],
+      "notes": [],
+      "request": "Infer and queue artifact/download verification work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0049",
+        "RQ-0058",
+        "RQ-0060"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0064",
+      "status": "todo",
+      "title": "Add constrained one-call browser jobs over existing primitives",
+      "priority": "medium",
+      "tags": [
+        "agent-browser",
+        "jobs",
+        "batch",
+        "orchestration"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Common browser work often needs a short open/click/fill/wait/assert/artifact sequence; a thin job runner can reduce calls without hiding upstream behavior.",
+        "The repo already supports batch, find locators, wait, and artifact handling, so job mode should orchestrate those primitives, not become a new browser framework."
+      ],
+      "plan": [
+        "Define a constrained job schema with supported steps only: open, click, fill, wait, assert text, assert URL, wait for download, and screenshot on failure.",
+        "Compile each job step to existing native args/stdin/sessionMode behavior and include the compiled steps in structured details for auditability.",
+        "Stop predictably on failure, emit stable categories, exact nextActions, compact page-change summaries, and verified artifact metadata.",
+        "Use the benchmark to compare raw multi-call workflows against job mode for success rate, tool calls, and output size."
+      ],
+      "notes": [],
+      "request": "Infer and queue one-call browser job work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0056",
+        "RQ-0060",
+        "RQ-0061",
+        "RQ-0062",
+        "RQ-0063"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0065",
+      "status": "todo",
+      "title": "Provide a lightweight QA preset built on browser jobs",
+      "priority": "medium",
+      "tags": [
+        "agent-browser",
+        "qa",
+        "jobs",
+        "dogfood"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "docs/COMMAND_REFERENCE.md",
+        "README.md",
+        "test"
+      ],
+      "evidence": [
+        "Browser QA should become a preset workflow once constrained jobs exist, not a separate bespoke testing framework.",
+        "Useful checks include route load, expected text/control visibility, no console errors, no failed network requests, and screenshot on failure."
+      ],
+      "plan": [
+        "Define a QA job preset that expands to constrained job steps and assertions rather than adding new browser semantics.",
+        "Include standard checks for page load, expected content/control visibility, console errors, failed network requests, and failure screenshots/artifacts.",
+        "Return compact pass/fail evidence with categories and nextActions suitable for agents writing reproducible issue reports.",
+        "Add docs and tests showing when to use QA mode versus raw browser commands or custom jobs."
+      ],
+      "notes": [],
+      "request": "Infer and queue lightweight browser QA mode work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0064"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0066",
+      "status": "todo",
+      "title": "Experiment with local source lookup for visible UI elements",
+      "priority": "low",
+      "tags": [
+        "agent-browser",
+        "source-lookup",
+        "react",
+        "experiment"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Mapping UI elements back to source could be powerful for debugging local apps, but it is higher complexity and should start from existing React inspection/source-map surfaces.",
+        "The wrapper must report uncertainty clearly and avoid pretending every DOM node maps cleanly to a file."
+      ],
+      "plan": [
+        "Inventory what the current React inspection, DOM metadata, sourcemaps, and local workspace context can reliably expose for a selected element.",
+        "Prototype an opt-in lookup that reports candidate component/file locations with confidence and evidence, not a single guaranteed answer.",
+        "Gate the feature behind explicit inputs and clear unsupported-state categories when React DevTools or sourcemaps are unavailable.",
+        "Document limitations and decide from benchmark/dogfood evidence whether to promote beyond experiment."
+      ],
+      "notes": [],
+      "request": "Infer and queue local-app source lookup experiment from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0065"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0067",
+      "status": "todo",
+      "title": "Experiment with source hints for failed browser network requests",
+      "priority": "low",
+      "tags": [
+        "agent-browser",
+        "network",
+        "source-lookup",
+        "experiment"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Failed request summaries are useful for QA, but mapping them causally to source files is ambiguous and should be treated as an experiment after network diagnostics are reliable.",
+        "The goal is candidate source hints with uncertainty, not definitive blame."
+      ],
+      "plan": [
+        "Ensure failed network request summaries include enough safe context: method, URL, status/error, initiator stack if available, and bounded redacted previews.",
+        "Prototype optional mapping from request initiator/source maps/local repo search to candidate files and call sites, clearly marking confidence and gaps.",
+        "Avoid automatic edits or blame; return evidence and nextActions for manual code inspection.",
+        "Evaluate against real local-app failures before deciding whether this belongs in the main tool contract."
+      ],
+      "notes": [],
+      "request": "Infer and queue failed-request source lookup experiment from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0065"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0068",
+      "status": "todo",
+      "title": "Decide whether repeated browser jobs should become reusable recipes",
+      "priority": "low",
+      "tags": [
+        "agent-browser",
+        "recipes",
+        "jobs",
+        "product-decision"
+      ],
+      "scope": [
+        "docs",
+        "extensions/agent-browser",
+        "test"
+      ],
+      "evidence": [
+        "Reusable recipes are only valuable if benchmark or dogfood data shows repeated job shapes that agents should not have to re-specify.",
+        "Adding a recipe layer too early risks another source of truth for workflows."
+      ],
+      "plan": [
+        "Analyze benchmark, QA, and dogfood usage after job mode exists to identify repeated job shapes and failure-prone sequences.",
+        "If recipes are justified, define a small recipe format with ownership, docs, versioning, and clear boundaries from prompt guidance and tests.",
+        "If not justified, document the decision and keep examples as docs rather than executable recipe state.",
+        "Add verification only for adopted recipes, avoiding speculative framework code."
+      ],
+      "notes": [],
+      "request": "Infer and queue reusable browser recipe decision from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0065"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
     },
     {
       "id": "RQ-0046",
@@ -47,7 +471,12 @@
       "title": "Refresh local docs and prompt guidance for the complete current surface",
       "description": "Update the repo-readable command reference, README, tool contract, requirements, release notes, and extension prompt playbook so agents can use the complete current agent-browser surface through the native `agent_browser` tool. Translate upstream shell examples into exact native tool-call shapes where this repo instructs agents, while preserving upstream terminology. Acceptance criteria: docs cover all baseline command families, global options, env vars, providers, setup/diagnostic commands, skills, and specialized workflows; `README.md`, `docs/COMMAND_REFERENCE.md`, `docs/TOOL_CONTRACT.md`, `docs/REQUIREMENTS.md`, and `extensions/agent-browser/lib/playbook.ts` agree with each other; drift checks prevent future divergence; `npm run docs -- playbook check` and `npm run verify -- command-reference` pass.",
       "priority": "high",
-      "tags": ["docs", "playbook", "agent-browser", "upstream-sync"],
+      "tags": [
+        "docs",
+        "playbook",
+        "agent-browser",
+        "upstream-sync"
+      ],
       "scope": [
         "README.md",
         "docs/COMMAND_REFERENCE.md",
@@ -75,11 +504,20 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0045"],
-      "blocks": ["RQ-0055"],
-      "relates_to": ["RQ-0013", "RQ-0019"],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0057"
+      ],
+      "blocks": [
+        "RQ-0055"
+      ],
+      "relates_to": [
+        "RQ-0013",
+        "RQ-0019"
+      ],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0047",
@@ -87,7 +525,13 @@
       "title": "Make skills and inspection commands first-class native tool flows",
       "description": "Ensure the wrapper handles upstream inspection surfaces cleanly: `--help`, `--version`, `<command> --help`, `skills list`, `skills get <name> [--full]`, and `skills path [name]`. These commands should be stateless when appropriate, produce readable model-facing output, spill large skill/reference payloads with stable full-output paths, and avoid corrupting harmless documentation examples with over-broad redaction while still redacting real secrets. Acceptance criteria: tests cover skill list/get/path, root and subcommand help, large full-skill compaction, and redaction behavior; outputs remain useful through the native tool without requiring bash; `npm test` passes.",
       "priority": "high",
-      "tags": ["runtime", "skills", "help", "redaction", "presentation"],
+      "tags": [
+        "runtime",
+        "skills",
+        "help",
+        "redaction",
+        "presentation"
+      ],
       "scope": [
         "extensions/agent-browser/index.ts",
         "extensions/agent-browser/lib/runtime.ts",
@@ -115,11 +559,19 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0045"],
-      "blocks": ["RQ-0054", "RQ-0056"],
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0046",
+        "RQ-0048"
+      ],
+      "blocks": [
+        "RQ-0054",
+        "RQ-0056"
+      ],
       "relates_to": [],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0048",
@@ -127,7 +579,13 @@
       "title": "Broaden runtime planning for all current commands, options, and interactive-risk cases",
       "description": "Audit and update argument parsing, command identification, value-flag validation, session planning, and non-interactive behavior against the full current surface. The wrapper should continue to be thin, but it must not misclassify new command families or accidentally run interactive/long-lived/destructive flows without clear docs and safe contracts. Cover command-level flags with values (`find --name`, wait predicates, tab labels, network filters/bodies, profiler categories, cookie attributes, auth options, dashboard/stream ports, chat model/quiet/verbose flags, etc.), launch-scoped global options, provider flags, and setup commands such as `install`, `upgrade`, and `doctor --fix`. Acceptance criteria: runtime tests pin command/subcommand extraction and validation across the full baseline; unsupported `stdin` remains rejected; long-running or interactive flows have explicit behavior and recovery guidance; `npm test` passes.",
       "priority": "high",
-      "tags": ["runtime", "arguments", "sessions", "safety", "agent-browser"],
+      "tags": [
+        "runtime",
+        "arguments",
+        "sessions",
+        "safety",
+        "agent-browser"
+      ],
       "scope": [
         "extensions/agent-browser/lib/runtime.ts",
         "extensions/agent-browser/index.ts",
@@ -151,11 +609,26 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0045"],
-      "blocks": ["RQ-0049", "RQ-0050", "RQ-0051", "RQ-0052", "RQ-0054", "RQ-0056"],
-      "relates_to": ["RQ-0002", "RQ-0009", "RQ-0010"],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0057"
+      ],
+      "blocks": [
+        "RQ-0049",
+        "RQ-0050",
+        "RQ-0051",
+        "RQ-0052",
+        "RQ-0054",
+        "RQ-0056"
+      ],
+      "relates_to": [
+        "RQ-0002",
+        "RQ-0009",
+        "RQ-0010"
+      ],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0049",
@@ -163,7 +636,13 @@
       "title": "Complete artifact and presentation support for all output-producing commands",
       "description": "Extend result presentation so every current command that saves files or emits large diagnostic data has a clear, safe native-tool contract. Cover screenshots including `--annotate` and `--full`, PDFs, downloads and `wait --download`, `state save/load` metadata, `network har start|stop`, `trace`, `profiler`, `record`, `diff screenshot --baseline`, diagnostic logs/requests/errors, and future path-bearing outputs from batch steps. Acceptance criteria: saved artifacts are summarized with `details.artifacts`/manifest entries; large outputs spill to readable full-output paths; inline images are limited to trusted screenshot outputs; sensitive state/auth/header contents are not printed; batch preserves per-step artifacts; `npm test` passes.",
       "priority": "high",
-      "tags": ["presentation", "artifacts", "results", "security", "batch"],
+      "tags": [
+        "presentation",
+        "artifacts",
+        "results",
+        "security",
+        "batch"
+      ],
       "scope": [
         "extensions/agent-browser/lib/results/presentation.ts",
         "extensions/agent-browser/lib/results/shared.ts",
@@ -190,11 +669,23 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0045", "RQ-0048"],
-      "blocks": ["RQ-0051", "RQ-0054", "RQ-0056"],
-      "relates_to": ["RQ-0006", "RQ-0007"],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0048",
+        "RQ-0058"
+      ],
+      "blocks": [
+        "RQ-0051",
+        "RQ-0054",
+        "RQ-0056"
+      ],
+      "relates_to": [
+        "RQ-0006",
+        "RQ-0007"
+      ],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0050",
@@ -202,7 +693,12 @@
       "title": "Add real-upstream coverage for core page interaction commands",
       "description": "Build a deterministic fixture-backed real-upstream contract matrix for the normal browser workflow commands in the current version. Cover navigation (`open`, `back`, `forward`, `reload`, `connect` where safe), interaction (`click`, `dblclick`, `type`, `fill`, `press`, `keyboard`, `hover`, `focus`, `check`, `uncheck`, `select`, `drag`, `upload`, `scroll`, `scrollintoview`, `mouse`), extraction (`get` variants, `is` variants, `find` locators), snapshots, screenshots, PDFs, waits, and tabs. Acceptance criteria: the opt-in real-upstream suite exercises representative commands against localhost fixtures without relying on external sites; fake tests cover the rest of the matrix; cleanup closes sessions and deletes temp files; `npm run verify -- real-upstream` passes when the baseline version is installed.",
       "priority": "high",
-      "tags": ["tests", "real-upstream", "core-commands", "browser"],
+      "tags": [
+        "tests",
+        "real-upstream",
+        "core-commands",
+        "browser"
+      ],
       "scope": [
         "test/agent-browser.real-upstream-contract.test.ts",
         "test/helpers/agent-browser-harness.ts",
@@ -226,11 +722,19 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0048", "RQ-0049"],
-      "blocks": ["RQ-0054", "RQ-0056"],
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0048",
+        "RQ-0049"
+      ],
+      "blocks": [
+        "RQ-0054",
+        "RQ-0056"
+      ],
       "relates_to": [],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0051",
@@ -238,7 +742,13 @@
       "title": "Support auth, state, cookies, storage, dialogs, frames, and confirmation workflows",
       "description": "Close gaps for current stateful/browser-context command families that are easy to misuse through a native wrapper. Cover `auth save/login/list/show/delete`, `state save/load`, `cookies get/set/clear`, `storage local|session`, `dialog accept/dismiss/status`, `frame ...`, and upstream confirmation `confirm`/`deny`. Acceptance criteria: docs and prompt guidance explain safe native usage; runtime tests cover stdin/password handling and secret redaction; presentation tests summarize auth/state/storage/cookie/dialog/frame results without leaking credentials; real-upstream or fake-upstream contracts prove representative flows work; `npm test` passes.",
       "priority": "high",
-      "tags": ["auth", "state", "storage", "security", "presentation"],
+      "tags": [
+        "auth",
+        "state",
+        "storage",
+        "security",
+        "presentation"
+      ],
       "scope": [
         "extensions/agent-browser/lib/runtime.ts",
         "extensions/agent-browser/lib/process.ts",
@@ -266,11 +776,23 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0048", "RQ-0049"],
-      "blocks": ["RQ-0054", "RQ-0056"],
-      "relates_to": ["RQ-0004"],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0048",
+        "RQ-0049",
+        "RQ-0058",
+        "RQ-0059"
+      ],
+      "blocks": [
+        "RQ-0054",
+        "RQ-0056"
+      ],
+      "relates_to": [
+        "RQ-0004"
+      ],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0052",
@@ -278,7 +800,14 @@
       "title": "Support network, debug, diff, streaming, dashboard, and chat command families",
       "description": "Make the non-core command families in the current root help reliable through the native wrapper. Cover network routing/requests/HAR, diff snapshot/screenshot/url, trace/profiler/record, console/errors/highlight/inspect/clipboard, stream enable/disable/status, dashboard start/stop, chat single-shot, and chat/dashboard AI env/model flags. Acceptance criteria: result presentation summarizes diagnostics and saved artifacts; interactive or long-running commands have documented behavior and timeout/cleanup expectations; credential-bearing values are redacted; fake-upstream tests cover every family and real-upstream tests cover safe representative flows; `npm test` passes.",
       "priority": "medium",
-      "tags": ["network", "debug", "stream", "dashboard", "chat", "diff"],
+      "tags": [
+        "network",
+        "debug",
+        "stream",
+        "dashboard",
+        "chat",
+        "diff"
+      ],
       "scope": [
         "extensions/agent-browser/lib/runtime.ts",
         "extensions/agent-browser/lib/process.ts",
@@ -305,11 +834,20 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0048", "RQ-0049"],
-      "blocks": ["RQ-0054", "RQ-0056"],
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0048",
+        "RQ-0049",
+        "RQ-0058"
+      ],
+      "blocks": [
+        "RQ-0054",
+        "RQ-0056"
+      ],
       "relates_to": [],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0053",
@@ -317,7 +855,14 @@
       "title": "Document and validate provider and specialized-skill passthrough",
       "description": "Add explicit support guidance and smoke contracts for current provider and specialized-skill workflows: iOS simulator/Appium commands, Browserbase, Kernel, BrowserUse, Browserless, AWS AgentCore, Electron, Slack, dogfood, and Vercel Sandbox. The wrapper should stay thin and should not emulate provider behavior, but it must forward the right flags/env, avoid managed-session interference where providers own the browser, and tell agents how to load version-matched upstream skills. Acceptance criteria: provider flags/env are included in the baseline and docs; runtime planning treats provider/CDP/auto-connect as launch-scoped where appropriate; process-env tests cover current provider credential prefixes; package docs state which workflows require external setup; fake smoke tests prove args/env passthrough; `npm test` passes.",
       "priority": "medium",
-      "tags": ["providers", "skills", "ios", "cloud", "electron", "slack"],
+      "tags": [
+        "providers",
+        "skills",
+        "ios",
+        "cloud",
+        "electron",
+        "slack"
+      ],
       "scope": [
         "scripts/agent-browser-capability-baseline.mjs",
         "extensions/agent-browser/lib/runtime.ts",
@@ -345,11 +890,20 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0045", "RQ-0048"],
-      "blocks": ["RQ-0054", "RQ-0056"],
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0046",
+        "RQ-0048",
+        "RQ-0047"
+      ],
+      "blocks": [
+        "RQ-0054",
+        "RQ-0056"
+      ],
       "relates_to": [],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0054",
@@ -357,7 +911,13 @@
       "title": "Upgrade verification gates for full-surface upstream support",
       "description": "Turn the expanded support matrix into sustainable verification. Update default and opt-in gates so future upstream changes cannot silently desynchronize the wrapper, docs, prompt guidance, package doctor, real-upstream contract fixture, or packaged Pi smoke tests. Acceptance criteria: `npm run verify` checks generated docs/playbook drift, typecheck, unit/fake tests, and command-reference baseline; `npm run verify -- real-upstream` covers the expanded safe real-browser matrix; `npm run verify -- package-pi` still loads the package with a fake upstream; doctor reports version drift with clear re-baselining instructions; all scripts have useful help where user-facing; tests are documented in release docs.",
       "priority": "high",
-      "tags": ["verification", "ci", "doctor", "package", "real-upstream"],
+      "tags": [
+        "verification",
+        "ci",
+        "doctor",
+        "package",
+        "real-upstream"
+      ],
       "scope": [
         "package.json",
         "scripts/doctor.mjs",
@@ -387,11 +947,30 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0047", "RQ-0048", "RQ-0049", "RQ-0050", "RQ-0051", "RQ-0052", "RQ-0053"],
-      "blocks": ["RQ-0056"],
-      "relates_to": ["RQ-0005", "RQ-0011", "RQ-0019"],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0047",
+        "RQ-0049",
+        "RQ-0050",
+        "RQ-0051",
+        "RQ-0052",
+        "RQ-0053",
+        "RQ-0060",
+        "RQ-0061",
+        "RQ-0062",
+        "RQ-0063"
+      ],
+      "blocks": [
+        "RQ-0056"
+      ],
+      "relates_to": [
+        "RQ-0005",
+        "RQ-0011",
+        "RQ-0019"
+      ],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0055",
@@ -399,7 +978,13 @@
       "title": "Run Pi lifecycle smoke validation for the expanded agent_browser surface",
       "description": "Validate the updated extension in Pi the way agents actually use it. Exercise both quick isolated mode and configured-source lifecycle mode after the expanded surface lands, including `/reload`, restart, and `/resume` behavior. Cover representative calls from every command family through the native `agent_browser` tool rather than bash. Acceptance criteria: `pi --no-extensions -e .` smoke proves unpublished checkout behavior; `npm run verify -- lifecycle` passes; manual or scripted transcript evidence covers version/help/skills, open/snapshot/click, batch stdin, eval stdin, screenshot artifact, explicit session passthrough, sessionMode fresh, and at least one representative current command from each newly supported family; no lingering tmux sessions, browser sessions, temp artifacts, or scratch files remain.",
       "priority": "medium",
-      "tags": ["pi", "lifecycle", "smoke", "manual-validation", "tmux"],
+      "tags": [
+        "pi",
+        "lifecycle",
+        "smoke",
+        "manual-validation",
+        "tmux"
+      ],
       "scope": [
         "AGENTS.md",
         "scripts/verify-lifecycle.mjs",
@@ -424,11 +1009,18 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0046", "RQ-0054"],
-      "blocks": ["RQ-0056"],
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0046",
+        "RQ-0054"
+      ],
+      "blocks": [
+        "RQ-0056"
+      ],
       "relates_to": [],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     },
     {
       "id": "RQ-0056",
@@ -436,7 +1028,12 @@
       "title": "Close the current-version support epic with a gap audit and release-ready evidence",
       "description": "After the implementation tasks land, perform a final support audit against the RQ-0045 baseline and produce release-ready evidence. The goal is to prove that every current command family is either natively supported, intentionally delegated thinly to upstream with docs/tests, or explicitly called out as requiring external setup/credentials. Acceptance criteria: a checklist maps every baseline command/option/env/skill/provider to docs, runtime handling, tests, and validation status; no unresolved high-priority gaps remain in `.cueloop/queue.jsonc`; `npm run verify`, `npm run verify -- real-upstream`, `npm run verify -- package-pi`, and `npm run verify -- lifecycle` are green or have documented environment-only skips; cleanup is complete; the task can be archived as the support epic closure.",
       "priority": "high",
-      "tags": ["audit", "release-readiness", "support-matrix", "verification"],
+      "tags": [
+        "audit",
+        "release-readiness",
+        "support-matrix",
+        "verification"
+      ],
       "scope": [
         "docs/COMMAND_REFERENCE.md",
         "docs/RELEASE.md",
@@ -463,11 +1060,16 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-04-29T13:43:31Z",
-      "depends_on": ["RQ-0054", "RQ-0055"],
+      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "depends_on": [
+        "RQ-0054",
+        "RQ-0055"
+      ],
       "blocks": [],
       "relates_to": [],
-      "custom_fields": { "source": "manual-upstream-refresh" }
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     }
   ]
 }

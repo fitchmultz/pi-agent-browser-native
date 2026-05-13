@@ -2,6 +2,7 @@
 
 Related docs:
 - [`../README.md`](../README.md)
+- [`../AGENTS.md`](../AGENTS.md) (maintainer workflows, including upstream capability baseline)
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
 
@@ -144,6 +145,18 @@ This keeps the product centered on native tool usage instead of auxiliary skill 
 - session/profile behavior
 - auth/profile mechanics
 - feature evolution
+
+### Upstream command surface and checked-in docs
+
+The extension does not ship `agent-browser`, but it does ship maintainer-owned documentation that must stay aligned when upstream help text grows. That work splits into two checks with different responsibilities:
+
+1. **Canonical baseline metadata** lives in `scripts/agent-browser-capability-baseline.mjs` (target version, which `agent-browser` help invocations to sample in live checks, and which literal tokens must appear in upstream help and in human-written `docs/COMMAND_REFERENCE.md` inventory sections). That file does not execute `agent-browser`; rebasing it is an explicit edit after comparing real `--help` output from the installed binary.
+
+2. **Generated Markdown blocks** in `docs/COMMAND_REFERENCE.md` are bounded by stable HTML comments. `scripts/check-command-reference-baseline.mjs` renders those blocks from the baseline metadata only. Use `npm run docs -- command-reference check` or `npm run docs -- command-reference write` after baseline edits so checked-in blocks cannot drift silently.
+
+3. **Live help verification** is `scripts/verify-command-reference.mjs`, invoked via `npm run verify -- command-reference` (and included in the default `npm run verify` gate). It runs the baseline’s help commands against `agent-browser` on `PATH` and fails when the installed upstream surface does not match the declared target version or expected tokens.
+
+This mirrors the playbook contract pattern described in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md): canonical TypeScript source and Markdown fragments stay paired through `npm run docs` / `npm run verify`, with deeper step-by-step notes in [`AGENTS.md`](../AGENTS.md) and release checklist items in [`RELEASE.md`](RELEASE.md).
 
 ## Not the right design
 

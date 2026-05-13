@@ -150,6 +150,7 @@ Before publishing:
 - update `CHANGELOG.md`
 - confirm README install guidance still leads with the package-first flow
 - confirm `docs/COMMAND_REFERENCE.md` still matches the effective upstream command/help surface used by the wrapper
+- if you changed `scripts/agent-browser-capability-baseline.mjs` or the human inventory prose outside the generated HTML-comment blocks, run `npm run docs -- command-reference write` before verification; see `AGENTS.md` (upstream capability baseline section) for the three-layer model
 - run `npm run verify -- command-reference` if the installed upstream `agent-browser` version or help surface changed
 - run `npm run doctor` and confirm any duplicate-source remediation matches the active package/checkout setup
 - run `npm run verify -- real-upstream` for upstream runtime, result-presentation, or managed-session changes
