@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "RQ-0057",
-      "status": "todo",
+      "status": "doing",
       "title": "Measure agent-browser workflow efficiency before new agent-facing abstractions",
       "priority": "high",
       "tags": [
@@ -29,10 +29,13 @@
         "Make the benchmark runnable locally without mutating the operator's normal browser/profile state, using fake upstream where determinism is required and real upstream only for opt-in smoke coverage.",
         "Document how future tasks must use this benchmark to prove call-count or success-rate improvements."
       ],
-      "notes": [],
+      "notes": [
+        "Started PR 2 after PR #7 merged; corrected loop to fetch and fast-forward after Cursor automation before merge."
+      ],
       "request": "Infer and queue the first milestone for agent-browser improvements from the user's ABN task list.",
       "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-13T14:37:47.558658000Z",
+      "started_at": "2026-05-13T14:37:47.558658000Z",
       "depends_on": [
         "RQ-0045"
       ],

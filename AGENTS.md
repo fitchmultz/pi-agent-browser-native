@@ -41,6 +41,15 @@ Verification stack:
 
 Release-oriented notes also live in [`docs/RELEASE.md`](docs/RELEASE.md) under pre-release and real-upstream sections.
 
+### Agent browser efficiency benchmark
+
+`scripts/agent-browser-efficiency-benchmark.mjs` is a **deterministic accounting benchmark**: it does not shell out to `agent-browser`, does not launch a browser, and does not read or write Pi sessions. It models representative `agent_browser` call shapes (including optional `stdin` for `batch`) and synthetic model-visible strings to produce comparable totals: scenario success rate, total tool calls, UTF-8 byte volume of model-visible output, stale-ref failure and recovery counts, artifact success count, distinct failure-category coverage, and summed elapsed-time estimates.
+
+- **Run:** `npm run benchmark:agent-browser` prints a Markdown report (default). `npm run benchmark:agent-browser -- --json` prints the same metrics as JSON suitable for saving as a baseline snapshot.
+- **Gate:** Default `npm run verify` runs the full unit suite (`test/**/*.test.ts`), which includes `test/agent-browser.efficiency-benchmark.test.ts` for scenario and comparison assertions, but it does **not** execute the standalone benchmark script’s JSON accounting pass. `npm run verify -- benchmark` runs `scripts/agent-browser-efficiency-benchmark.mjs --json` once and then that test module alone; it stays opt-in so release-style gates are not coupled to re-running the script on every default verify.
+- **Compare:** `npm run benchmark:agent-browser -- --compare path/to/prior.json` diffs a saved JSON report against the current in-repo scenario set. Exit code `1` means regressions (for example higher tool-call or model-visible byte totals, dropped success rate, missing failure categories) or unreadable comparison input; see the script’s `usage()` text for full exit codes.
+- **Evolving the benchmark:** scenarios and `CURRENT_BENCHMARK_VERSION` are defined in the script. Adding, removing, or renaming scenarios—or bumping the version—requires updating `test/agent-browser.efficiency-benchmark.test.ts` and any prose that cites specific scenario ids.
+
 ### Maintainer rebaselining workflow
 
 Use this sequence when upstream ships a new `agent-browser` version or help text changes enough to break the live verifier:
