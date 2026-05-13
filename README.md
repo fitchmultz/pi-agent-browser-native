@@ -213,7 +213,7 @@ The wrapper does not clone profiles or hide what upstream Chrome profile you cho
 Use these rules:
 
 - Use public/temp profiles for tests and examples.
-- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, or `--enable`.
+- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
 - Use `--session` when you want to manage a live upstream session name yourself.
 - Do not treat `--session` as persisted auth or tab restore after `close`; use `--profile`, `--session-name`, or `--state` for persistence.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.
