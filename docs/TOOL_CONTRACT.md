@@ -57,6 +57,12 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 ```json
 {
   "args": ["open", "https://example.com"],
+  "semanticAction": {
+    "action": "click",
+    "locator": "role",
+    "value": "button",
+    "name": "Export"
+  },
   "stdin": "optional raw stdin content",
   "sessionMode": "auto"
 }
@@ -65,7 +71,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 ### `args`
 
 - type: `string[]`
-- required
+- required unless `semanticAction` is provided
 - exact CLI args passed after `agent-browser`
 - no shell operators
 - do not include the binary name
@@ -77,6 +83,25 @@ Examples:
 { "args": ["snapshot", "-i"] }
 { "args": ["click", "@e2"] }
 { "args": ["tab", "list"] }
+```
+
+### `semanticAction`
+
+- type: object
+- optional; mutually exclusive with `args`
+- thin intent schema compiled by this wrapper into existing upstream `find <locator> <value> <action> [text]` commands
+- supported actions: `click`, `fill`, `select`, `check`, `uncheck`
+- supported locators: `role`, `text`, `label`, `placeholder`, `alt`, `title`, `testid`
+- `fill` and `select` require `text`
+- `role` actions can include `name`, compiled to `--name <name>`
+- successful and validation-failure results include `details.compiledSemanticAction.args` when compilation happened
+
+Examples:
+
+```json
+{ "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Export" } }
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Close" } }
+{ "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
 ```
 
 ### `stdin`

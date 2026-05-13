@@ -98,9 +98,13 @@ Examples:
 { "args": ["find", "role", "button", "click", "--name", "Close"] }
 { "args": ["find", "text", "Close", "click"] }
 { "args": ["find", "label", "Email", "fill", "user@example.com"] }
+{ "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Close" } }
+{ "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
 { "args": ["scrollintoview", "@e12"] }
 { "args": ["snapshot", "-i"] }
 ```
+
+The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled args in `details.compiledSemanticAction`.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 
