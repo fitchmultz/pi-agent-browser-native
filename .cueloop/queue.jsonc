@@ -2,51 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0070",
-      "status": "todo",
-      "title": "Return actionable candidates when locator or semantic actions fail",
-      "description": "Make locator-first actions easier to recover from by returning nearby or cross-family candidates when a semantic locator misses. Dogfood found placeholder fill failed on Wikipedia even though a named searchbox existed, and semantic clicks were attractive but brittle without candidate hints.",
-      "priority": "high",
-      "tags": [
-        "dogfood",
-        "semanticAction",
-        "locators",
-        "ux"
-      ],
-      "scope": [
-        "extensions/agent-browser/index.ts",
-        "extensions/agent-browser/lib/results/shared.ts",
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "docs/TOOL_CONTRACT.md",
-        "docs/COMMAND_REFERENCE.md",
-        "test/agent-browser.extension-validation.test.ts",
-        "test/agent-browser.results.test.ts"
-      ],
-      "evidence": [
-        "dogfood 2026-05-14 interactive pass :: `semanticAction` fill by placeholder `Search Wikipedia` returned `Element not found`, while raw snapshot showed `searchbox \"Search Wikipedia\"` and direct ref fill succeeded.",
-        "dogfood 2026-05-14 static/docs pass :: semantic Search click failed despite a visible/named Search control in the intended browsing context."
-      ],
-      "plan": [
-        "Map current semanticAction compilation, failure presentation, and available upstream evidence on element-not-found failures.",
-        "When a locator family misses, surface bounded nearby candidates from accessible role/name/placeholder/testid/title evidence when available.",
-        "Include a concrete suggested follow-up action or ref-based fallback when safe.",
-        "Update docs and playbook guidance so agents know to use candidate hints instead of raw artifact spelunking.",
-        "Add tests for placeholder miss with accessible-name searchbox candidate and for candidate redaction/sizing."
-      ],
-      "notes": [],
-      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
-      "created_at": "2026-05-14T20:19:11Z",
-      "updated_at": "2026-05-14T20:19:11Z",
-      "depends_on": [
-        "RQ-0069"
-      ],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "dogfood_order": "2"
-      }
-    },
-    {
       "id": "RQ-0071",
       "status": "todo",
       "title": "Make semanticAction and recovery suggestions session-aware",
