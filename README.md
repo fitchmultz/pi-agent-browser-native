@@ -360,6 +360,8 @@ pi --no-extensions -e .
 
 This bypasses Pi settings and configured extensions. After editing extension code, restart that Pi process to test the new checkout.
 
+For a concrete expanded native-tool smoke matrix (version/help/skills through dashboard/chat families), see [Local development validation](docs/RELEASE.md#local-development-validation) in `docs/RELEASE.md`.
+
 Configured-source lifecycle validation:
 
 ```bash
