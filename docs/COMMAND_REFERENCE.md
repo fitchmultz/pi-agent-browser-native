@@ -166,6 +166,8 @@ For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console
 { "qa": { "url": "https://example.com", "expectedText": "Example Domain", "screenshotPath": ".dogfood/qa-example.png" } }
 ```
 
+Optional `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set one to `false` to skip that diagnostic. Omit `expectedText` and `expectedSelector` when you only need load plus diagnostics.
+
 Use custom `job` or raw `batch` when you need a different check sequence.
 
 ### Wait for page readiness or downloads

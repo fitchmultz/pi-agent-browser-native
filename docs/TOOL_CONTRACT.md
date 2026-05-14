@@ -170,7 +170,7 @@ Use raw `args` plus `stdin` for upstream `batch` when a flow needs commands, fla
 - type: object with required `url`
 - optional; mutually exclusive with `args`, `semanticAction`, and `job`
 - lightweight preset built on the same batch compiler path as `job`
-- clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load networkidle`, checks optional `expectedText` (string or string array), checks optional `expectedSelector`, then runs enabled diagnostics: `network requests`, `console`, and `errors`
+- clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load networkidle`, optionally asserts `expectedText` (string or string array) and/or `expectedSelector` (each may be omitted for a load-plus-diagnostics-only smoke), then runs enabled diagnostics: `network requests`, `console`, and `errors`
 - `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set a field to `false` to omit that diagnostic
 - optional `screenshotPath` adds an evidence screenshot step
 - reports `details.compiledQaPreset` with the compiled batch plan and `details.qaPreset` with `{ passed, failedChecks, summary }`
@@ -291,7 +291,7 @@ Stable category fields are part of the machine-readable contract:
 
 - `resultCategory`: always either `"success"` or `"failure"`.
 - `successCategory`: present on successful results. Current values are `"completed"`, `"artifact-saved"`, `"artifact-unverified"`, and `"inspection"`. `artifact-unverified` means upstream reported success but the merged `artifactVerification` summary still reports missing or unverified rows (including manifest-backed spill rows), or the legacy artifact classifier still sees a non-pending file without confirmed disk presence; inspect `artifactVerification` (counts and per-entry `state` / optional `limitation`) before treating paths as durable.
-- `failureCategory`: present on failed results. Current values are `"aborted"`, `"confirmation-required"`, `"download-not-verified"`, `"missing-binary"`, `"parse-failure"`, `"selector-not-found"`, `"selector-unsupported"`, `"stale-ref"`, `"tab-drift"`, `"timeout"`, `"upstream-error"`, and `"validation-error"`.
+- `failureCategory`: present on failed results. Current values are `"aborted"`, `"confirmation-required"`, `"download-not-verified"`, `"missing-binary"`, `"parse-failure"`, `"qa-failure"`, `"selector-not-found"`, `"selector-unsupported"`, `"stale-ref"`, `"tab-drift"`, `"timeout"`, `"upstream-error"`, and `"validation-error"`.
 
 These categories are intentionally bounded and stable so agents can branch on them instead of parsing prose. They do not replace raw diagnostics: `details.error`, `details.stderr`, `details.parseError`, `details.validationError`, and visible content still preserve the specific upstream or wrapper message after normal redaction.
 
