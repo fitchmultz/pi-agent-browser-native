@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- compact oversized `snapshot` output now documents the `Omitted high-value controls` prose block and matching `details.data.highValueControlRefIds` (plus related compact snapshot metadata) in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#snapshot), [`README.md`](README.md), and generated playbook guidance from `extensions/agent-browser/lib/playbook.ts`, with implementation in `extensions/agent-browser/lib/results/snapshot.ts` and regression coverage in `test/agent-browser.presentation.test.ts`
+
 ## 0.2.25 - 2026-05-14
 
 ### Added
