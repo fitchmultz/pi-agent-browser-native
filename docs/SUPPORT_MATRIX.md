@@ -2,6 +2,7 @@
 
 Related docs:
 - [`../README.md`](../README.md)
+- [`../AGENTS.md`](../AGENTS.md) (rebaselining and verification stack)
 - [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
 - [`RELEASE.md`](RELEASE.md)
@@ -10,6 +11,16 @@ Related docs:
 ## Purpose
 
 This is the durable release-readiness checklist for the targeted upstream version (`agent-browser` version in `CAPABILITY_BASELINE.targetVersion`). It maps the canonical capability baseline in [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs) to documentation, runtime handling, tests, and validation evidence. Update it whenever the baseline version or inventory changes.
+
+## Maintainer refresh checklist
+
+When upstream ships a new `agent-browser` or the inventory changes:
+
+1. Edit [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs) (`targetVersion`, `helpCommands`, `inventorySections`) using real `--help` output from the binary you intend to target (the file never shells out to `agent-browser`).
+2. Align human prose and required tokens in [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md) outside the generated HTML-comment blocks.
+3. Regenerate bounded blocks with `npm run docs -- command-reference write`, then run `npm run docs` (or `npm run docs -- command-reference check`).
+4. Update the **Baseline checklist by inventory section** table below so each `CAPABILITY_BASELINE.inventorySections[].id` row still points at the right docs, code, tests, and status notes.
+5. Re-run the gates in **Verification evidence** on a machine that matches release expectations (`pi`, `tmux`, model config for lifecycle) and replace the dated status cells with fresh outcomes.
 
 ## Audit result
 
@@ -28,7 +39,7 @@ Re-run the gates below before each release; this table records what the closure 
 | Default local gate | `npm run verify` checks generated playbook drift, `tsc --noEmit`, unit/fake tests, generated command-reference blocks, and live command-reference sampling. | Pass on 2026-05-14 (`npm run verify`, `agent-browser 0.27.0` on `PATH`). |
 | Real upstream contract | `npm run verify -- real-upstream` runs the localhost fixture matrix against the real installed `agent-browser` matching the baseline. | Pass on 2026-05-14 (`npm run verify -- real-upstream`). |
 | Packaged Pi smoke | `npm run verify -- package-pi` validates package contents, loads exactly one packaged `agent_browser` tool, and executes fake-upstream `--version`. | Pass on 2026-05-14 (`npm run verify -- package-pi`). |
-| Configured-source lifecycle | `npm run verify -- lifecycle` validates `/reload`, restart, `/resume`, session continuity, sentinel pickup, and persisted spill reachability with fake upstream. | Pass on 2026-05-14 in local RQ-0056 branch validation after the automation retry note; release runs should still treat any future lifecycle failure as a blocker until triaged. |
+| Configured-source lifecycle | `npm run verify -- lifecycle` (`scripts/verify-lifecycle.mjs`) drives `/reload`, restart, `/resume`, session continuity, slash-command sentinel tokens (`v1` then `v2` after rewriting the packaged extension to simulate pickup), and persisted spill reachability with a fake upstream on `PATH`. | Pass on 2026-05-14 in local RQ-0056 branch validation (per prior evidence). A separate Linux automation re-run the same day timed out on sentinel `v2` after `/reload` with `--timeout-ms 300000`; use `npm run verify -- lifecycle --keep-artifacts --verbose` to triage `tmux` transcripts and temp artifacts. If `v1` succeeds and `v2` does not, focus on `/reload` and configured-source extension loading. Treat any unexplained red lifecycle gate as a release blocker. |
 | Quick isolated Pi smoke | `pi --no-extensions -e .` from repo root; native `agent_browser` only. | Covered version/help/skills, open/snapshot/click, eval stdin, batch stdin, screenshot, explicit session, `sessionMode: "fresh"`, network requests, console/errors, diff snapshot, stream status/disable, dashboard start/stop, and chat credential-failure pass-through during RQ-0055; RQ-0056 cleanup spot-check found no lingering tmux or repo-local smoke artifacts. |
 
 ## Baseline checklist by inventory section
