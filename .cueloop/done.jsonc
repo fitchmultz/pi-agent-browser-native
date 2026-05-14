@@ -2912,6 +2912,52 @@
       "custom_fields": {
         "source": "manual-upstream-refresh"
       }
+    },
+    {
+      "id": "RQ-0064",
+      "status": "done",
+      "title": "Add constrained one-call browser jobs over existing primitives",
+      "priority": "medium",
+      "tags": [
+        "agent-browser",
+        "jobs",
+        "batch",
+        "orchestration"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Common browser work often needs a short open/click/fill/wait/assert/artifact sequence; a thin job runner can reduce calls without hiding upstream behavior.",
+        "The repo already supports batch, find locators, wait, and artifact handling, so job mode should orchestrate those primitives, not become a new browser framework."
+      ],
+      "plan": [
+        "Define a constrained job schema with supported steps only: open, click, fill, wait, assert text, assert URL, wait for download, and screenshot on failure.",
+        "Compile each job step to existing native args/stdin/sessionMode behavior and include the compiled steps in structured details for auditability.",
+        "Stop predictably on failure, emit stable categories, exact nextActions, compact page-change summaries, and verified artifact metadata.",
+        "Use the benchmark to compare raw multi-call workflows against job mode for success rate, tool calls, and output size."
+      ],
+      "notes": [
+        "Merged PR #26 (61cca52) after reviewer approval, Cursor automation success, local post-sync validation: npm run verify, npm run verify -- package-pi, npm run verify -- real-upstream, git diff --check."
+      ],
+      "request": "Infer and queue one-call browser job work from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-14T01:24:21.868854000Z",
+      "completed_at": "2026-05-14T01:24:21.868854000Z",
+      "started_at": "2026-05-14T00:46:58.639953000Z",
+      "depends_on": [
+        "RQ-0056",
+        "RQ-0060",
+        "RQ-0061",
+        "RQ-0062",
+        "RQ-0063"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
     }
   ]
 }
