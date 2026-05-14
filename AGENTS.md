@@ -11,6 +11,7 @@ Native `pi` integration of `agent-browser` as a `pi` tool.
 - Keep the integration thin and close to upstream `agent-browser` behavior.
 - The primary UX is the agent invoking the native tool directly, not a slash-command-heavy manual workflow.
 - Do **not** overengineer or solve hypothetical problems that do not exist in observed behavior.
+- Do **not** add a reusable named "browser recipe" runtime layer on top of native `job` / `qa` / `batch` without new benchmark or dogfood evidence and an explicit design pass; the current no-adopt decision and revisit criteria live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) and [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md).
 - Thoroughly check official `pi` docs/examples/source behavior before inventing bespoke integration patterns. Prefer an official `pi` mechanism whenever one exists.
 - Prioritize the global install path first. Most users will install this extension globally, not as a project-local extension.
 - Keep the local extension-side documentation good enough that an agent can use the tool without relying on direct `agent-browser` binary help; when upstream `agent-browser` changes, update the repo-readable command reference, prompt guidance, README/docs, and any relevant tests in the same work.
