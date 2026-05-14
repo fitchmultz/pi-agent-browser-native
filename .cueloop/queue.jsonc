@@ -195,7 +195,7 @@
     },
     {
       "id": "RQ-0056",
-      "status": "todo",
+      "status": "doing",
       "title": "Close the current-version support epic with a gap audit and release-ready evidence",
       "description": "After the implementation tasks land, perform a final support audit against the RQ-0045 baseline and produce release-ready evidence. The goal is to prove that every current command family is either natively supported, intentionally delegated thinly to upstream with docs/tests, or explicitly called out as requiring external setup/credentials. Acceptance criteria: a checklist maps every baseline command/option/env/skill/provider to docs, runtime handling, tests, and validation status; no unresolved high-priority gaps remain in `.cueloop/queue.jsonc`; `npm run verify`, `npm run verify -- real-upstream`, `npm run verify -- package-pi`, and `npm run verify -- lifecycle` are green or have documented environment-only skips; cleanup is complete; the task can be archived as the support epic closure.",
       "priority": "high",
@@ -231,7 +231,8 @@
       "notes": [],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-14T00:03:03.526829000Z",
+      "started_at": "2026-05-14T00:03:03.526829000Z",
       "depends_on": [
         "RQ-0054",
         "RQ-0055"

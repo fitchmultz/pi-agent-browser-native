@@ -5,6 +5,7 @@ Related docs:
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
+- [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 - Bounded `agent_browser` outcome metadata on `details` (`resultCategory`, `successCategory`, `failureCategory`, optional `nextActions`, optional `pageChangeSummary` with per-step summaries on `batch`): contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details); maintainer checklists under “Tool result categories” and “Page-change summaries” in [`../AGENTS.md`](../AGENTS.md)
 - Stateful context commands (`cookies`, `storage`, `auth`, `dialog`, `frame`, `state`) and aggregate `batch` results: model-facing `details.data` is summarized or redacted per [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details); aggregate `batch` replaces top-level `details.data` with a compact per-step matrix (`success`, argv-redacted `command`, redacted `result` or scrubbed `error`) while full per-step payloads, artifacts, and categories remain on `batchSteps[]`—operational notes in [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#use-stateful-browser-context-commands-safely), assembly in `extensions/agent-browser/lib/results/presentation.ts`
 
@@ -197,5 +198,6 @@ Before publishing:
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and configured-source lifecycle validation
 - rerun `npm run verify -- release`
 - run `npm run verify -- lifecycle` for opt-in configured-source `/reload` plus restart/`/resume` regression coverage
+- confirm [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) still maps every current baseline inventory section to docs, runtime handling, tests, and validation status
 - manually exercise real-browser `/reload` and full restart + `/resume` continuity when release risk warrants browser-level confidence beyond the fake upstream harness
 - publish only after the tarball contents and isolated packaged-extension smoke check match expectations
