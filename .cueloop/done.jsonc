@@ -2801,6 +2801,60 @@
       "custom_fields": {
         "source": "manual-upstream-refresh"
       }
+    },
+    {
+      "id": "RQ-0055",
+      "status": "done",
+      "title": "Run Pi lifecycle smoke validation for the expanded agent_browser surface",
+      "description": "Validate the updated extension in Pi the way agents actually use it. Exercise both quick isolated mode and configured-source lifecycle mode after the expanded surface lands, including `/reload`, restart, and `/resume` behavior. Cover representative calls from every command family through the native `agent_browser` tool rather than bash. Acceptance criteria: `pi --no-extensions -e .` smoke proves unpublished checkout behavior; `npm run verify -- lifecycle` passes; manual or scripted transcript evidence covers version/help/skills, open/snapshot/click, batch stdin, eval stdin, screenshot artifact, explicit session passthrough, sessionMode fresh, and at least one representative current command from each newly supported family; no lingering tmux sessions, browser sessions, temp artifacts, or scratch files remain.",
+      "priority": "medium",
+      "tags": [
+        "pi",
+        "lifecycle",
+        "smoke",
+        "manual-validation",
+        "tmux"
+      ],
+      "scope": [
+        "AGENTS.md",
+        "scripts/verify-lifecycle.mjs",
+        "README.md",
+        "docs/RELEASE.md",
+        "npm run verify -- lifecycle",
+        "pi --no-extensions -e .",
+        "tmux"
+      ],
+      "evidence": [
+        "path: AGENTS.md:19-47 :: project testing rules require quick isolated mode and configured-source lifecycle mode to be kept distinct.",
+        "path: AGENTS.md:50-71 :: current minimum validation focus lists native invocation, open, snapshot, click, batch, eval, screenshot, sessions, reload, restart, and resume.",
+        "path: package.json scripts :: lifecycle harness is exposed through `npm run verify -- lifecycle`; artifact retention is available with `npm run verify -- lifecycle --keep-artifacts`.",
+        "workflow: user request asks for support for everything in the current version, so validation must go beyond docs/unit tests and prove Pi-native invocation paths."
+      ],
+      "plan": [
+        "Prepare a concise Pi smoke script/prompt that drives representative current command families through native `agent_browser` calls.",
+        "Run quick isolated `pi --no-extensions -e .` after code/docs changes and capture enough transcript evidence to debug failures.",
+        "Run configured-source lifecycle validation via `npm run verify -- lifecycle` and confirm reload/restart/resume behavior still sees the updated extension.",
+        "Clean up tmux sessions, browser sessions, temp roots, and any repo-local scratch artifacts before completion."
+      ],
+      "notes": [
+        "Merged PR #24: Document expanded Pi lifecycle smoke.",
+        "Validation: npm run verify -- lifecycle; isolated pi --no-extensions -e . native agent_browser smoke covering required families; npm run verify; git diff --check; cleanup confirmed no tmux session or smoke temp files."
+      ],
+      "request": "Add support for everything in the current version of agent-browser.",
+      "created_at": "2026-04-29T13:43:31Z",
+      "updated_at": "2026-05-14T00:02:11.177362000Z",
+      "completed_at": "2026-05-14T00:02:11.177362000Z",
+      "depends_on": [
+        "RQ-0046",
+        "RQ-0054"
+      ],
+      "blocks": [
+        "RQ-0056"
+      ],
+      "relates_to": [],
+      "custom_fields": {
+        "source": "manual-upstream-refresh"
+      }
     }
   ]
 }
