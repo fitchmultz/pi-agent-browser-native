@@ -188,6 +188,7 @@ Typical pitfalls:
 - `semanticAction` and `job` are **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
 - Commands or locators outside the supported shorthand still require explicit `args`.
 - If upstream classifies the failure as `stale-ref` and `details.compiledSemanticAction` is present, `details.nextActions` may list `retry-semantic-action-after-stale-ref` after `refresh-interactive-refs`, carrying the same compiled `find` argv so you can retry the locator-stable target once it is safe to do so (contract in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction)).
+- If the failure is `selector-not-found` for a compiled `semanticAction`, visible text may add `Agent-browser candidate fallbacks` and `details.nextActions` may list bounded `try-*-candidate` follow-ups (role/name retries for certain placeholder, text, or label targets); prefer those payloads or a fresh snapshot over guessing new selectors (same contract link).
 
 ### Constrained browser jobs
 
