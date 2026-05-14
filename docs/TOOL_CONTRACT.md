@@ -494,4 +494,5 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - no giant action enum mirroring the whole upstream CLI
 - no support for older `agent-browser` versions
 - no compatibility shims
+- no first-class reusable named browser recipe runtime above constrained `job`, the `qa` preset, experimental `sourceLookup` / `networkSourceLookup`, and raw `batch` / `args`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) (closed `RQ-0068`)
 - no embedded browser UI inside `pi`

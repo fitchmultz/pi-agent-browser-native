@@ -54,7 +54,7 @@ That means:
 Do **not** add reusable browser recipes as a first-class runtime surface yet.
 
 Current evidence does not justify another source of truth for workflows:
-- the benchmark has one representative native `job` shape, one `qa` preset shape, one `sourceLookup` shape, and one `networkSourceLookup` shape rather than repeated named job patterns that agents keep re-specifying
+- the deterministic efficiency benchmark in [`scripts/agent-browser-efficiency-benchmark.mjs`](../scripts/agent-browser-efficiency-benchmark.mjs) models one native `job` scenario (`job-open-assert-screenshot`), one `qa` preset (`qa-open-diagnostics`), one `sourceLookup` (`source-lookup-visible-element`), and one `networkSourceLookup` (`network-source-lookup-failed-request`) rather than repeated named job patterns that agents keep re-specifying
 - repo-local dogfood evidence does not show repeated project-specific job recipes that need versioning or ownership
 - `qa` already covers the only repeated smoke-test shape with a stable top-level preset
 - docs and prompt guidance can carry examples without adding recipe state, migration rules, or another schema
