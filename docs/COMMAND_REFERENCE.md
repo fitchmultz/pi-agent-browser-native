@@ -154,7 +154,7 @@ Prefer `get` and scoped `eval --stdin` for read-only extraction. Return the inte
 
 Use `batch --bail` when later steps should stop after the first failed command.
 
-For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`; the wrapper compiles them to upstream `batch` and records `details.compiledJob.steps[]`.
+For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`; the wrapper compiles them to upstream `batch` and records `details.compiledJob.steps[]`. There is still no separate first-class catalog of reusable named browser recipes above `job`, the `qa` preset, and raw `batch`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and revisit bar.
 
 ```json
 {

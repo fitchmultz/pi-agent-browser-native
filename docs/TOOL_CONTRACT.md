@@ -130,6 +130,7 @@ Examples:
 - optional; mutually exclusive with `args`, `semanticAction`, `qa`, `sourceLookup`, and `networkSourceLookup`
 - top-level tool input only; do not nest `job` inside `batch` stdin
 - constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
+- there is no separate reusable named “browser recipe” extension surface above `job`, `qa`, and raw `batch` yet; the closed `RQ-0068` decision, evidence bar, and revisit criteria are in [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) and [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 - supported steps (each row becomes one upstream `batch` step; `click` / `fill` pass `selector` through as the same argv token shape standalone `click` / `fill` would use upstream, including `@refs`, not the `semanticAction` locator schema):
   - `open` with `url`
   - `click` with `selector`
@@ -493,4 +494,5 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - no giant action enum mirroring the whole upstream CLI
 - no support for older `agent-browser` versions
 - no compatibility shims
+- no first-class reusable named browser recipe runtime above constrained `job`, the `qa` preset, experimental `sourceLookup` / `networkSourceLookup`, and raw `batch` / `args`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) (closed `RQ-0068`)
 - no embedded browser UI inside `pi`
