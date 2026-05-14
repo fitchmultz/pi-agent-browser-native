@@ -130,7 +130,7 @@ Examples:
 - optional; mutually exclusive with `args` and `semanticAction`
 - top-level tool input only; do not nest `job` inside `batch` stdin
 - constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
-- supported steps:
+- supported steps (each row becomes one upstream `batch` step; `click` / `fill` pass `selector` through as the same argv token shape standalone `click` / `fill` would use upstream, including `@refs`, not the `semanticAction` locator schema):
   - `open` with `url`
   - `click` with `selector`
   - `fill` with `selector` and `text`
