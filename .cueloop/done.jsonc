@@ -1976,8 +1976,8 @@
       ],
       "relates_to": [],
       "custom_fields": {
-        "target_upstream_version": "0.27.0",
-        "source": "manual-upstream-refresh"
+        "source": "manual-upstream-refresh",
+        "target_upstream_version": "0.27.0"
       }
     },
     {
@@ -2996,6 +2996,47 @@
       "started_at": "2026-05-14T01:24:39.175749000Z",
       "depends_on": [
         "RQ-0064"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0066",
+      "status": "done",
+      "title": "Experiment with local source lookup for visible UI elements",
+      "priority": "low",
+      "tags": [
+        "agent-browser",
+        "source-lookup",
+        "react",
+        "experiment"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Mapping UI elements back to source could be powerful for debugging local apps, but it is higher complexity and should start from existing React inspection/source-map surfaces.",
+        "The wrapper must report uncertainty clearly and avoid pretending every DOM node maps cleanly to a file."
+      ],
+      "plan": [
+        "Inventory what the current React inspection, DOM metadata, sourcemaps, and local workspace context can reliably expose for a selected element.",
+        "Prototype an opt-in lookup that reports candidate component/file locations with confidence and evidence, not a single guaranteed answer.",
+        "Gate the feature behind explicit inputs and clear unsupported-state categories when React DevTools or sourcemaps are unavailable.",
+        "Document limitations and decide from benchmark/dogfood evidence whether to promote beyond experiment."
+      ],
+      "notes": [
+        "Merged PR #28 after reviewer pass, Cursor automation success, post-sync validation (npm run verify, package-pi, real-upstream, git diff --check)."
+      ],
+      "request": "Infer and queue local-app source lookup experiment from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-14T02:49:26.278705000Z",
+      "completed_at": "2026-05-14T02:49:26.278705000Z",
+      "started_at": "2026-05-14T01:58:30.171453000Z",
+      "depends_on": [
+        "RQ-0065"
       ],
       "blocks": [],
       "relates_to": [],

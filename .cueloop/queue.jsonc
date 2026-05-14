@@ -2,44 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0066",
-      "status": "doing",
-      "title": "Experiment with local source lookup for visible UI elements",
-      "priority": "low",
-      "tags": [
-        "agent-browser",
-        "source-lookup",
-        "react",
-        "experiment"
-      ],
-      "scope": [
-        "extensions/agent-browser",
-        "docs/TOOL_CONTRACT.md",
-        "test"
-      ],
-      "evidence": [
-        "Mapping UI elements back to source could be powerful for debugging local apps, but it is higher complexity and should start from existing React inspection/source-map surfaces.",
-        "The wrapper must report uncertainty clearly and avoid pretending every DOM node maps cleanly to a file."
-      ],
-      "plan": [
-        "Inventory what the current React inspection, DOM metadata, sourcemaps, and local workspace context can reliably expose for a selected element.",
-        "Prototype an opt-in lookup that reports candidate component/file locations with confidence and evidence, not a single guaranteed answer.",
-        "Gate the feature behind explicit inputs and clear unsupported-state categories when React DevTools or sourcemaps are unavailable.",
-        "Document limitations and decide from benchmark/dogfood evidence whether to promote beyond experiment."
-      ],
-      "notes": [],
-      "request": "Infer and queue local-app source lookup experiment from the user's ABN task list.",
-      "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-14T01:58:30.171453000Z",
-      "started_at": "2026-05-14T01:58:30.171453000Z",
-      "depends_on": [
-        "RQ-0065"
-      ],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {}
-    },
-    {
       "id": "RQ-0067",
       "status": "todo",
       "title": "Experiment with source hints for failed browser network requests",
