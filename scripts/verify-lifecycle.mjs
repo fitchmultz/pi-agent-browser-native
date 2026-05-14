@@ -4,6 +4,7 @@
  * Scope: Opt-in maintainer regression harness only; normal unit/package verification remains in the standard npm scripts.
  * Usage: Run with `node scripts/verify-lifecycle.mjs`, `npm run verify -- lifecycle`, or `node scripts/verify-lifecycle.mjs --keep-artifacts --verbose`.
  * Invariants/Assumptions: `pi` and `tmux` are available on PATH, the configured model can follow explicit tool-use prompts, and the temporary configured package path is the only active Pi package source.
+ * Related: `docs/SUPPORT_MATRIX.md` tracks configured-source lifecycle expectations, passthrough flags, and triage notes for this harness.
  */
 
 import { execFile as execFileCallback } from "node:child_process";

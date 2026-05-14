@@ -33,6 +33,8 @@ When upstream `agent-browser` changes version or help text, keep three layers al
 
 3. **Generated blocks** — The baseline checker renders versioned boilerplate into `docs/COMMAND_REFERENCE.md`. After changing the baseline metadata, run `npm run docs -- command-reference write`. Do not hand-edit inside the `<!-- agent-browser-capability-baseline:start ... -->` / `<!-- ...:end ... -->` markers.
 
+Release-readiness checklist: [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md) maps each baseline inventory section to human docs, wrapper/runtime behavior, tests, and verification gates. Refresh it when rebaselining upstream.
+
 Verification stack:
 
 - `npm run docs` (or `npm run docs -- command-reference check`) — generated blocks match `agent-browser-capability-baseline.mjs`.

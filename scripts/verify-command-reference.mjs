@@ -4,6 +4,7 @@
  * Scope: Documentation drift detection only; it does not validate browser runtime behavior or package contents.
  * Usage: Run with `node scripts/verify-command-reference.mjs`, `npm run verify -- command-reference`, or as part of `npm run verify`.
  * Invariants/Assumptions: This package targets the current installed agent-browser surface declared in scripts/agent-browser-capability-baseline.mjs and does not provide backwards-compatibility shims for older upstream versions.
+ * Related: `docs/SUPPORT_MATRIX.md` records how this live help and human-token check fits into the default and command-reference verification gates.
  */
 
 import { execFile as execFileCallback } from "node:child_process";
