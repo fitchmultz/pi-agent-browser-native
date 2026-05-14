@@ -142,6 +142,32 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
     failureCategories: Object.freeze([]),
     elapsedMsEstimate: 1100,
   }),
+  Object.freeze({
+    id: "job-open-assert-screenshot",
+    title: "Run a constrained job that opens, asserts text, and captures evidence",
+    workflow: "native-job",
+    steps: Object.freeze([
+      Object.freeze({
+        call: "agent_browser",
+        job: Object.freeze({
+          steps: Object.freeze([
+            Object.freeze({ action: "open", url: "https://example.com" }),
+            Object.freeze({ action: "assertText", text: "Example Domain" }),
+            Object.freeze({ action: "screenshot", path: ".dogfood/example.png" }),
+          ]),
+        }),
+      }),
+    ]),
+    modelOutputs: Object.freeze([
+      "Batch results:\n1. Opened https://example.com\n2. Text appeared: Example Domain\n3. Saved image: .dogfood/example.png\nCompiled job: 3 steps",
+    ]),
+    success: true,
+    staleRefFailures: 0,
+    staleRefRecoveries: 0,
+    artifactSuccesses: 1,
+    failureCategories: Object.freeze(["artifact-completion"]),
+    elapsedMsEstimate: 1300,
+  }),
 ]);
 
 function usage() {

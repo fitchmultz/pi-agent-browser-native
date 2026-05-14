@@ -1222,6 +1222,84 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 	}
 });
 
+test("agentBrowserExtension compiles constrained jobs to upstream batch commands", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  const steps = JSON.parse(stdin);
+  process.stdout.write(JSON.stringify(steps.map((command) => ({ command, success: true, result: { command } }))));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: {
+					steps: [
+						{ action: "open", url: "https://example.test/" },
+						{ action: "fill", selector: "#email", text: "user@example.test" },
+						{ action: "click", selector: "#submit" },
+						{ action: "assertText", text: "Welcome" },
+						{ action: "assertUrl", url: "**/dashboard" },
+						{ action: "wait", milliseconds: 250 },
+						{ action: "waitForDownload", path: "report.csv" },
+						{ action: "screenshot", path: "job.png" },
+					],
+				},
+			});
+
+			assert.equal(result.isError, false);
+			assert.deepEqual(result.details?.args, ["batch"]);
+			const effectiveArgs = result.details?.effectiveArgs as string[] | undefined;
+			assert.deepEqual(effectiveArgs?.slice(0, 2), ["--json", "--session"]);
+			assert.match(effectiveArgs?.[2] ?? "", /^piab-pi-agent-browser-job-/);
+			assert.equal(effectiveArgs?.[3], "batch");
+			const compiledJob = result.details?.compiledJob as { args?: string[]; stdin?: string; steps?: Array<{ action: string; args: string[] }> } | undefined;
+			assert.deepEqual(compiledJob?.args, ["batch"]);
+			const expectedCompiledSteps = [
+				["open", "https://example.test/"],
+				["fill", "#email", "user@example.test"],
+				["click", "#submit"],
+				["wait", "--text", "Welcome"],
+				["wait", "--url", "**/dashboard"],
+				["wait", "250"],
+				["wait", "--download", "report.csv"],
+				["screenshot", "job.png"],
+			];
+			assert.deepEqual(compiledJob?.steps?.map((step) => step.args), expectedCompiledSteps);
+			assert.deepEqual(JSON.parse(compiledJob?.stdin ?? "[]"), expectedCompiledSteps);
+			const redactedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "open", url: "https://user:secret@example.test/path?token=abc&ok=1#access_token=xyz" }] },
+			});
+			const redactedCompiledJob = redactedResult.details?.compiledJob as { stdin?: string; steps?: Array<{ args: string[] }> } | undefined;
+			assert.match(redactedCompiledJob?.stdin ?? "", /%5BREDACTED%5D/);
+			assert.doesNotMatch(redactedCompiledJob?.stdin ?? "", /secret|token=abc|access_token=xyz/);
+			assert.deepEqual(JSON.parse(redactedCompiledJob?.stdin ?? "[]"), redactedCompiledJob?.steps?.map((step) => step.args));
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
+			const upstreamSteps = JSON.parse(invocations[0]?.stdin ?? "[]") as string[][];
+			assert.deepEqual(upstreamSteps.slice(0, 7), compiledJob?.steps?.slice(0, 7).map((step) => step.args));
+			assert.equal(upstreamSteps[7]?.[0], "screenshot");
+			assert.match(upstreamSteps[7]?.[1] ?? "", /job\.png$/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects ambiguous or incomplete semantic actions before spawning agent-browser", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-invalid-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -1243,9 +1321,49 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguous.isError, true);
-			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args or semanticAction/);
+			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, or job/);
 			assert.equal(ambiguous.details?.resultCategory, "failure");
 			assert.equal(ambiguous.details?.failureCategory, "validation-error");
+
+			const jobWithStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "open", url: "https://example.test/" }] },
+				stdin: "[]",
+			});
+			assert.equal(jobWithStdin.isError, true);
+			assert.match((jobWithStdin.content[0] as { text: string }).text, /Do not provide stdin with job/);
+			assert.equal(jobWithStdin.details?.failureCategory, "validation-error");
+
+			const ambiguousJobArgs = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.test/"],
+				job: { steps: [{ action: "open", url: "https://example.test/" }] },
+			});
+			assert.equal(ambiguousJobArgs.isError, true);
+			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, or job/);
+
+			const ambiguousJobSemanticAction = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "open", url: "https://example.test/" }] },
+				semanticAction: { action: "click", locator: "text", value: "Export" },
+			});
+			assert.equal(ambiguousJobSemanticAction.isError, true);
+			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, or job/);
+
+			const invalidJobAction = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "unknown" as never }] },
+			});
+			assert.equal(invalidJobAction.isError, true);
+			assert.match((invalidJobAction.content[0] as { text: string }).text, /action must be one of/);
+
+			const missingJobText = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "open", url: "https://example.test/" }, { action: "assertText" as never }] },
+			});
+			assert.equal(missingJobText.isError, true);
+			assert.match((missingJobText.content[0] as { text: string }).text, /job step assertText requires a non-empty text string/);
+
+			const invalidJobWait = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "wait", milliseconds: 0 }] },
+			});
+			assert.equal(invalidJobWait.isError, true);
+			assert.match((invalidJobWait.content[0] as { text: string }).text, /wait requires a positive integer milliseconds/);
 
 			const missingText = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "fill", locator: "label", value: "Email" },

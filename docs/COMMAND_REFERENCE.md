@@ -26,7 +26,7 @@ Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before an
 
 ## Core mental model
 
-Tool parameters (use either `args` **or** `semanticAction`, not both):
+Tool parameters (use exactly one of `args`, `semanticAction`, or `job`):
 
 ```json
 { "args": ["open", "https://example.com"], "sessionMode": "auto" }
@@ -40,9 +40,14 @@ Tool parameters (use either `args` **or** `semanticAction`, not both):
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction` instead (mutually exclusive).
-- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args` on the same call.
-- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched.
+```json
+{ "job": { "steps": [{ "action": "open", "url": "https://example.com" }, { "action": "assertText", "text": "Example Domain" }] } }
+```
+
+- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction` or `job` instead (mutually exclusive).
+- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args` or `job` on the same call.
+- `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin and reports the compiled plan in `details.compiledJob`.
+- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. Job mode generates its own `batch` stdin.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
@@ -115,7 +120,7 @@ Examples:
 { "args": ["snapshot", "-i"] }
 ```
 
-The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, not a nested shape inside `batch` stdin arrays.
+The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args` and `job`, not a nested shape inside `batch` stdin arrays.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 
@@ -137,6 +142,22 @@ Prefer `get` and scoped `eval --stdin` for read-only extraction. Return the inte
 ```
 
 Use `batch --bail` when later steps should stop after the first failed command.
+
+For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`; the wrapper compiles them to upstream `batch` and records `details.compiledJob.steps[]`.
+
+```json
+{
+  "job": {
+    "steps": [
+      { "action": "open", "url": "https://example.com" },
+      { "action": "assertText", "text": "Example Domain" },
+      { "action": "screenshot", "path": ".dogfood/example.png" }
+    ]
+  }
+}
+```
+
+Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`; job mode generates the batch stdin itself.
 
 ### Wait for page readiness or downloads
 

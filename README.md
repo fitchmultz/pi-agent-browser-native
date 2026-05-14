@@ -56,7 +56,7 @@ The result is optimized for agent work:
 
 | Pain | Native wrapper capability | Proof surface |
 |---|---|---|
-| Agents build fragile shell commands | Exposes `agent_browser` with exact `args` or an optional `semanticAction` shorthand for common `find` flows, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
+| Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, an optional `semanticAction` shorthand for common `find` flows, or a constrained `job` that compiles short workflows to `batch`, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
 | Page snapshots are too large | Shows compact, main-content-first summaries and stores full raw output in spill files when needed | `test/agent-browser.presentation.test.ts` |
 | Screenshots/downloads get lost in text | Normalizes artifact paths and reports existence, size, cwd, session, and repair status | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#download-screenshot-and-pdf-files) |
 | Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
@@ -184,10 +184,28 @@ For supported upstream `find` flows you can omit hand-built `args` and pass a to
 
 Typical pitfalls:
 
-- Supply **exactly one** of `args` or `semanticAction` per call (not both, not neither).
-- `semanticAction` is **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
+- Supply **exactly one** of `args`, `semanticAction`, or `job` per call (not more, not none).
+- `semanticAction` and `job` are **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
 - Commands or locators outside the supported shorthand still require explicit `args`.
 - If upstream classifies the failure as `stale-ref` and `details.compiledSemanticAction` is present, `details.nextActions` may list `retry-semantic-action-after-stale-ref` after `refresh-interactive-refs`, carrying the same compiled `find` argv so you can retry the locator-stable target once it is safe to do so (contract in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction)).
+
+### Constrained browser jobs
+
+For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability.
+
+```json
+{
+  "job": {
+    "steps": [
+      { "action": "open", "url": "https://example.com" },
+      { "action": "assertText", "text": "Example Domain" },
+      { "action": "screenshot", "path": ".dogfood/example.png" }
+    ]
+  }
+}
+```
+
+Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, or commands outside the constrained job schema. Do not pass `stdin` with `job`; job mode generates the batch stdin itself.
 
 For asynchronous exports, click first and then wait for the download:
 

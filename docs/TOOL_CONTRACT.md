@@ -61,7 +61,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 
 ## Parameters
 
-Illustrative shapes (each real call uses **either** `args` **or** `semanticAction`, not both):
+Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, or `job`):
 
 ```json
 { "args": ["open", "https://example.com"], "stdin": "optional raw stdin content", "sessionMode": "auto" }
@@ -74,7 +74,7 @@ Illustrative shapes (each real call uses **either** `args` **or** `semanticActio
 ### `args`
 
 - type: `string[]`
-- required unless `semanticAction` is provided
+- required unless `semanticAction` or `job` is provided
 - exact CLI args passed after `agent-browser`
 - no shell operators
 - do not include the binary name
@@ -91,7 +91,7 @@ Examples:
 ### `semanticAction`
 
 - type: object
-- optional; mutually exclusive with `args` (omit `args` entirely when using this field)
+- optional; mutually exclusive with `args` and `job` (omit both entirely when using this field)
 - top-level tool input only: `batch` stdin remains upstream argv arrays; express find steps inside batch as string arrays such as `["find","role","button","click","--name","Export"]`, not nested `semanticAction` objects
 - thin intent schema compiled by this wrapper into existing upstream `find` commands; behavior and locator semantics stay upstream-owned
 - supported actions: `click`, `fill`, `select`, `check`, `uncheck`
@@ -124,11 +124,53 @@ Examples:
 { "semanticAction": { "action": "select", "locator": "label", "value": "Country", "text": "United States" } }
 ```
 
+### `job`
+
+- type: object with a non-empty `steps` array
+- optional; mutually exclusive with `args` and `semanticAction`
+- top-level tool input only; do not nest `job` inside `batch` stdin
+- constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
+- supported steps (each row becomes one upstream `batch` step; `click` / `fill` pass `selector` through as the same argv token shape standalone `click` / `fill` would use upstream, including `@refs`, not the `semanticAction` locator schema):
+  - `open` with `url`
+  - `click` with `selector`
+  - `fill` with `selector` and `text`
+  - `wait` with positive integer `milliseconds`
+  - `assertText` with `text` (compiled as passive `wait --text <text>`)
+  - `assertUrl` with `url` pattern (compiled as `wait --url <pattern>`)
+  - `waitForDownload` with `path` (compiled as `wait --download <path>`)
+  - `screenshot` with `path`
+
+Example:
+
+```json
+{
+  "job": {
+    "steps": [
+      { "action": "open", "url": "https://example.com" },
+      { "action": "assertText", "text": "Example Domain" },
+      { "action": "screenshot", "path": ".dogfood/example.png" }
+    ]
+  }
+}
+```
+
+Compiled shape:
+
+```json
+{
+  "args": ["batch"],
+  "stdin": "[[\"open\",\"https://example.com\"],[\"wait\",\"--text\",\"Example Domain\"],[\"screenshot\",\".dogfood/example.png\"]]"
+}
+```
+
+Use raw `args` plus `stdin` for upstream `batch` when a flow needs commands, flags, stdin forms, or failure policies outside this constrained schema.
+
 ### `stdin`
 
 - type: `string`
 - optional
-- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`
+- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`; generated internally when `job` compiles to `batch`
+- do not provide `stdin` with `job`; job mode owns the generated batch stdin and rejects caller-provided stdin to avoid ambiguity
 - rejected before launch for any other command/stdin combination, including commands such as `click`, `snapshot`, or `open`
 
 Examples:
@@ -301,7 +343,8 @@ Implementation and precedence:
 - The main tool implementation merges these fields into Pi-facing `details` from `extensions/agent-browser/index.ts` and from `extensions/agent-browser/lib/results/presentation.ts` for presentation-time failures.
 
 Additional structured fields can appear when relevant:
-- `compiledSemanticAction` when the call used `semanticAction` and the result includes the unified `details` merge: `{ action, locator, args }` with the same redaction rules as `args` / `effectiveArgs`; omitted for plain `args` calls and omitted on some early error returns that omit this field (see the `semanticAction` section above)
+- `compiledSemanticAction` when the call used `semanticAction` and the result includes the unified `details` merge: `{ action, locator, args }` with the same redaction rules as `args` / `effectiveArgs`; omitted for plain `args`/`job` calls and omitted on some early error returns that omit this field (see the `semanticAction` section above)
+- `compiledJob` when the call used `job`: `{ args: ["batch"], stdin, steps: [{ action, args }] }`, with step args redacted the same way as other invocation details
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `pageChangeSummary` for compact mutation/artifact/navigation summaries on commands that can change browser state
