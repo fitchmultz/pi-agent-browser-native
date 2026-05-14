@@ -195,7 +195,7 @@
     },
     {
       "id": "RQ-0056",
-      "status": "doing",
+      "status": "done",
       "title": "Close the current-version support epic with a gap audit and release-ready evidence",
       "description": "After the implementation tasks land, perform a final support audit against the RQ-0045 baseline and produce release-ready evidence. The goal is to prove that every current command family is either natively supported, intentionally delegated thinly to upstream with docs/tests, or explicitly called out as requiring external setup/credentials. Acceptance criteria: a checklist maps every baseline command/option/env/skill/provider to docs, runtime handling, tests, and validation status; no unresolved high-priority gaps remain in `.cueloop/queue.jsonc`; `npm run verify`, `npm run verify -- real-upstream`, `npm run verify -- package-pi`, and `npm run verify -- lifecycle` are green or have documented environment-only skips; cleanup is complete; the task can be archived as the support epic closure.",
       "priority": "high",
@@ -208,6 +208,7 @@
       "scope": [
         "docs/COMMAND_REFERENCE.md",
         "docs/RELEASE.md",
+        "docs/SUPPORT_MATRIX.md",
         "docs/TOOL_CONTRACT.md",
         "scripts/agent-browser-capability-baseline.mjs",
         "test/fixtures/agent-browser-real-output-shapes.json",
@@ -220,7 +221,8 @@
       "evidence": [
         "workflow: this queue was created to decompose support for the complete current agent-browser version into implementable CueLoop tasks.",
         "path: docs/REQUIREMENTS.md:101-104 :: upstream remains the source of truth, and local docs/prompt guidance must refresh when upstream changes.",
-        "path: AGENTS.md:73-79 :: repo guidance requires sweeping and cleaning temp/browser/tmux side effects before ending work."
+        "path: AGENTS.md:73-79 :: repo guidance requires sweeping and cleaning temp/browser/tmux side effects before ending work.",
+        "path: docs/SUPPORT_MATRIX.md :: release-readiness matrix tied to scripts/agent-browser-capability-baseline.mjs inventorySections."
       ],
       "plan": [
         "Build a final support matrix from the canonical baseline and mark each item as documented, runtime-handled, tested with fake upstream, tested with real upstream, or external-setup-only.",
@@ -228,11 +230,14 @@
         "Create any follow-up CueLoop tasks for legitimate non-blocking gaps, then make sure active high-priority support gaps are not left hidden.",
         "Clean up side effects and record validation evidence in the appropriate durable repo docs or CueLoop notes before completion."
       ],
-      "notes": [],
+      "notes": [
+        "Closure evidence: docs/SUPPORT_MATRIX.md maps CAPABILITY_BASELINE.inventorySections to docs, runtime, tests, and verification gates. Re-run npm run verify -- lifecycle before release if the last run flaked."
+      ],
       "request": "Add support for everything in the current version of agent-browser.",
       "created_at": "2026-04-29T13:43:31Z",
-      "updated_at": "2026-05-14T00:03:03.526829000Z",
+      "updated_at": "2026-05-14T00:25:00.000000000Z",
       "started_at": "2026-05-14T00:03:03.526829000Z",
+      "completed_at": "2026-05-14T00:25:00.000000000Z",
       "depends_on": [
         "RQ-0054",
         "RQ-0055"
