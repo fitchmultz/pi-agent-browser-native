@@ -301,10 +301,11 @@ Primary content should be:
 - an image attachment when relevant
 - browser-aware compacting for oversized snapshots so the model gets a concise actionable view before raw page noise
 - compact snapshots should be main-content-first: prefer the primary content block and nearby sections over top-of-page chrome, ads, or unrelated sidebars when those can be distinguished from the snapshot tree
+- when compacting hides actionable controls, snapshot output should add an `Omitted high-value controls` section for bounded searchboxes, textboxes, comboboxes, buttons, tabs, checkboxes, radios, options, and menuitems that were not already shown in key refs
 
 Examples:
 - small `snapshot` results should include the actual snapshot text
-- oversized `snapshot` results should switch to a compact view that preserves the primary content, nearby sections, and a trimmed set of high-value refs, while exposing the full raw snapshot path directly in the rendered tool text and via `details.fullOutputPath`
+- oversized `snapshot` results should switch to a compact view that preserves the primary content, nearby sections, a trimmed set of high-value refs, and a separate bounded list of omitted high-value controls when dense pages would otherwise hide important inputs/tabs/buttons, while exposing the full raw snapshot path directly in the rendered tool text and via `details.fullOutputPath`
 - successful navigation actions like `click`, `back`, `forward`, and `reload` should include a lightweight post-action title/url summary when the wrapper can address the active session
 - `tab list` should include a readable tab summary
 - `screenshot` should include the saved-path summary plus the inline image attachment when available

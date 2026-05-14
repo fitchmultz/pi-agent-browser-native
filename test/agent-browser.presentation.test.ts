@@ -1976,6 +1976,60 @@ test("buildToolPresentation prefers main content sections over top-of-page chrom
 	}
 });
 
+test("buildToolPresentation surfaces omitted high-value controls in compact snapshots", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 100 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e2") return [id, { name: "Search", role: "button" }];
+			if (id === "e3") return [id, { name: "Search docs", role: "searchbox" }];
+			if (["e4", "e5", "e6", "e7", "e8", "e9"].includes(id)) {
+				return [id, { name: `Package tab ${id.slice(1)}`, role: "tab" }];
+			}
+			return [id, { name: `Article link ${index + 1}`, role: "link" }];
+		}),
+	);
+	const snapshot = [
+		'- heading "Docs Home" [level=1, ref=e1]',
+		...Array.from({ length: 80 }, (_, index) => `  - link "Article link ${index + 10}" [ref=e${index + 10}]`),
+		'- navigation "Top navigation"',
+		'  - button "Search" [ref=e2]',
+		'  - searchbox "Search docs" [ref=e3]',
+		'- tablist "Package managers"',
+		'  - tab "Package tab 4" [ref=e4]',
+		'  - tab "Package tab 5" [ref=e5]',
+		'  - tab "Package tab 6" [ref=e6]',
+		'  - tab "Package tab 7" [ref=e7]',
+		'  - tab "Package tab 8" [ref=e8]',
+		'  - tab "Package tab 9" [ref=e9]',
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "https://example.com/docs",
+				refs,
+				snapshot,
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Other refs:/);
+	assert.match(text, /e3 searchbox "Search docs"/);
+	assert.match(text, /e2 button "Search"/);
+	assert.match(text, /Omitted high-value controls:/);
+	assert.match(text, /e6 tab "Package tab 6"/);
+	assert.match(text, /e9 tab "Package tab 9"/);
+	assert.deepEqual((presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds, ["e6", "e7", "e8", "e9"]);
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
 test("buildToolPresentation falls back to an outline when the raw snapshot format is unfamiliar", async () => {
 	const refs = Object.fromEntries(
 		Array.from({ length: 90 }, (_, index) => [`e${index + 1}`, { name: `Action ${index + 1}`, role: "button" }]),

@@ -439,6 +439,8 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `snapshot -d <n>` / `snapshot --depth <n>` | Limit tree depth. |
 | `snapshot -s <sel>` / `snapshot --selector <sel>` | Scope to a CSS selector. |
 
+When a snapshot is too large for inline output, the Pi wrapper renders a compact view before spilling the full raw snapshot to `details.fullOutputPath`. Compact snapshots are main-content-first, but dense pages can still hide actionable controls in omitted content; in that case, look for `Omitted high-value controls` to find bounded searchboxes, textboxes, comboboxes, buttons, tabs, checkboxes, radios, options, and menuitems that were not already listed under key refs.
+
 ### Wait
 
 | Mode | Purpose |
