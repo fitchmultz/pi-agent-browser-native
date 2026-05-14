@@ -26,6 +26,7 @@
 - `package.json` `prepublishOnly` now runs `npm run verify -- release` before `npm pack --dry-run`, so publishes enforce packaged Pi smoke and the same live upstream command-reference sampling as [`docs/RELEASE.md`](docs/RELEASE.md#pre-release-checks); orchestration is the `release` mode in [`scripts/project.mjs`](scripts/project.mjs), with operator-facing notes in [`README.md`](README.md)
 - release guidance now requires `tmux`-driven live-site Pi dogfood with the native `agent_browser` tool before every release, with cleanup and evidence recording expectations in [`docs/RELEASE.md`](docs/RELEASE.md#pre-release-checks) and [`AGENTS.md`](AGENTS.md)
 - aligned maintainer wording so configured-source lifecycle (`npm run verify -- lifecycle`) is documented as a pre-publish requirement across [`AGENTS.md`](AGENTS.md), [`README.md`](README.md), [`docs/RELEASE.md`](docs/RELEASE.md), and [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md), while noting it remains a separate `verify` mode from the default gate in [`scripts/project.mjs`](scripts/project.mjs)
+- release-readiness cross-links: `package.json` `prepublishOnly` called out next to the verification facade in [`AGENTS.md`](AGENTS.md); configured-source lifecycle plus publish-time `release` gate summarized under local validation modes in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); configured-source harness subsection in [`docs/RELEASE.md`](docs/RELEASE.md) explicitly ties to [Pre-release checks](docs/RELEASE.md#pre-release-checks)
 
 ## 0.2.24 - 2026-05-11
 

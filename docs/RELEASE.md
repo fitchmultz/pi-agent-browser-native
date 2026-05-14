@@ -105,7 +105,7 @@ This checklist assumes a real `agent-browser` on `PATH`. It complements, but doe
 
 ### Configured-source lifecycle validation
 
-Prefer the automated harness for deterministic configured-source lifecycle regression coverage:
+Run the automated harness for deterministic configured-source lifecycle regression coverage (required before publish together with the other [Pre-release checks](#pre-release-checks)):
 
 ```bash
 npm run verify -- lifecycle
