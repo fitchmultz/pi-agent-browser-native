@@ -94,6 +94,10 @@ Examples:
   npm run verify -- lifecycle --keep-artifacts --verbose
   npm run verify -- release
 
+Publisher note:
+  package.json prepublishOnly runs release (default + package-pi), then npm pack --dry-run during npm publish.
+  It does not run lifecycle, real-upstream, or benchmark; see docs/RELEASE.md#pre-release-checks.
+
 Exit codes:
   0  Verification passed or help was shown.
   1  Verification failed.
