@@ -62,7 +62,7 @@ The result is optimized for agent work:
 | Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
 | Auth/profile workflows can leak secrets | Supports `auth save --password-stdin` and redacts sensitive args, URLs, stdout/stderr, details, and parse-failure spills | `test/agent-browser.extension-validation.test.ts` |
 | Stateful cookies/storage/auth output bloats or leaks context | Presentation layer redacts `details.data` for cookies and storage (field-aware values) and recursively scrubs other structured upstream JSON (network, diff, trace/profiler, stream, dashboard, chat, auth, dialog, frame, state, and similar) using sensitive key names plus string heuristics; masks sensitive argv flags and positionals; scrubs secrets from failed batch step errors; and exposes a compact redacted `batch` matrix on top-level `details.data` | `extensions/agent-browser/lib/results/presentation.ts`, `extensions/agent-browser/lib/runtime.ts`, `test/agent-browser.presentation.test.ts` |
-| Stale `@eN` refs fail mysteriously | Adds recovery guidance to rerun `snapshot -i` or use stable `find` locators | `test/agent-browser.results.test.ts` |
+| Stale `@eN` refs fail mysteriously | Records per-session `details.refSnapshot`, rejects mismatched URLs / unknown refs / unsafe `batch` stdin ordering before spawn, adds recovery guidance to rerun `snapshot -i` or use stable `find` locators | `extensions/agent-browser/index.ts`, `test/agent-browser.results.test.ts`, `test/agent-browser.extension-validation.test.ts` |
 | Agents need stable success/failure buckets | Exposes bounded `resultCategory`, `successCategory`, and `failureCategory` on tool `details` for branching without parsing prose | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/shared.ts`, `test/agent-browser.results.test.ts` |
 | Models re-snapshot after every click without new URL/title context | Adds optional `details.pageChangeSummary` (and per-batch-step summaries) with `changeType`, compact text, optional `title`/`url`, artifact hints, and `nextActionIds` aligned to `nextActions` | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/presentation.ts`, `test/agent-browser.presentation.test.ts` |
 | Direct binary help may be blocked in agent sessions | Publishes a repo-readable command reference and verifies it against the target upstream version | `npm run verify` |
@@ -155,6 +155,8 @@ Run a multi-step flow in one tool call:
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
 ```
 
+If the same `batch` stdin later uses `@e…` on interaction commands after a step that can navigate or mutate the page (`open`, `click`, `fill`, and similar), insert a `snapshot` step whose first argv token is `snapshot` (for example `["snapshot","-i"]`) between those phases. The wrapper rejects unsafe ordering with `failureCategory: "stale-ref"` before upstream runs; full rules are under `refSnapshot` in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
+
 Evaluate page JavaScript through stdin:
 
 ```json
@@ -189,6 +191,7 @@ Typical pitfalls:
 - `semanticAction` and `job` are **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
 - Commands or locators outside the supported shorthand still require explicit `args`.
 - Use `semanticAction.session` to target a named upstream browser session; the wrapper prepends `--session <name>` before `find` and keeps that prefix on retry/candidate actions.
+- Do not reuse `@e…` refs across navigation. The wrapper records the latest snapshot refs per session and fails mutation-prone stale/recycled refs before upstream can silently hit a different current-page element; use the session-aware `refresh-interactive-refs` next action.
 - If upstream classifies the failure as `stale-ref` and `details.compiledSemanticAction` is present, `details.nextActions` may list `retry-semantic-action-after-stale-ref` after `refresh-interactive-refs`, carrying the same compiled `find` argv so you can retry the locator-stable target once it is safe to do so (contract in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction)).
 - If the failure is `selector-not-found` for a compiled `semanticAction`, visible text may add `Agent-browser candidate fallbacks` and `details.nextActions` may list bounded `try-*-candidate` follow-ups (role/name retries only for `fill` + `placeholder`, `click` + `text`, or `fill` + `label`; `select` misses do not get these entries); prefer those payloads or a fresh snapshot over guessing new selectors (same contract link).
 

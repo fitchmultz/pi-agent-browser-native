@@ -1818,6 +1818,21 @@ interface OrderedSessionTabTarget {
 	target: SessionTabTarget;
 }
 
+interface SessionRefSnapshot {
+	refIds: string[];
+	target?: SessionTabTarget;
+}
+
+interface OrderedSessionRefSnapshot extends SessionRefSnapshot {
+	order: number;
+}
+
+interface StaleRefPreflight {
+	message: string;
+	refIds: string[];
+	snapshot?: SessionRefSnapshot;
+}
+
 interface AboutBlankSessionMismatch {
 	activeUrl: "about:blank";
 	recoveryApplied: boolean;
@@ -1826,7 +1841,7 @@ interface AboutBlankSessionMismatch {
 	targetUrl: string;
 }
 
-function getLatestSessionTabTargetOrder(targets: Map<string, OrderedSessionTabTarget>): number {
+function getLatestSessionTabTargetOrder(targets: Map<string, { order: number }>): number {
 	let latestOrder = 0;
 	for (const target of targets.values()) {
 		latestOrder = Math.max(latestOrder, target.order);
@@ -1835,7 +1850,7 @@ function getLatestSessionTabTargetOrder(targets: Map<string, OrderedSessionTabTa
 }
 
 function shouldApplySessionTabTargetUpdate(options: {
-	current?: OrderedSessionTabTarget;
+	current?: { order: number };
 	updateOrder: number;
 }): boolean {
 	return !options.current || options.updateOrder >= options.current.order;
@@ -1979,6 +1994,66 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Orde
 		}
 	}
 	return restoredTargets;
+}
+
+function extractRefSnapshotFromData(data: unknown): SessionRefSnapshot | undefined {
+	if (!isRecord(data)) return undefined;
+	const refIds = isRecord(data.refs) ? Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId)) : [];
+	if (refIds.length === 0) return undefined;
+	return {
+		refIds,
+		target: extractSessionTabTargetFromData(data),
+	};
+}
+
+function extractRefSnapshotFromBatchResults(data: unknown): SessionRefSnapshot | undefined {
+	if (!Array.isArray(data)) return undefined;
+	let latestSnapshot: SessionRefSnapshot | undefined;
+	for (const item of data) {
+		if (!isRecord(item) || item.success === false) continue;
+		const [name] = extractBatchResultCommand(item);
+		if (name !== "snapshot") continue;
+		latestSnapshot = extractRefSnapshotFromData(item.result) ?? latestSnapshot;
+	}
+	return latestSnapshot;
+}
+
+function restoreSessionRefSnapshotsFromBranch(branch: unknown[]): Map<string, OrderedSessionRefSnapshot> {
+	const restoredSnapshots = new Map<string, OrderedSessionRefSnapshot>();
+	let restoredOrder = 0;
+	for (const entry of branch) {
+		if (!isRecord(entry) || entry.type !== "message") continue;
+		const message = isRecord(entry.message) ? entry.message : undefined;
+		if (!message || message.toolName !== "agent_browser") continue;
+		const details = isRecord(message.details) ? message.details : undefined;
+		if (!details) continue;
+		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
+		if (!sessionName) continue;
+		const command = typeof details.command === "string" ? details.command : undefined;
+		if (command === "close" && message.isError !== true) {
+			restoredOrder += 1;
+			restoredSnapshots.delete(sessionName);
+			continue;
+		}
+		const refSnapshot = isRecord(details.refSnapshot)
+			? {
+				refIds: Array.isArray(details.refSnapshot.refIds)
+					? details.refSnapshot.refIds.filter((refId): refId is string => typeof refId === "string" && /^e\d+$/.test(refId))
+					: [],
+				target: isRecord(details.refSnapshot.target)
+					? normalizeSessionTabTarget({
+							title: typeof details.refSnapshot.target.title === "string" ? details.refSnapshot.target.title : undefined,
+							url: typeof details.refSnapshot.target.url === "string" ? details.refSnapshot.target.url : undefined,
+					  })
+					: undefined,
+			  }
+			: undefined;
+		if (refSnapshot && refSnapshot.refIds.length > 0) {
+			restoredOrder += 1;
+			restoredSnapshots.set(sessionName, { ...refSnapshot, order: restoredOrder });
+		}
+	}
+	return restoredSnapshots;
 }
 
 function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactManifest | undefined {
@@ -2130,6 +2205,46 @@ function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps
 	}
 }
 
+const REF_INVALIDATING_BATCH_COMMANDS = new Set([
+	"back",
+	"check",
+	"click",
+	"dblclick",
+	"drag",
+	"fill",
+	"forward",
+	"goto",
+	"keyboard",
+	"mouse",
+	"navigate",
+	"open",
+	"press",
+	"reload",
+	"select",
+	"type",
+	"uncheck",
+	"upload",
+]);
+
+const REF_GUARDED_COMMANDS = new Set([
+	"check",
+	"click",
+	"dblclick",
+	"download",
+	"drag",
+	"fill",
+	"focus",
+	"hover",
+	"keyboard",
+	"mouse",
+	"press",
+	"scrollintoview",
+	"select",
+	"type",
+	"uncheck",
+	"upload",
+]);
+
 function getStaleRefArgs(commandTokens: string[], stdin?: string): string[] {
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return commandTokens;
@@ -2139,6 +2254,101 @@ function getStaleRefArgs(commandTokens: string[], stdin?: string): string[] {
 		return commandTokens;
 	}
 	return parsed.steps.flatMap((step) => step);
+}
+
+function collectRefsFromTokens(tokens: string[]): string[] {
+	return tokens.filter((token) => /^@e\d+\b/.test(token)).map((token) => token.slice(1));
+}
+
+function getGuardedRefUsage(commandTokens: string[], stdin?: string): string[] {
+	const collectFromStep = (step: string[]) => REF_GUARDED_COMMANDS.has(step[0] ?? "") ? collectRefsFromTokens(step) : [];
+	if (commandTokens[0] !== "batch" || stdin === undefined) {
+		return collectFromStep(commandTokens);
+	}
+	const parsed = parseUserBatchStdin(stdin);
+	if (parsed.error || parsed.steps === undefined) {
+		return collectFromStep(commandTokens);
+	}
+	const refsBeforeInBatchSnapshot: string[] = [];
+	for (const step of parsed.steps) {
+		if ((step[0] ?? "") === "snapshot") break;
+		refsBeforeInBatchSnapshot.push(...collectFromStep(step));
+	}
+	return refsBeforeInBatchSnapshot;
+}
+
+function targetsMatch(left: SessionTabTarget | undefined, right: SessionTabTarget | undefined): boolean {
+	if (!left || !right) return true;
+	return normalizeComparableUrl(left.url) === normalizeComparableUrl(right.url);
+}
+
+function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string): string | undefined {
+	if (commandTokens[0] !== "batch" || stdin === undefined) return undefined;
+	const parsed = parseUserBatchStdin(stdin);
+	if (parsed.error || parsed.steps === undefined) return undefined;
+	let priorStepInvalidatesRefs = false;
+	for (const step of parsed.steps) {
+		if ((step[0] ?? "") === "snapshot") {
+			priorStepInvalidatesRefs = false;
+		}
+		const refIds = collectRefsFromTokens(step);
+		if (refIds.length > 0 && REF_GUARDED_COMMANDS.has(step[0] ?? "") && priorStepInvalidatesRefs) {
+			return `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`;
+		}
+		if (REF_INVALIDATING_BATCH_COMMANDS.has(step[0] ?? "")) {
+			priorStepInvalidatesRefs = true;
+		}
+	}
+	return undefined;
+}
+
+function buildStaleRefPreflight(options: {
+	commandTokens: string[];
+	currentTarget?: SessionTabTarget;
+	refSnapshot?: SessionRefSnapshot;
+	stdin?: string;
+}): StaleRefPreflight | undefined {
+	const usedRefIds = [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin))];
+	const batchInvalidationMessage = getBatchRefInvalidationMessage(options.commandTokens, options.stdin);
+	if (batchInvalidationMessage && usedRefIds.length > 0) {
+		return {
+			message: batchInvalidationMessage,
+			refIds: usedRefIds,
+			snapshot: options.refSnapshot,
+		};
+	}
+	if (usedRefIds.length === 0 || !options.refSnapshot) return undefined;
+	if (!targetsMatch(options.refSnapshot.target, options.currentTarget)) {
+		return {
+			message: `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} came from a snapshot for ${options.refSnapshot.target?.url ?? "a prior page"}, but the current session target is ${options.currentTarget?.url ?? "unknown"}. Run snapshot -i again before using page-scoped refs.`,
+			refIds: usedRefIds,
+			snapshot: options.refSnapshot,
+		};
+	}
+	const knownRefs = new Set(options.refSnapshot.refIds);
+	const missingRefs = usedRefIds.filter((refId) => !knownRefs.has(refId));
+	if (missingRefs.length > 0) {
+		return {
+			message: `Ref ${missingRefs.map((refId) => `@${refId}`).join(", ")} was not present in the latest snapshot for this session. Run snapshot -i again before using page-scoped refs.`,
+			refIds: missingRefs,
+			snapshot: options.refSnapshot,
+		};
+	}
+	return undefined;
+}
+
+function sessionPrefixArgs(sessionName: string | undefined, args: string[]): string[] {
+	return sessionName && args[0] !== "--session" ? ["--session", sessionName, ...args] : args;
+}
+
+function sessionAwareStaleRefNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
+	return (buildAgentBrowserNextActions({ failureCategory: "stale-ref", resultCategory: "failure" }) ?? []).map((action) => {
+		const actionArgs = action.params?.args;
+		return {
+			...action,
+			params: action.params && actionArgs ? { ...action.params, args: sessionPrefixArgs(sessionName, actionArgs) } : action.params,
+		};
+	});
 }
 
 function buildPinnedBatchPlan(options: {
@@ -2543,6 +2753,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let managedSessionCwd = process.cwd();
 	let freshSessionOrdinal = 0;
 	let sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
+	let sessionRefSnapshots = new Map<string, OrderedSessionRefSnapshot>();
 	let sessionTabTargetUpdateOrder = 0;
 	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
@@ -2556,7 +2767,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		managedSessionCwd = ctx.cwd;
 		freshSessionOrdinal = restoredState.freshSessionOrdinal;
 		sessionTabTargets = restoreSessionTabTargetsFromBranch(ctx.sessionManager.getBranch());
-		sessionTabTargetUpdateOrder = getLatestSessionTabTargetOrder(sessionTabTargets);
+		sessionRefSnapshots = restoreSessionRefSnapshotsFromBranch(ctx.sessionManager.getBranch());
+		sessionTabTargetUpdateOrder = Math.max(getLatestSessionTabTargetOrder(sessionTabTargets), getLatestSessionTabTargetOrder(sessionRefSnapshots));
 		artifactManifest = restoreArtifactManifestFromBranch(ctx.sessionManager.getBranch());
 	});
 
@@ -2573,6 +2785,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		}
 		managedSessionActive = false;
 		sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
+		sessionRefSnapshots = new Map<string, OrderedSessionRefSnapshot>();
 		sessionTabTargetUpdateOrder = 0;
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
@@ -2804,6 +3017,31 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 				const priorSessionTabTargetState = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
 				const priorSessionTabTarget = priorSessionTabTargetState?.target;
+				const priorRefSnapshotState = executionPlan.sessionName ? sessionRefSnapshots.get(executionPlan.sessionName) : undefined;
+				const staleRefPreflight = buildStaleRefPreflight({
+					commandTokens,
+					currentTarget: priorSessionTabTarget,
+					refSnapshot: priorRefSnapshotState,
+					stdin: toolStdin,
+				});
+				if (staleRefPreflight) {
+					return {
+						content: [{ type: "text", text: staleRefPreflight.message }],
+						details: {
+							args: redactedArgs,
+							command: executionPlan.commandInfo.command,
+							compatibilityWorkaround,
+							effectiveArgs: redactedEffectiveArgs,
+							nextActions: sessionAwareStaleRefNextActions(executionPlan.sessionName),
+							refIds: staleRefPreflight.refIds,
+							refSnapshot: staleRefPreflight.snapshot,
+							sessionMode,
+							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: staleRefPreflight.message, failureCategory: "stale-ref", succeeded: false }),
+							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+						},
+						isError: true,
+					};
+				}
 				let pinnedBatchUnwrapMode: PinnedBatchUnwrapMode | undefined;
 				let includePinnedNavigationSummary = false;
 				let sessionTabCorrection: OpenResultTabCorrection | undefined;
@@ -3099,14 +3337,29 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							}
 						}
 					}
+					let currentRefSnapshot: SessionRefSnapshot | undefined;
 					if (executionPlan.sessionName) {
 						const activeSessionTabTargetState = sessionTabTargets.get(executionPlan.sessionName);
 						if (shouldApplySessionTabTargetUpdate({ current: activeSessionTabTargetState, updateOrder: tabTargetUpdateOrder })) {
 							if (executionPlan.commandInfo.command === "close" && succeeded) {
 								sessionTabTargets.delete(executionPlan.sessionName);
+								sessionRefSnapshots.delete(executionPlan.sessionName);
 							} else if (currentSessionTabTarget) {
 								sessionTabTargets.set(executionPlan.sessionName, { order: tabTargetUpdateOrder, target: currentSessionTabTarget });
 							}
+						}
+						const refSnapshot = succeeded
+			? executionPlan.commandInfo.command === "snapshot"
+				? extractRefSnapshotFromData(presentationEnvelope?.data)
+				: executionPlan.commandInfo.command === "batch"
+					? extractRefSnapshotFromBatchResults(presentationEnvelope?.data)
+					: undefined
+			: undefined;
+						if (refSnapshot && shouldApplySessionTabTargetUpdate({ current: sessionRefSnapshots.get(executionPlan.sessionName), updateOrder: tabTargetUpdateOrder })) {
+							currentRefSnapshot = { ...refSnapshot, target: refSnapshot.target ?? currentSessionTabTarget };
+							sessionRefSnapshots.set(executionPlan.sessionName, { ...currentRefSnapshot, order: tabTargetUpdateOrder });
+						} else {
+							currentRefSnapshot = sessionRefSnapshots.get(executionPlan.sessionName);
 						}
 					}
 
@@ -3126,6 +3379,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 					if (replacedManagedSessionName) {
 						sessionTabTargets.delete(replacedManagedSessionName);
+						sessionRefSnapshots.delete(replacedManagedSessionName);
 						await closeManagedSession({
 							cwd: priorManagedSessionCwd,
 							sessionName: replacedManagedSessionName,
@@ -3265,6 +3519,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						validationError: undefined,
 					});
 					let nextActions = presentation.nextActions ? [...presentation.nextActions] : undefined;
+					if (categoryDetails.failureCategory === "stale-ref") {
+						nextActions = sessionAwareStaleRefNextActions(executionPlan.sessionName);
+					}
 					if (categoryDetails.failureCategory === "selector-not-found" && redactedCompiledSemanticAction) {
 						const candidateActions = buildSemanticActionCandidateActions(redactedCompiledSemanticAction);
 						if (candidateActions.length > 0) {
@@ -3321,6 +3578,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						sessionMode,
 						sessionTabCorrection,
 						sessionTabTarget: currentSessionTabTarget,
+						refSnapshot: currentRefSnapshot,
 						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 						sessionRecoveryHint: redactedRecoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,
