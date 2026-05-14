@@ -200,6 +200,7 @@ Before publishing:
 - run `npm run doctor` and confirm any duplicate-source remediation matches the active package/checkout setup
 - run `npm run verify -- real-upstream` for upstream runtime, result-presentation, or managed-session changes
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and configured-source lifecycle validation
+- complete interactive `tmux` live-site dogfood with `pi --no-extensions -e .` and the native `agent_browser` tool (at least one simple static site and one real documentation/product site; include `qa` or `job`/`batch` when those surfaces changed; close sessions and remove screenshots/temp artifacts; record evidence)—see [Pre-release checks](#pre-release-checks); automated gates are not a substitute
 - rerun `npm run verify -- release`
 - run `npm run verify -- lifecycle` for opt-in configured-source `/reload` plus restart/`/resume` regression coverage
 - confirm [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) still maps every current baseline inventory section to docs, runtime handling, tests, and validation status
