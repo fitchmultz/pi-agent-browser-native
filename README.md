@@ -56,7 +56,7 @@ The result is optimized for agent work:
 
 | Pain | Native wrapper capability | Proof surface |
 |---|---|---|
-| Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, an optional `semanticAction` shorthand for common `find` flows, a constrained `job` or `qa` preset that compile short workflows to `batch`, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
+| Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, an optional `semanticAction` shorthand for common `find` flows, constrained `job` / `qa` presets and experimental `sourceLookup` that compile short workflows to `batch`, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
 | Page snapshots are too large | Shows compact, main-content-first summaries and stores full raw output in spill files when needed | `test/agent-browser.presentation.test.ts` |
 | Screenshots/downloads get lost in text | Normalizes artifact paths and reports existence, size, cwd, session, and repair status | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#download-screenshot-and-pdf-files) |
 | Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
@@ -184,7 +184,7 @@ For supported upstream `find` flows you can omit hand-built `args` and pass a to
 
 Typical pitfalls:
 
-- Supply **exactly one** of `args`, `semanticAction`, `job`, or `qa` per call (not more, not none).
+- Supply **exactly one** of `args`, `semanticAction`, `job`, `qa`, or `sourceLookup` per call (not more, not none).
 - `semanticAction` and `job` are **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
 - Commands or locators outside the supported shorthand still require explicit `args`.
 - If upstream classifies the failure as `stale-ref` and `details.compiledSemanticAction` is present, `details.nextActions` may list `retry-semantic-action-after-stale-ref` after `refresh-interactive-refs`, carrying the same compiled `find` argv so you can retry the locator-stable target once it is safe to do so (contract in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction)).
@@ -205,7 +205,7 @@ For short repeatable workflows, pass a top-level `job` instead of hand-writing `
 }
 ```
 
-Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, or commands outside the constrained job schema. Do not pass `stdin` with `job` or `qa`; those modes generate the batch stdin themselves.
+Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, or commands outside the constrained job schema. Do not pass `stdin` with `job`, `qa`, or `sourceLookup`; those modes generate the batch stdin themselves.
 
 ### Lightweight QA preset
 
@@ -222,6 +222,16 @@ For a quick smoke/QA pass, use top-level `qa`. It compiles to the same batch pat
 ```
 
 Use custom `job` or raw `batch` when you need a different check sequence.
+
+### Experimental source lookup
+
+For local app debugging, `sourceLookup` can gather candidate component/file locations for a visible UI element. It is explicit and evidence-based: pass a `selector`, `reactFiberId`, and/or `componentName`; the wrapper compiles those inputs to existing batch steps (`is visible`, `get html` when `includeDomHints` is not `false`, `react inspect`, `react tree`) and a bounded local workspace scan under the Pi session cwd (`maxWorkspaceFiles` defaults to 2000 and cannot exceed 5000; the scan records at most ten `workspace-search` candidates). Results appear in `details.sourceLookup` with `status`, `candidates`, `limitations`, and `summary`. Unlike `qa`, the wrapper does not mark the tool failed on an otherwise successful batch solely because `status` is `no-candidates` or because React metadata was missing; failed upstream steps (for example `react inspect` without DevTools) still fail the batch normally.
+
+```json
+{ "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+```
+
+This is an experiment, not a guarantee. React hints require a session opened with `--enable react-devtools`, and many builds do not expose useful sourcemap/source metadata; `status: "no-candidates"` is common when nothing matched, and `status: "unsupported"` only when no candidates were found **and** a compiled `react` batch step failed (if DOM or workspace search still produced candidates, you get `candidates-found` instead).
 
 For asynchronous exports, click first and then wait for the download:
 

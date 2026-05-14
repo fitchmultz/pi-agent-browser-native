@@ -26,7 +26,7 @@ Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before an
 
 ## Core mental model
 
-Tool parameters (use exactly one of `args`, `semanticAction`, `job`, or `qa`):
+Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, or `sourceLookup`):
 
 ```json
 { "args": ["open", "https://example.com"], "sessionMode": "auto" }
@@ -44,11 +44,16 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, or `qa`):
 { "job": { "steps": [{ "action": "open", "url": "https://example.com" }, { "action": "assertText", "text": "Example Domain" }] } }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, or `qa` instead (mutually exclusive).
-- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args`, `job`, or `qa` on the same call.
+```json
+{ "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+```
+
+- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, `qa`, or `sourceLookup` instead (mutually exclusive).
+- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args`, `job`, `qa`, or `sourceLookup` on the same call.
 - `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin and reports the compiled plan in `details.compiledJob`.
 - `qa`: optional lightweight QA preset; compiles to the same batch path and reports `details.compiledQaPreset` plus `details.qaPreset` pass/fail evidence.
-- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. Job and QA modes generate their own `batch` stdin.
+- `sourceLookup`: optional experimental helper for local UI-to-source *candidates*; compiles to the same `batch` path, reports `details.compiledSourceLookup` and `details.sourceLookup`, and never reclassifies a fully successful upstream batch as failed the way `qa` can (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#sourcelookup) and the longer notes below).
+- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, and `sourceLookup` generate their own `batch` stdin.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
@@ -121,7 +126,7 @@ Examples:
 { "args": ["snapshot", "-i"] }
 ```
 
-The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args` and `job`, not a nested shape inside `batch` stdin arrays.
+The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, and `sourceLookup`, not a nested shape inside `batch` stdin arrays.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 
@@ -158,7 +163,7 @@ For short constrained flows, use top-level `job` instead of hand-writing `batch`
 }
 ```
 
-Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`; job mode generates the batch stdin itself.
+Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`, `qa`, or `sourceLookup`; those modes generate the batch stdin themselves.
 
 For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks expected text/selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot.
 
@@ -169,6 +174,12 @@ For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console
 Optional `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set one to `false` to skip that diagnostic. Omit `expectedText` and `expectedSelector` when you only need load plus diagnostics.
 
 Use custom `job` or raw `batch` when you need a different check sequence.
+
+For local app debugging, top-level `sourceLookup` can gather candidate component/file locations for a visible element from selector DOM hints, React DevTools inspection, and a bounded workspace component-name search rooted at the Pi session working directory (`maxWorkspaceFiles` defaults to 2000 and cannot exceed 5000; the scan records at most ten `workspace-search` candidates). With a `selector`, the wrapper runs `is visible` and, unless `includeDomHints` is `false`, `get html` so DOM data attributes and embedded source-like paths can become `dom-attribute` candidates. It reports evidence and confidence in `details.sourceLookup` instead of claiming a guaranteed source file. React hints require a session opened with `--enable react-devtools`. The `details.sourceLookup.status` field reads `unsupported` only when no candidates were collected **and** a `react` batch step failed (inspect errors, missing renderer, and similar); it reads `no-candidates` when the batch succeeded but nothing matched. If selector or workspace hints still yield candidates, `status` remains `candidates-found` even when React inspection failed. Unlike `qa`, the wrapper does not downgrade a **fully successful** upstream batch to `isError` solely because those statuses appear—though failed batch steps still produce normal tool errors.
+
+```json
+{ "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+```
 
 ### Wait for page readiness or downloads
 

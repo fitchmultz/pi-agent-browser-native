@@ -210,6 +210,13 @@ export type AgentBrowserToolParams = {
 		checkErrors?: boolean;
 		checkNetwork?: boolean;
 	};
+	sourceLookup?: {
+		selector?: string;
+		reactFiberId?: string;
+		componentName?: string;
+		includeDomHints?: boolean;
+		maxWorkspaceFiles?: number;
+	};
 	sessionMode?: "auto" | "fresh";
 	stdin?: string;
 };

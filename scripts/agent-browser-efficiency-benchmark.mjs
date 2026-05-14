@@ -167,6 +167,30 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
     elapsedMsEstimate: 1400,
   }),
   Object.freeze({
+    id: "source-lookup-visible-element",
+    title: "Look up candidate source locations for a visible local UI element",
+    workflow: "native-source-lookup-experiment",
+    steps: Object.freeze([
+      Object.freeze({
+        call: "agent_browser",
+        sourceLookup: Object.freeze({
+          selector: "#save",
+          reactFiberId: "2",
+          componentName: "SaveButton",
+        }),
+      }),
+    ]),
+    modelOutputs: Object.freeze([
+      "Source lookup found 2 candidate location(s). Status: candidates-found. Evidence: react inspect source and workspace component search. Limitations: experimental, not guaranteed.",
+    ]),
+    success: true,
+    staleRefFailures: 0,
+    staleRefRecoveries: 0,
+    artifactSuccesses: 0,
+    failureCategories: Object.freeze([]),
+    elapsedMsEstimate: 1500,
+  }),
+  Object.freeze({
     id: "job-open-assert-screenshot",
     title: "Run a constrained job that opens, asserts text, and captures evidence",
     workflow: "native-job",
