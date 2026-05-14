@@ -61,7 +61,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 
 ## Parameters
 
-Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, `job`, `qa`, or `sourceLookup`):
+Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup`):
 
 ```json
 { "args": ["open", "https://example.com"], "stdin": "optional raw stdin content", "sessionMode": "auto" }
@@ -74,7 +74,7 @@ Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`
 ### `args`
 
 - type: `string[]`
-- required unless `semanticAction`, `job`, `qa`, or `sourceLookup` is provided
+- required unless `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup` is provided
 - exact CLI args passed after `agent-browser`
 - no shell operators
 - do not include the binary name
@@ -91,7 +91,7 @@ Examples:
 ### `semanticAction`
 
 - type: object
-- optional; mutually exclusive with `args`, `job`, `qa`, and `sourceLookup` (omit all of them when using this field)
+- optional; mutually exclusive with `args`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup` (omit all of them when using this field)
 - top-level tool input only: `batch` stdin remains upstream argv arrays; express find steps inside batch as string arrays such as `["find","role","button","click","--name","Export"]`, not nested `semanticAction` objects
 - thin intent schema compiled by this wrapper into existing upstream `find` commands; behavior and locator semantics stay upstream-owned
 - supported actions: `click`, `fill`, `select`, `check`, `uncheck`
@@ -127,7 +127,7 @@ Examples:
 ### `job`
 
 - type: object with a non-empty `steps` array
-- optional; mutually exclusive with `args`, `semanticAction`, `qa`, and `sourceLookup`
+- optional; mutually exclusive with `args`, `semanticAction`, `qa`, `sourceLookup`, and `networkSourceLookup`
 - top-level tool input only; do not nest `job` inside `batch` stdin
 - constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
 - supported steps (each row becomes one upstream `batch` step; `click` / `fill` pass `selector` through as the same argv token shape standalone `click` / `fill` would use upstream, including `@refs`, not the `semanticAction` locator schema):
@@ -168,7 +168,7 @@ Use raw `args` plus `stdin` for upstream `batch` when a flow needs commands, fla
 ### `qa`
 
 - type: object with required `url`
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, and `sourceLookup`
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, `sourceLookup`, and `networkSourceLookup`
 - lightweight preset built on the same batch compiler path as `job`
 - clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load networkidle`, optionally asserts `expectedText` (string or string array) and/or `expectedSelector` (each may be omitted for a load-plus-diagnostics-only smoke), then runs enabled diagnostics: `network requests`, `console`, and `errors`
 - `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set a field to `false` to omit that diagnostic
@@ -187,7 +187,7 @@ Use custom `job` or raw `batch` for QA flows that need custom commands, flags, a
 ### `sourceLookup`
 
 - type: object with at least one of `selector`, `reactFiberId`, or `componentName`
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, and `qa`
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, and `networkSourceLookup`
 - experimental opt-in helper for local app debugging; it reports candidate source locations with confidence and evidence instead of claiming a guaranteed DOM-to-file mapping
 - compiles to existing upstream `batch` commands only:
   - `selector` adds `is visible <selector>` and, unless `includeDomHints: false`, adds `get html <selector>` for source-like DOM attributes (`data-source-file`, `data-file`, `data-component-file`, `data-source`, plus optional `data-source-line` / `data-line` and `data-source-column` / `data-column`) and for `.ts`/`.tsx`/`.js`/`.jsx` paths embedded in HTML text
@@ -208,12 +208,32 @@ Example:
 
 Use raw `args` for direct upstream React inspection when you already know the exact `react tree` / `react inspect` command you want, or when this experiment's bounded evidence model is too narrow.
 
+### `networkSourceLookup`
+
+- type: object with at least one of `requestId`, `filter`, or `url`, plus optional `maxWorkspaceFiles`
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, and `sourceLookup`
+- experimental failed-request source-hint helper; it reports failed network requests and candidate source hints with evidence instead of assigning blame
+- compiles to existing upstream `batch` commands only: `network request <requestId>` when provided plus `network requests` with `--filter <filter-or-url>` when a filter or URL is provided
+- detects failed requests from `status >= 400`, `failed: true`, or an `error` field
+- candidate sources come from source-like initiator/stack metadata in upstream network results and bounded local workspace search for URL/path literals under the Pi session cwd
+- optional `maxWorkspaceFiles` defaults to 2000 and cannot exceed 5000; workspace-search candidates are capped at ten
+- reports `details.compiledNetworkSourceLookup` with the generated batch plan and `details.networkSourceLookup` with `{ status, failedRequests, candidates, limitations, summary }`
+- `details.networkSourceLookup.status` is one of `failed-requests-found`, `no-failed-requests`, or `no-candidates`
+
+Example:
+
+```json
+{ "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }
+```
+
+Use raw `args` for HAR capture, full request body inspection, or custom network debugging beyond this bounded evidence model.
+
 ### `stdin`
 
 - type: `string`
 - optional
-- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`; generated internally when `job`, `qa`, or `sourceLookup` compiles to `batch`
-- do not provide `stdin` with `job`, `qa`, or `sourceLookup`; those modes own the generated batch stdin and reject caller-provided stdin to avoid ambiguity
+- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`; generated internally when `job`, `qa`, `sourceLookup`, or `networkSourceLookup` compiles to `batch`
+- do not provide `stdin` with `job`, `qa`, `sourceLookup`, or `networkSourceLookup`; those modes own the generated batch stdin and reject caller-provided stdin to avoid ambiguity
 - rejected before launch for any other command/stdin combination, including commands such as `click`, `snapshot`, or `open`
 
 Examples:

@@ -167,6 +167,26 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
     elapsedMsEstimate: 1400,
   }),
   Object.freeze({
+    id: "network-source-lookup-failed-request",
+    title: "Look up candidate source hints for a failed network request",
+    workflow: "native-network-source-lookup-experiment",
+    steps: Object.freeze([
+      Object.freeze({
+        call: "agent_browser",
+        networkSourceLookup: Object.freeze({ requestId: "req-1", url: "/api/fail" }),
+      }),
+    ]),
+    modelOutputs: Object.freeze([
+      "Network source lookup found 1 failed request(s) and 2 candidate source hint(s). Evidence: initiator stack and workspace URL literal. Limitations: experimental, not blame.",
+    ]),
+    success: true,
+    staleRefFailures: 0,
+    staleRefRecoveries: 0,
+    artifactSuccesses: 0,
+    failureCategories: Object.freeze([]),
+    elapsedMsEstimate: 1500,
+  }),
+  Object.freeze({
     id: "source-lookup-visible-element",
     title: "Look up candidate source locations for a visible local UI element",
     workflow: "native-source-lookup-experiment",

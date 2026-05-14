@@ -26,7 +26,7 @@ Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before an
 
 ## Core mental model
 
-Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, or `sourceLookup`):
+Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup`):
 
 ```json
 { "args": ["open", "https://example.com"], "sessionMode": "auto" }
@@ -46,14 +46,16 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, or `s
 
 ```json
 { "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+{ "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, `qa`, or `sourceLookup` instead (mutually exclusive).
-- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args`, `job`, `qa`, or `sourceLookup` on the same call.
+- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup` instead (mutually exclusive).
+- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup` on the same call.
 - `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin and reports the compiled plan in `details.compiledJob`.
 - `qa`: optional lightweight QA preset; compiles to the same batch path and reports `details.compiledQaPreset` plus `details.qaPreset` pass/fail evidence.
 - `sourceLookup`: optional experimental helper for local UI-to-source *candidates*; compiles to the same `batch` path, reports `details.compiledSourceLookup` and `details.sourceLookup`, and never reclassifies a fully successful upstream batch as failed the way `qa` can (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#sourcelookup) and the longer notes below).
-- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, and `sourceLookup` generate their own `batch` stdin.
+- `networkSourceLookup`: optional experimental helper for failed request-to-source *candidates*; compiles to generated `batch`, reports `details.compiledNetworkSourceLookup` and `details.networkSourceLookup`, and never assigns blame or edits files.
+- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, `sourceLookup`, and `networkSourceLookup` generate their own `batch` stdin.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
@@ -126,7 +128,7 @@ Examples:
 { "args": ["snapshot", "-i"] }
 ```
 
-The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, and `sourceLookup`, not a nested shape inside `batch` stdin arrays.
+The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`, not a nested shape inside `batch` stdin arrays.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 
@@ -163,7 +165,7 @@ For short constrained flows, use top-level `job` instead of hand-writing `batch`
 }
 ```
 
-Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`, `qa`, or `sourceLookup`; those modes generate the batch stdin themselves.
+Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`, `qa`, `sourceLookup`, or `networkSourceLookup`; those modes generate the batch stdin themselves.
 
 For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks expected text/selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot.
 
@@ -179,6 +181,12 @@ For local app debugging, top-level `sourceLookup` can gather candidate component
 
 ```json
 { "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+```
+
+Top-level `networkSourceLookup` does the same for failed browser requests. It reads a specific `network request <requestId>` and/or filtered `network requests`, extracts failed-request context, and searches initiator metadata plus bounded local URL literals for candidate files. It reports `details.networkSourceLookup.status` as `failed-requests-found`, `no-failed-requests`, or `no-candidates` and never assigns definitive blame.
+
+```json
+{ "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }
 ```
 
 ### Wait for page readiness or downloads

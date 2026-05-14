@@ -34,6 +34,7 @@ const requiredScenarioIds = new Set([
   "job-open-assert-screenshot",
   "qa-open-diagnostics",
   "source-lookup-visible-element",
+  "network-source-lookup-failed-request",
 ]);
 
 test("benchmark covers representative browser workflow shapes", () => {
