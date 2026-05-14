@@ -191,6 +191,16 @@ export type AgentBrowserToolParams = {
 		role?: string;
 		name?: string;
 	};
+	job?: {
+		steps: Array<{
+			action: "open" | "click" | "fill" | "wait" | "assertText" | "assertUrl" | "waitForDownload" | "screenshot";
+			url?: string;
+			selector?: string;
+			text?: string;
+			path?: string;
+			milliseconds?: number;
+		}>;
+	};
 	sessionMode?: "auto" | "fresh";
 	stdin?: string;
 };
