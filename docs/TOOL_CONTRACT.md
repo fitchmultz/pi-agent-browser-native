@@ -101,7 +101,7 @@ Examples:
 - `fill` and `select` require non-empty `text` (compiled as the trailing value argument to `find`)
 - optional `name` is only valid with `locator: "role"` and compiles to `--name <name>` after the action (and after `text` when present)
 - optional `role` is accepted only when `locator` is `role` and must equal `value` if set (redundant with `value`; prefer `value` alone)
-- optional `session` is an upstream session name; when set, compilation prepends `--session <session>` before `find` so the shorthand targets that named browser context instead of the managed default; this is independent of top-level `sessionMode`, which only injects or rotates the extension-managed implicit session when the planned argv does not already start with `--session` (see `buildExecutionPlan` in `extensions/agent-browser/lib/runtime.ts`)
+- optional `session` is an upstream session name; when set, compilation prepends `--session <session>` before `find` so the shorthand targets that named browser context instead of the managed default; this is independent of top-level `sessionMode`, which only injects or rotates the extension-managed implicit session when the planned argv does not already start with `--session` (see `buildExecutionPlan` in `extensions/agent-browser/lib/runtime.ts`). On successful unified results, `details.sessionName` matches that name and `usedImplicitSession` is `false` because the call named upstream directly rather than consuming the extension-managed implicit session slot.
 
 Compilation (then `--json` and session handling apply like any other call):
 
