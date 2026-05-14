@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "RQ-0066",
-      "status": "todo",
+      "status": "doing",
       "title": "Experiment with local source lookup for visible UI elements",
       "priority": "low",
       "tags": [
@@ -30,7 +30,8 @@
       "notes": [],
       "request": "Infer and queue local-app source lookup experiment from the user's ABN task list.",
       "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-14T01:58:30.171453000Z",
+      "started_at": "2026-05-14T01:58:30.171453000Z",
       "depends_on": [
         "RQ-0065"
       ],

@@ -6,7 +6,7 @@
  * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
  */
 
-import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -81,10 +81,15 @@ const PACKAGE_NAME = "pi-agent-browser-native";
 const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select", "uncheck"] as const;
 const AGENT_BROWSER_SEMANTIC_LOCATORS = ["alt", "label", "placeholder", "role", "testid", "text", "title"] as const;
 const AGENT_BROWSER_JOB_STEP_ACTIONS = ["open", "click", "fill", "wait", "assertText", "assertUrl", "waitForDownload", "screenshot"] as const;
+const SOURCE_LOOKUP_WORKSPACE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
+const SOURCE_LOOKUP_IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", "out", "tmp", "temp"]);
+const SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES = 2_000;
+const SOURCE_LOOKUP_MAX_WORKSPACE_FILES = 5_000;
 
 type AgentBrowserSemanticActionName = (typeof AGENT_BROWSER_SEMANTIC_ACTIONS)[number];
 type AgentBrowserSemanticLocator = (typeof AGENT_BROWSER_SEMANTIC_LOCATORS)[number];
 type AgentBrowserJobStepAction = (typeof AGENT_BROWSER_JOB_STEP_ACTIONS)[number];
+type AgentBrowserSourceLookupStatus = "candidates-found" | "no-candidates" | "unsupported";
 
 interface AgentBrowserSemanticActionInput {
 	action: AgentBrowserSemanticActionName;
@@ -124,11 +129,46 @@ interface CompiledAgentBrowserQaPreset extends CompiledAgentBrowserJob {
 	};
 }
 
+interface CompiledAgentBrowserSourceLookupStep {
+	action: "dom" | "react";
+	args: string[];
+}
+
+interface CompiledAgentBrowserSourceLookup {
+	args: string[];
+	stdin: string;
+	steps: CompiledAgentBrowserSourceLookupStep[];
+	query: {
+		componentName?: string;
+		includeDomHints: boolean;
+		maxWorkspaceFiles: number;
+		reactFiberId?: string;
+		selector?: string;
+	};
+}
+
+interface AgentBrowserSourceLookupCandidate {
+	column?: number;
+	componentName?: string;
+	confidence: "high" | "medium" | "low";
+	evidence: string[];
+	file?: string;
+	line?: number;
+	source: "react-inspect" | "dom-attribute" | "workspace-search";
+}
+
+interface AgentBrowserSourceLookupAnalysis {
+	candidates: AgentBrowserSourceLookupCandidate[];
+	limitations: string[];
+	status: AgentBrowserSourceLookupStatus;
+	summary: string;
+}
+
 const AGENT_BROWSER_PARAMS = Type.Object({
 
 	args: Type.Optional(
 		Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
-			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, or qa is provided.",
+			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, qa, or sourceLookup is provided.",
 			minItems: 1,
 		}),
 	),
@@ -155,6 +195,15 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			checkConsole: Type.Optional(Type.Boolean({ description: "Whether to fail on console error messages. Defaults to true." })),
 			checkErrors: Type.Optional(Type.Boolean({ description: "Whether to fail on page errors. Defaults to true." })),
 			checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to fail on failed network requests. Defaults to true." })),
+		}),
+	),
+	sourceLookup: Type.Optional(
+		Type.Object({
+			selector: Type.Optional(Type.String({ description: "Visible selector or @ref whose DOM metadata should be inspected for source hints." })),
+			reactFiberId: Type.Optional(Type.String({ description: "React fiber id to inspect with upstream react inspect. Requires a session opened with --enable react-devtools." })),
+			componentName: Type.Optional(Type.String({ description: "Component name to correlate with react tree output and bounded local workspace search." })),
+			includeDomHints: Type.Optional(Type.Boolean({ description: "Whether selector lookups should inspect DOM HTML attributes for source-like metadata. Defaults to true." })),
+			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan when componentName is provided. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
 		}),
 	),
 	job: Type.Optional(
@@ -374,6 +423,237 @@ function compileAgentBrowserQaPreset(input: unknown): { compiled?: CompiledAgent
 	};
 }
 
+function compileAgentBrowserSourceLookup(input: unknown): { compiled?: CompiledAgentBrowserSourceLookup; error?: string } {
+	if (!isRecord(input)) {
+		return { error: "sourceLookup must be an object." };
+	}
+	const selector = input.selector;
+	const reactFiberId = input.reactFiberId;
+	const componentName = input.componentName;
+	if (selector !== undefined && (typeof selector !== "string" || selector.trim().length === 0)) {
+		return { error: "sourceLookup.selector must be a non-empty string when provided." };
+	}
+	if (reactFiberId !== undefined && (typeof reactFiberId !== "string" || reactFiberId.trim().length === 0)) {
+		return { error: "sourceLookup.reactFiberId must be a non-empty string when provided." };
+	}
+	if (componentName !== undefined && (typeof componentName !== "string" || componentName.trim().length === 0)) {
+		return { error: "sourceLookup.componentName must be a non-empty string when provided." };
+	}
+	if (selector === undefined && reactFiberId === undefined && componentName === undefined) {
+		return { error: "sourceLookup requires selector, reactFiberId, or componentName." };
+	}
+	if (input.includeDomHints !== undefined && typeof input.includeDomHints !== "boolean") {
+		return { error: "sourceLookup.includeDomHints must be a boolean when provided." };
+	}
+	const rawMaxWorkspaceFiles = input.maxWorkspaceFiles;
+	if (rawMaxWorkspaceFiles !== undefined && (typeof rawMaxWorkspaceFiles !== "number" || !Number.isInteger(rawMaxWorkspaceFiles) || rawMaxWorkspaceFiles <= 0)) {
+		return { error: "sourceLookup.maxWorkspaceFiles must be a positive integer when provided." };
+	}
+	if (typeof rawMaxWorkspaceFiles === "number" && rawMaxWorkspaceFiles > SOURCE_LOOKUP_MAX_WORKSPACE_FILES) {
+		return { error: `sourceLookup.maxWorkspaceFiles must be ${SOURCE_LOOKUP_MAX_WORKSPACE_FILES} or less.` };
+	}
+	const includeDomHints = input.includeDomHints !== false;
+	const maxWorkspaceFiles = (rawMaxWorkspaceFiles as number | undefined) ?? SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES;
+	const steps: CompiledAgentBrowserSourceLookupStep[] = [];
+	if (typeof selector === "string") {
+		steps.push({ action: "dom", args: ["is", "visible", selector] });
+		if (includeDomHints) {
+			steps.push({ action: "dom", args: ["get", "html", selector] });
+		}
+	}
+	if (typeof reactFiberId === "string") {
+		steps.push({ action: "react", args: ["react", "inspect", reactFiberId] });
+	}
+	if (typeof componentName === "string") {
+		steps.push({ action: "react", args: ["react", "tree"] });
+	}
+	return {
+		compiled: {
+			args: ["batch"],
+			query: { componentName, includeDomHints, maxWorkspaceFiles, reactFiberId, selector },
+			stdin: JSON.stringify(steps.map((step) => step.args)),
+			steps,
+		},
+	};
+}
+
+function extractStringField(value: Record<string, unknown>, names: string[]): string | undefined {
+	for (const name of names) {
+		const field = value[name];
+		if (typeof field === "string" && field.trim().length > 0) return field;
+	}
+	return undefined;
+}
+
+function extractNumberField(value: Record<string, unknown>, names: string[]): number | undefined {
+	for (const name of names) {
+		const field = value[name];
+		if (typeof field === "number" && Number.isFinite(field)) return field;
+		if (typeof field === "string" && /^\d+$/.test(field)) return Number(field);
+	}
+	return undefined;
+}
+
+function candidateKey(candidate: AgentBrowserSourceLookupCandidate): string {
+	return [candidate.source, candidate.file ?? "", candidate.line ?? "", candidate.column ?? "", candidate.componentName ?? ""].join(":");
+}
+
+function addSourceLookupCandidate(candidates: AgentBrowserSourceLookupCandidate[], candidate: AgentBrowserSourceLookupCandidate): void {
+	if (!candidates.some((existing) => candidateKey(existing) === candidateKey(candidate))) {
+		candidates.push(candidate);
+	}
+}
+
+function collectSourceCandidatesFromValue(value: unknown, source: "react-inspect" | "dom-attribute", candidates: AgentBrowserSourceLookupCandidate[], evidence: string[], depth = 0): void {
+	if (depth > 6 || value === undefined || value === null) return;
+	if (typeof value === "string") {
+		const sourcePattern = /([A-Za-z0-9_./@-]+\.(?:tsx|jsx|ts|js))(?:[:#](\d+))?(?:[:#](\d+))?/g;
+		for (const match of value.matchAll(sourcePattern)) {
+			addSourceLookupCandidate(candidates, {
+				column: match[3] ? Number(match[3]) : undefined,
+				confidence: source === "react-inspect" ? "high" : "medium",
+				evidence,
+				file: match[1],
+				line: match[2] ? Number(match[2]) : undefined,
+				source,
+			});
+		}
+		return;
+	}
+	if (Array.isArray(value)) {
+		for (const item of value) collectSourceCandidatesFromValue(item, source, candidates, evidence, depth + 1);
+		return;
+	}
+	if (!isRecord(value)) return;
+	const file = extractStringField(value, ["file", "fileName", "filename", "filePath", "path", "source", "url"]);
+	if (file && /\.(?:tsx|jsx|ts|js)(?:$|[:?#])/.test(file)) {
+		addSourceLookupCandidate(candidates, {
+			column: extractNumberField(value, ["column", "columnNumber", "col"]),
+			confidence: source === "react-inspect" ? "high" : "medium",
+			evidence,
+			file,
+			line: extractNumberField(value, ["line", "lineNumber"]),
+			source,
+		});
+	}
+	for (const nested of Object.values(value)) {
+		collectSourceCandidatesFromValue(nested, source, candidates, evidence, depth + 1);
+	}
+}
+
+function getHtmlAttributeValue(html: string, name: string): string | undefined {
+	const pattern = new RegExp(`${name}=["']([^"']+)["']`, "i");
+	return pattern.exec(html)?.[1];
+}
+
+function collectDomSourceCandidates(html: unknown, candidates: AgentBrowserSourceLookupCandidate[]): void {
+	if (typeof html !== "string") return;
+	const file = getHtmlAttributeValue(html, "(?:data-source-file|data-file|data-component-file|data-source)");
+	if (file && /\.(?:tsx|jsx|ts|js)$/.test(file)) {
+		const line = getHtmlAttributeValue(html, "(?:data-source-line|data-line)");
+		const column = getHtmlAttributeValue(html, "(?:data-source-column|data-column)");
+		addSourceLookupCandidate(candidates, {
+			column: column && /^\d+$/.test(column) ? Number(column) : undefined,
+			confidence: "medium",
+			evidence: ["selector HTML contained source-like data attributes"],
+			file,
+			line: line && /^\d+$/.test(line) ? Number(line) : undefined,
+			source: "dom-attribute",
+		});
+	}
+	collectSourceCandidatesFromValue(html, "dom-attribute", candidates, ["selector HTML contained source-like text"]);
+}
+
+async function walkWorkspaceSourceFiles(root: string, maxFiles: number): Promise<string[]> {
+	const files: string[] = [];
+	async function visit(directory: string): Promise<void> {
+		if (files.length >= maxFiles) return;
+		let entries: Array<{ isDirectory: () => boolean; isFile: () => boolean; name: string }>;
+		try {
+			entries = await readdir(directory, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			if (files.length >= maxFiles) return;
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) {
+				if (!SOURCE_LOOKUP_IGNORED_DIRECTORIES.has(entry.name)) await visit(path);
+			} else if (entry.isFile() && SOURCE_LOOKUP_WORKSPACE_EXTENSIONS.has(extname(entry.name))) {
+				files.push(path);
+			}
+		}
+	}
+	await visit(root);
+	return files;
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function collectWorkspaceComponentCandidates(query: CompiledAgentBrowserSourceLookup["query"], cwd: string, candidates: AgentBrowserSourceLookupCandidate[], limitations: string[]): Promise<void> {
+	if (!query.componentName) return;
+	const files = await walkWorkspaceSourceFiles(cwd, query.maxWorkspaceFiles);
+	if (files.length >= query.maxWorkspaceFiles) {
+		limitations.push(`Workspace source scan stopped at ${query.maxWorkspaceFiles} files.`);
+	}
+	const componentPattern = new RegExp(`(?:function|class)\\s+${escapeRegExp(query.componentName)}\\b|(?:const|let|var)\\s+${escapeRegExp(query.componentName)}\\s*=|export\\s+default\\s+function\\s+${escapeRegExp(query.componentName)}\\b`);
+	for (const file of files) {
+		let text: string;
+		try {
+			text = await readFile(file, "utf8");
+		} catch {
+			continue;
+		}
+		const match = componentPattern.exec(text);
+		if (!match) continue;
+		const line = text.slice(0, match.index).split("\n").length;
+		addSourceLookupCandidate(candidates, {
+			componentName: query.componentName,
+			confidence: "low",
+			evidence: [`local workspace contains a matching ${query.componentName} declaration`],
+			file,
+			line,
+			source: "workspace-search",
+		});
+		if (candidates.filter((candidate) => candidate.source === "workspace-search").length >= 10) break;
+	}
+}
+
+async function analyzeSourceLookupResults(data: unknown, compiled: CompiledAgentBrowserSourceLookup, cwd: string): Promise<AgentBrowserSourceLookupAnalysis> {
+	const items = getBatchResultItems(data);
+	const candidates: AgentBrowserSourceLookupCandidate[] = [];
+	const limitations = [
+		"Experimental lookup only reports candidates with evidence; it cannot guarantee a DOM node maps to one source file.",
+		"React source hints require the page to be opened with --enable react-devtools and source information from the app build.",
+	];
+	let unsupported = false;
+	for (const item of items) {
+		const command = Array.isArray(item.command) ? item.command : [];
+		const result = isRecord(item.result) && "data" in item.result ? item.result.data : item.result;
+		if (item.success === false && command[0] === "react") unsupported = true;
+		if (command[0] === "react" && command[1] === "inspect") {
+			collectSourceCandidatesFromValue(result, "react-inspect", candidates, ["react inspect returned source-like metadata"]);
+		}
+		if (command[0] === "get" && command[1] === "html") {
+			collectDomSourceCandidates(result, candidates);
+		}
+	}
+	await collectWorkspaceComponentCandidates(compiled.query, cwd, candidates, limitations);
+	const status: AgentBrowserSourceLookupStatus = candidates.length > 0 ? "candidates-found" : unsupported ? "unsupported" : "no-candidates";
+	return {
+		candidates,
+		limitations,
+		status,
+		summary: candidates.length > 0
+			? `Source lookup found ${candidates.length} candidate location(s).`
+			: unsupported
+				? "Source lookup could not inspect React metadata in this session."
+				: "Source lookup found no candidate locations.",
+	};
+}
+
 function compileAgentBrowserSemanticAction(input: unknown): { compiled?: CompiledAgentBrowserSemanticAction; error?: string } {
 	if (!isRecord(input)) {
 		return { error: "semanticAction must be an object." };
@@ -492,9 +772,13 @@ function formatVisualTruncationNotice(remainingLines: number, totalLines: number
 function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
 	const input = isRecord(args) ? args : {};
 	const semanticAction = compileAgentBrowserSemanticAction(input.semanticAction);
+	const job = compileAgentBrowserJob(input.job);
+	const qa = compileAgentBrowserQaPreset(input.qa);
+	const sourceLookup = compileAgentBrowserSourceLookup(input.sourceLookup);
+	const generatedBatch = sourceLookup.compiled ?? job.compiled ?? qa.compiled;
 	const rawArgs = Array.isArray(input.args)
 		? input.args.filter((value): value is string => typeof value === "string")
-		: (semanticAction.compiled?.args ?? []);
+		: (semanticAction.compiled?.args ?? generatedBatch?.args ?? []);
 	const redactedArgs = redactInvocationArgs(rawArgs);
 	const invocation = sanitizeDisplayText(redactedArgs.join(" ")).replace(/\s+/g, " ").trim();
 	const invocationPreview =
@@ -2042,22 +2326,26 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const semanticActionResult = params.semanticAction === undefined ? {} : compileAgentBrowserSemanticAction(params.semanticAction);
 			const jobResult = params.job === undefined ? {} : compileAgentBrowserJob(params.job);
 			const qaResult = params.qa === undefined ? {} : compileAgentBrowserQaPreset(params.qa);
+			const sourceLookupResult = params.sourceLookup === undefined ? {} : compileAgentBrowserSourceLookup(params.sourceLookup);
 			const hasExplicitArgs = Array.isArray(params.args);
-			const explicitInputModes = [hasExplicitArgs, Boolean(semanticActionResult.compiled), Boolean(jobResult.compiled), Boolean(qaResult.compiled)].filter(Boolean).length;
+			const explicitInputModes = [hasExplicitArgs, Boolean(semanticActionResult.compiled), Boolean(jobResult.compiled), Boolean(qaResult.compiled), Boolean(sourceLookupResult.compiled)].filter(Boolean).length;
 			const semanticActionError = semanticActionResult.error;
 			const jobError = jobResult.error;
 			const qaError = qaResult.error;
+			const sourceLookupError = sourceLookupResult.error;
 			const inputModeError = explicitInputModes !== 1
-				? "Provide exactly one of args, semanticAction, job, or qa."
+				? "Provide exactly one of args, semanticAction, job, qa, or sourceLookup."
 				: undefined;
 			const compiledSemanticAction = semanticActionResult.compiled;
 			const compiledQaPreset = qaResult.compiled;
+			const compiledSourceLookup = sourceLookupResult.compiled;
 			const compiledJob = jobResult.compiled ?? compiledQaPreset;
-			const toolArgs = compiledSemanticAction?.args ?? compiledJob?.args ?? params.args ?? [];
-			const toolStdin = compiledJob?.stdin ?? params.stdin;
+			const compiledGeneratedBatch = compiledSourceLookup ?? compiledJob;
+			const toolArgs = compiledSemanticAction?.args ?? compiledGeneratedBatch?.args ?? params.args ?? [];
+			const toolStdin = compiledGeneratedBatch?.stdin ?? params.stdin;
 			const redactedArgs = redactInvocationArgs(toolArgs);
-			const jobStdinError = compiledJob && params.stdin !== undefined ? "Do not provide stdin with job or qa; those modes generate their own batch stdin." : undefined;
-			const validationError = semanticActionError ?? jobError ?? qaError ?? inputModeError ?? jobStdinError ?? validateToolArgs(toolArgs) ?? getBatchAnnotateValidationError(toolArgs, toolStdin);
+			const generatedStdinError = compiledGeneratedBatch && params.stdin !== undefined ? "Do not provide stdin with job, qa, or sourceLookup; those modes generate their own batch stdin." : undefined;
+			const validationError = semanticActionError ?? jobError ?? qaError ?? sourceLookupError ?? inputModeError ?? generatedStdinError ?? validateToolArgs(toolArgs) ?? getBatchAnnotateValidationError(toolArgs, toolStdin);
 			const redactedCompiledSemanticAction = compiledSemanticAction
 				? { ...compiledSemanticAction, args: redactInvocationArgs(compiledSemanticAction.args) }
 				: undefined;
@@ -2068,6 +2356,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const redactedCompiledQaPreset = compiledQaPreset && redactedCompiledJob
 				? { ...redactedCompiledJob, checks: compiledQaPreset.checks }
 				: undefined;
+			const redactedCompiledSourceLookupSteps = compiledSourceLookup?.steps.map((step) => ({ ...step, args: redactInvocationArgs(step.args) }));
+			const redactedCompiledSourceLookup = compiledSourceLookup && redactedCompiledSourceLookupSteps
+				? { ...compiledSourceLookup, stdin: JSON.stringify(redactedCompiledSourceLookupSteps.map((step) => step.args)), steps: redactedCompiledSourceLookupSteps }
+				: undefined;
 			if (validationError) {
 				return {
 					content: [{ type: "text", text: validationError }],
@@ -2075,6 +2367,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						args: redactedArgs,
 						compiledJob: redactedCompiledJob,
 						compiledQaPreset: redactedCompiledQaPreset,
+						compiledSourceLookup: redactedCompiledSourceLookup,
 						compiledSemanticAction: redactedCompiledSemanticAction,
 						...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, errorText: validationError, succeeded: false, validationError }),
 						validationError,
@@ -2109,6 +2402,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							args: redactedArgs,
 							compiledJob: redactedCompiledJob,
 							compiledQaPreset: redactedCompiledQaPreset,
+							compiledSourceLookup: redactedCompiledSourceLookup,
 							invalidValueFlag: executionPlan.invalidValueFlag,
 							sessionMode,
 							sessionRecoveryHint: redactedRecoveryHint,
@@ -2583,6 +2877,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						artifactManifest = presentation.artifactManifest;
 					}
 					const qaPreset = compiledQaPreset ? analyzeQaPresetResults(presentationEnvelope?.data) : undefined;
+					const sourceLookup = compiledSourceLookup ? await analyzeSourceLookupResults(presentationEnvelope?.data, compiledSourceLookup, ctx.cwd) : undefined;
+					if (sourceLookup && presentation.content[0]?.type === "text") {
+						presentation.content[0] = { ...presentation.content[0], text: `${sourceLookup.summary}\n\n${presentation.content[0].text}` };
+					} else if (sourceLookup) {
+						presentation.content.unshift({ type: "text", text: sourceLookup.summary });
+					}
 					if (qaPreset && !qaPreset.passed) {
 						succeeded = false;
 						presentation.failureCategory = "qa-failure";
@@ -2651,6 +2951,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						args: redactedArgs,
 						compiledJob: redactedCompiledJob,
 						compiledQaPreset: redactedCompiledQaPreset,
+						compiledSourceLookup: redactedCompiledSourceLookup,
 						artifactManifest: presentation.artifactManifest,
 						artifactRetentionSummary: presentation.artifactRetentionSummary,
 						artifactVerification: presentation.artifactVerification,
@@ -2681,6 +2982,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,
 						savedFilePath: presentation.savedFilePath,
+						sourceLookup,
 						sessionMode,
 						sessionTabCorrection,
 						sessionTabTarget: currentSessionTabTarget,

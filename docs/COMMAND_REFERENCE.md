@@ -158,7 +158,7 @@ For short constrained flows, use top-level `job` instead of hand-writing `batch`
 }
 ```
 
-Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`; job mode generates the batch stdin itself.
+Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`, `qa`, or `sourceLookup`; those modes generate the batch stdin themselves.
 
 For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks expected text/selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot.
 
@@ -169,6 +169,12 @@ For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console
 Optional `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set one to `false` to skip that diagnostic. Omit `expectedText` and `expectedSelector` when you only need load plus diagnostics.
 
 Use custom `job` or raw `batch` when you need a different check sequence.
+
+For local app debugging, top-level `sourceLookup` can gather candidate component/file locations for a visible element from selector DOM hints, React DevTools inspection, and a bounded workspace component-name search (`maxWorkspaceFiles` defaults to 2000 and cannot exceed 5000). It reports evidence and confidence in `details.sourceLookup` instead of claiming a guaranteed source file. React hints require a session opened with `--enable react-devtools`; unsupported or no-candidate states are expected when the app/build lacks source metadata.
+
+```json
+{ "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+```
 
 ### Wait for page readiness or downloads
 

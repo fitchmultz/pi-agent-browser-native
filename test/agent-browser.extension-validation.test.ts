@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1392,6 +1392,73 @@ process.stdin.on("end", () => {
 	}
 });
 
+test("agentBrowserExtension compiles experimental source lookups and reports candidate evidence", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-source-lookup-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await mkdir(join(tempDir, "src"), { recursive: true });
+	await writeFile(join(tempDir, "src", "Panel.tsx"), "export function Panel() { return <button>Save</button>; }\n");
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  const steps = JSON.parse(stdin);
+  const results = steps.map((command) => {
+    if (command[0] === "get" && command[1] === "html") {
+      return { command, success: true, result: "<button data-source-file='src/Button.tsx' data-source-line='17' data-source-column='5'>Save</button>" };
+    }
+    if (command[0] === "react" && command[1] === "inspect") {
+      return { command, success: true, result: { name: "Button", source: { fileName: "src/Button.tsx", lineNumber: 17, columnNumber: 5 } } };
+    }
+    if (command[0] === "react" && command[1] === "tree") {
+      return { command, success: true, result: "0 1 App\\n1 2 Panel" };
+    }
+    return { command, success: true, result: { ok: true } };
+  });
+  process.stdout.write(JSON.stringify(results));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sourceLookup: {
+					selector: "#save",
+					reactFiberId: "2",
+					componentName: "Panel",
+				},
+			});
+
+			assert.equal(result.isError, false);
+			const compiledSourceLookup = result.details?.compiledSourceLookup as { steps?: Array<{ args: string[] }>; stdin?: string } | undefined;
+			assert.deepEqual(compiledSourceLookup?.steps?.map((step) => step.args), [
+				["is", "visible", "#save"],
+				["get", "html", "#save"],
+				["react", "inspect", "2"],
+				["react", "tree"],
+			]);
+			assert.deepEqual(JSON.parse(compiledSourceLookup?.stdin ?? "[]"), compiledSourceLookup?.steps?.map((step) => step.args));
+			const sourceLookup = result.details?.sourceLookup as { status?: string; candidates?: Array<{ source?: string; file?: string; line?: number; column?: number; confidence?: string; componentName?: string }> } | undefined;
+			assert.equal(sourceLookup?.status, "candidates-found");
+			assert.ok(sourceLookup?.candidates?.some((candidate) => candidate.source === "react-inspect" && candidate.file === "src/Button.tsx" && candidate.line === 17 && candidate.confidence === "high"));
+			assert.ok(sourceLookup?.candidates?.some((candidate) => candidate.source === "dom-attribute" && candidate.file === "src/Button.tsx" && candidate.line === 17 && candidate.column === 5));
+			assert.ok(sourceLookup?.candidates?.some((candidate) => candidate.source === "workspace-search" && candidate.componentName === "Panel" && candidate.file?.endsWith("src/Panel.tsx")));
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects ambiguous or incomplete semantic actions before spawning agent-browser", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-invalid-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -1413,7 +1480,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguous.isError, true);
-			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, or qa/);
+			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, or sourceLookup/);
 			assert.equal(ambiguous.details?.resultCategory, "failure");
 			assert.equal(ambiguous.details?.failureCategory, "validation-error");
 
@@ -1430,14 +1497,14 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 			});
 			assert.equal(ambiguousJobArgs.isError, true);
-			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, or qa/);
+			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, or sourceLookup/);
 
 			const ambiguousJobSemanticAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguousJobSemanticAction.isError, true);
-			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, or qa/);
+			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, or sourceLookup/);
 
 			const invalidJobAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "unknown" as never }] },
@@ -1456,6 +1523,32 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			});
 			assert.equal(invalidJobWait.isError, true);
 			assert.match((invalidJobWait.content[0] as { text: string }).text, /wait requires a positive integer milliseconds/);
+
+			const invalidSourceLookup = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sourceLookup: {},
+			});
+			assert.equal(invalidSourceLookup.isError, true);
+			assert.match((invalidSourceLookup.content[0] as { text: string }).text, /sourceLookup requires selector, reactFiberId, or componentName/);
+
+			const oversizedSourceLookup = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sourceLookup: { componentName: "Panel", maxWorkspaceFiles: 5001 },
+			});
+			assert.equal(oversizedSourceLookup.isError, true);
+			assert.match((oversizedSourceLookup.content[0] as { text: string }).text, /maxWorkspaceFiles must be 5000 or less/);
+
+			const sourceLookupWithArgs = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["react", "tree"],
+				sourceLookup: { componentName: "Panel" },
+			});
+			assert.equal(sourceLookupWithArgs.isError, true);
+			assert.match((sourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, or sourceLookup/);
+
+			const sourceLookupWithStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sourceLookup: { componentName: "Panel" },
+				stdin: "[]",
+			});
+			assert.equal(sourceLookupWithStdin.isError, true);
+			assert.match((sourceLookupWithStdin.content[0] as { text: string }).text, /Do not provide stdin with job, qa, or sourceLookup/);
 
 			const missingText = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "fill", locator: "label", value: "Email" },

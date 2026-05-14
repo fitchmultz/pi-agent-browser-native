@@ -41,7 +41,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 - Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.
 - When using --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.
 - If you already used the implicit session and now need launch-scoped flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.
-- For React introspection, launch the page with --enable react-devtools before first navigation, then use react tree, react inspect <fiberId>, react renders start/stop, or react suspense; use vitals [url] for Core Web Vitals and hydration timing, and pushstate <url> for client-side SPA navigation.
+- For React introspection, launch the page with --enable react-devtools before first navigation, then use react tree, react inspect <fiberId>, sourceLookup candidates for local UI source hints, react renders start/stop, or react suspense; sourceLookup is experimental and reports confidence/evidence instead of guaranteed DOM-to-file mappings. Use vitals [url] for Core Web Vitals and hydration timing, and pushstate <url> for client-side SPA navigation.
 - For first-navigation setup, use open without a URL plus network route --resource-type <csv>, cookies set --curl <file>, or --init-script/--enable before navigate/opening the target page.
 - For stateful browser context work, prefer purpose-specific page actions before dumping browser data: use auth save --password-stdin with the tool stdin field for credentials, state save/load for portable test state, cookies get/set/clear and storage local|session only when the task needs those values, and expect cookie/storage/auth/state summaries to redact credential-like fields.
 - For batch chains that touch cookies, storage, auth, or other secret-bearing commands, use details.batchSteps for per-step artifacts, categories, spill paths, and full structured errors; top-level details.data on batch is only a compact redacted step matrix (success, argv-redacted command, redacted result or scrubbed error text) built from the same presentation rules as standalone calls.
@@ -61,7 +61,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 
 ## Parameters
 
-Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, `job`, or `qa`):
+Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, `job`, `qa`, or `sourceLookup`):
 
 ```json
 { "args": ["open", "https://example.com"], "stdin": "optional raw stdin content", "sessionMode": "auto" }
@@ -74,7 +74,7 @@ Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`
 ### `args`
 
 - type: `string[]`
-- required unless `semanticAction`, `job`, or `qa` is provided
+- required unless `semanticAction`, `job`, `qa`, or `sourceLookup` is provided
 - exact CLI args passed after `agent-browser`
 - no shell operators
 - do not include the binary name
@@ -91,7 +91,7 @@ Examples:
 ### `semanticAction`
 
 - type: object
-- optional; mutually exclusive with `args`, `job`, and `qa` (omit all of them when using this field)
+- optional; mutually exclusive with `args`, `job`, `qa`, and `sourceLookup` (omit all of them when using this field)
 - top-level tool input only: `batch` stdin remains upstream argv arrays; express find steps inside batch as string arrays such as `["find","role","button","click","--name","Export"]`, not nested `semanticAction` objects
 - thin intent schema compiled by this wrapper into existing upstream `find` commands; behavior and locator semantics stay upstream-owned
 - supported actions: `click`, `fill`, `select`, `check`, `uncheck`
@@ -127,7 +127,7 @@ Examples:
 ### `job`
 
 - type: object with a non-empty `steps` array
-- optional; mutually exclusive with `args`, `semanticAction`, and `qa`
+- optional; mutually exclusive with `args`, `semanticAction`, `qa`, and `sourceLookup`
 - top-level tool input only; do not nest `job` inside `batch` stdin
 - constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
 - supported steps (each row becomes one upstream `batch` step; `click` / `fill` pass `selector` through as the same argv token shape standalone `click` / `fill` would use upstream, including `@refs`, not the `semanticAction` locator schema):
@@ -168,7 +168,7 @@ Use raw `args` plus `stdin` for upstream `batch` when a flow needs commands, fla
 ### `qa`
 
 - type: object with required `url`
-- optional; mutually exclusive with `args`, `semanticAction`, and `job`
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, and `sourceLookup`
 - lightweight preset built on the same batch compiler path as `job`
 - clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load networkidle`, optionally asserts `expectedText` (string or string array) and/or `expectedSelector` (each may be omitted for a load-plus-diagnostics-only smoke), then runs enabled diagnostics: `network requests`, `console`, and `errors`
 - `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set a field to `false` to omit that diagnostic
@@ -184,12 +184,34 @@ Example:
 
 Use custom `job` or raw `batch` for QA flows that need custom commands, flags, auth setup, HAR capture, or project-specific assertions.
 
+### `sourceLookup`
+
+- type: object with at least one of `selector`, `reactFiberId`, or `componentName`
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, and `qa`
+- experimental opt-in helper for local app debugging; it reports candidate source locations with confidence and evidence instead of claiming a guaranteed DOM-to-file mapping
+- compiles to existing upstream `batch` commands only:
+  - `selector` checks visibility and, by default, reads `get html <selector>` for source-like DOM attributes such as `data-source-file`
+  - `reactFiberId` runs `react inspect <id>`; this requires the page to have been launched with `--enable react-devtools` before first navigation and for the app build to expose source information
+  - `componentName` runs `react tree` and performs a bounded local workspace scan for matching component declarations under the Pi session cwd
+- optional `includeDomHints: false` skips the selector HTML read
+- optional `maxWorkspaceFiles` bounds the local component-name scan; default is 2000 source files and the hard maximum is 5000
+- reports `details.compiledSourceLookup` with the generated batch plan and `details.sourceLookup` with `{ status, candidates, limitations, summary }`
+- `details.sourceLookup.status` is one of `candidates-found`, `no-candidates`, or `unsupported`; unsupported states are expected when React DevTools was not enabled, no React renderer is present, or the page/build lacks sourcemap/source metadata
+
+Example:
+
+```json
+{ "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+```
+
+Use raw `args` for direct upstream React inspection when you already know the exact `react tree` / `react inspect` command you want, or when this experiment's bounded evidence model is too narrow.
+
 ### `stdin`
 
 - type: `string`
 - optional
-- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`; generated internally when `job` or `qa` compiles to `batch`
-- do not provide `stdin` with `job` or `qa`; those modes own the generated batch stdin and reject caller-provided stdin to avoid ambiguity
+- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`; generated internally when `job`, `qa`, or `sourceLookup` compiles to `batch`
+- do not provide `stdin` with `job`, `qa`, or `sourceLookup`; those modes own the generated batch stdin and reject caller-provided stdin to avoid ambiguity
 - rejected before launch for any other command/stdin combination, including commands such as `click`, `snapshot`, or `open`
 
 Examples:
