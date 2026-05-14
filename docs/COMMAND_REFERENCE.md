@@ -44,8 +44,8 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, or `qa`):
 { "job": { "steps": [{ "action": "open", "url": "https://example.com" }, { "action": "assertText", "text": "Example Domain" }] } }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction` or `job` instead (mutually exclusive).
-- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args` or `job` on the same call.
+- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, or `qa` instead (mutually exclusive).
+- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args`, `job`, or `qa` on the same call.
 - `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin and reports the compiled plan in `details.compiledJob`.
 - `qa`: optional lightweight QA preset; compiles to the same batch path and reports `details.compiledQaPreset` plus `details.qaPreset` pass/fail evidence.
 - `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. Job and QA modes generate their own `batch` stdin.

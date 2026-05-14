@@ -127,7 +127,7 @@ Examples:
 ### `job`
 
 - type: object with a non-empty `steps` array
-- optional; mutually exclusive with `args` and `semanticAction`
+- optional; mutually exclusive with `args`, `semanticAction`, and `qa`
 - top-level tool input only; do not nest `job` inside `batch` stdin
 - constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
 - supported steps (each row becomes one upstream `batch` step; `click` / `fill` pass `selector` through as the same argv token shape standalone `click` / `fill` would use upstream, including `@refs`, not the `semanticAction` locator schema):
@@ -170,7 +170,7 @@ Use raw `args` plus `stdin` for upstream `batch` when a flow needs commands, fla
 - type: object with required `url`
 - optional; mutually exclusive with `args`, `semanticAction`, and `job`
 - lightweight preset built on the same batch compiler path as `job`
-- clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits for `networkidle`, checks optional `expectedText` (string or string array), checks optional `expectedSelector`, then runs enabled diagnostics: `network requests`, `console`, and `errors`
+- clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load networkidle`, checks optional `expectedText` (string or string array), checks optional `expectedSelector`, then runs enabled diagnostics: `network requests`, `console`, and `errors`
 - `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set a field to `false` to omit that diagnostic
 - optional `screenshotPath` adds an evidence screenshot step
 - reports `details.compiledQaPreset` with the compiled batch plan and `details.qaPreset` with `{ passed, failedChecks, summary }`
@@ -188,8 +188,8 @@ Use custom `job` or raw `batch` for QA flows that need custom commands, flags, a
 
 - type: `string`
 - optional
-- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`; generated internally when `job` compiles to `batch`
-- do not provide `stdin` with `job`; job mode owns the generated batch stdin and rejects caller-provided stdin to avoid ambiguity
+- raw stdin for `eval --stdin`, `batch`, and `auth save --password-stdin`; generated internally when `job` or `qa` compiles to `batch`
+- do not provide `stdin` with `job` or `qa`; those modes own the generated batch stdin and reject caller-provided stdin to avoid ambiguity
 - rejected before launch for any other command/stdin combination, including commands such as `click`, `snapshot`, or `open`
 
 Examples:
