@@ -1669,6 +1669,57 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	}
 });
 
+test("agentBrowserExtension returns semantic locator candidates when semanticAction misses", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-candidates-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("find")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "Element not found" }));
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "fill", locator: "placeholder", value: "Search Wikipedia", text: "agent browser" },
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "selector-not-found");
+			const text = result.content[0] as { text: string };
+			assert.match(text.text, /Agent-browser candidate fallbacks:/);
+			assert.match(text.text, /try-searchbox-name-candidate/);
+			assert.match(text.text, /"searchbox"/);
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; reason?: string }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.id), [
+				"refresh-interactive-refs",
+				"try-searchbox-name-candidate",
+				"try-textbox-name-candidate",
+			]);
+			assert.deepEqual(nextActions?.[1]?.params?.args, ["find", "role", "searchbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
+			assert.deepEqual(nextActions?.[2]?.params?.args, ["find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
+			assert.match(nextActions?.[1]?.reason ?? "", /accessible name/);
+
+			const selectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "placeholder", value: "Country", text: "United States" },
+			});
+			assert.equal(selectResult.isError, true);
+			assert.equal(selectResult.details?.failureCategory, "selector-not-found");
+			const selectNextActions = selectResult.details?.nextActions as Array<{ id?: string }> | undefined;
+			assert.deepEqual(selectNextActions?.map((action) => action.id), ["refresh-interactive-refs"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension returns a safe semantic retry action for stale-ref failures with compiled targets", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-stale-"));
 	const basePath = process.env.PATH ?? "";

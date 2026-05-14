@@ -34,6 +34,7 @@ import {
 	parseAgentBrowserEnvelope,
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
+	type AgentBrowserNextAction,
 } from "./lib/results.js";
 import {
 	buildExecutionPlan,
@@ -876,6 +877,62 @@ async function analyzeNetworkSourceLookupResults(data: unknown, compiled: Compil
 	await collectWorkspaceRequestCandidates(compiled.query, failedRequests, cwd, candidates, limitations);
 	const status: AgentBrowserNetworkSourceLookupStatus = failedRequests.length === 0 ? "no-failed-requests" : candidates.length > 0 ? "failed-requests-found" : "no-candidates";
 	return { candidates, failedRequests, limitations, status, summary: failedRequests.length === 0 ? "Network source lookup found no failed requests." : candidates.length > 0 ? `Network source lookup found ${failedRequests.length} failed request(s) and ${candidates.length} candidate source hint(s).` : `Network source lookup found ${failedRequests.length} failed request(s) but no source candidates.` };
+}
+
+function appendSemanticActionTextArg(args: string[], action: string, text: string | undefined): void {
+	if ((action === "fill" || action === "select") && text) {
+		args.push(text);
+	}
+}
+
+function getCompiledSemanticActionTextArg(compiled: CompiledAgentBrowserSemanticAction): string | undefined {
+	if (compiled.action !== "fill" && compiled.action !== "select") return undefined;
+	const markerIndex = compiled.args.indexOf("--name");
+	return markerIndex >= 0 ? compiled.args[markerIndex - 1] : compiled.args[4];
+}
+
+function formatSemanticActionCandidateText(actions: AgentBrowserNextAction[]): string | undefined {
+	const candidateActions = actions.filter((action) => action.id.startsWith("try-") && action.params?.args);
+	if (candidateActions.length === 0) return undefined;
+	return [
+		"Agent-browser candidate fallbacks:",
+		...candidateActions.map((action) => `- ${action.id}: agent_browser ${JSON.stringify({ args: action.params?.args })} — ${action.reason}`),
+	].join("\n");
+}
+
+function buildSemanticActionCandidateActions(compiled: CompiledAgentBrowserSemanticAction): AgentBrowserNextAction[] {
+	const [, locator, value] = compiled.args;
+	if (!locator || !value) return [];
+	const text = getCompiledSemanticActionTextArg(compiled);
+	const buildRoleCandidate = (role: string, id: string, reason: string): AgentBrowserNextAction => {
+		const args = ["find", "role", role, compiled.action];
+		appendSemanticActionTextArg(args, compiled.action, text);
+		args.push("--name", value);
+		return {
+			id,
+			params: { args: redactInvocationArgs(args) },
+			reason,
+			safety: "Candidate locator fallback only; inspect the page if multiple elements could match the same accessible name.",
+			tool: "agent_browser" as const,
+		};
+	};
+
+	if (locator === "placeholder" && compiled.action === "fill") {
+		return [
+			buildRoleCandidate("searchbox", "try-searchbox-name-candidate", "Retry against a searchbox with the same accessible name; many search inputs expose names instead of placeholders."),
+			buildRoleCandidate("textbox", "try-textbox-name-candidate", "Retry against a textbox with the same accessible name when placeholder lookup misses."),
+		];
+	}
+	if (locator === "text" && compiled.action === "click") {
+		return [
+			buildRoleCandidate("button", "try-button-name-candidate", "Retry against a button with the same accessible name when text lookup misses."),
+			buildRoleCandidate("link", "try-link-name-candidate", "Retry against a link with the same accessible name when text lookup misses."),
+		];
+	}
+	if (locator === "label" && compiled.action === "fill") {
+		return [buildRoleCandidate("textbox", "try-labeled-textbox-candidate", "Retry against a textbox with the same accessible name when label lookup misses.")];
+	}
+	return [];
 }
 
 function compileAgentBrowserSemanticAction(input: unknown): { compiled?: CompiledAgentBrowserSemanticAction; error?: string } {
@@ -3187,6 +3244,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						validationError: undefined,
 					});
 					let nextActions = presentation.nextActions ? [...presentation.nextActions] : undefined;
+					if (categoryDetails.failureCategory === "selector-not-found" && redactedCompiledSemanticAction) {
+						const candidateActions = buildSemanticActionCandidateActions(redactedCompiledSemanticAction);
+						if (candidateActions.length > 0) {
+							(nextActions ??= []).push(...candidateActions);
+						}
+					}
 					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction) {
 						(nextActions ??= []).push({
 							id: "retry-semantic-action-after-stale-ref",
@@ -3247,8 +3310,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						timeoutMs: processResult.timeoutMs,
 					};
 
+					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
+					const content = semanticActionCandidateText && redactedContent[0]?.type === "text"
+						? [
+							{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${semanticActionCandidateText}` },
+							...redactedContent.slice(1),
+						]
+						: redactedContent;
 					const result = {
-						content: redactedContent,
+						content,
 						details: redactToolDetails(details, exactSensitiveValues),
 						isError: !succeeded,
 					};

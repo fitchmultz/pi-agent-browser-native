@@ -368,6 +368,7 @@ export function classifyAgentBrowserFailureCategory(options: {
 	) {
 		return "selector-unsupported";
 	}
+	if (command === "find" && /could not locate element|element not found|no elements? found|unable to find/i.test(text)) return "selector-not-found";
 	if (reportsSelectorMatchFailure) return "selector-not-found";
 	if ((command === "download" || text.includes("wait --download") || /\bdownload\b/i.test(text)) && /missing|not verified|not found|failed|timeout|timed out/i.test(text)) {
 		return "download-not-verified";

@@ -29,6 +29,8 @@ const NON_BOOLEAN_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON 
 test("classifyAgentBrowserFailureCategory locks common machine-readable failure categories", () => {
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Unknown ref: e4", args: ["click", "@e4"] }), "stale-ref");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Failed to parse selector text=Close" }), "selector-unsupported");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Unable to find selector text=Close", command: "find" }), "selector-unsupported");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Element not found", command: "find" }), "selector-not-found");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "No elements found for selector .missing" }), "selector-not-found");
 	assert.equal(classifyAgentBrowserFailureCategory({ timedOut: true }), "timeout");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Download not verified: file missing", command: "download" }), "download-not-verified");
