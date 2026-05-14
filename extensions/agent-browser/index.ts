@@ -1378,6 +1378,20 @@ interface NavigationSummary {
 	url?: string;
 }
 
+interface OverlayBlockerCandidate {
+	args: string[];
+	name?: string;
+	reason: string;
+	ref: string;
+	role?: string;
+}
+
+interface OverlayBlockerDiagnostic {
+	candidates: OverlayBlockerCandidate[];
+	snapshot: SessionRefSnapshot;
+	summary: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -2537,6 +2551,94 @@ function mergeNavigationSummaryIntoData(data: unknown, navigationSummary: Naviga
 	return { navigationSummary, result: data };
 }
 
+function getSnapshotRefRecord(data: unknown): Record<string, unknown> | undefined {
+	return isRecord(data) && isRecord(data.refs) ? data.refs : undefined;
+}
+
+const OVERLAY_CLOSE_NAME_PATTERN = /(?:\b(?:close|dismiss|no thanks|not now|maybe later|hide|skip|continue without|x)\b|^\s*×\s*$)/i;
+const OVERLAY_CONTEXT_NAME_PATTERN = /\b(?:banner|modal|dialog|popup|pop-up|overlay|donat(?:e|ion)|subscribe|sign in|login|cookie|privacy|consent)\b/i;
+const OVERLAY_CONTEXT_ROLES = new Set(["alertdialog", "dialog"]);
+const OVERLAY_ACTION_ROLES = new Set(["button", "link", "menuitem"]);
+const OVERLAY_BLOCKER_CANDIDATE_LIMIT = 3;
+
+function getOverlayBlockerCandidates(snapshotData: unknown): OverlayBlockerCandidate[] {
+	const refs = getSnapshotRefRecord(snapshotData);
+	if (!refs) return [];
+	const hasOverlayContext = Object.values(refs).some((entry) => {
+		if (!isRecord(entry)) return false;
+		const role = typeof entry.role === "string" ? entry.role : "";
+		const name = typeof entry.name === "string" ? entry.name : "";
+		return OVERLAY_CONTEXT_ROLES.has(role.toLowerCase()) || OVERLAY_CONTEXT_NAME_PATTERN.test(name);
+	});
+	if (!hasOverlayContext) return [];
+	const candidates: OverlayBlockerCandidate[] = [];
+	for (const [ref, entry] of Object.entries(refs)) {
+		if (!/^e\d+$/.test(ref) || !isRecord(entry)) continue;
+		const role = typeof entry.role === "string" ? entry.role : undefined;
+		const name = typeof entry.name === "string" ? entry.name : undefined;
+		if (!role || !OVERLAY_ACTION_ROLES.has(role.toLowerCase()) || !name || !OVERLAY_CLOSE_NAME_PATTERN.test(name)) continue;
+		candidates.push({
+			args: ["click", `@${ref}`],
+			name,
+			reason: `Visible ${role} ${JSON.stringify(name)} appears in a snapshot that also contains overlay/banner/dialog context.`,
+			ref: `@${ref}`,
+			role,
+		});
+		if (candidates.length >= OVERLAY_BLOCKER_CANDIDATE_LIMIT) break;
+	}
+	return candidates;
+}
+
+function formatOverlayBlockerText(diagnostic: OverlayBlockerDiagnostic): string {
+	return [
+		"Possible overlay blockers:",
+		...diagnostic.candidates.map((candidate) => `- ${candidate.ref}${candidate.role ? ` ${candidate.role}` : ""}${candidate.name ? ` ${JSON.stringify(candidate.name)}` : ""}: ${candidate.reason}`),
+	].join("\n");
+}
+
+function buildOverlayBlockerNextActions(options: { diagnostic: OverlayBlockerDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
+	return [
+		{
+			id: "inspect-overlay-state",
+			params: { args: sessionPrefixArgs(options.sessionName, ["snapshot", "-i"]) },
+			reason: "Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.",
+			safety: "Read-only inspection; use current refs from this snapshot before interacting.",
+			tool: "agent_browser" as const,
+		},
+		...options.diagnostic.candidates.map((candidate, index) => ({
+			id: `try-overlay-blocker-candidate-${index + 1}`,
+			params: { args: sessionPrefixArgs(options.sessionName, candidate.args) },
+			reason: candidate.reason,
+			safety: "Only click this if the candidate is clearly a close/dismiss control for an overlay that blocks the intended workflow.",
+			tool: "agent_browser" as const,
+		})),
+	];
+}
+
+async function collectOverlayBlockerDiagnostic(options: {
+	command?: string;
+	cwd: string;
+	data: unknown;
+	navigationSummary?: NavigationSummary;
+	priorTarget?: SessionTabTarget;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<OverlayBlockerDiagnostic | undefined> {
+	if (options.command !== "click" || !isRecord(options.data) || typeof options.data.clicked !== "string") return undefined;
+	const priorUrl = normalizeComparableUrl(options.priorTarget?.url);
+	const currentUrl = normalizeComparableUrl(options.navigationSummary?.url);
+	if (!priorUrl || !currentUrl || priorUrl !== currentUrl) return undefined;
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const candidates = getOverlayBlockerCandidates(snapshotData);
+	const snapshot = extractRefSnapshotFromData(snapshotData);
+	if (candidates.length === 0 || !snapshot) return undefined;
+	return {
+		candidates,
+		snapshot,
+		summary: `Click completed but the page stayed on ${currentUrl}; a fresh snapshot contains likely overlay close/dismiss controls.`,
+	};
+}
+
 async function collectOpenResultTabCorrection(options: {
 	cwd: string;
 	sessionName?: string;
@@ -3234,6 +3336,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary),
 						};
 					}
+					let overlayBlockerDiagnostic: OverlayBlockerDiagnostic | undefined;
 
 					let openResultTabCorrection: OpenResultTabCorrection | undefined;
 					if (
@@ -3337,6 +3440,17 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							}
 						}
 					}
+					if (succeeded && !sessionTabCorrection && !aboutBlankSessionMismatch) {
+						overlayBlockerDiagnostic = await collectOverlayBlockerDiagnostic({
+							command: executionPlan.commandInfo.command,
+							cwd: ctx.cwd,
+							data: presentationEnvelope?.data,
+							navigationSummary,
+							priorTarget: priorSessionTabTarget,
+							sessionName: executionPlan.sessionName,
+							signal,
+						});
+					}
 					let currentRefSnapshot: SessionRefSnapshot | undefined;
 					if (executionPlan.sessionName) {
 						const activeSessionTabTargetState = sessionTabTargets.get(executionPlan.sessionName);
@@ -3353,7 +3467,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				? extractRefSnapshotFromData(presentationEnvelope?.data)
 				: executionPlan.commandInfo.command === "batch"
 					? extractRefSnapshotFromBatchResults(presentationEnvelope?.data)
-					: undefined
+					: overlayBlockerDiagnostic?.snapshot
 			: undefined;
 						if (refSnapshot && shouldApplySessionTabTargetUpdate({ current: sessionRefSnapshots.get(executionPlan.sessionName), updateOrder: tabTargetUpdateOrder })) {
 							currentRefSnapshot = { ...refSnapshot, target: refSnapshot.target ?? currentSessionTabTarget };
@@ -3528,6 +3642,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							(nextActions ??= []).push(...candidateActions);
 						}
 					}
+					if (overlayBlockerDiagnostic) {
+						(nextActions ??= []).push(...buildOverlayBlockerNextActions({ diagnostic: overlayBlockerDiagnostic, sessionName: executionPlan.sessionName }));
+					}
 					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction) {
 						(nextActions ??= []).push({
 							id: "retry-semantic-action-after-stale-ref",
@@ -3569,6 +3686,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						imagePaths: presentation.imagePaths,
 						nextActions,
 						pageChangeSummary: presentation.pageChangeSummary,
+						overlayBlockers: overlayBlockerDiagnostic,
 						qaPreset,
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,
@@ -3590,9 +3708,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					};
 
 					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
-					const content = semanticActionCandidateText && redactedContent[0]?.type === "text"
+					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
+					const appendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText].filter((item): item is string => item !== undefined).join("\n\n");
+					const content = appendedDiagnosticText.length > 0 && redactedContent[0]?.type === "text"
 						? [
-							{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${semanticActionCandidateText}` },
+							{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${appendedDiagnosticText}` },
 							...redactedContent.slice(1),
 						]
 						: redactedContent;
