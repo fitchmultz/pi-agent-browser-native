@@ -57,7 +57,7 @@ The result is optimized for agent work:
 | Pain | Native wrapper capability | Proof surface |
 |---|---|---|
 | Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, an optional `semanticAction` shorthand for common `find` flows, constrained `job` / `qa` presets and experimental `sourceLookup` / `networkSourceLookup` that compile short workflows to `batch`, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
-| Page snapshots are too large | Shows compact, main-content-first summaries and stores full raw output in spill files when needed | `test/agent-browser.presentation.test.ts` |
+| Page snapshots are too large | Shows compact, main-content-first summaries, surfaces an `Omitted high-value controls` section (plus `details.data.highValueControlRefIds`) when dense pages hide inputs and tabs from the trimmed ref lists, and stores full raw output in spill files when needed | `extensions/agent-browser/lib/results/snapshot.ts`, `test/agent-browser.presentation.test.ts` |
 | Screenshots/downloads get lost in text | Normalizes artifact paths and reports existence, size, cwd, session, and repair status | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#download-screenshot-and-pdf-files) |
 | Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
 | Auth/profile workflows can leak secrets | Supports `auth save --password-stdin` and redacts sensitive args, URLs, stdout/stderr, details, and parse-failure spills | `test/agent-browser.extension-validation.test.ts` |
