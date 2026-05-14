@@ -26,7 +26,7 @@ Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before an
 
 ## Core mental model
 
-Tool parameters (use exactly one of `args`, `semanticAction`, `job`, or `qa`):
+Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, or `sourceLookup`):
 
 ```json
 { "args": ["open", "https://example.com"], "sessionMode": "auto" }
@@ -44,11 +44,16 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, or `qa`):
 { "job": { "steps": [{ "action": "open", "url": "https://example.com" }, { "action": "assertText", "text": "Example Domain" }] } }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, or `qa` instead (mutually exclusive).
-- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args`, `job`, or `qa` on the same call.
+```json
+{ "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+```
+
+- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, `qa`, or `sourceLookup` instead (mutually exclusive).
+- `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args`, `job`, `qa`, or `sourceLookup` on the same call.
 - `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin and reports the compiled plan in `details.compiledJob`.
 - `qa`: optional lightweight QA preset; compiles to the same batch path and reports `details.compiledQaPreset` plus `details.qaPreset` pass/fail evidence.
-- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. Job and QA modes generate their own `batch` stdin.
+- `sourceLookup`: optional experimental helper for local UI-to-source *candidates*; compiles to the same `batch` path, reports `details.compiledSourceLookup` and `details.sourceLookup`, and never reclassifies a fully successful upstream batch as failed the way `qa` can (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#sourcelookup) and the longer notes below).
+- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, and `sourceLookup` generate their own `batch` stdin.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
@@ -121,7 +126,7 @@ Examples:
 { "args": ["snapshot", "-i"] }
 ```
 
-The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args` and `job`, not a nested shape inside `batch` stdin arrays.
+The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, and `sourceLookup`, not a nested shape inside `batch` stdin arrays.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 
