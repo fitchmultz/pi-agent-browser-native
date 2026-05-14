@@ -174,6 +174,8 @@ Compiled shape:
 
 Use raw `args` plus `stdin` for upstream `batch` when a flow needs commands, flags, stdin forms, or failure policies outside this constrained schema.
 
+Because `job` still executes as upstream `batch` with generated stdin, the same wrapper page-scoped `@e…` preflight applies: if you pass `@refs` in `click`/`fill` selectors after an `open` or another step that can navigate or mutate the page, split the work across tool calls or switch to raw `batch` and insert your own `snapshot -i` rows between steps—the constrained `job` vocabulary does not emit snapshot steps for you.
+
 ### `qa`
 
 - type: object with required `url`
