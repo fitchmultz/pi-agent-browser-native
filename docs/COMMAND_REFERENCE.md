@@ -5,6 +5,7 @@ Related docs:
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`RELEASE.md`](RELEASE.md)
+- [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 
 ## Purpose
 

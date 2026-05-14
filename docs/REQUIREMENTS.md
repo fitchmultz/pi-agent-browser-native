@@ -5,6 +5,7 @@ Related docs:
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
 - [`RELEASE.md`](RELEASE.md)
+- [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 
 ## Purpose
 
@@ -25,6 +26,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - Do **not** support a broad range of older `agent-browser` versions.
 - Do **not** add backward-compatibility shims.
 - Keep the wrapper close to current upstream behavior as `agent-browser` evolves.
+- Maintainer-facing mapping from the canonical baseline (`scripts/agent-browser-capability-baseline.mjs`) to docs, runtime, tests, and verification gates lives in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md); refresh that matrix when rebaselining upstream.
 
 ### Design philosophy
 
