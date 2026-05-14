@@ -23,6 +23,7 @@
 - added a concrete `details.nextActions` JSON example in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) for the `refresh-interactive-refs` + `retry-semantic-action-after-stale-ref` chain on semantic `stale-ref` failures, aligned with `extensions/agent-browser/index.ts` and `extensions/agent-browser/lib/results/shared.ts`
 - documented how `npm run docs` differs from the default `npm run verify` gate, and linked checkout maintainers to `AGENTS.md` for capability baseline rebaselining and operational testing notes alongside the shipped `docs/` set
 - linked [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) to the stable `agent_browser` result-category contract in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) and the TypeScript source in `extensions/agent-browser/lib/results/shared.ts`
+- `package.json` `prepublishOnly` now runs `npm run verify -- release` before `npm pack --dry-run`, so publishes enforce packaged Pi smoke and the same live upstream command-reference sampling as [`docs/RELEASE.md`](docs/RELEASE.md#pre-release-checks); orchestration is the `release` mode in [`scripts/project.mjs`](scripts/project.mjs), with operator-facing notes in [`README.md`](README.md)
 
 ## 0.2.24 - 2026-05-11
 

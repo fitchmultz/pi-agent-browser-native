@@ -30,6 +30,8 @@ npm run verify -- release
 1. `npm run verify` for generated playbook drift, TypeScript, unit/fake coverage, command-reference generated-block drift, and live command-reference verification against the targeted upstream on `PATH`
 2. `npm run verify -- package-pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
 
+`npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`) plus the packaged Pi smoke in `package-pi`. Using `npm publish --ignore-scripts` skips that contract intentionally.
+
 The configured-source lifecycle regression harness is opt-in because it launches an interactive `pi` process under `tmux` and requires a usable local model configuration:
 
 ```bash
