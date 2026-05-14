@@ -2,49 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0073",
-      "status": "todo",
-      "title": "Surface likely overlay blockers when clicks do not change page state",
-      "description": "Improve click-result diagnostics when an action reports success but no URL or meaningful DOM state changes occur because a fixed overlay, modal, banner, or dialog may be intercepting the intended workflow. Dogfood on Wikipedia needed a screenshot to discover a donation banner close button before search would navigate.",
-      "priority": "medium",
-      "tags": [
-        "dogfood",
-        "clicks",
-        "diagnostics",
-        "overlays"
-      ],
-      "scope": [
-        "extensions/agent-browser/lib/results/presentation.ts",
-        "extensions/agent-browser/lib/results/shared.ts",
-        "extensions/agent-browser/index.ts",
-        "docs/TOOL_CONTRACT.md",
-        "docs/COMMAND_REFERENCE.md",
-        "test/agent-browser.presentation.test.ts",
-        "test/agent-browser.extension-validation.test.ts"
-      ],
-      "evidence": [
-        "dogfood 2026-05-14 interactive pass :: clicking Wikipedia Search reported success but stayed on the same URL; a screenshot later revealed a Wikimedia donation banner/overlay with close button `@e5` blocking progress."
-      ],
-      "plan": [
-        "Inspect available post-click page-change summary and snapshot evidence for detecting no-op clicks and overlays.",
-        "When a mutation-prone click has no URL/state change, surface likely blockers such as visible fixed overlays, dialogs, banners, and close buttons if evidence is available.",
-        "Add a conservative nextAction for re-snapshot or close-overlay only when safe; avoid inventing blockers without evidence.",
-        "Document the diagnostic limits and add tests with a fixture overlay."
-      ],
-      "notes": [],
-      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
-      "created_at": "2026-05-14T20:19:11Z",
-      "updated_at": "2026-05-14T20:19:11Z",
-      "depends_on": [
-        "RQ-0072"
-      ],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {
-        "dogfood_order": "5"
-      }
-    },
-    {
       "id": "RQ-0074",
       "status": "todo",
       "title": "Prefer or warn about visible elements for selector text reads",
