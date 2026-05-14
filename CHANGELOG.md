@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.25 - 2026-05-14
+
 ### Added
 - [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md) as the durable upstream support and release-readiness matrix keyed to `CAPABILITY_BASELINE.inventorySections` in `scripts/agent-browser-capability-baseline.mjs`, including maintainer refresh steps, verification gate evidence, and per-inventory documentation/runtime/test pointers; cross-linked from [`README.md`](README.md), [`AGENTS.md`](AGENTS.md), [`docs/RELEASE.md`](docs/RELEASE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and the published tarball `files` list in `package.json`
 - machine-readable `details.nextActions` id `retry-semantic-action-after-stale-ref` when a top-level `semanticAction` call fails with `failureCategory: "stale-ref"` and the wrapper still has the compiled upstream `find` argv: it is appended after `refresh-interactive-refs` so agents can retry the same locator-stable target without hand-rebuilding argv, while direct stale `@e…` flows keep snapshot-only recovery; merged in `extensions/agent-browser/index.ts`, documented in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#semanticaction) and [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), agent playbook string in `extensions/agent-browser/lib/playbook.ts`, regression coverage in `test/agent-browser.extension-validation.test.ts`
@@ -21,6 +23,10 @@
 - added a concrete `details.nextActions` JSON example in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) for the `refresh-interactive-refs` + `retry-semantic-action-after-stale-ref` chain on semantic `stale-ref` failures, aligned with `extensions/agent-browser/index.ts` and `extensions/agent-browser/lib/results/shared.ts`
 - documented how `npm run docs` differs from the default `npm run verify` gate, and linked checkout maintainers to `AGENTS.md` for capability baseline rebaselining and operational testing notes alongside the shipped `docs/` set
 - linked [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) to the stable `agent_browser` result-category contract in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) and the TypeScript source in `extensions/agent-browser/lib/results/shared.ts`
+- `package.json` `prepublishOnly` now runs `npm run verify -- release` before `npm pack --dry-run`, so publishes enforce packaged Pi smoke and the same live upstream command-reference sampling as [`docs/RELEASE.md`](docs/RELEASE.md#pre-release-checks); orchestration is the `release` mode in [`scripts/project.mjs`](scripts/project.mjs), with operator-facing notes in [`README.md`](README.md)
+- release guidance now requires `tmux`-driven live-site Pi dogfood with the native `agent_browser` tool before every release, with cleanup and evidence recording expectations in [`docs/RELEASE.md`](docs/RELEASE.md#pre-release-checks) and [`AGENTS.md`](AGENTS.md)
+- aligned maintainer wording so configured-source lifecycle (`npm run verify -- lifecycle`) is documented as a pre-publish requirement across [`AGENTS.md`](AGENTS.md), [`README.md`](README.md), [`docs/RELEASE.md`](docs/RELEASE.md), and [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md), while noting it remains a separate `verify` mode from the default gate in [`scripts/project.mjs`](scripts/project.mjs)
+- release-readiness cross-links: `package.json` `prepublishOnly` called out next to the verification facade in [`AGENTS.md`](AGENTS.md); configured-source lifecycle plus publish-time `release` gate summarized under local validation modes in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); configured-source harness subsection in [`docs/RELEASE.md`](docs/RELEASE.md) explicitly ties to [Pre-release checks](docs/RELEASE.md#pre-release-checks)
 
 ## 0.2.24 - 2026-05-11
 

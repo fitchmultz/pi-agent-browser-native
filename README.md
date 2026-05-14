@@ -370,7 +370,7 @@ npm run doctor
 npm run verify -- release
 ```
 
-`npm run verify -- release` includes the default verification gate plus packaged Pi smoke coverage. The package also has a `prepublishOnly` hook that runs default verification and `npm pack --dry-run` during `npm publish`.
+`npm run verify -- release` includes the default verification gate plus packaged Pi smoke coverage. The package also has a `prepublishOnly` hook that runs the same release gate and `npm pack --dry-run` during `npm publish`.
 
 ## How it works
 
@@ -418,7 +418,7 @@ Configured-source lifecycle validation:
 npm run verify -- lifecycle
 ```
 
-Use lifecycle validation when testing `/reload`, full restart, `/resume`, managed-session continuity, or persisted artifact behavior.
+Use lifecycle validation when testing `/reload`, full restart, `/resume`, managed-session continuity, or persisted artifact behavior. Maintainers must run the same harness before every publish; see [Pre-release checks](docs/RELEASE.md#pre-release-checks).
 
 Installed-package validation after publish:
 

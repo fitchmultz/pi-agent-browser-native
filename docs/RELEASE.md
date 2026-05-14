@@ -30,13 +30,19 @@ npm run verify -- release
 1. `npm run verify` for generated playbook drift, TypeScript, unit/fake coverage, command-reference generated-block drift, and live command-reference verification against the targeted upstream on `PATH`
 2. `npm run verify -- package-pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
 
-The configured-source lifecycle regression harness is opt-in because it launches an interactive `pi` process under `tmux` and requires a usable local model configuration:
+`npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`) plus the packaged Pi smoke in `package-pi`. Using `npm publish --ignore-scripts` skips that contract intentionally.
+
+`prepublishOnly` intentionally does **not** run `npm run verify -- lifecycle`, `npm run verify -- real-upstream`, or `npm run verify -- benchmark`; those are separate `npm run verify` modes in [`scripts/project.mjs`](../scripts/project.mjs). Treat the bullets below as the full pre-publish contract even though only the `release` slice is automated at publish time.
+
+Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. Use `pi --no-extensions -e .` from the checkout before publish, drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost and fake-upstream gates do not replace this human-readable live-site transcript evidence.
+
+The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload` plus restart/`/resume` behavior:
 
 ```bash
 npm run verify -- lifecycle
 ```
 
-Use `npm run verify -- lifecycle --keep-artifacts` when debugging failures.
+Use `npm run verify -- lifecycle --keep-artifacts` when debugging failures, then remove retained artifacts after inspection.
 
 ## Deterministic agent efficiency benchmark
 
@@ -101,7 +107,7 @@ This checklist assumes a real `agent-browser` on `PATH`. It complements, but doe
 
 ### Configured-source lifecycle validation
 
-Prefer the automated harness for deterministic configured-source lifecycle regression coverage:
+Run the automated harness for deterministic configured-source lifecycle regression coverage (required before publish together with the other [Pre-release checks](#pre-release-checks)):
 
 ```bash
 npm run verify -- lifecycle
@@ -196,8 +202,9 @@ Before publishing:
 - run `npm run doctor` and confirm any duplicate-source remediation matches the active package/checkout setup
 - run `npm run verify -- real-upstream` for upstream runtime, result-presentation, or managed-session changes
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and configured-source lifecycle validation
+- complete interactive `tmux` live-site dogfood with `pi --no-extensions -e .` and the native `agent_browser` tool (at least one simple static site and one real documentation/product site; include `qa` or `job`/`batch` when those surfaces changed; close sessions and remove screenshots/temp artifacts; record evidence)—see [Pre-release checks](#pre-release-checks); automated gates are not a substitute
 - rerun `npm run verify -- release`
-- run `npm run verify -- lifecycle` for opt-in configured-source `/reload` plus restart/`/resume` regression coverage
+- run `npm run verify -- lifecycle` for configured-source `/reload` plus restart/`/resume` regression coverage (required before publish; see [Pre-release checks](#pre-release-checks))
 - confirm [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) still maps every current baseline inventory section to docs, runtime handling, tests, and validation status
 - manually exercise real-browser `/reload` and full restart + `/resume` continuity when release risk warrants browser-level confidence beyond the fake upstream harness
 - publish only after the tarball contents and isolated packaged-extension smoke check match expectations

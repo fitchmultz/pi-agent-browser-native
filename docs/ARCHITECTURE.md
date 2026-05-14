@@ -68,7 +68,7 @@ The published package should load from the `pi` manifest in `package.json`.
 Local checkout validation has two intentional modes:
 
 - **Quick isolated mode:** use explicit CLI loading such as `pi --no-extensions -e .` from the repository root. This bypasses Pi settings and extension discovery, avoids duplicate `agent_browser` registrations when another source is installed globally, and is the right mode for checkout smoke tests.
-- **Configured-source lifecycle mode:** configure exactly one active checkout or package source in Pi settings and launch plain `pi`. This is the right mode for validating `/reload`, restart, and `/resume` behavior because those lifecycle checks exercise discovered/configured resources.
+- **Configured-source lifecycle mode:** configure exactly one active checkout or package source in Pi settings and launch plain `pi`. This is the right mode for validating `/reload`, restart, and `/resume` behavior because those lifecycle checks exercise discovered/configured resources. Before shipping, maintainers also run `npm run verify -- lifecycle` (same semantics under automation) plus the live-site checks in [`RELEASE.md`](RELEASE.md#pre-release-checks); `npm publish` enforces `npm run verify -- release` via `prepublishOnly` unless scripts are skipped.
 
 The repo should not add a repo-local `.pi/extensions/` autoload shim as the documented checkout path.
 

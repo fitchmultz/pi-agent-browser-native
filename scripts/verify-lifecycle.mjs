@@ -1,7 +1,7 @@
 /**
  * Purpose: Exercise the configured-source pi-agent-browser lifecycle path through a real tmux-driven Pi process.
  * Responsibilities: Create isolated Pi settings and a temporary package source, inject a deterministic reload sentinel, drive `/reload` plus restart/`/resume`, assert managed browser-session continuity and persisted artifact survival, capture transcripts, and clean up side effects.
- * Scope: Opt-in maintainer regression harness only; normal unit/package verification remains in the standard npm scripts.
+ * Scope: Maintainer regression harness invoked only through `npm run verify -- lifecycle` (not part of default `verify` or the `release` compose used by `prepublishOnly`); normal unit/package verification remains in the standard npm scripts.
  * Usage: Run with `node scripts/verify-lifecycle.mjs`, `npm run verify -- lifecycle`, or `node scripts/verify-lifecycle.mjs --keep-artifacts --verbose`.
  * Invariants/Assumptions: `pi` and `tmux` are available on PATH, the configured model can follow explicit tool-use prompts, and the temporary configured package path is the only active Pi package source.
  * Related: `docs/SUPPORT_MATRIX.md` tracks configured-source lifecycle expectations, passthrough flags, and triage notes for this harness.
