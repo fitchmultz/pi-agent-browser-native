@@ -155,7 +155,7 @@ Run a multi-step flow in one tool call:
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
 ```
 
-If the same `batch` stdin later uses `@e…` on interaction commands after a step that can navigate or mutate the page (`open`, `click`, `fill`, and similar), insert a `snapshot` step whose first argv token is `snapshot` (for example `["snapshot","-i"]`) between those phases. The wrapper rejects unsafe ordering with `failureCategory: "stale-ref"` before upstream runs; full rules are under `refSnapshot` in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
+If the same `batch` stdin later uses `@e…` on interaction commands after a step that can navigate or mutate the page (`open`, `click`, `fill`, and similar), insert a `snapshot` step whose first argv token is `snapshot` (for example `["snapshot","-i"]`) between those phases. The wrapper rejects unsafe ordering with `failureCategory: "stale-ref"` before upstream runs. For the same stdin plan, URL drift and unknown-ref preflight only consider `@e…` on guarded steps before the first `snapshot` row; refs introduced after that in-batch snapshot are validated by upstream when the batch runs. Full rules are under `refSnapshot` in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
 
 Evaluate page JavaScript through stdin:
 

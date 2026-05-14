@@ -9,6 +9,7 @@
 
 ### Changed
 - batch stdin page-scoped ref preflight clears the ref-invalidating latch when a later `snapshot` step appears in the same JSON plan (`getBatchRefInvalidationMessage` in `extensions/agent-browser/index.ts`), matching documented `snapshot -i` spacing inside `batch`; contract expanded under [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) (`refSnapshot`); regression `agentBrowserExtension allows batch stdin ref steps after snapshot following an invalidating step` in [`test/agent-browser.extension-validation.test.ts`](test/agent-browser.extension-validation.test.ts)
+- clarified that pre-spawn URL drift and missing-ref checks for `batch` stdin only collect guarded `@e…` from steps before the first `snapshot` row (`getGuardedRefUsage` in `extensions/agent-browser/index.ts`), while the invalidating latch still walks the full stdin plan; aligned [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md), [`README.md`](README.md), [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`AGENTS.md`](AGENTS.md)
 
 ## 0.2.25 - 2026-05-14
 
