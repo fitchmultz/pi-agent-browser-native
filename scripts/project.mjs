@@ -5,6 +5,7 @@
  * Scope: Local maintainer orchestration only; individual verifier scripts continue to own their domain-specific checks.
  * Usage: Called from package.json scripts (`npm run docs`, `npm run verify -- package-pi`) or directly as `node scripts/project.mjs <docs|verify> ...`.
  * Invariants/Assumptions: `npm install` has populated local `node_modules/.bin` tools, and Pi/tmux are available in the maintainer environment only for lifecycle/package smoke modes.
+ * Related: `docs/SUPPORT_MATRIX.md` maps `npm run verify` / `npm run docs` modes to the release-readiness gates maintainers re-run before shipping.
  */
 
 import { spawn } from "node:child_process";
