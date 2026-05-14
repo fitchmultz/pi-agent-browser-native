@@ -2283,6 +2283,9 @@ function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string)
 	if (parsed.error || parsed.steps === undefined) return undefined;
 	let priorStepInvalidatesRefs = false;
 	for (const step of parsed.steps) {
+		if ((step[0] ?? "") === "snapshot") {
+			priorStepInvalidatesRefs = false;
+		}
 		const refIds = collectRefsFromTokens(step);
 		if (refIds.length > 0 && REF_GUARDED_COMMANDS.has(step[0] ?? "") && priorStepInvalidatesRefs) {
 			return `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`;

@@ -1874,6 +1874,52 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension allows batch stdin ref steps after snapshot following an invalidating step", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-snapshot-reset-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["open", "https://second.example/"], success: true, result: { title: "Second", url: "https://second.example/" } },
+    { command: ["snapshot", "-i"], success: true, result: {
+      origin: "https://second.example/",
+      refs: { e1: { role: "button", name: "Go" } },
+      snapshot: '- button "Go" [ref=e1]'
+    } },
+    { command: ["click", "@e1"], success: true, result: { clicked: "ok" } }
+  ]));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+
+			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["open", "https://second.example/"], ["snapshot", "-i"], ["click", "@e1"]]),
+			});
+			assert.equal(batch.isError, false);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension records snapshot refs returned inside a successful batch", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-snapshot-"));
 	const logPath = join(tempDir, "invocations.log");
