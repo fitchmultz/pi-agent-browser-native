@@ -418,7 +418,7 @@ Configured-source lifecycle validation:
 npm run verify -- lifecycle
 ```
 
-Use lifecycle validation when testing `/reload`, full restart, `/resume`, managed-session continuity, or persisted artifact behavior.
+Use lifecycle validation when testing `/reload`, full restart, `/resume`, managed-session continuity, or persisted artifact behavior. Maintainers must run the same harness before every publish; see [Pre-release checks](docs/RELEASE.md#pre-release-checks).
 
 Installed-package validation after publish:
 
