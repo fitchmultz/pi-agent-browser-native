@@ -223,7 +223,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			),
 		}),
 	),
-	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, auth save --password-stdin, and is generated internally by job or qa mode." })),
+	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, auth save --password-stdin, and is generated internally by job, qa, or sourceLookup mode." })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:
