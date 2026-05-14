@@ -197,7 +197,7 @@ Use custom `job` or raw `batch` for QA flows that need custom commands, flags, a
 - optional `maxWorkspaceFiles` bounds the local component-name scan; default is 2000 source files and the hard maximum is 5000
 - reports `details.compiledSourceLookup` with the generated batch plan and `details.sourceLookup` with `{ status, candidates, limitations, summary }`
 - each `candidates[]` entry includes `source` (`react-inspect`, `dom-attribute`, or `workspace-search`), `confidence` (`high`, `medium`, or `low`), `evidence` (string reasons), and optional `file`, `line`, `column`, and `componentName`
-- `details.sourceLookup.status` is one of `candidates-found`, `no-candidates`, or `unsupported`; `unsupported` is set when any compiled `react` batch step fails (for example React DevTools not enabled, no renderer, or inspect errors), even if other steps succeeded
+- `details.sourceLookup.status` is one of `candidates-found`, `no-candidates`, or `unsupported`; `unsupported` applies only when **no** candidates were collected **and** at least one compiled `react` batch step failed (for example React DevTools not enabled, no renderer, or inspect errors). If DOM or workspace evidence still produced candidates, `status` stays `candidates-found` even when a `react` step failed
 - when analysis produces a `summary`, the wrapper prepends it to the primary visible text block (or inserts a leading text block) for quick scanning; unlike `qa`, it never flips the unified tool outcome to failed solely because diagnostics look noisy or because `status` is `no-candidates` / metadata was missing—failed upstream batch steps still surface as normal tool errors
 
 Example:

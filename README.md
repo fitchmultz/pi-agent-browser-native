@@ -231,7 +231,7 @@ For local app debugging, `sourceLookup` can gather candidate component/file loca
 { "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
 ```
 
-This is an experiment, not a guarantee. React hints require a session opened with `--enable react-devtools`, and many builds do not expose useful sourcemap/source metadata; `status: "unsupported"` or `"no-candidates"` is expected for those cases.
+This is an experiment, not a guarantee. React hints require a session opened with `--enable react-devtools`, and many builds do not expose useful sourcemap/source metadata; `status: "no-candidates"` is common when nothing matched, and `status: "unsupported"` only when no candidates were found **and** a compiled `react` batch step failed (if DOM or workspace search still produced candidates, you get `candidates-found` instead).
 
 For asynchronous exports, click first and then wait for the download:
 
