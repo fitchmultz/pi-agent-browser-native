@@ -1976,8 +1976,8 @@
       ],
       "relates_to": [],
       "custom_fields": {
-        "source": "manual-upstream-refresh",
-        "target_upstream_version": "0.27.0"
+        "target_upstream_version": "0.27.0",
+        "source": "manual-upstream-refresh"
       }
     },
     {
@@ -3035,6 +3035,48 @@
       "updated_at": "2026-05-14T02:49:26.278705000Z",
       "completed_at": "2026-05-14T02:49:26.278705000Z",
       "started_at": "2026-05-14T01:58:30.171453000Z",
+      "depends_on": [
+        "RQ-0065"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0067",
+      "status": "done",
+      "title": "Experiment with source hints for failed browser network requests",
+      "priority": "low",
+      "tags": [
+        "agent-browser",
+        "network",
+        "source-lookup",
+        "experiment"
+      ],
+      "scope": [
+        "extensions/agent-browser",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "test"
+      ],
+      "evidence": [
+        "Failed request summaries are useful for QA, but mapping them causally to source files is ambiguous and should be treated as an experiment after network diagnostics are reliable.",
+        "The goal is candidate source hints with uncertainty, not definitive blame."
+      ],
+      "plan": [
+        "Ensure failed network request summaries include enough safe context: method, URL, status/error, initiator stack if available, and bounded redacted previews.",
+        "Prototype optional mapping from request initiator/source maps/local repo search to candidate files and call sites, clearly marking confidence and gaps.",
+        "Avoid automatic edits or blame; return evidence and nextActions for manual code inspection.",
+        "Evaluate against real local-app failures before deciding whether this belongs in the main tool contract."
+      ],
+      "notes": [
+        "PR #29 merged as 54b23c7 Add network source lookup experiment. Validation after Cursor commits: npm run verify; npm run verify -- benchmark; npm run verify -- package-pi; npm run verify -- real-upstream; git diff --check; cueloop machine queue validate."
+      ],
+      "request": "Infer and queue failed-request source lookup experiment from the user's ABN task list.",
+      "created_at": "2026-05-13T13:33:42.731677000Z",
+      "updated_at": "2026-05-14T03:55:38.139205000Z",
+      "completed_at": "2026-05-14T03:55:38.139205000Z",
+      "started_at": "2026-05-14T02:49:39.707375000Z",
       "depends_on": [
         "RQ-0065"
       ],
