@@ -191,7 +191,7 @@ Typical pitfalls:
 
 ### Constrained browser jobs
 
-For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability.
+For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability. There is no separate catalog of reusable named browser recipes above `job`, `qa`, and raw `batch`; see [`docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and when to revisit it.
 
 ```json
 {
