@@ -49,6 +49,18 @@ That means:
 - no manual user orchestration as the main workflow
 - any future slash commands should be minimal and secondary
 
+### No reusable recipe layer yet
+
+Do **not** add reusable browser recipes as a first-class runtime surface yet.
+
+Current evidence does not justify another source of truth for workflows:
+- the benchmark has one representative native `job` shape, one `qa` preset shape, one `sourceLookup` shape, and one `networkSourceLookup` shape rather than repeated named job patterns that agents keep re-specifying
+- repo-local dogfood evidence does not show repeated project-specific job recipes that need versioning or ownership
+- `qa` already covers the only repeated smoke-test shape with a stable top-level preset
+- docs and prompt guidance can carry examples without adding recipe state, migration rules, or another schema
+
+Revisit this only when benchmark or dogfood data shows at least two repeated, failure-prone job sequences that cannot be represented clearly by `job`, `qa`, or raw `batch`. If that happens, define ownership, versioning, schema boundaries, generated docs, and tests before adding executable recipes.
+
 ### Package layout versus local checkout development
 
 The published package should load from the `pi` manifest in `package.json`.

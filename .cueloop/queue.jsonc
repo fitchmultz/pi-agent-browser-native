@@ -1,42 +1,4 @@
 {
   "version": 1,
-  "tasks": [
-    {
-      "id": "RQ-0068",
-      "status": "todo",
-      "title": "Decide whether repeated browser jobs should become reusable recipes",
-      "priority": "low",
-      "tags": [
-        "agent-browser",
-        "recipes",
-        "jobs",
-        "product-decision"
-      ],
-      "scope": [
-        "docs",
-        "extensions/agent-browser",
-        "test"
-      ],
-      "evidence": [
-        "Reusable recipes are only valuable if benchmark or dogfood data shows repeated job shapes that agents should not have to re-specify.",
-        "Adding a recipe layer too early risks another source of truth for workflows."
-      ],
-      "plan": [
-        "Analyze benchmark, QA, and dogfood usage after job mode exists to identify repeated job shapes and failure-prone sequences.",
-        "If recipes are justified, define a small recipe format with ownership, docs, versioning, and clear boundaries from prompt guidance and tests.",
-        "If not justified, document the decision and keep examples as docs rather than executable recipe state.",
-        "Add verification only for adopted recipes, avoiding speculative framework code."
-      ],
-      "notes": [],
-      "request": "Infer and queue reusable browser recipe decision from the user's ABN task list.",
-      "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
-      "depends_on": [
-        "RQ-0065"
-      ],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {}
-    }
-  ]
+  "tasks": []
 }
