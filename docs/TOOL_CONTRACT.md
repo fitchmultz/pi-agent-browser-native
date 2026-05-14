@@ -190,13 +190,15 @@ Use custom `job` or raw `batch` for QA flows that need custom commands, flags, a
 - optional; mutually exclusive with `args`, `semanticAction`, `job`, and `qa`
 - experimental opt-in helper for local app debugging; it reports candidate source locations with confidence and evidence instead of claiming a guaranteed DOM-to-file mapping
 - compiles to existing upstream `batch` commands only:
-  - `selector` checks visibility and, by default, reads `get html <selector>` for source-like DOM attributes such as `data-source-file`
+  - `selector` adds `is visible <selector>` and, unless `includeDomHints: false`, adds `get html <selector>` for source-like DOM attributes (`data-source-file`, `data-file`, `data-component-file`, `data-source`, plus optional `data-source-line` / `data-line` and `data-source-column` / `data-column`) and for `.ts`/`.tsx`/`.js`/`.jsx` paths embedded in HTML text
   - `reactFiberId` runs `react inspect <id>`; this requires the page to have been launched with `--enable react-devtools` before first navigation and for the app build to expose source information
-  - `componentName` runs `react tree` and performs a bounded local workspace scan for matching component declarations under the Pi session cwd
+  - `componentName` runs `react tree` and performs a bounded local workspace scan under the Pi tool session **cwd** for matching component declarations in `.ts`, `.tsx`, `.js`, and `.jsx` files (skipping directories such as `.git`, `node_modules`, `dist`, `build`, `coverage`, `.next`, `out`, `tmp`, and `temp`); the walk stops after `maxWorkspaceFiles` files (default 2000, hard cap 5000) and records at most ten `workspace-search` candidates
 - optional `includeDomHints: false` skips the selector HTML read
 - optional `maxWorkspaceFiles` bounds the local component-name scan; default is 2000 source files and the hard maximum is 5000
 - reports `details.compiledSourceLookup` with the generated batch plan and `details.sourceLookup` with `{ status, candidates, limitations, summary }`
-- `details.sourceLookup.status` is one of `candidates-found`, `no-candidates`, or `unsupported`; unsupported states are expected when React DevTools was not enabled, no React renderer is present, or the page/build lacks sourcemap/source metadata
+- each `candidates[]` entry includes `source` (`react-inspect`, `dom-attribute`, or `workspace-search`), `confidence` (`high`, `medium`, or `low`), `evidence` (string reasons), and optional `file`, `line`, `column`, and `componentName`
+- `details.sourceLookup.status` is one of `candidates-found`, `no-candidates`, or `unsupported`; `unsupported` is set when any compiled `react` batch step fails (for example React DevTools not enabled, no renderer, or inspect errors), even if other steps succeeded
+- when analysis produces a `summary`, the wrapper prepends it to the primary visible text block (or inserts a leading text block) for quick scanning; unlike `qa`, it never flips the unified tool outcome to failed solely because diagnostics look noisy or because `status` is `no-candidates` / metadata was missing—failed upstream batch steps still surface as normal tool errors
 
 Example:
 
