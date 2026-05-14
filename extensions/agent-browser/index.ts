@@ -2269,7 +2269,12 @@ function getGuardedRefUsage(commandTokens: string[], stdin?: string): string[] {
 	if (parsed.error || parsed.steps === undefined) {
 		return collectFromStep(commandTokens);
 	}
-	return parsed.steps.flatMap((step) => collectFromStep(step));
+	const refsBeforeInBatchSnapshot: string[] = [];
+	for (const step of parsed.steps) {
+		if ((step[0] ?? "") === "snapshot") break;
+		refsBeforeInBatchSnapshot.push(...collectFromStep(step));
+	}
+	return refsBeforeInBatchSnapshot;
 }
 
 function targetsMatch(left: SessionTabTarget | undefined, right: SessionTabTarget | undefined): boolean {

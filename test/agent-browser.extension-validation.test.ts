@@ -1888,11 +1888,17 @@ if (args.includes("batch")) {
     { command: ["open", "https://second.example/"], success: true, result: { title: "Second", url: "https://second.example/" } },
     { command: ["snapshot", "-i"], success: true, result: {
       origin: "https://second.example/",
-      refs: { e1: { role: "button", name: "Go" } },
-      snapshot: '- button "Go" [ref=e1]'
+      refs: { e7: { role: "button", name: "Go" } },
+      snapshot: '- button "Go" [ref=e7]'
     } },
-    { command: ["click", "@e1"], success: true, result: { clicked: "ok" } }
+    { command: ["click", "@e7"], success: true, result: { clicked: "ok" } }
   ]));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://first.example/",
+    refs: { e1: { role: "button", name: "Old" } },
+    snapshot: '- button "Old" [ref=e1]'
+  } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
 }`,
@@ -1908,7 +1914,7 @@ if (args.includes("batch")) {
 
 			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
-				stdin: JSON.stringify([["open", "https://second.example/"], ["snapshot", "-i"], ["click", "@e1"]]),
+				stdin: JSON.stringify([["open", "https://second.example/"], ["snapshot", "-i"], ["click", "@e7"]]),
 			});
 			assert.equal(batch.isError, false);
 
