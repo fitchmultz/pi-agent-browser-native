@@ -26,7 +26,7 @@ Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before an
 
 ## Core mental model
 
-Tool parameters (use exactly one of `args`, `semanticAction`, or `job`):
+Tool parameters (use exactly one of `args`, `semanticAction`, `job`, or `qa`):
 
 ```json
 { "args": ["open", "https://example.com"], "sessionMode": "auto" }
@@ -47,7 +47,8 @@ Tool parameters (use exactly one of `args`, `semanticAction`, or `job`):
 - `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction` or `job` instead (mutually exclusive).
 - `semanticAction`: optional shorthand for common `find` flows; compiles to `find` argv and is rejected together with `args` or `job` on the same call.
 - `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin and reports the compiled plan in `details.compiledJob`.
-- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. Job mode generates its own `batch` stdin.
+- `qa`: optional lightweight QA preset; compiles to the same batch path and reports `details.compiledQaPreset` plus `details.qaPreset` pass/fail evidence.
+- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. Job and QA modes generate their own `batch` stdin.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
@@ -158,6 +159,14 @@ For short constrained flows, use top-level `job` instead of hand-writing `batch`
 ```
 
 Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`; job mode generates the batch stdin itself.
+
+For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks expected text/selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot.
+
+```json
+{ "qa": { "url": "https://example.com", "expectedText": "Example Domain", "screenshotPath": ".dogfood/qa-example.png" } }
+```
+
+Use custom `job` or raw `batch` when you need a different check sequence.
 
 ### Wait for page readiness or downloads
 

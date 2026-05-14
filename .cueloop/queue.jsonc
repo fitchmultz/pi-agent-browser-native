@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "RQ-0065",
-      "status": "todo",
+      "status": "doing",
       "title": "Provide a lightweight QA preset built on browser jobs",
       "priority": "medium",
       "tags": [
@@ -31,7 +31,8 @@
       "notes": [],
       "request": "Infer and queue lightweight browser QA mode work from the user's ABN task list.",
       "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-14T01:24:39.175749000Z",
+      "started_at": "2026-05-14T01:24:39.175749000Z",
       "depends_on": [
         "RQ-0064"
       ],

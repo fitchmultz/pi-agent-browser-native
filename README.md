@@ -207,6 +207,22 @@ For short repeatable workflows, pass a top-level `job` instead of hand-writing `
 
 Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, or commands outside the constrained job schema. Do not pass `stdin` with `job`; job mode generates the batch stdin itself.
 
+### Lightweight QA preset
+
+For a quick smoke/QA pass, use top-level `qa`. It compiles to the same batch path as `job`, clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks expected text/selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot.
+
+```json
+{
+  "qa": {
+    "url": "https://example.com",
+    "expectedText": "Example Domain",
+    "screenshotPath": ".dogfood/qa-example.png"
+  }
+}
+```
+
+Use custom `job` or raw `batch` when you need a different check sequence.
+
 For asynchronous exports, click first and then wait for the download:
 
 ```json

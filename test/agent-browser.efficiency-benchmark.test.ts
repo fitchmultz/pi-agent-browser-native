@@ -32,6 +32,7 @@ const requiredScenarioIds = new Set([
   "artifact-download",
   "batch-open-snapshot",
   "job-open-assert-screenshot",
+  "qa-open-diagnostics",
 ]);
 
 test("benchmark covers representative browser workflow shapes", () => {
@@ -58,7 +59,7 @@ test("benchmark report aggregates required efficiency metrics", () => {
   assert.equal(report.metrics.successes, requiredScenarioIds.size);
   assert.equal(report.metrics.staleRefFailures, 1);
   assert.equal(report.metrics.staleRefRecoveries, 1);
-  assert.equal(report.metrics.artifactSuccesses, 2);
+  assert.equal(report.metrics.artifactSuccesses, 3);
   assert.deepEqual(report.metrics.failureCategoriesCovered, ["artifact-completion", "stale-ref"]);
   assert.equal(report.metrics.failureCategoryCoverage, 2);
   assert.ok(report.metrics.toolCalls > report.metrics.scenarios);

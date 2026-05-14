@@ -143,6 +143,30 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
     elapsedMsEstimate: 1100,
   }),
   Object.freeze({
+    id: "qa-open-diagnostics",
+    title: "Run a lightweight QA preset with text and diagnostic checks",
+    workflow: "native-qa",
+    steps: Object.freeze([
+      Object.freeze({
+        call: "agent_browser",
+        qa: Object.freeze({
+          url: "https://example.com",
+          expectedText: "Example Domain",
+          screenshotPath: ".dogfood/qa-example.png",
+        }),
+      }),
+    ]),
+    modelOutputs: Object.freeze([
+      "QA preset passed. Batch results: clear diagnostics, open, wait --load, wait --text, network requests, console, errors, screenshot.",
+    ]),
+    success: true,
+    staleRefFailures: 0,
+    staleRefRecoveries: 0,
+    artifactSuccesses: 1,
+    failureCategories: Object.freeze(["artifact-completion"]),
+    elapsedMsEstimate: 1400,
+  }),
+  Object.freeze({
     id: "job-open-assert-screenshot",
     title: "Run a constrained job that opens, asserts text, and captures evidence",
     workflow: "native-job",

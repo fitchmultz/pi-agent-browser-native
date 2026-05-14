@@ -61,7 +61,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 
 ## Parameters
 
-Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, or `job`):
+Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, `job`, or `qa`):
 
 ```json
 { "args": ["open", "https://example.com"], "stdin": "optional raw stdin content", "sessionMode": "auto" }
@@ -74,7 +74,7 @@ Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`
 ### `args`
 
 - type: `string[]`
-- required unless `semanticAction` or `job` is provided
+- required unless `semanticAction`, `job`, or `qa` is provided
 - exact CLI args passed after `agent-browser`
 - no shell operators
 - do not include the binary name
@@ -91,7 +91,7 @@ Examples:
 ### `semanticAction`
 
 - type: object
-- optional; mutually exclusive with `args` and `job` (omit both entirely when using this field)
+- optional; mutually exclusive with `args`, `job`, and `qa` (omit all of them when using this field)
 - top-level tool input only: `batch` stdin remains upstream argv arrays; express find steps inside batch as string arrays such as `["find","role","button","click","--name","Export"]`, not nested `semanticAction` objects
 - thin intent schema compiled by this wrapper into existing upstream `find` commands; behavior and locator semantics stay upstream-owned
 - supported actions: `click`, `fill`, `select`, `check`, `uncheck`
@@ -164,6 +164,25 @@ Compiled shape:
 ```
 
 Use raw `args` plus `stdin` for upstream `batch` when a flow needs commands, flags, stdin forms, or failure policies outside this constrained schema.
+
+### `qa`
+
+- type: object with required `url`
+- optional; mutually exclusive with `args`, `semanticAction`, and `job`
+- lightweight preset built on the same batch compiler path as `job`
+- clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits for `networkidle`, checks optional `expectedText` (string or string array), checks optional `expectedSelector`, then runs enabled diagnostics: `network requests`, `console`, and `errors`
+- `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set a field to `false` to omit that diagnostic
+- optional `screenshotPath` adds an evidence screenshot step
+- reports `details.compiledQaPreset` with the compiled batch plan and `details.qaPreset` with `{ passed, failedChecks, summary }`
+- fails the native tool result with `failureCategory: "qa-failure"` when diagnostics report page errors, console error messages, failed network requests, or any batch step failure
+
+Example:
+
+```json
+{ "qa": { "url": "https://example.com", "expectedText": "Example Domain", "screenshotPath": ".dogfood/qa-example.png" } }
+```
+
+Use custom `job` or raw `batch` for QA flows that need custom commands, flags, auth setup, HAR capture, or project-specific assertions.
 
 ### `stdin`
 
@@ -344,7 +363,9 @@ Implementation and precedence:
 
 Additional structured fields can appear when relevant:
 - `compiledSemanticAction` when the call used `semanticAction` and the result includes the unified `details` merge: `{ action, locator, args }` with the same redaction rules as `args` / `effectiveArgs`; omitted for plain `args`/`job` calls and omitted on some early error returns that omit this field (see the `semanticAction` section above)
-- `compiledJob` when the call used `job`: `{ args: ["batch"], stdin, steps: [{ action, args }] }`, with step args redacted the same way as other invocation details
+- `compiledJob` when the call used `job` or the job-backed `qa` preset: `{ args: ["batch"], stdin, steps: [{ action, args }] }`, with step args redacted the same way as other invocation details
+- `compiledQaPreset` when the call used `qa`: the compiled job fields plus the QA `checks` object
+- `qaPreset` when the call used `qa`: `{ passed, failedChecks, summary }`
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `pageChangeSummary` for compact mutation/artifact/navigation summaries on commands that can change browser state
