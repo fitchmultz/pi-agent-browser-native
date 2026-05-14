@@ -1,4 +1,488 @@
 {
   "version": 1,
-  "tasks": []
+  "tasks": [
+    {
+      "id": "RQ-0069",
+      "status": "todo",
+      "title": "Prioritize high-value controls in compact snapshots",
+      "description": "Improve `snapshot -i` compact output so dense docs/product pages surface the controls agents need most: visible inputs, searchboxes, overlay/dialog controls, tabs, focused regions, and controls related to visible action buttons. Dogfood agents repeatedly had to read raw snapshot artifacts because compact snapshots hid Playwright Search, Algolia result refs, Playwright package-manager tabs, and Wikipedia's primary searchbox.",
+      "priority": "high",
+      "tags": [
+        "dogfood",
+        "snapshot",
+        "ux",
+        "agent-efficiency"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/index.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "README.md",
+        "test/agent-browser.presentation.test.ts",
+        "test/agent-browser.extension-validation.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 static/docs pass :: Playwright docs `snapshot -i` reported 183 refs but compact output omitted Search, package-manager tabs, and search results, forcing raw artifact inspection.",
+        "dogfood 2026-05-14 interactive pass :: Wikipedia `snapshot -i` showed 117 refs but omitted primary searchbox `Search Wikipedia`; agent had to inspect raw snapshot JSON to find the ref."
+      ],
+      "plan": [
+        "Inspect current snapshot compaction and presentation tests to identify where refs are ranked and omitted.",
+        "Prioritize visible fillable controls, searchboxes, dialog/menu/overlay controls, tabs, focused controls, and controls semantically associated with visible buttons.",
+        "Add an `omitted high-value controls` or equivalent compact section when controls are still truncated.",
+        "Update tool contract and command-reference guidance for the new compact snapshot behavior.",
+        "Add regression coverage using representative dense docs/search overlay fixtures and run `npm run verify`."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 1
+      }
+    },
+    {
+      "id": "RQ-0070",
+      "status": "todo",
+      "title": "Return actionable candidates when locator or semantic actions fail",
+      "description": "Make locator-first actions easier to recover from by returning nearby or cross-family candidates when a semantic locator misses. Dogfood found placeholder fill failed on Wikipedia even though a named searchbox existed, and semantic clicks were attractive but brittle without candidate hints.",
+      "priority": "high",
+      "tags": [
+        "dogfood",
+        "semanticAction",
+        "locators",
+        "ux"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.results.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 interactive pass :: `semanticAction` fill by placeholder `Search Wikipedia` returned `Element not found`, while raw snapshot showed `searchbox \"Search Wikipedia\"` and direct ref fill succeeded.",
+        "dogfood 2026-05-14 static/docs pass :: semantic Search click failed despite a visible/named Search control in the intended browsing context."
+      ],
+      "plan": [
+        "Map current semanticAction compilation, failure presentation, and available upstream evidence on element-not-found failures.",
+        "When a locator family misses, surface bounded nearby candidates from accessible role/name/placeholder/testid/title evidence when available.",
+        "Include a concrete suggested follow-up action or ref-based fallback when safe.",
+        "Update docs and playbook guidance so agents know to use candidate hints instead of raw artifact spelunking.",
+        "Add tests for placeholder miss with accessible-name searchbox candidate and for candidate redaction/sizing."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [
+        "RQ-0069"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 2
+      }
+    },
+    {
+      "id": "RQ-0071",
+      "status": "todo",
+      "title": "Make semanticAction and recovery suggestions session-aware",
+      "description": "Clarify and fix session targeting for top-level `semanticAction` and machine follow-up suggestions. Dogfood showed `args` workflows can target `--session`, but `semanticAction` has no obvious session field and stale-ref retry hints omit the active named session.",
+      "priority": "high",
+      "tags": [
+        "dogfood",
+        "semanticAction",
+        "sessions",
+        "recovery"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/runtime.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "README.md",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.runtime.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 static/docs pass :: named-session Playwright page had Search, but `semanticAction` click returned `Element not found`; schema had no session field to direct it at `dogfood-pi-tool`.",
+        "dogfood 2026-05-14 static/docs pass :: stale-ref retry hint suggested `{ args: [\"snapshot\", \"-i\"] }` and omitted the named session, which would inspect the wrong/default context."
+      ],
+      "plan": [
+        "Decide the canonical session model for top-level shorthands without introducing a broad recipe layer.",
+        "Add or document session targeting for `semanticAction`, or make output unambiguous about which managed/default session is used.",
+        "Carry current session context into stale-ref and locator-recovery `nextActions` where available.",
+        "Include current URL/title for the page that was searched or failed.",
+        "Update schema/docs/tests and run `npm run verify`."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [
+        "RQ-0070"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 3
+      }
+    },
+    {
+      "id": "RQ-0072",
+      "status": "todo",
+      "title": "Prevent stale or recycled refs from silently targeting different elements",
+      "description": "Add stale-ref safety for page-scoped refs so agents cannot easily reuse an old-looking `@eNN` after navigation and hit an unrelated current-page element. Dogfood found an old Wikipedia search ref number later clicked a different Tools control instead of failing as stale.",
+      "priority": "high",
+      "tags": [
+        "dogfood",
+        "refs",
+        "stale-ref",
+        "correctness"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.results.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 interactive pass :: after navigating from Wikipedia home/search, reusing `@e34` clicked the current page's `button \"Tools\"` rather than producing a stale-ref warning for the prior Search button.",
+        "dogfood 2026-05-14 static/docs pass :: stale-ref handling was helpful when it did trigger, but retry guidance lacked named-session context."
+      ],
+      "plan": [
+        "Investigate whether upstream exposes enough snapshot/page identity to associate refs with a generation token.",
+        "If feasible, preserve snapshot generation metadata in tool output and detect/refuse stale generation mismatches for mutation-prone actions.",
+        "If upstream cannot support generation checks, add best-effort warnings that include current element name/role and prior snapshot context when known.",
+        "Update stale-ref nextActions to request a fresh session-aware snapshot before retrying.",
+        "Add regression coverage for ref reuse after navigation and for safe current-page ref usage."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [
+        "RQ-0071"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 4
+      }
+    },
+    {
+      "id": "RQ-0073",
+      "status": "todo",
+      "title": "Surface likely overlay blockers when clicks do not change page state",
+      "description": "Improve click-result diagnostics when an action reports success but no URL or meaningful DOM state changes occur because a fixed overlay, modal, banner, or dialog may be intercepting the intended workflow. Dogfood on Wikipedia needed a screenshot to discover a donation banner close button before search would navigate.",
+      "priority": "medium",
+      "tags": [
+        "dogfood",
+        "clicks",
+        "diagnostics",
+        "overlays"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "extensions/agent-browser/index.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "test/agent-browser.presentation.test.ts",
+        "test/agent-browser.extension-validation.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 interactive pass :: clicking Wikipedia Search reported success but stayed on the same URL; a screenshot later revealed a Wikimedia donation banner/overlay with close button `@e5` blocking progress."
+      ],
+      "plan": [
+        "Inspect available post-click page-change summary and snapshot evidence for detecting no-op clicks and overlays.",
+        "When a mutation-prone click has no URL/state change, surface likely blockers such as visible fixed overlays, dialogs, banners, and close buttons if evidence is available.",
+        "Add a conservative nextAction for re-snapshot or close-overlay only when safe; avoid inventing blockers without evidence.",
+        "Document the diagnostic limits and add tests with a fixture overlay."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [
+        "RQ-0072"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 5
+      }
+    },
+    {
+      "id": "RQ-0074",
+      "status": "todo",
+      "title": "Prefer or warn about visible elements for selector text reads",
+      "description": "Make `get text <selector>` less misleading on tabbed/hidden DOM content. Dogfood found `get text .language-bash` returned npm command text after the visible Playwright tab had switched to yarn, likely because the first matching hidden code block was read.",
+      "priority": "medium",
+      "tags": [
+        "dogfood",
+        "get-text",
+        "selectors",
+        "visibility"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/index.ts",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "test/agent-browser.presentation.test.ts",
+        "test/agent-browser.extension-validation.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 static/docs pass :: after clicking Playwright `yarn` tab, DOM eval showed active tab text `yarn`, but `get text .language-bash` returned `npm init playwright@latest` from a first/hidden match."
+      ],
+      "plan": [
+        "Determine whether upstream supports visible-only selector reads or exposes match counts/visibility metadata for `get text`.",
+        "Prefer visible matches by default when safe, or add a warning when selector results may include hidden/multiple elements.",
+        "Document selector best practices for tabbed pages and visible-only alternatives if upstream provides them.",
+        "Add tests for hidden-first selector content and ensure existing text reads remain stable."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [
+        "RQ-0069"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 6
+      }
+    },
+    {
+      "id": "RQ-0075",
+      "status": "todo",
+      "title": "Classify benign network failures in QA and diagnostics",
+      "description": "Reduce QA false negatives and raw diagnostic noise by classifying failed network requests by likely impact. Dogfood saw `qa` fail on `example.com` solely because `/favicon.ico` returned 404 even though expected text, page load, console, errors, and screenshot were fine.",
+      "priority": "high",
+      "tags": [
+        "dogfood",
+        "qa",
+        "network",
+        "diagnostics"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "README.md",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.presentation.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 interactive pass :: `qa` on `https://example.com` found expected text, no console/page errors, and saved screenshot but failed because `https://example.com/favicon.ico` returned 404.",
+        "dogfood 2026-05-14 interactive pass :: `network requests` and `networkSourceLookup` were useful but too raw for QA triage, repeatedly surfacing favicon noise."
+      ],
+      "plan": [
+        "Audit `qa` failure classification and network presentation paths.",
+        "Classify common low-impact asset failures such as `favicon.ico` separately from document/API/script failures.",
+        "Decide whether benign failures should warn instead of failing by default, while preserving strict opt-in behavior for users who want it.",
+        "Add compact network diagnostic summaries grouped by status/resource type and common-noise classification.",
+        "Update docs/tests for QA pass/warn/fail semantics."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 7
+      }
+    },
+    {
+      "id": "RQ-0076",
+      "status": "todo",
+      "title": "Return partial progress and artifact evidence when jobs time out",
+      "description": "Make long `job`/`batch` workflows recoverable when the wrapper watchdog fires. Dogfood found a realistic DuckDuckGo job exceeded the 28s wrapper watchdog and returned an actionable timeout message but no last completed step, active step, current URL/title, or artifact paths already created.",
+      "priority": "high",
+      "tags": [
+        "dogfood",
+        "job",
+        "batch",
+        "timeouts",
+        "artifacts"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/process.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.presentation.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 interactive pass :: DuckDuckGo job with open/wait/fill/screenshot/click/wait/assert/screenshot exceeded wrapper watchdog; output did not include partial step evidence or artifact paths.",
+        "dogfood 2026-05-14 interactive pass :: agent had to manually inspect whether `ddg-job-filled.png` existed after timeout."
+      ],
+      "plan": [
+        "Inspect process timeout handling, upstream batch output shape, and artifact manifest collection on failed invocations.",
+        "Return best-effort partial progress: last completed step, active/failed step when known, current URL/title if safely available, and verified artifacts created before timeout.",
+        "Consider an explicit timeout/budget parameter for top-level `job` or clearer guidance to split long waits.",
+        "Ensure timeout evidence is redacted and bounded.",
+        "Add fake-upstream timeout regressions for partial artifacts and batch-step context."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [
+        "RQ-0075"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 8
+      }
+    },
+    {
+      "id": "RQ-0077",
+      "status": "todo",
+      "title": "Report managed-session outcome after failed fresh launches or jobs",
+      "description": "Make post-failure recovery clearer by stating whether a failed `sessionMode: fresh` call replaced, preserved, or abandoned the managed session. Dogfood saw a timed-out fresh DuckDuckGo job followed by plain `snapshot -i` showing the previous Wikipedia/Wikisource page, and the timeout output did not explain whether the previous auto session was preserved.",
+      "priority": "medium",
+      "tags": [
+        "dogfood",
+        "sessions",
+        "timeouts",
+        "recovery"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/runtime.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.runtime.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 interactive pass :: after timed-out DuckDuckGo `job` with `sessionMode: fresh`, plain `snapshot -i` still showed the previous session page; output did not state whether the fresh session was abandoned or current auto session preserved."
+      ],
+      "plan": [
+        "Trace managed-session state transitions for failed fresh launches, timeouts, and compiled job/qa flows.",
+        "Add a concise `managedSessionOutcome` or equivalent detail on failure paths that states preserved/replaced/unknown with session/page context when safe.",
+        "Ensure recovery nextActions reflect the actual current managed session state.",
+        "Add tests for fresh failure preserving prior session and fresh success replacing it."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [
+        "RQ-0076"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 9
+      }
+    },
+    {
+      "id": "RQ-0078",
+      "status": "todo",
+      "title": "Improve command discoverability for getters and eval stdin semantics",
+      "description": "Reduce trial-and-error for simple read-only commands and JavaScript evaluation. Dogfood found direct `title` failed instead of suggesting `get title`, and `eval --stdin` with a function-shaped snippet returned `{}` while a bare object expression worked.",
+      "priority": "medium",
+      "tags": [
+        "dogfood",
+        "docs",
+        "discoverability",
+        "eval"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/index.ts",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/TOOL_CONTRACT.md",
+        "README.md",
+        "test/agent-browser.presentation.test.ts",
+        "test/agent-browser.extension-validation.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 static/docs pass :: command `title` returned unknown command; `get title` and `get url` worked.",
+        "dogfood 2026-05-14 static/docs pass :: `eval --stdin` with `() => ({ title: document.title })` returned `{ result: {} }`, while a bare object expression returned expected values."
+      ],
+      "plan": [
+        "Add unknown-command suggestions for common getter guesses such as `title`, `url`, and text extraction where presentation has enough context.",
+        "Clarify `eval --stdin` expected expression/function semantics in command reference and prompt guidance.",
+        "If feasible, detect function-valued eval results and warn that the user may need to call the function or pass an expression.",
+        "Add tests for unknown getter suggestions and eval function-result messaging."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 10
+      }
+    },
+    {
+      "id": "RQ-0079",
+      "status": "todo",
+      "title": "Clarify artifact lifecycle and cleanup support",
+      "description": "Make artifact lifecycle expectations explicit for agents running dogfood and QA. Dogfood praised screenshot artifact verification metadata, but agents were unsure how to clean up temp screenshots through the native tool and wanted session close or artifact summaries to help cleanup.",
+      "priority": "low",
+      "tags": [
+        "dogfood",
+        "artifacts",
+        "docs",
+        "cleanup"
+      ],
+      "scope": [
+        "extensions/agent-browser/lib/results/shared.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "README.md",
+        "test/agent-browser.presentation.test.ts"
+      ],
+      "evidence": [
+        "dogfood 2026-05-14 static/docs pass :: screenshot outputs had excellent path/size/media/session metadata, but native tool exposed no obvious cleanup/delete operation for temp artifacts.",
+        "dogfood 2026-05-14 interactive pass :: multiple dogfood-output screenshots accumulated and required parent cleanup outside the browser tool."
+      ],
+      "plan": [
+        "Decide whether artifact deletion is intentionally out of scope for the native browser tool or whether a safe cleanup surface belongs in the wrapper.",
+        "If out of scope, document that host file tools own cleanup and ensure artifact lists make cleanup easy.",
+        "Consider returning session artifact summaries on `close` or exposing created-artifact lists in details for dogfood workflows.",
+        "Update tests and docs for whichever lifecycle contract is chosen."
+      ],
+      "notes": [],
+      "request": "dogfood feedback from two pi agents on native agent_browser tool, 2026-05-14",
+      "created_at": "2026-05-14T20:19:11Z",
+      "updated_at": "2026-05-14T20:19:11Z",
+      "depends_on": [
+        "RQ-0076"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {
+        "dogfood_order": 11
+      }
+    }
+  ]
 }
