@@ -4,6 +4,7 @@
  * Scope: Versioned capability metadata only; it does not execute agent-browser or validate documentation by itself.
  * Usage: Imported by command-reference verifier, generated docs checker, and tests when upstream agent-browser is re-baselined.
  * Invariants/Assumptions: This package targets the current installed upstream agent-browser only and does not keep compatibility shims for older versions.
+ * Related: `docs/SUPPORT_MATRIX.md` maps `CAPABILITY_BASELINE.inventorySections` to human docs, runtime behavior, tests, and verification gates; refresh that matrix whenever this baseline changes.
  */
 
 export const CAPABILITY_BASELINE_SOURCE = "scripts/agent-browser-capability-baseline.mjs";
