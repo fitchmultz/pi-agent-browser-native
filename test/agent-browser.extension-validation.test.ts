@@ -1212,10 +1212,22 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 				args: ["find", "text", "Close", "click"],
 			});
 
+			const sessionClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "text", value: "Close", session: "named" },
+			});
+			assert.equal(sessionClickResult.isError, false);
+			assert.deepEqual(sessionClickResult.details?.compiledSemanticAction, {
+				action: "click",
+				locator: "text",
+				args: ["--session", "named", "find", "text", "Close", "click"],
+			});
+			assert.equal(sessionClickResult.details?.sessionName, "named");
+
 			const invocations = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("find"));
 			assert.deepEqual(invocations[0]?.args.slice(-6), ["find", "role", "button", "click", "--name", "Export"]);
 			assert.deepEqual(invocations[1]?.args.slice(-5), ["find", "label", "Email", "fill", "user@example.test"]);
 			assert.deepEqual(invocations[2]?.args.slice(-4), ["find", "text", "Close", "click"]);
+			assert.deepEqual(invocations[3]?.args.slice(-6), ["--session", "named", "find", "text", "Close", "click"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1661,6 +1673,13 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match((unsupportedRoleName.content[0] as { text: string }).text, /semanticAction\.name is only supported/);
 			assert.equal(unsupportedRoleName.details?.failureCategory, "validation-error");
 
+			const emptySession = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "text", value: "Export", session: "" },
+			});
+			assert.equal(emptySession.isError, true);
+			assert.match((emptySession.content[0] as { text: string }).text, /semanticAction\.session must be a non-empty string/);
+			assert.equal(emptySession.details?.failureCategory, "validation-error");
+
 			const invocations = await readInvocationLog(logPath).catch(() => []);
 			assert.deepEqual(invocations.filter((entry) => entry.args.includes("find")), []);
 		});
@@ -1688,7 +1707,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				semanticAction: { action: "fill", locator: "placeholder", value: "Search Wikipedia", text: "agent browser" },
+				semanticAction: { action: "fill", locator: "placeholder", value: "Search Wikipedia", text: "agent browser", session: "find" },
 			});
 
 			assert.equal(result.isError, true);
@@ -1703,8 +1722,8 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 				"try-searchbox-name-candidate",
 				"try-textbox-name-candidate",
 			]);
-			assert.deepEqual(nextActions?.[1]?.params?.args, ["find", "role", "searchbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
-			assert.deepEqual(nextActions?.[2]?.params?.args, ["find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
+			assert.deepEqual(nextActions?.[1]?.params?.args, ["--session", "find", "find", "role", "searchbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
+			assert.deepEqual(nextActions?.[2]?.params?.args, ["--session", "find", "find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
 			assert.match(nextActions?.[1]?.reason ?? "", /accessible name/);
 
 			const selectResult = await executeRegisteredTool(harness.tool, harness.ctx, {

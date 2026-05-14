@@ -190,6 +190,7 @@ export type AgentBrowserToolParams = {
 		text?: string;
 		role?: string;
 		name?: string;
+		session?: string;
 	};
 	job?: {
 		steps: Array<{

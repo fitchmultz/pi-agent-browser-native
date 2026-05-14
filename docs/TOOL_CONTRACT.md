@@ -101,6 +101,7 @@ Examples:
 - `fill` and `select` require non-empty `text` (compiled as the trailing value argument to `find`)
 - optional `name` is only valid with `locator: "role"` and compiles to `--name <name>` after the action (and after `text` when present)
 - optional `role` is accepted only when `locator` is `role` and must equal `value` if set (redundant with `value`; prefer `value` alone)
+- optional `session` is an upstream session name; when set, compilation prepends `--session <session>` before `find` so the shorthand targets that named browser context instead of the managed default; this is independent of top-level `sessionMode`, which only injects or rotates the extension-managed implicit session when the planned argv does not already start with `--session` (see `buildExecutionPlan` in `extensions/agent-browser/lib/runtime.ts`). On successful unified results, `details.sessionName` matches that name and `usedImplicitSession` is `false` because the call named upstream directly rather than consuming the extension-managed implicit session slot.
 
 Compilation (then `--json` and session handling apply like any other call):
 
@@ -109,12 +110,13 @@ Compilation (then `--json` and session handling apply like any other call):
 | `click`, `check`, or `uncheck` + non-`role` locator | `["find", <locator>, <value>, <action>]` |
 | `click` / `check` / `uncheck` + `role` + optional `name` | `["find","role",<value>,<action>]` plus `["--name",<name>]` when `name` is set |
 | `fill` or `select` | `["find",<locator>,<value>,<action>,<text>]` plus optional `["--name",<name>]` after `text` when `locator` is `role` and `name` is set |
+| any supported action + `session` | prepends `["--session",<session>]` before the compiled `find` argv |
 
 When `semanticAction` compiles successfully, `details.compiledSemanticAction` echoes `{ action, locator, args }` with `args` redacted the same way as other invocation details. Expect it on the initial wrapper validation return (when that path still builds the early `details` object) and on the unified result after `agent-browser` runs. It is omitted when the call used `args` only, when compilation never produced argv, and on some in-`execute` error returns that attach a slimmer `details` shape before the unified merge (for example certain session-plan, stdin-contract, tab-pinning, or missing-binary guard paths); compare `extensions/agent-browser/index.ts` where `compiledSemanticAction` is assigned.
 
-If a compiled `semanticAction` fails with `failureCategory: "selector-not-found"`, visible content includes an `Agent-browser candidate fallbacks` block when the wrapper has bounded role/name retries for that locator and action, and `details.nextActions` includes the normal `refresh-interactive-refs` snapshot step plus those entries. Today `buildSemanticActionCandidateActions` in `extensions/agent-browser/index.ts` only appends candidates for: `fill` + `placeholder` → `try-searchbox-name-candidate` and `try-textbox-name-candidate` (same accessible name as `value`); `click` + `text` → `try-button-name-candidate` and `try-link-name-candidate`; `fill` + `label` → `try-labeled-textbox-candidate`. `select` misses—including `select` + `placeholder`—do not append `try-*` entries even when a parallel `fill` would; other locator/action pairs omit this block too. `fill` candidates keep the same trailing `text` token as the original compile before `--name <value>`; `click` candidates omit text. Each entry carries `safety` noting the match may be ambiguous. Candidate fallbacks are heuristics, not proof that an element exists; inspect the page when several controls could share the same name.
+If a compiled `semanticAction` fails with `failureCategory: "selector-not-found"`, visible content includes an `Agent-browser candidate fallbacks` block when the wrapper has bounded role/name retries for that locator and action, and `details.nextActions` includes the normal `refresh-interactive-refs` snapshot step plus those entries. When `session` was provided, candidate retry args preserve the same `--session <session>` prefix. Today `buildSemanticActionCandidateActions` in `extensions/agent-browser/index.ts` only appends candidates for: `fill` + `placeholder` → `try-searchbox-name-candidate` and `try-textbox-name-candidate` (same accessible name as `value`); `click` + `text` → `try-button-name-candidate` and `try-link-name-candidate`; `fill` + `label` → `try-labeled-textbox-candidate`. `select` misses—including `select` + `placeholder`—do not append `try-*` entries even when a parallel `fill` would; other locator/action pairs omit this block too. `fill` candidates keep the same trailing `text` token as the original compile before `--name <value>`; `click` candidates omit text. Each entry carries `safety` noting the match may be ambiguous. Candidate fallbacks are heuristics, not proof that an element exists; inspect the page when several controls could share the same name.
 
-If a compiled `semanticAction` fails with `failureCategory: "stale-ref"`, `details.nextActions` includes `retry-semantic-action-after-stale-ref` with the exact compiled `find` argv in `params.args`. The wrapper appends that entry **after** any `refresh-interactive-refs` snapshot step from `buildAgentBrowserNextActions` in `extensions/agent-browser/lib/results/shared.ts` (see `extensions/agent-browser/index.ts` where `nextActions` is merged). That retry is only offered because the semantic target is stable and the stale-ref error proves the previous action did not execute; direct stale `@e…` commands still return snapshot/find recovery guidance instead of an unsafe blind retry.
+If a compiled `semanticAction` fails with `failureCategory: "stale-ref"`, `details.nextActions` includes `retry-semantic-action-after-stale-ref` with the same redacted compiled argv as `details.compiledSemanticAction` in `params.args` (any leading `--session` pair from `semanticAction.session`, then the `find` tokens). The wrapper appends that entry **after** any `refresh-interactive-refs` snapshot step from `buildAgentBrowserNextActions` in `extensions/agent-browser/lib/results/shared.ts` (see `extensions/agent-browser/index.ts` where `nextActions` is merged). That retry is only offered because the semantic target is stable and the stale-ref error proves the previous action did not execute; direct stale `@e…` commands still return snapshot/find recovery guidance instead of an unsafe blind retry.
 
 Examples:
 
@@ -125,6 +127,7 @@ Examples:
 { "semanticAction": { "action": "check", "locator": "label", "value": "Remember me" } }
 { "semanticAction": { "action": "uncheck", "locator": "label", "value": "Remember me" } }
 { "semanticAction": { "action": "select", "locator": "label", "value": "Country", "text": "United States" } }
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Close", "session": "named-browser" } }
 ```
 
 ### `job`
@@ -263,7 +266,7 @@ Examples:
 - default: `"auto"`
 
 Behavior:
-- if `args` already include `--session`, upstream session choice wins
+- if `args` already include `--session` (including argv compiled from optional `semanticAction.session`), upstream session choice wins
 - `"auto"` prepends the current extension-managed active session when appropriate
 - `"fresh"` rotates that managed session to a fresh upstream launch so startup-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply and later default calls follow the new browser
 - stateless paths skip that injection even under `"auto"`: plain-text `--help` / `-h` / `--version` / `-V` (see the generated inspection playbook fragment below) and read-only `skills list`, `skills get …`, and `skills path …` keep `effectiveArgs` free of the implicit managed `--session` unless the caller supplied `--session` explicitly; successful results therefore omit `usedImplicitSession` and the extension-managed `sessionName` for those calls (`extensions/agent-browser/lib/runtime.ts`, `buildExecutionPlan`)

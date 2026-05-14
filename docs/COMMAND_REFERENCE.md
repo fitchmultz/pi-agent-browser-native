@@ -126,12 +126,13 @@ Examples:
 { "args": ["find", "label", "Email", "fill", "user@example.com"] }
 { "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Close" } }
 { "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Close", "session": "named-browser" } }
 { "semanticAction": { "action": "uncheck", "locator": "label", "value": "Remember me" } }
 { "args": ["scrollintoview", "@e12"] }
 { "args": ["snapshot", "-i"] }
 ```
 
-The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`, not a nested shape inside `batch` stdin arrays. If a semantic action misses with `selector-not-found`, visible output may include `Agent-browser candidate fallbacks`, while `details.nextActions` first recommends a fresh `snapshot -i` and may include bounded role/name retries—for example `searchbox`/`textbox` for a missed `placeholder` fill, `button`/`link` for a missed `text` click, or a `textbox` retry for a missed `label` fill—each as a `try-*-candidate` entry carrying redacted `find role …` argv.
+The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`, not a nested shape inside `batch` stdin arrays. Add `session` inside `semanticAction` when the shorthand should target a named upstream browser session; the compiled argv prepends `--session <name>` before `find`, and fallback candidate actions preserve that prefix. If a semantic action misses with `selector-not-found`, visible output may include `Agent-browser candidate fallbacks`, while `details.nextActions` first recommends a fresh `snapshot -i` and may include bounded role/name retries—for example `searchbox`/`textbox` for a missed `placeholder` fill, `button`/`link` for a missed `text` click, or a `textbox` retry for a missed `label` fill—each as a `try-*-candidate` entry carrying redacted `find role …` argv.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 

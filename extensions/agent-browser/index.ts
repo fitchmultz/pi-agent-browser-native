@@ -100,6 +100,7 @@ interface AgentBrowserSemanticActionInput {
 	text?: string;
 	role?: string;
 	name?: string;
+	session?: string;
 }
 
 interface CompiledAgentBrowserSemanticAction {
@@ -223,6 +224,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			text: Type.Optional(Type.String({ description: "Text/value argument for fill or select actions." })),
 			role: Type.Optional(Type.String({ description: "Role locator value; when set it must match value for locator=role." })),
 			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
+			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the compiled find command." })),
 		}),
 	),
 	qa: Type.Optional(
@@ -885,10 +887,21 @@ function appendSemanticActionTextArg(args: string[], action: string, text: strin
 	}
 }
 
+function getCompiledSemanticActionCommandIndex(compiled: CompiledAgentBrowserSemanticAction): number {
+	return compiled.args[0] === "--session" ? 2 : 0;
+}
+
 function getCompiledSemanticActionTextArg(compiled: CompiledAgentBrowserSemanticAction): string | undefined {
 	if (compiled.action !== "fill" && compiled.action !== "select") return undefined;
+	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
+	if (commandIndex < 0) return undefined;
 	const markerIndex = compiled.args.indexOf("--name");
-	return markerIndex >= 0 ? compiled.args[markerIndex - 1] : compiled.args[4];
+	return markerIndex >= 0 ? compiled.args[markerIndex - 1] : compiled.args[commandIndex + 4];
+}
+
+function getCompiledSemanticActionSessionPrefix(compiled: CompiledAgentBrowserSemanticAction): string[] {
+	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
+	return commandIndex > 0 ? compiled.args.slice(0, commandIndex) : [];
 }
 
 function formatSemanticActionCandidateText(actions: AgentBrowserNextAction[]): string | undefined {
@@ -901,11 +914,15 @@ function formatSemanticActionCandidateText(actions: AgentBrowserNextAction[]): s
 }
 
 function buildSemanticActionCandidateActions(compiled: CompiledAgentBrowserSemanticAction): AgentBrowserNextAction[] {
-	const [, locator, value] = compiled.args;
+	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
+	if (commandIndex < 0) return [];
+	const locator = compiled.args[commandIndex + 1];
+	const value = compiled.args[commandIndex + 2];
 	if (!locator || !value) return [];
 	const text = getCompiledSemanticActionTextArg(compiled);
+	const sessionPrefix = getCompiledSemanticActionSessionPrefix(compiled);
 	const buildRoleCandidate = (role: string, id: string, reason: string): AgentBrowserNextAction => {
-		const args = ["find", "role", role, compiled.action];
+		const args = [...sessionPrefix, "find", "role", role, compiled.action];
 		appendSemanticActionTextArg(args, compiled.action, text);
 		args.push("--name", value);
 		return {
@@ -945,6 +962,7 @@ function compileAgentBrowserSemanticAction(input: unknown): { compiled?: Compile
 	const text = input.text;
 	const role = input.role;
 	const name = input.name;
+	const session = input.session;
 	if (typeof action !== "string" || !AGENT_BROWSER_SEMANTIC_ACTIONS.includes(action as AgentBrowserSemanticActionName)) {
 		return { error: `semanticAction.action must be one of: ${AGENT_BROWSER_SEMANTIC_ACTIONS.join(", ")}.` };
 	}
@@ -969,7 +987,10 @@ function compileAgentBrowserSemanticAction(input: unknown): { compiled?: Compile
 	if (name !== undefined && (locator !== "role" || typeof name !== "string" || name.length === 0)) {
 		return { error: "semanticAction.name is only supported as a non-empty string for locator=role." };
 	}
-	const args = ["find", locator, value, action];
+	if (session !== undefined && (typeof session !== "string" || session.trim().length === 0)) {
+		return { error: "semanticAction.session must be a non-empty string when provided." };
+	}
+	const args = typeof session === "string" ? ["--session", session, "find", locator, value, action] : ["find", locator, value, action];
 	if (action === "fill" || action === "select") {
 		args.push(text as string);
 	}
