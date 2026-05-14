@@ -32,13 +32,15 @@ npm run verify -- release
 
 `npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`) plus the packaged Pi smoke in `package-pi`. Using `npm publish --ignore-scripts` skips that contract intentionally.
 
-The configured-source lifecycle regression harness is opt-in because it launches an interactive `pi` process under `tmux` and requires a usable local model configuration:
+Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. Use `pi --no-extensions -e .` from the checkout before publish, drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost and fake-upstream gates do not replace this human-readable live-site transcript evidence.
+
+The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload` plus restart/`/resume` behavior:
 
 ```bash
 npm run verify -- lifecycle
 ```
 
-Use `npm run verify -- lifecycle --keep-artifacts` when debugging failures.
+Use `npm run verify -- lifecycle --keep-artifacts` when debugging failures, then remove retained artifacts after inspection.
 
 ## Deterministic agent efficiency benchmark
 
