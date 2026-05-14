@@ -370,7 +370,7 @@ npm run doctor
 npm run verify -- release
 ```
 
-`npm run verify -- release` includes the default verification gate plus packaged Pi smoke coverage. The package also has a `prepublishOnly` hook that runs default verification and `npm pack --dry-run` during `npm publish`.
+`npm run verify -- release` includes the default verification gate plus packaged Pi smoke coverage. The package also has a `prepublishOnly` hook that runs the same release gate and `npm pack --dry-run` during `npm publish`.
 
 ## How it works
 

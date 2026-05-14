@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.25 - 2026-05-14
+
 ### Added
 - [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md) as the durable upstream support and release-readiness matrix keyed to `CAPABILITY_BASELINE.inventorySections` in `scripts/agent-browser-capability-baseline.mjs`, including maintainer refresh steps, verification gate evidence, and per-inventory documentation/runtime/test pointers; cross-linked from [`README.md`](README.md), [`AGENTS.md`](AGENTS.md), [`docs/RELEASE.md`](docs/RELEASE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and the published tarball `files` list in `package.json`
 - machine-readable `details.nextActions` id `retry-semantic-action-after-stale-ref` when a top-level `semanticAction` call fails with `failureCategory: "stale-ref"` and the wrapper still has the compiled upstream `find` argv: it is appended after `refresh-interactive-refs` so agents can retry the same locator-stable target without hand-rebuilding argv, while direct stale `@e…` flows keep snapshot-only recovery; merged in `extensions/agent-browser/index.ts`, documented in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#semanticaction) and [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), agent playbook string in `extensions/agent-browser/lib/playbook.ts`, regression coverage in `test/agent-browser.extension-validation.test.ts`
