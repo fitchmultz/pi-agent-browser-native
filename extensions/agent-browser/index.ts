@@ -57,6 +57,7 @@ import {
 	resolveManagedSessionState,
 	shouldAppendBrowserSystemPrompt,
 	validateToolArgs,
+	type CommandInfo,
 	type CompatibilityWorkaround,
 	type OpenResultTabCorrection,
 } from "./lib/runtime.js";
@@ -1392,6 +1393,15 @@ interface OverlayBlockerDiagnostic {
 	summary: string;
 }
 
+interface SelectorTextVisibilityDiagnostic {
+	firstMatchVisible?: boolean;
+	firstVisibleTextPreview?: string;
+	matchCount: number;
+	selector: string;
+	summary: string;
+	visibleCount: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -1795,7 +1805,7 @@ function shouldCaptureNavigationSummary(command: string | undefined, data: unkno
 	);
 }
 
-function extractStringResultField(data: unknown, fieldName: "title" | "url"): string | undefined {
+function extractStringResultField(data: unknown, fieldName: "result" | "title" | "url"): string | undefined {
 	if (typeof data === "string") {
 		const text = data.trim();
 		return text.length > 0 ? text : undefined;
@@ -2498,14 +2508,16 @@ async function runSessionCommandData(options: {
 	cwd: string;
 	sessionName?: string;
 	signal?: AbortSignal;
+	stdin?: string;
 }): Promise<unknown | undefined> {
-	const { args, cwd, sessionName, signal } = options;
+	const { args, cwd, sessionName, signal, stdin } = options;
 	if (!sessionName) return undefined;
 
 	const processResult = await runAgentBrowserProcess({
 		args: ["--json", "--session", sessionName, ...args],
 		cwd,
 		signal,
+		stdin,
 	});
 	try {
 		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
@@ -2613,6 +2625,119 @@ function buildOverlayBlockerNextActions(options: { diagnostic: OverlayBlockerDia
 			tool: "agent_browser" as const,
 		})),
 	];
+}
+
+function buildVisibleTextProbeScript(selector: string): string {
+	return `(() => {\n  const selector = ${JSON.stringify(selector)};\n  const isVisible = (element) => {\n    const style = window.getComputedStyle(element);\n    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;\n    return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);\n  };\n  let matches = [];\n  try {\n    matches = Array.from(document.querySelectorAll(selector));\n  } catch (error) {\n    return JSON.stringify({ selector, error: error instanceof Error ? error.message : String(error) });\n  }\n  const visible = matches.filter(isVisible);\n  const trim = (value) => typeof value === 'string' ? value.trim().replace(/\\s+/g, ' ').slice(0, 200) : undefined;\n  return JSON.stringify({\n    selector,\n    matchCount: matches.length,\n    visibleCount: visible.length,\n    firstMatchVisible: matches[0] ? isVisible(matches[0]) : undefined,\n    firstTextPreview: trim(matches[0]?.textContent),\n    firstVisibleTextPreview: trim(visible[0]?.textContent),\n  });\n})()`;
+}
+
+function parseSelectorTextVisibilityProbe(data: unknown, selector: string): Omit<SelectorTextVisibilityDiagnostic, "summary"> | undefined {
+	const result = extractStringResultField(data, "result");
+	if (!result) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(result);
+	} catch {
+		return undefined;
+	}
+	if (!isRecord(parsed) || typeof parsed.error === "string") return undefined;
+	const matchCount = typeof parsed.matchCount === "number" ? parsed.matchCount : undefined;
+	const visibleCount = typeof parsed.visibleCount === "number" ? parsed.visibleCount : undefined;
+	if (matchCount === undefined || visibleCount === undefined) return undefined;
+	return {
+		firstMatchVisible: typeof parsed.firstMatchVisible === "boolean" ? parsed.firstMatchVisible : undefined,
+		firstVisibleTextPreview: typeof parsed.firstVisibleTextPreview === "string" && parsed.firstVisibleTextPreview.length > 0 ? redactSensitiveText(parsed.firstVisibleTextPreview) : undefined,
+		matchCount,
+		selector,
+		visibleCount,
+	};
+}
+
+function selectorMayExposeSensitiveLiteral(selector: string): boolean {
+	return redactSensitiveText(selector) !== selector || /\[[^\]]*[~|^$*]?=\s*(?:"[^"]*"|'[^']*'|[^\]\s]+)\s*(?:[is]\s*)?\]/.test(selector);
+}
+
+async function collectSelectorTextVisibilityDiagnosticForSelector(options: {
+	cwd: string;
+	selector: string | undefined;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<SelectorTextVisibilityDiagnostic | undefined> {
+	const { selector } = options;
+	if (!selector || /^@e\d+$/.test(selector) || selectorMayExposeSensitiveLiteral(selector)) return undefined;
+	const probe = await runSessionCommandData({
+		args: ["eval", "--stdin"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		signal: options.signal,
+		stdin: buildVisibleTextProbeScript(selector),
+	});
+	const parsed = parseSelectorTextVisibilityProbe(probe, selector);
+	if (!parsed || parsed.matchCount <= 1 && parsed.firstMatchVisible !== false) return undefined;
+	if (parsed.visibleCount === 0) return undefined;
+	const visibleMatchNoun = `visible match${parsed.visibleCount === 1 ? "" : "es"}`;
+	const visibleMatchVerb = parsed.visibleCount === 1 ? "exists" : "exist";
+	const summary = parsed.firstMatchVisible === false
+		? `Selector ${JSON.stringify(selector)} matched ${parsed.matchCount} elements; the first match is hidden while ${parsed.visibleCount} ${visibleMatchNoun} ${visibleMatchVerb}.`
+		: `Selector ${JSON.stringify(selector)} matched ${parsed.matchCount} elements; get text reads the first upstream match, which may not be the intended visible tab/panel.`;
+	return { ...parsed, summary };
+}
+
+function getBatchGetTextSelectors(data: unknown): string[] {
+	if (!Array.isArray(data)) return [];
+	return data.flatMap((item) => {
+		if (!isRecord(item) || item.success === false) return [];
+		const [command, subcommand, selector] = extractBatchResultCommand(item);
+		return command === "get" && subcommand === "text" && selector ? [selector] : [];
+	});
+}
+
+async function collectSelectorTextVisibilityDiagnostics(options: {
+	commandInfo: CommandInfo;
+	commandTokens: string[];
+	cwd: string;
+	data: unknown;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<SelectorTextVisibilityDiagnostic[]> {
+	const selectors = options.commandInfo.command === "get" && options.commandInfo.subcommand === "text"
+		? [options.commandTokens[2]]
+		: options.commandInfo.command === "batch"
+			? getBatchGetTextSelectors(options.data)
+			: [];
+	const diagnostics: SelectorTextVisibilityDiagnostic[] = [];
+	for (const selector of selectors) {
+		const diagnostic = await collectSelectorTextVisibilityDiagnosticForSelector({
+			cwd: options.cwd,
+			selector,
+			sessionName: options.sessionName,
+			signal: options.signal,
+		});
+		if (diagnostic) diagnostics.push(diagnostic);
+	}
+	return diagnostics.sort((left, right) => Number(right.firstMatchVisible === false) - Number(left.firstMatchVisible === false));
+}
+
+function formatSelectorTextVisibilityText(diagnostics: SelectorTextVisibilityDiagnostic[]): string | undefined {
+	if (diagnostics.length === 0) return undefined;
+	return diagnostics.flatMap((diagnostic) => {
+		const lines = [`Selector text visibility warning: ${diagnostic.summary}`];
+		if (diagnostic.firstVisibleTextPreview) lines.push(`First visible text preview: ${JSON.stringify(diagnostic.firstVisibleTextPreview)}`);
+		return lines;
+	}).join("\n");
+}
+
+function buildSelectorTextVisibilityNextActions(options: { diagnostics: SelectorTextVisibilityDiagnostic[]; sessionName?: string }): AgentBrowserNextAction[] {
+	return options.diagnostics.map((diagnostic, index) => ({
+		id: index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`,
+		params: {
+			args: sessionPrefixArgs(options.sessionName, ["eval", "--stdin"]),
+			stdin: buildVisibleTextProbeScript(diagnostic.selector),
+		},
+		reason: "Inspect selector match count and visible text before trusting get text on tabbed or hidden DOM content.",
+		safety: "Read-only DOM inspection; use a more specific visible selector or current @ref before acting on hidden-tab text.",
+		tool: "agent_browser" as const,
+	}));
 }
 
 async function collectOverlayBlockerDiagnostic(options: {
@@ -3440,6 +3565,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							}
 						}
 					}
+					let selectorTextVisibilityDiagnostics: SelectorTextVisibilityDiagnostic[] = [];
 					if (succeeded && !sessionTabCorrection && !aboutBlankSessionMismatch) {
 						overlayBlockerDiagnostic = await collectOverlayBlockerDiagnostic({
 							command: executionPlan.commandInfo.command,
@@ -3447,6 +3573,16 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							data: presentationEnvelope?.data,
 							navigationSummary,
 							priorTarget: priorSessionTabTarget,
+							sessionName: executionPlan.sessionName,
+							signal,
+						});
+					}
+					if (succeeded) {
+						selectorTextVisibilityDiagnostics = await collectSelectorTextVisibilityDiagnostics({
+							commandInfo: executionPlan.commandInfo,
+							commandTokens,
+							cwd: ctx.cwd,
+							data: presentationEnvelope?.data,
 							sessionName: executionPlan.sessionName,
 							signal,
 						});
@@ -3645,6 +3781,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (overlayBlockerDiagnostic) {
 						(nextActions ??= []).push(...buildOverlayBlockerNextActions({ diagnostic: overlayBlockerDiagnostic, sessionName: executionPlan.sessionName }));
 					}
+					if (selectorTextVisibilityDiagnostics.length > 0) {
+						(nextActions ??= []).push(...buildSelectorTextVisibilityNextActions({ diagnostics: selectorTextVisibilityDiagnostics, sessionName: executionPlan.sessionName }));
+					}
 					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction) {
 						(nextActions ??= []).push({
 							id: "retry-semantic-action-after-stale-ref",
@@ -3688,6 +3827,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						pageChangeSummary: presentation.pageChangeSummary,
 						overlayBlockers: overlayBlockerDiagnostic,
 						qaPreset,
+						selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
+						selectorTextVisibilityAll: selectorTextVisibilityDiagnostics.length > 1 ? selectorTextVisibilityDiagnostics : undefined,
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,
 						savedFilePath: presentation.savedFilePath,
@@ -3709,7 +3850,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
-					const appendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText].filter((item): item is string => item !== undefined).join("\n\n");
+					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
+					const appendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText].filter((item): item is string => item !== undefined).join("\n\n");
 					const content = appendedDiagnosticText.length > 0 && redactedContent[0]?.type === "text"
 						? [
 							{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${appendedDiagnosticText}` },

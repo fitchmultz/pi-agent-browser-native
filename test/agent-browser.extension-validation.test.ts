@@ -2170,6 +2170,80 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 	}
 });
 
+test("agentBrowserExtension warns when get text may read hidden selector matches", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-get-text-visibility-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("get") && args.includes("text")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "npm init playwright@latest", origin: "https://docs.example/" } }));
+} else if (args.includes("eval")) {
+  const isAmbiguous = stdin.includes('.ambiguous-language-bash');
+  process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.stringify(isAmbiguous
+    ? { selector: '.ambiguous-language-bash', matchCount: 2, visibleCount: 2, firstMatchVisible: true, firstTextPreview: "first visible", firstVisibleTextPreview: "first visible" }
+    : { selector: '[href*="token=page-secret"]', matchCount: 2, visibleCount: 1, firstMatchVisible: false, firstTextPreview: "npm init playwright@latest", firstVisibleTextPreview: "yarn create playwright Authorization: Bearer visible-secret" }) } }));
+} else if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify({ success: true, data: [{ command: ["get", "text", ".ambiguous-language-bash"], success: true, result: { result: "first visible" } }, { command: ["get", "text", ".language-bash"], success: true, result: { result: "npm init playwright@latest" } }] }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", ".language-bash"] });
+			assert.equal(result.isError, false);
+			assert.match((result.content[0] as { text: string }).text, /npm init playwright@latest/);
+			assert.match((result.content[0] as { text: string }).text, /Selector text visibility warning:/);
+			assert.match((result.content[0] as { text: string }).text, /yarn create playwright/);
+			assert.doesNotMatch((result.content[0] as { text: string }).text, /visible-secret|page-secret/);
+			assert.deepEqual(result.details?.selectorTextVisibility, {
+				firstMatchVisible: false,
+				firstVisibleTextPreview: "yarn create playwright Authorization: Bearer [REDACTED]",
+				matchCount: 2,
+				selector: ".language-bash",
+				summary: 'Selector ".language-bash" matched 2 elements; the first match is hidden while 1 visible match exists.',
+				visibleCount: 1,
+			});
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; stdin?: string } }> | undefined;
+			assert.equal(nextActions?.at(-1)?.id, "inspect-visible-text-candidates");
+			assert.deepEqual(nextActions?.at(-1)?.params?.args, ["--session", result.details?.sessionName as string, "eval", "--stdin"]);
+			assert.match(nextActions?.at(-1)?.params?.stdin ?? "", /querySelectorAll/);
+
+			const secretSelectorResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", '[href*="token=visible-secret"]'] });
+			assert.equal(secretSelectorResult.isError, false);
+			assert.doesNotMatch((secretSelectorResult.content[0] as { text: string }).text, /Selector text visibility warning|visible-secret/);
+			assert.equal(secretSelectorResult.details?.selectorTextVisibility, undefined);
+			const unquotedSecretSelectorResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "[data-token=visible-secret]"] });
+			assert.equal(unquotedSecretSelectorResult.isError, false);
+			assert.doesNotMatch((unquotedSecretSelectorResult.content[0] as { text: string }).text, /Selector text visibility warning|visible-secret/);
+			assert.equal(unquotedSecretSelectorResult.details?.selectorTextVisibility, undefined);
+			let invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+
+			const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch"], stdin: JSON.stringify([["get", "text", ".ambiguous-language-bash"], ["get", "text", ".language-bash"]]) });
+			assert.equal(batchResult.isError, false);
+			assert.match((batchResult.content[0] as { text: string }).text, /Selector text visibility warning:/);
+			assert.match((batchResult.content[0] as { text: string }).text, /Selector "\.language-bash" matched 2 elements; the first match is hidden/);
+			assert.match((batchResult.content[0] as { text: string }).text, /Selector "\.ambiguous-language-bash" matched 2 elements; get text reads the first upstream match/);
+			assert.equal((batchResult.details?.selectorTextVisibility as { selector?: string } | undefined)?.selector, ".language-bash");
+			assert.deepEqual((batchResult.details?.selectorTextVisibilityAll as Array<{ selector?: string }> | undefined)?.map((entry) => entry.selector), [".language-bash", ".ambiguous-language-bash"]);
+			invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 3);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension surfaces likely overlay blockers after a no-op click", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-overlay-blocker-"));
 	const logPath = join(tempDir, "invocations.log");
