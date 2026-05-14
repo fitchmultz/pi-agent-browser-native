@@ -217,6 +217,12 @@ export type AgentBrowserToolParams = {
 		includeDomHints?: boolean;
 		maxWorkspaceFiles?: number;
 	};
+	networkSourceLookup?: {
+		filter?: string;
+		requestId?: string;
+		url?: string;
+		maxWorkspaceFiles?: number;
+	};
 	sessionMode?: "auto" | "fresh";
 	stdin?: string;
 };

@@ -1459,6 +1459,83 @@ process.stdin.on("end", () => {
 	}
 });
 
+test("agentBrowserExtension compiles experimental network source lookups and reports failed-request candidates", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-source-lookup-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await mkdir(join(tempDir, "src"), { recursive: true });
+	await writeFile(join(tempDir, "src", "api.ts"), "export const endpoint = 'https://user:pass@app.test/api/fail?token=secret&ok=1';\n");
+	await writeFile(join(tempDir, "src", "ok.ts"), "export const endpoint = 'https://app.test/api/ok';\n");
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  const steps = JSON.parse(stdin);
+  const results = steps.map((command) => {
+    if (command[0] === "network" && command[1] === "request") {
+      return { command, success: true, result: { id: "req-1", method: "GET", url: "https://user:pass@app.test/api/fail?token=secret&ok=1", status: 500, initiator: "src/api.ts:1:22" } };
+    }
+    if (command[0] === "network" && command[1] === "requests") {
+      return { command, success: true, result: { requests: [
+        { id: "req-1", method: "GET", url: "https://user:pass@app.test/api/fail?token=secret&ok=1", status: 500, initiator: { stack: "at load (src/api.ts:1:22)" } },
+        { id: "req-ok", method: "GET", url: "https://app.test/api/ok", status: 200, initiator: { stack: "at ok (src/ok.ts:1:22)" } }
+      ] } };
+    }
+    return { command, success: true, result: {} };
+  });
+  process.stdout.write(JSON.stringify(results));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				networkSourceLookup: { requestId: "req-1", url: "https://user:pass@app.test/api/fail?token=secret&ok=1" },
+			});
+
+			assert.equal(result.isError, false);
+			const compiled = result.details?.compiledNetworkSourceLookup as { steps?: Array<{ args: string[] }>; stdin?: string } | undefined;
+			assert.deepEqual(compiled?.steps?.[0]?.args, ["network", "request", "req-1"]);
+			assert.deepEqual(compiled?.steps?.[1]?.args.slice(0, 3), ["network", "requests", "--filter"]);
+			assert.match(compiled?.steps?.[1]?.args[3] ?? "", /api\/fail/);
+			assert.match(compiled?.steps?.[1]?.args[3] ?? "", /REDACTED/);
+			const compiledStdinSteps = JSON.parse(compiled?.stdin ?? "[]") as string[][];
+			assert.deepEqual(compiledStdinSteps[0], ["network", "request", "req-1"]);
+			assert.deepEqual(compiledStdinSteps[1]?.slice(0, 3), ["network", "requests", "--filter"]);
+			assert.doesNotMatch(compiled?.stdin ?? "", /secret|user:pass|ok=1/);
+			assert.doesNotMatch(JSON.stringify(result.details?.compiledNetworkSourceLookup), /secret|user:pass|ok=1/);
+			const lookup = result.details?.networkSourceLookup as { status?: string; failedRequests?: Array<{ status?: number; url?: string }>; candidates?: Array<{ source?: string; file?: string; line?: number; requestUrl?: string }> } | undefined;
+			assert.equal(lookup?.status, "failed-requests-found");
+			assert.equal(lookup?.failedRequests?.[0]?.status, 500);
+			assert.doesNotMatch(JSON.stringify(lookup), /secret|user:pass|ok=1/);
+			assert.doesNotMatch(JSON.stringify(result), /secret|user:pass|ok=1/);
+			assert.ok(lookup?.candidates?.some((candidate) => candidate.source === "initiator" && candidate.file === "src/api.ts" && candidate.line === 1));
+			assert.ok(lookup?.candidates?.some((candidate) => candidate.source === "workspace-search" && candidate.file?.endsWith("src/api.ts") && candidate.line === 1));
+			assert.equal(lookup?.candidates?.some((candidate) => candidate.file === "src/ok.ts" || candidate.file?.endsWith("src/ok.ts")), false);
+
+			const requestOnlyResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				networkSourceLookup: { requestId: "req-1" },
+			});
+			assert.equal(requestOnlyResult.isError, false);
+			const requestOnlyCompiled = requestOnlyResult.details?.compiledNetworkSourceLookup as { steps?: Array<{ args: string[] }> } | undefined;
+			assert.deepEqual(requestOnlyCompiled?.steps?.map((step) => step.args), [["network", "request", "req-1"]]);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects ambiguous or incomplete semantic actions before spawning agent-browser", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-invalid-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -1480,7 +1557,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguous.isError, true);
-			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, or sourceLookup/);
+			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
 			assert.equal(ambiguous.details?.resultCategory, "failure");
 			assert.equal(ambiguous.details?.failureCategory, "validation-error");
 
@@ -1497,14 +1574,14 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 			});
 			assert.equal(ambiguousJobArgs.isError, true);
-			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, or sourceLookup/);
+			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
 
 			const ambiguousJobSemanticAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguousJobSemanticAction.isError, true);
-			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, or sourceLookup/);
+			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
 
 			const invalidJobAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "unknown" as never }] },
@@ -1541,14 +1618,34 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				sourceLookup: { componentName: "Panel" },
 			});
 			assert.equal(sourceLookupWithArgs.isError, true);
-			assert.match((sourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, or sourceLookup/);
+			assert.match((sourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
 
 			const sourceLookupWithStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
 				sourceLookup: { componentName: "Panel" },
 				stdin: "[]",
 			});
 			assert.equal(sourceLookupWithStdin.isError, true);
-			assert.match((sourceLookupWithStdin.content[0] as { text: string }).text, /Do not provide stdin with job, qa, or sourceLookup/);
+			assert.match((sourceLookupWithStdin.content[0] as { text: string }).text, /Do not provide stdin with job, qa, sourceLookup, or networkSourceLookup/);
+
+			const networkSourceLookupWithArgs = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["network", "requests"],
+				networkSourceLookup: { url: "/api/fail" },
+			});
+			assert.equal(networkSourceLookupWithArgs.isError, true);
+			assert.match((networkSourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
+
+			const networkSourceLookupWithStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
+				networkSourceLookup: { url: "/api/fail" },
+				stdin: "[]",
+			});
+			assert.equal(networkSourceLookupWithStdin.isError, true);
+			assert.match((networkSourceLookupWithStdin.content[0] as { text: string }).text, /Do not provide stdin with job, qa, sourceLookup, or networkSourceLookup/);
+
+			const emptyNetworkSourceLookup = await executeRegisteredTool(harness.tool, harness.ctx, {
+				networkSourceLookup: {},
+			});
+			assert.equal(emptyNetworkSourceLookup.isError, true);
+			assert.match((emptyNetworkSourceLookup.content[0] as { text: string }).text, /networkSourceLookup requires requestId, filter, or url/);
 
 			const missingText = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "fill", locator: "label", value: "Email" },

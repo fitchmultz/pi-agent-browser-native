@@ -90,6 +90,7 @@ type AgentBrowserSemanticActionName = (typeof AGENT_BROWSER_SEMANTIC_ACTIONS)[nu
 type AgentBrowserSemanticLocator = (typeof AGENT_BROWSER_SEMANTIC_LOCATORS)[number];
 type AgentBrowserJobStepAction = (typeof AGENT_BROWSER_JOB_STEP_ACTIONS)[number];
 type AgentBrowserSourceLookupStatus = "candidates-found" | "no-candidates" | "unsupported";
+type AgentBrowserNetworkSourceLookupStatus = "failed-requests-found" | "no-failed-requests" | "no-candidates";
 
 interface AgentBrowserSemanticActionInput {
 	action: AgentBrowserSemanticActionName;
@@ -164,11 +165,48 @@ interface AgentBrowserSourceLookupAnalysis {
 	summary: string;
 }
 
+interface CompiledAgentBrowserNetworkSourceLookup {
+	args: string[];
+	stdin: string;
+	steps: Array<{ action: "network"; args: string[] }>;
+	query: {
+		filter?: string;
+		maxWorkspaceFiles: number;
+		requestId?: string;
+		url?: string;
+	};
+}
+
+interface AgentBrowserNetworkSourceLookupRequest {
+	error?: string;
+	method?: string;
+	requestId?: string;
+	status?: number;
+	url?: string;
+}
+
+interface AgentBrowserNetworkSourceLookupCandidate {
+	confidence: "high" | "medium" | "low";
+	evidence: string[];
+	file?: string;
+	line?: number;
+	requestUrl?: string;
+	source: "initiator" | "workspace-search";
+}
+
+interface AgentBrowserNetworkSourceLookupAnalysis {
+	candidates: AgentBrowserNetworkSourceLookupCandidate[];
+	failedRequests: AgentBrowserNetworkSourceLookupRequest[];
+	limitations: string[];
+	status: AgentBrowserNetworkSourceLookupStatus;
+	summary: string;
+}
+
 const AGENT_BROWSER_PARAMS = Type.Object({
 
 	args: Type.Optional(
 		Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
-			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, qa, or sourceLookup is provided.",
+			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, qa, sourceLookup, or networkSourceLookup is provided.",
 			minItems: 1,
 		}),
 	),
@@ -206,6 +244,14 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan when componentName is provided. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
 		}),
 	),
+	networkSourceLookup: Type.Optional(
+		Type.Object({
+			filter: Type.Optional(Type.String({ description: "Optional upstream network requests filter pattern." })),
+			requestId: Type.Optional(Type.String({ description: "Optional network request id to inspect with network request <id>." })),
+			url: Type.Optional(Type.String({ description: "Optional failed request URL or URL fragment to correlate with local source." })),
+			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan for URL literals. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
+		}),
+	),
 	job: Type.Optional(
 		Type.Object({
 			steps: Type.Array(
@@ -223,7 +269,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			),
 		}),
 	),
-	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, auth save --password-stdin, and is generated internally by job, qa, or sourceLookup mode." })),
+	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, auth save --password-stdin, and is generated internally by job, qa, sourceLookup, or networkSourceLookup mode." })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:
@@ -621,6 +667,17 @@ async function collectWorkspaceComponentCandidates(query: CompiledAgentBrowserSo
 	}
 }
 
+function validateLookupMaxWorkspaceFiles(value: unknown, fieldName: string): { value?: number; error?: string } {
+	if (value === undefined) return { value: SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES };
+	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+		return { error: `${fieldName} must be a positive integer when provided.` };
+	}
+	if (value > SOURCE_LOOKUP_MAX_WORKSPACE_FILES) {
+		return { error: `${fieldName} must be ${SOURCE_LOOKUP_MAX_WORKSPACE_FILES} or less.` };
+	}
+	return { value };
+}
+
 async function analyzeSourceLookupResults(data: unknown, compiled: CompiledAgentBrowserSourceLookup, cwd: string): Promise<AgentBrowserSourceLookupAnalysis> {
 	const items = getBatchResultItems(data);
 	const candidates: AgentBrowserSourceLookupCandidate[] = [];
@@ -652,6 +709,173 @@ async function analyzeSourceLookupResults(data: unknown, compiled: CompiledAgent
 				? "Source lookup could not inspect React metadata in this session."
 				: "Source lookup found no candidate locations.",
 	};
+}
+
+function compileAgentBrowserNetworkSourceLookup(input: unknown): { compiled?: CompiledAgentBrowserNetworkSourceLookup; error?: string } {
+	if (!isRecord(input)) return { error: "networkSourceLookup must be an object." };
+	const filter = input.filter;
+	const requestId = input.requestId;
+	const url = input.url;
+	if (filter !== undefined && (typeof filter !== "string" || filter.trim().length === 0)) return { error: "networkSourceLookup.filter must be a non-empty string when provided." };
+	if (requestId !== undefined && (typeof requestId !== "string" || requestId.trim().length === 0)) return { error: "networkSourceLookup.requestId must be a non-empty string when provided." };
+	if (url !== undefined && (typeof url !== "string" || url.trim().length === 0)) return { error: "networkSourceLookup.url must be a non-empty string when provided." };
+	if (filter === undefined && requestId === undefined && url === undefined) return { error: "networkSourceLookup requires requestId, filter, or url." };
+	const maxWorkspaceFiles = validateLookupMaxWorkspaceFiles(input.maxWorkspaceFiles, "networkSourceLookup.maxWorkspaceFiles");
+	if (maxWorkspaceFiles.error) return { error: maxWorkspaceFiles.error };
+	const steps: Array<{ action: "network"; args: string[] }> = [];
+	if (typeof requestId === "string") {
+		steps.push({ action: "network", args: ["network", "request", requestId] });
+	}
+	const effectiveFilter = typeof filter === "string" ? filter : typeof url === "string" ? url : undefined;
+	if (effectiveFilter) {
+		steps.push({ action: "network", args: ["network", "requests", "--filter", effectiveFilter] });
+	}
+	return { compiled: { args: ["batch"], query: { filter, maxWorkspaceFiles: maxWorkspaceFiles.value as number, requestId, url }, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
+}
+
+function getResultPayload(item: Record<string, unknown>): unknown {
+	return isRecord(item.result) && "data" in item.result ? item.result.data : item.result;
+}
+
+function networkRequestMatchesQuery(url: string | undefined, queryText: string | undefined): boolean {
+	return queryText === undefined || url === undefined || url.includes(queryText) || queryText.includes(url);
+}
+
+function isFailedNetworkRecord(request: Record<string, unknown>): boolean {
+	const status = typeof request.status === "number" ? request.status : undefined;
+	const error = typeof request.error === "string" ? request.error : undefined;
+	return request.failed === true || error !== undefined || (status !== undefined && status >= 400);
+}
+
+function getFailedNetworkRequests(data: unknown, queryText?: string): AgentBrowserNetworkSourceLookupRequest[] {
+	const failed: AgentBrowserNetworkSourceLookupRequest[] = [];
+	for (const item of getBatchResultItems(data)) {
+		const payload = getResultPayload(item);
+		const requests = isRecord(payload) && Array.isArray(payload.requests) ? payload.requests : Array.isArray(payload) ? payload : isRecord(payload) ? [payload] : [];
+		for (const request of requests) {
+			if (!isRecord(request)) continue;
+			const url = typeof request.url === "string" ? request.url : undefined;
+			if (!networkRequestMatchesQuery(url, queryText) || !isFailedNetworkRecord(request)) continue;
+			failed.push({
+				error: typeof request.error === "string" ? request.error : undefined,
+				method: typeof request.method === "string" ? request.method : undefined,
+				requestId: typeof request.id === "string" ? request.id : typeof request.requestId === "string" ? request.requestId : undefined,
+				status: typeof request.status === "number" ? request.status : undefined,
+				url,
+			});
+		}
+	}
+	return failed;
+}
+
+function addNetworkCandidate(candidates: AgentBrowserNetworkSourceLookupCandidate[], candidate: AgentBrowserNetworkSourceLookupCandidate): void {
+	const key = [candidate.source, candidate.file ?? "", candidate.line ?? "", candidate.requestUrl ?? ""].join(":");
+	if (!candidates.some((existing) => [existing.source, existing.file ?? "", existing.line ?? "", existing.requestUrl ?? ""].join(":") === key)) candidates.push(candidate);
+}
+
+function collectInitiatorCandidates(data: unknown, failedRequests: AgentBrowserNetworkSourceLookupRequest[], candidates: AgentBrowserNetworkSourceLookupCandidate[]): void {
+	const failedRequestIds = new Set(failedRequests.map((request) => request.requestId).filter((value): value is string => value !== undefined));
+	const failedRequestUrls = new Set(failedRequests.map((request) => request.url).filter((value): value is string => value !== undefined));
+	for (const item of getBatchResultItems(data)) {
+		const payload = getResultPayload(item);
+		const requestValues = isRecord(payload) && Array.isArray(payload.requests) ? payload.requests : [payload];
+		for (const value of requestValues) {
+			if (!isRecord(value)) continue;
+			const requestUrl = typeof value.url === "string" ? value.url : undefined;
+			const requestId = typeof value.id === "string" ? value.id : typeof value.requestId === "string" ? value.requestId : undefined;
+			const correlatesWithFailedRequest = (requestId !== undefined && failedRequestIds.has(requestId)) || (requestUrl !== undefined && failedRequestUrls.has(requestUrl));
+			if (!correlatesWithFailedRequest && !isFailedNetworkRecord(value)) continue;
+			for (const field of [value.initiator, value.stack, value.source, value.trace]) {
+				const localCandidates: AgentBrowserSourceLookupCandidate[] = [];
+				collectSourceCandidatesFromValue(field, "dom-attribute", localCandidates, ["failed network request included source-like initiator metadata"]);
+				for (const candidate of localCandidates) {
+					addNetworkCandidate(candidates, { confidence: "medium", evidence: candidate.evidence, file: candidate.file, line: candidate.line, requestUrl, source: "initiator" });
+				}
+			}
+		}
+	}
+}
+
+async function collectWorkspaceRequestCandidates(query: CompiledAgentBrowserNetworkSourceLookup["query"], failedRequests: AgentBrowserNetworkSourceLookupRequest[], cwd: string, candidates: AgentBrowserNetworkSourceLookupCandidate[], limitations: string[]): Promise<void> {
+	const needles = [...new Set([query.url, query.filter, ...failedRequests.map((request) => request.url)].filter((value): value is string => typeof value === "string" && value.length > 0).flatMap((value) => {
+		try {
+			const parsed = new URL(value);
+			return [value, parsed.pathname].filter((item) => item && item !== "/");
+		} catch {
+			return [value];
+		}
+	}))].slice(0, 8);
+	if (needles.length === 0) return;
+	const files = await walkWorkspaceSourceFiles(cwd, query.maxWorkspaceFiles);
+	if (files.length >= query.maxWorkspaceFiles) limitations.push(`Workspace source scan stopped at ${query.maxWorkspaceFiles} files.`);
+	for (const file of files) {
+		let text: string;
+		try { text = await readFile(file, "utf8"); } catch { continue; }
+		for (const needle of needles) {
+			const index = text.indexOf(needle);
+			if (index === -1) continue;
+			addNetworkCandidate(candidates, { confidence: "low", evidence: [`local workspace contains request URL literal ${needle}`], file, line: text.slice(0, index).split("\n").length, requestUrl: needle, source: "workspace-search" });
+			if (candidates.filter((candidate) => candidate.source === "workspace-search").length >= 10) return;
+		}
+	}
+}
+
+function redactNetworkSourceLookupUrl(value: string | undefined): string | undefined {
+	if (!value) return value;
+	try {
+		const isRelative = value.startsWith("/");
+		const url = new URL(value, isRelative ? "https://redacted.invalid" : undefined);
+		url.username = url.username ? "[REDACTED]" : "";
+		url.password = url.password ? "[REDACTED]" : "";
+		for (const key of [...url.searchParams.keys()]) {
+			url.searchParams.set(key, "[REDACTED]");
+		}
+		if (/(?:token|secret|password|passwd|pwd|key|auth|session|jwt|credential)/i.test(url.hash)) {
+			url.hash = "#[REDACTED]";
+		}
+		return isRelative ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+	} catch {
+		return redactSensitiveText(value
+			.replace(/([a-z][a-z0-9+.-]*:\/\/)\S+:\S+@/gi, "$1[REDACTED]@")
+			.replace(/([?&][^=]+)=([^&#\s"'\]]+)/g, "$1=[REDACTED]"));
+	}
+}
+
+function redactNetworkSourceLookupArgs(args: string[]): string[] {
+	return redactInvocationArgs(args).map((arg) => redactNetworkSourceLookupUrl(arg) ?? arg);
+}
+
+function redactNetworkSourceLookupSurface(value: unknown): unknown {
+	if (typeof value === "string") return redactNetworkSourceLookupUrl(value) ?? value;
+	if (Array.isArray(value)) return value.map((item) => redactNetworkSourceLookupSurface(item));
+	if (!isRecord(value)) return value;
+	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactNetworkSourceLookupSurface(item)]));
+}
+
+function redactNetworkSourceLookupAnalysis(analysis: AgentBrowserNetworkSourceLookupAnalysis): AgentBrowserNetworkSourceLookupAnalysis {
+	return {
+		...analysis,
+		candidates: analysis.candidates.map((candidate) => ({
+			...candidate,
+			evidence: candidate.evidence.map((item) => redactNetworkSourceLookupUrl(item) ?? redactSensitiveText(item)),
+			file: redactNetworkSourceLookupUrl(candidate.file),
+			requestUrl: redactNetworkSourceLookupUrl(candidate.requestUrl),
+		})),
+		failedRequests: analysis.failedRequests.map((request) => ({ ...request, error: redactNetworkSourceLookupUrl(request.error), url: redactNetworkSourceLookupUrl(request.url) })),
+	};
+}
+
+async function analyzeNetworkSourceLookupResults(data: unknown, compiled: CompiledAgentBrowserNetworkSourceLookup, cwd: string): Promise<AgentBrowserNetworkSourceLookupAnalysis> {
+	const limitations = [
+		"Experimental network source hints report candidates only; failed requests can be triggered indirectly by frameworks, caches, service workers, or third-party scripts.",
+		"Initiator/source-map metadata is upstream/browser-build dependent and may be absent.",
+	];
+	const failedRequests = getFailedNetworkRequests(data, compiled.query.url ?? compiled.query.filter);
+	const candidates: AgentBrowserNetworkSourceLookupCandidate[] = [];
+	collectInitiatorCandidates(data, failedRequests, candidates);
+	await collectWorkspaceRequestCandidates(compiled.query, failedRequests, cwd, candidates, limitations);
+	const status: AgentBrowserNetworkSourceLookupStatus = failedRequests.length === 0 ? "no-failed-requests" : candidates.length > 0 ? "failed-requests-found" : "no-candidates";
+	return { candidates, failedRequests, limitations, status, summary: failedRequests.length === 0 ? "Network source lookup found no failed requests." : candidates.length > 0 ? `Network source lookup found ${failedRequests.length} failed request(s) and ${candidates.length} candidate source hint(s).` : `Network source lookup found ${failedRequests.length} failed request(s) but no source candidates.` };
 }
 
 function compileAgentBrowserSemanticAction(input: unknown): { compiled?: CompiledAgentBrowserSemanticAction; error?: string } {
@@ -775,7 +999,8 @@ function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
 	const job = compileAgentBrowserJob(input.job);
 	const qa = compileAgentBrowserQaPreset(input.qa);
 	const sourceLookup = compileAgentBrowserSourceLookup(input.sourceLookup);
-	const generatedBatch = sourceLookup.compiled ?? job.compiled ?? qa.compiled;
+	const networkSourceLookup = compileAgentBrowserNetworkSourceLookup(input.networkSourceLookup);
+	const generatedBatch = networkSourceLookup.compiled ?? sourceLookup.compiled ?? job.compiled ?? qa.compiled;
 	const rawArgs = Array.isArray(input.args)
 		? input.args.filter((value): value is string => typeof value === "string")
 		: (semanticAction.compiled?.args ?? generatedBatch?.args ?? []);
@@ -2327,25 +2552,28 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const jobResult = params.job === undefined ? {} : compileAgentBrowserJob(params.job);
 			const qaResult = params.qa === undefined ? {} : compileAgentBrowserQaPreset(params.qa);
 			const sourceLookupResult = params.sourceLookup === undefined ? {} : compileAgentBrowserSourceLookup(params.sourceLookup);
+			const networkSourceLookupResult = params.networkSourceLookup === undefined ? {} : compileAgentBrowserNetworkSourceLookup(params.networkSourceLookup);
 			const hasExplicitArgs = Array.isArray(params.args);
-			const explicitInputModes = [hasExplicitArgs, Boolean(semanticActionResult.compiled), Boolean(jobResult.compiled), Boolean(qaResult.compiled), Boolean(sourceLookupResult.compiled)].filter(Boolean).length;
+			const explicitInputModes = [hasExplicitArgs, Boolean(semanticActionResult.compiled), Boolean(jobResult.compiled), Boolean(qaResult.compiled), Boolean(sourceLookupResult.compiled), Boolean(networkSourceLookupResult.compiled)].filter(Boolean).length;
 			const semanticActionError = semanticActionResult.error;
 			const jobError = jobResult.error;
 			const qaError = qaResult.error;
 			const sourceLookupError = sourceLookupResult.error;
+			const networkSourceLookupError = networkSourceLookupResult.error;
 			const inputModeError = explicitInputModes !== 1
-				? "Provide exactly one of args, semanticAction, job, qa, or sourceLookup."
+				? "Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup."
 				: undefined;
 			const compiledSemanticAction = semanticActionResult.compiled;
 			const compiledQaPreset = qaResult.compiled;
 			const compiledSourceLookup = sourceLookupResult.compiled;
+			const compiledNetworkSourceLookup = networkSourceLookupResult.compiled;
 			const compiledJob = jobResult.compiled ?? compiledQaPreset;
-			const compiledGeneratedBatch = compiledSourceLookup ?? compiledJob;
+			const compiledGeneratedBatch = compiledNetworkSourceLookup ?? compiledSourceLookup ?? compiledJob;
 			const toolArgs = compiledSemanticAction?.args ?? compiledGeneratedBatch?.args ?? params.args ?? [];
 			const toolStdin = compiledGeneratedBatch?.stdin ?? params.stdin;
 			const redactedArgs = redactInvocationArgs(toolArgs);
-			const generatedStdinError = compiledGeneratedBatch && params.stdin !== undefined ? "Do not provide stdin with job, qa, or sourceLookup; those modes generate their own batch stdin." : undefined;
-			const validationError = semanticActionError ?? jobError ?? qaError ?? sourceLookupError ?? inputModeError ?? generatedStdinError ?? validateToolArgs(toolArgs) ?? getBatchAnnotateValidationError(toolArgs, toolStdin);
+			const generatedStdinError = compiledGeneratedBatch && params.stdin !== undefined ? "Do not provide stdin with job, qa, sourceLookup, or networkSourceLookup; those modes generate their own batch stdin." : undefined;
+			const validationError = semanticActionError ?? jobError ?? qaError ?? sourceLookupError ?? networkSourceLookupError ?? inputModeError ?? generatedStdinError ?? validateToolArgs(toolArgs) ?? getBatchAnnotateValidationError(toolArgs, toolStdin);
 			const redactedCompiledSemanticAction = compiledSemanticAction
 				? { ...compiledSemanticAction, args: redactInvocationArgs(compiledSemanticAction.args) }
 				: undefined;
@@ -2360,6 +2588,19 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const redactedCompiledSourceLookup = compiledSourceLookup && redactedCompiledSourceLookupSteps
 				? { ...compiledSourceLookup, stdin: JSON.stringify(redactedCompiledSourceLookupSteps.map((step) => step.args)), steps: redactedCompiledSourceLookupSteps }
 				: undefined;
+			const redactedCompiledNetworkSourceLookupSteps = compiledNetworkSourceLookup?.steps.map((step) => ({ ...step, args: redactNetworkSourceLookupArgs(step.args) }));
+			const redactedCompiledNetworkSourceLookup = compiledNetworkSourceLookup && redactedCompiledNetworkSourceLookupSteps
+				? {
+					...compiledNetworkSourceLookup,
+					query: {
+						...compiledNetworkSourceLookup.query,
+						filter: redactNetworkSourceLookupUrl(compiledNetworkSourceLookup.query.filter),
+						url: redactNetworkSourceLookupUrl(compiledNetworkSourceLookup.query.url),
+					},
+					stdin: JSON.stringify(redactedCompiledNetworkSourceLookupSteps.map((step) => step.args)),
+					steps: redactedCompiledNetworkSourceLookupSteps,
+				}
+				: undefined;
 			if (validationError) {
 				return {
 					content: [{ type: "text", text: validationError }],
@@ -2368,6 +2609,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						compiledJob: redactedCompiledJob,
 						compiledQaPreset: redactedCompiledQaPreset,
 						compiledSourceLookup: redactedCompiledSourceLookup,
+						compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
 						compiledSemanticAction: redactedCompiledSemanticAction,
 						...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, errorText: validationError, succeeded: false, validationError }),
 						validationError,
@@ -2403,6 +2645,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							compiledJob: redactedCompiledJob,
 							compiledQaPreset: redactedCompiledQaPreset,
 							compiledSourceLookup: redactedCompiledSourceLookup,
+							compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
 							invalidValueFlag: executionPlan.invalidValueFlag,
 							sessionMode,
 							sessionRecoveryHint: redactedRecoveryHint,
@@ -2878,6 +3121,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 					const qaPreset = compiledQaPreset ? analyzeQaPresetResults(presentationEnvelope?.data) : undefined;
 					const sourceLookup = compiledSourceLookup ? await analyzeSourceLookupResults(presentationEnvelope?.data, compiledSourceLookup, ctx.cwd) : undefined;
+					const networkSourceLookup = compiledNetworkSourceLookup ? redactNetworkSourceLookupAnalysis(await analyzeNetworkSourceLookupResults(presentationEnvelope?.data, compiledNetworkSourceLookup, ctx.cwd)) : undefined;
+					if (networkSourceLookup && presentation.content[0]?.type === "text") {
+						presentation.content[0] = { ...presentation.content[0], text: `${networkSourceLookup.summary}\n\n${presentation.content[0].text}` };
+					} else if (networkSourceLookup) {
+						presentation.content.unshift({ type: "text", text: networkSourceLookup.summary });
+					}
 					if (sourceLookup && presentation.content[0]?.type === "text") {
 						presentation.content[0] = { ...presentation.content[0], text: `${sourceLookup.summary}\n\n${presentation.content[0].text}` };
 					} else if (sourceLookup) {
@@ -2952,6 +3201,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						compiledJob: redactedCompiledJob,
 						compiledQaPreset: redactedCompiledQaPreset,
 						compiledSourceLookup: redactedCompiledSourceLookup,
+						compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
 						artifactManifest: presentation.artifactManifest,
 						artifactRetentionSummary: presentation.artifactRetentionSummary,
 						artifactVerification: presentation.artifactVerification,
@@ -2983,6 +3233,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						savedFile: presentation.savedFile,
 						savedFilePath: presentation.savedFilePath,
 						sourceLookup,
+						networkSourceLookup,
 						sessionMode,
 						sessionTabCorrection,
 						sessionTabTarget: currentSessionTabTarget,
@@ -2996,11 +3247,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						timeoutMs: processResult.timeoutMs,
 					};
 
-					return {
+					const result = {
 						content: redactedContent,
 						details: redactToolDetails(details, exactSensitiveValues),
 						isError: !succeeded,
 					};
+					return compiledNetworkSourceLookup ? redactNetworkSourceLookupSurface(result) as typeof result : result;
 				} finally {
 					if (processResult.stdoutSpillPath) {
 						await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);

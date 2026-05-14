@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "RQ-0067",
-      "status": "todo",
+      "status": "doing",
       "title": "Experiment with source hints for failed browser network requests",
       "priority": "low",
       "tags": [
@@ -31,7 +31,8 @@
       "notes": [],
       "request": "Infer and queue failed-request source lookup experiment from the user's ABN task list.",
       "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-13T13:40:06.107090000Z",
+      "updated_at": "2026-05-14T02:49:39.707375000Z",
+      "started_at": "2026-05-14T02:49:39.707375000Z",
       "depends_on": [
         "RQ-0065"
       ],
