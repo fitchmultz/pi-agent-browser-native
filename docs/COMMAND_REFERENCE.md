@@ -46,6 +46,9 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 
 ```json
 { "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+```
+
+```json
 { "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }
 ```
 
@@ -183,7 +186,7 @@ For local app debugging, top-level `sourceLookup` can gather candidate component
 { "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
 ```
 
-Top-level `networkSourceLookup` does the same for failed browser requests. It reads a specific `network request <requestId>` and/or filtered `network requests`, extracts failed-request context, and searches initiator metadata plus bounded local URL literals for candidate files. It reports `details.networkSourceLookup.status` as `failed-requests-found`, `no-failed-requests`, or `no-candidates` and never assigns definitive blame.
+Top-level `networkSourceLookup` does the same for failed browser requests. When `requestId` is set it adds `network request <requestId>`; when `filter` or `url` is set it also adds `network requests --filter …`, using `url` as the filter pattern when `filter` is omitted. With `requestId` only, the compiled batch is just that request step; failed-request detection still walks the returned batch JSON and treats HTTP status ≥ 400, `failed: true`, or an `error` field as failure. When `filter` or `url` is present, the same heuristics apply but requests are correlated only if their URL matches that substring (either direction). Workspace URL literal search under the Pi session cwd reuses the `sourceLookup` scan rules (`maxWorkspaceFiles` defaults to 2000, hard cap 5000, at most ten `workspace-search` rows, up to eight URL/path needles from the query plus failed request URLs). It reports `details.networkSourceLookup.status` as `failed-requests-found`, `no-failed-requests`, or `no-candidates` and never assigns definitive blame.
 
 ```json
 { "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }

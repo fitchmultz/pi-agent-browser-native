@@ -233,7 +233,7 @@ For local app debugging, `sourceLookup` can gather candidate component/file loca
 
 This is an experiment, not a guarantee. React hints require a session opened with `--enable react-devtools`, and many builds do not expose useful sourcemap/source metadata; `status: "no-candidates"` is common when nothing matched, and `status: "unsupported"` only when no candidates were found **and** a compiled `react` batch step failed (if DOM or workspace search still produced candidates, you get `candidates-found` instead).
 
-`networkSourceLookup` is the matching failed-request experiment. It reads `network request <id>` and/or filtered `network requests`, reports failed requests plus candidate initiator/workspace source hints, and avoids automatic blame or edits.
+`networkSourceLookup` is the matching failed-request experiment. It runs `network request <id>` when `requestId` is present and/or `network requests --filter …` when `filter` or `url` is present (`url` supplies the filter pattern when `filter` is omitted). It merges failed-request rows from the batch JSON with initiator-style hints and a bounded workspace literal scan (`maxWorkspaceFiles` defaults to 2000, cap 5000), surfaces everything under `details.networkSourceLookup`, and avoids automatic blame or edits.
 
 ```json
 { "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }

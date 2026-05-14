@@ -213,7 +213,7 @@ Use raw `args` for direct upstream React inspection when you already know the ex
 - type: object with at least one of `requestId`, `filter`, or `url`, plus optional `maxWorkspaceFiles`
 - optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, and `sourceLookup`
 - experimental failed-request source-hint helper; it reports failed network requests and candidate source hints with evidence instead of assigning blame
-- compiles to existing upstream `batch` commands only: `network request <requestId>` when provided plus `network requests` with `--filter <filter-or-url>` when a filter or URL is provided
+- compiles to existing upstream `batch` commands only: `network request <requestId>` when provided plus `network requests` with `--filter <filter-or-url>` when a filter or URL is provided (if both are set, `filter` wins; when only `url` is set, it becomes the `--filter` argument)
 - detects failed requests from `status >= 400`, `failed: true`, or an `error` field
 - candidate sources come from source-like initiator/stack metadata in upstream network results and bounded local workspace search for URL/path literals under the Pi session cwd
 - optional `maxWorkspaceFiles` defaults to 2000 and cannot exceed 5000; workspace-search candidates are capped at ten
