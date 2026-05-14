@@ -32,6 +32,8 @@ npm run verify -- release
 
 `npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`) plus the packaged Pi smoke in `package-pi`. Using `npm publish --ignore-scripts` skips that contract intentionally.
 
+`prepublishOnly` intentionally does **not** run `npm run verify -- lifecycle`, `npm run verify -- real-upstream`, or `npm run verify -- benchmark`; those are separate `npm run verify` modes in [`scripts/project.mjs`](../scripts/project.mjs). Treat the bullets below as the full pre-publish contract even though only the `release` slice is automated at publish time.
+
 Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. Use `pi --no-extensions -e .` from the checkout before publish, drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost and fake-upstream gates do not replace this human-readable live-site transcript evidence.
 
 The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload` plus restart/`/resume` behavior:

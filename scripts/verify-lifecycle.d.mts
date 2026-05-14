@@ -1,5 +1,5 @@
 /**
- * Purpose: Provide TypeScript declarations for the pure helpers exported by the opt-in lifecycle verification script.
+ * Purpose: Provide TypeScript declarations for the pure helpers exported by `scripts/verify-lifecycle.mjs` (configured-source lifecycle harness).
  * Responsibilities: Keep unit tests type-safe when importing the JavaScript maintainer harness.
  * Scope: Declaration surface only; runtime behavior lives in `verify-lifecycle.mjs`.
  * Usage: Imported automatically by TypeScript when tests import `scripts/verify-lifecycle.mjs`.
