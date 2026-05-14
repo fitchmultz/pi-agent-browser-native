@@ -2,45 +2,6 @@
   "version": 1,
   "tasks": [
     {
-      "id": "RQ-0065",
-      "status": "doing",
-      "title": "Provide a lightweight QA preset built on browser jobs",
-      "priority": "medium",
-      "tags": [
-        "agent-browser",
-        "qa",
-        "jobs",
-        "dogfood"
-      ],
-      "scope": [
-        "extensions/agent-browser",
-        "docs/COMMAND_REFERENCE.md",
-        "README.md",
-        "test"
-      ],
-      "evidence": [
-        "Browser QA should become a preset workflow once constrained jobs exist, not a separate bespoke testing framework.",
-        "Useful checks include route load, expected text/control visibility, no console errors, no failed network requests, and screenshot on failure."
-      ],
-      "plan": [
-        "Define a QA job preset that expands to constrained job steps and assertions rather than adding new browser semantics.",
-        "Include standard checks for page load, expected content/control visibility, console errors, failed network requests, and failure screenshots/artifacts.",
-        "Return compact pass/fail evidence with categories and nextActions suitable for agents writing reproducible issue reports.",
-        "Add docs and tests showing when to use QA mode versus raw browser commands or custom jobs."
-      ],
-      "notes": [],
-      "request": "Infer and queue lightweight browser QA mode work from the user's ABN task list.",
-      "created_at": "2026-05-13T13:33:42.731677000Z",
-      "updated_at": "2026-05-14T01:24:39.175749000Z",
-      "started_at": "2026-05-14T01:24:39.175749000Z",
-      "depends_on": [
-        "RQ-0064"
-      ],
-      "blocks": [],
-      "relates_to": [],
-      "custom_fields": {}
-    },
-    {
       "id": "RQ-0066",
       "status": "todo",
       "title": "Experiment with local source lookup for visible UI elements",
