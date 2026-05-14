@@ -32,9 +32,10 @@ The extension should:
 - resolve `agent-browser` from `PATH`
 - invoke it directly, not through a shell
 - inject `--json`
-- support optional stdin only for `eval --stdin`, `batch`, `auth save --password-stdin`, and wrapper-generated `batch` stdin from top-level `job`, rejecting other command/stdin combinations before launch
+- support optional stdin only for `eval --stdin`, `batch`, `auth save --password-stdin`, and wrapper-generated `batch` stdin from top-level `job` or `qa`, rejecting other command/stdin combinations before launch
 - accept an optional native `semanticAction` object as a mutually exclusive alternative to `args` on a single tool call, compile it into upstream `find` argv, and echo the compiled shape in `details.compiledSemanticAction` for observability (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction))
-- accept an optional native `job` object (mutually exclusive with `args` and `semanticAction` on the same call) with a small fixed step vocabulary that compiles only to existing upstream `batch` argv rows, generates the JSON batch stdin string internally, and echoes `details.compiledJob` for observability (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#job))
+- accept an optional native `job` object (mutually exclusive with `args`, `semanticAction`, and `qa` on the same call) with a small fixed step vocabulary that compiles only to existing upstream `batch` argv rows, generates the JSON batch stdin string internally, and echoes `details.compiledJob` for observability (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#job))
+- accept an optional native `qa` object (mutually exclusive with `args`, `semanticAction`, and `job` on the same call) that compiles to the same `batch` path as `job`, runs a fixed diagnostic smoke sequence, and echoes `details.compiledQaPreset` plus structured `details.qaPreset` pass/fail evidence (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#qa))
 - when that compiled path fails as `stale-ref`, optionally append a `retry-semantic-action-after-stale-ref` entry to `details.nextActions` after the usual `refresh-interactive-refs` snapshot step so agents can re-issue the same compiled `find` argv only when the failure implies the interaction did not run (contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction))
 
 ### Agent-first UX

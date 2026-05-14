@@ -201,6 +201,15 @@ export type AgentBrowserToolParams = {
 			milliseconds?: number;
 		}>;
 	};
+	qa?: {
+		url: string;
+		expectedText?: string | string[];
+		expectedSelector?: string;
+		screenshotPath?: string;
+		checkConsole?: boolean;
+		checkErrors?: boolean;
+		checkNetwork?: boolean;
+	};
 	sessionMode?: "auto" | "fresh";
 	stdin?: string;
 };

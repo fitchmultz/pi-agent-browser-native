@@ -1300,6 +1300,98 @@ process.stdin.on("end", () => {
 	}
 });
 
+test("agentBrowserExtension compiles lightweight QA presets and fails diagnostics", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+let mode = "clean";
+let staleNetwork = true;
+let staleConsole = true;
+let staleErrors = true;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  const steps = JSON.parse(stdin);
+  const results = steps.map((command) => {
+    const name = command[0];
+    if (name === "open") mode = String(command[1] || "").includes("fail") ? "fail" : "clean";
+    if (name === "network") {
+      if (command.includes("--clear")) { staleNetwork = false; return { command, success: true, result: { requests: [] } }; }
+      return { command, success: true, result: staleNetwork || mode === "fail" ? { requests: [{ method: "GET", status: 500, url: "https://example.test/api" }] } : { requests: [] } };
+    }
+    if (name === "console") {
+      if (command.includes("--clear")) { staleConsole = false; return { command, success: true, result: { messages: [] } }; }
+      return { command, success: true, result: staleConsole || mode === "fail" ? { messages: [{ type: "error", text: "boom" }] } : { messages: [] } };
+    }
+    if (name === "errors") {
+      if (command.includes("--clear")) { staleErrors = false; return { command, success: true, result: { errors: [] } }; }
+      return { command, success: true, result: staleErrors || mode === "fail" ? { errors: [{ text: "page boom" }] } : { errors: [] } };
+    }
+    return { command, success: true, result: { ok: true } };
+  });
+  process.stdout.write(JSON.stringify(results));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const cleanResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: {
+					url: "https://example.test/",
+					expectedText: ["Welcome"],
+				},
+			});
+			assert.equal(cleanResult.isError, false);
+			assert.deepEqual((cleanResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, []);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: {
+					url: "https://fail.example.test/",
+					expectedText: ["Welcome"],
+					expectedSelector: "main",
+					screenshotPath: "qa.png",
+				},
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "qa-failure");
+			assert.deepEqual((result.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
+				"1 failed network request(s)",
+				"1 console error message(s)",
+				"1 page error(s)",
+			]);
+			const compiledQaPreset = result.details?.compiledQaPreset as { steps?: Array<{ args: string[] }> } | undefined;
+			assert.deepEqual(compiledQaPreset?.steps?.map((step) => step.args), [
+				["network", "requests", "--clear"],
+				["console", "--clear"],
+				["errors", "--clear"],
+				["open", "https://fail.example.test/"],
+				["wait", "--load", "networkidle"],
+				["wait", "--text", "Welcome"],
+				["wait", "main"],
+				["network", "requests"],
+				["console"],
+				["errors"],
+				["screenshot", "qa.png"],
+			]);
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
+			assert.deepEqual(invocations[1]?.args.slice(-1), ["batch"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects ambiguous or incomplete semantic actions before spawning agent-browser", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-invalid-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -1321,7 +1413,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguous.isError, true);
-			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, or job/);
+			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, or qa/);
 			assert.equal(ambiguous.details?.resultCategory, "failure");
 			assert.equal(ambiguous.details?.failureCategory, "validation-error");
 
@@ -1338,14 +1430,14 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 			});
 			assert.equal(ambiguousJobArgs.isError, true);
-			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, or job/);
+			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, or qa/);
 
 			const ambiguousJobSemanticAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguousJobSemanticAction.isError, true);
-			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, or job/);
+			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, or qa/);
 
 			const invalidJobAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "unknown" as never }] },

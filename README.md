@@ -56,7 +56,7 @@ The result is optimized for agent work:
 
 | Pain | Native wrapper capability | Proof surface |
 |---|---|---|
-| Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, an optional `semanticAction` shorthand for common `find` flows, or a constrained `job` that compiles short workflows to `batch`, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
+| Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, an optional `semanticAction` shorthand for common `find` flows, a constrained `job` or `qa` preset that compile short workflows to `batch`, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
 | Page snapshots are too large | Shows compact, main-content-first summaries and stores full raw output in spill files when needed | `test/agent-browser.presentation.test.ts` |
 | Screenshots/downloads get lost in text | Normalizes artifact paths and reports existence, size, cwd, session, and repair status | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#download-screenshot-and-pdf-files) |
 | Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
@@ -184,7 +184,7 @@ For supported upstream `find` flows you can omit hand-built `args` and pass a to
 
 Typical pitfalls:
 
-- Supply **exactly one** of `args`, `semanticAction`, or `job` per call (not more, not none).
+- Supply **exactly one** of `args`, `semanticAction`, `job`, or `qa` per call (not more, not none).
 - `semanticAction` and `job` are **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
 - Commands or locators outside the supported shorthand still require explicit `args`.
 - If upstream classifies the failure as `stale-ref` and `details.compiledSemanticAction` is present, `details.nextActions` may list `retry-semantic-action-after-stale-ref` after `refresh-interactive-refs`, carrying the same compiled `find` argv so you can retry the locator-stable target once it is safe to do so (contract in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction)).
@@ -205,7 +205,23 @@ For short repeatable workflows, pass a top-level `job` instead of hand-writing `
 }
 ```
 
-Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, or commands outside the constrained job schema. Do not pass `stdin` with `job`; job mode generates the batch stdin itself.
+Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, or commands outside the constrained job schema. Do not pass `stdin` with `job` or `qa`; those modes generate the batch stdin themselves.
+
+### Lightweight QA preset
+
+For a quick smoke/QA pass, use top-level `qa`. It compiles to the same batch path as `job`, clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks optional expected text or selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot. `checkNetwork`, `checkConsole`, and `checkErrors` default to true; set one to `false` to skip that diagnostic read.
+
+```json
+{
+  "qa": {
+    "url": "https://example.com",
+    "expectedText": "Example Domain",
+    "screenshotPath": ".dogfood/qa-example.png"
+  }
+}
+```
+
+Use custom `job` or raw `batch` when you need a different check sequence.
 
 For asynchronous exports, click first and then wait for the download:
 
@@ -235,7 +251,7 @@ Use these rules:
 - Use `--session` when you want to manage a live upstream session name yourself.
 - Do not treat `--session` as persisted auth or tab restore after `close`; use `--profile`, `--session-name`, or `--state` for persistence.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.
-- Prefer `auth save --password-stdin` over putting passwords in `args`; the wrapper only accepts `stdin` for `batch`, `eval --stdin`, and `auth save --password-stdin`.
+- Prefer `auth save --password-stdin` over putting passwords in `args`; the wrapper only accepts caller `stdin` for `batch`, `eval --stdin`, and `auth save --password-stdin` (top-level `job` and `qa` compile to `batch` and supply their own stdin).
 - Use `state save <path>` / `state load <path>` for portable test state. `state save` is reported as a file artifact with verification metadata; `state load` may mention a path but is not treated as a newly saved artifact.
 - Treat `cookies get`, `storage local|session`, and `auth show` output as sensitive. The native presentation summarizes and redacts credential-like values, but avoid requesting these dumps unless the task needs them.
 - Use `dialog status`, `dialog accept [text]`, `dialog dismiss`, and `frame <selector|main>` through native `args`; use exact `confirm <id>` / `deny <id>` next actions for guarded-action confirmations.

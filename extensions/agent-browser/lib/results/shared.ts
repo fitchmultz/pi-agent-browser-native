@@ -29,6 +29,7 @@ export type AgentBrowserFailureCategory =
 	| "download-not-verified"
 	| "missing-binary"
 	| "parse-failure"
+	| "qa-failure"
 	| "selector-not-found"
 	| "selector-unsupported"
 	| "stale-ref"
