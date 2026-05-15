@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.26 - 2026-05-14
 
 ### Added
 - artifact lifecycle cleanup guidance (`RQ-0079`): successful `close` results now include `details.artifactCleanup` and a visible `Artifact lifecycle` note when recent artifact metadata exists, making explicit that browser close does not delete user-chosen screenshot/download/PDF/trace/HAR/recording paths and listing paths for host-tool cleanup.
@@ -17,6 +17,11 @@
 - documentation for `RQ-0077` managed-session outcomes now matches `buildManagedSessionOutcome` / `formatManagedSessionOutcomeText`: when the visible `Managed session outcome: …` line is emitted (including ordering after other diagnostic tails per `rawAppendedDiagnosticText` in `extensions/agent-browser/index.ts`, and the missing-binary-only case), how `details.managedSessionOutcome` behaves after **`qa`** reclassification, and that `"auto"` failures can populate `details` without the extra prose line; updates in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md), [`README.md`](README.md), [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#session-model), [`AGENTS.md`](AGENTS.md), and this changelog.
 - documentation for `RQ-0076` timeout partial progress now matches `collectTimeoutPartialProgress` / `formatTimeoutPartialProgressText` in code: compiled `qa` shares the `job` step-list path; otherwise planned steps come from JSON-array `batch` stdin (caller-provided or wrapper-generated for `sourceLookup` / `networkSourceLookup`), only when each element is a string[] argv row; optional planned-URL fallback and `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` watchdog tuning are called out in [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md), [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md), [`README.md`](README.md), and [`AGENTS.md`](AGENTS.md); [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) now documents `timeoutPartialProgress.summary`, the batch stdin parse rule, the six-step cap on visible `Planned steps` lines, and the `0/0` declared-path count when only page context is recovered.
 - batch stdin page-scoped ref preflight clears the ref-invalidating latch when a later `snapshot` step appears in the same JSON plan (`getBatchRefInvalidationMessage` in `extensions/agent-browser/index.ts`), matching documented `snapshot -i` spacing inside `batch`; contract expanded under [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details) (`refSnapshot`); regression `agentBrowserExtension allows batch stdin ref steps after snapshot following an invalidating step` in [`test/agent-browser.extension-validation.test.ts`](test/agent-browser.extension-validation.test.ts)
+
+### Fixed
+- explicit `--json` calls keep machine-readable visible content parseable even when the wrapper attaches extra diagnostic structs such as `details.evalStdinHint`; diagnostic guidance remains available on `details` without being appended after the JSON payload.
+- overlay blocker candidate actions (`try-overlay-blocker-candidate-*`) no longer appear under the semantic-action `Agent-browser candidate fallbacks` heading; that prose is now limited to the bounded semantic locator fallback ids.
+- packaged Pi smoke now forces its temporary `npm pack` to write a tarball even when invoked from `npm publish --dry-run`, so the release lifecycle dry run validates the same smoke path instead of inheriting npm's outer dry-run mode.
 
 ## 0.2.25 - 2026-05-14
 

@@ -136,15 +136,19 @@ async function getDryRunPackResult(cwd = process.cwd()) {
 	return parseSinglePackResult(stdout, stderr);
 }
 
-async function packToTemporaryPackageDir(cwd = process.cwd()) {
+export async function packToTemporaryPackageDir(cwd = process.cwd()) {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-"));
 	let tarballPath;
 
 	try {
-		const { stdout, stderr } = await execFile(npmCommand, ["pack", "--json", "--pack-destination", tempDir], {
-			cwd,
-			maxBuffer: 5 * 1024 * 1024,
-		});
+		const { stdout, stderr } = await execFile(
+			npmCommand,
+			["pack", "--json", "--pack-destination", tempDir, "--dry-run=false"],
+			{
+				cwd,
+				maxBuffer: 5 * 1024 * 1024,
+			},
+		);
 		const packResult = parseSinglePackResult(stdout, stderr);
 		if (typeof packResult.filename !== "string" || packResult.filename.length === 0) {
 			throw new Error(`Unexpected npm pack result without a filename.\nstdout:\n${stdout}\n\nstderr:\n${stderr}`);
