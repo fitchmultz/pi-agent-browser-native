@@ -157,10 +157,11 @@ Run a multi-step flow in one tool call:
 
 If the same `batch` stdin later uses `@e…` on interaction commands after a step that can navigate or mutate the page (`open`, `click`, `fill`, and similar), insert a `snapshot` step whose first argv token is `snapshot` (for example `["snapshot","-i"]`) between those phases. The wrapper rejects unsafe ordering with `failureCategory: "stale-ref"` before upstream runs; full rules are under `refSnapshot` in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
 
-Evaluate page JavaScript through stdin:
+Evaluate page JavaScript through stdin. Return the value you want as an expression; `eval --stdin` may warn with `details.evalStdinHint` when a function-shaped snippet serializes to `{}` instead of being invoked:
 
 ```json
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
+{ "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })" }
 ```
 
 Save an auth profile without putting the password in `args`:
@@ -189,7 +190,7 @@ Typical pitfalls:
 
 - Supply **exactly one** of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup` per call (not more, not none).
 - `semanticAction` and `job` are **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
-- Commands or locators outside the supported shorthand still require explicit `args`.
+- Commands or locators outside the supported shorthand still require explicit `args`. Common page getters are grouped under `get`: use `get title`, `get url`, or `get text <selector>` rather than shortcut commands such as `title` or `url`; unknown getter shortcuts can return read-only `details.nextActions` like `use-get-title`.
 - Use `semanticAction.session` to target a named upstream browser session; the wrapper prepends `--session <name>` before `find` and keeps that prefix on retry/candidate actions.
 - Do not reuse `@e…` refs across navigation. The wrapper records the latest snapshot refs per session and fails mutation-prone stale/recycled refs before upstream can silently hit a different current-page element; use the session-aware `refresh-interactive-refs` next action.
 - If upstream classifies the failure as `stale-ref` and `details.compiledSemanticAction` is present, `details.nextActions` may list `retry-semantic-action-after-stale-ref` after `refresh-interactive-refs`, carrying the same compiled `find` argv so you can retry the locator-stable target once it is safe to do so (contract in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction)).

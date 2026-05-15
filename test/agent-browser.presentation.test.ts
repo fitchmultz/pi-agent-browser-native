@@ -496,6 +496,46 @@ test("buildToolPresentation appends selector-dialect guidance to Playwright-styl
 	assert.match(text, /scrollintoview/);
 });
 
+test("buildToolPresentation suggests grouped getter commands for common unknown getter shortcuts", async () => {
+	const titleFailure = await buildToolPresentation({
+		args: ["--session", "work", "title"],
+		commandInfo: { command: "title" },
+		cwd: process.cwd(),
+		errorText: "Unknown command: title",
+		sessionName: "work",
+	});
+
+	assert.equal(titleFailure.content[0]?.type, "text");
+	const titleText = (titleFailure.content[0] as { text: string }).text;
+	assert.match(titleText, /getter shortcut/i);
+	assert.match(titleText, /`get title`/);
+	assert.deepEqual(titleFailure.nextActions?.[0], {
+		id: "use-get-title",
+		params: { args: ["--session", "work", "get", "title"] },
+		reason: "Use `get title` to read the current page title.",
+		safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
+		tool: "agent_browser",
+	});
+
+	const urlFailure = await buildToolPresentation({
+		args: ["--session", "work", "url"],
+		commandInfo: { command: "url" },
+		cwd: process.cwd(),
+		errorText: "Unknown command: url",
+		sessionName: "work",
+	});
+	assert.deepEqual(urlFailure.nextActions?.[0]?.params?.args, ["--session", "work", "get", "url"]);
+
+	const textFailure = await buildToolPresentation({
+		args: ["text"],
+		commandInfo: { command: "text" },
+		cwd: process.cwd(),
+		errorText: "Unknown command: text",
+	});
+	assert.match((textFailure.content[0] as { text: string }).text, /`get text <selector>`/);
+	assert.equal(textFailure.nextActions, undefined);
+});
+
 test("buildToolPresentation returns exact next actions for selector failures and tab drift", async () => {
 	const selectorFailure = await buildToolPresentation({
 		commandInfo: { command: "click", subcommand: "text=Close" },

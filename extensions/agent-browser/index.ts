@@ -1428,6 +1428,11 @@ interface TimeoutPartialProgress {
 	summary: string;
 }
 
+interface EvalStdinHint {
+	reason: string;
+	suggestion: string;
+}
+
 interface ManagedSessionOutcome {
 	activeAfter: boolean;
 	activeBefore: boolean;
@@ -2766,6 +2771,30 @@ function formatSelectorTextVisibilityText(diagnostics: SelectorTextVisibilityDia
 	}).join("\n");
 }
 
+function looksLikeFunctionEvalStdin(stdin: string | undefined): boolean {
+	const trimmed = stdin?.trim();
+	if (!trimmed) return false;
+	return /^(?:async\s+)?function\b/.test(trimmed) || /^(?:async\s*)?\([^)]*\)\s*=>/.test(trimmed) || /^(?:async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(trimmed);
+}
+
+function isEmptyRecord(value: unknown): boolean {
+	return isRecord(value) && Object.keys(value).length === 0;
+}
+
+function getEvalStdinHint(options: { command?: string; data: unknown; stdin?: string }): EvalStdinHint | undefined {
+	if (options.command !== "eval" || !looksLikeFunctionEvalStdin(options.stdin) || !isRecord(options.data)) return undefined;
+	const result = options.data.result;
+	if (!isEmptyRecord(result)) return undefined;
+	return {
+		reason: "eval --stdin received a function-shaped snippet and the upstream JSON result was an empty object, which often means the function itself was returned or serialized instead of invoked.",
+		suggestion: "Pass a plain expression such as `({ title: document.title })`, or invoke the function explicitly, for example `(() => ({ title: document.title }))()`.",
+	};
+}
+
+function formatEvalStdinHintText(hint: EvalStdinHint | undefined): string | undefined {
+	return hint ? `Eval stdin hint: ${hint.reason} ${hint.suggestion}` : undefined;
+}
+
 function buildSelectorTextVisibilityNextActions(options: { diagnostics: SelectorTextVisibilityDiagnostic[]; sessionName?: string }): AgentBrowserNextAction[] {
 	return options.diagnostics.map((diagnostic, index) => ({
 		id: index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`,
@@ -4004,6 +4033,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (managedSessionOutcome && managedSessionOutcome.succeeded !== succeeded) {
 						managedSessionOutcome = { ...managedSessionOutcome, succeeded };
 					}
+					const evalStdinHint = getEvalStdinHint({
+						command: executionPlan.commandInfo.command,
+						data: presentationEnvelope?.data,
+						stdin: toolStdin,
+					});
 					const warningText = aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
 					const contentWithSessionWarnings = userRequestedJson && !plainTextInspection
 						? buildJsonVisibleContent({
@@ -4110,6 +4144,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						qaPreset,
 						selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
 						selectorTextVisibilityAll: selectorTextVisibilityDiagnostics.length > 1 ? selectorTextVisibilityDiagnostics : undefined,
+						evalStdinHint,
 						timeoutPartialProgress,
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,
@@ -4133,9 +4168,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
+					const evalStdinHintText = formatEvalStdinHintText(evalStdinHint);
 					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
 					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, evalStdinHintText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const content = appendedDiagnosticText.length > 0 && redactedContent[0]?.type === "text"
 						? [

@@ -150,7 +150,9 @@ When a **top-level** `click` succeeds (not a `click` hidden inside a `batch`/`jo
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
 
-Prefer `get` and scoped `eval --stdin` for read-only extraction. Return the intended JavaScript value instead of relying on `console.log`.
+Prefer `get` and scoped `eval --stdin` for read-only extraction. Getter names are grouped under `get`: use `get title`, `get url`, or `get text <selector>`, not shortcut commands such as `title` or `url`. If an unknown-command failure looks like a getter shortcut, the wrapper adds a visible getter hint and may return exact read-only `details.nextActions` such as `use-get-title` / `use-get-url`.
+
+Return the intended JavaScript value from `eval --stdin` instead of relying on `console.log`. For object-shaped extraction, pass a plain expression such as `({ title: document.title, url: location.href })`; if you send a function-shaped snippet, invoke it explicitly, for example `(() => ({ title: document.title }))()`. When upstream serializes a function result to `{}`, the wrapper can append `Eval stdin hint` and `details.evalStdinHint`.
 
 On tabbed or hidden-DOM pages, `get text <selector>` reads the upstream-selected match, which may be hidden even when a later match is visible. For non-`@ref` CSS selectors with multiple matches, including successful `batch` steps, the wrapper may add `Selector text visibility warning`, `details.selectorTextVisibility` (and `details.selectorTextVisibilityAll` for multiple batched warnings), and `inspect-visible-text-candidates` next actions so agents know to use a fresher `snapshot -i`, a visible `@ref`, or a more specific selector instead of trusting hidden tab content.
 
