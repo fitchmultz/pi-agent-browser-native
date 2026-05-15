@@ -2394,6 +2394,63 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 	}
 });
 
+test("agentBrowserExtension reports artifact lifecycle guidance on close", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-artifact-cleanup-"));
+	const screenshotPath = join(tempDir, "artifact.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+if (args.includes("screenshot")) {
+  const outputPath = args[args.length - 1];
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, Buffer.from("89504e470d0a1a0a", "hex"));
+  process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
+} else if (args.includes("close")) {
+  if (args.includes("--fail")) {
+    process.stdout.write(JSON.stringify({ success: false, error: "close failed" }));
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+  }
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.com/" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const screenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", screenshotPath] });
+			assert.equal(screenshot.isError, false);
+			assert.equal((screenshot.details?.artifactManifest as { liveCount?: number } | undefined)?.liveCount, 1);
+
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false);
+			const text = (close.content[0] as { text: string }).text;
+			assert.match(text, /Artifact lifecycle:/);
+			assert.match(text, /Closing the browser session does not delete explicit screenshots/);
+			assert.match(text, /artifact\.png/);
+			assert.deepEqual(close.details?.artifactCleanup, {
+				explicitArtifactPaths: [screenshotPath],
+				note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean those paths with host file tools when no longer needed.",
+				owner: "host-file-tools",
+				summary: String(close.details?.artifactRetentionSummary),
+			});
+
+			const failedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close", "--fail"] });
+			assert.equal(failedClose.isError, true);
+			assert.doesNotMatch((failedClose.content[0] as { text: string }).text, /Artifact lifecycle:/);
+			assert.equal(failedClose.details?.artifactCleanup, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension warns when get text may read hidden selector matches", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-get-text-visibility-"));
 	const logPath = join(tempDir, "invocations.log");

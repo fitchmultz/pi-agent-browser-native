@@ -1433,6 +1433,13 @@ interface EvalStdinHint {
 	suggestion: string;
 }
 
+interface ArtifactCleanupGuidance {
+	explicitArtifactPaths: string[];
+	note: string;
+	owner: "host-file-tools";
+	summary: string;
+}
+
 interface ManagedSessionOutcome {
 	activeAfter: boolean;
 	activeBefore: boolean;
@@ -2795,6 +2802,34 @@ function formatEvalStdinHintText(hint: EvalStdinHint | undefined): string | unde
 	return hint ? `Eval stdin hint: ${hint.reason} ${hint.suggestion}` : undefined;
 }
 
+function getArtifactCleanupGuidance(options: { command?: string; manifest?: SessionArtifactManifest; succeeded: boolean }): ArtifactCleanupGuidance | undefined {
+	if (!options.succeeded || options.command !== "close" || !options.manifest || options.manifest.entries.length === 0) return undefined;
+	const explicitArtifactPaths = options.manifest.entries
+		.filter((entry) => entry.storageScope === "explicit-path")
+		.map((entry) => entry.path)
+		.filter((path, index, paths) => paths.indexOf(path) === index)
+		.slice(0, 10);
+	return {
+		explicitArtifactPaths,
+		note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean those paths with host file tools when no longer needed.",
+		owner: "host-file-tools",
+		summary: formatSessionArtifactRetentionSummary(options.manifest),
+	};
+}
+
+function formatArtifactCleanupGuidanceText(guidance: ArtifactCleanupGuidance | undefined): string | undefined {
+	if (!guidance) return undefined;
+	const lines = [
+		"Artifact lifecycle:",
+		`- ${guidance.summary}`,
+		`- ${guidance.note}`,
+	];
+	if (guidance.explicitArtifactPaths.length > 0) {
+		lines.push(`- Explicit artifact paths to review: ${guidance.explicitArtifactPaths.join(", ")}`);
+	}
+	return lines.join("\n");
+}
+
 function buildSelectorTextVisibilityNextActions(options: { diagnostics: SelectorTextVisibilityDiagnostic[]; sessionName?: string }): AgentBrowserNextAction[] {
 	return options.diagnostics.map((diagnostic, index) => ({
 		id: index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`,
@@ -4038,6 +4073,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						data: presentationEnvelope?.data,
 						stdin: toolStdin,
 					});
+					const resultArtifactManifest = presentation.artifactManifest ?? artifactManifest;
+					const artifactCleanup = getArtifactCleanupGuidance({
+						command: executionPlan.commandInfo.command,
+						manifest: resultArtifactManifest,
+						succeeded,
+					});
 					const warningText = aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
 					const contentWithSessionWarnings = userRequestedJson && !plainTextInspection
 						? buildJsonVisibleContent({
@@ -4113,8 +4154,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						compiledQaPreset: redactedCompiledQaPreset,
 						compiledSourceLookup: redactedCompiledSourceLookup,
 						compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
-						artifactManifest: presentation.artifactManifest,
-						artifactRetentionSummary: presentation.artifactRetentionSummary,
+						artifactManifest: resultArtifactManifest,
+						artifactRetentionSummary: presentation.artifactRetentionSummary ?? (resultArtifactManifest ? formatSessionArtifactRetentionSummary(resultArtifactManifest) : undefined),
+						artifactCleanup,
 						artifactVerification: presentation.artifactVerification,
 						artifacts: presentation.artifacts,
 						batchFailure: presentation.batchFailure,
@@ -4169,9 +4211,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
 					const evalStdinHintText = formatEvalStdinHintText(evalStdinHint);
+					const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
 					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
 					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, evalStdinHintText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const content = appendedDiagnosticText.length > 0 && redactedContent[0]?.type === "text"
 						? [

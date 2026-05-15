@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- artifact lifecycle cleanup guidance (`RQ-0079`): successful `close` results now include `details.artifactCleanup` and a visible `Artifact lifecycle` note when recent artifact metadata exists, making explicit that browser close does not delete user-chosen screenshot/download/PDF/trace/HAR/recording paths and listing paths for host-tool cleanup.
 - getter/eval discoverability diagnostics (`RQ-0078`): common unknown getter shortcuts such as `title`, `url`, and `text` now get grouped-`get` guidance (with exact `use-get-title` / `use-get-url` next actions where unambiguous), and function-shaped `eval --stdin` snippets that serialize to `{}` now add visible `Eval stdin hint` plus `details.evalStdinHint` so agents know to pass a plain expression or invoke the function explicitly.
 - managed-session outcome diagnostics for failed `sessionMode: "fresh"` calls (`RQ-0077`): failed or timed-out fresh launches now report `details.managedSessionOutcome` and, when the plan used `sessionMode: "fresh"` with a failing outcome, append visible `Managed session outcome: …` text so agents know whether the prior managed session was preserved or no managed session became current.
 - timeout partial-progress evidence for long `job` / `qa` / `batch` calls (`RQ-0076`): wrapper watchdog timeouts now add best-effort `details.timeoutPartialProgress` with planned steps, current page title/URL, and declared artifact path checks, and append visible `Timeout partial progress` recovery text.
