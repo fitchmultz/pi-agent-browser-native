@@ -207,6 +207,49 @@ test("restoreManagedSessionStateFromBranch ignores inspection entries and recons
 	});
 });
 
+test("restoreManagedSessionStateFromBranch honors managedSessionOutcome replacement on wrapper-level failures", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					command: "batch",
+					managedSessionOutcome: {
+						activeAfter: true,
+						activeBefore: true,
+						attemptedSessionName: "piab-demo-123-fresh-aaa",
+						currentSessionName: "piab-demo-123-fresh-aaa",
+						previousSessionName: "piab-demo-123",
+						replacedSessionName: "piab-demo-123",
+						sessionMode: "fresh",
+						status: "replaced",
+						succeeded: false,
+					},
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+				isError: true,
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.sessionName, "piab-demo-123-fresh-aaa");
+	assert.equal(restored.freshSessionOrdinal, 1);
+});
+
 test("restoreManagedSessionStateFromBranch ignores stale base completions after fresh rotation", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[

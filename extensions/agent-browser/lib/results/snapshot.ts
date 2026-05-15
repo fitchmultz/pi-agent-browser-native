@@ -34,6 +34,7 @@ const SNAPSHOT_SECTION_PREVIEW_LINES = 2;
 const SNAPSHOT_MAX_ADDITIONAL_SECTIONS = 2;
 const SNAPSHOT_KEY_REF_MAX_LINES = 8;
 const SNAPSHOT_OTHER_REF_MAX_LINES = 4;
+const SNAPSHOT_HIGH_VALUE_REF_MAX_LINES = 10;
 const SNAPSHOT_ROLE_COUNT_MAX_ENTRIES = 4;
 const SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES = 12;
 const SNAPSHOT_NAME_MAX_CHARS = 96;
@@ -58,6 +59,7 @@ const SNAPSHOT_SIGNAL_ROLES = new Set([
 	"radio",
 	"region",
 	"row",
+	"searchbox",
 	"tab",
 	"textbox",
 ]);
@@ -69,14 +71,15 @@ const SNAPSHOT_ROLE_PRIORITY: Record<string, number> = {
 	menu: 3,
 	region: 4,
 	heading: 5,
-	button: 6,
+	searchbox: 6,
 	textbox: 7,
 	combobox: 8,
-	checkbox: 9,
-	radio: 10,
-	tab: 11,
-	option: 12,
-	link: 13,
+	button: 9,
+	checkbox: 10,
+	radio: 11,
+	tab: 12,
+	option: 13,
+	link: 14,
 	listitem: 14,
 	row: 15,
 	gridcell: 16,
@@ -103,6 +106,28 @@ const SNAPSHOT_CHROME_SECTION_PATTERNS = [
 	/\brecommended\b/i,
 	/\bsuggested\b/i,
 ];
+const SNAPSHOT_HIGH_VALUE_CONTROL_ROLES = new Set([
+	"button",
+	"checkbox",
+	"combobox",
+	"menuitem",
+	"option",
+	"radio",
+	"searchbox",
+	"tab",
+	"textbox",
+]);
+const SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY: Record<string, number> = {
+	searchbox: 0,
+	textbox: 1,
+	combobox: 2,
+	button: 3,
+	tab: 4,
+	checkbox: 5,
+	radio: 6,
+	option: 7,
+	menuitem: 8,
+};
 
 interface SnapshotRefEntry {
 	id: string;
@@ -458,6 +483,25 @@ function formatCompactRef(entry: SnapshotRefEntry): string {
 	return `- ${entry.id} ${entry.role}${suffix}`;
 }
 
+function isHighValueControlRef(entry: SnapshotRefEntry): boolean {
+	if (!SNAPSHOT_HIGH_VALUE_CONTROL_ROLES.has(entry.role)) return false;
+	if (isNoiseName(entry.name) || isChromeSectionName(entry.name)) return false;
+	return entry.name.length > 0 || entry.role === "searchbox" || entry.role === "textbox" || entry.role === "combobox";
+}
+
+function rankHighValueControlRefs(left: SnapshotRefEntry, right: SnapshotRefEntry): number {
+	const rolePriority =
+		(SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[left.role] ?? 50) -
+		(SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[right.role] ?? 50);
+	if (rolePriority !== 0) return rolePriority;
+
+	const leftHasName = left.name.length > 0 ? 0 : 1;
+	const rightHasName = right.name.length > 0 ? 0 : 1;
+	if (leftHasName !== rightHasName) return leftHasName - rightHasName;
+
+	return compareRefIds(left.id, right.id);
+}
+
 function shouldCompactSnapshot(rawText: string, data: Record<string, unknown>): boolean {
 	const snapshot = getSnapshotText(data) ?? "";
 	const refEntries = getSnapshotRefEntries(data);
@@ -611,7 +655,16 @@ export async function buildSnapshotPresentation(
 	const otherRefEntries = visibleRankedRefEntries
 		.filter((entry) => !keyRefIdSet.has(entry.id))
 		.slice(0, SNAPSHOT_OTHER_REF_MAX_LINES);
-	const omittedOtherRefs = Math.max(0, visibleRankedRefEntries.length - keyRefEntries.length - otherRefEntries.length);
+	const displayedRefIdSet = new Set([...keyRefEntries, ...otherRefEntries].map((entry) => entry.id));
+	const omittedHighValueControlEntries = visibleRankedRefEntries
+		.filter((entry) => !displayedRefIdSet.has(entry.id) && isHighValueControlRef(entry))
+		.sort(rankHighValueControlRefs);
+	const visibleHighValueControlEntries = omittedHighValueControlEntries.slice(0, SNAPSHOT_HIGH_VALUE_REF_MAX_LINES);
+	const omittedHighValueControls = Math.max(0, omittedHighValueControlEntries.length - visibleHighValueControlEntries.length);
+	const omittedNonHighlightedRefs = Math.max(
+		0,
+		visibleRankedRefEntries.length - keyRefEntries.length - otherRefEntries.length - omittedHighValueControlEntries.length,
+	);
 	const origin = getSnapshotOrigin(data);
 
 	const lines: string[] = [
@@ -658,8 +711,14 @@ export async function buildSnapshotPresentation(
 	if (otherRefEntries.length > 0) {
 		lines.push("", "Other refs:", ...otherRefEntries.map(formatCompactRef));
 	}
-	if (omittedOtherRefs > 0) {
-		lines.push(`- ... (${omittedOtherRefs} additional refs omitted)`);
+	if (omittedNonHighlightedRefs > 0) {
+		lines.push(`- ... (${omittedNonHighlightedRefs} additional refs omitted)`);
+	}
+	if (visibleHighValueControlEntries.length > 0) {
+		lines.push("", "Omitted high-value controls:", ...visibleHighValueControlEntries.map(formatCompactRef));
+		if (omittedHighValueControls > 0) {
+			lines.push(`- ... (${omittedHighValueControls} additional high-value controls omitted)`);
+		}
 	}
 
 	lines.push(
@@ -689,6 +748,7 @@ export async function buildSnapshotPresentation(
 			previewMode: fallbackPreview ? "outline" : "structured",
 			spillError: spillErrorText,
 			previewRefIds: [...previewRefIds],
+			highValueControlRefIds: visibleHighValueControlEntries.map((entry) => entry.id),
 			additionalSectionsOmitted: omittedAdditionalSectionCount,
 			previewSections: [
 				...(primarySegment

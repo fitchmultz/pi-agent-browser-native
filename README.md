@@ -57,14 +57,14 @@ The result is optimized for agent work:
 | Pain | Native wrapper capability | Proof surface |
 |---|---|---|
 | Agents build fragile shell commands | Exposes `agent_browser` with exact `args`, an optional `semanticAction` shorthand for common `find` flows, constrained `job` / `qa` presets and experimental `sourceLookup` / `networkSourceLookup` that compile short workflows to `batch`, plus controlled `stdin` and `sessionMode` | `extensions/agent-browser/index.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
-| Page snapshots are too large | Shows compact, main-content-first summaries and stores full raw output in spill files when needed | `test/agent-browser.presentation.test.ts` |
+| Page snapshots are too large | Shows compact, main-content-first summaries, surfaces an `Omitted high-value controls` section (plus `details.data.highValueControlRefIds`) when dense pages hide inputs and tabs from the trimmed ref lists, and stores full raw output in spill files when needed | `extensions/agent-browser/lib/results/snapshot.ts`, `test/agent-browser.presentation.test.ts` |
 | Screenshots/downloads get lost in text | Normalizes artifact paths and reports existence, size, cwd, session, and repair status | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#download-screenshot-and-pdf-files) |
 | Profile restores and tab drift confuse agents | Tracks managed sessions, pins intended tabs, and re-selects target tabs after drift | generated tab-recovery notes below; `test/agent-browser.resume-state.test.ts` |
 | Auth/profile workflows can leak secrets | Supports `auth save --password-stdin` and redacts sensitive args, URLs, stdout/stderr, details, and parse-failure spills | `test/agent-browser.extension-validation.test.ts` |
 | Stateful cookies/storage/auth output bloats or leaks context | Presentation layer redacts `details.data` for cookies and storage (field-aware values) and recursively scrubs other structured upstream JSON (network, diff, trace/profiler, stream, dashboard, chat, auth, dialog, frame, state, and similar) using sensitive key names plus string heuristics; masks sensitive argv flags and positionals; scrubs secrets from failed batch step errors; and exposes a compact redacted `batch` matrix on top-level `details.data` | `extensions/agent-browser/lib/results/presentation.ts`, `extensions/agent-browser/lib/runtime.ts`, `test/agent-browser.presentation.test.ts` |
-| Stale `@eN` refs fail mysteriously | Adds recovery guidance to rerun `snapshot -i` or use stable `find` locators | `test/agent-browser.results.test.ts` |
+| Stale `@eN` refs fail mysteriously | Records per-session `details.refSnapshot`, rejects mismatched URLs / unknown refs / unsafe `batch` stdin ordering before spawn, adds recovery guidance to rerun `snapshot -i` or use stable `find` locators | `extensions/agent-browser/index.ts`, `test/agent-browser.results.test.ts`, `test/agent-browser.extension-validation.test.ts` |
 | Agents need stable success/failure buckets | Exposes bounded `resultCategory`, `successCategory`, and `failureCategory` on tool `details` for branching without parsing prose | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/shared.ts`, `test/agent-browser.results.test.ts` |
-| Models re-snapshot after every click without new URL/title context | Adds optional `details.pageChangeSummary` (and per-batch-step summaries) with `changeType`, compact text, optional `title`/`url`, artifact hints, and `nextActionIds` aligned to `nextActions` | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/presentation.ts`, `test/agent-browser.presentation.test.ts` |
+| Models re-snapshot after every click without new URL/title context | Adds optional `details.pageChangeSummary` (and per-batch-step summaries) with `changeType`, compact text, optional `title`/`url`, artifact hints, and `nextActionIds` aligned to `nextActions`; no-navigation clicks can also surface evidence-backed `details.overlayBlockers` candidates | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), `extensions/agent-browser/lib/results/presentation.ts`, `test/agent-browser.presentation.test.ts` |
 | Direct binary help may be blocked in agent sessions | Publishes a repo-readable command reference and verifies it against the target upstream version | `npm run verify` |
 | Agents need bundled `skills` text without touching the live session | Treats `skills list`, `skills get …`, and `skills path …` as stateless JSON reads: no implicit managed `--session` under default `sessionMode: "auto"` (same session-ownership goal as plain-text `--help` / `--version`), while provider workflows stay thin passthroughs that require upstream setup and credentials | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#built-in-skills), `extensions/agent-browser/lib/runtime.ts` |
 
@@ -155,10 +155,13 @@ Run a multi-step flow in one tool call:
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
 ```
 
-Evaluate page JavaScript through stdin:
+If the same `batch` stdin later uses `@e…` on interaction commands after a step that can navigate or mutate the page (`open`, `click`, `fill`, and similar), insert a `snapshot` step whose first argv token is `snapshot` (for example `["snapshot","-i"]`) between those phases. The wrapper rejects unsafe ordering with `failureCategory: "stale-ref"` before upstream runs; full rules are under `refSnapshot` in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
+
+Evaluate page JavaScript through stdin. Return the value you want as an expression; `eval --stdin` may warn with `details.evalStdinHint` when a function-shaped snippet serializes to `{}` instead of being invoked:
 
 ```json
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
+{ "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })" }
 ```
 
 Save an auth profile without putting the password in `args`:
@@ -180,18 +183,24 @@ For supported upstream `find` flows you can omit hand-built `args` and pass a to
 ```json
 { "semanticAction": { "action": "click", "locator": "text", "value": "Submit" } }
 { "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Close", "session": "named-browser" } }
 ```
 
 Typical pitfalls:
 
 - Supply **exactly one** of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup` per call (not more, not none).
 - `semanticAction` and `job` are **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
-- Commands or locators outside the supported shorthand still require explicit `args`.
+- Commands or locators outside the supported shorthand still require explicit `args`. Common page getters are grouped under `get`: use `get title`, `get url`, or `get text <selector>` rather than shortcut commands such as `title` or `url`; unknown getter shortcuts can return read-only `details.nextActions` like `use-get-title`.
+- Use `semanticAction.session` to target a named upstream browser session; the wrapper prepends `--session <name>` before `find` and keeps that prefix on retry/candidate actions.
+- Do not reuse `@e…` refs across navigation. The wrapper records the latest snapshot refs per session and fails mutation-prone stale/recycled refs before upstream can silently hit a different current-page element; use the session-aware `refresh-interactive-refs` next action.
 - If upstream classifies the failure as `stale-ref` and `details.compiledSemanticAction` is present, `details.nextActions` may list `retry-semantic-action-after-stale-ref` after `refresh-interactive-refs`, carrying the same compiled `find` argv so you can retry the locator-stable target once it is safe to do so (contract in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction)).
+- If the failure is `selector-not-found` for a compiled `semanticAction`, visible text may add `Agent-browser candidate fallbacks` and `details.nextActions` may list bounded `try-*-candidate` follow-ups (role/name retries only for `fill` + `placeholder`, `click` + `text`, or `fill` + `label`; `select` misses do not get these entries); prefer those payloads or a fresh snapshot over guessing new selectors (same contract link).
+- If a **top-level** `click` succeeds (unified command `click`, not a `batch` step), upstream reports `data.clicked`, and the tab URL is unchanged under the same normalization as ref preflight (fragment-insensitive), the wrapper may take one extra `snapshot -i` and add `Possible overlay blockers` with `details.overlayBlockers` (`candidates`, `summary`, optional `snapshot` refresh for refs) plus session-aware `inspect-overlay-state` / bounded `try-overlay-blocker-candidate-*` next actions when that snapshot shows overlay/banner/dialog context and close/dismiss-like controls. The unchanged-URL check uses `details.navigationSummary`, which is only populated via follow-up `get url` / `get title` when the click JSON omits **both** string `data.url` and `data.title`; if upstream already includes either, overlay diagnostics are skipped here. Also skipped when tab correction or about-blank recovery already ran on that result.
+- If `get text <selector>` reads a non-ref CSS selector with multiple matches or a hidden first match while visible matches exist, including successful `batch` steps, the wrapper may add `Selector text visibility warning`, `details.selectorTextVisibility` (plus `selectorTextVisibilityAll` for multiple batched warnings), and `inspect-visible-text-candidates` next actions; prefer a visible `@ref`, a scoped selector, or a targeted `eval --stdin` over hidden tab content.
 
 ### Constrained browser jobs
 
-For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability. There is no separate catalog of reusable named browser recipes above `job`, `qa`, and raw `batch`; see [`docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and when to revisit it.
+For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability. The same compile path backs top-level `qa`, so long `qa` runs surface the same timeout evidence shape. If a long `job`, `qa`, or `batch` hits the wrapper watchdog, `details.timeoutPartialProgress` may recover planned steps, current page title/URL, and declared artifact paths that already exist on disk (see [`docs/TOOL_CONTRACT.md#details`](docs/TOOL_CONTRACT.md#details)). There is no separate catalog of reusable named browser recipes above `job`, `qa`, and raw `batch`; see [`docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and when to revisit it.
 
 ```json
 {
@@ -209,7 +218,7 @@ Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, 
 
 ### Lightweight QA preset
 
-For a quick smoke/QA pass, use top-level `qa`. It compiles to the same batch path as `job`, clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks optional expected text or selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot. `checkNetwork`, `checkConsole`, and `checkErrors` default to true; set one to `false` to skip that diagnostic read.
+For a quick smoke/QA pass, use top-level `qa`. It compiles to the same batch path as `job`, clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks optional expected text or selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot. `checkNetwork`, `checkConsole`, and `checkErrors` default to true; set one to `false` to skip that diagnostic read. Network failures are classified by likely impact: actionable document/script/API-style failures still fail QA, while some low-impact browser icon asset misses (for example certain `favicon` or `apple-touch-icon` paths when upstream marks the row failed and resource metadata looks image-like) surface only as warnings instead of failing an otherwise healthy smoke check (`details.qaPreset.warnings`, with human-readable `details.qaPreset.summary` when the preset still passes). Exact predicates live in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#qa) and `classifyNetworkRequestFailure` in `extensions/agent-browser/lib/results/shared.ts`.
 
 ```json
 {
@@ -248,13 +257,15 @@ For asynchronous exports, click first and then wait for the download:
 
 With upstream `agent-browser 0.27.0`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` before relying on the requested `wait --download <path>` file being present on disk.
 
+Artifact cleanup is host-owned, not a browser command. `close` shuts down the browser session but does **not** delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings saved to paths you chose. When the session’s non-empty `details.artifactManifest` is in scope, a successful `close` appends an `Artifact lifecycle` note and sets `details.artifactCleanup` with the same retention summary as `details.artifactRetentionSummary`, a fixed `note` about host-owned cleanup, and `explicitArtifactPaths`: up to ten distinct paths from manifest rows whose `storageScope` is `explicit-path` (this list can be empty if the recent window only holds spills or other non-explicit inventory). Remove any listed paths with normal file tools after inspection.
+
 Start a fresh profiled browser after the implicit public-browsing session already exists:
 
 ```json
 { "args": ["--profile", "Default", "open", "https://example.com/account"], "sessionMode": "fresh" }
 ```
 
-After a successful unnamed fresh launch, later default `sessionMode: "auto"` calls follow that browser automatically.
+After a successful unnamed fresh launch, later default `sessionMode: "auto"` calls follow that browser automatically. If the fresh launch fails or times out, `details.managedSessionOutcome` records whether the previous managed session was preserved or the attempted fresh session was abandoned before any managed session became current; a `Managed session outcome: …` line is appended only when the failing call used `sessionMode: "fresh"`.
 
 ## Authenticated/profile workflows
 

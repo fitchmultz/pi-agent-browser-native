@@ -22,6 +22,7 @@ import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary
 import {
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
+	type AgentBrowserNextAction,
 	type AgentBrowserPageChangeSummary,
 	type ArtifactVerificationEntry,
 	type ArtifactVerificationSummary,
@@ -29,6 +30,7 @@ import {
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
+	classifyNetworkRequestFailure,
 	type BatchFailurePresentationDetails,
 	type BatchStepPresentationDetails,
 	type ArtifactStorageScope,
@@ -43,6 +45,7 @@ import {
 	formatSessionArtifactRetentionSummary,
 	mergeSessionArtifactManifest,
 	stringifyUnknown,
+	summarizeNetworkFailures,
 	truncateText,
 } from "./shared.js";
 
@@ -589,7 +592,9 @@ function formatNetworkRequestLine(item: Record<string, unknown>, index: number):
 	const url = getStringField(item, "url") ?? "(no url)";
 	const requestId = getStringField(item, "requestId") ?? getStringField(item, "id");
 	const idText = requestId ? ` [${redactSensitiveText(requestId)}]` : "";
-	const lines = [`${index + 1}. ${status} ${method} ${truncateText(redactSensitiveText(url), 180)}${type ? ` (${type})` : ""}${idText}`];
+	const failureClassification = classifyNetworkRequestFailure(item);
+	const impactText = failureClassification ? ` [${failureClassification.impact}: ${failureClassification.reason}]` : "";
+	const lines = [`${index + 1}. ${status} ${method} ${truncateText(redactSensitiveText(url), 180)}${type ? ` (${type})` : ""}${idText}${impactText}`];
 	appendNetworkPreview(lines, "Payload", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.request), NETWORK_BODY_PREVIEW_MAX_CHARS);
 	appendNetworkPreview(lines, "Response", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.response), NETWORK_BODY_PREVIEW_MAX_CHARS);
 	appendNetworkPreview(lines, "Error", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.error), NETWORK_ERROR_PREVIEW_MAX_CHARS);
@@ -600,10 +605,14 @@ function formatNetworkRequestsText(data: Record<string, unknown>): string | unde
 	const requests = getArrayField(data, "requests");
 	if (!requests) return undefined;
 	if (requests.length === 0) return "No network requests captured.";
-	const shown = requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap((item, index) => {
+	const networkFailureSummary = summarizeNetworkFailures(requests);
+	const shown = networkFailureSummary.totalCount > 0
+		? [`Network failure summary: ${networkFailureSummary.actionableCount} actionable, ${networkFailureSummary.benignCount} benign low-impact (${networkFailureSummary.totalCount} total).`]
+		: [];
+	shown.push(...requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap((item, index) => {
 		if (!isRecord(item)) return [`${index + 1}. ${stringifyModelFacing(item)}`];
 		return formatNetworkRequestLine(item, index);
-	});
+	}));
 	if (requests.length > DIAGNOSTIC_REQUEST_PREVIEW_LIMIT) {
 		shown.push(`... (${requests.length - DIAGNOSTIC_REQUEST_PREVIEW_LIMIT} additional requests omitted from preview)`);
 	}
@@ -1478,6 +1487,65 @@ function getSelectorRecoveryHint(errorText: string): string | undefined {
 	return undefined;
 }
 
+interface CommandSuggestion {
+	args?: string[];
+	description: string;
+	id?: string;
+}
+
+const UNKNOWN_COMMAND_SUGGESTIONS: Record<string, CommandSuggestion[]> = {
+	attr: [
+		{ description: "Use `get attr <selector> <name>` to read an attribute from a selector or current `@ref`." },
+	],
+	count: [
+		{ description: "Use `get count <selector>` to count matching elements." },
+	],
+	html: [
+		{ description: "Use `get html <selector>` to read element HTML, or `get html` for the page when upstream supports it." },
+	],
+	text: [
+		{ description: "Use `get text <selector>` to read text from a selector or current `@ref`; run `snapshot -i` first when you need a safe `@ref`." },
+	],
+	title: [
+		{ args: ["get", "title"], description: "Use `get title` to read the current page title.", id: "use-get-title" },
+	],
+	url: [
+		{ args: ["get", "url"], description: "Use `get url` to read the current page URL.", id: "use-get-url" },
+	],
+	value: [
+		{ description: "Use `get value <selector>` to read form control value from a selector or current `@ref`." },
+	],
+};
+
+function getUnknownCommandSuggestions(command: string | undefined, errorText: string): CommandSuggestion[] {
+	if (!command) return [];
+	const normalizedCommand = command.trim().toLowerCase();
+	if (!/\bunknown\s+command\b|\bunknown\s+subcommand\b|\bunrecognized\s+command\b/i.test(errorText)) return [];
+	return UNKNOWN_COMMAND_SUGGESTIONS[normalizedCommand] ?? [];
+}
+
+function formatUnknownCommandSuggestionText(suggestions: CommandSuggestion[]): string | undefined {
+	if (suggestions.length === 0) return undefined;
+	return ["Agent-browser hint: This looks like a getter shortcut, but upstream getter commands are grouped under `get`.", ...suggestions.map((suggestion) => suggestion.description)].join(" ");
+}
+
+function withSessionPrefix(sessionName: string | undefined, args: string[]): string[] {
+	return sessionName ? ["--session", sessionName, ...args] : args;
+}
+
+function buildUnknownCommandSuggestionActions(suggestions: CommandSuggestion[], sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
+	const actions = suggestions
+		.filter((suggestion): suggestion is CommandSuggestion & { args: string[]; id: string } => suggestion.args !== undefined && suggestion.id !== undefined)
+		.map((suggestion) => ({
+			id: suggestion.id,
+			params: { args: withSessionPrefix(sessionName, suggestion.args) },
+			reason: suggestion.description,
+			safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
+			tool: "agent_browser" as const,
+		}));
+	return actions.length > 0 ? actions : undefined;
+}
+
 function appendSelectorRecoveryHint(errorText: string): string {
 	const hint = getSelectorRecoveryHint(errorText);
 	if (!hint || errorText.includes("Agent-browser hint:")) {
@@ -2137,12 +2205,22 @@ export async function buildToolPresentation(options: {
 }): Promise<ToolPresentation> {
 	const { args, artifactManifest, artifactRequest, commandInfo, cwd, envelope, errorText, persistentArtifactStore, sessionName } = options;
 	if (errorText) {
-		const hintedErrorText = appendSelectorRecoveryHint(redactModelFacingText(errorText));
+		const safeErrorText = redactModelFacingText(errorText);
+		const selectorHintedErrorText = appendSelectorRecoveryHint(safeErrorText);
+		const unknownCommandSuggestions = getUnknownCommandSuggestions(commandInfo.command, safeErrorText);
+		const unknownCommandSuggestionText = formatUnknownCommandSuggestionText(unknownCommandSuggestions);
+		const hintedErrorText = unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:")
+			? `${selectorHintedErrorText}\n\n${unknownCommandSuggestionText}`
+			: selectorHintedErrorText;
 		const categoryDetails = buildAgentBrowserResultCategoryDetails({ args: [commandInfo.command, commandInfo.subcommand].filter((item): item is string => item !== undefined), command: commandInfo.command, errorText: hintedErrorText, succeeded: false });
+		const nextActions = [
+			...(buildUnknownCommandSuggestionActions(unknownCommandSuggestions, sessionName) ?? []),
+			...(buildAgentBrowserNextActions({ args, command: commandInfo.command, failureCategory: categoryDetails.failureCategory, resultCategory: "failure" }) ?? []),
+		];
 		return {
 			...categoryDetails,
 			content: [{ type: "text", text: hintedErrorText }],
-			nextActions: buildAgentBrowserNextActions({ args, command: commandInfo.command, failureCategory: categoryDetails.failureCategory, resultCategory: "failure" }),
+			nextActions: nextActions.length > 0 ? nextActions : undefined,
 			summary: hintedErrorText,
 		};
 	}

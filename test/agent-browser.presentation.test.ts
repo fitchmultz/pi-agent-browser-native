@@ -496,6 +496,46 @@ test("buildToolPresentation appends selector-dialect guidance to Playwright-styl
 	assert.match(text, /scrollintoview/);
 });
 
+test("buildToolPresentation suggests grouped getter commands for common unknown getter shortcuts", async () => {
+	const titleFailure = await buildToolPresentation({
+		args: ["--session", "work", "title"],
+		commandInfo: { command: "title" },
+		cwd: process.cwd(),
+		errorText: "Unknown command: title",
+		sessionName: "work",
+	});
+
+	assert.equal(titleFailure.content[0]?.type, "text");
+	const titleText = (titleFailure.content[0] as { text: string }).text;
+	assert.match(titleText, /getter shortcut/i);
+	assert.match(titleText, /`get title`/);
+	assert.deepEqual(titleFailure.nextActions?.[0], {
+		id: "use-get-title",
+		params: { args: ["--session", "work", "get", "title"] },
+		reason: "Use `get title` to read the current page title.",
+		safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
+		tool: "agent_browser",
+	});
+
+	const urlFailure = await buildToolPresentation({
+		args: ["--session", "work", "url"],
+		commandInfo: { command: "url" },
+		cwd: process.cwd(),
+		errorText: "Unknown command: url",
+		sessionName: "work",
+	});
+	assert.deepEqual(urlFailure.nextActions?.[0]?.params?.args, ["--session", "work", "get", "url"]);
+
+	const textFailure = await buildToolPresentation({
+		args: ["text"],
+		commandInfo: { command: "text" },
+		cwd: process.cwd(),
+		errorText: "Unknown command: text",
+	});
+	assert.match((textFailure.content[0] as { text: string }).text, /`get text <selector>`/);
+	assert.equal(textFailure.nextActions, undefined);
+});
+
 test("buildToolPresentation returns exact next actions for selector failures and tab drift", async () => {
 	const selectorFailure = await buildToolPresentation({
 		commandInfo: { command: "click", subcommand: "text=Close" },
@@ -804,8 +844,9 @@ test("buildToolPresentation formats redacted network payload, response, and erro
 
 	assert.equal(presentation.summary, "Network requests: 2");
 	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Network failure summary: 1 actionable, 0 benign low-impact \(1 total\)\./);
 	assert.match(text, /1\. 200 GET https:\/\/example.com\/ \(Document\) \[req-1\]/);
-	assert.match(text, /2\. 201 POST https:\/\/api\.example\.test\/items\?token=%5BREDACTED%5D \(Fetch\) \[req-2\]/);
+	assert.match(text, /2\. 201 POST https:\/\/api\.example\.test\/items\?token=%5BREDACTED%5D \(Fetch\) \[req-2\] \[actionable: document, script, API, or non-benign request failure\]/);
 	assert.match(text, /Payload: .*name.*demo/);
 	assert.match(text, /Payload: .*\[REDACTED\]/);
 	assert.match(text, /Payload: .*https:\/\/api\.example\.test\/callback\?token=%5BREDACTED%5D/);
@@ -1970,6 +2011,60 @@ test("buildToolPresentation prefers main content sections over top-of-page chrom
 	assert.doesNotMatch(text, /Skip to main content/);
 	assert.doesNotMatch(text, /^- AD$/m);
 	assert.equal((presentation.data as { previewMode?: string }).previewMode, "structured");
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
+test("buildToolPresentation surfaces omitted high-value controls in compact snapshots", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 100 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e2") return [id, { name: "Search", role: "button" }];
+			if (id === "e3") return [id, { name: "Search docs", role: "searchbox" }];
+			if (["e4", "e5", "e6", "e7", "e8", "e9"].includes(id)) {
+				return [id, { name: `Package tab ${id.slice(1)}`, role: "tab" }];
+			}
+			return [id, { name: `Article link ${index + 1}`, role: "link" }];
+		}),
+	);
+	const snapshot = [
+		'- heading "Docs Home" [level=1, ref=e1]',
+		...Array.from({ length: 80 }, (_, index) => `  - link "Article link ${index + 10}" [ref=e${index + 10}]`),
+		'- navigation "Top navigation"',
+		'  - button "Search" [ref=e2]',
+		'  - searchbox "Search docs" [ref=e3]',
+		'- tablist "Package managers"',
+		'  - tab "Package tab 4" [ref=e4]',
+		'  - tab "Package tab 5" [ref=e5]',
+		'  - tab "Package tab 6" [ref=e6]',
+		'  - tab "Package tab 7" [ref=e7]',
+		'  - tab "Package tab 8" [ref=e8]',
+		'  - tab "Package tab 9" [ref=e9]',
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "https://example.com/docs",
+				refs,
+				snapshot,
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Other refs:/);
+	assert.match(text, /e3 searchbox "Search docs"/);
+	assert.match(text, /e2 button "Search"/);
+	assert.match(text, /Omitted high-value controls:/);
+	assert.match(text, /e6 tab "Package tab 6"/);
+	assert.match(text, /e9 tab "Package tab 9"/);
+	assert.deepEqual((presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds, ["e6", "e7", "e8", "e9"]);
 
 	if (presentation.fullOutputPath) {
 		await rm(presentation.fullOutputPath, { force: true });

@@ -62,6 +62,7 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
+  - If a fresh launch fails or times out, read `details.managedSessionOutcome` for `preserved` vs `abandoned` (and related fields). A model-visible `Managed session outcome: …` line is appended only for failing calls that used `sessionMode: "fresh"`; `"auto"` failures can still populate the struct without that extra line.
 
 ### Debug, diff, stream, dashboard, and chat families
 
@@ -126,14 +127,19 @@ Examples:
 { "args": ["find", "label", "Email", "fill", "user@example.com"] }
 { "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Close" } }
 { "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
+{ "semanticAction": { "action": "click", "locator": "text", "value": "Close", "session": "named-browser" } }
 { "semanticAction": { "action": "uncheck", "locator": "label", "value": "Remember me" } }
 { "args": ["scrollintoview", "@e12"] }
 { "args": ["snapshot", "-i"] }
 ```
 
-The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`, not a nested shape inside `batch` stdin arrays.
+The optional native `semanticAction` object is only a thin schema for common locator-based actions; it compiles to existing upstream `find` commands and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`, not a nested shape inside `batch` stdin arrays. Add `session` inside `semanticAction` when the shorthand should target a named upstream browser session; the compiled argv prepends `--session <name>` before `find`, and fallback candidate actions preserve that prefix. If a semantic action misses with `selector-not-found`, visible output may include `Agent-browser candidate fallbacks`, while `details.nextActions` first recommends a fresh `snapshot -i` and may include bounded role/name retries—for example `searchbox`/`textbox` for a missed `placeholder` fill, `button`/`link` for a missed `text` click, or a `textbox` retry for a missed `label` fill—each as a `try-*-candidate` entry carrying redacted `find role …` argv.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
+
+Treat `@e…` refs as page-scoped. After a successful `snapshot`, the wrapper records the latest refs and page target for that session; mutation-prone ref commands such as `click @e4` or batch steps with old refs fail with `failureCategory: "stale-ref"` when the page target changed or the ref is absent from the latest same-page snapshot. Inside `batch` stdin JSON, the wrapper also walks steps in order before spawn: steps whose first token can navigate or mutate set a latch; a later step whose first token is `snapshot` clears that latch for following rows; guarded steps that still mention `@e…` after an uncleared latch fail with the same `stale-ref` bucket without launching upstream. Follow the `refresh-interactive-refs` next action (it includes `--session <name>` when needed) and prefer stable `find` or `semanticAction` locators when navigation or rerendering is likely. Contract detail: [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details) (`refSnapshot`).
+
+When a **top-level** `click` succeeds (not a `click` hidden inside a `batch`/`job` tool call—the unified command must be `click`), the upstream payload includes `data.clicked`, and the wrapper sees the active tab URL unchanged after the same normalization it uses for ref guards (**`#fragment` ignored**), it may run one extra `snapshot -i` and surface `Possible overlay blockers` plus `details.overlayBlockers` (`candidates`, `summary`, and a `snapshot` map that can refresh `refSnapshot`) when that snapshot shows overlay/banner/dialog context **and** up to three close/dismiss-like controls. The URL check compares the session’s prior pinned tab target to `details.navigationSummary.url` after the click; that summary is gathered with extra `get url` / `get title` calls only when the click JSON omits **both** string `data.url` and `data.title`—if upstream already echoes either field, overlay diagnostics are skipped on this path. The diagnostic is skipped if the wrapper already applied tab-focus correction or about-blank recovery on that result. Appended `inspect-overlay-state` / `try-overlay-blocker-candidate-*` entries in `details.nextActions` include `--session <name>` when the session is named, same as other session-scoped follow-ups. Treat `inspect-overlay-state` as the safe first follow-up; only use a `try-overlay-blocker-candidate-*` next action when the candidate is clearly the control you intend to close.
 
 ### Extract page data
 
@@ -144,7 +150,11 @@ Do not assume Playwright selector dialects such as `text=Close` or `button:has-t
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
 
-Prefer `get` and scoped `eval --stdin` for read-only extraction. Return the intended JavaScript value instead of relying on `console.log`.
+Prefer `get` and scoped `eval --stdin` for read-only extraction. Getter names are grouped under `get`: use `get title`, `get url`, or `get text <selector>`, not shortcut commands such as `title` or `url`. When upstream reports an unknown command, unknown subcommand, or unrecognized command for a single-token shortcut (`attr`, `count`, `html`, `text`, `title`, `url`, or `value`), the wrapper adds a visible grouped-`get` hint; only `title` and `url` also get exact read-only `details.nextActions` (`use-get-title` / `use-get-url`, with `--session` preserved when the failed call named a session). If another `Agent-browser hint:` (selector dialect or stale-ref recovery) was already appended to the same error text, the getter hint is omitted.
+
+Return the intended JavaScript value from `eval --stdin` instead of relying on `console.log`. For object-shaped extraction, pass a plain expression such as `({ title: document.title, url: location.href })`; if you send a function-shaped snippet, invoke it explicitly, for example `(() => ({ title: document.title }))()`. When upstream serializes a function result to `{}`, the wrapper can append `Eval stdin hint` and `details.evalStdinHint`.
+
+On tabbed or hidden-DOM pages, `get text <selector>` reads the upstream-selected match, which may be hidden even when a later match is visible. For non-`@ref` CSS selectors with multiple matches, including successful `batch` steps, the wrapper may add `Selector text visibility warning`, `details.selectorTextVisibility` (and `details.selectorTextVisibilityAll` for multiple batched warnings), and `inspect-visible-text-candidates` next actions so agents know to use a fresher `snapshot -i`, a visible `@ref`, or a more specific selector instead of trusting hidden tab content.
 
 ### Run a multi-step flow in one browser invocation
 
@@ -170,7 +180,9 @@ For short constrained flows, use top-level `job` instead of hand-writing `batch`
 
 Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`, `qa`, `sourceLookup`, or `networkSourceLookup`; those modes generate the batch stdin themselves.
 
-For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks expected text/selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot.
+For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks expected text/selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot. QA network diagnostics classify failed requests by likely impact: actionable document/script/API-style failures fail the preset, while common low-impact browser icon misses such as `favicon.ico` are surfaced as warnings (`qaPreset.warnings`) so they do not fail an otherwise healthy page.
+
+The same classification drives plain `network requests` presentation: when any row counts as failed (HTTP status ≥ 400, `failed: true`, or a string `error`), model-facing text starts with a line like `Network failure summary: 0 actionable, 1 benign low-impact (1 total).`, and each preview line can end with an impact tag such as `[benign: low-impact browser icon asset]` or `[actionable: document, script, API, or non-benign request failure]`. Rules live in `classifyNetworkRequestFailure` / `summarizeNetworkFailures` in `extensions/agent-browser/lib/results/shared.ts`; QA aggregation is `analyzeQaPresetResults` in `extensions/agent-browser/index.ts`.
 
 ```json
 { "qa": { "url": "https://example.com", "expectedText": "Example Domain", "screenshotPath": ".dogfood/qa-example.png" } }
@@ -252,6 +264,8 @@ For annotated screenshots in `batch`, put `--annotate` in top-level args instead
 The wrapper keeps a bounded, metadata-only `details.artifactManifest` of recent artifacts so long sessions do not grow unbounded. The default recent window is 100 entries and can be raised for screenshot/video-heavy QA sessions with `PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES=<count>`.
 
 This manifest cap controls what appears in `details.artifactManifest` and in summaries such as `Session artifacts: 42 live, 0 evicted (42/100 recent)`. It does not delete explicit files that upstream saved to paths you chose, such as screenshots, PDFs, downloads, traces, HAR files, or WebM recordings.
+
+Browser `close` is also not file cleanup. If `details.artifactManifest` is present with a non-empty `entries` list, a successful `close` appends an `Artifact lifecycle` note and reports `details.artifactCleanup` with the current retention summary and the same host-owned cleanup `note` as the contract (`extensions/agent-browser/index.ts`, `getArtifactCleanupGuidance`). Up to ten distinct user-chosen paths appear in `explicitArtifactPaths` when matching `explicit-path` manifest rows exist in the recent window; otherwise that array is empty and visible text may omit the “Explicit artifact paths” line even though the lifecycle block still reminds you that close does not delete saved files. Delete any paths you care about with host file tools after inspection; the native browser tool intentionally does not remove arbitrary user-chosen filesystem paths.
 
 Oversized snapshots and oversized generic outputs are different: when a persisted pi session is available, their wrapper-managed spill files are stored under the private session artifact directory and are governed by the byte budget `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` (default 32 MiB). Raise that byte budget as well for long QA sessions that need many full raw snapshots or large text spills to survive reload/resume.
 
@@ -439,6 +453,8 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `snapshot -d <n>` / `snapshot --depth <n>` | Limit tree depth. |
 | `snapshot -s <sel>` / `snapshot --selector <sel>` | Scope to a CSS selector. |
 
+When a snapshot is too large for inline output, the Pi wrapper renders a compact view before spilling the full raw snapshot to `details.fullOutputPath`. Compact snapshots are main-content-first, but dense pages can still hide actionable controls in omitted content; in that case, look for `Omitted high-value controls` to find bounded searchboxes, textboxes, comboboxes, buttons, tabs, checkboxes, radios, options, and menuitems that were not already listed under key refs or other refs. When that section appears, `details.data.highValueControlRefIds` repeats the same ref ids for programmatic follow-up alongside fields such as `previewMode`, `previewSections`, and counts on `details.data` (see [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details)).
+
 ### Wait
 
 | Mode | Purpose |
@@ -514,7 +530,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. Use `doctor --offline --quick` for a fast local-only check and `doctor --json` for structured output. |
 | `profiles` | List available Chrome profiles. |
 
-When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; command echoes also redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, cookie/storage values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
+When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; command echoes also redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, cookie/storage values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
 
 ## Important global flags, config, and environment
 
@@ -585,6 +601,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 
 - The extension may keep following one implicit managed session across later tool calls.
 - If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
+- If a `sessionMode: "fresh"` call fails (including upstream failure, timeout, missing binary, or **`qa`** reclassification after a nominally successful batch), read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current. When the failure reason is not the fresh launch itself—for example `failureCategory: "qa-failure"`—`status`/`summary` may still describe the managed-session transition while `succeeded` on this object matches the final tool outcome.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
@@ -592,7 +609,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 - After a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes.
 - If a known session target unexpectedly reports about:blank, agent_browser preserves the prior intended target, best-effort re-selects it when it still exists, and reports exact recovery guidance when it cannot be re-selected.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
-- Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to 25 seconds and use a 28-second child-process watchdog so one upstream CLI call does not cross the upstream 30-second IPC read-timeout/retry path.
+- Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to 25 seconds and use a 28-second child-process watchdog (`PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides the default 28s budget) so one upstream CLI call does not cross the upstream 30-second IPC read-timeout/retry path. When that watchdog fires, `details.timeoutPartialProgress` may include a planned step list for compiled `job` / `qa` plans or caller `batch` stdin, current page title/URL from best-effort session `get url` / `get title` (or a planned URL inferred from the step list when the session cannot answer), and declared artifact paths such as `screenshot`, `pdf`, `download`, or `wait --download` outputs with existence/size checks; the same evidence is appended under `Timeout partial progress` in visible text with URL/path redaction.
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result. Recent artifact metadata is bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES` (default 100); persisted spill files are separately bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` (default 32 MiB).
 - The wrapper keeps `--help` and `--version` stateless so they do not consume the implicit managed-session slot.
 

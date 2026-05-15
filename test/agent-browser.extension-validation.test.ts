@@ -1212,10 +1212,22 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 				args: ["find", "text", "Close", "click"],
 			});
 
+			const sessionClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "text", value: "Close", session: "named" },
+			});
+			assert.equal(sessionClickResult.isError, false);
+			assert.deepEqual(sessionClickResult.details?.compiledSemanticAction, {
+				action: "click",
+				locator: "text",
+				args: ["--session", "named", "find", "text", "Close", "click"],
+			});
+			assert.equal(sessionClickResult.details?.sessionName, "named");
+
 			const invocations = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("find"));
 			assert.deepEqual(invocations[0]?.args.slice(-6), ["find", "role", "button", "click", "--name", "Export"]);
 			assert.deepEqual(invocations[1]?.args.slice(-5), ["find", "label", "Email", "fill", "user@example.test"]);
 			assert.deepEqual(invocations[2]?.args.slice(-4), ["find", "text", "Close", "click"]);
+			assert.deepEqual(invocations[3]?.args.slice(-6), ["--session", "named", "find", "text", "Close", "click"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1320,10 +1332,15 @@ process.stdin.on("end", () => {
   const steps = JSON.parse(stdin);
   const results = steps.map((command) => {
     const name = command[0];
-    if (name === "open") mode = String(command[1] || "").includes("fail") ? "fail" : "clean";
+    if (name === "open") {
+      const url = String(command[1] || "");
+      mode = url.includes("fail") ? "fail" : url.includes("favicon") ? "favicon" : "clean";
+    }
     if (name === "network") {
       if (command.includes("--clear")) { staleNetwork = false; return { command, success: true, result: { requests: [] } }; }
-      return { command, success: true, result: staleNetwork || mode === "fail" ? { requests: [{ method: "GET", status: 500, url: "https://example.test/api" }] } : { requests: [] } };
+      if (staleNetwork || mode === "fail") return { command, success: true, result: { requests: [{ method: "GET", resourceType: "fetch", status: 500, url: "https://example.test/api" }] } };
+      if (mode === "favicon") return { command, success: true, result: { requests: [{ method: "GET", mimeType: "image/x-icon", status: 404, url: "https://example.test/favicon.ico" }] } };
+      return { command, success: true, result: { requests: [] } };
     }
     if (name === "console") {
       if (command.includes("--clear")) { staleConsole = false; return { command, success: true, result: { messages: [] } }; }
@@ -1353,6 +1370,19 @@ process.stdin.on("end", () => {
 			assert.equal(cleanResult.isError, false);
 			assert.deepEqual((cleanResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, []);
 
+			const benignNetworkResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: {
+					url: "https://favicon.example.test/",
+					expectedText: ["Welcome"],
+				},
+			});
+			assert.equal(benignNetworkResult.isError, false);
+			assert.deepEqual((benignNetworkResult.details?.qaPreset as { failedChecks?: string[]; warnings?: string[] } | undefined)?.failedChecks, []);
+			assert.deepEqual((benignNetworkResult.details?.qaPreset as { warnings?: string[] } | undefined)?.warnings, ["1 benign network request failure(s) ignored"]);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /QA preset passed with warnings: 1 benign network request failure\(s\) ignored\./);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /Network failure summary: 0 actionable, 1 benign low-impact \(1 total\)\./);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /404 GET https:\/\/example.test\/favicon.ico \(image\/x-icon\).*\[benign: low-impact browser icon asset\]/);
+
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {
 					url: "https://fail.example.test/",
@@ -1360,12 +1390,18 @@ process.stdin.on("end", () => {
 					expectedSelector: "main",
 					screenshotPath: "qa.png",
 				},
+				sessionMode: "fresh",
 			});
 
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.failureCategory, "qa-failure");
+			const managedSessionOutcome = result.details?.managedSessionOutcome as { sessionMode?: string; status?: string; succeeded?: boolean } | undefined;
+			assert.equal(managedSessionOutcome?.sessionMode, "fresh");
+			assert.equal(managedSessionOutcome?.status, "replaced");
+			assert.equal(managedSessionOutcome?.succeeded, false);
+			assert.match((result.content[0] as { text: string }).text, /Managed session outcome: Managed session .* was replaced by .*/);
 			assert.deepEqual((result.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
-				"1 failed network request(s)",
+				"1 actionable failed network request(s)",
 				"1 console error message(s)",
 				"1 page error(s)",
 			]);
@@ -1386,6 +1422,7 @@ process.stdin.on("end", () => {
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
 			assert.deepEqual(invocations[1]?.args.slice(-1), ["batch"]);
+			assert.deepEqual(invocations[2]?.args.slice(-1), ["batch"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1661,8 +1698,66 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match((unsupportedRoleName.content[0] as { text: string }).text, /semanticAction\.name is only supported/);
 			assert.equal(unsupportedRoleName.details?.failureCategory, "validation-error");
 
+			const emptySession = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "text", value: "Export", session: "" },
+			});
+			assert.equal(emptySession.isError, true);
+			assert.match((emptySession.content[0] as { text: string }).text, /semanticAction\.session must be a non-empty string/);
+			assert.equal(emptySession.details?.failureCategory, "validation-error");
+
 			const invocations = await readInvocationLog(logPath).catch(() => []);
 			assert.deepEqual(invocations.filter((entry) => entry.args.includes("find")), []);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension returns semantic locator candidates when semanticAction misses", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-candidates-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("find")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "Element not found" }));
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "fill", locator: "placeholder", value: "Search Wikipedia", text: "agent browser", session: "find" },
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "selector-not-found");
+			const text = result.content[0] as { text: string };
+			assert.match(text.text, /Agent-browser candidate fallbacks:/);
+			assert.match(text.text, /try-searchbox-name-candidate/);
+			assert.match(text.text, /"searchbox"/);
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; reason?: string }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.id), [
+				"refresh-interactive-refs",
+				"try-searchbox-name-candidate",
+				"try-textbox-name-candidate",
+			]);
+			assert.deepEqual(nextActions?.[1]?.params?.args, ["--session", "find", "find", "role", "searchbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
+			assert.deepEqual(nextActions?.[2]?.params?.args, ["--session", "find", "find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
+			assert.match(nextActions?.[1]?.reason ?? "", /accessible name/);
+
+			const selectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "placeholder", value: "Country", text: "United States" },
+			});
+			assert.equal(selectResult.isError, true);
+			assert.equal(selectResult.details?.failureCategory, "selector-not-found");
+			const selectNextActions = selectResult.details?.nextActions as Array<{ id?: string }> | undefined;
+			assert.deepEqual(selectNextActions?.map((action) => action.id), ["refresh-interactive-refs"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1697,6 +1792,245 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.deepEqual(nextActions?.map((action) => action.id), ["refresh-interactive-refs", "retry-semantic-action-after-stale-ref"]);
 			assert.deepEqual(nextActions?.[1]?.params?.args, ["find", "text", "Export", "click"]);
 			assert.match(nextActions?.[1]?.safety ?? "", /prior action did not execute|direct stale @refs/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension blocks page-scoped ref reuse after navigation before upstream can recycle it", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-generation-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://first.example/",
+    refs: { e1: { role: "button", name: "Old Search" } },
+    snapshot: '- button "Old Search" [ref=e1]'
+  } }));
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Second", url: "https://second.example/" } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "recycled ref" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+			assert.deepEqual((snapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const currentClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(currentClick.isError, false);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://second.example/"] });
+			assert.equal(open.isError, false);
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true);
+			assert.equal(staleClick.details?.failureCategory, "stale-ref");
+			assert.match((staleClick.content[0] as { text: string }).text, /came from a snapshot for https:\/\/first\.example\//);
+			assert.match((staleClick.content[0] as { text: string }).text, /current session target is https:\/\/second\.example\//);
+			const nextActions = staleClick.details?.nextActions as Array<{ params?: { args?: string[] } }> | undefined;
+			assert.deepEqual(nextActions?.[0]?.params?.args, ["--session", staleClick.details?.sessionName as string, "snapshot", "-i"]);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension blocks stale refs after page-changing steps inside a batch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin: null }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://first.example/",
+    refs: { e1: { role: "button", name: "Old Search" } },
+    snapshot: '- button "Old Search" [ref=e1]'
+  } }));
+} else if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([{ command: ["open", "https://second.example/"], success: true, result: { title: "Second", url: "https://second.example/" } }, { command: ["click", "@e1"], success: true, result: { clicked: "recycled" } }]));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+
+			const staleBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["open", "https://second.example/"], ["click", "@e1"]]),
+			});
+			assert.equal(staleBatch.isError, true);
+			assert.equal(staleBatch.details?.failureCategory, "stale-ref");
+			assert.match((staleBatch.content[0] as { text: string }).text, /after an earlier batch step can navigate or mutate/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension allows batch stdin ref steps after snapshot following an invalidating step", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-snapshot-reset-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["open", "https://second.example/"], success: true, result: { title: "Second", url: "https://second.example/" } },
+    { command: ["snapshot", "-i"], success: true, result: {
+      origin: "https://second.example/",
+      refs: { e7: { role: "button", name: "Go" } },
+      snapshot: '- button "Go" [ref=e7]'
+    } },
+    { command: ["click", "@e7"], success: true, result: { clicked: "ok" } }
+  ]));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://first.example/",
+    refs: { e1: { role: "button", name: "Old" } },
+    snapshot: '- button "Old" [ref=e1]'
+  } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+
+			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["open", "https://second.example/"], ["snapshot", "-i"], ["click", "@e7"]]),
+			});
+			assert.equal(batch.isError, false);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension records snapshot refs returned inside a successful batch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-snapshot-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([{ command: ["snapshot", "-i"], success: true, result: {
+    origin: "https://batched.example/",
+    refs: { e7: { role: "button", name: "Batched" } },
+    snapshot: '- button "Batched" [ref=e7]'
+  } }]));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "batched ref" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const batchSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["snapshot", "-i"]]),
+			});
+			assert.equal(batchSnapshot.isError, false);
+			assert.deepEqual((batchSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e7"]);
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e7"] });
+			assert.equal(click.isError, false);
+			assert.equal((click.details?.data as { clicked?: string } | undefined)?.clicked, "batched ref");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rejects refs absent from the latest same-page snapshot", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-missing-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://same.example/",
+    refs: { e2: { role: "button", name: "Current" } },
+    snapshot: '- button "Current" [ref=e2]'
+  } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "unexpected" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+
+			const missingRefClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(missingRefClick.isError, true);
+			assert.equal(missingRefClick.details?.failureCategory, "stale-ref");
+			assert.match((missingRefClick.content[0] as { text: string }).text, /was not present in the latest snapshot/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1820,6 +2154,205 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	}
 });
 
+test("agentBrowserExtension warns when eval stdin returns an empty object from a function-shaped snippet", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-stdin-hint-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+if (stdin.trim().startsWith("() =>")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: {}, origin: "https://example.com/" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Example Domain" }, origin: "https://example.com/" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const functionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "() => ({ title: document.title })",
+			});
+			assert.equal(functionResult.isError, false);
+			assert.match((functionResult.content[0] as { text: string }).text, /Eval stdin hint:/);
+			assert.match((functionResult.content[0] as { text: string }).text, /\(\{ title: document\.title \}\)/);
+			assert.deepEqual(functionResult.details?.evalStdinHint, {
+				reason: "eval --stdin received a function-shaped snippet and the upstream JSON result was an empty object, which often means the function itself was returned or serialized instead of invoked.",
+				suggestion: "Pass a plain expression such as `({ title: document.title })`, or invoke the function explicitly, for example `(() => ({ title: document.title }))()`.",
+			});
+
+			const expressionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "({ title: document.title })",
+			});
+			assert.equal(expressionResult.isError, false);
+			assert.doesNotMatch((expressionResult.content[0] as { text: string }).text, /Eval stdin hint:/);
+			assert.equal(expressionResult.details?.evalStdinHint, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("https://fail.test")) {
+  console.error("simulated launch failure");
+  process.exit(2);
+}
+process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: args.at(-1) || "about:blank" } }));`,
+	);
+
+	try {
+		const missingBinaryDir = await mkdtemp(join(tempDir, "missing-agent-browser-"));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://previous.test"] });
+			assert.equal(firstResult.isError, false);
+			const previousSessionName = firstResult.details?.sessionName as string;
+			assert.ok(previousSessionName);
+
+			const failedFreshResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://fail.test"], sessionMode: "fresh" });
+			assert.equal(failedFreshResult.isError, true);
+			const preservedOutcome = failedFreshResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; attemptedSessionName?: string; currentSessionName?: string; previousSessionName?: string; sessionMode?: string; status?: string; succeeded?: boolean; summary?: string } | undefined;
+			assert.equal(preservedOutcome?.status, "preserved");
+			assert.equal(preservedOutcome?.activeBefore, true);
+			assert.equal(preservedOutcome?.activeAfter, true);
+			assert.equal(preservedOutcome?.currentSessionName, previousSessionName);
+			assert.equal(preservedOutcome?.previousSessionName, previousSessionName);
+			assert.equal(preservedOutcome?.sessionMode, "fresh");
+			assert.match(preservedOutcome?.attemptedSessionName ?? "", /-fresh-/);
+			assert.equal(preservedOutcome?.succeeded, false);
+			assert.match((failedFreshResult.content[0] as { text: string }).text, /Managed session outcome: Fresh managed session .* failed before becoming current; previous managed session .* was preserved\./);
+
+			await withPatchedEnv({ PATH: missingBinaryDir }, async () => {
+				const missingBinaryResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://missing-binary.test"], sessionMode: "fresh" });
+				assert.equal(missingBinaryResult.isError, true);
+				assert.equal(missingBinaryResult.details?.failureCategory, "missing-binary");
+				const missingBinaryOutcome = missingBinaryResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; currentSessionName?: string; previousSessionName?: string; sessionMode?: string; status?: string } | undefined;
+				assert.equal(missingBinaryOutcome?.status, "preserved");
+				assert.equal(missingBinaryOutcome?.activeBefore, true);
+				assert.equal(missingBinaryOutcome?.activeAfter, true);
+				assert.equal(missingBinaryOutcome?.currentSessionName, previousSessionName);
+				assert.equal(missingBinaryOutcome?.previousSessionName, previousSessionName);
+				assert.equal(missingBinaryOutcome?.sessionMode, "fresh");
+				assert.match((missingBinaryResult.content[0] as { text: string }).text, /Managed session outcome: Fresh managed session .* failed before becoming current; previous managed session .* was preserved\./);
+			});
+
+			const followupResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followupResult.isError, false);
+			assert.equal(followupResult.details?.sessionName, previousSessionName);
+
+			const abandonedHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(abandonedHarness.handlers, "session_start", { reason: "new" }, abandonedHarness.ctx);
+			const abandonedResult = await executeRegisteredTool(abandonedHarness.tool, abandonedHarness.ctx, { args: ["open", "https://fail.test"], sessionMode: "fresh" });
+			assert.equal(abandonedResult.isError, true);
+			const abandonedOutcome = abandonedResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; status?: string; summary?: string } | undefined;
+			assert.equal(abandonedOutcome?.status, "abandoned");
+			assert.equal(abandonedOutcome?.activeBefore, false);
+			assert.equal(abandonedOutcome?.activeAfter, false);
+			assert.match((abandonedResult.content[0] as { text: string }).text, /no previous managed session was active/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports partial progress and artifacts after job timeout", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-timeout-progress-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.test/secret-token/results?token=url-secret" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Results page export secret-token Authorization: Bearer title-secret" } }));
+} else if (args.includes("batch")) {
+  const stdin = fs.readFileSync(0, "utf8");
+  const steps = JSON.parse(stdin);
+  const screenshotStep = steps.find((step) => step[0] === "screenshot");
+  const screenshot = screenshotStep?.filter((token) => !String(token).startsWith('-')).at(-1);
+  if (screenshot && screenshot !== 'screenshot') {
+    fs.mkdirSync(path.dirname(path.resolve(screenshot)), { recursive: true });
+    fs.writeFileSync(path.resolve(screenshot), "fake image");
+  }
+  setInterval(() => {}, 1000);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "120" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: {
+					steps: [
+						{ action: "open", url: "https://example.test" },
+						{ action: "screenshot", path: "dogfood/secret-token/filled.png" },
+						{ action: "waitForDownload", path: "dogfood/export.csv" },
+						{ action: "wait", milliseconds: 500 },
+					],
+				},
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "timeout");
+			assert.equal(result.details?.timedOut, true);
+			const timeoutProgress = result.details?.timeoutPartialProgress as { artifacts?: Array<{ exists?: boolean; path?: string; sizeBytes?: number; stepIndex?: number }>; currentPage?: { title?: string; url?: string }; steps?: Array<{ args?: string[]; index?: number }> } | undefined;
+			assert.equal(timeoutProgress?.currentPage?.url, "https://example.test/secret-token/results?token=%5BREDACTED%5D");
+			assert.equal(timeoutProgress?.currentPage?.title, "Results page export secret-token Authorization: Bearer [REDACTED]");
+			assert.deepEqual(timeoutProgress?.artifacts?.map((artifact) => ({ exists: artifact.exists, path: artifact.path, stepIndex: artifact.stepIndex })), [
+				{ exists: true, path: "dogfood/secret-token/filled.png", stepIndex: 2 },
+				{ exists: false, path: "dogfood/export.csv", stepIndex: 3 },
+			]);
+			assert.deepEqual(timeoutProgress?.steps?.map((step) => step.args?.[0]), ["open", "screenshot", "wait", "wait"]);
+			const text = (result.content[0] as { text: string }).text;
+			assert.match(text, /Timeout partial progress:/);
+			assert.match(text, /Current page: \[REDACTED\] — https:\/\/example.test\/\[REDACTED\]\/results\?token=%5BREDACTED%5D/);
+			assert.match(text, /Artifact from step 2: dogfood\/\[REDACTED\]\/filled\.png \(exists, 10 bytes\)/);
+			assert.doesNotMatch(text, /url-secret|title-secret|secret-token/);
+			assert.match(text, /Artifact from step 3: dogfood\/export\.csv \(missing\)/);
+
+			const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "--full-page", "dogfood/option-full-page.png"], ["wait", "--download", "dogfood/download.csv", "--timeout", "1000"]]),
+			});
+			assert.equal(batchResult.isError, true);
+			const batchProgress = batchResult.details?.timeoutPartialProgress as { artifacts?: Array<{ exists?: boolean; path?: string; stepIndex?: number }> } | undefined;
+			assert.deepEqual(batchProgress?.artifacts?.map((artifact) => ({ exists: artifact.exists, path: artifact.path, stepIndex: artifact.stepIndex })), [
+				{ exists: true, path: "dogfood/option-full-page.png", stepIndex: 1 },
+				{ exists: false, path: "dogfood/download.csv", stepIndex: 2 },
+			]);
+
+			const waitNoPathResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["wait", "--download", "--timeout", "1000"]]),
+			});
+			assert.equal(waitNoPathResult.isError, true);
+			const waitNoPathProgress = waitNoPathResult.details?.timeoutPartialProgress as { artifacts?: Array<{ path?: string }> } | undefined;
+			assert.deepEqual(waitNoPathProgress?.artifacts, []);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension forwards wait --download saved-file metadata in details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-download-"));
 	const basePath = process.env.PATH ?? "";
@@ -1855,6 +2388,201 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 			assert.deepEqual((result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
 			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.changeType, "artifact");
 			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.savedFilePath, "/tmp/export.csv");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports artifact lifecycle guidance on close", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-artifact-cleanup-"));
+	const screenshotPath = join(tempDir, "artifact.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+if (args.includes("screenshot")) {
+  const outputPath = args[args.length - 1];
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, Buffer.from("89504e470d0a1a0a", "hex"));
+  process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
+} else if (args.includes("close")) {
+  if (args.includes("--fail")) {
+    process.stdout.write(JSON.stringify({ success: false, error: "close failed" }));
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+  }
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.com/" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const screenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", screenshotPath] });
+			assert.equal(screenshot.isError, false);
+			assert.equal((screenshot.details?.artifactManifest as { liveCount?: number } | undefined)?.liveCount, 1);
+
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false);
+			const text = (close.content[0] as { text: string }).text;
+			assert.match(text, /Artifact lifecycle:/);
+			assert.match(text, /Closing the browser session does not delete explicit screenshots/);
+			assert.match(text, /artifact\.png/);
+			assert.deepEqual(close.details?.artifactCleanup, {
+				explicitArtifactPaths: [screenshotPath],
+				note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean those paths with host file tools when no longer needed.",
+				owner: "host-file-tools",
+				summary: String(close.details?.artifactRetentionSummary),
+			});
+
+			const failedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close", "--fail"] });
+			assert.equal(failedClose.isError, true);
+			assert.doesNotMatch((failedClose.content[0] as { text: string }).text, /Artifact lifecycle:/);
+			assert.equal(failedClose.details?.artifactCleanup, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension warns when get text may read hidden selector matches", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-get-text-visibility-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("get") && args.includes("text")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "npm init playwright@latest", origin: "https://docs.example/" } }));
+} else if (args.includes("eval")) {
+  const isAmbiguous = stdin.includes('.ambiguous-language-bash');
+  process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.stringify(isAmbiguous
+    ? { selector: '.ambiguous-language-bash', matchCount: 2, visibleCount: 2, firstMatchVisible: true, firstTextPreview: "first visible", firstVisibleTextPreview: "first visible" }
+    : { selector: '[href*="token=page-secret"]', matchCount: 2, visibleCount: 1, firstMatchVisible: false, firstTextPreview: "npm init playwright@latest", firstVisibleTextPreview: "yarn create playwright Authorization: Bearer visible-secret" }) } }));
+} else if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify({ success: true, data: [{ command: ["get", "text", ".ambiguous-language-bash"], success: true, result: { result: "first visible" } }, { command: ["get", "text", ".language-bash"], success: true, result: { result: "npm init playwright@latest" } }] }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", ".language-bash"] });
+			assert.equal(result.isError, false);
+			assert.match((result.content[0] as { text: string }).text, /npm init playwright@latest/);
+			assert.match((result.content[0] as { text: string }).text, /Selector text visibility warning:/);
+			assert.match((result.content[0] as { text: string }).text, /yarn create playwright/);
+			assert.doesNotMatch((result.content[0] as { text: string }).text, /visible-secret|page-secret/);
+			assert.deepEqual(result.details?.selectorTextVisibility, {
+				firstMatchVisible: false,
+				firstVisibleTextPreview: "yarn create playwright Authorization: Bearer [REDACTED]",
+				matchCount: 2,
+				selector: ".language-bash",
+				summary: 'Selector ".language-bash" matched 2 elements; the first match is hidden while 1 visible match exists.',
+				visibleCount: 1,
+			});
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; stdin?: string } }> | undefined;
+			assert.equal(nextActions?.at(-1)?.id, "inspect-visible-text-candidates");
+			assert.deepEqual(nextActions?.at(-1)?.params?.args, ["--session", result.details?.sessionName as string, "eval", "--stdin"]);
+			assert.match(nextActions?.at(-1)?.params?.stdin ?? "", /querySelectorAll/);
+
+			const secretSelectorResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", '[href*="token=visible-secret"]'] });
+			assert.equal(secretSelectorResult.isError, false);
+			assert.doesNotMatch((secretSelectorResult.content[0] as { text: string }).text, /Selector text visibility warning|visible-secret/);
+			assert.equal(secretSelectorResult.details?.selectorTextVisibility, undefined);
+			const unquotedSecretSelectorResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "[data-token=visible-secret]"] });
+			assert.equal(unquotedSecretSelectorResult.isError, false);
+			assert.doesNotMatch((unquotedSecretSelectorResult.content[0] as { text: string }).text, /Selector text visibility warning|visible-secret/);
+			assert.equal(unquotedSecretSelectorResult.details?.selectorTextVisibility, undefined);
+			let invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+
+			const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch"], stdin: JSON.stringify([["get", "text", ".ambiguous-language-bash"], ["get", "text", ".language-bash"]]) });
+			assert.equal(batchResult.isError, false);
+			assert.match((batchResult.content[0] as { text: string }).text, /Selector text visibility warning:/);
+			assert.match((batchResult.content[0] as { text: string }).text, /Selector "\.language-bash" matched 2 elements; the first match is hidden/);
+			assert.match((batchResult.content[0] as { text: string }).text, /Selector "\.ambiguous-language-bash" matched 2 elements; get text reads the first upstream match/);
+			assert.equal((batchResult.details?.selectorTextVisibility as { selector?: string } | undefined)?.selector, ".language-bash");
+			assert.deepEqual((batchResult.details?.selectorTextVisibilityAll as Array<{ selector?: string }> | undefined)?.map((entry) => entry.selector), [".language-bash", ".ambiguous-language-bash"]);
+			invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 3);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension surfaces likely overlay blockers after a no-op click", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-overlay-blocker-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Blocked Search", url: "https://blocked.example/" } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Blocked Search" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://blocked.example/" } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://blocked.example/",
+    refs: {
+      e5: { role: "button", name: "×" },
+      e6: { role: "button", name: "Donate now" },
+      e7: { role: "dialog", name: "Donation banner" }
+    },
+    snapshot: '- dialog "Donation banner" [ref=e7]\\n  - button "×" [ref=e5]\\n  - button "Donate now" [ref=e6]'
+  } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://blocked.example/"] });
+			assert.equal(open.isError, false);
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e9"] });
+			assert.equal(click.isError, false);
+			const text = click.content[0] as { text: string };
+			assert.match(text.text, /Possible overlay blockers:/);
+			assert.match(text.text, /@e5 button "×"/);
+			const overlayBlockers = click.details?.overlayBlockers as { candidates?: Array<{ ref?: string; args?: string[] }> } | undefined;
+			assert.equal(overlayBlockers?.candidates?.[0]?.ref, "@e5");
+			assert.deepEqual((click.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e5", "e6", "e7"]);
+			const nextActions = click.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.id), ["inspect-after-mutation", "inspect-overlay-state", "try-overlay-blocker-candidate-1"]);
+			assert.deepEqual(nextActions?.[1]?.params?.args, ["--session", click.details?.sessionName as string, "snapshot", "-i"]);
+			assert.deepEqual(nextActions?.[2]?.params?.args, ["--session", click.details?.sessionName as string, "click", "@e5"]);
+
+			const closeCandidateArgs = nextActions?.[2]?.params?.args;
+			assert.ok(closeCandidateArgs);
+			const closeCandidate = await executeRegisteredTool(harness.tool, harness.ctx, { args: closeCandidateArgs });
+			assert.equal(closeCandidate.isError, false);
+			assert.notEqual(closeCandidate.details?.failureCategory, "stale-ref");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

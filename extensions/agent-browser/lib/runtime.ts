@@ -649,9 +649,14 @@ export function restoreManagedSessionStateFromBranch(
 
 		const messageIsError = typeof message.isError === "boolean" ? message.isError : undefined;
 		const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
-		const succeeded = messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
+		const outcome = typeof details.managedSessionOutcome === "object" && details.managedSessionOutcome !== null ? details.managedSessionOutcome as Record<string, unknown> : undefined;
+		const outcomeStatus = typeof outcome?.status === "string" ? outcome.status : undefined;
+		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
+		const outcomeActiveAfter = outcome?.activeAfter === true;
+		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
+		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
 		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
-		if (succeeded && sessionMode === "fresh") {
+		if ((succeeded || outcomeRepresentsActiveCurrentSession) && sessionMode === "fresh") {
 			freshSessionOrdinal += 1;
 		}
 		const staleCompletion = succeeded && command !== "close" && restoreRank < activeRestoreRank;

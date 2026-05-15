@@ -34,6 +34,7 @@ import {
 	parseAgentBrowserEnvelope,
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
+	type AgentBrowserNextAction,
 } from "./lib/results.js";
 import {
 	buildExecutionPlan,
@@ -56,6 +57,7 @@ import {
 	resolveManagedSessionState,
 	shouldAppendBrowserSystemPrompt,
 	validateToolArgs,
+	type CommandInfo,
 	type CompatibilityWorkaround,
 	type OpenResultTabCorrection,
 } from "./lib/runtime.js";
@@ -72,6 +74,7 @@ import {
 	formatSessionArtifactRetentionSummary,
 	isSessionArtifactManifest,
 	mergeSessionArtifactManifest,
+	summarizeNetworkFailures,
 } from "./lib/results/shared.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
@@ -99,6 +102,7 @@ interface AgentBrowserSemanticActionInput {
 	text?: string;
 	role?: string;
 	name?: string;
+	session?: string;
 }
 
 interface CompiledAgentBrowserSemanticAction {
@@ -222,6 +226,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			text: Type.Optional(Type.String({ description: "Text/value argument for fill or select actions." })),
 			role: Type.Optional(Type.String({ description: "Role locator value; when set it must match value for locator=role." })),
 			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
+			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the compiled find command." })),
 		}),
 	),
 	qa: Type.Optional(
@@ -232,7 +237,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			screenshotPath: Type.Optional(Type.String({ description: "Optional evidence screenshot path captured at the end of the QA preset." })),
 			checkConsole: Type.Optional(Type.Boolean({ description: "Whether to fail on console error messages. Defaults to true." })),
 			checkErrors: Type.Optional(Type.Boolean({ description: "Whether to fail on page errors. Defaults to true." })),
-			checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to fail on failed network requests. Defaults to true." })),
+			checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to inspect network requests and fail on actionable request failures; benign icon misses warn. Defaults to true." })),
 		}),
 	),
 	sourceLookup: Type.Optional(
@@ -366,6 +371,7 @@ interface AgentBrowserQaPresetAnalysis {
 	failedChecks: string[];
 	passed: boolean;
 	summary: string;
+	warnings: string[];
 }
 
 function getBatchResultItems(data: unknown): Array<Record<string, unknown>> {
@@ -381,6 +387,7 @@ function analyzeQaPresetResults(data: unknown): AgentBrowserQaPresetAnalysis | u
 	const items = getBatchResultItems(data);
 	if (items.length === 0) return undefined;
 	const failedChecks: string[] = [];
+	const warnings: string[] = [];
 	for (const item of items) {
 		if (item.success === false) {
 			failedChecks.push(`${getCommandNameFromBatchItem(item) ?? "step"} failed`);
@@ -395,15 +402,20 @@ function analyzeQaPresetResults(data: unknown): AgentBrowserQaPresetAnalysis | u
 			if (errorCount > 0) failedChecks.push(`${errorCount} console error message(s)`);
 		}
 		if (commandName === "network" && Array.isArray(result?.requests)) {
-			const failedRequestCount = result.requests.filter((request) => isRecord(request) && ((typeof request.status === "number" && request.status >= 400) || request.failed === true || typeof request.error === "string")).length;
-			if (failedRequestCount > 0) failedChecks.push(`${failedRequestCount} failed network request(s)`);
+			const networkFailures = summarizeNetworkFailures(result.requests);
+			if (networkFailures.actionableCount > 0) failedChecks.push(`${networkFailures.actionableCount} actionable failed network request(s)`);
+			if (networkFailures.benignCount > 0) warnings.push(`${networkFailures.benignCount} benign network request failure(s) ignored`);
 		}
 	}
 	const uniqueFailures = [...new Set(failedChecks)];
+	const uniqueWarnings = [...new Set(warnings)];
 	return {
 		failedChecks: uniqueFailures,
 		passed: uniqueFailures.length === 0,
-		summary: uniqueFailures.length === 0 ? "QA preset passed." : `QA preset failed: ${uniqueFailures.join("; ")}.`,
+		summary: uniqueFailures.length === 0
+			? uniqueWarnings.length === 0 ? "QA preset passed." : `QA preset passed with warnings: ${uniqueWarnings.join("; ")}.`
+			: `QA preset failed: ${uniqueFailures.join("; ")}.`,
+		warnings: uniqueWarnings,
 	};
 }
 
@@ -878,6 +890,77 @@ async function analyzeNetworkSourceLookupResults(data: unknown, compiled: Compil
 	return { candidates, failedRequests, limitations, status, summary: failedRequests.length === 0 ? "Network source lookup found no failed requests." : candidates.length > 0 ? `Network source lookup found ${failedRequests.length} failed request(s) and ${candidates.length} candidate source hint(s).` : `Network source lookup found ${failedRequests.length} failed request(s) but no source candidates.` };
 }
 
+function appendSemanticActionTextArg(args: string[], action: string, text: string | undefined): void {
+	if ((action === "fill" || action === "select") && text) {
+		args.push(text);
+	}
+}
+
+function getCompiledSemanticActionCommandIndex(compiled: CompiledAgentBrowserSemanticAction): number {
+	return compiled.args[0] === "--session" ? 2 : 0;
+}
+
+function getCompiledSemanticActionTextArg(compiled: CompiledAgentBrowserSemanticAction): string | undefined {
+	if (compiled.action !== "fill" && compiled.action !== "select") return undefined;
+	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
+	if (commandIndex < 0) return undefined;
+	const markerIndex = compiled.args.indexOf("--name");
+	return markerIndex >= 0 ? compiled.args[markerIndex - 1] : compiled.args[commandIndex + 4];
+}
+
+function getCompiledSemanticActionSessionPrefix(compiled: CompiledAgentBrowserSemanticAction): string[] {
+	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
+	return commandIndex > 0 ? compiled.args.slice(0, commandIndex) : [];
+}
+
+function formatSemanticActionCandidateText(actions: AgentBrowserNextAction[]): string | undefined {
+	const candidateActions = actions.filter((action) => action.id.startsWith("try-") && action.params?.args);
+	if (candidateActions.length === 0) return undefined;
+	return [
+		"Agent-browser candidate fallbacks:",
+		...candidateActions.map((action) => `- ${action.id}: agent_browser ${JSON.stringify({ args: action.params?.args })} — ${action.reason}`),
+	].join("\n");
+}
+
+function buildSemanticActionCandidateActions(compiled: CompiledAgentBrowserSemanticAction): AgentBrowserNextAction[] {
+	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
+	if (commandIndex < 0) return [];
+	const locator = compiled.args[commandIndex + 1];
+	const value = compiled.args[commandIndex + 2];
+	if (!locator || !value) return [];
+	const text = getCompiledSemanticActionTextArg(compiled);
+	const sessionPrefix = getCompiledSemanticActionSessionPrefix(compiled);
+	const buildRoleCandidate = (role: string, id: string, reason: string): AgentBrowserNextAction => {
+		const args = [...sessionPrefix, "find", "role", role, compiled.action];
+		appendSemanticActionTextArg(args, compiled.action, text);
+		args.push("--name", value);
+		return {
+			id,
+			params: { args: redactInvocationArgs(args) },
+			reason,
+			safety: "Candidate locator fallback only; inspect the page if multiple elements could match the same accessible name.",
+			tool: "agent_browser" as const,
+		};
+	};
+
+	if (locator === "placeholder" && compiled.action === "fill") {
+		return [
+			buildRoleCandidate("searchbox", "try-searchbox-name-candidate", "Retry against a searchbox with the same accessible name; many search inputs expose names instead of placeholders."),
+			buildRoleCandidate("textbox", "try-textbox-name-candidate", "Retry against a textbox with the same accessible name when placeholder lookup misses."),
+		];
+	}
+	if (locator === "text" && compiled.action === "click") {
+		return [
+			buildRoleCandidate("button", "try-button-name-candidate", "Retry against a button with the same accessible name when text lookup misses."),
+			buildRoleCandidate("link", "try-link-name-candidate", "Retry against a link with the same accessible name when text lookup misses."),
+		];
+	}
+	if (locator === "label" && compiled.action === "fill") {
+		return [buildRoleCandidate("textbox", "try-labeled-textbox-candidate", "Retry against a textbox with the same accessible name when label lookup misses.")];
+	}
+	return [];
+}
+
 function compileAgentBrowserSemanticAction(input: unknown): { compiled?: CompiledAgentBrowserSemanticAction; error?: string } {
 	if (!isRecord(input)) {
 		return { error: "semanticAction must be an object." };
@@ -888,6 +971,7 @@ function compileAgentBrowserSemanticAction(input: unknown): { compiled?: Compile
 	const text = input.text;
 	const role = input.role;
 	const name = input.name;
+	const session = input.session;
 	if (typeof action !== "string" || !AGENT_BROWSER_SEMANTIC_ACTIONS.includes(action as AgentBrowserSemanticActionName)) {
 		return { error: `semanticAction.action must be one of: ${AGENT_BROWSER_SEMANTIC_ACTIONS.join(", ")}.` };
 	}
@@ -912,7 +996,10 @@ function compileAgentBrowserSemanticAction(input: unknown): { compiled?: Compile
 	if (name !== undefined && (locator !== "role" || typeof name !== "string" || name.length === 0)) {
 		return { error: "semanticAction.name is only supported as a non-empty string for locator=role." };
 	}
-	const args = ["find", locator, value, action];
+	if (session !== undefined && (typeof session !== "string" || session.trim().length === 0)) {
+		return { error: "semanticAction.session must be a non-empty string when provided." };
+	}
+	const args = typeof session === "string" ? ["--session", session, "find", locator, value, action] : ["find", locator, value, action];
 	if (action === "fill" || action === "select") {
 		args.push(text as string);
 	}
@@ -1298,6 +1385,72 @@ const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forwa
 interface NavigationSummary {
 	title?: string;
 	url?: string;
+}
+
+interface OverlayBlockerCandidate {
+	args: string[];
+	name?: string;
+	reason: string;
+	ref: string;
+	role?: string;
+}
+
+interface OverlayBlockerDiagnostic {
+	candidates: OverlayBlockerCandidate[];
+	snapshot: SessionRefSnapshot;
+	summary: string;
+}
+
+interface SelectorTextVisibilityDiagnostic {
+	firstMatchVisible?: boolean;
+	firstVisibleTextPreview?: string;
+	matchCount: number;
+	selector: string;
+	summary: string;
+	visibleCount: number;
+}
+
+interface TimeoutArtifactEvidence {
+	absolutePath: string;
+	exists: boolean;
+	path: string;
+	sizeBytes?: number;
+	stepIndex: number;
+}
+
+interface TimeoutPartialProgress {
+	artifacts: TimeoutArtifactEvidence[];
+	currentPage?: {
+		title?: string;
+		url?: string;
+	};
+	steps?: Array<{ args: string[]; index: number }>;
+	summary: string;
+}
+
+interface EvalStdinHint {
+	reason: string;
+	suggestion: string;
+}
+
+interface ArtifactCleanupGuidance {
+	explicitArtifactPaths: string[];
+	note: string;
+	owner: "host-file-tools";
+	summary: string;
+}
+
+interface ManagedSessionOutcome {
+	activeAfter: boolean;
+	activeBefore: boolean;
+	attemptedSessionName?: string;
+	currentSessionName: string;
+	previousSessionName: string;
+	replacedSessionName?: string;
+	sessionMode: "auto" | "fresh";
+	status: "abandoned" | "closed" | "created" | "preserved" | "replaced" | "unchanged";
+	succeeded: boolean;
+	summary: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1703,7 +1856,7 @@ function shouldCaptureNavigationSummary(command: string | undefined, data: unkno
 	);
 }
 
-function extractStringResultField(data: unknown, fieldName: "title" | "url"): string | undefined {
+function extractStringResultField(data: unknown, fieldName: "result" | "title" | "url"): string | undefined {
 	if (typeof data === "string") {
 		const text = data.trim();
 		return text.length > 0 ? text : undefined;
@@ -1740,6 +1893,21 @@ interface OrderedSessionTabTarget {
 	target: SessionTabTarget;
 }
 
+interface SessionRefSnapshot {
+	refIds: string[];
+	target?: SessionTabTarget;
+}
+
+interface OrderedSessionRefSnapshot extends SessionRefSnapshot {
+	order: number;
+}
+
+interface StaleRefPreflight {
+	message: string;
+	refIds: string[];
+	snapshot?: SessionRefSnapshot;
+}
+
 interface AboutBlankSessionMismatch {
 	activeUrl: "about:blank";
 	recoveryApplied: boolean;
@@ -1748,7 +1916,7 @@ interface AboutBlankSessionMismatch {
 	targetUrl: string;
 }
 
-function getLatestSessionTabTargetOrder(targets: Map<string, OrderedSessionTabTarget>): number {
+function getLatestSessionTabTargetOrder(targets: Map<string, { order: number }>): number {
 	let latestOrder = 0;
 	for (const target of targets.values()) {
 		latestOrder = Math.max(latestOrder, target.order);
@@ -1757,7 +1925,7 @@ function getLatestSessionTabTargetOrder(targets: Map<string, OrderedSessionTabTa
 }
 
 function shouldApplySessionTabTargetUpdate(options: {
-	current?: OrderedSessionTabTarget;
+	current?: { order: number };
 	updateOrder: number;
 }): boolean {
 	return !options.current || options.updateOrder >= options.current.order;
@@ -1901,6 +2069,66 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Orde
 		}
 	}
 	return restoredTargets;
+}
+
+function extractRefSnapshotFromData(data: unknown): SessionRefSnapshot | undefined {
+	if (!isRecord(data)) return undefined;
+	const refIds = isRecord(data.refs) ? Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId)) : [];
+	if (refIds.length === 0) return undefined;
+	return {
+		refIds,
+		target: extractSessionTabTargetFromData(data),
+	};
+}
+
+function extractRefSnapshotFromBatchResults(data: unknown): SessionRefSnapshot | undefined {
+	if (!Array.isArray(data)) return undefined;
+	let latestSnapshot: SessionRefSnapshot | undefined;
+	for (const item of data) {
+		if (!isRecord(item) || item.success === false) continue;
+		const [name] = extractBatchResultCommand(item);
+		if (name !== "snapshot") continue;
+		latestSnapshot = extractRefSnapshotFromData(item.result) ?? latestSnapshot;
+	}
+	return latestSnapshot;
+}
+
+function restoreSessionRefSnapshotsFromBranch(branch: unknown[]): Map<string, OrderedSessionRefSnapshot> {
+	const restoredSnapshots = new Map<string, OrderedSessionRefSnapshot>();
+	let restoredOrder = 0;
+	for (const entry of branch) {
+		if (!isRecord(entry) || entry.type !== "message") continue;
+		const message = isRecord(entry.message) ? entry.message : undefined;
+		if (!message || message.toolName !== "agent_browser") continue;
+		const details = isRecord(message.details) ? message.details : undefined;
+		if (!details) continue;
+		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
+		if (!sessionName) continue;
+		const command = typeof details.command === "string" ? details.command : undefined;
+		if (command === "close" && message.isError !== true) {
+			restoredOrder += 1;
+			restoredSnapshots.delete(sessionName);
+			continue;
+		}
+		const refSnapshot = isRecord(details.refSnapshot)
+			? {
+				refIds: Array.isArray(details.refSnapshot.refIds)
+					? details.refSnapshot.refIds.filter((refId): refId is string => typeof refId === "string" && /^e\d+$/.test(refId))
+					: [],
+				target: isRecord(details.refSnapshot.target)
+					? normalizeSessionTabTarget({
+							title: typeof details.refSnapshot.target.title === "string" ? details.refSnapshot.target.title : undefined,
+							url: typeof details.refSnapshot.target.url === "string" ? details.refSnapshot.target.url : undefined,
+					  })
+					: undefined,
+			  }
+			: undefined;
+		if (refSnapshot && refSnapshot.refIds.length > 0) {
+			restoredOrder += 1;
+			restoredSnapshots.set(sessionName, { ...refSnapshot, order: restoredOrder });
+		}
+	}
+	return restoredSnapshots;
 }
 
 function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactManifest | undefined {
@@ -2052,6 +2280,46 @@ function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps
 	}
 }
 
+const REF_INVALIDATING_BATCH_COMMANDS = new Set([
+	"back",
+	"check",
+	"click",
+	"dblclick",
+	"drag",
+	"fill",
+	"forward",
+	"goto",
+	"keyboard",
+	"mouse",
+	"navigate",
+	"open",
+	"press",
+	"reload",
+	"select",
+	"type",
+	"uncheck",
+	"upload",
+]);
+
+const REF_GUARDED_COMMANDS = new Set([
+	"check",
+	"click",
+	"dblclick",
+	"download",
+	"drag",
+	"fill",
+	"focus",
+	"hover",
+	"keyboard",
+	"mouse",
+	"press",
+	"scrollintoview",
+	"select",
+	"type",
+	"uncheck",
+	"upload",
+]);
+
 function getStaleRefArgs(commandTokens: string[], stdin?: string): string[] {
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return commandTokens;
@@ -2061,6 +2329,101 @@ function getStaleRefArgs(commandTokens: string[], stdin?: string): string[] {
 		return commandTokens;
 	}
 	return parsed.steps.flatMap((step) => step);
+}
+
+function collectRefsFromTokens(tokens: string[]): string[] {
+	return tokens.filter((token) => /^@e\d+\b/.test(token)).map((token) => token.slice(1));
+}
+
+function getGuardedRefUsage(commandTokens: string[], stdin?: string): string[] {
+	const collectFromStep = (step: string[]) => REF_GUARDED_COMMANDS.has(step[0] ?? "") ? collectRefsFromTokens(step) : [];
+	if (commandTokens[0] !== "batch" || stdin === undefined) {
+		return collectFromStep(commandTokens);
+	}
+	const parsed = parseUserBatchStdin(stdin);
+	if (parsed.error || parsed.steps === undefined) {
+		return collectFromStep(commandTokens);
+	}
+	const refsBeforeInBatchSnapshot: string[] = [];
+	for (const step of parsed.steps) {
+		if ((step[0] ?? "") === "snapshot") break;
+		refsBeforeInBatchSnapshot.push(...collectFromStep(step));
+	}
+	return refsBeforeInBatchSnapshot;
+}
+
+function targetsMatch(left: SessionTabTarget | undefined, right: SessionTabTarget | undefined): boolean {
+	if (!left || !right) return true;
+	return normalizeComparableUrl(left.url) === normalizeComparableUrl(right.url);
+}
+
+function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string): string | undefined {
+	if (commandTokens[0] !== "batch" || stdin === undefined) return undefined;
+	const parsed = parseUserBatchStdin(stdin);
+	if (parsed.error || parsed.steps === undefined) return undefined;
+	let priorStepInvalidatesRefs = false;
+	for (const step of parsed.steps) {
+		if ((step[0] ?? "") === "snapshot") {
+			priorStepInvalidatesRefs = false;
+		}
+		const refIds = collectRefsFromTokens(step);
+		if (refIds.length > 0 && REF_GUARDED_COMMANDS.has(step[0] ?? "") && priorStepInvalidatesRefs) {
+			return `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`;
+		}
+		if (REF_INVALIDATING_BATCH_COMMANDS.has(step[0] ?? "")) {
+			priorStepInvalidatesRefs = true;
+		}
+	}
+	return undefined;
+}
+
+function buildStaleRefPreflight(options: {
+	commandTokens: string[];
+	currentTarget?: SessionTabTarget;
+	refSnapshot?: SessionRefSnapshot;
+	stdin?: string;
+}): StaleRefPreflight | undefined {
+	const usedRefIds = [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin))];
+	const batchInvalidationMessage = getBatchRefInvalidationMessage(options.commandTokens, options.stdin);
+	if (batchInvalidationMessage && usedRefIds.length > 0) {
+		return {
+			message: batchInvalidationMessage,
+			refIds: usedRefIds,
+			snapshot: options.refSnapshot,
+		};
+	}
+	if (usedRefIds.length === 0 || !options.refSnapshot) return undefined;
+	if (!targetsMatch(options.refSnapshot.target, options.currentTarget)) {
+		return {
+			message: `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} came from a snapshot for ${options.refSnapshot.target?.url ?? "a prior page"}, but the current session target is ${options.currentTarget?.url ?? "unknown"}. Run snapshot -i again before using page-scoped refs.`,
+			refIds: usedRefIds,
+			snapshot: options.refSnapshot,
+		};
+	}
+	const knownRefs = new Set(options.refSnapshot.refIds);
+	const missingRefs = usedRefIds.filter((refId) => !knownRefs.has(refId));
+	if (missingRefs.length > 0) {
+		return {
+			message: `Ref ${missingRefs.map((refId) => `@${refId}`).join(", ")} was not present in the latest snapshot for this session. Run snapshot -i again before using page-scoped refs.`,
+			refIds: missingRefs,
+			snapshot: options.refSnapshot,
+		};
+	}
+	return undefined;
+}
+
+function sessionPrefixArgs(sessionName: string | undefined, args: string[]): string[] {
+	return sessionName && args[0] !== "--session" ? ["--session", sessionName, ...args] : args;
+}
+
+function sessionAwareStaleRefNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
+	return (buildAgentBrowserNextActions({ failureCategory: "stale-ref", resultCategory: "failure" }) ?? []).map((action) => {
+		const actionArgs = action.params?.args;
+		return {
+			...action,
+			params: action.params && actionArgs ? { ...action.params, args: sessionPrefixArgs(sessionName, actionArgs) } : action.params,
+		};
+	});
 }
 
 function buildPinnedBatchPlan(options: {
@@ -2196,14 +2559,16 @@ async function runSessionCommandData(options: {
 	cwd: string;
 	sessionName?: string;
 	signal?: AbortSignal;
+	stdin?: string;
 }): Promise<unknown | undefined> {
-	const { args, cwd, sessionName, signal } = options;
+	const { args, cwd, sessionName, signal, stdin } = options;
 	if (!sessionName) return undefined;
 
 	const processResult = await runAgentBrowserProcess({
 		args: ["--json", "--session", sessionName, ...args],
 		cwd,
 		signal,
+		stdin,
 	});
 	try {
 		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
@@ -2247,6 +2612,401 @@ function mergeNavigationSummaryIntoData(data: unknown, navigationSummary: Naviga
 		return { ...data, navigationSummary };
 	}
 	return { navigationSummary, result: data };
+}
+
+function getSnapshotRefRecord(data: unknown): Record<string, unknown> | undefined {
+	return isRecord(data) && isRecord(data.refs) ? data.refs : undefined;
+}
+
+const OVERLAY_CLOSE_NAME_PATTERN = /(?:\b(?:close|dismiss|no thanks|not now|maybe later|hide|skip|continue without|x)\b|^\s*×\s*$)/i;
+const OVERLAY_CONTEXT_NAME_PATTERN = /\b(?:banner|modal|dialog|popup|pop-up|overlay|donat(?:e|ion)|subscribe|sign in|login|cookie|privacy|consent)\b/i;
+const OVERLAY_CONTEXT_ROLES = new Set(["alertdialog", "dialog"]);
+const OVERLAY_ACTION_ROLES = new Set(["button", "link", "menuitem"]);
+const OVERLAY_BLOCKER_CANDIDATE_LIMIT = 3;
+
+function getOverlayBlockerCandidates(snapshotData: unknown): OverlayBlockerCandidate[] {
+	const refs = getSnapshotRefRecord(snapshotData);
+	if (!refs) return [];
+	const hasOverlayContext = Object.values(refs).some((entry) => {
+		if (!isRecord(entry)) return false;
+		const role = typeof entry.role === "string" ? entry.role : "";
+		const name = typeof entry.name === "string" ? entry.name : "";
+		return OVERLAY_CONTEXT_ROLES.has(role.toLowerCase()) || OVERLAY_CONTEXT_NAME_PATTERN.test(name);
+	});
+	if (!hasOverlayContext) return [];
+	const candidates: OverlayBlockerCandidate[] = [];
+	for (const [ref, entry] of Object.entries(refs)) {
+		if (!/^e\d+$/.test(ref) || !isRecord(entry)) continue;
+		const role = typeof entry.role === "string" ? entry.role : undefined;
+		const name = typeof entry.name === "string" ? entry.name : undefined;
+		if (!role || !OVERLAY_ACTION_ROLES.has(role.toLowerCase()) || !name || !OVERLAY_CLOSE_NAME_PATTERN.test(name)) continue;
+		candidates.push({
+			args: ["click", `@${ref}`],
+			name,
+			reason: `Visible ${role} ${JSON.stringify(name)} appears in a snapshot that also contains overlay/banner/dialog context.`,
+			ref: `@${ref}`,
+			role,
+		});
+		if (candidates.length >= OVERLAY_BLOCKER_CANDIDATE_LIMIT) break;
+	}
+	return candidates;
+}
+
+function formatOverlayBlockerText(diagnostic: OverlayBlockerDiagnostic): string {
+	return [
+		"Possible overlay blockers:",
+		...diagnostic.candidates.map((candidate) => `- ${candidate.ref}${candidate.role ? ` ${candidate.role}` : ""}${candidate.name ? ` ${JSON.stringify(candidate.name)}` : ""}: ${candidate.reason}`),
+	].join("\n");
+}
+
+function buildOverlayBlockerNextActions(options: { diagnostic: OverlayBlockerDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
+	return [
+		{
+			id: "inspect-overlay-state",
+			params: { args: sessionPrefixArgs(options.sessionName, ["snapshot", "-i"]) },
+			reason: "Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.",
+			safety: "Read-only inspection; use current refs from this snapshot before interacting.",
+			tool: "agent_browser" as const,
+		},
+		...options.diagnostic.candidates.map((candidate, index) => ({
+			id: `try-overlay-blocker-candidate-${index + 1}`,
+			params: { args: sessionPrefixArgs(options.sessionName, candidate.args) },
+			reason: candidate.reason,
+			safety: "Only click this if the candidate is clearly a close/dismiss control for an overlay that blocks the intended workflow.",
+			tool: "agent_browser" as const,
+		})),
+	];
+}
+
+function buildVisibleTextProbeScript(selector: string): string {
+	return `(() => {\n  const selector = ${JSON.stringify(selector)};\n  const isVisible = (element) => {\n    const style = window.getComputedStyle(element);\n    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;\n    return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);\n  };\n  let matches = [];\n  try {\n    matches = Array.from(document.querySelectorAll(selector));\n  } catch (error) {\n    return JSON.stringify({ selector, error: error instanceof Error ? error.message : String(error) });\n  }\n  const visible = matches.filter(isVisible);\n  const trim = (value) => typeof value === 'string' ? value.trim().replace(/\\s+/g, ' ').slice(0, 200) : undefined;\n  return JSON.stringify({\n    selector,\n    matchCount: matches.length,\n    visibleCount: visible.length,\n    firstMatchVisible: matches[0] ? isVisible(matches[0]) : undefined,\n    firstTextPreview: trim(matches[0]?.textContent),\n    firstVisibleTextPreview: trim(visible[0]?.textContent),\n  });\n})()`;
+}
+
+function parseSelectorTextVisibilityProbe(data: unknown, selector: string): Omit<SelectorTextVisibilityDiagnostic, "summary"> | undefined {
+	const result = extractStringResultField(data, "result");
+	if (!result) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(result);
+	} catch {
+		return undefined;
+	}
+	if (!isRecord(parsed) || typeof parsed.error === "string") return undefined;
+	const matchCount = typeof parsed.matchCount === "number" ? parsed.matchCount : undefined;
+	const visibleCount = typeof parsed.visibleCount === "number" ? parsed.visibleCount : undefined;
+	if (matchCount === undefined || visibleCount === undefined) return undefined;
+	return {
+		firstMatchVisible: typeof parsed.firstMatchVisible === "boolean" ? parsed.firstMatchVisible : undefined,
+		firstVisibleTextPreview: typeof parsed.firstVisibleTextPreview === "string" && parsed.firstVisibleTextPreview.length > 0 ? redactSensitiveText(parsed.firstVisibleTextPreview) : undefined,
+		matchCount,
+		selector,
+		visibleCount,
+	};
+}
+
+function selectorMayExposeSensitiveLiteral(selector: string): boolean {
+	return redactSensitiveText(selector) !== selector || /\[[^\]]*[~|^$*]?=\s*(?:"[^"]*"|'[^']*'|[^\]\s]+)\s*(?:[is]\s*)?\]/.test(selector);
+}
+
+async function collectSelectorTextVisibilityDiagnosticForSelector(options: {
+	cwd: string;
+	selector: string | undefined;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<SelectorTextVisibilityDiagnostic | undefined> {
+	const { selector } = options;
+	if (!selector || /^@e\d+$/.test(selector) || selectorMayExposeSensitiveLiteral(selector)) return undefined;
+	const probe = await runSessionCommandData({
+		args: ["eval", "--stdin"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		signal: options.signal,
+		stdin: buildVisibleTextProbeScript(selector),
+	});
+	const parsed = parseSelectorTextVisibilityProbe(probe, selector);
+	if (!parsed || parsed.matchCount <= 1 && parsed.firstMatchVisible !== false) return undefined;
+	if (parsed.visibleCount === 0) return undefined;
+	const visibleMatchNoun = `visible match${parsed.visibleCount === 1 ? "" : "es"}`;
+	const visibleMatchVerb = parsed.visibleCount === 1 ? "exists" : "exist";
+	const summary = parsed.firstMatchVisible === false
+		? `Selector ${JSON.stringify(selector)} matched ${parsed.matchCount} elements; the first match is hidden while ${parsed.visibleCount} ${visibleMatchNoun} ${visibleMatchVerb}.`
+		: `Selector ${JSON.stringify(selector)} matched ${parsed.matchCount} elements; get text reads the first upstream match, which may not be the intended visible tab/panel.`;
+	return { ...parsed, summary };
+}
+
+function getBatchGetTextSelectors(data: unknown): string[] {
+	if (!Array.isArray(data)) return [];
+	return data.flatMap((item) => {
+		if (!isRecord(item) || item.success === false) return [];
+		const [command, subcommand, selector] = extractBatchResultCommand(item);
+		return command === "get" && subcommand === "text" && selector ? [selector] : [];
+	});
+}
+
+async function collectSelectorTextVisibilityDiagnostics(options: {
+	commandInfo: CommandInfo;
+	commandTokens: string[];
+	cwd: string;
+	data: unknown;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<SelectorTextVisibilityDiagnostic[]> {
+	const selectors = options.commandInfo.command === "get" && options.commandInfo.subcommand === "text"
+		? [options.commandTokens[2]]
+		: options.commandInfo.command === "batch"
+			? getBatchGetTextSelectors(options.data)
+			: [];
+	const diagnostics: SelectorTextVisibilityDiagnostic[] = [];
+	for (const selector of selectors) {
+		const diagnostic = await collectSelectorTextVisibilityDiagnosticForSelector({
+			cwd: options.cwd,
+			selector,
+			sessionName: options.sessionName,
+			signal: options.signal,
+		});
+		if (diagnostic) diagnostics.push(diagnostic);
+	}
+	return diagnostics.sort((left, right) => Number(right.firstMatchVisible === false) - Number(left.firstMatchVisible === false));
+}
+
+function formatSelectorTextVisibilityText(diagnostics: SelectorTextVisibilityDiagnostic[]): string | undefined {
+	if (diagnostics.length === 0) return undefined;
+	return diagnostics.flatMap((diagnostic) => {
+		const lines = [`Selector text visibility warning: ${diagnostic.summary}`];
+		if (diagnostic.firstVisibleTextPreview) lines.push(`First visible text preview: ${JSON.stringify(diagnostic.firstVisibleTextPreview)}`);
+		return lines;
+	}).join("\n");
+}
+
+function looksLikeFunctionEvalStdin(stdin: string | undefined): boolean {
+	const trimmed = stdin?.trim();
+	if (!trimmed) return false;
+	return /^(?:async\s+)?function\b/.test(trimmed) || /^(?:async\s*)?\([^)]*\)\s*=>/.test(trimmed) || /^(?:async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(trimmed);
+}
+
+function isEmptyRecord(value: unknown): boolean {
+	return isRecord(value) && Object.keys(value).length === 0;
+}
+
+function getEvalStdinHint(options: { command?: string; data: unknown; stdin?: string }): EvalStdinHint | undefined {
+	if (options.command !== "eval" || !looksLikeFunctionEvalStdin(options.stdin) || !isRecord(options.data)) return undefined;
+	const result = options.data.result;
+	if (!isEmptyRecord(result)) return undefined;
+	return {
+		reason: "eval --stdin received a function-shaped snippet and the upstream JSON result was an empty object, which often means the function itself was returned or serialized instead of invoked.",
+		suggestion: "Pass a plain expression such as `({ title: document.title })`, or invoke the function explicitly, for example `(() => ({ title: document.title }))()`.",
+	};
+}
+
+function formatEvalStdinHintText(hint: EvalStdinHint | undefined): string | undefined {
+	return hint ? `Eval stdin hint: ${hint.reason} ${hint.suggestion}` : undefined;
+}
+
+function getArtifactCleanupGuidance(options: { command?: string; manifest?: SessionArtifactManifest; succeeded: boolean }): ArtifactCleanupGuidance | undefined {
+	if (!options.succeeded || options.command !== "close" || !options.manifest || options.manifest.entries.length === 0) return undefined;
+	const explicitArtifactPaths = options.manifest.entries
+		.filter((entry) => entry.storageScope === "explicit-path")
+		.map((entry) => entry.path)
+		.filter((path, index, paths) => paths.indexOf(path) === index)
+		.slice(0, 10);
+	return {
+		explicitArtifactPaths,
+		note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean those paths with host file tools when no longer needed.",
+		owner: "host-file-tools",
+		summary: formatSessionArtifactRetentionSummary(options.manifest),
+	};
+}
+
+function formatArtifactCleanupGuidanceText(guidance: ArtifactCleanupGuidance | undefined): string | undefined {
+	if (!guidance) return undefined;
+	const lines = [
+		"Artifact lifecycle:",
+		`- ${guidance.summary}`,
+		`- ${guidance.note}`,
+	];
+	if (guidance.explicitArtifactPaths.length > 0) {
+		lines.push(`- Explicit artifact paths to review: ${guidance.explicitArtifactPaths.join(", ")}`);
+	}
+	return lines.join("\n");
+}
+
+function buildSelectorTextVisibilityNextActions(options: { diagnostics: SelectorTextVisibilityDiagnostic[]; sessionName?: string }): AgentBrowserNextAction[] {
+	return options.diagnostics.map((diagnostic, index) => ({
+		id: index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`,
+		params: {
+			args: sessionPrefixArgs(options.sessionName, ["eval", "--stdin"]),
+			stdin: buildVisibleTextProbeScript(diagnostic.selector),
+		},
+		reason: "Inspect selector match count and visible text before trusting get text on tabbed or hidden DOM content.",
+		safety: "Read-only DOM inspection; use a more specific visible selector or current @ref before acting on hidden-tab text.",
+		tool: "agent_browser" as const,
+	}));
+}
+
+function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, command: string | undefined, stdin: string | undefined): Array<{ args: string[]; index: number }> {
+	if (compiledJob) return compiledJob.steps.map((step, index) => ({ args: step.args, index: index + 1 }));
+	if (command !== "batch" || !stdin) return [];
+	try {
+		const parsed = JSON.parse(stdin) as unknown;
+		if (!Array.isArray(parsed)) return [];
+		return parsed.flatMap((step, index) => Array.isArray(step) && step.every((token) => typeof token === "string") ? [{ args: step as string[], index: index + 1 }] : []);
+	} catch {
+		return [];
+	}
+}
+
+function getLastPositionalToken(args: string[], startIndex = 1): string | undefined {
+	for (let index = args.length - 1; index >= startIndex; index -= 1) {
+		const token = args[index];
+		if (token && !token.startsWith("-")) return token;
+	}
+	return undefined;
+}
+
+function getTimeoutStepArtifactPath(args: string[]): string | undefined {
+	const [command] = args;
+	if (command === "screenshot") {
+		const index = getScreenshotPathTokenIndex(args);
+		return index === undefined ? undefined : args[index];
+	}
+	if (command === "pdf") return getLastPositionalToken(args);
+	if (command === "download") return getLastPositionalToken(args, 2);
+	if (command === "wait") {
+		const inlineDownload = args.find((token) => token.startsWith("--download="));
+		if (inlineDownload) return inlineDownload.slice("--download=".length) || undefined;
+		const downloadIndex = args.indexOf("--download");
+		const downloadPath = downloadIndex >= 0 ? args[downloadIndex + 1] : undefined;
+		if (downloadPath && !downloadPath.startsWith("-")) return downloadPath;
+	}
+	return undefined;
+}
+
+async function collectTimeoutArtifactEvidence(cwd: string, steps: Array<{ args: string[]; index: number }>): Promise<TimeoutArtifactEvidence[]> {
+	const evidence: TimeoutArtifactEvidence[] = [];
+	for (const step of steps) {
+		const path = getTimeoutStepArtifactPath(step.args);
+		if (!path) continue;
+		const absolutePath = isAbsolute(path) ? path : resolve(cwd, path);
+		try {
+			const stats = await stat(absolutePath);
+			evidence.push({ absolutePath, exists: true, path, sizeBytes: stats.size, stepIndex: step.index });
+		} catch {
+			evidence.push({ absolutePath, exists: false, path, stepIndex: step.index });
+		}
+	}
+	return evidence;
+}
+
+function getPlannedCurrentPageUrl(steps: Array<{ args: string[]; index: number }>): string | undefined {
+	for (let index = steps.length - 1; index >= 0; index -= 1) {
+		const args = steps[index]?.args ?? [];
+		if (args[0] === "open" || args[0] === "navigate" || args[0] === "pushstate") {
+			return getLastPositionalToken(args);
+		}
+	}
+	return undefined;
+}
+
+async function collectTimeoutPartialProgress(options: {
+	command?: string;
+	compiledJob?: CompiledAgentBrowserJob;
+	cwd: string;
+	sessionName?: string;
+	stdin?: string;
+}): Promise<TimeoutPartialProgress | undefined> {
+	const steps = getTimeoutProgressSteps(options.compiledJob, options.command, options.stdin);
+	const artifacts = await collectTimeoutArtifactEvidence(options.cwd, steps);
+	const [urlData, titleData] = await Promise.all([
+		runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName }),
+		runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName }),
+	]);
+	const recoveredUrl = extractStringResultField(urlData, "result") ?? extractStringResultField(urlData, "url");
+	const title = extractStringResultField(titleData, "result") ?? extractStringResultField(titleData, "title");
+	const plannedUrl = recoveredUrl ? undefined : getPlannedCurrentPageUrl(steps);
+	const url = recoveredUrl ?? plannedUrl;
+	if (steps.length === 0 && artifacts.length === 0 && !url && !title) return undefined;
+	const foundArtifacts = artifacts.filter((artifact) => artifact.exists).length;
+	const pageStateSummary = recoveredUrl || title ? " and current page state" : plannedUrl ? " and planned page URL" : "";
+	return {
+		artifacts,
+		currentPage: url || title ? { title, url } : undefined,
+		steps: steps.length > 0 ? steps : undefined,
+		summary: `Timed out before upstream returned final results; recovered ${foundArtifacts}/${artifacts.length} declared artifact path${artifacts.length === 1 ? "" : "s"}${pageStateSummary}.`,
+	};
+}
+
+function redactSensitivePathSegmentsForDiagnostic(path: string): string {
+	return path.split(/([/\\]+)/).map((segment) => {
+		if (segment === "/" || segment === "\\" || /^[/\\]+$/.test(segment)) return segment;
+		return redactSensitiveText(segment) !== segment || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(segment) ? "[REDACTED]" : segment;
+	}).join("");
+}
+
+function sanitizeCurrentPageUrlForTimeoutDiagnostic(url: string): string {
+	try {
+		const parsedUrl = new URL(url);
+		parsedUrl.pathname = parsedUrl.pathname.split("/").map((segment) => redactSensitivePathSegmentsForDiagnostic(segment)).join("/");
+		for (const [key, value] of parsedUrl.searchParams.entries()) {
+			if (redactSensitiveText(key) !== key || redactSensitiveText(value) !== value || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(`${key} ${value}`)) {
+				parsedUrl.searchParams.set(key, "[REDACTED]");
+			}
+		}
+		if (parsedUrl.hash) {
+			parsedUrl.hash = redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(parsedUrl.hash));
+		}
+		return redactSensitiveText(parsedUrl.toString());
+	} catch {
+		return redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(url));
+	}
+}
+
+function formatTimeoutPartialProgressText(progress: TimeoutPartialProgress): string {
+	const lines = [`Timeout partial progress: ${progress.summary}`];
+	const currentPageTitle = progress.currentPage?.title ? redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(progress.currentPage.title)) : undefined;
+	const currentPageUrl = progress.currentPage?.url ? sanitizeCurrentPageUrlForTimeoutDiagnostic(progress.currentPage.url) : undefined;
+	if (currentPageTitle || currentPageUrl) {
+		lines.push(`Current page: ${[currentPageTitle, currentPageUrl].filter(Boolean).join(" — ")}`);
+	}
+	if (progress.steps && progress.steps.length > 0) {
+		const shownSteps = progress.steps.slice(0, 6);
+		lines.push("Planned steps:");
+		for (const step of shownSteps) {
+			const command = redactSensitivePathSegmentsForDiagnostic(redactInvocationArgs(step.args).join(" "));
+			lines.push(`- Step ${step.index}: ${command}`);
+		}
+		if (progress.steps.length > shownSteps.length) {
+			lines.push(`- ... ${progress.steps.length - shownSteps.length} more step${progress.steps.length - shownSteps.length === 1 ? "" : "s"} omitted`);
+		}
+	}
+	for (const artifact of progress.artifacts) {
+		const path = redactSensitivePathSegmentsForDiagnostic(artifact.path);
+		lines.push(`Artifact from step ${artifact.stepIndex}: ${path} (${artifact.exists ? `exists${typeof artifact.sizeBytes === "number" ? `, ${artifact.sizeBytes} bytes` : ""}` : "missing"})`);
+	}
+	return lines.join("\n");
+}
+
+async function collectOverlayBlockerDiagnostic(options: {
+	command?: string;
+	cwd: string;
+	data: unknown;
+	navigationSummary?: NavigationSummary;
+	priorTarget?: SessionTabTarget;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<OverlayBlockerDiagnostic | undefined> {
+	if (options.command !== "click" || !isRecord(options.data) || typeof options.data.clicked !== "string") return undefined;
+	const priorUrl = normalizeComparableUrl(options.priorTarget?.url);
+	const currentUrl = normalizeComparableUrl(options.navigationSummary?.url);
+	if (!priorUrl || !currentUrl || priorUrl !== currentUrl) return undefined;
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const candidates = getOverlayBlockerCandidates(snapshotData);
+	const snapshot = extractRefSnapshotFromData(snapshotData);
+	if (candidates.length === 0 || !snapshot) return undefined;
+	return {
+		candidates,
+		snapshot,
+		summary: `Click completed but the page stayed on ${currentUrl}; a fresh snapshot contains likely overlay close/dismiss controls.`,
+	};
 }
 
 async function collectOpenResultTabCorrection(options: {
@@ -2312,6 +3072,68 @@ async function applyOpenResultTabCorrection(options: {
 
 function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean): Record<string, unknown> {
 	return sessionName ? { sessionName, usedImplicitSession } : {};
+}
+
+function buildManagedSessionOutcome(options: {
+	activeAfter: boolean;
+	activeBefore: boolean;
+	attemptedSessionName?: string;
+	command?: string;
+	currentSessionName: string;
+	previousSessionName: string;
+	replacedSessionName?: string;
+	sessionMode: "auto" | "fresh";
+	succeeded: boolean;
+}): ManagedSessionOutcome | undefined {
+	const { activeAfter, activeBefore, attemptedSessionName, command, currentSessionName, previousSessionName, replacedSessionName, sessionMode, succeeded } = options;
+	if (!attemptedSessionName) return undefined;
+	let status: ManagedSessionOutcome["status"];
+	let summary: string;
+	if (command === "close") {
+		status = succeeded ? "closed" : activeBefore ? "preserved" : "abandoned";
+		summary = succeeded
+			? `Managed session ${attemptedSessionName} was closed.`
+			: activeBefore
+				? `Managed session close failed; previous managed session ${previousSessionName} remains current.`
+				: `Managed session close failed; no managed session is active.`;
+	} else if (succeeded) {
+		if (replacedSessionName) {
+			status = "replaced";
+			summary = `Managed session ${replacedSessionName} was replaced by ${currentSessionName}.`;
+		} else if (!activeBefore && activeAfter) {
+			status = "created";
+			summary = `Managed session ${currentSessionName} is now current.`;
+		} else {
+			status = "unchanged";
+			summary = `Managed session ${currentSessionName} remains current.`;
+		}
+	} else if (activeBefore) {
+		status = "preserved";
+		summary = sessionMode === "fresh" && attemptedSessionName !== previousSessionName
+			? `Fresh managed session ${attemptedSessionName} failed before becoming current; previous managed session ${previousSessionName} was preserved.`
+			: `Managed session call failed; previous managed session ${previousSessionName} was preserved.`;
+	} else {
+		status = "abandoned";
+		summary = sessionMode === "fresh"
+			? `Fresh managed session ${attemptedSessionName} failed before becoming current; no previous managed session was active, so no managed session is current.`
+			: `Managed session call failed before any managed session became current.`;
+	}
+	return {
+		activeAfter,
+		activeBefore,
+		attemptedSessionName,
+		currentSessionName,
+		previousSessionName,
+		replacedSessionName,
+		sessionMode,
+		status,
+		succeeded,
+		summary,
+	};
+}
+
+function formatManagedSessionOutcomeText(outcome: ManagedSessionOutcome | undefined): string | undefined {
+	return outcome && !outcome.succeeded && outcome.sessionMode === "fresh" ? `Managed session outcome: ${outcome.summary}` : undefined;
 }
 
 function getPersistentSessionArtifactStore(ctx: {
@@ -2465,6 +3287,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let managedSessionCwd = process.cwd();
 	let freshSessionOrdinal = 0;
 	let sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
+	let sessionRefSnapshots = new Map<string, OrderedSessionRefSnapshot>();
 	let sessionTabTargetUpdateOrder = 0;
 	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
@@ -2478,7 +3301,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		managedSessionCwd = ctx.cwd;
 		freshSessionOrdinal = restoredState.freshSessionOrdinal;
 		sessionTabTargets = restoreSessionTabTargetsFromBranch(ctx.sessionManager.getBranch());
-		sessionTabTargetUpdateOrder = getLatestSessionTabTargetOrder(sessionTabTargets);
+		sessionRefSnapshots = restoreSessionRefSnapshotsFromBranch(ctx.sessionManager.getBranch());
+		sessionTabTargetUpdateOrder = Math.max(getLatestSessionTabTargetOrder(sessionTabTargets), getLatestSessionTabTargetOrder(sessionRefSnapshots));
 		artifactManifest = restoreArtifactManifestFromBranch(ctx.sessionManager.getBranch());
 	});
 
@@ -2495,6 +3319,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		}
 		managedSessionActive = false;
 		sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
+		sessionRefSnapshots = new Map<string, OrderedSessionRefSnapshot>();
 		sessionTabTargetUpdateOrder = 0;
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
@@ -2726,6 +3551,31 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 				const priorSessionTabTargetState = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
 				const priorSessionTabTarget = priorSessionTabTargetState?.target;
+				const priorRefSnapshotState = executionPlan.sessionName ? sessionRefSnapshots.get(executionPlan.sessionName) : undefined;
+				const staleRefPreflight = buildStaleRefPreflight({
+					commandTokens,
+					currentTarget: priorSessionTabTarget,
+					refSnapshot: priorRefSnapshotState,
+					stdin: toolStdin,
+				});
+				if (staleRefPreflight) {
+					return {
+						content: [{ type: "text", text: staleRefPreflight.message }],
+						details: {
+							args: redactedArgs,
+							command: executionPlan.commandInfo.command,
+							compatibilityWorkaround,
+							effectiveArgs: redactedEffectiveArgs,
+							nextActions: sessionAwareStaleRefNextActions(executionPlan.sessionName),
+							refIds: staleRefPreflight.refIds,
+							refSnapshot: staleRefPreflight.snapshot,
+							sessionMode,
+							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: staleRefPreflight.message, failureCategory: "stale-ref", succeeded: false }),
+							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+						},
+						isError: true,
+					};
+				}
 				let pinnedBatchUnwrapMode: PinnedBatchUnwrapMode | undefined;
 				let includePinnedNavigationSummary = false;
 				let sessionTabCorrection: OpenResultTabCorrection | undefined;
@@ -2832,12 +3682,24 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 				if (processResult.spawnError?.message.includes("ENOENT")) {
 					const errorText = buildMissingBinaryMessage();
+					const managedSessionOutcome = buildManagedSessionOutcome({
+						activeAfter: managedSessionActive,
+						activeBefore: managedSessionActive,
+						attemptedSessionName: executionPlan.managedSessionName,
+						command: executionPlan.commandInfo.command,
+						currentSessionName: managedSessionName,
+						previousSessionName: managedSessionName,
+						sessionMode,
+						succeeded: false,
+					});
+					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
 					return {
-						content: [{ type: "text", text: errorText }],
+						content: [{ type: "text", text: managedSessionOutcomeText ? `${errorText}\n\n${managedSessionOutcomeText}` : errorText }],
 						details: {
 							args: redactedArgs,
 							compatibilityWorkaround,
 							effectiveArgs: redactedProcessArgs,
+							managedSessionOutcome,
 							sessionMode,
 							sessionTabCorrection,
 							...buildAgentBrowserResultCategoryDetails({ args: redactedProcessArgs, command: executionPlan.commandInfo.command, errorText, failureCategory: "missing-binary", spawnError: processResult.spawnError.message, succeeded: false }),
@@ -2918,6 +3780,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary),
 						};
 					}
+					let overlayBlockerDiagnostic: OverlayBlockerDiagnostic | undefined;
 
 					let openResultTabCorrection: OpenResultTabCorrection | undefined;
 					if (
@@ -3021,33 +3884,91 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							}
 						}
 					}
+					let selectorTextVisibilityDiagnostics: SelectorTextVisibilityDiagnostic[] = [];
+					const timeoutPartialProgress = processResult.timedOut ? await collectTimeoutPartialProgress({
+						command: executionPlan.commandInfo.command,
+						compiledJob,
+						cwd: ctx.cwd,
+						sessionName: executionPlan.sessionName,
+						stdin: toolStdin,
+					}) : undefined;
+					if (succeeded && !sessionTabCorrection && !aboutBlankSessionMismatch) {
+						overlayBlockerDiagnostic = await collectOverlayBlockerDiagnostic({
+							command: executionPlan.commandInfo.command,
+							cwd: ctx.cwd,
+							data: presentationEnvelope?.data,
+							navigationSummary,
+							priorTarget: priorSessionTabTarget,
+							sessionName: executionPlan.sessionName,
+							signal,
+						});
+					}
+					if (succeeded) {
+						selectorTextVisibilityDiagnostics = await collectSelectorTextVisibilityDiagnostics({
+							commandInfo: executionPlan.commandInfo,
+							commandTokens,
+							cwd: ctx.cwd,
+							data: presentationEnvelope?.data,
+							sessionName: executionPlan.sessionName,
+							signal,
+						});
+					}
+					let currentRefSnapshot: SessionRefSnapshot | undefined;
 					if (executionPlan.sessionName) {
 						const activeSessionTabTargetState = sessionTabTargets.get(executionPlan.sessionName);
 						if (shouldApplySessionTabTargetUpdate({ current: activeSessionTabTargetState, updateOrder: tabTargetUpdateOrder })) {
 							if (executionPlan.commandInfo.command === "close" && succeeded) {
 								sessionTabTargets.delete(executionPlan.sessionName);
+								sessionRefSnapshots.delete(executionPlan.sessionName);
 							} else if (currentSessionTabTarget) {
 								sessionTabTargets.set(executionPlan.sessionName, { order: tabTargetUpdateOrder, target: currentSessionTabTarget });
 							}
 						}
+						const refSnapshot = succeeded
+			? executionPlan.commandInfo.command === "snapshot"
+				? extractRefSnapshotFromData(presentationEnvelope?.data)
+				: executionPlan.commandInfo.command === "batch"
+					? extractRefSnapshotFromBatchResults(presentationEnvelope?.data)
+					: overlayBlockerDiagnostic?.snapshot
+			: undefined;
+						if (refSnapshot && shouldApplySessionTabTargetUpdate({ current: sessionRefSnapshots.get(executionPlan.sessionName), updateOrder: tabTargetUpdateOrder })) {
+							currentRefSnapshot = { ...refSnapshot, target: refSnapshot.target ?? currentSessionTabTarget };
+							sessionRefSnapshots.set(executionPlan.sessionName, { ...currentRefSnapshot, order: tabTargetUpdateOrder });
+						} else {
+							currentRefSnapshot = sessionRefSnapshots.get(executionPlan.sessionName);
+						}
 					}
 
+					const priorManagedSessionActive = managedSessionActive;
 					const priorManagedSessionCwd = managedSessionCwd;
+					const priorManagedSessionName = managedSessionName;
 					const managedSessionState = resolveManagedSessionState({
 						command: executionPlan.commandInfo.command,
 						managedSessionName: executionPlan.managedSessionName,
-						priorActive: managedSessionActive,
-						priorSessionName: managedSessionName,
+						priorActive: priorManagedSessionActive,
+						priorSessionName: priorManagedSessionName,
 						succeeded,
 					});
 					const replacedManagedSessionName = managedSessionState.replacedSessionName;
 					managedSessionActive = managedSessionState.active;
 					managedSessionName = managedSessionState.sessionName;
+					let managedSessionOutcome = buildManagedSessionOutcome({
+						activeAfter: managedSessionActive,
+						activeBefore: priorManagedSessionActive,
+						attemptedSessionName: executionPlan.managedSessionName,
+						command: executionPlan.commandInfo.command,
+						currentSessionName: managedSessionName,
+						previousSessionName: priorManagedSessionName,
+						replacedSessionName: replacedManagedSessionName,
+						sessionMode,
+						succeeded,
+					});
 					if (executionPlan.managedSessionName && succeeded) {
 						managedSessionCwd = ctx.cwd;
 					}
 					if (replacedManagedSessionName) {
 						sessionTabTargets.delete(replacedManagedSessionName);
+						sessionRefSnapshots.delete(replacedManagedSessionName);
 						await closeManagedSession({
 							cwd: priorManagedSessionCwd,
 							sessionName: replacedManagedSessionName,
@@ -3132,9 +4053,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					} else if (sourceLookup) {
 						presentation.content.unshift({ type: "text", text: sourceLookup.summary });
 					}
-					if (qaPreset && !qaPreset.passed) {
-						succeeded = false;
-						presentation.failureCategory = "qa-failure";
+					if (qaPreset && (!qaPreset.passed || qaPreset.warnings.length > 0)) {
+						if (!qaPreset.passed) {
+							succeeded = false;
+							presentation.failureCategory = "qa-failure";
+						}
 						presentation.summary = qaPreset.summary;
 						if (presentation.content[0]?.type === "text") {
 							presentation.content[0] = { ...presentation.content[0], text: `${qaPreset.summary}\n\n${presentation.content[0].text}` };
@@ -3142,6 +4065,20 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							presentation.content.unshift({ type: "text", text: qaPreset.summary });
 						}
 					}
+					if (managedSessionOutcome && managedSessionOutcome.succeeded !== succeeded) {
+						managedSessionOutcome = { ...managedSessionOutcome, succeeded };
+					}
+					const evalStdinHint = getEvalStdinHint({
+						command: executionPlan.commandInfo.command,
+						data: presentationEnvelope?.data,
+						stdin: toolStdin,
+					});
+					const resultArtifactManifest = presentation.artifactManifest ?? artifactManifest;
+					const artifactCleanup = getArtifactCleanupGuidance({
+						command: executionPlan.commandInfo.command,
+						manifest: resultArtifactManifest,
+						succeeded,
+					});
 					const warningText = aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
 					const contentWithSessionWarnings = userRequestedJson && !plainTextInspection
 						? buildJsonVisibleContent({
@@ -3187,6 +4124,21 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						validationError: undefined,
 					});
 					let nextActions = presentation.nextActions ? [...presentation.nextActions] : undefined;
+					if (categoryDetails.failureCategory === "stale-ref") {
+						nextActions = sessionAwareStaleRefNextActions(executionPlan.sessionName);
+					}
+					if (categoryDetails.failureCategory === "selector-not-found" && redactedCompiledSemanticAction) {
+						const candidateActions = buildSemanticActionCandidateActions(redactedCompiledSemanticAction);
+						if (candidateActions.length > 0) {
+							(nextActions ??= []).push(...candidateActions);
+						}
+					}
+					if (overlayBlockerDiagnostic) {
+						(nextActions ??= []).push(...buildOverlayBlockerNextActions({ diagnostic: overlayBlockerDiagnostic, sessionName: executionPlan.sessionName }));
+					}
+					if (selectorTextVisibilityDiagnostics.length > 0) {
+						(nextActions ??= []).push(...buildSelectorTextVisibilityNextActions({ diagnostics: selectorTextVisibilityDiagnostics, sessionName: executionPlan.sessionName }));
+					}
 					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction) {
 						(nextActions ??= []).push({
 							id: "retry-semantic-action-after-stale-ref",
@@ -3202,8 +4154,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						compiledQaPreset: redactedCompiledQaPreset,
 						compiledSourceLookup: redactedCompiledSourceLookup,
 						compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
-						artifactManifest: presentation.artifactManifest,
-						artifactRetentionSummary: presentation.artifactRetentionSummary,
+						artifactManifest: resultArtifactManifest,
+						artifactRetentionSummary: presentation.artifactRetentionSummary ?? (resultArtifactManifest ? formatSessionArtifactRetentionSummary(resultArtifactManifest) : undefined),
+						artifactCleanup,
 						artifactVerification: presentation.artifactVerification,
 						artifacts: presentation.artifacts,
 						batchFailure: presentation.batchFailure,
@@ -3224,11 +4177,17 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
 						fullOutputPaths: presentation.fullOutputPaths,
 						fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
+						managedSessionOutcome,
 						imagePath: presentation.imagePath,
 						imagePaths: presentation.imagePaths,
 						nextActions,
 						pageChangeSummary: presentation.pageChangeSummary,
+						overlayBlockers: overlayBlockerDiagnostic,
 						qaPreset,
+						selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
+						selectorTextVisibilityAll: selectorTextVisibilityDiagnostics.length > 1 ? selectorTextVisibilityDiagnostics : undefined,
+						evalStdinHint,
+						timeoutPartialProgress,
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,
 						savedFilePath: presentation.savedFilePath,
@@ -3237,6 +4196,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						sessionMode,
 						sessionTabCorrection,
 						sessionTabTarget: currentSessionTabTarget,
+						refSnapshot: currentRefSnapshot,
 						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 						sessionRecoveryHint: redactedRecoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,
@@ -3247,8 +4207,23 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						timeoutMs: processResult.timeoutMs,
 					};
 
+					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
+					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
+					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
+					const evalStdinHintText = formatEvalStdinHintText(evalStdinHint);
+					const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
+					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
+					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
+					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
+					const content = appendedDiagnosticText.length > 0 && redactedContent[0]?.type === "text"
+						? [
+							{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${appendedDiagnosticText}` },
+							...redactedContent.slice(1),
+						]
+						: redactedContent;
 					const result = {
-						content: redactedContent,
+						content,
 						details: redactToolDetails(details, exactSensitiveValues),
 						isError: !succeeded,
 					};

@@ -368,6 +368,7 @@ export function classifyAgentBrowserFailureCategory(options: {
 	) {
 		return "selector-unsupported";
 	}
+	if (command === "find" && /could not locate element|element not found|no elements? found|unable to find/i.test(text)) return "selector-not-found";
 	if (reportsSelectorMatchFailure) return "selector-not-found";
 	if ((command === "download" || text.includes("wait --download") || /\bdownload\b/i.test(text)) && /missing|not verified|not found|failed|timeout|timed out/i.test(text)) {
 		return "download-not-verified";
@@ -589,6 +590,77 @@ export function buildAgentBrowserResultCategoryDetails(options: {
 	return {
 		failureCategory: options.failureCategory ?? classifyAgentBrowserFailureCategory(options),
 		resultCategory: "failure",
+	};
+}
+
+export type NetworkFailureImpact = "actionable" | "benign";
+
+export interface NetworkFailureClassification {
+	impact: NetworkFailureImpact;
+	reason: string;
+	resourceType?: string;
+	status?: number;
+	url?: string;
+}
+
+export interface NetworkFailureSummary {
+	actionableCount: number;
+	benignCount: number;
+	failures: NetworkFailureClassification[];
+	totalCount: number;
+}
+
+function getStringRecordField(value: Record<string, unknown>, key: string): string | undefined {
+	const field = value[key];
+	return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
+}
+
+function getNetworkRequestUrlPath(url: string | undefined): string | undefined {
+	if (!url) return undefined;
+	try {
+		return new URL(url).pathname;
+	} catch {
+		const withoutQuery = url.split(/[?#]/, 1)[0];
+		return withoutQuery.length > 0 ? withoutQuery : undefined;
+	}
+}
+
+function isFailedNetworkRequest(request: Record<string, unknown>): boolean {
+	return (typeof request.status === "number" && request.status >= 400) || request.failed === true || typeof request.error === "string";
+}
+
+function isBenignAssetFailure(request: Record<string, unknown>, url: string | undefined, resourceType: string | undefined): boolean {
+	const path = getNetworkRequestUrlPath(url);
+	if (!path) return false;
+	const normalizedResourceType = resourceType?.toLowerCase();
+	return /(?:^|\/)(?:favicon(?:[-.\w]*)?\.(?:ico|png|svg)|apple-touch-icon(?:[-.\w]*)?\.png)$/i.test(path)
+		&& (request.status === 404 || request.failed === true || typeof request.error === "string")
+		&& (!normalizedResourceType || ["image", "img", "other"].includes(normalizedResourceType) || normalizedResourceType.startsWith("image/"));
+}
+
+export function classifyNetworkRequestFailure(request: Record<string, unknown>): NetworkFailureClassification | undefined {
+	if (!isFailedNetworkRequest(request)) return undefined;
+	const url = getStringRecordField(request, "url");
+	const resourceType = getStringRecordField(request, "resourceType") ?? getStringRecordField(request, "mimeType");
+	const status = typeof request.status === "number" ? request.status : undefined;
+	if (isBenignAssetFailure(request, url, resourceType)) {
+		return { impact: "benign", reason: "low-impact browser icon asset", resourceType, status, url };
+	}
+	return { impact: "actionable", reason: "document, script, API, or non-benign request failure", resourceType, status, url };
+}
+
+export function summarizeNetworkFailures(requests: unknown[]): NetworkFailureSummary {
+	const failures = requests.flatMap((request) => {
+		if (!isRecord(request)) return [];
+		const classification = classifyNetworkRequestFailure(request);
+		return classification ? [classification] : [];
+	});
+	const benignCount = failures.filter((failure) => failure.impact === "benign").length;
+	return {
+		actionableCount: failures.length - benignCount,
+		benignCount,
+		failures,
+		totalCount: failures.length,
 	};
 }
 
