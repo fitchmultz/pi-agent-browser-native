@@ -62,7 +62,7 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
-  - If a fresh launch fails or times out, `details.managedSessionOutcome` and visible `Managed session outcome` text say whether the prior managed session was preserved or the attempted fresh session was abandoned.
+  - If a fresh launch fails or times out, read `details.managedSessionOutcome` for `preserved` vs `abandoned` (and related fields). A model-visible `Managed session outcome: …` line is appended only for failing calls that used `sessionMode: "fresh"`; `"auto"` failures can still populate the struct without that extra line.
 
 ### Debug, diff, stream, dashboard, and chat families
 
@@ -597,7 +597,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 
 - The extension may keep following one implicit managed session across later tool calls.
 - If launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
-- If a `sessionMode: "fresh"` launch fails, read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current.
+- If a `sessionMode: "fresh"` call fails (including upstream failure, timeout, missing binary, or **`qa`** reclassification after a nominally successful batch), read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current. When the failure reason is not the fresh launch itself—for example `failureCategory: "qa-failure"`—`status`/`summary` may still describe the managed-session transition while `succeeded` on this object matches the final tool outcome.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
