@@ -291,7 +291,13 @@ process.stdout.write(JSON.stringify({ success: true, data: command === "eval" ? 
 			const comboboxActionIds = details.nextActions.map((action) => action.id).filter((id) => id.includes("combobox"));
 			assert.deepEqual(comboboxActionIds, ["inspect-focused-combobox", "try-open-combobox-with-arrow", "try-open-combobox-with-enter"]);
 			assert.ok(details.nextActions.filter((action) => action.id.includes("combobox")).every((action) => action.params?.args[0] === "--session"));
-			for (const name of ["MissingExpanded", "Open", "OptionsVisible"]) {
+			const openComboboxResult = await executeRegisteredTool(harness.tool, harness.ctx, { semanticAction: { action: "click", locator: "role", value: "combobox", name: "Open" } });
+			assert.equal(openComboboxResult.isError, false);
+			assert.match(openComboboxResult.content[0]?.text ?? "", /Combobox diagnostic: focused combobox did not expose visible options/);
+			assert.equal((openComboboxResult.details as { comboboxFocus?: { activeElement?: { name?: string; expanded?: string } } }).comboboxFocus?.activeElement?.name, "Open");
+			assert.equal((openComboboxResult.details as { comboboxFocus?: { activeElement?: { name?: string; expanded?: string } } }).comboboxFocus?.activeElement?.expanded, "true");
+
+			for (const name of ["MissingExpanded", "OptionsVisible"]) {
 				const negativeComboboxResult = await executeRegisteredTool(harness.tool, harness.ctx, { semanticAction: { action: "click", locator: "role", value: "combobox", name } });
 				assert.equal(negativeComboboxResult.isError, false, name);
 				assert.equal((negativeComboboxResult.details as { comboboxFocus?: unknown }).comboboxFocus, undefined, name);
@@ -345,7 +351,7 @@ if (command === "open") {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[commandIndex + 1] } }));
 } else if (command === "eval") {
   const result = state.mode === "combo"
-    ? { comboboxLike: true, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "combobox", expanded: "false", hasPopup: "listbox", name: "Job", tagName: "input" } }
+    ? { comboboxLike: true, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "combobox", expanded: "true", hasPopup: "listbox", name: "Job", tagName: "input" } }
     : { comboboxLike: false, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "textbox", name: "Other", tagName: "input" } };
   process.stdout.write(JSON.stringify({ success: true, data: { result } }));
 } else if (command === "get" && args.includes("title")) {

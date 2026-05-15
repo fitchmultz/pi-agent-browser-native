@@ -2890,7 +2890,7 @@ function extractComboboxFocusDiagnostic(data: unknown): ComboboxFocusDiagnostic 
 	const visibleListboxCount = typeof result.visibleListboxCount === "number" ? result.visibleListboxCount : 0;
 	const visibleOptionCount = typeof result.visibleOptionCount === "number" ? result.visibleOptionCount : 0;
 	const expanded = typeof result.activeElement.expanded === "string" ? result.activeElement.expanded : undefined;
-	if (expanded !== "false" || visibleListboxCount > 0 || visibleOptionCount > 0) return undefined;
+	if ((expanded !== "false" && expanded !== "true") || visibleListboxCount > 0 || visibleOptionCount > 0) return undefined;
 	return {
 		activeElement: {
 			expanded,
