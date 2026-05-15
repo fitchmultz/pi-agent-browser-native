@@ -115,6 +115,25 @@ interface CompiledAgentBrowserSemanticAction {
 	args: string[];
 }
 
+interface ScrollPositionSnapshot {
+	containerCount: number;
+	containers: Array<{ id: string; scrollLeft: number; scrollTop: number }>;
+	innerHeight: number;
+	innerWidth: number;
+	scrollHeight: number;
+	scrollWidth: number;
+	scrollX: number;
+	scrollY: number;
+}
+
+interface ScrollNoopDiagnostic {
+	after: ScrollPositionSnapshot;
+	before: ScrollPositionSnapshot;
+	message: string;
+	reason: "no-observed-scroll-position-change";
+	recommendations: string[];
+}
+
 interface CompiledAgentBrowserJobStep {
 	action: AgentBrowserJobStepAction;
 	args: string[];
@@ -2681,6 +2700,140 @@ async function collectNavigationSummary(options: {
 	return { title, url };
 }
 
+function extractScrollPositionSnapshot(data: unknown): ScrollPositionSnapshot | undefined {
+	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
+	if (!isRecord(result)) return undefined;
+	const scrollX = typeof result.scrollX === "number" ? result.scrollX : undefined;
+	const scrollY = typeof result.scrollY === "number" ? result.scrollY : undefined;
+	const innerHeight = typeof result.innerHeight === "number" ? result.innerHeight : undefined;
+	const innerWidth = typeof result.innerWidth === "number" ? result.innerWidth : undefined;
+	const scrollHeight = typeof result.scrollHeight === "number" ? result.scrollHeight : undefined;
+	const scrollWidth = typeof result.scrollWidth === "number" ? result.scrollWidth : undefined;
+	if (scrollX === undefined || scrollY === undefined || innerHeight === undefined || innerWidth === undefined || scrollHeight === undefined || scrollWidth === undefined) return undefined;
+	const containers = Array.isArray(result.containers)
+		? result.containers.flatMap((entry, index): ScrollPositionSnapshot["containers"] => {
+			if (!isRecord(entry)) return [];
+			const rawId = typeof entry.id === "string" ? entry.id : undefined;
+			const id = rawId && /^\d+:[a-z][a-z0-9-]*(?:\[role=[a-z-]+\])?$/i.test(rawId) ? rawId : `sample-${index}`;
+			const scrollTop = typeof entry.scrollTop === "number" ? entry.scrollTop : undefined;
+			const scrollLeft = typeof entry.scrollLeft === "number" ? entry.scrollLeft : undefined;
+			return scrollTop !== undefined && scrollLeft !== undefined ? [{ id, scrollLeft, scrollTop }] : [];
+		})
+		: [];
+	return {
+		containerCount: typeof result.containerCount === "number" ? result.containerCount : containers.length,
+		containers,
+		innerHeight,
+		innerWidth,
+		scrollHeight,
+		scrollWidth,
+		scrollX,
+		scrollY,
+	};
+}
+
+const SCROLL_POSITION_EVAL = `(() => {
+  const viewport = {
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+    innerHeight: window.innerHeight,
+    innerWidth: window.innerWidth,
+    scrollHeight: Math.max(document.documentElement?.scrollHeight || 0, document.body?.scrollHeight || 0),
+    scrollWidth: Math.max(document.documentElement?.scrollWidth || 0, document.body?.scrollWidth || 0),
+  };
+  const describe = (element, index) => {
+    const role = element.getAttribute("role") || "";
+    const id = element.tagName.toLowerCase();
+    return {
+      id: String(index) + ":" + id + (role ? "[role=" + role + "]" : ""),
+      scrollTop: element.scrollTop,
+      scrollLeft: element.scrollLeft,
+      area: element.clientWidth * element.clientHeight,
+    };
+  };
+  const containers = Array.from(document.querySelectorAll("body *"))
+    .filter((element) => element instanceof HTMLElement && (element.scrollHeight > element.clientHeight + 1 || element.scrollWidth > element.clientWidth + 1))
+    .map(describe)
+    .sort((left, right) => right.area - left.area)
+    .slice(0, 10)
+    .map(({ area, ...entry }) => entry);
+  return { ...viewport, containerCount: containers.length, containers };
+})()`;
+
+async function collectScrollPositionSnapshot(options: {
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<ScrollPositionSnapshot | undefined> {
+	return extractScrollPositionSnapshot(await runSessionCommandData({
+		args: ["eval", "--stdin"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		signal: options.signal,
+		stdin: SCROLL_POSITION_EVAL,
+	}));
+}
+
+function sameScrollPositionSnapshot(left: ScrollPositionSnapshot, right: ScrollPositionSnapshot): boolean {
+	if (
+		left.scrollX !== right.scrollX ||
+		left.scrollY !== right.scrollY ||
+		left.scrollHeight !== right.scrollHeight ||
+		left.scrollWidth !== right.scrollWidth ||
+		left.containers.length !== right.containers.length
+	) {
+		return false;
+	}
+	return left.containers.every((container, index) => {
+		const other = right.containers[index];
+		return other?.id === container.id && other.scrollTop === container.scrollTop && other.scrollLeft === container.scrollLeft;
+	});
+}
+
+function buildScrollNoopDiagnostic(before: ScrollPositionSnapshot | undefined, after: ScrollPositionSnapshot | undefined): ScrollNoopDiagnostic | undefined {
+	if (!before || !after || !sameScrollPositionSnapshot(before, after)) return undefined;
+	return {
+		after,
+		before,
+		message: "Scroll reported success, but the viewport and sampled scrollable containers did not change position.",
+		reason: "no-observed-scroll-position-change",
+		recommendations: [
+			"Run snapshot -i or screenshot to confirm what is visible before choosing the next action.",
+			"On dashboards and panes with nested scrolling, use scrollintoview <@ref> for a visible target or target the actual scrollable region instead of repeating page scrolls.",
+		],
+	};
+}
+
+function buildScrollNoopNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
+	const withSession = (args: string[]): string[] => sessionName ? ["--session", sessionName, ...args] : args;
+	return [
+		{
+			id: "inspect-after-noop-scroll",
+			params: { args: withSession(["snapshot", "-i"]) },
+			reason: "Refresh interactive refs and inspect whether the intended target is inside a nested scroll container.",
+			safety: "Do not assume repeated page scrolls will move dashboard panels or nested panes.",
+			tool: "agent_browser",
+		},
+		{
+			id: "verify-noop-scroll-visually",
+			params: { args: withSession(["screenshot"]) },
+			reason: "Capture the current viewport to verify whether the scroll actually changed visible content.",
+			safety: "Use screenshot evidence before concluding a dense dashboard did or did not move.",
+			tool: "agent_browser",
+		},
+	];
+}
+
+function formatScrollNoopDiagnosticText(diagnostic: ScrollNoopDiagnostic | undefined): string | undefined {
+	if (!diagnostic) return undefined;
+	return [
+		"Scroll diagnostic: no observed scroll movement.",
+		`Reason: ${diagnostic.message}`,
+		`Sampled scrollable containers: ${diagnostic.after.containers.length}/${diagnostic.after.containerCount}.`,
+		...diagnostic.recommendations.map((recommendation) => `- ${recommendation}`),
+	].join("\n");
+}
+
 function mergeNavigationSummaryIntoData(data: unknown, navigationSummary: NavigationSummary): unknown {
 	if (isRecord(data)) {
 		return { ...data, navigationSummary };
@@ -3772,6 +3925,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 				}
 				const redactedProcessArgs = redactInvocationArgs(processArgs);
+				const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0;
+				const scrollPositionBefore = shouldProbeScrollNoop
+					? await collectScrollPositionSnapshot({
+							cwd: ctx.cwd,
+							sessionName: executionPlan.sessionName,
+							signal,
+					  })
+					: undefined;
 
 				onUpdate?.({
 					content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(redactedProcessArgs)}` }],
@@ -4025,6 +4186,16 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							signal,
 						});
 					}
+					const scrollNoopDiagnostic = succeeded && shouldProbeScrollNoop
+						? buildScrollNoopDiagnostic(
+							scrollPositionBefore,
+							await collectScrollPositionSnapshot({
+								cwd: ctx.cwd,
+								sessionName: executionPlan.sessionName,
+								signal,
+							}),
+						)
+						: undefined;
 					let currentRefSnapshot: SessionRefSnapshot | undefined;
 					if (executionPlan.sessionName) {
 						const activeSessionTabTargetState = sessionTabTargets.get(executionPlan.sessionName);
@@ -4252,6 +4423,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (selectorTextVisibilityDiagnostics.length > 0) {
 						(nextActions ??= []).push(...buildSelectorTextVisibilityNextActions({ diagnostics: selectorTextVisibilityDiagnostics, sessionName: executionPlan.sessionName }));
 					}
+					if (scrollNoopDiagnostic) {
+						(nextActions ??= []).push(...buildScrollNoopNextActions(executionPlan.sessionName));
+					}
 					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction) {
 						(nextActions ??= []).push({
 							id: "retry-semantic-action-after-stale-ref",
@@ -4261,6 +4435,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							tool: "agent_browser" as const,
 						});
 					}
+					const pageChangeSummary = scrollNoopDiagnostic && presentation.pageChangeSummary
+						? { ...presentation.pageChangeSummary, nextActionIds: nextActions?.map((action) => action.id) }
+						: presentation.pageChangeSummary;
 					const details = {
 						args: redactedArgs,
 						compiledJob: redactedCompiledJob,
@@ -4294,8 +4471,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						imagePath: presentation.imagePath,
 						imagePaths: presentation.imagePaths,
 						nextActions,
-						pageChangeSummary: presentation.pageChangeSummary,
+						pageChangeSummary,
 						overlayBlockers: overlayBlockerDiagnostic,
+						scrollNoop: scrollNoopDiagnostic,
 						qaPreset,
 						selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
 						selectorTextVisibilityAll: selectorTextVisibilityDiagnostics.length > 1 ? selectorTextVisibilityDiagnostics : undefined,
@@ -4323,11 +4501,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
+					const scrollNoopDiagnosticText = formatScrollNoopDiagnosticText(scrollNoopDiagnostic);
 					const evalStdinHintText = formatEvalStdinHintText(evalStdinHint);
 					const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
 					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
 					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, scrollNoopDiagnosticText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!userRequestedJson || plainTextInspection);
 					const content = shouldAppendDiagnosticText && redactedContent[0]?.type === "text"

@@ -138,6 +138,93 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 	});
 });
 
+test("agentBrowserExtension reports no-op scroll diagnostics with recovery next actions", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-noop-scroll-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "scroll-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const valueFlags = new Set(["--session", "--profile", "--state", "--session-name", "--cdp", "--provider", "-p", "--device"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+const amount = args[commandIndex + 2];
+let state = { moved: false };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+if (command === "scroll" && amount === "701") {
+  state.moved = true;
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+}
+const snapshot = {
+  scrollX: 0,
+  scrollY: state.moved ? 701 : 0,
+  innerHeight: 600,
+  innerWidth: 800,
+  scrollHeight: 1600,
+  scrollWidth: 800,
+  containerCount: 1,
+  containers: [{ id: "0:main.dashboard", scrollTop: state.moved ? 701 : 0, scrollLeft: 0 }]
+};
+const data = command === "eval" ? { result: snapshot } : { scrolled: true };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Check scroll recovery diagnostics." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const noopResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "down", "700"], sessionMode: "fresh" });
+			assert.equal(noopResult.isError, false);
+			assert.match(noopResult.content[0]?.text ?? "", /Scroll diagnostic: no observed scroll movement/);
+			const noopDetails = noopResult.details as {
+				nextActions: Array<{ id: string; params?: { args: string[] } }>;
+				pageChangeSummary: { nextActionIds: string[] };
+				scrollNoop: { before: { containers: Array<{ id: string }> }; reason: string };
+			};
+			assert.equal(noopDetails.scrollNoop.reason, "no-observed-scroll-position-change");
+			assert.equal(noopDetails.scrollNoop.before.containers[0]?.id, "sample-0");
+			assert.deepEqual(
+				noopDetails.nextActions.map((action) => action.id).filter((id) => id.includes("noop-scroll")),
+				["inspect-after-noop-scroll", "verify-noop-scroll-visually"],
+			);
+			const scrollRecoveryActions = noopDetails.nextActions.filter((action) => action.id.includes("noop-scroll"));
+			assert.ok(scrollRecoveryActions.every((action) => action.params?.args[0] === "--session"));
+			assert.deepEqual(
+				noopDetails.pageChangeSummary.nextActionIds.filter((id) => id.includes("noop-scroll")),
+				["inspect-after-noop-scroll", "verify-noop-scroll-visually"],
+			);
+
+			const movedResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "down", "701"] });
+			assert.equal(movedResult.isError, false);
+			const movedDetails = movedResult.details as { scrollNoop?: unknown };
+			assert.equal(movedDetails.scrollNoop, undefined);
+			assert.doesNotMatch(movedResult.content[0]?.text ?? "", /Scroll diagnostic/);
+
+			const evalCallsBeforeLaunchScopedScroll = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("eval")).length;
+			const launchScopedResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--profile", "Default", "scroll", "down", "700"], sessionMode: "fresh" });
+			assert.equal(launchScopedResult.isError, false);
+			assert.equal((launchScopedResult.details as { scrollNoop?: unknown }).scrollNoop, undefined);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, evalCallsBeforeLaunchScopedScroll);
+			assert.ok(invocations.some((entry) => entry.args.includes("--profile") && entry.args.includes("scroll")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension renders long TUI output compactly without changing model-facing content", async () => {
 	const harness = createExtensionHarness({ cwd: process.cwd(), prompt: "Inspect a page." });
 	const renderCall = harness.tool.renderCall;

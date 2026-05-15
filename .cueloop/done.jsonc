@@ -3626,6 +3626,52 @@
       "custom_fields": {
         "dogfood_order": "11"
       }
+    },
+    {
+      "id": "RQ-0080",
+      "status": "done",
+      "title": "Detect no-op scrolls and suggest nested-scroll recovery",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "dogfood",
+        "scroll",
+        "nextActions",
+        "agent-efficiency"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "README.md",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.presentation.test.ts"
+      ],
+      "evidence": [
+        "Grafana Play dashboard dogfood: `scroll down 700` reported success but did not visibly move the nested dashboard content.",
+        "Current runtime prompt guidance now tells agents to verify dashboard scrolls and use `scrollintoview <@ref>` or target the real scroll region, but the tool does not yet detect unchanged scroll position or provide machine nextActions."
+      ],
+      "plan": [
+        "Inspect upstream scroll result shape and whether pre/post viewport or container scroll positions can be probed safely after scroll commands.",
+        "When scroll reports success but viewport/container evidence is unchanged, add a conservative diagnostic in details and visible output.",
+        "Return bounded nextActions such as fresh snapshot/screenshot, `scrollintoview <@ref>`, or targeting a likely scrollable region when evidence supports it.",
+        "Document limitations for nested dashboards and add fake-upstream/unit coverage without overfitting to Grafana."
+      ],
+      "notes": [
+        "Started by pi agent to implement no-op scroll diagnostics per execution contract.",
+        "Implemented no-op scroll diagnostics for successful top-level scrolls: pre/post read-only scroll-position probes when no startup-scoped flags are present; details.scrollNoop with sanitized container descriptors; visible diagnostic text; exact nextActions for snapshot and screenshot; pageChangeSummary nextActionIds updated. Docs updated in README, COMMAND_REFERENCE, TOOL_CONTRACT, SUPPORT_MATRIX. Tests: new extension-validation coverage for no-op, movement, session-prefixed nextActions, sanitized descriptors, and startup-scoped --profile probe skip. Validation: npm run docs -- write; npm run verify; git diff --check; reviewer subagent re-review found no findings."
+      ],
+      "request": "Post-0.2.27 Grafana dogfood follow-up from user request to queue unfinished tasks.",
+      "created_at": "2026-05-15T16:14:32.267385000Z",
+      "updated_at": "2026-05-15T17:10:41.430961000Z",
+      "completed_at": "2026-05-15T17:10:41.430961000Z",
+      "started_at": "2026-05-15T16:56:35.787102000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
     }
   ]
 }

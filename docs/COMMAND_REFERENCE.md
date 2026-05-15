@@ -379,7 +379,7 @@ Session note: `skills list`, `skills get …`, and `skills path …` are **state
 | `connect <port|url>` | Connect to a browser through CDP. |
 | `close [--all]` | Close the current browser or all sessions. |
 
-On dashboards and other apps with nested scroll containers, `scroll <dir> [px]` may report a successful wheel action while the viewport appears unchanged because the page-level scroller was not the one containing the content. Verify with a screenshot or fresh `snapshot -i`; when you need a specific panel, prefer `scrollintoview <@ref>` or a scoped interaction with the actual scrollable region.
+On dashboards and other apps with nested scroll containers, `scroll <dir> [px]` may report a successful wheel action while the viewport appears unchanged because the page-level scroller was not the one containing the content. For top-level `scroll` calls without startup-scoped launch flags, the wrapper samples viewport and prominent scroll-container positions before and after the command; when nothing changes it appends `Scroll diagnostic: no observed scroll movement`, exposes `details.scrollNoop`, and adds exact `details.nextActions` for a fresh `snapshot -i` and screenshot. Use those before repeating page scrolls; when you need a specific panel, prefer `scrollintoview <@ref>` or a scoped interaction with the actual scrollable region.
 
 Comboboxes vary by app. A `click` or `semanticAction` role/name click may focus a searchable combobox without opening its option list. Re-snapshot after focus and fall back to `type`, `press Enter` / arrow keys, `select`, or app-specific visible option refs instead of assuming click alone expanded the control.
 
