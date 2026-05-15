@@ -13,6 +13,7 @@ export {
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
+	compareRefIds,
 } from "./results/shared.js";
 export type {
 	AgentBrowserBatchResult,

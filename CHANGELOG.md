@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.27 - 2026-05-14
+
+### Fixed
+- `semanticAction` role/name click, check, and uncheck calls in active sessions now resolve through the current `snapshot -i` refs before execution, preventing hidden duplicate upstream `find` matches from stealing the action while preserving the original target in `details.compiledSemanticAction` and showing the executed ref in `details.effectiveArgs`.
+- QA presets now default to `loadState: "domcontentloaded"` and accept explicit `domcontentloaded`, `load`, or `networkidle`, avoiding wrapper watchdog timeouts on analytics-heavy or long-polling docs sites while keeping stricter waits opt-in.
+- Network request presentation now shows actionable and benign failed rows before successful rows, so late failures remain visible even when request previews are capped.
+- Overlay blocker diagnostics now require strong modal context (`dialog` / `alertdialog`) before suggesting close/dismiss candidates, eliminating noisy warnings after ordinary same-page menu opens or app button mutations.
+- Artifact lifecycle cleanup guidance now lists only explicit artifact paths that still exist on disk, skipping deleted/stale paths while preserving the close-does-not-delete reminder.
+
 ## 0.2.26 - 2026-05-14
 
 ### Added

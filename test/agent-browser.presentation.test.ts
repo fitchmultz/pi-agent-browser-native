@@ -845,8 +845,9 @@ test("buildToolPresentation formats redacted network payload, response, and erro
 	assert.equal(presentation.summary, "Network requests: 2");
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /Network failure summary: 1 actionable, 0 benign low-impact \(1 total\)\./);
-	assert.match(text, /1\. 200 GET https:\/\/example.com\/ \(Document\) \[req-1\]/);
 	assert.match(text, /2\. 201 POST https:\/\/api\.example\.test\/items\?token=%5BREDACTED%5D \(Fetch\) \[req-2\] \[actionable: document, script, API, or non-benign request failure\]/);
+	assert.match(text, /1\. 200 GET https:\/\/example.com\/ \(Document\) \[req-1\]/);
+	assert.ok(text.indexOf("2. 201 POST") < text.indexOf("1. 200 GET"));
 	assert.match(text, /Payload: .*name.*demo/);
 	assert.match(text, /Payload: .*\[REDACTED\]/);
 	assert.match(text, /Payload: .*https:\/\/api\.example\.test\/callback\?token=%5BREDACTED%5D/);
@@ -854,6 +855,33 @@ test("buildToolPresentation formats redacted network payload, response, and erro
 	assert.match(text, /Response: .*…/);
 	assert.match(text, /Error: net::ERR_FAILED Authorization: Bearer \[REDACTED\]/);
 	assert.doesNotMatch(text, /User-Agent|secret-agent|body-secret|response-secret|header-secret|url-secret|nested-url-secret|error-secret|Set-Cookie/);
+});
+
+test("buildToolPresentation keeps failed network rows visible when successful rows would fill the preview", async () => {
+	const requests = Array.from({ length: 45 }, (_, index) => ({
+		method: "GET",
+		requestId: `ok-${index}`,
+		resourceType: "Script",
+		status: 200,
+		url: `https://example.test/static/${index}.js`,
+	}));
+	requests.push({
+		method: "GET",
+		requestId: "late-failure",
+		resourceType: "Script",
+		status: 404,
+		url: "https://example.test/missing.js",
+	});
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "network", subcommand: "requests" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { requests } },
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /46\. 404 GET https:\/\/example\.test\/missing\.js \(Script\) \[late-failure\] \[actionable: document, script, API, or non-benign request failure\]/);
+	assert.ok(text.indexOf("46. 404 GET") < text.indexOf("1. 200 GET"));
+	assert.match(text, /failed requests are shown first when present/);
 });
 
 test("buildToolPresentation formats singular network request details without expanding headers", async () => {

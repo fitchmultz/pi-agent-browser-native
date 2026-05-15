@@ -1234,6 +1234,77 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 	}
 });
 
+test("agentBrowserExtension resolves semantic role clicks through current visible snapshot refs when available", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-visible-ref-"));
+	const logPath = join(tempDir, "invocations.log");
+	const snapshotCountPath = join(tempDir, "snapshot-count.txt");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Docs", url: "https://docs.example.test/" } }));
+} else if (args.includes("snapshot")) {
+  const statePath = ${JSON.stringify(snapshotCountPath)};
+  const count = fs.existsSync(statePath) ? Number(fs.readFileSync(statePath, "utf8")) : 0;
+  fs.writeFileSync(statePath, String(count + 1));
+  const refs = count === 0
+    ? { e2: { role: "button", name: "Old Search Documentation" } }
+    : { e17: { role: "button", name: "Search Documentation ⌘ K" } };
+  const snapshot = count === 0
+    ? '- button "Old Search Documentation" [ref=e2]'
+    : '- button "Search Documentation ⌘ K" [ref=e17]';
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://docs.example.test/",
+    refs,
+    snapshot
+  } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e17" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Docs" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://docs.example.test/" } }));
+} else if (args.includes("find")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "[data-agent-browser-located='true']" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://docs.example.test/"] });
+			assert.equal(open.isError, false);
+			const oldSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(oldSnapshot.isError, false);
+			assert.deepEqual((oldSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e2"]);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "role", value: "button", name: "Search Documentation" },
+			});
+			assert.equal(result.isError, false);
+			assert.deepEqual(result.details?.compiledSemanticAction, {
+				action: "click",
+				locator: "role",
+				args: ["find", "role", "button", "click", "--name", "Search Documentation"],
+			});
+			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-2), ["click", "@e17"]);
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.includes("snapshot")));
+			assert.ok(invocations.some((entry) => entry.args.at(-2) === "click" && entry.args.at(-1) === "@e17"));
+			assert.equal(invocations.some((entry) => entry.args.includes("find")), false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension compiles constrained jobs to upstream batch commands", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -1411,7 +1482,7 @@ process.stdin.on("end", () => {
 				["console", "--clear"],
 				["errors", "--clear"],
 				["open", "https://fail.example.test/"],
-				["wait", "--load", "networkidle"],
+				["wait", "--load", "domcontentloaded"],
 				["wait", "--text", "Welcome"],
 				["wait", "main"],
 				["network", "requests"],
@@ -2410,6 +2481,7 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 test("agentBrowserExtension reports artifact lifecycle guidance on close", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-artifact-cleanup-"));
 	const screenshotPath = join(tempDir, "artifact.png");
+	const deletedScreenshotPath = join(tempDir, "deleted-artifact.png");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -2439,7 +2511,10 @@ if (args.includes("screenshot")) {
 
 			const screenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", screenshotPath] });
 			assert.equal(screenshot.isError, false);
-			assert.equal((screenshot.details?.artifactManifest as { liveCount?: number } | undefined)?.liveCount, 1);
+			const deletedScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", deletedScreenshotPath] });
+			assert.equal(deletedScreenshot.isError, false);
+			await rm(deletedScreenshotPath, { force: true });
+			assert.equal((deletedScreenshot.details?.artifactManifest as { liveCount?: number } | undefined)?.liveCount, 2);
 
 			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
 			assert.equal(close.isError, false);
@@ -2447,9 +2522,10 @@ if (args.includes("screenshot")) {
 			assert.match(text, /Artifact lifecycle:/);
 			assert.match(text, /Closing the browser session does not delete explicit screenshots/);
 			assert.match(text, /artifact\.png/);
+			assert.doesNotMatch(text, /deleted-artifact\.png/);
 			assert.deepEqual(close.details?.artifactCleanup, {
 				explicitArtifactPaths: [screenshotPath],
-				note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean those paths with host file tools when no longer needed.",
+				note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean existing paths with host file tools when no longer needed.",
 				owner: "host-file-tools",
 				summary: String(close.details?.artifactRetentionSummary),
 			});
@@ -2597,6 +2673,53 @@ if (args.includes("open")) {
 			const closeCandidate = await executeRegisteredTool(harness.tool, harness.ctx, { args: closeCandidateArgs });
 			assert.equal(closeCandidate.isError, false);
 			assert.notEqual(closeCandidate.details?.failureCategory, "stale-ref");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not report overlay blockers from unrelated page chrome after a successful same-page click", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-overlay-noise-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Repo", url: "https://repo.example/" } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Repo" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://repo.example/" } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://repo.example/",
+    refs: {
+      e1: { role: "link", name: "Skip to content" },
+      e2: { role: "button", name: "Privacy choices" },
+      e3: { role: "button", name: "Close banner" }
+    },
+    snapshot: '- link "Skip to content" [ref=e1]\\n- button "Privacy choices" [ref=e2]\\n- button "Close banner" [ref=e3]'
+  } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://repo.example/"] });
+			assert.equal(open.isError, false);
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e9"] });
+			assert.equal(click.isError, false);
+			const text = click.content[0] as { text: string };
+			assert.doesNotMatch(text.text, /Possible overlay blockers:/);
+			assert.equal(click.details?.overlayBlockers, undefined);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

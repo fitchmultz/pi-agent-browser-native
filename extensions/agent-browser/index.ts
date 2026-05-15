@@ -30,6 +30,7 @@ import {
 	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	buildToolPresentation,
+	compareRefIds,
 	getAgentBrowserErrorText,
 	parseAgentBrowserEnvelope,
 	type AgentBrowserBatchResult,
@@ -84,6 +85,7 @@ const PACKAGE_NAME = "pi-agent-browser-native";
 const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select", "uncheck"] as const;
 const AGENT_BROWSER_SEMANTIC_LOCATORS = ["alt", "label", "placeholder", "role", "testid", "text", "title"] as const;
 const AGENT_BROWSER_JOB_STEP_ACTIONS = ["open", "click", "fill", "wait", "assertText", "assertUrl", "waitForDownload", "screenshot"] as const;
+const AGENT_BROWSER_QA_LOAD_STATES = ["domcontentloaded", "load", "networkidle"] as const;
 const SOURCE_LOOKUP_WORKSPACE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const SOURCE_LOOKUP_IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", "out", "tmp", "temp"]);
 const SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES = 2_000;
@@ -92,6 +94,7 @@ const SOURCE_LOOKUP_MAX_WORKSPACE_FILES = 5_000;
 type AgentBrowserSemanticActionName = (typeof AGENT_BROWSER_SEMANTIC_ACTIONS)[number];
 type AgentBrowserSemanticLocator = (typeof AGENT_BROWSER_SEMANTIC_LOCATORS)[number];
 type AgentBrowserJobStepAction = (typeof AGENT_BROWSER_JOB_STEP_ACTIONS)[number];
+type AgentBrowserQaLoadState = (typeof AGENT_BROWSER_QA_LOAD_STATES)[number];
 type AgentBrowserSourceLookupStatus = "candidates-found" | "no-candidates" | "unsupported";
 type AgentBrowserNetworkSourceLookupStatus = "failed-requests-found" | "no-failed-requests" | "no-candidates";
 
@@ -127,6 +130,7 @@ interface CompiledAgentBrowserQaPreset extends CompiledAgentBrowserJob {
 		checkConsole: boolean;
 		checkErrors: boolean;
 		checkNetwork: boolean;
+		loadState: AgentBrowserQaLoadState;
 		expectedText: string[];
 		expectedSelector?: string;
 		screenshotPath?: string;
@@ -238,6 +242,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			checkConsole: Type.Optional(Type.Boolean({ description: "Whether to fail on console error messages. Defaults to true." })),
 			checkErrors: Type.Optional(Type.Boolean({ description: "Whether to fail on page errors. Defaults to true." })),
 			checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to inspect network requests and fail on actionable request failures; benign icon misses warn. Defaults to true." })),
+			loadState: Type.Optional(StringEnum(AGENT_BROWSER_QA_LOAD_STATES, { description: "Page readiness state for the QA preset before assertions and diagnostics. Defaults to domcontentloaded; use networkidle only for pages without long-lived background requests." })),
 		}),
 	),
 	sourceLookup: Type.Optional(
@@ -450,16 +455,21 @@ function compileAgentBrowserQaPreset(input: unknown): { compiled?: CompiledAgent
 			return { error: `qa.${field} must be a boolean when provided.` };
 		}
 	}
+	const rawLoadState = input.loadState;
+	if (rawLoadState !== undefined && (typeof rawLoadState !== "string" || !AGENT_BROWSER_QA_LOAD_STATES.includes(rawLoadState as AgentBrowserQaLoadState))) {
+		return { error: `qa.loadState must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.` };
+	}
 	const checkConsole = input.checkConsole !== false;
 	const checkErrors = input.checkErrors !== false;
 	const checkNetwork = input.checkNetwork !== false;
+	const loadState = (rawLoadState as AgentBrowserQaLoadState | undefined) ?? "domcontentloaded";
 	const steps: CompiledAgentBrowserJobStep[] = [];
 	if (checkNetwork) steps.push({ action: "wait", args: ["network", "requests", "--clear"] });
 	if (checkConsole) steps.push({ action: "wait", args: ["console", "--clear"] });
 	if (checkErrors) steps.push({ action: "wait", args: ["errors", "--clear"] });
 	steps.push(
 		{ action: "open", args: ["open", url] },
-		{ action: "wait", args: ["wait", "--load", "networkidle"] },
+		{ action: "wait", args: ["wait", "--load", loadState] },
 	);
 	for (const text of expectedText) {
 		steps.push({ action: "assertText", args: ["wait", "--text", text] });
@@ -474,7 +484,7 @@ function compileAgentBrowserQaPreset(input: unknown): { compiled?: CompiledAgent
 	return {
 		compiled: {
 			args: ["batch"],
-			checks: { checkConsole, checkErrors, checkNetwork, expectedSelector, expectedText, screenshotPath, url },
+			checks: { checkConsole, checkErrors, checkNetwork, expectedSelector, expectedText, loadState, screenshotPath, url },
 			stdin: JSON.stringify(steps.map((step) => step.args)),
 			steps,
 		},
@@ -967,6 +977,61 @@ function buildSemanticActionCandidateActions(compiled: CompiledAgentBrowserSeman
 		return [buildRoleCandidate("textbox", "try-labeled-textbox-candidate", "Retry against a textbox with the same accessible name when label lookup misses.")];
 	}
 	return [];
+}
+
+function normalizeSemanticActionAccessibleName(name: string): string {
+	return name.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function semanticActionNameMatches(candidateName: string, targetName: string): boolean {
+	const normalizedCandidate = normalizeSemanticActionAccessibleName(candidateName);
+	const normalizedTarget = normalizeSemanticActionAccessibleName(targetName);
+	return normalizedCandidate === normalizedTarget || normalizedCandidate.startsWith(`${normalizedTarget} `);
+}
+
+function getCompiledSemanticActionRoleTarget(compiled: CompiledAgentBrowserSemanticAction): { role: string; targetName: string } | undefined {
+	if (compiled.locator !== "role" || !["check", "click", "uncheck"].includes(compiled.action)) return undefined;
+	const findIndex = compiled.args.indexOf("find");
+	if (findIndex < 0 || compiled.args[findIndex + 1] !== "role") return undefined;
+	const role = compiled.args[findIndex + 2];
+	const nameFlagIndex = compiled.args.indexOf("--name");
+	const targetName = nameFlagIndex >= 0 ? compiled.args[nameFlagIndex + 1] : undefined;
+	if (!role || !targetName) return undefined;
+	return { role, targetName };
+}
+
+function findSemanticActionRefInSnapshot(compiled: CompiledAgentBrowserSemanticAction, snapshotData: unknown): string | undefined {
+	const target = getCompiledSemanticActionRoleTarget(compiled);
+	const refs = getSnapshotRefRecord(snapshotData);
+	if (!target || !refs) return undefined;
+	const candidates = Object.entries(refs).flatMap(([ref, entry]) => {
+		if (!/^e\d+$/.test(ref) || !isRecord(entry)) return [];
+		const role = typeof entry.role === "string" ? entry.role : undefined;
+		const name = typeof entry.name === "string" ? entry.name : undefined;
+		if (!role || !name || role.toLowerCase() !== target.role.toLowerCase() || !semanticActionNameMatches(name, target.targetName)) return [];
+		return [{ exact: normalizeSemanticActionAccessibleName(name) === normalizeSemanticActionAccessibleName(target.targetName), name, ref }];
+	});
+	candidates.sort((left, right) => Number(right.exact) - Number(left.exact) || left.name.length - right.name.length || compareRefIds(left.ref, right.ref));
+	return candidates[0]?.ref;
+}
+
+interface SemanticActionVisibleRefResolution {
+	args: string[];
+	snapshot: SessionRefSnapshot;
+}
+
+async function resolveSemanticActionVisibleRefArgs(options: {
+	compiled: CompiledAgentBrowserSemanticAction | undefined;
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<SemanticActionVisibleRefResolution | undefined> {
+	if (!options.compiled || !options.sessionName || !getCompiledSemanticActionRoleTarget(options.compiled)) return undefined;
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const ref = findSemanticActionRefInSnapshot(options.compiled, snapshotData);
+	const snapshot = extractRefSnapshotFromData(snapshotData);
+	if (!ref || !snapshot) return undefined;
+	return { args: [...getCompiledSemanticActionSessionPrefix(options.compiled), options.compiled.action, `@${ref}`], snapshot };
 }
 
 function compileAgentBrowserSemanticAction(input: unknown): { compiled?: CompiledAgentBrowserSemanticAction; error?: string } {
@@ -2627,7 +2692,6 @@ function getSnapshotRefRecord(data: unknown): Record<string, unknown> | undefine
 }
 
 const OVERLAY_CLOSE_NAME_PATTERN = /(?:\b(?:close|dismiss|no thanks|not now|maybe later|hide|skip|continue without|x)\b|^\s*×\s*$)/i;
-const OVERLAY_CONTEXT_NAME_PATTERN = /\b(?:banner|modal|dialog|popup|pop-up|overlay|donat(?:e|ion)|subscribe|sign in|login|cookie|privacy|consent)\b/i;
 const OVERLAY_CONTEXT_ROLES = new Set(["alertdialog", "dialog"]);
 const OVERLAY_ACTION_ROLES = new Set(["button", "link", "menuitem"]);
 const OVERLAY_BLOCKER_CANDIDATE_LIMIT = 3;
@@ -2638,8 +2702,7 @@ function getOverlayBlockerCandidates(snapshotData: unknown): OverlayBlockerCandi
 	const hasOverlayContext = Object.values(refs).some((entry) => {
 		if (!isRecord(entry)) return false;
 		const role = typeof entry.role === "string" ? entry.role : "";
-		const name = typeof entry.name === "string" ? entry.name : "";
-		return OVERLAY_CONTEXT_ROLES.has(role.toLowerCase()) || OVERLAY_CONTEXT_NAME_PATTERN.test(name);
+		return OVERLAY_CONTEXT_ROLES.has(role.toLowerCase());
 	});
 	if (!hasOverlayContext) return [];
 	const candidates: OverlayBlockerCandidate[] = [];
@@ -2810,16 +2873,27 @@ function formatEvalStdinHintText(hint: EvalStdinHint | undefined): string | unde
 	return hint ? `Eval stdin hint: ${hint.reason} ${hint.suggestion}` : undefined;
 }
 
-function getArtifactCleanupGuidance(options: { command?: string; manifest?: SessionArtifactManifest; succeeded: boolean }): ArtifactCleanupGuidance | undefined {
+async function getArtifactCleanupGuidance(options: { command?: string; cwd: string; manifest?: SessionArtifactManifest; succeeded: boolean }): Promise<ArtifactCleanupGuidance | undefined> {
 	if (!options.succeeded || options.command !== "close" || !options.manifest || options.manifest.entries.length === 0) return undefined;
-	const explicitArtifactPaths = options.manifest.entries
-		.filter((entry) => entry.storageScope === "explicit-path")
-		.map((entry) => entry.path)
-		.filter((path, index, paths) => paths.indexOf(path) === index)
-		.slice(0, 10);
+	const explicitEntries = options.manifest.entries.filter((entry) => entry.storageScope === "explicit-path");
+	const explicitArtifactPaths: string[] = [];
+	const seenPaths = new Set<string>();
+	for (const entry of explicitEntries) {
+		if (explicitArtifactPaths.length >= 10) break;
+		const displayPath = entry.path;
+		if (seenPaths.has(displayPath)) continue;
+		const absolutePath = entry.absolutePath ?? (isAbsolute(entry.path) ? entry.path : resolve(options.cwd, entry.path));
+		try {
+			await stat(absolutePath);
+		} catch {
+			continue;
+		}
+		seenPaths.add(displayPath);
+		explicitArtifactPaths.push(displayPath);
+	}
 	return {
 		explicitArtifactPaths,
-		note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean those paths with host file tools when no longer needed.",
+		note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean existing paths with host file tools when no longer needed.",
 		owner: "host-file-tools",
 		summary: formatSessionArtifactRetentionSummary(options.manifest),
 	};
@@ -3457,12 +3531,29 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const runTool = async (): Promise<AgentBrowserToolResult> => {
 				const sessionMode = params.sessionMode ?? DEFAULT_SESSION_MODE;
 				const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
-				const executionPlan = buildExecutionPlan(preparedArgs.args, {
+				let executionPlan = buildExecutionPlan(preparedArgs.args, {
 					freshSessionName,
 					managedSessionActive,
 					managedSessionName,
 					sessionMode,
 				});
+				let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
+				if (!executionPlan.validationError && executionPlan.managedSessionName !== freshSessionName) {
+					semanticActionVisibleRefResolution = await resolveSemanticActionVisibleRefArgs({
+						compiled: compiledSemanticAction,
+						cwd: ctx.cwd,
+						sessionName: executionPlan.sessionName,
+						signal,
+					});
+					if (semanticActionVisibleRefResolution) {
+						executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {
+							freshSessionName,
+							managedSessionActive,
+							managedSessionName,
+							sessionMode,
+						});
+					}
+				}
 				const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
 				const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
 				const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
@@ -3490,7 +3581,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					};
 				}
 
-				const commandTokens = extractCommandTokens(preparedArgs.args);
+				const commandTokens = semanticActionVisibleRefResolution ? extractCommandTokens(semanticActionVisibleRefResolution.args) : extractCommandTokens(preparedArgs.args);
 				const exactSensitiveValues = getExactSensitiveStdinValues({
 					command: executionPlan.commandInfo.command,
 					commandTokens,
@@ -3560,10 +3651,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				const priorSessionTabTargetState = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
 				const priorSessionTabTarget = priorSessionTabTargetState?.target;
 				const priorRefSnapshotState = executionPlan.sessionName ? sessionRefSnapshots.get(executionPlan.sessionName) : undefined;
+				const resolvedSemanticActionRefSnapshot = semanticActionVisibleRefResolution?.snapshot
+					? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
+					: undefined;
 				const staleRefPreflight = buildStaleRefPreflight({
 					commandTokens,
 					currentTarget: priorSessionTabTarget,
-					refSnapshot: priorRefSnapshotState,
+					refSnapshot: resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState,
 					stdin: toolStdin,
 				});
 				if (staleRefPreflight) {
@@ -3937,7 +4031,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				? extractRefSnapshotFromData(presentationEnvelope?.data)
 				: executionPlan.commandInfo.command === "batch"
 					? extractRefSnapshotFromBatchResults(presentationEnvelope?.data)
-					: overlayBlockerDiagnostic?.snapshot
+					: resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot
 			: undefined;
 						if (refSnapshot && shouldApplySessionTabTargetUpdate({ current: sessionRefSnapshots.get(executionPlan.sessionName), updateOrder: tabTargetUpdateOrder })) {
 							currentRefSnapshot = { ...refSnapshot, target: refSnapshot.target ?? currentSessionTabTarget };
@@ -4082,8 +4176,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						stdin: toolStdin,
 					});
 					const resultArtifactManifest = presentation.artifactManifest ?? artifactManifest;
-					const artifactCleanup = getArtifactCleanupGuidance({
+					const artifactCleanup = await getArtifactCleanupGuidance({
 						command: executionPlan.commandInfo.command,
+						cwd: ctx.cwd,
 						manifest: resultArtifactManifest,
 						succeeded,
 					});

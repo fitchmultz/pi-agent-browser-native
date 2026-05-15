@@ -609,12 +609,27 @@ function formatNetworkRequestsText(data: Record<string, unknown>): string | unde
 	const shown = networkFailureSummary.totalCount > 0
 		? [`Network failure summary: ${networkFailureSummary.actionableCount} actionable, ${networkFailureSummary.benignCount} benign low-impact (${networkFailureSummary.totalCount} total).`]
 		: [];
-	shown.push(...requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap((item, index) => {
+	const indexedRequests = requests.map((item, index) => ({ index, item }));
+	const failedRequests: typeof indexedRequests = [];
+	const normalRequests: typeof indexedRequests = [];
+	for (const indexed of indexedRequests) {
+		if (isRecord(indexed.item) && classifyNetworkRequestFailure(indexed.item)) failedRequests.push(indexed);
+		else normalRequests.push(indexed);
+	}
+	failedRequests.sort((left, right) => {
+		const leftClassification = isRecord(left.item) ? classifyNetworkRequestFailure(left.item) : undefined;
+		const rightClassification = isRecord(right.item) ? classifyNetworkRequestFailure(right.item) : undefined;
+		const leftRank = leftClassification?.impact === "actionable" ? 0 : 1;
+		const rightRank = rightClassification?.impact === "actionable" ? 0 : 1;
+		return leftRank - rightRank || left.index - right.index;
+	});
+	const prioritizedRequests = [...failedRequests, ...normalRequests];
+	shown.push(...prioritizedRequests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap(({ item, index }) => {
 		if (!isRecord(item)) return [`${index + 1}. ${stringifyModelFacing(item)}`];
 		return formatNetworkRequestLine(item, index);
 	}));
 	if (requests.length > DIAGNOSTIC_REQUEST_PREVIEW_LIMIT) {
-		shown.push(`... (${requests.length - DIAGNOSTIC_REQUEST_PREVIEW_LIMIT} additional requests omitted from preview)`);
+		shown.push(`... (${requests.length - DIAGNOSTIC_REQUEST_PREVIEW_LIMIT} additional requests omitted from preview; failed requests are shown first when present)`);
 	}
 	return shown.join("\n");
 }
