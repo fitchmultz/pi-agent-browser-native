@@ -150,7 +150,7 @@ When a **top-level** `click` succeeds (not a `click` hidden inside a `batch`/`jo
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
 
-Prefer `get` and scoped `eval --stdin` for read-only extraction. Getter names are grouped under `get`: use `get title`, `get url`, or `get text <selector>`, not shortcut commands such as `title` or `url`. If an unknown-command failure looks like a getter shortcut, the wrapper adds a visible getter hint and may return exact read-only `details.nextActions` such as `use-get-title` / `use-get-url`.
+Prefer `get` and scoped `eval --stdin` for read-only extraction. Getter names are grouped under `get`: use `get title`, `get url`, or `get text <selector>`, not shortcut commands such as `title` or `url`. When upstream reports an unknown command, unknown subcommand, or unrecognized command for a single-token shortcut (`attr`, `count`, `html`, `text`, `title`, `url`, or `value`), the wrapper adds a visible grouped-`get` hint; only `title` and `url` also get exact read-only `details.nextActions` (`use-get-title` / `use-get-url`, with `--session` preserved when the failed call named a session). If another `Agent-browser hint:` (selector dialect or stale-ref recovery) was already appended to the same error text, the getter hint is omitted.
 
 Return the intended JavaScript value from `eval --stdin` instead of relying on `console.log`. For object-shaped extraction, pass a plain expression such as `({ title: document.title, url: location.href })`; if you send a function-shaped snippet, invoke it explicitly, for example `(() => ({ title: document.title }))()`. When upstream serializes a function result to `{}`, the wrapper can append `Eval stdin hint` and `details.evalStdinHint`.
 
