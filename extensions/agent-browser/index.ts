@@ -1410,6 +1410,24 @@ interface SelectorTextVisibilityDiagnostic {
 	visibleCount: number;
 }
 
+interface TimeoutArtifactEvidence {
+	absolutePath: string;
+	exists: boolean;
+	path: string;
+	sizeBytes?: number;
+	stepIndex: number;
+}
+
+interface TimeoutPartialProgress {
+	artifacts: TimeoutArtifactEvidence[];
+	currentPage?: {
+		title?: string;
+		url?: string;
+	};
+	steps?: Array<{ args: string[]; index: number }>;
+	summary: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -2748,6 +2766,148 @@ function buildSelectorTextVisibilityNextActions(options: { diagnostics: Selector
 	}));
 }
 
+function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, command: string | undefined, stdin: string | undefined): Array<{ args: string[]; index: number }> {
+	if (compiledJob) return compiledJob.steps.map((step, index) => ({ args: step.args, index: index + 1 }));
+	if (command !== "batch" || !stdin) return [];
+	try {
+		const parsed = JSON.parse(stdin) as unknown;
+		if (!Array.isArray(parsed)) return [];
+		return parsed.flatMap((step, index) => Array.isArray(step) && step.every((token) => typeof token === "string") ? [{ args: step as string[], index: index + 1 }] : []);
+	} catch {
+		return [];
+	}
+}
+
+function getLastPositionalToken(args: string[], startIndex = 1): string | undefined {
+	for (let index = args.length - 1; index >= startIndex; index -= 1) {
+		const token = args[index];
+		if (token && !token.startsWith("-")) return token;
+	}
+	return undefined;
+}
+
+function getTimeoutStepArtifactPath(args: string[]): string | undefined {
+	const [command] = args;
+	if (command === "screenshot") {
+		const index = getScreenshotPathTokenIndex(args);
+		return index === undefined ? undefined : args[index];
+	}
+	if (command === "pdf") return getLastPositionalToken(args);
+	if (command === "download") return getLastPositionalToken(args, 2);
+	if (command === "wait") {
+		const inlineDownload = args.find((token) => token.startsWith("--download="));
+		if (inlineDownload) return inlineDownload.slice("--download=".length) || undefined;
+		const downloadIndex = args.indexOf("--download");
+		const downloadPath = downloadIndex >= 0 ? args[downloadIndex + 1] : undefined;
+		if (downloadPath && !downloadPath.startsWith("-")) return downloadPath;
+	}
+	return undefined;
+}
+
+async function collectTimeoutArtifactEvidence(cwd: string, steps: Array<{ args: string[]; index: number }>): Promise<TimeoutArtifactEvidence[]> {
+	const evidence: TimeoutArtifactEvidence[] = [];
+	for (const step of steps) {
+		const path = getTimeoutStepArtifactPath(step.args);
+		if (!path) continue;
+		const absolutePath = isAbsolute(path) ? path : resolve(cwd, path);
+		try {
+			const stats = await stat(absolutePath);
+			evidence.push({ absolutePath, exists: true, path, sizeBytes: stats.size, stepIndex: step.index });
+		} catch {
+			evidence.push({ absolutePath, exists: false, path, stepIndex: step.index });
+		}
+	}
+	return evidence;
+}
+
+function getPlannedCurrentPageUrl(steps: Array<{ args: string[]; index: number }>): string | undefined {
+	for (let index = steps.length - 1; index >= 0; index -= 1) {
+		const args = steps[index]?.args ?? [];
+		if (args[0] === "open" || args[0] === "navigate" || args[0] === "pushstate") {
+			return getLastPositionalToken(args);
+		}
+	}
+	return undefined;
+}
+
+async function collectTimeoutPartialProgress(options: {
+	command?: string;
+	compiledJob?: CompiledAgentBrowserJob;
+	cwd: string;
+	sessionName?: string;
+	stdin?: string;
+}): Promise<TimeoutPartialProgress | undefined> {
+	const steps = getTimeoutProgressSteps(options.compiledJob, options.command, options.stdin);
+	const artifacts = await collectTimeoutArtifactEvidence(options.cwd, steps);
+	const [urlData, titleData] = await Promise.all([
+		runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName }),
+		runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName }),
+	]);
+	const recoveredUrl = extractStringResultField(urlData, "result") ?? extractStringResultField(urlData, "url");
+	const title = extractStringResultField(titleData, "result") ?? extractStringResultField(titleData, "title");
+	const plannedUrl = recoveredUrl ? undefined : getPlannedCurrentPageUrl(steps);
+	const url = recoveredUrl ?? plannedUrl;
+	if (steps.length === 0 && artifacts.length === 0 && !url && !title) return undefined;
+	const foundArtifacts = artifacts.filter((artifact) => artifact.exists).length;
+	const pageStateSummary = recoveredUrl || title ? " and current page state" : plannedUrl ? " and planned page URL" : "";
+	return {
+		artifacts,
+		currentPage: url || title ? { title, url } : undefined,
+		steps: steps.length > 0 ? steps : undefined,
+		summary: `Timed out before upstream returned final results; recovered ${foundArtifacts}/${artifacts.length} declared artifact path${artifacts.length === 1 ? "" : "s"}${pageStateSummary}.`,
+	};
+}
+
+function redactSensitivePathSegmentsForDiagnostic(path: string): string {
+	return path.split(/([/\\]+)/).map((segment) => {
+		if (segment === "/" || segment === "\\" || /^[/\\]+$/.test(segment)) return segment;
+		return redactSensitiveText(segment) !== segment || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(segment) ? "[REDACTED]" : segment;
+	}).join("");
+}
+
+function sanitizeCurrentPageUrlForTimeoutDiagnostic(url: string): string {
+	try {
+		const parsedUrl = new URL(url);
+		parsedUrl.pathname = parsedUrl.pathname.split("/").map((segment) => redactSensitivePathSegmentsForDiagnostic(segment)).join("/");
+		for (const [key, value] of parsedUrl.searchParams.entries()) {
+			if (redactSensitiveText(key) !== key || redactSensitiveText(value) !== value || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(`${key} ${value}`)) {
+				parsedUrl.searchParams.set(key, "[REDACTED]");
+			}
+		}
+		if (parsedUrl.hash) {
+			parsedUrl.hash = redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(parsedUrl.hash));
+		}
+		return redactSensitiveText(parsedUrl.toString());
+	} catch {
+		return redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(url));
+	}
+}
+
+function formatTimeoutPartialProgressText(progress: TimeoutPartialProgress): string {
+	const lines = [`Timeout partial progress: ${progress.summary}`];
+	const currentPageTitle = progress.currentPage?.title ? redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(progress.currentPage.title)) : undefined;
+	const currentPageUrl = progress.currentPage?.url ? sanitizeCurrentPageUrlForTimeoutDiagnostic(progress.currentPage.url) : undefined;
+	if (currentPageTitle || currentPageUrl) {
+		lines.push(`Current page: ${[currentPageTitle, currentPageUrl].filter(Boolean).join(" — ")}`);
+	}
+	if (progress.steps && progress.steps.length > 0) {
+		const shownSteps = progress.steps.slice(0, 6);
+		lines.push("Planned steps:");
+		for (const step of shownSteps) {
+			const command = redactSensitivePathSegmentsForDiagnostic(redactInvocationArgs(step.args).join(" "));
+			lines.push(`- Step ${step.index}: ${command}`);
+		}
+		if (progress.steps.length > shownSteps.length) {
+			lines.push(`- ... ${progress.steps.length - shownSteps.length} more step${progress.steps.length - shownSteps.length === 1 ? "" : "s"} omitted`);
+		}
+	}
+	for (const artifact of progress.artifacts) {
+		const path = redactSensitivePathSegmentsForDiagnostic(artifact.path);
+		lines.push(`Artifact from step ${artifact.stepIndex}: ${path} (${artifact.exists ? `exists${typeof artifact.sizeBytes === "number" ? `, ${artifact.sizeBytes} bytes` : ""}` : "missing"})`);
+	}
+	return lines.join("\n");
+}
+
 async function collectOverlayBlockerDiagnostic(options: {
 	command?: string;
 	cwd: string;
@@ -3574,6 +3734,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						}
 					}
 					let selectorTextVisibilityDiagnostics: SelectorTextVisibilityDiagnostic[] = [];
+					const timeoutPartialProgress = processResult.timedOut ? await collectTimeoutPartialProgress({
+						command: executionPlan.commandInfo.command,
+						compiledJob,
+						cwd: ctx.cwd,
+						sessionName: executionPlan.sessionName,
+						stdin: toolStdin,
+					}) : undefined;
 					if (succeeded && !sessionTabCorrection && !aboutBlankSessionMismatch) {
 						overlayBlockerDiagnostic = await collectOverlayBlockerDiagnostic({
 							command: executionPlan.commandInfo.command,
@@ -3839,6 +4006,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						qaPreset,
 						selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
 						selectorTextVisibilityAll: selectorTextVisibilityDiagnostics.length > 1 ? selectorTextVisibilityDiagnostics : undefined,
+						timeoutPartialProgress,
 						parseError: plainTextInspection ? undefined : parseError,
 						savedFile: presentation.savedFile,
 						savedFilePath: presentation.savedFilePath,
@@ -3861,7 +4029,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
-					const appendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText].filter((item): item is string => item !== undefined).join("\n\n");
+					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
+					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, timeoutPartialProgressText].filter((item): item is string => item !== undefined).join("\n\n");
+					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const content = appendedDiagnosticText.length > 0 && redactedContent[0]?.type === "text"
 						? [
 							{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${appendedDiagnosticText}` },
