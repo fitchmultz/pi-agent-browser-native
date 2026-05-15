@@ -217,7 +217,7 @@ Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, 
 
 ### Lightweight QA preset
 
-For a quick smoke/QA pass, use top-level `qa`. It compiles to the same batch path as `job`, clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks optional expected text or selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot. `checkNetwork`, `checkConsole`, and `checkErrors` default to true; set one to `false` to skip that diagnostic read. Network failures are classified by likely impact: actionable document/script/API-style failures still fail QA, while common low-impact browser icon failures such as missing `favicon.ico` are reported as warnings instead of failing an otherwise healthy smoke check.
+For a quick smoke/QA pass, use top-level `qa`. It compiles to the same batch path as `job`, clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks optional expected text or selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot. `checkNetwork`, `checkConsole`, and `checkErrors` default to true; set one to `false` to skip that diagnostic read. Network failures are classified by likely impact: actionable document/script/API-style failures still fail QA, while common low-impact browser icon failures such as missing `favicon.ico` are reported as warnings instead of failing an otherwise healthy smoke check (`details.qaPreset.warnings`, with human-readable `details.qaPreset.summary` when the preset still passes).
 
 ```json
 {
