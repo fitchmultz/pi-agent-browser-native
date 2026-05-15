@@ -3818,6 +3818,43 @@
       "blocks": [],
       "relates_to": [],
       "custom_fields": {}
+    },
+    {
+      "id": "RQ-0085",
+      "status": "done",
+      "title": "Preserve combobox diagnostics after semanticAction visible-ref resolution",
+      "description": "Post-reload Grafana stress smoke on 2026-05-15 exposed a regression gap: semanticAction role=combobox name=Job resolved through current snapshot refs to click @e65, focused the Grafana Job combobox, but did not emit details.comboboxFocus or visible Combobox diagnostic. No-op scroll diagnostics were active in the same reloaded session, so this appears specific to losing the original semantic combobox target after visible-ref resolution. Preserve original semanticAction role/locator context for combobox diagnostics while keeping ordinary-click false-positive protections and explicit aria-expanded=false/no-visible-options requirements. Add regression coverage for semanticAction role=combobox name click that resolves through snapshot refs and still emits details.comboboxFocus when focused closed combobox evidence qualifies. Update docs/contracts if trigger wording changes.",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "combobox",
+        "semanticAction",
+        "dogfood",
+        "regression"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "docs/SUPPORT_MATRIX.md",
+        "test/agent-browser.extension-validation.test.ts"
+      ],
+      "evidence": [],
+      "plan": [],
+      "notes": [
+        "Started by pi agent after post-reload Grafana stress smoke exposed missing comboboxFocus after semanticAction visible-ref resolution.",
+        "Implemented combobox diagnostic gating that preserves the original compiled semanticAction role/listbox/combobox target even when active-session visible-ref resolution rewrites execution to click @ref. Existing ordinary command gating plus aria-expanded=false and no-visible-options requirements remain unchanged.",
+        "Added regression coverage: active managed session semanticAction role=combobox name=Job resolves through snapshot to click @e65, no upstream find is invoked, and details.comboboxFocus plus visible Combobox diagnostic still appear.",
+        "Docs/contracts updated in TOOL_CONTRACT, COMMAND_REFERENCE, SUPPORT_MATRIX, and CHANGELOG for semanticAction visible-ref resolution. Verification: npm run docs -- write; npm run verify (292 pass, 1 skipped); git diff --check; cueloop machine queue validate. Reviewer subagent found no material findings."
+      ],
+      "created_at": "2026-05-15T17:49:59.456929000Z",
+      "updated_at": "2026-05-15T17:59:52.613468000Z",
+      "completed_at": "2026-05-15T17:59:52.613468000Z",
+      "started_at": "2026-05-15T17:53:46.402896000Z",
+      "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
     }
   ]
 }

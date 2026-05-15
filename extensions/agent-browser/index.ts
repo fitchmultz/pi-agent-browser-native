@@ -2917,14 +2917,27 @@ function isComboboxFocusDiagnosticCommand(command: string | undefined, commandTo
 	return command === "find" && commandTokens.some((token) => ["click", "fill", "select"].includes(token));
 }
 
+function getCompiledSemanticActionRoleValue(compiled: CompiledAgentBrowserSemanticAction): string | undefined {
+	if (compiled.locator !== "role") return undefined;
+	const findIndex = compiled.args.indexOf("find");
+	if (findIndex < 0 || compiled.args[findIndex + 1] !== "role") return undefined;
+	return compiled.args[findIndex + 2];
+}
+
+function isComboboxFocusDiagnosticSemanticAction(compiled: CompiledAgentBrowserSemanticAction | undefined): boolean {
+	if (!compiled || !["click", "fill", "select"].includes(compiled.action)) return false;
+	return /^(?:combobox|listbox)$/i.test(getCompiledSemanticActionRoleValue(compiled) ?? "");
+}
+
 async function collectComboboxFocusDiagnostic(options: {
 	command?: string;
 	commandTokens: string[];
 	cwd: string;
+	semanticAction?: CompiledAgentBrowserSemanticAction;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<ComboboxFocusDiagnostic | undefined> {
-	if (!isComboboxFocusDiagnosticCommand(options.command, options.commandTokens)) return undefined;
+	if (!isComboboxFocusDiagnosticCommand(options.command, options.commandTokens) && !isComboboxFocusDiagnosticSemanticAction(options.semanticAction)) return undefined;
 	return extractComboboxFocusDiagnostic(await runSessionCommandData({
 		args: ["eval", "--stdin"],
 		cwd: options.cwd,
@@ -4378,6 +4391,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 								command: executionPlan.commandInfo.command,
 								commandTokens,
 								cwd: ctx.cwd,
+								semanticAction: compiledSemanticAction,
 								sessionName: executionPlan.sessionName,
 								signal,
 						  })

@@ -308,6 +308,80 @@ process.stdout.write(JSON.stringify({ success: true, data: command === "eval" ? 
 	}
 });
 
+test("agentBrowserExtension preserves combobox diagnostics after semanticAction visible-ref resolution", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-combobox-visible-ref-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "combobox-visible-ref-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const valueFlags = new Set(["--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+let state = { mode: "none" };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+if (command === "open") {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Grafana", url: "https://grafana.example.test/" } }));
+} else if (command === "snapshot") {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://grafana.example.test/",
+    refs: { e65: { role: "combobox", name: "Job" } },
+    snapshot: '- combobox "Job" [ref=e65]'
+  } }));
+} else if (command === "click") {
+  state.mode = args[commandIndex + 1] === "@e65" ? "combo" : "other";
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[commandIndex + 1] } }));
+} else if (command === "eval") {
+  const result = state.mode === "combo"
+    ? { comboboxLike: true, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "combobox", expanded: "false", hasPopup: "listbox", name: "Job", tagName: "input" } }
+    : { comboboxLike: false, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "textbox", name: "Other", tagName: "input" } };
+  process.stdout.write(JSON.stringify({ success: true, data: { result } }));
+} else if (command === "get" && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Grafana" } }));
+} else if (command === "get" && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://grafana.example.test/" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Check visible-ref combobox recovery diagnostics." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://grafana.example.test/"] });
+			assert.equal(open.isError, false);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "role", value: "combobox", name: "Job" },
+			});
+			assert.equal(result.isError, false);
+			assert.match(result.content[0]?.text ?? "", /Combobox diagnostic: focused combobox did not expose visible options/);
+			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-2), ["click", "@e65"]);
+			assert.equal((result.details?.comboboxFocus as { activeElement?: { role?: string; name?: string } } | undefined)?.activeElement?.role, "combobox");
+			assert.equal((result.details?.comboboxFocus as { activeElement?: { role?: string; name?: string } } | undefined)?.activeElement?.name, "Job");
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.includes("snapshot")));
+			assert.ok(invocations.some((entry) => entry.args.at(-2) === "click" && entry.args.at(-1) === "@e65"));
+			assert.equal(invocations.some((entry) => entry.args.includes("find")), false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension warns after record start when ffmpeg is missing", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-recording-ffmpeg-"));
 	const nodeBinDir = dirname(process.execPath);
