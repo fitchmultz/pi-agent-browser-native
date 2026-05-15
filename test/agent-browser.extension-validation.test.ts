@@ -225,6 +225,89 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	}
 });
 
+test("agentBrowserExtension reports focused combobox diagnostics with option-opening next actions", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-combobox-focus-"));
+	const statePath = join(tempDir, "combobox-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const valueFlags = new Set(["--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+const target = args[commandIndex + 1];
+const value = args[commandIndex + 2];
+const action = args[commandIndex + 3];
+const nameIndex = args.indexOf("--name");
+const name = nameIndex >= 0 ? args[nameIndex + 1] : undefined;
+let state = { mode: "none" };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+if (command === "find" && target === "role" && value === "combobox" && action === "click") {
+  state.mode = name === "MissingExpanded" ? "combo-missing" : name === "Open" ? "combo-open" : name === "OptionsVisible" ? "combo-options" : "combo";
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+} else if (command === "click") {
+  state.mode = "textbox";
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+}
+let result = { ok: true, command, target };
+if (command === "eval") {
+  result = state.mode === "combo"
+    ? { comboboxLike: true, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "combobox", expanded: "false", hasPopup: "listbox", name: "Datasource", tagName: "input" } }
+    : state.mode === "combo-missing"
+      ? { comboboxLike: true, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "combobox", hasPopup: "listbox", name: "MissingExpanded", tagName: "input" } }
+      : state.mode === "combo-open"
+        ? { comboboxLike: true, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "combobox", expanded: "true", hasPopup: "listbox", name: "Open", tagName: "input" } }
+        : state.mode === "combo-options"
+          ? { comboboxLike: true, visibleListboxCount: 1, visibleOptionCount: 2, activeElement: { role: "combobox", expanded: "false", hasPopup: "listbox", name: "OptionsVisible", tagName: "input" } }
+          : { comboboxLike: false, visibleListboxCount: 0, visibleOptionCount: 0, activeElement: { role: "textbox", name: "Search", tagName: "input" } };
+}
+process.stdout.write(JSON.stringify({ success: true, data: command === "eval" ? { result } : result }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Check combobox recovery diagnostics." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const comboboxResult = await executeRegisteredTool(harness.tool, harness.ctx, { semanticAction: { action: "click", locator: "role", value: "combobox", name: "Datasource" }, sessionMode: "fresh" });
+			assert.equal(comboboxResult.isError, false);
+			assert.match(comboboxResult.content[0]?.text ?? "", /Combobox diagnostic: focused combobox did not expose visible options/);
+			const details = comboboxResult.details as {
+				comboboxFocus: { reason: string; activeElement: { name?: string; role?: string } };
+				nextActions: Array<{ id: string; params?: { args: string[] } }>;
+			};
+			assert.equal(details.comboboxFocus.reason, "focused-combobox-without-visible-options");
+			assert.equal(details.comboboxFocus.activeElement.role, "combobox");
+			assert.equal(details.comboboxFocus.activeElement.name, "Datasource");
+			const comboboxActionIds = details.nextActions.map((action) => action.id).filter((id) => id.includes("combobox"));
+			assert.deepEqual(comboboxActionIds, ["inspect-focused-combobox", "try-open-combobox-with-arrow", "try-open-combobox-with-enter"]);
+			assert.ok(details.nextActions.filter((action) => action.id.includes("combobox")).every((action) => action.params?.args[0] === "--session"));
+			for (const name of ["MissingExpanded", "Open", "OptionsVisible"]) {
+				const negativeComboboxResult = await executeRegisteredTool(harness.tool, harness.ctx, { semanticAction: { action: "click", locator: "role", value: "combobox", name } });
+				assert.equal(negativeComboboxResult.isError, false, name);
+				assert.equal((negativeComboboxResult.details as { comboboxFocus?: unknown }).comboboxFocus, undefined, name);
+				assert.doesNotMatch(negativeComboboxResult.content[0]?.text ?? "", /Combobox diagnostic/, name);
+			}
+
+			const textboxResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@text"] });
+			assert.equal(textboxResult.isError, false);
+			assert.equal((textboxResult.details as { comboboxFocus?: unknown }).comboboxFocus, undefined);
+			assert.doesNotMatch(textboxResult.content[0]?.text ?? "", /Combobox diagnostic/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension renders long TUI output compactly without changing model-facing content", async () => {
 	const harness = createExtensionHarness({ cwd: process.cwd(), prompt: "Inspect a page." });
 	const renderCall = harness.tool.renderCall;

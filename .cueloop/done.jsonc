@@ -3672,6 +3672,56 @@
       "blocks": [],
       "relates_to": [],
       "custom_fields": {}
+    },
+    {
+      "id": "RQ-0081",
+      "status": "done",
+      "title": "Detect combobox focus-without-open and suggest reliable option-selection fallbacks",
+      "priority": "high",
+      "tags": [
+        "agent-browser",
+        "dogfood",
+        "combobox",
+        "nextActions",
+        "agent-efficiency"
+      ],
+      "scope": [
+        "extensions/agent-browser/index.ts",
+        "extensions/agent-browser/lib/results/presentation.ts",
+        "extensions/agent-browser/lib/results/shared.ts",
+        "docs/TOOL_CONTRACT.md",
+        "docs/COMMAND_REFERENCE.md",
+        "README.md",
+        "test/agent-browser.extension-validation.test.ts",
+        "test/agent-browser.presentation.test.ts"
+      ],
+      "evidence": [
+        "Grafana Play dashboard dogfood: combobox clicks could focus fields without exposing option lists.",
+        "Current prompt guidance recommends re-snapshotting and falling back to type, Enter/arrows, select, or visible option refs, but the tool does not yet detect this state or provide structured follow-up actions."
+      ],
+      "plan": [
+        "Identify robust post-click/fill signals for combobox focus state, expanded state, visible listbox/option/menuitem refs, and unchanged page state.",
+        "When a combobox-like control is focused but options are not visible, emit a concise diagnostic and exact nextActions for snapshot, type/Enter/arrows, select, or option refs when safe.",
+        "Avoid false positives for normal textboxes and custom controls where expanded state is unavailable.",
+        "Update docs/playbook/tests for the diagnostic contract and recovery order."
+      ],
+      "notes": [
+        "Started by pi agent after completing RQ-0080 per execution contract.",
+        "Implemented conservative focused-combobox diagnostics for explicit combobox/listbox-targeted actions. Diagnostic requires focused combobox-like element, aria-expanded=\"false\", and no visible listbox/options/menu options; emits details.comboboxFocus, visible diagnostic text, and exact session-prefixed nextActions for snapshot -i, press ArrowDown, and press Enter.",
+        "Docs updated in README.md, docs/COMMAND_REFERENCE.md, docs/TOOL_CONTRACT.md, and docs/SUPPORT_MATRIX.md. Tests added for positive semanticAction role combobox path and negative ordinary-click, missing-expanded, already-open, and visible-options cases.",
+        "Verification: npm run docs -- write; npm run verify (first run exposed unrelated flaky partial-progress assertion, targeted rerun passed, final npm run verify passed: 290 pass, 1 skipped); git diff --check; cueloop machine queue validate. Reviewer signoff: no material findings after explicit aria-expanded=false fix."
+      ],
+      "request": "Post-0.2.27 Grafana dogfood follow-up from user request to queue unfinished tasks.",
+      "created_at": "2026-05-15T16:14:32.267385000Z",
+      "updated_at": "2026-05-15T17:24:53.650423000Z",
+      "completed_at": "2026-05-15T17:24:53.650423000Z",
+      "started_at": "2026-05-15T17:10:50.400914000Z",
+      "depends_on": [
+        "RQ-0080"
+      ],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
     }
   ]
 }

@@ -134,6 +134,21 @@ interface ScrollNoopDiagnostic {
 	recommendations: string[];
 }
 
+interface ComboboxFocusDiagnostic {
+	activeElement: {
+		expanded?: string;
+		hasPopup?: string;
+		name?: string;
+		role?: string;
+		tagName?: string;
+	};
+	message: string;
+	reason: "focused-combobox-without-visible-options";
+	recommendations: string[];
+	visibleListboxCount: number;
+	visibleOptionCount: number;
+}
+
 interface CompiledAgentBrowserJobStep {
 	action: AgentBrowserJobStepAction;
 	args: string[];
@@ -2841,6 +2856,112 @@ function mergeNavigationSummaryIntoData(data: unknown, navigationSummary: Naviga
 	return { navigationSummary, result: data };
 }
 
+const COMBOBOX_FOCUS_EVAL = `(() => {
+  const isVisible = (element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+    return element.getClientRects().length > 0;
+  };
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const role = active?.getAttribute("role") || undefined;
+  const hasPopup = active?.getAttribute("aria-haspopup") || undefined;
+  const expanded = active?.getAttribute("aria-expanded") || undefined;
+  const tagName = active?.tagName.toLowerCase();
+  const name = (active?.getAttribute("aria-label") || active?.getAttribute("placeholder") || active?.getAttribute("title") || active?.textContent || "").trim().slice(0, 80) || undefined;
+  const visibleListboxCount = Array.from(document.querySelectorAll('[role="listbox"], [role="menu"]')).filter(isVisible).length;
+  const visibleOptionCount = Array.from(document.querySelectorAll('[role="option"], option, [role="menuitem"]')).filter(isVisible).length;
+  const comboboxLike = role === "combobox" || hasPopup === "listbox" || hasPopup === "menu" || tagName === "select" || active?.getAttribute("aria-autocomplete") !== null;
+  return { activeElement: active ? { expanded, hasPopup, name, role, tagName } : undefined, comboboxLike, visibleListboxCount, visibleOptionCount };
+})()`;
+
+function extractComboboxFocusDiagnostic(data: unknown): ComboboxFocusDiagnostic | undefined {
+	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
+	if (!isRecord(result) || result.comboboxLike !== true || !isRecord(result.activeElement)) return undefined;
+	const visibleListboxCount = typeof result.visibleListboxCount === "number" ? result.visibleListboxCount : 0;
+	const visibleOptionCount = typeof result.visibleOptionCount === "number" ? result.visibleOptionCount : 0;
+	const expanded = typeof result.activeElement.expanded === "string" ? result.activeElement.expanded : undefined;
+	if (expanded !== "false" || visibleListboxCount > 0 || visibleOptionCount > 0) return undefined;
+	return {
+		activeElement: {
+			expanded,
+			hasPopup: typeof result.activeElement.hasPopup === "string" ? result.activeElement.hasPopup : undefined,
+			name: typeof result.activeElement.name === "string" ? redactSensitiveText(result.activeElement.name) : undefined,
+			role: typeof result.activeElement.role === "string" ? result.activeElement.role : undefined,
+			tagName: typeof result.activeElement.tagName === "string" ? result.activeElement.tagName : undefined,
+		},
+		message: "A combobox-like control is focused, but no listbox or option elements are visibly open.",
+		reason: "focused-combobox-without-visible-options",
+		recommendations: [
+			"Run snapshot -i to inspect whether options appeared under a different role or portal.",
+			"Try ArrowDown or Enter to open the option list before selecting, or use select/visible option refs when available.",
+		],
+		visibleListboxCount,
+		visibleOptionCount,
+	};
+}
+
+function isComboboxFocusDiagnosticCommand(command: string | undefined, commandTokens: string[]): boolean {
+	const explicitlyTargetsCombobox = commandTokens.some((token) => /^(?:combobox|listbox)$/i.test(token));
+	if (!explicitlyTargetsCombobox) return false;
+	if (command === "click" || command === "fill") return true;
+	return command === "find" && commandTokens.some((token) => ["click", "fill", "select"].includes(token));
+}
+
+async function collectComboboxFocusDiagnostic(options: {
+	command?: string;
+	commandTokens: string[];
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<ComboboxFocusDiagnostic | undefined> {
+	if (!isComboboxFocusDiagnosticCommand(options.command, options.commandTokens)) return undefined;
+	return extractComboboxFocusDiagnostic(await runSessionCommandData({
+		args: ["eval", "--stdin"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		signal: options.signal,
+		stdin: COMBOBOX_FOCUS_EVAL,
+	}));
+}
+
+function buildComboboxFocusNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
+	const withSession = (args: string[]): string[] => sessionName ? ["--session", sessionName, ...args] : args;
+	return [
+		{
+			id: "inspect-focused-combobox",
+			params: { args: withSession(["snapshot", "-i"]) },
+			reason: "Inspect the focused combobox and any portal/listbox refs before choosing an option.",
+			safety: "Prefer visible option refs or select when a native/selectable option list is exposed.",
+			tool: "agent_browser",
+		},
+		{
+			id: "try-open-combobox-with-arrow",
+			params: { args: withSession(["press", "ArrowDown"]) },
+			reason: "Many searchable comboboxes open their option list with ArrowDown after focus.",
+			safety: "Use only when the focused combobox is still the intended control, then re-snapshot before selecting.",
+			tool: "agent_browser",
+		},
+		{
+			id: "try-open-combobox-with-enter",
+			params: { args: withSession(["press", "Enter"]) },
+			reason: "Some comboboxes open or confirm their option list with Enter after focus.",
+			safety: "Enter may select a highlighted/default option; prefer ArrowDown first unless Enter is the app's expected opener.",
+			tool: "agent_browser",
+		},
+	];
+}
+
+function formatComboboxFocusDiagnosticText(diagnostic: ComboboxFocusDiagnostic | undefined): string | undefined {
+	if (!diagnostic) return undefined;
+	const label = diagnostic.activeElement.name ? ` (${diagnostic.activeElement.name})` : "";
+	return [
+		`Combobox diagnostic: focused combobox did not expose visible options${label}.`,
+		`Reason: ${diagnostic.message}`,
+		...diagnostic.recommendations.map((recommendation) => `- ${recommendation}`),
+	].join("\n");
+}
+
 function getSnapshotRefRecord(data: unknown): Record<string, unknown> | undefined {
 	return isRecord(data) && isRecord(data.refs) ? data.refs : undefined;
 }
@@ -4186,6 +4307,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							signal,
 						});
 					}
+					const comboboxFocusDiagnostic = succeeded
+						? await collectComboboxFocusDiagnostic({
+								command: executionPlan.commandInfo.command,
+								commandTokens,
+								cwd: ctx.cwd,
+								sessionName: executionPlan.sessionName,
+								signal,
+						  })
+						: undefined;
 					const scrollNoopDiagnostic = succeeded && shouldProbeScrollNoop
 						? buildScrollNoopDiagnostic(
 							scrollPositionBefore,
@@ -4426,6 +4556,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (scrollNoopDiagnostic) {
 						(nextActions ??= []).push(...buildScrollNoopNextActions(executionPlan.sessionName));
 					}
+					if (comboboxFocusDiagnostic) {
+						(nextActions ??= []).push(...buildComboboxFocusNextActions(executionPlan.sessionName));
+					}
 					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction) {
 						(nextActions ??= []).push({
 							id: "retry-semantic-action-after-stale-ref",
@@ -4435,7 +4568,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							tool: "agent_browser" as const,
 						});
 					}
-					const pageChangeSummary = scrollNoopDiagnostic && presentation.pageChangeSummary
+					const pageChangeSummary = (scrollNoopDiagnostic || comboboxFocusDiagnostic) && presentation.pageChangeSummary
 						? { ...presentation.pageChangeSummary, nextActionIds: nextActions?.map((action) => action.id) }
 						: presentation.pageChangeSummary;
 					const details = {
@@ -4473,6 +4606,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						nextActions,
 						pageChangeSummary,
 						overlayBlockers: overlayBlockerDiagnostic,
+						comboboxFocus: comboboxFocusDiagnostic,
 						scrollNoop: scrollNoopDiagnostic,
 						qaPreset,
 						selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
@@ -4502,11 +4636,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
 					const scrollNoopDiagnosticText = formatScrollNoopDiagnosticText(scrollNoopDiagnostic);
+					const comboboxFocusDiagnosticText = formatComboboxFocusDiagnosticText(comboboxFocusDiagnostic);
 					const evalStdinHintText = formatEvalStdinHintText(evalStdinHint);
 					const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
 					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
 					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, scrollNoopDiagnosticText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!userRequestedJson || plainTextInspection);
 					const content = shouldAppendDiagnosticText && redactedContent[0]?.type === "text"
