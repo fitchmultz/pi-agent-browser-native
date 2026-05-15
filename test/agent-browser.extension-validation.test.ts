@@ -2148,6 +2148,91 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	}
 });
 
+test("agentBrowserExtension reports partial progress and artifacts after job timeout", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-timeout-progress-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.test/secret-token/results?token=url-secret" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Results page export secret-token Authorization: Bearer title-secret" } }));
+} else if (args.includes("batch")) {
+  const stdin = fs.readFileSync(0, "utf8");
+  const steps = JSON.parse(stdin);
+  const screenshotStep = steps.find((step) => step[0] === "screenshot");
+  const screenshot = screenshotStep?.filter((token) => !String(token).startsWith('-')).at(-1);
+  if (screenshot && screenshot !== 'screenshot') {
+    fs.mkdirSync(path.dirname(path.resolve(screenshot)), { recursive: true });
+    fs.writeFileSync(path.resolve(screenshot), "fake image");
+  }
+  setInterval(() => {}, 1000);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "120" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: {
+					steps: [
+						{ action: "open", url: "https://example.test" },
+						{ action: "screenshot", path: "dogfood/secret-token/filled.png" },
+						{ action: "waitForDownload", path: "dogfood/export.csv" },
+						{ action: "wait", milliseconds: 500 },
+					],
+				},
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "timeout");
+			assert.equal(result.details?.timedOut, true);
+			const timeoutProgress = result.details?.timeoutPartialProgress as { artifacts?: Array<{ exists?: boolean; path?: string; sizeBytes?: number; stepIndex?: number }>; currentPage?: { title?: string; url?: string }; steps?: Array<{ args?: string[]; index?: number }> } | undefined;
+			assert.equal(timeoutProgress?.currentPage?.url, "https://example.test/secret-token/results?token=%5BREDACTED%5D");
+			assert.equal(timeoutProgress?.currentPage?.title, "Results page export secret-token Authorization: Bearer [REDACTED]");
+			assert.deepEqual(timeoutProgress?.artifacts?.map((artifact) => ({ exists: artifact.exists, path: artifact.path, stepIndex: artifact.stepIndex })), [
+				{ exists: true, path: "dogfood/secret-token/filled.png", stepIndex: 2 },
+				{ exists: false, path: "dogfood/export.csv", stepIndex: 3 },
+			]);
+			assert.deepEqual(timeoutProgress?.steps?.map((step) => step.args?.[0]), ["open", "screenshot", "wait", "wait"]);
+			const text = (result.content[0] as { text: string }).text;
+			assert.match(text, /Timeout partial progress:/);
+			assert.match(text, /Current page: \[REDACTED\] — https:\/\/example.test\/\[REDACTED\]\/results\?token=%5BREDACTED%5D/);
+			assert.match(text, /Artifact from step 2: dogfood\/\[REDACTED\]\/filled\.png \(exists, 10 bytes\)/);
+			assert.doesNotMatch(text, /url-secret|title-secret|secret-token/);
+			assert.match(text, /Artifact from step 3: dogfood\/export\.csv \(missing\)/);
+
+			const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "--full-page", "dogfood/option-full-page.png"], ["wait", "--download", "dogfood/download.csv", "--timeout", "1000"]]),
+			});
+			assert.equal(batchResult.isError, true);
+			const batchProgress = batchResult.details?.timeoutPartialProgress as { artifacts?: Array<{ exists?: boolean; path?: string; stepIndex?: number }> } | undefined;
+			assert.deepEqual(batchProgress?.artifacts?.map((artifact) => ({ exists: artifact.exists, path: artifact.path, stepIndex: artifact.stepIndex })), [
+				{ exists: true, path: "dogfood/option-full-page.png", stepIndex: 1 },
+				{ exists: false, path: "dogfood/download.csv", stepIndex: 2 },
+			]);
+
+			const waitNoPathResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["wait", "--download", "--timeout", "1000"]]),
+			});
+			assert.equal(waitNoPathResult.isError, true);
+			const waitNoPathProgress = waitNoPathResult.details?.timeoutPartialProgress as { artifacts?: Array<{ path?: string }> } | undefined;
+			assert.deepEqual(waitNoPathProgress?.artifacts, []);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension forwards wait --download saved-file metadata in details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-download-"));
 	const basePath = process.env.PATH ?? "";
