@@ -262,7 +262,7 @@ Start a fresh profiled browser after the implicit public-browsing session alread
 { "args": ["--profile", "Default", "open", "https://example.com/account"], "sessionMode": "fresh" }
 ```
 
-After a successful unnamed fresh launch, later default `sessionMode: "auto"` calls follow that browser automatically.
+After a successful unnamed fresh launch, later default `sessionMode: "auto"` calls follow that browser automatically. If the fresh launch fails or times out, `details.managedSessionOutcome` and visible `Managed session outcome` text state whether the previous managed session was preserved or whether the attempted fresh session was abandoned before any managed session became current.
 
 ## Authenticated/profile workflows
 
