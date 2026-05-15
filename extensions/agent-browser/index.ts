@@ -74,6 +74,7 @@ import {
 	formatSessionArtifactRetentionSummary,
 	isSessionArtifactManifest,
 	mergeSessionArtifactManifest,
+	summarizeNetworkFailures,
 } from "./lib/results/shared.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
@@ -236,7 +237,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 			screenshotPath: Type.Optional(Type.String({ description: "Optional evidence screenshot path captured at the end of the QA preset." })),
 			checkConsole: Type.Optional(Type.Boolean({ description: "Whether to fail on console error messages. Defaults to true." })),
 			checkErrors: Type.Optional(Type.Boolean({ description: "Whether to fail on page errors. Defaults to true." })),
-			checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to fail on failed network requests. Defaults to true." })),
+			checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to inspect network requests and fail on actionable request failures; benign icon misses warn. Defaults to true." })),
 		}),
 	),
 	sourceLookup: Type.Optional(
@@ -370,6 +371,7 @@ interface AgentBrowserQaPresetAnalysis {
 	failedChecks: string[];
 	passed: boolean;
 	summary: string;
+	warnings: string[];
 }
 
 function getBatchResultItems(data: unknown): Array<Record<string, unknown>> {
@@ -385,6 +387,7 @@ function analyzeQaPresetResults(data: unknown): AgentBrowserQaPresetAnalysis | u
 	const items = getBatchResultItems(data);
 	if (items.length === 0) return undefined;
 	const failedChecks: string[] = [];
+	const warnings: string[] = [];
 	for (const item of items) {
 		if (item.success === false) {
 			failedChecks.push(`${getCommandNameFromBatchItem(item) ?? "step"} failed`);
@@ -399,15 +402,20 @@ function analyzeQaPresetResults(data: unknown): AgentBrowserQaPresetAnalysis | u
 			if (errorCount > 0) failedChecks.push(`${errorCount} console error message(s)`);
 		}
 		if (commandName === "network" && Array.isArray(result?.requests)) {
-			const failedRequestCount = result.requests.filter((request) => isRecord(request) && ((typeof request.status === "number" && request.status >= 400) || request.failed === true || typeof request.error === "string")).length;
-			if (failedRequestCount > 0) failedChecks.push(`${failedRequestCount} failed network request(s)`);
+			const networkFailures = summarizeNetworkFailures(result.requests);
+			if (networkFailures.actionableCount > 0) failedChecks.push(`${networkFailures.actionableCount} actionable failed network request(s)`);
+			if (networkFailures.benignCount > 0) warnings.push(`${networkFailures.benignCount} benign network request failure(s) ignored`);
 		}
 	}
 	const uniqueFailures = [...new Set(failedChecks)];
+	const uniqueWarnings = [...new Set(warnings)];
 	return {
 		failedChecks: uniqueFailures,
 		passed: uniqueFailures.length === 0,
-		summary: uniqueFailures.length === 0 ? "QA preset passed." : `QA preset failed: ${uniqueFailures.join("; ")}.`,
+		summary: uniqueFailures.length === 0
+			? uniqueWarnings.length === 0 ? "QA preset passed." : `QA preset passed with warnings: ${uniqueWarnings.join("; ")}.`
+			: `QA preset failed: ${uniqueFailures.join("; ")}.`,
+		warnings: uniqueWarnings,
 	};
 }
 
@@ -3714,9 +3722,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					} else if (sourceLookup) {
 						presentation.content.unshift({ type: "text", text: sourceLookup.summary });
 					}
-					if (qaPreset && !qaPreset.passed) {
-						succeeded = false;
-						presentation.failureCategory = "qa-failure";
+					if (qaPreset && (!qaPreset.passed || qaPreset.warnings.length > 0)) {
+						if (!qaPreset.passed) {
+							succeeded = false;
+							presentation.failureCategory = "qa-failure";
+						}
 						presentation.summary = qaPreset.summary;
 						if (presentation.content[0]?.type === "text") {
 							presentation.content[0] = { ...presentation.content[0], text: `${qaPreset.summary}\n\n${presentation.content[0].text}` };

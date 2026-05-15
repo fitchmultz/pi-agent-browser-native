@@ -1332,10 +1332,15 @@ process.stdin.on("end", () => {
   const steps = JSON.parse(stdin);
   const results = steps.map((command) => {
     const name = command[0];
-    if (name === "open") mode = String(command[1] || "").includes("fail") ? "fail" : "clean";
+    if (name === "open") {
+      const url = String(command[1] || "");
+      mode = url.includes("fail") ? "fail" : url.includes("favicon") ? "favicon" : "clean";
+    }
     if (name === "network") {
       if (command.includes("--clear")) { staleNetwork = false; return { command, success: true, result: { requests: [] } }; }
-      return { command, success: true, result: staleNetwork || mode === "fail" ? { requests: [{ method: "GET", status: 500, url: "https://example.test/api" }] } : { requests: [] } };
+      if (staleNetwork || mode === "fail") return { command, success: true, result: { requests: [{ method: "GET", resourceType: "fetch", status: 500, url: "https://example.test/api" }] } };
+      if (mode === "favicon") return { command, success: true, result: { requests: [{ method: "GET", mimeType: "image/x-icon", status: 404, url: "https://example.test/favicon.ico" }] } };
+      return { command, success: true, result: { requests: [] } };
     }
     if (name === "console") {
       if (command.includes("--clear")) { staleConsole = false; return { command, success: true, result: { messages: [] } }; }
@@ -1365,6 +1370,19 @@ process.stdin.on("end", () => {
 			assert.equal(cleanResult.isError, false);
 			assert.deepEqual((cleanResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, []);
 
+			const benignNetworkResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: {
+					url: "https://favicon.example.test/",
+					expectedText: ["Welcome"],
+				},
+			});
+			assert.equal(benignNetworkResult.isError, false);
+			assert.deepEqual((benignNetworkResult.details?.qaPreset as { failedChecks?: string[]; warnings?: string[] } | undefined)?.failedChecks, []);
+			assert.deepEqual((benignNetworkResult.details?.qaPreset as { warnings?: string[] } | undefined)?.warnings, ["1 benign network request failure(s) ignored"]);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /QA preset passed with warnings: 1 benign network request failure\(s\) ignored\./);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /Network failure summary: 0 actionable, 1 benign low-impact \(1 total\)\./);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /404 GET https:\/\/example.test\/favicon.ico \(image\/x-icon\).*\[benign: low-impact browser icon asset\]/);
+
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {
 					url: "https://fail.example.test/",
@@ -1377,7 +1395,7 @@ process.stdin.on("end", () => {
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.failureCategory, "qa-failure");
 			assert.deepEqual((result.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
-				"1 failed network request(s)",
+				"1 actionable failed network request(s)",
 				"1 console error message(s)",
 				"1 page error(s)",
 			]);
@@ -1398,6 +1416,7 @@ process.stdin.on("end", () => {
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
 			assert.deepEqual(invocations[1]?.args.slice(-1), ["batch"]);
+			assert.deepEqual(invocations[2]?.args.slice(-1), ["batch"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
