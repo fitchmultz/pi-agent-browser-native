@@ -257,6 +257,8 @@ For asynchronous exports, click first and then wait for the download:
 
 With upstream `agent-browser 0.27.0`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` before relying on the requested `wait --download <path>` file being present on disk.
 
+Artifact cleanup is host-owned, not a browser command. `close` shuts down the browser session but does **not** delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings saved to paths you chose. When recent artifact metadata exists, `close` appends an `Artifact lifecycle` note and exposes `details.artifactCleanup.explicitArtifactPaths` so dogfood agents can remove those files with normal file tools after inspection.
+
 Start a fresh profiled browser after the implicit public-browsing session already exists:
 
 ```json

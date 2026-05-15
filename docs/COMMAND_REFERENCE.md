@@ -265,6 +265,8 @@ The wrapper keeps a bounded, metadata-only `details.artifactManifest` of recent 
 
 This manifest cap controls what appears in `details.artifactManifest` and in summaries such as `Session artifacts: 42 live, 0 evicted (42/100 recent)`. It does not delete explicit files that upstream saved to paths you chose, such as screenshots, PDFs, downloads, traces, HAR files, or WebM recordings.
 
+Browser `close` is also not file cleanup. If a session has recent artifact metadata, a successful `close` appends an `Artifact lifecycle` note and reports `details.artifactCleanup` with the current retention summary plus up to ten explicit artifact paths to review. Delete those files with host file tools after inspection; the native browser tool intentionally does not remove arbitrary user-chosen filesystem paths.
+
 Oversized snapshots and oversized generic outputs are different: when a persisted pi session is available, their wrapper-managed spill files are stored under the private session artifact directory and are governed by the byte budget `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` (default 32 MiB). Raise that byte budget as well for long QA sessions that need many full raw snapshots or large text spills to survive reload/resume.
 
 ### Switch from an already-active implicit session to a fresh profiled launch
