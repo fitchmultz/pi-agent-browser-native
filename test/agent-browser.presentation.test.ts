@@ -804,8 +804,9 @@ test("buildToolPresentation formats redacted network payload, response, and erro
 
 	assert.equal(presentation.summary, "Network requests: 2");
 	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Network failure summary: 1 actionable, 0 benign low-impact \(1 total\)\./);
 	assert.match(text, /1\. 200 GET https:\/\/example.com\/ \(Document\) \[req-1\]/);
-	assert.match(text, /2\. 201 POST https:\/\/api\.example\.test\/items\?token=%5BREDACTED%5D \(Fetch\) \[req-2\]/);
+	assert.match(text, /2\. 201 POST https:\/\/api\.example\.test\/items\?token=%5BREDACTED%5D \(Fetch\) \[req-2\] \[actionable: document, script, API, or non-benign request failure\]/);
 	assert.match(text, /Payload: .*name.*demo/);
 	assert.match(text, /Payload: .*\[REDACTED\]/);
 	assert.match(text, /Payload: .*https:\/\/api\.example\.test\/callback\?token=%5BREDACTED%5D/);

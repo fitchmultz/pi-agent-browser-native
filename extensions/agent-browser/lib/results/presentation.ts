@@ -29,6 +29,7 @@ import {
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
+	classifyNetworkRequestFailure,
 	type BatchFailurePresentationDetails,
 	type BatchStepPresentationDetails,
 	type ArtifactStorageScope,
@@ -43,6 +44,7 @@ import {
 	formatSessionArtifactRetentionSummary,
 	mergeSessionArtifactManifest,
 	stringifyUnknown,
+	summarizeNetworkFailures,
 	truncateText,
 } from "./shared.js";
 
@@ -589,7 +591,9 @@ function formatNetworkRequestLine(item: Record<string, unknown>, index: number):
 	const url = getStringField(item, "url") ?? "(no url)";
 	const requestId = getStringField(item, "requestId") ?? getStringField(item, "id");
 	const idText = requestId ? ` [${redactSensitiveText(requestId)}]` : "";
-	const lines = [`${index + 1}. ${status} ${method} ${truncateText(redactSensitiveText(url), 180)}${type ? ` (${type})` : ""}${idText}`];
+	const failureClassification = classifyNetworkRequestFailure(item);
+	const impactText = failureClassification ? ` [${failureClassification.impact}: ${failureClassification.reason}]` : "";
+	const lines = [`${index + 1}. ${status} ${method} ${truncateText(redactSensitiveText(url), 180)}${type ? ` (${type})` : ""}${idText}${impactText}`];
 	appendNetworkPreview(lines, "Payload", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.request), NETWORK_BODY_PREVIEW_MAX_CHARS);
 	appendNetworkPreview(lines, "Response", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.response), NETWORK_BODY_PREVIEW_MAX_CHARS);
 	appendNetworkPreview(lines, "Error", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.error), NETWORK_ERROR_PREVIEW_MAX_CHARS);
@@ -600,10 +604,14 @@ function formatNetworkRequestsText(data: Record<string, unknown>): string | unde
 	const requests = getArrayField(data, "requests");
 	if (!requests) return undefined;
 	if (requests.length === 0) return "No network requests captured.";
-	const shown = requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap((item, index) => {
+	const networkFailureSummary = summarizeNetworkFailures(requests);
+	const shown = networkFailureSummary.totalCount > 0
+		? [`Network failure summary: ${networkFailureSummary.actionableCount} actionable, ${networkFailureSummary.benignCount} benign low-impact (${networkFailureSummary.totalCount} total).`]
+		: [];
+	shown.push(...requests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap((item, index) => {
 		if (!isRecord(item)) return [`${index + 1}. ${stringifyModelFacing(item)}`];
 		return formatNetworkRequestLine(item, index);
-	});
+	}));
 	if (requests.length > DIAGNOSTIC_REQUEST_PREVIEW_LIMIT) {
 		shown.push(`... (${requests.length - DIAGNOSTIC_REQUEST_PREVIEW_LIMIT} additional requests omitted from preview)`);
 	}

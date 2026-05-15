@@ -184,8 +184,8 @@ Because `job` still executes as upstream `batch` with generated stdin, the same 
 - clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load networkidle`, optionally asserts `expectedText` (string or string array) and/or `expectedSelector` (each may be omitted for a load-plus-diagnostics-only smoke), then runs enabled diagnostics: `network requests`, `console`, and `errors`
 - `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set a field to `false` to omit that diagnostic
 - optional `screenshotPath` adds an evidence screenshot step
-- reports `details.compiledQaPreset` with the compiled batch plan and `details.qaPreset` with `{ passed, failedChecks, summary }`
-- fails the native tool result with `failureCategory: "qa-failure"` when diagnostics report page errors, console error messages, failed network requests, or any batch step failure
+- reports `details.compiledQaPreset` with the compiled batch plan and `details.qaPreset` with `{ passed, failedChecks, warnings, summary }`
+- fails the native tool result with `failureCategory: "qa-failure"` when diagnostics report page errors, console error messages, actionable failed network requests, or any batch step failure. Common low-impact browser icon failures such as missing `favicon.ico` are classified as benign network warnings in `qaPreset.warnings` and do not fail QA by default.
 
 Example:
 
@@ -432,7 +432,7 @@ Additional structured fields can appear when relevant:
 - `compiledSemanticAction` when the call used `semanticAction` and the result includes the unified `details` merge: `{ action, locator, args }` with the same redaction rules as `args` / `effectiveArgs`; omitted for plain `args`/`job` calls and omitted on some early error returns that omit this field (see the `semanticAction` section above)
 - `compiledJob` when the call used `job` or the job-backed `qa` preset: `{ args: ["batch"], stdin, steps: [{ action, args }] }`, with step args redacted the same way as other invocation details
 - `compiledQaPreset` when the call used `qa`: the compiled job fields plus the QA `checks` object
-- `qaPreset` when the call used `qa`: `{ passed, failedChecks, summary }`
+- `qaPreset` when the call used `qa`: `{ passed, failedChecks, warnings, summary }`
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `pageChangeSummary` for compact mutation/artifact/navigation summaries on commands that can change browser state
@@ -473,7 +473,7 @@ Worth doing in v1:
 - navigation actions like `click`, `back`, `forward`, and `reload` → lightweight post-action title/url summary when available
 - tab lists → compact summary/table
 - stream status → enabled/connected/port summary plus WebSocket URL and frame format when a port is known; if the caller explicitly passed `--json`, visible text is valid JSON instead of a prose summary
-- diagnostic/status families (`session`, `session list`, `profiles`, `doctor`, `auth list`/`show`, `cookies`, `storage`, `dialog`, `frame`, `state`, `network requests`, `console`, `errors`, and dashboard start/stop/status outputs) → compact readable summaries with counts and stable fields; large log/request/error outputs use previews plus `fullOutputPath` spill files; sensitive nested auth/header/token fields are not expanded in the model-facing text
+- diagnostic/status families (`session`, `session list`, `profiles`, `doctor`, `auth list`/`show`, `cookies`, `storage`, `dialog`, `frame`, `state`, `network requests`, `console`, `errors`, and dashboard start/stop/status outputs) → compact readable summaries with counts and stable fields; network request lists include an actionable-vs-benign failed-request summary and mark low-impact browser icon failures separately; large log/request/error outputs use previews plus `fullOutputPath` spill files; sensitive nested auth/header/token fields are not expanded in the model-facing text
 - trace/profiler owner conflicts → when the wrapper has observed one owner active for a session, block conflicting starts/stops with "wrapper believes ..." wording because upstream or external CLI use can desynchronize wrapper-local state
 
 ## Missing binary behavior
