@@ -36,7 +36,7 @@ npm run verify -- release
 
 `prepublishOnly` intentionally does **not** run `npm run verify -- lifecycle`, `npm run verify -- real-upstream`, or `npm run verify -- benchmark`; those are separate `npm run verify` modes in [`scripts/project.mjs`](../scripts/project.mjs). Treat the bullets below as the full pre-publish contract even though only the `release` slice is automated at publish time.
 
-Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. Use `pi --no-extensions -e .` from the checkout before publish, drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost and fake-upstream gates do not replace this human-readable live-site transcript evidence.
+Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. Use `pi --no-extensions -e .` from the checkout before publish, drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost and fake-upstream gates do not replace this human-readable live-site transcript evidence. For dense-dashboard stress coverage, use the [public Grafana stress checklist](#public-grafana-stress-checklist) below; it is a maintainer workflow, not bundled product skill or recipe runtime.
 
 The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload` plus restart/`/resume` behavior:
 
@@ -45,6 +45,29 @@ npm run verify -- lifecycle
 ```
 
 Use `npm run verify -- lifecycle --keep-artifacts` when debugging failures, then remove retained artifacts after inspection.
+
+## Public Grafana stress checklist
+
+Use this optional-but-recommended checklist when a release touches dashboard behavior, snapshots, refs, scroll, comboboxes, artifacts, network diagnostics, recording, or prompt guidance. It keeps the useful public Grafana dogfood target repeatable without bundling private dogfood/VFR skills or adding a reusable browser recipe layer.
+
+Target:
+
+```text
+https://play.grafana.org/d/rYdddlPWk/node-exporter-full?orgId=1&from=now-6h&to=now&timezone=browser&var-datasource=default&var-job=node&var-node=All
+```
+
+Minimum pass:
+
+1. Open the URL with the native `agent_browser` tool in a fresh session.
+2. Run `snapshot -i`; confirm the output is useful on a dense dashboard, including high-value controls and bounded spill behavior when needed.
+3. Exercise one dashboard scroll path. If page-level `scroll` does not move visible content, confirm `details.scrollNoop` / next actions or equivalent guidance points to snapshot/screenshot verification and nested-scroll recovery.
+4. Exercise one explicit combobox-targeted action such as a role/name `semanticAction` on a dashboard variable. If it only focuses the field, confirm `details.comboboxFocus` / next actions point to `snapshot -i`, `press ArrowDown`, and `press Enter` when the closed-state evidence qualifies.
+5. Capture at least one screenshot artifact and verify `details.artifactVerification` before using the file.
+6. If `ffmpeg` is on `PATH`, run a short `record start` / visible interaction / `record stop` cycle and verify the WebM artifact. If `ffmpeg` is absent, confirm `details.recordingDependencyWarning` appears after `record start` and stop before relying on recording evidence.
+7. Inspect `network requests`, `console`, and `errors` summaries. Treat Grafana Play-side noise such as analytics/Sentry requests, public-demo 403s, and console errors as site noise unless the wrapper leaks secrets, hides actionable failed rows, misclassifies artifacts, or suggests unsafe follow-ups.
+8. Close the browser session and delete temporary screenshots, HARs, recordings, and scratch reports after extracting any release evidence.
+
+Record release evidence as a short note with: date, package/checkout source, target URL, browser command families exercised, artifacts collected and cleaned up, known Grafana-side noise observed, and any product findings converted into CueLoop tasks. Do not commit private dogfood scripts, VFR harness files, raw browser profiles, HARs, videos, or `.dogfood/` run output as product docs.
 
 ## Deterministic agent efficiency benchmark
 
@@ -206,7 +229,7 @@ Before publishing:
 - run `npm run doctor` and confirm any duplicate-source remediation matches the active package/checkout setup
 - run `npm run verify -- real-upstream` for upstream runtime, result-presentation, or managed-session changes
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and configured-source lifecycle validation
-- complete interactive `tmux` live-site dogfood with `pi --no-extensions -e .` and the native `agent_browser` tool (at least one simple static site and one real documentation/product site; include `qa` or `job`/`batch` when those surfaces changed; close sessions and remove screenshots/temp artifacts; record evidence)—see [Pre-release checks](#pre-release-checks); automated gates are not a substitute
+- complete interactive `tmux` live-site dogfood with `pi --no-extensions -e .` and the native `agent_browser` tool (at least one simple static site and one real documentation/product site; include `qa` or `job`/`batch` when those surfaces changed; use the [public Grafana stress checklist](#public-grafana-stress-checklist) when dashboard/diagnostic/artifact behavior changed; close sessions and remove screenshots/temp artifacts; record evidence)—see [Pre-release checks](#pre-release-checks); automated gates are not a substitute
 - rerun `npm run verify -- release`
 - run `npm run verify -- lifecycle` for configured-source `/reload` plus restart/`/resume` regression coverage (required before publish; see [Pre-release checks](#pre-release-checks))
 - confirm [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) still maps every current baseline inventory section to docs, runtime handling, tests, and validation status

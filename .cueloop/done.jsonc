@@ -1976,8 +1976,8 @@
       ],
       "relates_to": [],
       "custom_fields": {
-        "source": "manual-upstream-refresh",
-        "target_upstream_version": "0.27.0"
+        "target_upstream_version": "0.27.0",
+        "source": "manual-upstream-refresh"
       }
     },
     {
@@ -3767,6 +3767,54 @@
       "completed_at": "2026-05-15T17:34:29.954169000Z",
       "started_at": "2026-05-15T17:25:19.335640000Z",
       "depends_on": [],
+      "blocks": [],
+      "relates_to": [],
+      "custom_fields": {}
+    },
+    {
+      "id": "RQ-0083",
+      "status": "done",
+      "title": "Capture a repeatable public Grafana stress checklist without bundling private dogfood skills",
+      "priority": "medium",
+      "tags": [
+        "dogfood",
+        "grafana",
+        "docs",
+        "release",
+        "stress"
+      ],
+      "scope": [
+        "docs/RELEASE.md",
+        "docs/SUPPORT_MATRIX.md",
+        "README.md",
+        "AGENTS.md"
+      ],
+      "evidence": [
+        "Grafana Play Node Exporter Full dashboard proved useful as a public repeatable target for dense UI, noisy network, artifacts, screenshots/HAR/video, stale refs, and semantic actions.",
+        "Decision: do not package private dogfood/VFR skills with this extension; product docs should mention lightweight public validation only when useful and avoid adding a recipe runtime layer."
+      ],
+      "plan": [
+        "Define the minimal recurring release/dogfood checklist around the public Grafana URL and expected categories of observations, not private scripts.",
+        "Document which artifacts to collect and clean up, and how to distinguish product bugs from known Grafana-side noise such as console errors or 403s.",
+        "Keep guidance short and linked from release/support docs so it does not bloat runtime prompt guidance.",
+        "Validate once manually before treating it as release evidence."
+      ],
+      "notes": [
+        "Started by pi agent after completing RQ-0082 per execution contract.",
+        "Documented public Grafana Play stress checklist in docs/RELEASE.md with target URL, dense snapshot, scroll, combobox, screenshot/artifact, optional recording, network/console/error, cleanup, and evidence expectations. README and AGENTS link to the checklist without adding runtime prompt bloat; SUPPORT_MATRIX records RQ-0083 rationale and validation evidence.",
+        "Validated once manually with native agent_browser against Grafana Play: fresh open, wait/screenshot artifact verification, snapshot -i dense output, scroll, semanticAction role combobox click, second screenshot, network requests, console, close artifact lifecycle, and host cleanup of /tmp/pi-agent-browser-grafana-rq0083*.png. Observed expected Grafana-side 403/network and console noise.",
+        "Verification: npm run docs -- write; npm run verify (291 pass, 1 skipped); git diff --check; cueloop machine queue validate (valid, dependency-blocked until this task is archived); reviewer found only queue lifecycle completion remaining."
+      ],
+      "request": "Post-0.2.27 Grafana dogfood follow-up from user request to queue unfinished tasks.",
+      "created_at": "2026-05-15T16:14:32.267385000Z",
+      "updated_at": "2026-05-15T17:38:45.966389000Z",
+      "completed_at": "2026-05-15T17:38:45.966389000Z",
+      "started_at": "2026-05-15T17:34:43.919237000Z",
+      "depends_on": [
+        "RQ-0080",
+        "RQ-0081",
+        "RQ-0082"
+      ],
       "blocks": [],
       "relates_to": [],
       "custom_fields": {}
