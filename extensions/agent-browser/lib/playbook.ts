@@ -13,6 +13,10 @@ export const TOOL_PROMPT_GUIDELINES_PREFIX = [
 	"Use agent_browser whenever the task requires a real browser or live web content.",
 ] as const;
 
+export function buildInstalledDocsGuideline(paths: { readmePath: string; commandReferencePath: string; toolContractPath: string }): string {
+	return `For deeper guidance without bloating context, read installed package docs on demand: ${paths.readmePath} for setup/external dependencies, ${paths.commandReferencePath} for command workflows, and ${paths.toolContractPath} for result/details contracts. Do not load the full command reference unless needed; prefer targeted sections.`;
+}
+
 export const QUICK_START_GUIDELINES = [
 	"Quick start mental model: use exactly one of args (exact agent-browser CLI args after the binary), semanticAction (a thin find-locator shorthand compiled to find argv), job (a constrained short-workflow schema compiled to batch), qa (a lightweight QA preset built on job/batch), or the experimental sourceLookup / networkSourceLookup helpers (each compiled to batch); stdin is only for batch, eval --stdin, auth save --password-stdin, and wrapper-generated batch stdin from job, qa, sourceLookup, or networkSourceLookup, and other command/stdin combinations are rejected before launch; sessionMode=fresh switches the extension-managed pi-scoped session to a fresh upstream launch when you need new --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device state.",
 	"There is no first-class reusable named browser recipe runtime above top-level job, the qa preset, and raw batch stdin; keep recurring flows in documentation examples or those inputs (closed RQ-0068; see docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet).",
@@ -47,6 +51,7 @@ export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"For feed, timeline, or inbox reading tasks, focus on the main timeline/list region and read the first item there rather than unrelated composer or sidebar content.",
 	"For read-only browsing tasks, prefer extracting the answer from the current snapshot, structured ref labels, or eval --stdin on the current page before navigating away. Only click into media viewers, detail routes, or new pages when the current view does not contain the needed information.",
 	"For downloads, prefer download <selector> <path> when an element click should save a file. Do not rely on click alone when you need the downloaded file on disk.",
+	"On dashboards with nested scroll containers, verify scroll with a screenshot or fresh snapshot -i; if the viewport did not move, prefer scrollintoview <@ref> or target the actual scrollable region. For comboboxes, a click/semanticAction may only focus the field; re-snapshot and fall back to type, press Enter/arrow keys, select, or visible option refs.",
 	"When using eval --stdin, scope checks and actions to the target element or route whenever possible instead of relying on broad page-wide text heuristics.",
 	"When using eval --stdin for extraction, return the value you want instead of relying on console.log as the primary result channel. Prefer plain expressions like ({ title: document.title }) or explicitly invoked functions like (() => ({ title: document.title }))(); if a function-shaped snippet returns {}, details.evalStdinHint may warn that the function was serialized instead of called. If get text on a CSS selector surfaces details.selectorTextVisibility or selectorTextVisibilityAll, prefer a visible @ref, a more specific selector, or the inspect-visible-text-candidates nextAction over hidden tab content.",
 	"When details.pageChangeSummary is present, use changeType and summary as a compact signal for navigation, DOM mutation, confirmations, or artifacts; when nextActionIds is set, match those ids to entries in details.nextActions (or per-step nextActions inside batch) for concrete follow-up payloads instead of inferring from prose alone. If a no-navigation click surfaces details.overlayBlockers, inspect the fresh snapshot evidence before using a close/dismiss candidate nextAction; ordinary page chrome without dialog/alertdialog evidence should not trigger this diagnostic.",
@@ -83,11 +88,26 @@ export function buildSharedBrowserPlaybookGuidelines(options: { includeBraveSear
 	];
 }
 
-export function buildToolPromptGuidelines(options: { includeBraveSearch: boolean }): string[] {
+const RUNTIME_PROMPT_GUIDELINES = [
+	"Use exactly one input mode: args, semanticAction, job, qa, sourceLookup, or networkSourceLookup. Use stdin only for batch, eval --stdin, auth save --password-stdin, or wrapper-generated batch modes.",
+	"Common flow: open, snapshot -i, interact with current @refs or semanticAction, then re-snapshot after navigation, scrolling, rerenders, or DOM changes.",
+	"Prefer stable locators for visible text/names: semanticAction or upstream find with role/text/label/placeholder/alt/title/testid. Use current @refs only from the latest same-page snapshot.",
+	"Use sessionMode=fresh for launch-scoped state such as --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, providers, or iOS devices; otherwise let the implicit session carry continuity.",
+	"For artifacts, read visible metadata and details.artifactVerification before using files. record stop needs ffmpeg on PATH. close does not delete saved files; cleanup is host-owned.",
+	"When details.nextActions is present, prefer those exact follow-up payloads over prose or guessed selectors.",
+	"For dense snapshots, check Omitted high-value controls and details.data.highValueControlRefIds before opening large spill files.",
+	"For dashboards, verify scroll with screenshot/snapshot; if nothing moved, use scrollintoview <@ref> or target the real scroll region. Combobox clicks may only focus; re-snapshot and fall back to type, Enter/arrows, select, or option refs.",
+	"For extraction, prefer get title/url/text/html/value/attr/count or eval --stdin that returns a value; do not rely on console.log. If selector visibility warnings appear, prefer visible @refs or nextActions.",
+	"For non-core debugging, pass upstream commands through args: network, diff, trace/profiler/record, console/errors, stream, dashboard, chat, react, vitals, pushstate, dialog, frame, tab.",
+] as const;
+
+export function buildToolPromptGuidelines(options: { includeBraveSearch: boolean; docs?: { readmePath: string; commandReferencePath: string; toolContractPath: string } }): string[] {
 	return [
 		...TOOL_PROMPT_GUIDELINES_PREFIX,
-		...QUICK_START_GUIDELINES,
-		...buildSharedBrowserPlaybookGuidelines(options),
-		...TOOL_PROMPT_GUIDELINES_SUFFIX,
+		...(options.docs ? [buildInstalledDocsGuideline(options.docs)] : []),
+		...RUNTIME_PROMPT_GUIDELINES,
+		...(options.includeBraveSearch ? [BRAVE_SEARCH_PROMPT_GUIDELINE] : []),
+		TOOL_PROMPT_GUIDELINES_SUFFIX[0],
+		TOOL_PROMPT_GUIDELINES_SUFFIX[1],
 	];
 }

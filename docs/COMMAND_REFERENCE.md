@@ -246,7 +246,7 @@ Prefer `download <selector> <path>` when the target element itself is the downlo
 Wrapper result rendering is metadata-first for saved files:
 - screenshots return a saved-path summary, visible artifact metadata, structured `details.artifacts` metadata, and an inline image attachment when safe; the visible block includes artifact type, requested path, absolute path, existence, size, cwd, session, and repair/copy status when applicable
 - downloads, PDFs, `wait --download` files, `state save` state files, diff screenshot output images, traces, CPU profiles, completed WebM recordings from `record stop`, and path-bearing HAR captures return concise saved-path summaries plus structured `details.artifacts` metadata without inlining large files
-- `record start <path>` reports that recording started and that output will be written on `record stop`; the target file may not exist until recording stops
+- `record start <path>` reports that recording started and that output will be written on `record stop`; the target file may not exist until recording stops, and upstream needs `ffmpeg` on `PATH` at stop time to encode the WebM
 - `batch` keeps each step's artifacts in `details.batchSteps[].artifacts` and aggregates them in top-level `details.artifacts` in step order
 
 `diff screenshot` follows the file-artifact path above for the **diff** image: model-visible text and `details.artifacts` focus on that output, while baseline paths stay out of the artifact summary block, and Pi does **not** auto-inline the diff the way it inlines trusted `screenshot` captures. `state load` may print the loaded path in prose but does not add a saved-file artifact entry the way `state save` does.
@@ -379,6 +379,10 @@ Session note: `skills list`, `skills get …`, and `skills path …` are **state
 | `connect <port|url>` | Connect to a browser through CDP. |
 | `close [--all]` | Close the current browser or all sessions. |
 
+On dashboards and other apps with nested scroll containers, `scroll <dir> [px]` may report a successful wheel action while the viewport appears unchanged because the page-level scroller was not the one containing the content. Verify with a screenshot or fresh `snapshot -i`; when you need a specific panel, prefer `scrollintoview <@ref>` or a scoped interaction with the actual scrollable region.
+
+Comboboxes vary by app. A `click` or `semanticAction` role/name click may focus a searchable combobox without opening its option list. Re-snapshot after focus and fall back to `type`, `press Enter` / arrow keys, `select`, or app-specific visible option refs instead of assuming click alone expanded the control.
+
 ### Navigation
 
 | Command | Purpose |
@@ -479,8 +483,8 @@ When a snapshot is too large for inline output, the Pi wrapper renders a compact
 | `diff url <u1> <u2>` | Compare two pages. |
 | `trace start|stop [path]` | Record a Chrome DevTools trace. |
 | `profiler start|stop [path]` | Record a Chrome DevTools profile. |
-| `record start <path> [url]` | Start WebM video recording; output is written on `record stop`. |
-| `record stop` | Stop and save video. |
+| `record start <path> [url]` | Start WebM video recording; output is written on `record stop`. Requires `ffmpeg` on `PATH` for the final encode. |
+| `record stop` | Stop and save video. If this fails with `ffmpeg not found`, install `ffmpeg` / `ffmpeg-full` and rerun the recording. |
 | `record restart <path> [url]` | Stop any current recording and start a new WebM recording. |
 | `console [--clear]` | View or clear console logs. |
 | `errors [--clear]` | View or clear page errors. |
@@ -499,7 +503,7 @@ When a snapshot is too large for inline output, the Pi wrapper renders a compact
 | `pushstate <url>` | Perform SPA client-side navigation; detects Next.js router pushes and falls back to history navigation events. |
 | `removeinitscript <id>` | Remove an init script registered through upstream init-script mechanisms. |
 
-When these diagnostic commands are invoked through the native `agent_browser` tool, structured console, page-error, React, Web Vitals, and SPA outputs render as compact summaries when possible, with large outputs previewed and spilled instead of dumped into context. Large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. Artifact-producing commands such as `network har stop`, `diff screenshot`, `trace stop`, `profiler stop`, and `record stop` report `details.artifacts[]` plus `details.artifactVerification`; `record start` is reported as pending until `record stop` completes.
+When these diagnostic commands are invoked through the native `agent_browser` tool, structured console, page-error, React, Web Vitals, and SPA outputs render as compact summaries when possible, with large outputs previewed and spilled instead of dumped into context. Large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. Artifact-producing commands such as `network har stop`, `diff screenshot`, `trace stop`, `profiler stop`, and `record stop` report `details.artifacts[]` plus `details.artifactVerification`; `record start` is reported as pending until `record stop` completes. For video workflows, keep `ffmpeg` on `PATH` first; on macOS with Homebrew, `brew install ffmpeg` or `brew install ffmpeg-full` is sufficient. The README install section keeps the concise external-dependency list for maximal extension use.
 
 Long-running or lifecycle commands should be explicitly paired with cleanup calls: `stream enable` → `stream disable`, `dashboard start` → `dashboard stop`, `trace start` → `trace stop`, `profiler start` → `profiler stop`, and `record start` → `record stop`. The wrapper keeps each subprocess bounded by its normal timeout; it does not keep an interactive `chat` REPL open, so prefer `chat <message>` with `--model` or `AI_GATEWAY_MODEL` for single-shot AI use.
 

@@ -8,6 +8,7 @@
 
 import { copyFile, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
@@ -3357,10 +3358,19 @@ async function closeManagedSession(options: { cwd: string; sessionName: string; 
 	}
 }
 
+function getInstalledDocsPaths(): { readmePath: string; commandReferencePath: string; toolContractPath: string } {
+	const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+	return {
+		readmePath: join(packageRoot, "README.md"),
+		commandReferencePath: join(packageRoot, "docs", "COMMAND_REFERENCE.md"),
+		toolContractPath: join(packageRoot, "docs", "TOOL_CONTRACT.md"),
+	};
+}
+
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	const hasBraveApiKey = hasUsableBraveApiKey();
-	const toolPromptGuidelines = buildToolPromptGuidelines({ includeBraveSearch: hasBraveApiKey });
+	const toolPromptGuidelines = buildToolPromptGuidelines({ includeBraveSearch: hasBraveApiKey, docs: getInstalledDocsPaths() });
 	const implicitSessionIdleTimeoutMs = String(getImplicitSessionIdleTimeoutMs());
 	const implicitSessionCloseTimeoutMs = getImplicitSessionCloseTimeoutMs();
 	let managedSessionActive = false;

@@ -75,6 +75,17 @@ Install upstream `agent-browser` first and make sure it is on `PATH`:
 - https://agent-browser.dev/
 - https://github.com/vercel-labs/agent-browser
 
+Optional external tools unlock the full command surface:
+
+| Dependency | Required for | macOS install example |
+| --- | --- | --- |
+| `agent-browser` | All browser automation through this extension | See upstream install docs |
+| `ffmpeg` | `record stop` WebM encoding after `record start` / `record restart` | `brew install ffmpeg` or `brew install ffmpeg-full` |
+
+Keep both binaries on `PATH`. `record start` can begin without a file on disk, but `record stop` needs `ffmpeg` to encode the WebM.
+
+The native tool also gives agents absolute installed-package doc paths in its compact runtime guidance. Agents should read `README.md` for setup/dependencies, `docs/COMMAND_REFERENCE.md` for targeted command workflows, and `docs/TOOL_CONTRACT.md` for result/detail contracts only when deeper guidance is needed.
+
 Then install this Pi package:
 
 ```bash

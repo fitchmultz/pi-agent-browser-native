@@ -17,6 +17,7 @@ import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
 import {
 	BRAVE_SEARCH_PROMPT_GUIDELINE,
 	QUICK_START_GUIDELINES,
+	buildInstalledDocsGuideline,
 	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
 	TOOL_PROMPT_GUIDELINES_PREFIX,
 	TOOL_PROMPT_GUIDELINES_SUFFIX,
@@ -71,7 +72,7 @@ function createRenderContext(options: {
 	};
 }
 
-test("agentBrowserExtension keeps the full browser playbook in tool metadata and only injects a minimal browser prompt when relevant", async () => {
+test("agentBrowserExtension keeps concise browser guidance plus installed doc pointers in tool metadata", async () => {
 	await withPatchedEnv({ BRAVE_API_KEY: "demo-key" }, async () => {
 		const harness = createExtensionHarness({ cwd: process.cwd() });
 		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "tool_call"]);
@@ -79,21 +80,37 @@ test("agentBrowserExtension keeps the full browser playbook in tool metadata and
 		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
 
-		const expectedGuidelines = [
+		const docsGuideline = buildInstalledDocsGuideline({
+			readmePath: join(process.cwd(), "README.md"),
+			commandReferencePath: join(process.cwd(), "docs", "COMMAND_REFERENCE.md"),
+			toolContractPath: join(process.cwd(), "docs", "TOOL_CONTRACT.md"),
+		});
+		const guidelineText = harness.tool.promptGuidelines.join("\n");
+		const requiredGuidelines = [
 			...TOOL_PROMPT_GUIDELINES_PREFIX,
-			...QUICK_START_GUIDELINES,
-			SHARED_BROWSER_PLAYBOOK_GUIDELINES[0],
+			docsGuideline,
 			BRAVE_SEARCH_PROMPT_GUIDELINE,
-			...SHARED_BROWSER_PLAYBOOK_GUIDELINES.slice(1),
-			...TOOL_PROMPT_GUIDELINES_SUFFIX,
+			TOOL_PROMPT_GUIDELINES_SUFFIX[0],
 		];
-		for (const guideline of expectedGuidelines) {
+		for (const guideline of requiredGuidelines) {
 			assert.equal(
 				harness.tool.promptGuidelines.includes(guideline),
 				true,
-				`missing canonical playbook guideline: ${guideline}`,
+				`missing concise runtime guideline: ${guideline}`,
 			);
 		}
+		assert.match(guidelineText, /Use exactly one input mode/);
+		assert.match(guidelineText, /Common flow: open, snapshot -i/);
+		assert.match(guidelineText, /record stop needs ffmpeg/);
+		assert.match(guidelineText, /For dashboards, verify scroll/);
+		assert.match(guidelineText, /When details\.nextActions is present/);
+		assert.equal(harness.tool.promptGuidelines.includes(SHARED_BROWSER_PLAYBOOK_GUIDELINES[12]), false);
+		assert.equal(harness.tool.promptGuidelines.includes(QUICK_START_GUIDELINES[0]), false);
+		assert.ok(harness.tool.promptGuidelines.length <= 15, "promptGuidelines should stay bounded");
+		assert.ok(
+			guidelineText.length < 4_500,
+			"promptGuidelines should point to docs instead of carrying the full command reference/playbook",
+		);
 		assert.equal(
 			WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) => line.includes("After a successful command")),
 			true,
