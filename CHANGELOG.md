@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.28 - 2026-05-15
+
+### Added
+- Compact runtime guidance now points agents to the installed package's `README.md`, `docs/COMMAND_REFERENCE.md`, and `docs/TOOL_CONTRACT.md` for on-demand detail instead of injecting the full browser playbook into every browser-oriented turn.
+- Successful top-level `scroll` calls can now report `details.scrollNoop`, visible no-op scroll diagnostics, and exact snapshot/screenshot recovery `nextActions` when wrapper-side probes show the viewport and sampled scroll containers did not move.
+- Successful explicit combobox-targeted actions can now report `details.comboboxFocus` and exact `snapshot -i`, `press ArrowDown`, and `press Enter` recovery `nextActions` when a closed focused combobox has no visible options.
+- Successful `record start` / `record restart` calls now warn early with `details.recordingDependencyWarning` when executable `ffmpeg` is missing from the Pi process `PATH`, so agents can fix recording prerequisites before `record stop` needs to encode the WebM.
+- `docs/RELEASE.md` now includes a repeatable public Grafana Play stress checklist for dense-dashboard release dogfood without bundling private dogfood/VFR skills or adding a recipe runtime.
+
+### Fixed
+- Network request redaction now treats secret-like query and field names such as `sentry_key` and `writeKey` as sensitive in model-visible summaries and details.
+- README and command-reference setup notes now call out `ffmpeg` as the external dependency required for recording workflows.
+
 ## 0.2.27 - 2026-05-14
 
 ### Fixed
