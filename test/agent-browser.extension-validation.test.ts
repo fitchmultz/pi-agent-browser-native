@@ -7,9 +7,9 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
@@ -302,6 +302,59 @@ process.stdout.write(JSON.stringify({ success: true, data: command === "eval" ? 
 			assert.equal(textboxResult.isError, false);
 			assert.equal((textboxResult.details as { comboboxFocus?: unknown }).comboboxFocus, undefined);
 			assert.doesNotMatch(textboxResult.content[0]?.text ?? "", /Combobox diagnostic/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension warns after record start when ffmpeg is missing", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-recording-ffmpeg-"));
+	const nodeBinDir = dirname(process.execPath);
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+const valueFlags = new Set(["--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+process.stdout.write(JSON.stringify({ success: true, data: { command, subcommand, path: args[commandIndex + 2] } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Record a browser workflow." });
+			await mkdir(join(tempDir, "ffmpeg"));
+			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "demo.webm"] });
+			assert.equal(missingResult.isError, false);
+			assert.match(missingResult.content[0]?.text ?? "", /Recording dependency warning: ffmpeg not found on PATH/);
+			const missingDetails = missingResult.details as { recordingDependencyWarning?: { reason?: string; command?: string; dependency?: string } };
+			assert.deepEqual(missingDetails.recordingDependencyWarning, {
+				command: "record start",
+				dependency: "ffmpeg",
+				message: "record start can begin recording, but record stop needs ffmpeg on PATH to encode the WebM output.",
+				reason: "ffmpeg-missing-for-recording",
+				recommendations: [
+					"Install ffmpeg before relying on this recording workflow; on macOS with Homebrew, brew install ffmpeg or brew install ffmpeg-full.",
+					"If ffmpeg was just installed, restart pi or ensure the PATH visible to pi includes the ffmpeg binary before running record stop.",
+				],
+			});
+
+			await rm(join(tempDir, "ffmpeg"), { recursive: true, force: true });
+			await writeFile(join(tempDir, "ffmpeg"), "#!/bin/sh\nexit 0\n", "utf8");
+			await chmod(join(tempDir, "ffmpeg"), 0o755);
+			const presentResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "demo.webm"] });
+			assert.equal(presentResult.isError, false);
+			assert.equal((presentResult.details as { recordingDependencyWarning?: unknown }).recordingDependencyWarning, undefined);
+			assert.doesNotMatch(presentResult.content[0]?.text ?? "", /Recording dependency warning/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -6,8 +6,9 @@
  * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
  */
 
-import { copyFile, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
-import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { constants as fsConstants } from "node:fs";
+import { access, copyFile, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -147,6 +148,14 @@ interface ComboboxFocusDiagnostic {
 	recommendations: string[];
 	visibleListboxCount: number;
 	visibleOptionCount: number;
+}
+
+interface RecordingDependencyWarning {
+	command: "record start" | "record restart";
+	dependency: "ffmpeg";
+	message: string;
+	reason: "ffmpeg-missing-for-recording";
+	recommendations: string[];
 }
 
 interface CompiledAgentBrowserJobStep {
@@ -2962,6 +2971,63 @@ function formatComboboxFocusDiagnosticText(diagnostic: ComboboxFocusDiagnostic |
 	].join("\n");
 }
 
+function getRecordStartLikeCommand(command: string | undefined, commandTokens: string[]): RecordingDependencyWarning["command"] | undefined {
+	if (command !== "record") return undefined;
+	const subcommand = commandTokens[1]?.toLowerCase();
+	if (subcommand === "start") return "record start";
+	if (subcommand === "restart") return "record restart";
+	return undefined;
+}
+
+async function executableExistsOnPath(command: string): Promise<boolean> {
+	const pathValue = process.env.PATH ?? "";
+	const extensions = process.platform === "win32"
+		? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)
+		: [""];
+	for (const directory of pathValue.split(delimiter).filter(Boolean)) {
+		for (const extension of extensions) {
+			try {
+				const candidate = join(directory, `${command}${extension}`);
+				await access(candidate, fsConstants.X_OK);
+				if ((await stat(candidate)).isFile()) return true;
+			} catch {
+				// Try the next candidate.
+			}
+		}
+	}
+	return false;
+}
+
+async function collectRecordingDependencyWarning(options: {
+	command: string | undefined;
+	commandTokens: string[];
+	succeeded: boolean;
+}): Promise<RecordingDependencyWarning | undefined> {
+	if (!options.succeeded) return undefined;
+	const recordCommand = getRecordStartLikeCommand(options.command, options.commandTokens);
+	if (!recordCommand) return undefined;
+	if (await executableExistsOnPath("ffmpeg")) return undefined;
+	return {
+		command: recordCommand,
+		dependency: "ffmpeg",
+		message: `${recordCommand} can begin recording, but record stop needs ffmpeg on PATH to encode the WebM output.`,
+		reason: "ffmpeg-missing-for-recording",
+		recommendations: [
+			"Install ffmpeg before relying on this recording workflow; on macOS with Homebrew, brew install ffmpeg or brew install ffmpeg-full.",
+			"If ffmpeg was just installed, restart pi or ensure the PATH visible to pi includes the ffmpeg binary before running record stop.",
+		],
+	};
+}
+
+function formatRecordingDependencyWarningText(warning: RecordingDependencyWarning | undefined): string | undefined {
+	if (!warning) return undefined;
+	return [
+		"Recording dependency warning: ffmpeg not found on PATH.",
+		`Reason: ${warning.message}`,
+		...warning.recommendations.map((recommendation) => `- ${recommendation}`),
+	].join("\n");
+}
+
 function getSnapshotRefRecord(data: unknown): Record<string, unknown> | undefined {
 	return isRecord(data) && isRecord(data.refs) ? data.refs : undefined;
 }
@@ -4316,6 +4382,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 								signal,
 						  })
 						: undefined;
+					const recordingDependencyWarning = await collectRecordingDependencyWarning({
+						command: executionPlan.commandInfo.command,
+						commandTokens,
+						succeeded,
+					});
 					const scrollNoopDiagnostic = succeeded && shouldProbeScrollNoop
 						? buildScrollNoopDiagnostic(
 							scrollPositionBefore,
@@ -4607,6 +4678,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						pageChangeSummary,
 						overlayBlockers: overlayBlockerDiagnostic,
 						comboboxFocus: comboboxFocusDiagnostic,
+						recordingDependencyWarning,
 						scrollNoop: scrollNoopDiagnostic,
 						qaPreset,
 						selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
@@ -4637,11 +4709,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
 					const scrollNoopDiagnosticText = formatScrollNoopDiagnosticText(scrollNoopDiagnostic);
 					const comboboxFocusDiagnosticText = formatComboboxFocusDiagnosticText(comboboxFocusDiagnostic);
+					const recordingDependencyWarningText = formatRecordingDependencyWarningText(recordingDependencyWarning);
 					const evalStdinHintText = formatEvalStdinHintText(evalStdinHint);
 					const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
 					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
 					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!userRequestedJson || plainTextInspection);
 					const content = shouldAppendDiagnosticText && redactedContent[0]?.type === "text"
