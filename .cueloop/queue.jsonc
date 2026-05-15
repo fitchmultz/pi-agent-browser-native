@@ -34,11 +34,12 @@
         "Record final evidence and cleanup artifacts/sessions."
       ],
       "notes": [
-        "Started by pi agent after completing RQ-0083 per execution contract."
+        "Started by pi agent after completing RQ-0083 per execution contract.",
+        "Release prep completed and committed as 3cce63c Release v0.2.28; pushed to origin/main. npm run docs -- write, npm run verify -- release, npm publish --dry-run, git diff --check, and cueloop machine queue validate passed before commit/publish attempt. npm publish re-ran prepublishOnly successfully but failed at publish with ENEEDAUTH because this machine is not logged in to npm (npm whoami also returns ENEEDAUTH). Blocked pending npm authentication; do not tag/GitHub-release until npm publish succeeds."
       ],
       "request": "Post-0.2.27 release follow-up from user request to queue unfinished tasks.",
       "created_at": "2026-05-15T16:14:32.267385000Z",
-      "updated_at": "2026-05-15T17:39:03.285069000Z",
+      "updated_at": "2026-05-15T17:41:58.424009000Z",
       "started_at": "2026-05-15T17:39:03.285069000Z",
       "depends_on": [
         "RQ-0083"
