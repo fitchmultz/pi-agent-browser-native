@@ -2154,6 +2154,50 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	}
 });
 
+test("agentBrowserExtension warns when eval stdin returns an empty object from a function-shaped snippet", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-stdin-hint-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+if (stdin.trim().startsWith("() =>")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: {}, origin: "https://example.com/" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Example Domain" }, origin: "https://example.com/" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const functionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "() => ({ title: document.title })",
+			});
+			assert.equal(functionResult.isError, false);
+			assert.match((functionResult.content[0] as { text: string }).text, /Eval stdin hint:/);
+			assert.match((functionResult.content[0] as { text: string }).text, /\(\{ title: document\.title \}\)/);
+			assert.deepEqual(functionResult.details?.evalStdinHint, {
+				reason: "eval --stdin received a function-shaped snippet and the upstream JSON result was an empty object, which often means the function itself was returned or serialized instead of invoked.",
+				suggestion: "Pass a plain expression such as `({ title: document.title })`, or invoke the function explicitly, for example `(() => ({ title: document.title }))()`.",
+			});
+
+			const expressionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "({ title: document.title })",
+			});
+			assert.equal(expressionResult.isError, false);
+			assert.doesNotMatch((expressionResult.content[0] as { text: string }).text, /Eval stdin hint:/);
+			assert.equal(expressionResult.details?.evalStdinHint, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
 	const basePath = process.env.PATH ?? "";
