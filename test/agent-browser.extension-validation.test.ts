@@ -1390,10 +1390,16 @@ process.stdin.on("end", () => {
 					expectedSelector: "main",
 					screenshotPath: "qa.png",
 				},
+				sessionMode: "fresh",
 			});
 
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.failureCategory, "qa-failure");
+			const managedSessionOutcome = result.details?.managedSessionOutcome as { sessionMode?: string; status?: string; succeeded?: boolean } | undefined;
+			assert.equal(managedSessionOutcome?.sessionMode, "fresh");
+			assert.equal(managedSessionOutcome?.status, "replaced");
+			assert.equal(managedSessionOutcome?.succeeded, false);
+			assert.match((result.content[0] as { text: string }).text, /Managed session outcome: Managed session .* was replaced by .*/);
 			assert.deepEqual((result.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
 				"1 actionable failed network request(s)",
 				"1 console error message(s)",
@@ -2142,6 +2148,76 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 				assert.equal(result.details?.failureCategory, "timeout");
 			}
 			assert.deepEqual(await readInvocationLog(logPath), []);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("https://fail.test")) {
+  console.error("simulated launch failure");
+  process.exit(2);
+}
+process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: args.at(-1) || "about:blank" } }));`,
+	);
+
+	try {
+		const missingBinaryDir = await mkdtemp(join(tempDir, "missing-agent-browser-"));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://previous.test"] });
+			assert.equal(firstResult.isError, false);
+			const previousSessionName = firstResult.details?.sessionName as string;
+			assert.ok(previousSessionName);
+
+			const failedFreshResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://fail.test"], sessionMode: "fresh" });
+			assert.equal(failedFreshResult.isError, true);
+			const preservedOutcome = failedFreshResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; attemptedSessionName?: string; currentSessionName?: string; previousSessionName?: string; sessionMode?: string; status?: string; succeeded?: boolean; summary?: string } | undefined;
+			assert.equal(preservedOutcome?.status, "preserved");
+			assert.equal(preservedOutcome?.activeBefore, true);
+			assert.equal(preservedOutcome?.activeAfter, true);
+			assert.equal(preservedOutcome?.currentSessionName, previousSessionName);
+			assert.equal(preservedOutcome?.previousSessionName, previousSessionName);
+			assert.equal(preservedOutcome?.sessionMode, "fresh");
+			assert.match(preservedOutcome?.attemptedSessionName ?? "", /-fresh-/);
+			assert.equal(preservedOutcome?.succeeded, false);
+			assert.match((failedFreshResult.content[0] as { text: string }).text, /Managed session outcome: Fresh managed session .* failed before becoming current; previous managed session .* was preserved\./);
+
+			await withPatchedEnv({ PATH: missingBinaryDir }, async () => {
+				const missingBinaryResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://missing-binary.test"], sessionMode: "fresh" });
+				assert.equal(missingBinaryResult.isError, true);
+				assert.equal(missingBinaryResult.details?.failureCategory, "missing-binary");
+				const missingBinaryOutcome = missingBinaryResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; currentSessionName?: string; previousSessionName?: string; sessionMode?: string; status?: string } | undefined;
+				assert.equal(missingBinaryOutcome?.status, "preserved");
+				assert.equal(missingBinaryOutcome?.activeBefore, true);
+				assert.equal(missingBinaryOutcome?.activeAfter, true);
+				assert.equal(missingBinaryOutcome?.currentSessionName, previousSessionName);
+				assert.equal(missingBinaryOutcome?.previousSessionName, previousSessionName);
+				assert.equal(missingBinaryOutcome?.sessionMode, "fresh");
+				assert.match((missingBinaryResult.content[0] as { text: string }).text, /Managed session outcome: Fresh managed session .* failed before becoming current; previous managed session .* was preserved\./);
+			});
+
+			const followupResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followupResult.isError, false);
+			assert.equal(followupResult.details?.sessionName, previousSessionName);
+
+			const abandonedHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(abandonedHarness.handlers, "session_start", { reason: "new" }, abandonedHarness.ctx);
+			const abandonedResult = await executeRegisteredTool(abandonedHarness.tool, abandonedHarness.ctx, { args: ["open", "https://fail.test"], sessionMode: "fresh" });
+			assert.equal(abandonedResult.isError, true);
+			const abandonedOutcome = abandonedResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; status?: string; summary?: string } | undefined;
+			assert.equal(abandonedOutcome?.status, "abandoned");
+			assert.equal(abandonedOutcome?.activeBefore, false);
+			assert.equal(abandonedOutcome?.activeAfter, false);
+			assert.match((abandonedResult.content[0] as { text: string }).text, /no previous managed session was active/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

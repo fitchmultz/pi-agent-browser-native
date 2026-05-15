@@ -147,6 +147,8 @@ Implementation detail lives in `extensions/agent-browser/lib/runtime.ts` (`findC
 
 A successful unnamed `sessionMode: "fresh"` launch should become the new extension-managed session so later default calls follow that browser instead of silently snapping back to the older managed session.
 
+When a managed implicit or fresh `--session` plan reaches process execution, `details.managedSessionOutcome` summarizes the managed-session transition: on **success**, statuses such as `created`, `replaced`, `unchanged`, or `closed` describe what became current (including successful `close`); on **failure** (launch error, timeout, missing binary, **`qa`** reclassification after a nominally successful batch, failed `close`, and similar), `preserved` vs `abandoned` captures whether a prior managed session stayed current or no managed session ended up active, plus related names and booleans. Failing calls that used `sessionMode: "fresh"` also append a short `Managed session outcome: …` line to model-visible text so the next default `sessionMode: "auto"` hop is obvious; `"auto"` failures may still populate the struct without that extra line. Implementation and field semantics live in `extensions/agent-browser/index.ts` (`buildManagedSessionOutcome`, `formatManagedSessionOutcomeText`); agent contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details); checklist row `RQ-0077` in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md).
+
 ## Preferring the native tool
 
 Keep the handling simple:

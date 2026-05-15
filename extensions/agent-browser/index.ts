@@ -1428,6 +1428,19 @@ interface TimeoutPartialProgress {
 	summary: string;
 }
 
+interface ManagedSessionOutcome {
+	activeAfter: boolean;
+	activeBefore: boolean;
+	attemptedSessionName?: string;
+	currentSessionName: string;
+	previousSessionName: string;
+	replacedSessionName?: string;
+	sessionMode: "auto" | "fresh";
+	status: "abandoned" | "closed" | "created" | "preserved" | "replaced" | "unchanged";
+	succeeded: boolean;
+	summary: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -2997,6 +3010,68 @@ function buildSessionDetailFields(sessionName: string | undefined, usedImplicitS
 	return sessionName ? { sessionName, usedImplicitSession } : {};
 }
 
+function buildManagedSessionOutcome(options: {
+	activeAfter: boolean;
+	activeBefore: boolean;
+	attemptedSessionName?: string;
+	command?: string;
+	currentSessionName: string;
+	previousSessionName: string;
+	replacedSessionName?: string;
+	sessionMode: "auto" | "fresh";
+	succeeded: boolean;
+}): ManagedSessionOutcome | undefined {
+	const { activeAfter, activeBefore, attemptedSessionName, command, currentSessionName, previousSessionName, replacedSessionName, sessionMode, succeeded } = options;
+	if (!attemptedSessionName) return undefined;
+	let status: ManagedSessionOutcome["status"];
+	let summary: string;
+	if (command === "close") {
+		status = succeeded ? "closed" : activeBefore ? "preserved" : "abandoned";
+		summary = succeeded
+			? `Managed session ${attemptedSessionName} was closed.`
+			: activeBefore
+				? `Managed session close failed; previous managed session ${previousSessionName} remains current.`
+				: `Managed session close failed; no managed session is active.`;
+	} else if (succeeded) {
+		if (replacedSessionName) {
+			status = "replaced";
+			summary = `Managed session ${replacedSessionName} was replaced by ${currentSessionName}.`;
+		} else if (!activeBefore && activeAfter) {
+			status = "created";
+			summary = `Managed session ${currentSessionName} is now current.`;
+		} else {
+			status = "unchanged";
+			summary = `Managed session ${currentSessionName} remains current.`;
+		}
+	} else if (activeBefore) {
+		status = "preserved";
+		summary = sessionMode === "fresh" && attemptedSessionName !== previousSessionName
+			? `Fresh managed session ${attemptedSessionName} failed before becoming current; previous managed session ${previousSessionName} was preserved.`
+			: `Managed session call failed; previous managed session ${previousSessionName} was preserved.`;
+	} else {
+		status = "abandoned";
+		summary = sessionMode === "fresh"
+			? `Fresh managed session ${attemptedSessionName} failed before becoming current; no previous managed session was active, so no managed session is current.`
+			: `Managed session call failed before any managed session became current.`;
+	}
+	return {
+		activeAfter,
+		activeBefore,
+		attemptedSessionName,
+		currentSessionName,
+		previousSessionName,
+		replacedSessionName,
+		sessionMode,
+		status,
+		succeeded,
+		summary,
+	};
+}
+
+function formatManagedSessionOutcomeText(outcome: ManagedSessionOutcome | undefined): string | undefined {
+	return outcome && !outcome.succeeded && outcome.sessionMode === "fresh" ? `Managed session outcome: ${outcome.summary}` : undefined;
+}
+
 function getPersistentSessionArtifactStore(ctx: {
 	sessionManager: {
 		getSessionDir?: () => string;
@@ -3543,12 +3618,24 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 				if (processResult.spawnError?.message.includes("ENOENT")) {
 					const errorText = buildMissingBinaryMessage();
+					const managedSessionOutcome = buildManagedSessionOutcome({
+						activeAfter: managedSessionActive,
+						activeBefore: managedSessionActive,
+						attemptedSessionName: executionPlan.managedSessionName,
+						command: executionPlan.commandInfo.command,
+						currentSessionName: managedSessionName,
+						previousSessionName: managedSessionName,
+						sessionMode,
+						succeeded: false,
+					});
+					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
 					return {
-						content: [{ type: "text", text: errorText }],
+						content: [{ type: "text", text: managedSessionOutcomeText ? `${errorText}\n\n${managedSessionOutcomeText}` : errorText }],
 						details: {
 							args: redactedArgs,
 							compatibilityWorkaround,
 							effectiveArgs: redactedProcessArgs,
+							managedSessionOutcome,
 							sessionMode,
 							sessionTabCorrection,
 							...buildAgentBrowserResultCategoryDetails({ args: redactedProcessArgs, command: executionPlan.commandInfo.command, errorText, failureCategory: "missing-binary", spawnError: processResult.spawnError.message, succeeded: false }),
@@ -3788,17 +3875,30 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						}
 					}
 
+					const priorManagedSessionActive = managedSessionActive;
 					const priorManagedSessionCwd = managedSessionCwd;
+					const priorManagedSessionName = managedSessionName;
 					const managedSessionState = resolveManagedSessionState({
 						command: executionPlan.commandInfo.command,
 						managedSessionName: executionPlan.managedSessionName,
-						priorActive: managedSessionActive,
-						priorSessionName: managedSessionName,
+						priorActive: priorManagedSessionActive,
+						priorSessionName: priorManagedSessionName,
 						succeeded,
 					});
 					const replacedManagedSessionName = managedSessionState.replacedSessionName;
 					managedSessionActive = managedSessionState.active;
 					managedSessionName = managedSessionState.sessionName;
+					let managedSessionOutcome = buildManagedSessionOutcome({
+						activeAfter: managedSessionActive,
+						activeBefore: priorManagedSessionActive,
+						attemptedSessionName: executionPlan.managedSessionName,
+						command: executionPlan.commandInfo.command,
+						currentSessionName: managedSessionName,
+						previousSessionName: priorManagedSessionName,
+						replacedSessionName: replacedManagedSessionName,
+						sessionMode,
+						succeeded,
+					});
 					if (executionPlan.managedSessionName && succeeded) {
 						managedSessionCwd = ctx.cwd;
 					}
@@ -3901,6 +4001,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							presentation.content.unshift({ type: "text", text: qaPreset.summary });
 						}
 					}
+					if (managedSessionOutcome && managedSessionOutcome.succeeded !== succeeded) {
+						managedSessionOutcome = { ...managedSessionOutcome, succeeded };
+					}
 					const warningText = aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
 					const contentWithSessionWarnings = userRequestedJson && !plainTextInspection
 						? buildJsonVisibleContent({
@@ -3998,6 +4101,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
 						fullOutputPaths: presentation.fullOutputPaths,
 						fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
+						managedSessionOutcome,
 						imagePath: presentation.imagePath,
 						imagePaths: presentation.imagePaths,
 						nextActions,
@@ -4030,7 +4134,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
 					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
-					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, timeoutPartialProgressText].filter((item): item is string => item !== undefined).join("\n\n");
+					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
+					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const content = appendedDiagnosticText.length > 0 && redactedContent[0]?.type === "text"
 						? [
