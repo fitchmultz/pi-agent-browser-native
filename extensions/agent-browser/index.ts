@@ -913,8 +913,16 @@ function getCompiledSemanticActionSessionPrefix(compiled: CompiledAgentBrowserSe
 	return commandIndex > 0 ? compiled.args.slice(0, commandIndex) : [];
 }
 
+const SEMANTIC_ACTION_CANDIDATE_ACTION_IDS = new Set([
+	"try-searchbox-name-candidate",
+	"try-textbox-name-candidate",
+	"try-button-name-candidate",
+	"try-link-name-candidate",
+	"try-labeled-textbox-candidate",
+]);
+
 function formatSemanticActionCandidateText(actions: AgentBrowserNextAction[]): string | undefined {
-	const candidateActions = actions.filter((action) => action.id.startsWith("try-") && action.params?.args);
+	const candidateActions = actions.filter((action) => SEMANTIC_ACTION_CANDIDATE_ACTION_IDS.has(action.id) && action.params?.args);
 	if (candidateActions.length === 0) return undefined;
 	return [
 		"Agent-browser candidate fallbacks:",
@@ -4216,7 +4224,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
 					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
-					const content = appendedDiagnosticText.length > 0 && redactedContent[0]?.type === "text"
+					const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!userRequestedJson || plainTextInspection);
+					const content = shouldAppendDiagnosticText && redactedContent[0]?.type === "text"
 						? [
 							{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${appendedDiagnosticText}` },
 							...redactedContent.slice(1),

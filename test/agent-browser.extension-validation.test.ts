@@ -2185,6 +2185,19 @@ if (stdin.trim().startsWith("() =>")) {
 				suggestion: "Pass a plain expression such as `({ title: document.title })`, or invoke the function explicitly, for example `(() => ({ title: document.title }))()`.",
 			});
 
+			const jsonFunctionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--json", "eval", "--stdin"],
+				stdin: "() => ({ title: document.title })",
+			});
+			assert.equal(jsonFunctionResult.isError, false);
+			const jsonFunctionText = (jsonFunctionResult.content[0] as { text: string }).text;
+			assert.doesNotMatch(jsonFunctionText, /Eval stdin hint:/);
+			assert.deepEqual(JSON.parse(jsonFunctionText), {
+				data: { origin: "https://example.com/", result: {} },
+				success: true,
+			});
+			assert.deepEqual(jsonFunctionResult.details?.evalStdinHint, functionResult.details?.evalStdinHint);
+
 			const expressionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["eval", "--stdin"],
 				stdin: "({ title: document.title })",
@@ -2570,6 +2583,7 @@ if (args.includes("open")) {
 			const text = click.content[0] as { text: string };
 			assert.match(text.text, /Possible overlay blockers:/);
 			assert.match(text.text, /@e5 button "×"/);
+			assert.doesNotMatch(text.text, /Agent-browser candidate fallbacks:/);
 			const overlayBlockers = click.details?.overlayBlockers as { candidates?: Array<{ ref?: string; args?: string[] }> } | undefined;
 			assert.equal(overlayBlockers?.candidates?.[0]?.ref, "@e5");
 			assert.deepEqual((click.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e5", "e6", "e7"]);
@@ -2999,4 +3013,3 @@ test("agentBrowserExtension returns temp full-output path for oversized parse fa
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-
