@@ -24,7 +24,7 @@
     "url": "https://github.com/fitchmultz/pi-agent-browser-native/issues"
   },
   "engines": {
-    "node": ">=20.6.0"
+    "node": ">=22.19.0"
   },
   "bin": {
     "pi-agent-browser-doctor": "scripts/doctor.mjs"
@@ -51,11 +51,13 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.74.0",
-    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "@earendil-works/pi-ai": "^0.75.3",
+    "@earendil-works/pi-coding-agent": "^0.75.3",
+    "@earendil-works/pi-tui": "^0.75.3",
     "@types/node": "^25.6.1",
     "tsx": "^4.21.0",
     "typebox": "^1.1.38",
