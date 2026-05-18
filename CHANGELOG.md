@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.29 - 2026-05-18
+
+### Changed
+- Updated the local pi package baseline to `@earendil-works/*` `0.75.3`, including the Node.js `>=22.19.0` runtime floor and refreshed npm lockfile.
+- Removed tracked CueLoop runtime state from the repository and ignored local `.cueloop/` artifacts.
+
+
 ## 0.2.28 - 2026-05-15
 
 ### Added
