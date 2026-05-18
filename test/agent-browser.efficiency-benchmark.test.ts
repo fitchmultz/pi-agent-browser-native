@@ -31,6 +31,7 @@ const requiredScenarioIds = new Set([
   "stale-ref-recovery",
   "artifact-download",
   "batch-open-snapshot",
+  "batch-multi-extract",
   "job-open-assert-screenshot",
   "qa-open-diagnostics",
   "source-lookup-visible-element",

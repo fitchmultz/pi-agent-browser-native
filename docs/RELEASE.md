@@ -69,6 +69,47 @@ Minimum pass:
 
 Record release evidence as a short note with: date, package/checkout source, target URL, browser command families exercised, artifacts collected and cleaned up, known Grafana-side noise observed, and any product findings converted into CueLoop tasks. Do not commit private dogfood scripts, VFR harness files, raw browser profiles, HARs, videos, or `.dogfood/` run output as product docs.
 
+## Public Sauce Demo checkout smoke prompt
+
+Use this validation prompt after changing click enrichment, tab pinning, ref preflight, form-fill batching, artifact handling, recording, or prompt guidance. It is intentionally more stateful than `example.com` and uses a natural user-style request so the transcript shows what the agent chooses on its own. Do **not** mention `agent_browser`, snapshots, refs, `batch`, `eval`, or upstream command names in the prompt; those are evaluator expectations, not user instructions.
+
+Run it in an isolated checkout session. It is fine to restrict active tools at launch so the checkout extension is the only browser surface, but keep that detail out of the user prompt:
+
+```bash
+pi --no-extensions -e . --model openai-codex/gpt-5.5:minimal --tools agent_browser --session-dir "$SESSION_DIR"
+```
+
+Repeat with `--model openai-codex/gpt-5.5:medium` when validating instruction-following robustness. Use unique temp paths for each run and delete them afterward.
+
+Copy/paste prompt, replacing the two artifact placeholders with exact absolute paths:
+
+```text
+Please do an end-to-end QA pass on the public Sauce Demo store.
+
+Site: https://www.saucedemo.com/
+Demo credentials: standard_user / secret_sauce
+
+Use a clean browser context, not my personal Chrome profile.
+
+Scenario:
+- Log in.
+- Sort products by price low to high.
+- Add at least two products to the cart.
+- Open the cart.
+- Start checkout with a fake name and postal code.
+- Stop on the checkout overview page; do not place the order.
+
+Please gather enough evidence to support the QA result:
+- Save a screenshot here: <ABSOLUTE_SCREENSHOT_PATH>.png
+- Save a short screen recording here if recording is available: <ABSOLUTE_RECORDING_PATH>.webm
+- Include the final page title/URL, the selected sort order, cart contents, item total/tax/total, and any browser-side network, console, or page-error issues you see.
+- Clean up by closing the browser when finished.
+
+Return a concise PASS/FAIL report with evidence and any tool or workflow issues you noticed.
+```
+
+Evaluator expectations after the queued Sauce Demo fixes: the agent should independently choose efficient, safe browser operations; native add-to-cart clicks should mutate cart state without JavaScript fallback; same-snapshot form fills may be batched safely when the agent chooses that route; the selected sort order should be verified; checkout should stop before Finish; screenshot and recording should use the requested paths; `network requests` may show public-demo telemetry 401s; `console` may report offline-cache logs; `errors` should show no page errors; and the browser session plus temp artifacts should be cleaned up after evidence is recorded.
+
 ## Deterministic agent efficiency benchmark
 
 [`scripts/agent-browser-efficiency-benchmark.mjs`](../scripts/agent-browser-efficiency-benchmark.mjs) is an accounting-only benchmark: it does not shell out to `agent-browser`, launch a browser, or read or write Pi sessions. It models representative `agent_browser` call shapes (including optional `stdin` for `batch` and top-level `job`, `qa`, or experimental `sourceLookup` / `networkSourceLookup` objects that compile to batch) and aggregates success rate, tool-call counts, UTF-8 size of model-visible strings, stale-ref failure and recovery counts, artifact success, distinct failure-category coverage, and summed elapsed-time estimates. When extending scenarios, keep them aligned with the closed `RQ-0068` “no reusable recipe layer” rationale in [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) (benchmark ids cited there are the canonical inventory for that evidence bar).

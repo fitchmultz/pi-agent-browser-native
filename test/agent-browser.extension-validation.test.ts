@@ -101,6 +101,8 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		}
 		assert.match(guidelineText, /Use exactly one input mode/);
 		assert.match(guidelineText, /Common flow: open, snapshot -i/);
+		assert.match(guidelineText, /signed-in\/account-specific content/);
+		assert.match(guidelineText, /reading several known refs\/selectors/);
 		assert.match(guidelineText, /record stop needs ffmpeg/);
 		assert.match(guidelineText, /For dashboards, verify scroll/);
 		assert.match(guidelineText, /When details\.nextActions is present/);
@@ -2142,13 +2144,12 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.deepEqual(nextActions?.[2]?.params?.args, ["--session", "find", "find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
 			assert.match(nextActions?.[1]?.reason ?? "", /accessible name/);
 
-			const selectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const unsupportedSelectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "select", locator: "placeholder", value: "Country", text: "United States" },
 			});
-			assert.equal(selectResult.isError, true);
-			assert.equal(selectResult.details?.failureCategory, "selector-not-found");
-			const selectNextActions = selectResult.details?.nextActions as Array<{ id?: string }> | undefined;
-			assert.deepEqual(selectNextActions?.map((action) => action.id), ["refresh-interactive-refs"]);
+			assert.equal(unsupportedSelectResult.isError, true);
+			assert.equal(unsupportedSelectResult.details?.failureCategory, "validation-error");
+			assert.match((unsupportedSelectResult.content[0] as { text: string }).text, /semanticAction\.action must be one of: check, click, fill, uncheck/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

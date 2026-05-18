@@ -178,6 +178,12 @@ Evaluate page JavaScript through stdin. Return the value you want as an expressi
 { "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })" }
 ```
 
+Extract several known refs or selectors in one `batch` call instead of many serial getter calls:
+
+```json
+{ "args": ["batch"], "stdin": "[[\"get\",\"text\",\"@e64\"],[\"get\",\"text\",\"@e65\"]]" }
+```
+
 Save an auth profile without putting the password in `args`:
 
 ```json
@@ -208,7 +214,7 @@ Typical pitfalls:
 - Use `semanticAction.session` to target a named upstream browser session; the wrapper prepends `--session <name>` before `find` and keeps that prefix on retry/candidate actions. In active sessions, role/name click/check/uncheck shorthands may resolve through the current `snapshot -i` refs before execution so hidden duplicate matches do not steal the action; `details.effectiveArgs` shows the exact executed argv.
 - Do not reuse `@e…` refs across navigation. The wrapper records the latest snapshot refs per session and fails mutation-prone stale/recycled refs before upstream can silently hit a different current-page element; use the session-aware `refresh-interactive-refs` next action.
 - If upstream classifies the failure as `stale-ref` and `details.compiledSemanticAction` is present, `details.nextActions` may list `retry-semantic-action-after-stale-ref` after `refresh-interactive-refs`, carrying the same compiled `find` argv so you can retry the locator-stable target once it is safe to do so (contract in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction)).
-- If the failure is `selector-not-found` for a compiled `semanticAction`, visible text may add `Agent-browser candidate fallbacks` and `details.nextActions` may list bounded `try-*-candidate` follow-ups (role/name retries only for `fill` + `placeholder`, `click` + `text`, or `fill` + `label`; `select` misses do not get these entries); prefer those payloads or a fresh snapshot over guessing new selectors (same contract link).
+- If the failure is `selector-not-found` for a compiled `semanticAction`, visible text may add `Agent-browser candidate fallbacks` and `details.nextActions` may list bounded `try-*-candidate` follow-ups (role/name retries only for `fill` + `placeholder`, `click` + `text`, or `fill` + `label`); prefer those payloads or a fresh snapshot over guessing new selectors (same contract link).
 - If a **top-level** `click` succeeds (unified command `click`, not a `batch` step), upstream reports `data.clicked`, and the tab URL is unchanged under the same normalization as ref preflight (fragment-insensitive), the wrapper may take one extra `snapshot -i` and add `Possible overlay blockers` with `details.overlayBlockers` (`candidates`, `summary`, optional `snapshot` refresh for refs) plus session-aware `inspect-overlay-state` / bounded `try-overlay-blocker-candidate-*` next actions when that snapshot shows strong modal context (`dialog` / `alertdialog`) and close/dismiss-like controls. Page-wide words like privacy, sign in, or banner alone do not trigger this diagnostic. The unchanged-URL check uses `details.navigationSummary`, which is only populated via follow-up `get url` / `get title` when the click JSON omits **both** string `data.url` and `data.title`; if upstream already includes either, overlay diagnostics are skipped here. Also skipped when tab correction or about-blank recovery already ran on that result.
 - If `get text <selector>` reads a non-ref CSS selector with multiple matches or a hidden first match while visible matches exist, including successful `batch` steps, the wrapper may add `Selector text visibility warning`, `details.selectorTextVisibility` (plus `selectorTextVisibilityAll` for multiple batched warnings), and `inspect-visible-text-candidates` next actions; prefer a visible `@ref`, a scoped selector, or a targeted `eval --stdin` over hidden tab content.
 
@@ -283,7 +289,7 @@ After a successful unnamed fresh launch, later default `sessionMode: "auto"` cal
 
 ## Authenticated/profile workflows
 
-The wrapper does not clone profiles or hide what upstream Chrome profile you chose. Passing `--profile` is an explicit upstream `agent-browser` choice.
+The wrapper does not clone profiles or hide what upstream Chrome profile you chose. Passing `--profile` is an explicit upstream `agent-browser` choice. Visible page content from real profiles is model-visible and may persist in transcripts or saved artifacts; redaction protects credential-like cookie/storage/auth values, not ordinary page text you asked the browser to read.
 
 Use these rules:
 

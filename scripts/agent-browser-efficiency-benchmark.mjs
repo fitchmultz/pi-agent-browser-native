@@ -143,6 +143,27 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
     elapsedMsEstimate: 1100,
   }),
   Object.freeze({
+    id: "batch-multi-extract",
+    title: "Extract several known refs in one batch call",
+    workflow: "current-batch",
+    steps: Object.freeze([
+      Object.freeze({
+        call: "agent_browser",
+        args: Object.freeze(["batch"]),
+        stdin: '[["get","text","@e10"],["get","text","@e11"],["get","text","@e12"]]',
+      }),
+    ]),
+    modelOutputs: Object.freeze([
+      "Batch results:\n1. CPU Usage\n2. Memory Usage\n3. Disk I/O",
+    ]),
+    success: true,
+    staleRefFailures: 0,
+    staleRefRecoveries: 0,
+    artifactSuccesses: 0,
+    failureCategories: Object.freeze([]),
+    elapsedMsEstimate: 800,
+  }),
+  Object.freeze({
     id: "qa-open-diagnostics",
     title: "Run a lightweight QA preset with text and diagnostic checks",
     workflow: "native-qa",

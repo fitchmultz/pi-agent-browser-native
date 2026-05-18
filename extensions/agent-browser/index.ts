@@ -84,7 +84,7 @@ const DEFAULT_SESSION_MODE = "auto" as const;
 const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
 const PACKAGE_NAME = "pi-agent-browser-native";
 
-const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select", "uncheck"] as const;
+const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "uncheck"] as const;
 const AGENT_BROWSER_SEMANTIC_LOCATORS = ["alt", "label", "placeholder", "role", "testid", "text", "title"] as const;
 const AGENT_BROWSER_JOB_STEP_ACTIONS = ["open", "click", "fill", "wait", "assertText", "assertUrl", "waitForDownload", "screenshot"] as const;
 const AGENT_BROWSER_QA_LOAD_STATES = ["domcontentloaded", "load", "networkidle"] as const;
@@ -271,7 +271,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 				description: "Upstream find locator family to use.",
 			}),
 			value: Type.String({ description: "Locator value, such as visible text, label text, placeholder text, test id, title, alt text, or role." }),
-			text: Type.Optional(Type.String({ description: "Text/value argument for fill or select actions." })),
+			text: Type.Optional(Type.String({ description: "Text/value argument for fill actions." })),
 			role: Type.Optional(Type.String({ description: "Role locator value; when set it must match value for locator=role." })),
 			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
 			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the compiled find command." })),
@@ -945,7 +945,7 @@ async function analyzeNetworkSourceLookupResults(data: unknown, compiled: Compil
 }
 
 function appendSemanticActionTextArg(args: string[], action: string, text: string | undefined): void {
-	if ((action === "fill" || action === "select") && text) {
+	if (action === "fill" && text) {
 		args.push(text);
 	}
 }
@@ -955,7 +955,7 @@ function getCompiledSemanticActionCommandIndex(compiled: CompiledAgentBrowserSem
 }
 
 function getCompiledSemanticActionTextArg(compiled: CompiledAgentBrowserSemanticAction): string | undefined {
-	if (compiled.action !== "fill" && compiled.action !== "select") return undefined;
+	if (compiled.action !== "fill") return undefined;
 	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
 	if (commandIndex < 0) return undefined;
 	const markerIndex = compiled.args.indexOf("--name");
@@ -1101,11 +1101,11 @@ function compileAgentBrowserSemanticAction(input: unknown): { compiled?: Compile
 	if (text !== undefined && typeof text !== "string") {
 		return { error: "semanticAction.text must be a string when provided." };
 	}
-	if ((action === "fill" || action === "select") && (typeof text !== "string" || text.length === 0)) {
+	if (action === "fill" && (typeof text !== "string" || text.length === 0)) {
 		return { error: `semanticAction.text is required for ${action}.` };
 	}
-	if (action !== "fill" && action !== "select" && text !== undefined) {
-		return { error: `semanticAction.text is only supported for fill and select actions.` };
+	if (action !== "fill" && text !== undefined) {
+		return { error: "semanticAction.text is only supported for fill actions." };
 	}
 	if (role !== undefined && (locator !== "role" || role !== value)) {
 		return { error: "semanticAction.role is only supported for locator=role and must match value." };
@@ -1117,7 +1117,7 @@ function compileAgentBrowserSemanticAction(input: unknown): { compiled?: Compile
 		return { error: "semanticAction.session must be a non-empty string when provided." };
 	}
 	const args = typeof session === "string" ? ["--session", session, "find", locator, value, action] : ["find", locator, value, action];
-	if (action === "fill" || action === "select") {
+	if (action === "fill") {
 		args.push(text as string);
 	}
 	if (locator === "role" && typeof name === "string") {
@@ -2914,7 +2914,7 @@ function isComboboxFocusDiagnosticCommand(command: string | undefined, commandTo
 	const explicitlyTargetsCombobox = commandTokens.some((token) => /^(?:combobox|listbox)$/i.test(token));
 	if (!explicitlyTargetsCombobox) return false;
 	if (command === "click" || command === "fill") return true;
-	return command === "find" && commandTokens.some((token) => ["click", "fill", "select"].includes(token));
+	return command === "find" && commandTokens.some((token) => ["click", "fill"].includes(token));
 }
 
 function getCompiledSemanticActionRoleValue(compiled: CompiledAgentBrowserSemanticAction): string | undefined {
@@ -2925,7 +2925,7 @@ function getCompiledSemanticActionRoleValue(compiled: CompiledAgentBrowserSemant
 }
 
 function isComboboxFocusDiagnosticSemanticAction(compiled: CompiledAgentBrowserSemanticAction | undefined): boolean {
-	if (!compiled || !["click", "fill", "select"].includes(compiled.action)) return false;
+	if (!compiled || !["click", "fill"].includes(compiled.action)) return false;
 	return /^(?:combobox|listbox)$/i.test(getCompiledSemanticActionRoleValue(compiled) ?? "");
 }
 

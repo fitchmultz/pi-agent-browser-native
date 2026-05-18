@@ -150,6 +150,12 @@ When a **top-level** `click` succeeds (not a `click` hidden inside a `batch`/`jo
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
 
+When you already know several visible refs or selectors, extract them in one `batch` call instead of many serial getter calls:
+
+```json
+{ "args": ["batch"], "stdin": "[[\"get\",\"text\",\"@e64\"],[\"get\",\"text\",\"@e65\"],[\"get\",\"text\",\"@e66\"]]" }
+```
+
 Prefer `get` and scoped `eval --stdin` for read-only extraction. Getter names are grouped under `get`: use `get title`, `get url`, or `get text <selector>`, not shortcut commands such as `title` or `url`. When upstream reports an unknown command, unknown subcommand, or unrecognized command for a single-token shortcut (`attr`, `count`, `html`, `text`, `title`, `url`, or `value`), the wrapper adds a visible grouped-`get` hint; only `title` and `url` also get exact read-only `details.nextActions` (`use-get-title` / `use-get-url`, with `--session` preserved when the failed call named a session). If another `Agent-browser hint:` (selector dialect or stale-ref recovery) was already appended to the same error text, the getter hint is omitted.
 
 Return the intended JavaScript value from `eval --stdin` instead of relying on `console.log`. For object-shaped extraction, pass a plain expression such as `({ title: document.title, url: location.href })`; if you send a function-shaped snippet, invoke it explicitly, for example `(() => ({ title: document.title }))()`. When upstream serializes a function result to `{}`, the wrapper can append `Eval stdin hint` and `details.evalStdinHint`.
@@ -323,6 +329,7 @@ Stateful commands are native `agent_browser` calls, not shell commands. Keep sec
 
 Operational notes:
 
+- Visible page content from real authenticated profiles is still model-visible and may persist in transcripts or saved artifacts. The wrapper redacts credential-like cookie/storage/auth data, not the ordinary page text you asked it to read.
 - `stdin` is accepted only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other stdin-bearing calls are rejected before launch.
 - `auth list/show/save/login/delete` summaries avoid expanding profile secrets. Prefer `auth save --password-stdin` over `--password <value>`.
 - `state save <path>` is a verified file-artifact workflow; inspect `details.artifactVerification` before relying on the file. `state load <path>` is not treated as a newly saved artifact.
