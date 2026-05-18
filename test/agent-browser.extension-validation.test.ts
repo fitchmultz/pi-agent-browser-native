@@ -114,7 +114,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			"promptGuidelines should point to docs instead of carrying the full command reference/playbook",
 		);
 		assert.equal(
-			WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) => line.includes("After a successful command")),
+			WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) => line.includes("For sessions with observed tab-drift risk")),
 			true,
 		);
 
@@ -2285,6 +2285,77 @@ if (args.includes("snapshot")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension allows same-snapshot form fills before a batch click", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-form-fills-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://login.example/",
+    refs: {
+      e3: { role: "button", name: "Login" },
+      e4: { role: "textbox", name: "Username" },
+      e5: { role: "textbox", name: "Password" }
+    },
+    snapshot: '- textbox "Username" [ref=e4]\\n- textbox "Password" [ref=e5]\\n- button "Login" [ref=e3]'
+  } }));
+} else if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  process.stdout.write(JSON.stringify(steps.map((step) => ({ command: step, success: true, result: { ok: step[0] } }))));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+
+			const sameFormBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([
+					["fill", "@e4", "standard_user"],
+					["fill", "@e5", "secret_sauce"],
+					["click", "@e3"],
+				]),
+			});
+			assert.equal(sameFormBatch.isError, false, JSON.stringify(sameFormBatch));
+
+			const clickThenFill = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([
+					["click", "@e3"],
+					["fill", "@e4", "standard_user"],
+				]),
+			});
+			assert.equal(clickThenFill.isError, true);
+			assert.equal(clickThenFill.details?.failureCategory, "stale-ref");
+			assert.match((clickThenFill.content[0] as { text: string }).text, /after an earlier batch step can navigate or mutate/);
+
+			const invocations = await readInvocationLog(logPath);
+			const batchInvocations = invocations.filter((entry) => entry.args.includes("batch"));
+			assert.equal(batchInvocations.length, 1);
+			assert.deepEqual(JSON.parse(String(batchInvocations[0]?.stdin ?? "[]")), [
+				["fill", "@e4", "standard_user"],
+				["fill", "@e5", "secret_sauce"],
+				["click", "@e3"],
+			]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

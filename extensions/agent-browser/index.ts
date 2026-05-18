@@ -2412,7 +2412,6 @@ const REF_INVALIDATING_BATCH_COMMANDS = new Set([
 	"click",
 	"dblclick",
 	"drag",
-	"fill",
 	"forward",
 	"goto",
 	"keyboard",

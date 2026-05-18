@@ -33,6 +33,7 @@ export const BRAVE_SEARCH_PROMPT_GUIDELINE =
 
 export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs are page-scoped; the wrapper fails mutation-prone stale/recycled refs before upstream can silently target a different current-page element.",
+	"For ordinary forms from one snapshot, batch multiple fill @refs before the submit/click step to avoid serial tool calls; if a fill may autosubmit, navigate, or rerender later fields, split the flow and refresh refs first.",
 	"When snapshot -i compacts because the tree is oversized, scan visible output for Omitted high-value controls and optional details.data.highValueControlRefIds before opening the spill file: those list bounded searchboxes, textboxes, comboboxes, buttons, tabs, checkboxes, radios, options, and menuitems that did not fit the key/other ref previews.",
 	"When a visible text or accessible-name target should survive ref churn, prefer find locators such as role, text, label, placeholder, alt, title, or testid with the intended action instead of guessing a CSS selector.",
 	"Do not assume Playwright selector dialects such as text=Close or button:has-text('Close') are supported wrapper syntax unless current upstream agent-browser behavior has been verified.",
@@ -90,7 +91,7 @@ export function buildSharedBrowserPlaybookGuidelines(options: { includeBraveSear
 
 const RUNTIME_PROMPT_GUIDELINES = [
 	"Use exactly one input mode: args, semanticAction, job, qa, sourceLookup, or networkSourceLookup. Use stdin only for batch, eval --stdin, auth save --password-stdin, or wrapper-generated batch modes.",
-	"Common flow: open, snapshot -i, interact with current @refs or semanticAction, then re-snapshot after navigation, scrolling, rerenders, or DOM changes.",
+	"Common flow: open, snapshot -i, interact with current @refs or semanticAction, then re-snapshot after navigation, scrolling, rerenders, or DOM changes. For ordinary forms, batch same-snapshot fill @refs before the submit/click step; split if a fill may autosubmit, navigate, or rerender later fields.",
 	"Prefer stable locators for visible text/names: semanticAction or upstream find with role/text/label/placeholder/alt/title/testid. Use current @refs only from the latest same-page snapshot.",
 	"For tasks that explicitly require the user's signed-in/account-specific content, start with --profile Default plus sessionMode=fresh unless the user asks otherwise; visible page content is model-visible. Use sessionMode=fresh for other launch-scoped state such as --session-name, --cdp, --state, --auto-connect, --init-script, --enable, providers, or iOS devices; otherwise let the implicit session carry continuity.",
 	"For artifacts, read visible metadata and details.artifactVerification before using files. record stop needs ffmpeg on PATH. close does not delete saved files; cleanup is host-owned.",
