@@ -108,7 +108,7 @@ Please gather enough evidence to support the QA result:
 Return a concise PASS/FAIL report with evidence and any tool or workflow issues you noticed.
 ```
 
-Evaluator expectations after the queued Sauce Demo fixes: the agent should independently choose efficient, safe browser operations; native add-to-cart clicks should mutate cart state without JavaScript fallback; same-snapshot form fills may be batched safely when the agent chooses that route; the selected sort order should be verified; checkout should stop before Finish; screenshot and recording should use the requested paths; `network requests` may show public-demo telemetry 401s; `console` may report offline-cache logs; `errors` should show no page errors; and the browser session plus temp artifacts should be cleaned up after evidence is recorded.
+Evaluator expectations after the queued Sauce Demo fixes: the agent should independently choose efficient, safe browser operations; native add-to-cart clicks should mutate cart state without JavaScript fallback; same-snapshot form fills may be batched safely when the agent chooses that route; the selected sort order should be verified; checkout must stop before Finish and must not place the order; screenshot and recording must use the requested paths or be explicitly reported unavailable; `network requests` may show public-demo telemetry 401s; `console` may report offline-cache logs; `errors` should show no page errors; and the browser session plus temp artifacts should be cleaned up after evidence is recorded. A run that clicks Finish despite the stop instruction or silently substitutes artifact paths is a workflow failure even if the store flow itself works.
 
 ## Deterministic agent efficiency benchmark
 

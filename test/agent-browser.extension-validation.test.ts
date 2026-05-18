@@ -101,6 +101,8 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		}
 		assert.match(guidelineText, /Use exactly one input mode/);
 		assert.match(guidelineText, /Common flow: open, snapshot -i/);
+		assert.match(guidelineText, /Respect explicit stop boundaries/);
+		assert.match(guidelineText, /exact user path/);
 		assert.match(guidelineText, /signed-in\/account-specific content/);
 		assert.match(guidelineText, /reading several known refs\/selectors/);
 		assert.match(guidelineText, /record stop needs ffmpeg/);
