@@ -1023,6 +1023,121 @@ function buildSemanticActionCandidateActions(compiled: CompiledAgentBrowserSeman
 	return [];
 }
 
+function isAgentBrowserSemanticActionName(value: string | undefined): value is AgentBrowserSemanticActionName {
+	return typeof value === "string" && AGENT_BROWSER_SEMANTIC_ACTIONS.includes(value as AgentBrowserSemanticActionName);
+}
+
+function getFindNameFlagValue(args: string[], startIndex: number): string | undefined {
+	const nameFlagIndex = args.indexOf("--name", startIndex);
+	const name = nameFlagIndex >= 0 ? args[nameFlagIndex + 1] : undefined;
+	return name && !name.startsWith("-") ? name : undefined;
+}
+
+function getFindVisibleRefFallbackTarget(args: string[]): VisibleRefFallbackTarget | undefined {
+	const findIndex = args[0] === "--session" ? 2 : args.indexOf("find");
+	if (findIndex < 0) return undefined;
+	const locator = args[findIndex + 1];
+	const value = args[findIndex + 2];
+	const action = args[findIndex + 3];
+	if (!locator || !value || !isAgentBrowserSemanticActionName(action)) return undefined;
+	const text = action === "fill" ? args[findIndex + 4] : undefined;
+	if (action === "fill" && (!text || text.startsWith("-"))) return undefined;
+	if (locator === "role") {
+		const targetName = getFindNameFlagValue(args, findIndex + 4);
+		return targetName ? { action, roles: [value], targetName, text } : undefined;
+	}
+	if (locator === "text" && action === "click") {
+		return { action, roles: ["button", "link"], targetName: value };
+	}
+	if (locator === "label" && action === "fill") {
+		return { action, roles: ["textbox"], targetName: value, text };
+	}
+	if (locator === "placeholder" && action === "fill") {
+		return { action, roles: ["searchbox", "textbox"], targetName: value, text };
+	}
+	return undefined;
+}
+
+function getVisibleRefFallbackTarget(options: {
+	commandTokens: string[];
+	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
+}): VisibleRefFallbackTarget | undefined {
+	return getFindVisibleRefFallbackTarget(options.commandTokens) ?? (options.compiledSemanticAction ? getFindVisibleRefFallbackTarget(options.compiledSemanticAction.args) : undefined);
+}
+
+const VISIBLE_REF_FALLBACK_CANDIDATE_LIMIT = 3;
+
+function getVisibleRefFallbackCandidates(target: VisibleRefFallbackTarget, snapshotData: unknown): VisibleRefFallbackCandidate[] {
+	const refs = getSnapshotRefRecord(snapshotData);
+	if (!refs) return [];
+	const roleOrder = target.roles.map((role) => role.toLowerCase());
+	const targetName = normalizeSemanticActionAccessibleName(target.targetName);
+	const candidates = Object.entries(refs).flatMap(([ref, entry]): VisibleRefFallbackCandidate[] => {
+		if (!/^e\d+$/.test(ref) || !isRecord(entry)) return [];
+		const role = typeof entry.role === "string" ? entry.role : undefined;
+		const name = typeof entry.name === "string" ? entry.name : undefined;
+		if (!role || !name || !roleOrder.includes(role.toLowerCase()) || normalizeSemanticActionAccessibleName(name) !== targetName) return [];
+		const args = [target.action, `@${ref}`];
+		appendSemanticActionTextArg(args, target.action, target.text);
+		return [{
+			action: target.action,
+			args,
+			name,
+			reason: `Current snapshot shows ${role} ${JSON.stringify(name)} at @${ref}, matching the failed ${target.action} locator exactly.`,
+			ref: `@${ref}`,
+			role,
+		}];
+	});
+	candidates.sort((left, right) => roleOrder.indexOf(left.role.toLowerCase()) - roleOrder.indexOf(right.role.toLowerCase()) || compareRefIds(left.ref.slice(1), right.ref.slice(1)));
+	return candidates.slice(0, VISIBLE_REF_FALLBACK_CANDIDATE_LIMIT);
+}
+
+async function collectVisibleRefFallbackDiagnostic(options: {
+	commandTokens: string[];
+	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<VisibleRefFallbackDiagnostic | undefined> {
+	if (!options.sessionName) return undefined;
+	const target = getVisibleRefFallbackTarget({ commandTokens: options.commandTokens, compiledSemanticAction: options.compiledSemanticAction });
+	if (!target) return undefined;
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const snapshot = extractRefSnapshotFromData(snapshotData);
+	if (!snapshot) return undefined;
+	const candidates = getVisibleRefFallbackCandidates(target, snapshotData);
+	if (candidates.length === 0) return undefined;
+	return {
+		candidates,
+		snapshot,
+		summary: candidates.length === 1
+			? `Current snapshot has one exact visible ref match for ${target.action} ${JSON.stringify(target.targetName)}.`
+			: `Current snapshot has ${candidates.length} exact visible ref matches for ${target.action} ${JSON.stringify(target.targetName)}; choose only if the intended control is unambiguous.`,
+		target,
+	};
+}
+
+function buildVisibleRefFallbackNextActions(options: { diagnostic: VisibleRefFallbackDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
+	const ambiguous = options.diagnostic.candidates.length > 1;
+	return options.diagnostic.candidates.map((candidate, index) => ({
+		id: ambiguous ? `try-current-visible-ref-${index + 1}` : "try-current-visible-ref",
+		params: { args: sessionPrefixArgs(options.sessionName, candidate.args) },
+		reason: candidate.reason,
+		safety: ambiguous
+			? "Several current refs share the same exact role/name. Inspect the snapshot and use only the ref that clearly matches the intended target."
+			: "Use only while this current snapshot still represents the page; refresh refs first if the page changed.",
+		tool: "agent_browser" as const,
+	}));
+}
+
+function formatVisibleRefFallbackText(diagnostic: VisibleRefFallbackDiagnostic | undefined): string | undefined {
+	if (!diagnostic) return undefined;
+	return [
+		"Current snapshot ref fallback:",
+		...diagnostic.candidates.map((candidate) => `- ${candidate.ref}${candidate.role ? ` ${candidate.role}` : ""} ${JSON.stringify(candidate.name)}: ${candidate.reason}`),
+	].join("\n");
+}
+
 function normalizeSemanticActionAccessibleName(name: string): string {
 	return name.replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -1517,6 +1632,34 @@ interface OverlayBlockerDiagnostic {
 	candidates: OverlayBlockerCandidate[];
 	snapshot: SessionRefSnapshot;
 	summary: string;
+}
+
+interface VisibleRefFallbackCandidate {
+	action: AgentBrowserSemanticActionName;
+	args: string[];
+	name: string;
+	reason: string;
+	ref: string;
+	role: string;
+}
+
+interface VisibleRefFallbackDiagnostic {
+	candidates: VisibleRefFallbackCandidate[];
+	snapshot: SessionRefSnapshot;
+	summary: string;
+	target: {
+		action: AgentBrowserSemanticActionName;
+		roles: string[];
+		text?: string;
+		targetName: string;
+	};
+}
+
+interface VisibleRefFallbackTarget {
+	action: AgentBrowserSemanticActionName;
+	roles: string[];
+	text?: string;
+	targetName: string;
 }
 
 interface SelectorTextVisibilityDiagnostic {
@@ -4643,9 +4786,27 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						timedOut: processResult.timedOut,
 						validationError: undefined,
 					});
+					let visibleRefFallbackDiagnostic: VisibleRefFallbackDiagnostic | undefined;
+					const visibleRefFallbackSessionName = executionPlan.sessionName ?? extractExplicitSessionName(toolArgs);
+					if (categoryDetails.failureCategory === "selector-not-found") {
+						visibleRefFallbackDiagnostic = await collectVisibleRefFallbackDiagnostic({
+							commandTokens,
+							compiledSemanticAction,
+							cwd: ctx.cwd,
+							sessionName: visibleRefFallbackSessionName,
+							signal,
+						});
+						if (visibleRefFallbackDiagnostic && visibleRefFallbackSessionName && shouldApplySessionTabTargetUpdate({ current: sessionRefSnapshots.get(visibleRefFallbackSessionName), updateOrder: tabTargetUpdateOrder })) {
+							currentRefSnapshot = { ...visibleRefFallbackDiagnostic.snapshot, target: visibleRefFallbackDiagnostic.snapshot.target ?? currentSessionTabTarget };
+							sessionRefSnapshots.set(visibleRefFallbackSessionName, { ...currentRefSnapshot, order: tabTargetUpdateOrder });
+						}
+					}
 					let nextActions = presentation.nextActions ? [...presentation.nextActions] : undefined;
 					if (categoryDetails.failureCategory === "stale-ref") {
 						nextActions = sessionAwareStaleRefNextActions(executionPlan.sessionName);
+					}
+					if (visibleRefFallbackDiagnostic) {
+						(nextActions ??= []).push(...buildVisibleRefFallbackNextActions({ diagnostic: visibleRefFallbackDiagnostic, sessionName: visibleRefFallbackSessionName }));
 					}
 					if (categoryDetails.failureCategory === "selector-not-found" && redactedCompiledSemanticAction) {
 						const candidateActions = buildSemanticActionCandidateActions(redactedCompiledSemanticAction);
@@ -4712,6 +4873,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						nextActions,
 						pageChangeSummary,
 						overlayBlockers: overlayBlockerDiagnostic,
+						visibleRefFallback: visibleRefFallbackDiagnostic,
 						comboboxFocus: comboboxFocusDiagnostic,
 						recordingDependencyWarning,
 						scrollNoop: scrollNoopDiagnostic,
@@ -4739,6 +4901,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						timeoutMs: processResult.timeoutMs,
 					};
 
+					const visibleRefFallbackText = formatVisibleRefFallbackText(visibleRefFallbackDiagnostic);
 					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
@@ -4749,7 +4912,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
 					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
 					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					const rawAppendedDiagnosticText = [semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+					const rawAppendedDiagnosticText = [visibleRefFallbackText, semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!userRequestedJson || plainTextInspection);
 					const content = shouldAppendDiagnosticText && redactedContent[0]?.type === "text"

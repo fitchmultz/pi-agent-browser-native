@@ -2112,7 +2112,18 @@ test("agentBrowserExtension returns semantic locator candidates when semanticAct
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const args = process.argv.slice(2);
-if (args.includes("find")) {
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://search.example/",
+    refs: {
+      e7: { role: "searchbox", name: "Search Wikipedia" },
+      e8: { role: "textbox", name: "Search Wikipedia" },
+      e9: { role: "textbox", name: "Search Wikipedia advanced" }
+    },
+    snapshot: '- searchbox "Search Wikipedia" [ref=e7]\\n- textbox "Search Wikipedia" [ref=e8]\\n- textbox "Search Wikipedia advanced" [ref=e9]'
+  } }));
+  process.exit(0);
+} else if (args.includes("find")) {
   process.stdout.write(JSON.stringify({ success: false, error: "Element not found" }));
   process.exit(1);
 }
@@ -2124,25 +2135,37 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				semanticAction: { action: "fill", locator: "placeholder", value: "Search Wikipedia", text: "agent browser", session: "find" },
+				semanticAction: { action: "fill", locator: "placeholder", value: "Search Wikipedia", text: "agent browser" },
 			});
 
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.failureCategory, "selector-not-found");
 			const text = result.content[0] as { text: string };
+			assert.match(text.text, /Current snapshot ref fallback:/);
+			assert.match(text.text, /@e7 searchbox "Search Wikipedia"/);
+			assert.match(text.text, /@e8 textbox "Search Wikipedia"/);
+			assert.doesNotMatch(text.text, /@e9/);
 			assert.match(text.text, /Agent-browser candidate fallbacks:/);
 			assert.match(text.text, /try-searchbox-name-candidate/);
 			assert.match(text.text, /"searchbox"/);
-			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; reason?: string }> | undefined;
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; reason?: string; safety?: string }> | undefined;
 			assert.deepEqual(nextActions?.map((action) => action.id), [
 				"refresh-interactive-refs",
+				"try-current-visible-ref-1",
+				"try-current-visible-ref-2",
 				"try-searchbox-name-candidate",
 				"try-textbox-name-candidate",
 			]);
-			assert.deepEqual(nextActions?.[1]?.params?.args, ["--session", "find", "find", "role", "searchbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
-			assert.deepEqual(nextActions?.[2]?.params?.args, ["--session", "find", "find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
-			assert.match(nextActions?.[1]?.reason ?? "", /accessible name/);
+			assert.deepEqual(nextActions?.[1]?.params?.args?.slice(-3), ["fill", "@e7", "agent browser"]);
+			assert.deepEqual(nextActions?.[2]?.params?.args?.slice(-3), ["fill", "@e8", "agent browser"]);
+			assert.match(nextActions?.[1]?.safety ?? "", /Several current refs share/);
+			assert.deepEqual(nextActions?.[3]?.params?.args, ["find", "role", "searchbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
+			assert.deepEqual(nextActions?.[4]?.params?.args, ["find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
+			assert.match(nextActions?.[3]?.reason ?? "", /accessible name/);
 
 			const unsupportedSelectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "select", locator: "placeholder", value: "Country", text: "United States" },
@@ -2150,6 +2173,79 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.equal(unsupportedSelectResult.isError, true);
 			assert.equal(unsupportedSelectResult.details?.failureCategory, "validation-error");
 			assert.match((unsupportedSelectResult.content[0] as { text: string }).text, /semanticAction\.action must be one of: check, click, fill, uncheck/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension suggests current snapshot refs when raw find role locators miss", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-find-ref-fallback-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://login.example/",
+    refs: {
+      e3: { role: "button", name: "Login" },
+      e4: { role: "button", name: "Cancel" },
+      e5: { role: "link", name: "Login" },
+      e6: { role: "button", name: "Login later" }
+    },
+    snapshot: '- button "Login" [ref=e3]\\n- button "Cancel" [ref=e4]\\n- link "Login" [ref=e5]\\n- button "Login later" [ref=e6]'
+  } }));
+} else if (args.includes("find")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "Element not found" }));
+  process.exit(1);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["find", "role", "button", "click", "--name", "Login"],
+			});
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "selector-not-found");
+			assert.match((result.content[0] as { text: string }).text, /Current snapshot ref fallback:/);
+			assert.match((result.content[0] as { text: string }).text, /@e3 button "Login"/);
+			assert.doesNotMatch((result.content[0] as { text: string }).text, /@e5 link "Login"/);
+			assert.doesNotMatch((result.content[0] as { text: string }).text, /@e6 button "Login later"/);
+
+			const visibleRefFallback = result.details?.visibleRefFallback as { candidates?: Array<{ ref?: string; role?: string; name?: string }> } | undefined;
+			assert.deepEqual(visibleRefFallback?.candidates, [
+				{
+					action: "click",
+					args: ["click", "@e3"],
+					name: "Login",
+					reason: 'Current snapshot shows button "Login" at @e3, matching the failed click locator exactly.',
+					ref: "@e3",
+					role: "button",
+				},
+			]);
+			assert.deepEqual((result.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e3", "e4", "e5", "e6"]);
+
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; safety?: string }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.id), ["refresh-interactive-refs", "try-current-visible-ref"]);
+			assert.deepEqual(nextActions?.[1]?.params?.args?.slice(-2), ["click", "@e3"]);
+			assert.match(nextActions?.[1]?.safety ?? "", /current snapshot/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("find")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
