@@ -234,7 +234,7 @@ Use raw `args` for direct upstream React inspection when you already know the ex
 - optional `maxWorkspaceFiles` defaults to 2000 and cannot exceed 5000; workspace-search candidates are capped at ten
 - reports `details.compiledNetworkSourceLookup` with the generated batch plan and `details.networkSourceLookup` with `{ status, failedRequests, candidates, limitations, summary }`
 - `details.networkSourceLookup.status` is one of `failed-requests-found`, `no-failed-requests`, or `no-candidates`
-- `details.networkSourceLookup.failedRequests[]` lists correlated failed requests (optional `requestId`, `url`, HTTP `status`, `method`, `error`) after the same failure heuristics as analysis
+- `details.networkSourceLookup.failedRequests[]` lists correlated failed requests (optional `requestId`, `url`, HTTP `status`, `method`, `error`) after the same failure heuristics as analysis; those request URLs are diagnostic evidence only and do not replace the session’s active page target or invalidate the latest app-page `refSnapshot`
 - each `candidates[]` entry uses `source` `initiator` (parsed from upstream initiator/stack/source/trace fields on matching requests) or `workspace-search` (string match of URL/path needles in local source files), plus `confidence`, `evidence`, optional `file`/`line`, and optional `requestUrl`; URLs and query parameters in these surfaces are redacted for model-facing output
 
 Example:
@@ -488,7 +488,7 @@ Worth doing in v1:
 - navigation actions like `click`, `back`, `forward`, and `reload` → lightweight post-action title/url summary when available
 - tab lists → compact summary/table
 - stream status → enabled/connected/port summary plus WebSocket URL and frame format when a port is known; if the caller explicitly passed `--json`, visible text is valid JSON instead of a prose summary
-- diagnostic/status families (`session`, `session list`, `profiles`, `doctor`, `auth list`/`show`, `cookies`, `storage`, `dialog`, `frame`, `state`, `network requests`, `console`, `errors`, and dashboard start/stop/status outputs) → compact readable summaries with counts and stable fields; network request lists include an actionable-vs-benign failed-request summary and mark low-impact browser icon failures separately; large log/request/error outputs use previews plus `fullOutputPath` spill files; sensitive nested auth/header/token fields are not expanded in the model-facing text
+- diagnostic/status families (`session`, `session list`, `profiles`, `doctor`, `auth list`/`show`, `cookies`, `storage`, `dialog`, `frame`, `state`, `network requests`, `console`, `errors`, and dashboard start/stop/status outputs) → compact readable summaries with counts and stable fields; network request lists include an actionable-vs-benign failed-request summary and mark low-impact browser icon failures separately; request-detail URLs from `network request` remain diagnostic-only rather than session page targets; large log/request/error outputs use previews plus `fullOutputPath` spill files; sensitive nested auth/header/token fields are not expanded in the model-facing text
 - trace/profiler owner conflicts → when the wrapper has observed one owner active for a session, block conflicting starts/stops with "wrapper believes ..." wording because upstream or external CLI use can desynchronize wrapper-local state
 
 ## Missing binary behavior

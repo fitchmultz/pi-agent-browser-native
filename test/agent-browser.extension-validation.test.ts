@@ -2343,6 +2343,175 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension keeps network request diagnostics from replacing the active page target", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-request-target-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const appTarget = "https://app.example/";
+const apiTarget = "https://app.example/api/data";
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: appTarget,
+    refs: { e1: { role: "button", name: "Refresh data" } },
+    snapshot: '- button "Refresh data" [ref=e1]'
+  } }));
+} else if (args.includes("network") && args.includes("request")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { id: "42", method: "GET", status: 500, url: apiTarget, error: "server error" } }));
+} else if (args.includes("errors")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { errors: [], url: "https://cdn.example/app.js" } }));
+} else if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  process.stdout.write(JSON.stringify(steps.map((step) => {
+    if (step[0] === "network" && step[1] === "request") {
+      return { command: step, success: true, result: { id: step[2], method: "GET", status: 500, url: apiTarget, error: "server error" } };
+    }
+    if (step[0] === "network" && step[1] === "requests") {
+      return { command: step, success: true, result: { requests: [{ id: "42", method: "GET", status: 500, url: apiTarget, error: "server error" }] } };
+    }
+    return { command: step, success: true, result: { ok: step[0] } };
+  })));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e1" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.deepEqual(snapshot.details?.sessionTabTarget, { title: undefined, url: "https://app.example/" });
+
+			const networkRequest = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "request", "42"] });
+			assert.equal(networkRequest.isError, false, JSON.stringify(networkRequest));
+			assert.deepEqual(networkRequest.details?.sessionTabTarget, { title: undefined, url: "https://app.example/" });
+			assert.deepEqual((networkRequest.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const pageErrors = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["errors"] });
+			assert.equal(pageErrors.isError, false, JSON.stringify(pageErrors));
+			assert.deepEqual(pageErrors.details?.sessionTabTarget, { title: undefined, url: "https://app.example/" });
+
+			const clickAfterNetworkRequest = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(clickAfterNetworkRequest.isError, false, JSON.stringify(clickAfterNetworkRequest));
+			assert.notEqual(clickAfterNetworkRequest.details?.failureCategory, "stale-ref");
+			assert.equal((clickAfterNetworkRequest.details?.data as { clicked?: string } | undefined)?.clicked, "@e1");
+
+			const networkSourceLookup = await executeRegisteredTool(harness.tool, harness.ctx, { networkSourceLookup: { requestId: "42" } });
+			assert.equal(networkSourceLookup.isError, false, JSON.stringify(networkSourceLookup));
+			assert.deepEqual(networkSourceLookup.details?.sessionTabTarget, { title: undefined, url: "https://app.example/" });
+			assert.deepEqual((networkSourceLookup.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const clickAfterNetworkSourceLookup = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(clickAfterNetworkSourceLookup.isError, false, JSON.stringify(clickAfterNetworkSourceLookup));
+			assert.notEqual(clickAfterNetworkSourceLookup.details?.failureCategory, "stale-ref");
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 2);
+			assert.equal(invocations.filter((entry) => entry.args.includes("network") && entry.args.includes("request")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension ignores restored diagnostic session targets that contain request URLs", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-request-restore-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e1" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const appTarget = { title: undefined, url: "https://app.example/" };
+			const harness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "open", "https://app.example/"],
+							command: "open",
+							sessionName: "named",
+							sessionTabTarget: appTarget,
+						},
+						isError: false,
+					}),
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "snapshot", "-i"],
+							command: "snapshot",
+							refSnapshot: { refIds: ["e1"], target: appTarget },
+							sessionName: "named",
+							sessionTabTarget: appTarget,
+						},
+						isError: false,
+					}),
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "network", "request", "42"],
+							command: "network",
+							refSnapshot: { refIds: ["e1"], target: appTarget },
+							sessionName: "named",
+							sessionTabTarget: { title: undefined, url: "https://app.example/api/data" },
+							subcommand: "request",
+						},
+						isError: false,
+					}),
+					createToolBranchEntry({
+						details: {
+							args: ["batch"],
+							command: "batch",
+							compiledNetworkSourceLookup: { args: ["batch"], query: { requestId: "42" }, steps: [], stdin: "[]" },
+							data: [
+								{
+									command: ["network", "request", "42"],
+									result: { error: "server error", id: "42", status: 500, url: "https://app.example/api/data" },
+									success: true,
+								},
+							],
+							refSnapshot: { refIds: ["e1"], target: appTarget },
+							sessionName: "named",
+							sessionTabTarget: { title: undefined, url: "https://app.example/api/data" },
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "click", "@e1"] });
+			assert.equal(click.isError, false, JSON.stringify(click));
+			assert.notEqual(click.details?.failureCategory, "stale-ref");
+			assert.deepEqual(click.details?.sessionTabTarget, appTarget);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension blocks stale refs after page-changing steps inside a batch", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-"));
 	const logPath = join(tempDir, "invocations.log");

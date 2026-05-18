@@ -1614,6 +1614,9 @@ async function isDirectAgentBrowserBashAllowed(cwd: string): Promise<boolean> {
 
 const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
 const NAVIGATION_SUMMARY_EVAL = `({ title: document.title, url: location.href })`;
+// These commands can expose URLs for inspected resources (request URLs, cookie/storage scope, or log sources),
+// but they do not navigate the active tab and must not poison page-scoped ref guards.
+const READ_ONLY_DIAGNOSTIC_SESSION_TARGET_COMMANDS = new Set(["console", "cookies", "errors", "network", "storage"]);
 
 interface NavigationSummary {
 	title?: string;
@@ -2259,6 +2262,15 @@ function extractSessionTabTargetFromData(data: unknown): SessionTabTarget | unde
 	return undefined;
 }
 
+function isReadOnlyDiagnosticSessionTargetCommand(command: string | undefined, _subcommand: string | undefined): boolean {
+	return command !== undefined && READ_ONLY_DIAGNOSTIC_SESSION_TARGET_COMMANDS.has(command);
+}
+
+function extractSessionTabTargetFromCommandData(commandTokens: string[], data: unknown): SessionTabTarget | undefined {
+	const [command, subcommand] = commandTokens;
+	return isReadOnlyDiagnosticSessionTargetCommand(command, subcommand) ? undefined : extractSessionTabTargetFromData(data);
+}
+
 function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 	return Array.isArray(item.command) ? item.command.filter((token): token is string => typeof token === "string") : [];
 }
@@ -2290,13 +2302,47 @@ function extractSessionTabTargetFromBatchResults(data: unknown): SessionTabTarge
 			pendingTitle = undefined;
 			continue;
 		}
-		const resultTarget = extractSessionTabTargetFromData(result);
+		const resultTarget = extractSessionTabTargetFromCommandData([name, subcommand].filter((token): token is string => token !== undefined), result);
 		if (resultTarget) {
 			currentTarget = resultTarget;
 		}
 		pendingTitle = undefined;
 	}
 	return currentTarget;
+}
+
+function batchContainsOnlyReadOnlyDiagnosticTargets(data: unknown): boolean {
+	if (!Array.isArray(data) || data.length === 0) {
+		return false;
+	}
+	return data.every((item) => {
+		if (!isRecord(item)) return false;
+		const [command, subcommand] = extractBatchResultCommand(item);
+		return isReadOnlyDiagnosticSessionTargetCommand(command, subcommand);
+	});
+}
+
+function getRestoredSessionTabTarget(details: Record<string, unknown>, command: string | undefined, subcommand: string | undefined): SessionTabTarget | undefined {
+	if (isReadOnlyDiagnosticSessionTargetCommand(command, subcommand)) {
+		return undefined;
+	}
+	const storedTarget = isRecord(details.sessionTabTarget)
+		? normalizeSessionTabTarget({
+				title: typeof details.sessionTabTarget.title === "string" ? details.sessionTabTarget.title : undefined,
+				url: typeof details.sessionTabTarget.url === "string" ? details.sessionTabTarget.url : undefined,
+		  })
+		: undefined;
+	if (command !== "batch") {
+		return storedTarget;
+	}
+	const batchTarget = extractSessionTabTargetFromBatchResults(details.data);
+	if (batchTarget) {
+		return batchTarget;
+	}
+	if (isRecord(details.compiledNetworkSourceLookup) || batchContainsOnlyReadOnlyDiagnosticTargets(details.data)) {
+		return undefined;
+	}
+	return storedTarget;
 }
 
 function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, OrderedSessionTabTarget> {
@@ -2319,17 +2365,13 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Orde
 			continue;
 		}
 		const command = typeof details.command === "string" ? details.command : undefined;
+		const subcommand = typeof details.subcommand === "string" ? details.subcommand : undefined;
 		if (command === "close" && message.isError !== true) {
 			restoredOrder += 1;
 			restoredTargets.delete(sessionName);
 			continue;
 		}
-		const sessionTabTarget = isRecord(details.sessionTabTarget)
-			? normalizeSessionTabTarget({
-					title: typeof details.sessionTabTarget.title === "string" ? details.sessionTabTarget.title : undefined,
-					url: typeof details.sessionTabTarget.url === "string" ? details.sessionTabTarget.url : undefined,
-			  })
-			: undefined;
+		const sessionTabTarget = getRestoredSessionTabTarget(details, command, subcommand);
 		if (sessionTabTarget) {
 			restoredOrder += 1;
 			restoredTargets.set(sessionName, { order: restoredOrder, target: sessionTabTarget });
@@ -2751,14 +2793,18 @@ function deriveSessionTabTarget(options: {
 	data: unknown;
 	navigationSummary?: NavigationSummary;
 	previousTarget?: SessionTabTarget;
+	subcommand?: string;
 }): SessionTabTarget | undefined {
 	if (options.command === "close") {
 		return undefined;
 	}
+	const commandDataTarget = isReadOnlyDiagnosticSessionTargetCommand(options.command, options.subcommand)
+		? undefined
+		: extractSessionTabTargetFromData(options.data);
 	return (
 		normalizeSessionTabTarget(options.navigationSummary) ??
 		extractSessionTabTargetFromBatchResults(options.data) ??
-		extractSessionTabTargetFromData(options.data) ??
+		commandDataTarget ??
 		options.previousTarget
 	);
 }
@@ -4435,12 +4481,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const observedSessionTabTarget =
 						normalizeSessionTabTarget(navigationSummary) ??
 						extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) ??
-						extractSessionTabTargetFromData(presentationEnvelope?.data);
+						extractSessionTabTargetFromCommandData(commandTokens, presentationEnvelope?.data);
 					let currentSessionTabTarget = deriveSessionTabTarget({
 						command: executionPlan.commandInfo.command,
 						data: presentationEnvelope?.data,
 						navigationSummary,
 						previousTarget: priorSessionTabTarget,
+						subcommand: executionPlan.commandInfo.subcommand,
 					});
 					let aboutBlankSessionMismatch: AboutBlankSessionMismatch | undefined;
 					const shouldTreatAboutBlankAsMismatch =
