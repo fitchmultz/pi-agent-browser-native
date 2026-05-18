@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.30 - 2026-05-18
+
+### Added
+- Current-snapshot ref fallback for locator misses: raw `find` and compiled `semanticAction` selector misses can now surface exact visible `@ref` retry actions when a fresh snapshot shows the intended control.
+- Public Sauce Demo checkout smoke guidance for validating natural browser workflows, artifact paths, and final-action stop boundaries before release.
+- Efficiency benchmark coverage for multi-ref extraction workflows.
+
+### Changed
+- Reduced wrapper-induced click fragility by replacing serial post-click title/URL probes with one read-only navigation summary eval and limiting tab-list pinning/correction probes to sessions with observed drift risk.
+- Allowed same-snapshot form-fill batching: `fill @e…` remains stale-ref guarded but no longer invalidates later same-snapshot fills before the first click/submit/navigation row.
+- Tightened browser playbook guidance for signed-in profile use, multi-value extraction, exact requested artifact paths, and explicit order/post/purchase/submit stop boundaries.
+
+### Fixed
+- Removed stale release/support documentation notes after the post-`v0.2.29` review and kept command-reference, support-matrix, README, and tool-contract guidance aligned with the current wrapper behavior.
+
 ## 0.2.29 - 2026-05-18
 
 ### Changed
