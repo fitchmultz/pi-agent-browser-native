@@ -2948,10 +2948,8 @@ if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Blocked Search", url: "https://blocked.example/" } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
-} else if (args.includes("get") && args.includes("title")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { title: "Blocked Search" } }));
-} else if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://blocked.example/" } }));
+} else if (args.includes("eval")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Blocked Search", url: "https://blocked.example/" } } }));
 } else if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://blocked.example/",
@@ -3010,10 +3008,8 @@ if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Repo", url: "https://repo.example/" } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
-} else if (args.includes("get") && args.includes("title")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { title: "Repo" } }));
-} else if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://repo.example/" } }));
+} else if (args.includes("eval")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Repo", url: "https://repo.example/" } } }));
 } else if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://repo.example/",

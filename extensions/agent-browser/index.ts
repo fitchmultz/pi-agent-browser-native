@@ -1498,6 +1498,7 @@ async function isDirectAgentBrowserBashAllowed(cwd: string): Promise<boolean> {
 }
 
 const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
+const NAVIGATION_SUMMARY_EVAL = `({ title: document.title, url: location.href })`;
 
 interface NavigationSummary {
 	title?: string;
@@ -1985,6 +1986,13 @@ function extractStringResultField(data: unknown, fieldName: "result" | "title" |
 	return text.length > 0 ? text : undefined;
 }
 
+function extractNavigationSummaryFromData(data: unknown): NavigationSummary | undefined {
+	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
+	const title = extractStringResultField(result, "title");
+	const url = extractStringResultField(result, "url");
+	return title || url ? { title, url } : undefined;
+}
+
 const SESSION_TAB_PINNING_EXCLUDED_COMMANDS = new Set(["close", "goto", "navigate", "open", "session", "tab"]);
 const SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS = new Set(["batch", "close", "session", "tab"]);
 
@@ -2139,7 +2147,6 @@ function extractSessionTabTargetFromBatchResults(data: unknown): SessionTabTarge
 			pendingTitle = undefined;
 			continue;
 		}
-
 		const resultTarget = extractSessionTabTargetFromData(result);
 		if (resultTarget) {
 			currentTarget = resultTarget;
@@ -2334,10 +2341,12 @@ function supportsPinnedStdinCommand(options: { command?: string; commandTokens: 
 function shouldPinSessionTabForCommand(options: {
 	command?: string;
 	commandTokens: string[];
+	pinningRequired?: boolean;
 	sessionName?: string;
 	stdin?: string;
 }): boolean {
 	return (
+		options.pinningRequired === true &&
 		options.sessionName !== undefined &&
 		options.command !== undefined &&
 		!SESSION_TAB_PINNING_EXCLUDED_COMMANDS.has(options.command) &&
@@ -2567,7 +2576,7 @@ function buildPinnedBatchPlan(options: {
 	const includeNavigationSummary = options.command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(options.command);
 	const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
 	const commandStep = options.commandTokens as BatchCommandStep;
-	const navigationSummarySteps: BatchCommandStep[] = includeNavigationSummary ? [["get", "title"], ["get", "url"]] : [];
+	const navigationSummarySteps: BatchCommandStep[] = includeNavigationSummary ? [["eval", NAVIGATION_SUMMARY_EVAL]] : [];
 	return {
 		includeNavigationSummary,
 		steps: [tabSelectionStep, commandStep, ...navigationSummarySteps],
@@ -2575,8 +2584,9 @@ function buildPinnedBatchPlan(options: {
 	};
 }
 
-function shouldCorrectSessionTabAfterCommand(options: { command?: string; sessionName?: string }): boolean {
+function shouldCorrectSessionTabAfterCommand(options: { command?: string; pinningRequired?: boolean; sessionName?: string }): boolean {
 	return (
+		options.pinningRequired === true &&
 		options.sessionName !== undefined &&
 		options.command !== undefined &&
 		!SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS.has(options.command)
@@ -2655,12 +2665,8 @@ function unwrapPinnedSessionBatchEnvelope(options: {
 		};
 	}
 
-	const titleStep = options.includeNavigationSummary ? steps[2] : undefined;
-	const urlStep = options.includeNavigationSummary ? steps[3] : undefined;
-	const navigationSummary = normalizeSessionTabTarget({
-		title: extractStringResultField(titleStep?.result, "title"),
-		url: extractStringResultField(urlStep?.result, "url"),
-	});
+	const navigationSummaryStep = options.includeNavigationSummary ? steps[2] : undefined;
+	const navigationSummary = normalizeSessionTabTarget(extractNavigationSummaryFromData(navigationSummaryStep?.result));
 	return {
 		envelope: {
 			success: commandStep.success !== false,
@@ -2711,17 +2717,13 @@ async function collectNavigationSummary(options: {
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<NavigationSummary | undefined> {
-	const { cwd, sessionName, signal } = options;
-	const title = extractStringResultField(
-		await runSessionCommandData({ args: ["get", "title"], cwd, sessionName, signal }),
-		"title",
-	);
-	const url = extractStringResultField(
-		await runSessionCommandData({ args: ["get", "url"], cwd, sessionName, signal }),
-		"url",
-	);
-	if (!title && !url) return undefined;
-	return { title, url };
+	return extractNavigationSummaryFromData(await runSessionCommandData({
+		args: ["eval", "--stdin"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		signal: options.signal,
+		stdin: NAVIGATION_SUMMARY_EVAL,
+	}));
 }
 
 function extractScrollPositionSnapshot(data: unknown): ScrollPositionSnapshot | undefined {
@@ -3733,6 +3735,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let freshSessionOrdinal = 0;
 	let sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
 	let sessionRefSnapshots = new Map<string, OrderedSessionRefSnapshot>();
+	let sessionTabPinningReasons = new Map<string, "drift" | "restore">();
 	let sessionTabTargetUpdateOrder = 0;
 	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
@@ -3747,6 +3750,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		freshSessionOrdinal = restoredState.freshSessionOrdinal;
 		sessionTabTargets = restoreSessionTabTargetsFromBranch(ctx.sessionManager.getBranch());
 		sessionRefSnapshots = restoreSessionRefSnapshotsFromBranch(ctx.sessionManager.getBranch());
+		sessionTabPinningReasons = new Map([...sessionTabTargets.keys()].map((sessionName) => [sessionName, "restore"]));
 		sessionTabTargetUpdateOrder = Math.max(getLatestSessionTabTargetOrder(sessionTabTargets), getLatestSessionTabTargetOrder(sessionRefSnapshots));
 		artifactManifest = restoreArtifactManifestFromBranch(ctx.sessionManager.getBranch());
 	});
@@ -3765,6 +3769,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		managedSessionActive = false;
 		sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
 		sessionRefSnapshots = new Map<string, OrderedSessionRefSnapshot>();
+		sessionTabPinningReasons = new Map<string, "drift" | "restore">();
 		sessionTabTargetUpdateOrder = 0;
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
@@ -4013,6 +4018,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 				const priorSessionTabTargetState = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
 				const priorSessionTabTarget = priorSessionTabTargetState?.target;
+				const sessionTabPinningReason = executionPlan.sessionName ? sessionTabPinningReasons.get(executionPlan.sessionName) : undefined;
 				const priorRefSnapshotState = executionPlan.sessionName ? sessionRefSnapshots.get(executionPlan.sessionName) : undefined;
 				const resolvedSemanticActionRefSnapshot = semanticActionVisibleRefResolution?.snapshot
 					? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
@@ -4051,6 +4057,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					shouldPinSessionTabForCommand({
 						command: executionPlan.commandInfo.command,
 						commandTokens,
+						pinningRequired: sessionTabPinningReason !== undefined,
 						sessionName: executionPlan.sessionName,
 						stdin: toolStdin,
 					})
@@ -4336,6 +4343,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						observedSessionTabTarget &&
 						shouldCorrectSessionTabAfterCommand({
 							command: executionPlan.commandInfo.command,
+							pinningRequired: sessionTabPinningReason !== undefined,
 							sessionName: executionPlan.sessionName,
 						})
 					) {
@@ -4418,9 +4426,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							if (executionPlan.commandInfo.command === "close" && succeeded) {
 								sessionTabTargets.delete(executionPlan.sessionName);
 								sessionRefSnapshots.delete(executionPlan.sessionName);
+								sessionTabPinningReasons.delete(executionPlan.sessionName);
 							} else if (currentSessionTabTarget) {
 								sessionTabTargets.set(executionPlan.sessionName, { order: tabTargetUpdateOrder, target: currentSessionTabTarget });
 							}
+						} else if (succeeded && currentSessionTabTarget) {
+							// A stale overlapping command may have moved browser focus even though its older target
+							// must not replace the newer logical target. Require tab pinning on the next call.
+							sessionTabPinningReasons.set(executionPlan.sessionName, "drift");
 						}
 						const refSnapshot = succeeded
 			? executionPlan.commandInfo.command === "snapshot"
@@ -4464,9 +4477,18 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (executionPlan.managedSessionName && succeeded) {
 						managedSessionCwd = ctx.cwd;
 					}
+					if (executionPlan.sessionName && succeeded) {
+						if (openResultTabCorrection || sessionTabCorrection || aboutBlankSessionMismatch?.recoveryApplied) {
+							sessionTabPinningReasons.set(executionPlan.sessionName, "drift");
+						} else if (sessionTabPinningReason === "restore") {
+							sessionTabPinningReasons.delete(executionPlan.sessionName);
+						}
+					}
+
 					if (replacedManagedSessionName) {
 						sessionTabTargets.delete(replacedManagedSessionName);
 						sessionRefSnapshots.delete(replacedManagedSessionName);
+						sessionTabPinningReasons.delete(replacedManagedSessionName);
 						await closeManagedSession({
 							cwd: priorManagedSessionCwd,
 							sessionName: replacedManagedSessionName,

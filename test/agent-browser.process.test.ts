@@ -324,7 +324,7 @@ test("agentBrowserExtension removes oversized navigation-summary stdout spills a
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const args = process.argv.slice(2);
-const isNavigationSummaryHelper = args.includes("get") && (args.includes("title") || args.includes("url"));
+const isNavigationSummaryHelper = args.includes("eval") || (args.includes("get") && (args.includes("title") || args.includes("url")));
 if (isNavigationSummaryHelper) {
 	process.stdout.write(JSON.stringify({ success: false, data: { payload: "x".repeat(700000) } }), () => process.exit(1));
 } else if (args.includes("open")) {
