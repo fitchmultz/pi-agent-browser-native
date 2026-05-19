@@ -36,7 +36,7 @@ npm run verify -- release
 
 `prepublishOnly` intentionally does **not** run `npm run verify -- lifecycle`, `npm run verify -- real-upstream`, or `npm run verify -- benchmark`; those are separate `npm run verify` modes in [`scripts/project.mjs`](../scripts/project.mjs). Treat the bullets below as the full pre-publish contract even though only the `release` slice is automated at publish time.
 
-Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. Use `pi --no-extensions -e .` from the checkout before publish, drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost and fake-upstream gates do not replace this human-readable live-site transcript evidence. For dense-dashboard stress coverage, use the [public Grafana stress checklist](#public-grafana-stress-checklist) below; it is a maintainer workflow, not bundled product skill or recipe runtime.
+Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. For extension-focused release smokes, use `pi --no-extensions --no-skills -e .` from the checkout before publish so auto-loaded dogfood/QA skills cannot replace the bounded smoke workflow; run separate skill-enabled dogfood only when validating skill routing or report-generation behavior. Drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost and fake-upstream gates do not replace this human-readable live-site transcript evidence. For dense-dashboard stress coverage, use the [public Grafana stress checklist](#public-grafana-stress-checklist) below; it is a maintainer workflow, not bundled product skill or recipe runtime.
 
 The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload` plus restart/`/resume` behavior:
 
@@ -73,18 +73,18 @@ Record release evidence as a short note with: date, package/checkout source, tar
 
 Use this validation prompt after changing click enrichment, tab pinning, ref preflight, form-fill batching, artifact handling, recording, or prompt guidance. It is intentionally more stateful than `example.com` and uses a natural user-style request so the transcript shows what the agent chooses on its own. Do **not** mention `agent_browser`, snapshots, refs, `batch`, `eval`, or upstream command names in the prompt; those are evaluator expectations, not user instructions.
 
-Run it in an isolated checkout session. It is fine to restrict active tools at launch so the checkout extension is the only browser surface, but keep that detail out of the user prompt:
+Run it in an isolated checkout session with skills disabled so the run validates the extension browser workflow instead of external dogfood/QA skill routing. It is fine to restrict active tools at launch so the checkout extension is the only browser surface, but keep those launch details out of the user prompt:
 
 ```bash
-pi --no-extensions -e . --model openai-codex/gpt-5.5:minimal --tools agent_browser --session-dir "$SESSION_DIR"
+pi --no-extensions --no-skills -e . --model openai-codex/gpt-5.5:minimal --tools agent_browser --session-dir "$SESSION_DIR"
 ```
 
-Repeat with `--model openai-codex/gpt-5.5:medium` when validating instruction-following robustness. Use unique temp paths for each run and delete them afterward.
+Repeat with `--model openai-codex/gpt-5.5:medium` when validating instruction-following robustness. Use unique temp paths for each run and delete them afterward. Run separate skill-enabled dogfood sessions only when the thing under test is skill integration, not this bounded release smoke.
 
 Copy/paste prompt, replacing the two artifact placeholders with exact absolute paths:
 
 ```text
-Please do an end-to-end QA pass on the public Sauce Demo store.
+Please run a bounded release smoke check on the public Sauce Demo store. This is not an exploratory bug hunt or dogfood report.
 
 Site: https://www.saucedemo.com/
 Demo credentials: standard_user / secret_sauce
@@ -99,13 +99,13 @@ Scenario:
 - Start checkout with a fake name and postal code.
 - Stop on the checkout overview page; do not place the order.
 
-Please gather enough evidence to support the QA result:
+Please gather enough evidence to support the smoke result:
 - Save a screenshot here: <ABSOLUTE_SCREENSHOT_PATH>.png
 - Save a short screen recording here if recording is available: <ABSOLUTE_RECORDING_PATH>.webm
 - Include the final page title/URL, the selected sort order, cart contents, item total/tax/total, and any browser-side network, console, or page-error issues you see.
 - Clean up by closing the browser when finished.
 
-Return a concise PASS/FAIL report with evidence and any tool or workflow issues you noticed.
+Return a concise PASS/FAIL report with evidence and any tool or workflow issues you noticed. Do not create a dogfood-output report directory.
 ```
 
 Evaluator expectations after the queued Sauce Demo fixes: the agent should independently choose efficient, safe browser operations; native add-to-cart clicks should mutate cart state without JavaScript fallback; same-snapshot form fills may be batched safely when the agent chooses that route; the selected sort order should be verified; checkout must stop before Finish and must not place the order; screenshot and recording must use the requested paths or be explicitly reported unavailable; `network requests` may show public-demo telemetry 401s; `console` may report offline-cache logs; `errors` should show no page errors; and the browser session plus temp artifacts should be cleaned up after evidence is recorded. A run that clicks Finish despite the stop instruction or silently substitutes artifact paths is a workflow failure even if the store flow itself works.
@@ -269,8 +269,8 @@ Before publishing:
 - run `npm run verify -- command-reference` if the installed upstream `agent-browser` version or help surface changed
 - run `npm run doctor` and confirm any duplicate-source remediation matches the active package/checkout setup
 - run `npm run verify -- real-upstream` for upstream runtime, result-presentation, or managed-session changes
-- confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing and configured-source lifecycle validation
-- complete interactive `tmux` live-site dogfood with `pi --no-extensions -e .` and the native `agent_browser` tool (at least one simple static site and one real documentation/product site; include `qa` or `job`/`batch` when those surfaces changed; use the [public Grafana stress checklist](#public-grafana-stress-checklist) when dashboard/diagnostic/artifact behavior changed; close sessions and remove screenshots/temp artifacts; record evidence)—see [Pre-release checks](#pre-release-checks); automated gates are not a substitute
+- confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing for general checkout loading (add `--no-skills` for extension-focused bounded smokes) and configured-source lifecycle validation
+- complete interactive `tmux` live-site extension smoke with `pi --no-extensions --no-skills -e .` and the native `agent_browser` tool (at least one simple static site and one real documentation/product site; include `qa` or `job`/`batch` when those surfaces changed; use the [public Grafana stress checklist](#public-grafana-stress-checklist) when dashboard/diagnostic/artifact behavior changed; close sessions and remove screenshots/temp artifacts; record evidence). Run separate skill-enabled dogfood only when validating skill routing/report-generation behavior—see [Pre-release checks](#pre-release-checks); automated gates are not a substitute
 - rerun `npm run verify -- release`
 - run `npm run verify -- lifecycle` for configured-source `/reload` plus restart/`/resume` regression coverage (required before publish; see [Pre-release checks](#pre-release-checks))
 - confirm [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) still maps every current baseline inventory section to docs, runtime handling, tests, and validation status

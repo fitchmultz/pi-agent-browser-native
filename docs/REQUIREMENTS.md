@@ -89,6 +89,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - Prefer full `pi` restart over `/reload` when validating extension changes beyond a quick reload smoke check.
 - Use `/resume` when needed after restart.
 - Keep testing broader than a single smoke site like `example.com`.
+- Bounded release smokes that validate this extension should disable auto-loaded skills with `--no-skills`; run skill-enabled dogfood separately only when validating external skill routing or report-generation behavior.
 - Maintain a concrete release/package verification workflow in `docs/RELEASE.md` and matching repository scripts.
 
 ## Representative use cases
