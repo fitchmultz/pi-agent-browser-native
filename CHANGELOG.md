@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.31 - 2026-05-18
+
+### Added
+- First-class native dropdown selection for `agent_browser`: `semanticAction.action = "select"` and constrained `job` `select` steps now compile to upstream `select <selector> <value...>`, with tests against fake and real upstream fixtures.
+- Bounded machine `details.nextActions` for compact `network requests` output, including exact request-detail, source-lookup, filter, and HAR-capture follow-ups with session preservation and sensitive path/query suppression.
+
+### Changed
+- Release smoke guidance now uses bounded extension-focused prompts with `--no-skills` for Sauce Demo validation, keeping skill-enabled dogfood/report routing as a separate test mode.
+- Network diagnostics preserve app page/ref context so request-detail and `networkSourceLookup` URLs do not replace the active browser target or stale current-page refs.
+
+### Fixed
+- Narrowed the `eval --stdin` empty-result hint so valid empty array results no longer warn like uninvoked function snippets that serialize to `{}`.
+
 ## 0.2.30 - 2026-05-18
 
 ### Added
