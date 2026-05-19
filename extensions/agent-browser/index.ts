@@ -84,9 +84,9 @@ const DEFAULT_SESSION_MODE = "auto" as const;
 const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
 const PACKAGE_NAME = "pi-agent-browser-native";
 
-const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "uncheck"] as const;
+const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select", "uncheck"] as const;
 const AGENT_BROWSER_SEMANTIC_LOCATORS = ["alt", "label", "placeholder", "role", "testid", "text", "title"] as const;
-const AGENT_BROWSER_JOB_STEP_ACTIONS = ["open", "click", "fill", "wait", "assertText", "assertUrl", "waitForDownload", "screenshot"] as const;
+const AGENT_BROWSER_JOB_STEP_ACTIONS = ["open", "click", "fill", "select", "wait", "assertText", "assertUrl", "waitForDownload", "screenshot"] as const;
 const AGENT_BROWSER_QA_LOAD_STATES = ["domcontentloaded", "load", "networkidle"] as const;
 const SOURCE_LOOKUP_WORKSPACE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const SOURCE_LOOKUP_IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", "out", "tmp", "temp"]);
@@ -102,8 +102,10 @@ type AgentBrowserNetworkSourceLookupStatus = "failed-requests-found" | "no-faile
 
 interface AgentBrowserSemanticActionInput {
 	action: AgentBrowserSemanticActionName;
-	locator: AgentBrowserSemanticLocator;
-	value: string;
+	locator?: AgentBrowserSemanticLocator;
+	value?: string;
+	values?: string[];
+	selector?: string;
 	text?: string;
 	role?: string;
 	name?: string;
@@ -112,7 +114,9 @@ interface AgentBrowserSemanticActionInput {
 
 interface CompiledAgentBrowserSemanticAction {
 	action: AgentBrowserSemanticActionName;
-	locator: AgentBrowserSemanticLocator;
+	locator?: AgentBrowserSemanticLocator;
+	selector?: string;
+	values?: string[];
 	args: string[];
 }
 
@@ -265,16 +269,18 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 	semanticAction: Type.Optional(
 		Type.Object({
 			action: StringEnum(AGENT_BROWSER_SEMANTIC_ACTIONS, {
-				description: "Intent action to compile to an existing agent-browser find command.",
+				description: "Intent action to compile to an existing agent-browser find command, or to upstream select when action=select.",
 			}),
-			locator: StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, {
-				description: "Upstream find locator family to use.",
-			}),
-			value: Type.String({ description: "Locator value, such as visible text, label text, placeholder text, test id, title, alt text, or role." }),
+			locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, {
+				description: "Upstream find locator family to use for check/click/fill/uncheck actions.",
+			})),
+			value: Type.Optional(Type.String({ description: "Locator value for find actions, or a single option value for select actions." })),
+			values: Type.Optional(Type.Array(Type.String({ description: "Option value for select actions." }), { description: "One or more option values for select actions.", minItems: 1 })),
+			selector: Type.Optional(Type.String({ description: "Selector or @ref for select actions; compiled to select <selector> <value...>." })),
 			text: Type.Optional(Type.String({ description: "Text/value argument for fill actions." })),
 			role: Type.Optional(Type.String({ description: "Role locator value; when set it must match value for locator=role." })),
 			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
-			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the compiled find command." })),
+			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the compiled command." })),
 		}),
 	),
 	qa: Type.Optional(
@@ -314,8 +320,10 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 						description: "Constrained one-call job step compiled to existing upstream batch commands.",
 					}),
 					url: Type.Optional(Type.String({ description: "URL for open steps, or URL pattern for assertUrl steps." })),
-					selector: Type.Optional(Type.String({ description: "Selector or @ref for click/fill/get-like steps." })),
+					selector: Type.Optional(Type.String({ description: "Selector or @ref for click/fill/select-like steps." })),
 					text: Type.Optional(Type.String({ description: "Text for fill steps or visible text for assertText steps." })),
+					value: Type.Optional(Type.String({ description: "Single option value for select steps." })),
+					values: Type.Optional(Type.Array(Type.String({ description: "Option value for select steps." }), { description: "One or more option values for select steps.", minItems: 1 })),
 					path: Type.Optional(Type.String({ description: "Artifact/download path for waitForDownload or screenshot steps." })),
 					milliseconds: Type.Optional(Type.Number({ description: "Milliseconds for wait steps." })),
 				}),
@@ -355,6 +363,24 @@ function getRequiredJobString(step: Record<string, unknown>, field: "path" | "se
 	return { value };
 }
 
+function getSelectValues(input: Record<string, unknown>, context: string): { values?: string[]; error?: string } {
+	const rawValue = input.value;
+	const rawValues = input.values;
+	if (rawValue !== undefined && rawValues !== undefined) {
+		return { error: `${context}.value and ${context}.values cannot both be provided for select.` };
+	}
+	if (rawValues !== undefined) {
+		if (!Array.isArray(rawValues) || rawValues.length === 0 || rawValues.some((value) => typeof value !== "string" || value.trim().length === 0)) {
+			return { error: `${context}.values must be a non-empty array of non-empty strings for select.` };
+		}
+		return { values: rawValues };
+	}
+	if (typeof rawValue === "string" && rawValue.trim().length > 0) {
+		return { values: [rawValue] };
+	}
+	return { error: `${context}.value or ${context}.values is required for select.` };
+}
+
 function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAgentBrowserJob; error?: string } {
 	if (!isRecord(input)) {
 		return { error: "job must be an object." };
@@ -388,6 +414,12 @@ function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAgentBrows
 			const text = getRequiredJobString(rawStep, "text", jobAction);
 			if (text.error) return { error: `job.steps[${index}]: ${text.error}` };
 			args = ["fill", selector.value as string, text.value as string];
+		} else if (jobAction === "select") {
+			const selector = getRequiredJobString(rawStep, "selector", jobAction);
+			if (selector.error) return { error: `job.steps[${index}]: ${selector.error}` };
+			const values = getSelectValues(rawStep, `job.steps[${index}]`);
+			if (values.error) return { error: values.error };
+			args = ["select", selector.value as string, ...(values.values as string[])];
 		} else if (jobAction === "wait") {
 			const milliseconds = rawStep.milliseconds;
 			if (typeof milliseconds !== "number" || !Number.isInteger(milliseconds) || milliseconds <= 0) {
@@ -967,6 +999,11 @@ function getCompiledSemanticActionSessionPrefix(compiled: CompiledAgentBrowserSe
 	return commandIndex > 0 ? compiled.args.slice(0, commandIndex) : [];
 }
 
+function isCompiledSemanticActionFindCommand(compiled: CompiledAgentBrowserSemanticAction | undefined): boolean {
+	if (!compiled) return false;
+	return compiled.args[getCompiledSemanticActionCommandIndex(compiled)] === "find";
+}
+
 const SEMANTIC_ACTION_CANDIDATE_ACTION_IDS = new Set([
 	"try-searchbox-name-candidate",
 	"try-textbox-name-candidate",
@@ -986,7 +1023,7 @@ function formatSemanticActionCandidateText(actions: AgentBrowserNextAction[]): s
 
 function buildSemanticActionCandidateActions(compiled: CompiledAgentBrowserSemanticAction): AgentBrowserNextAction[] {
 	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
-	if (commandIndex < 0) return [];
+	if (commandIndex < 0 || compiled.args[commandIndex] !== "find") return [];
 	const locator = compiled.args[commandIndex + 1];
 	const value = compiled.args[commandIndex + 2];
 	if (!locator || !value) return [];
@@ -1034,12 +1071,12 @@ function getFindNameFlagValue(args: string[], startIndex: number): string | unde
 }
 
 function getFindVisibleRefFallbackTarget(args: string[]): VisibleRefFallbackTarget | undefined {
-	const findIndex = args[0] === "--session" ? 2 : args.indexOf("find");
-	if (findIndex < 0) return undefined;
+	const findIndex = args[0] === "--session" ? 2 : 0;
+	if (args[findIndex] !== "find") return undefined;
 	const locator = args[findIndex + 1];
 	const value = args[findIndex + 2];
 	const action = args[findIndex + 3];
-	if (!locator || !value || !isAgentBrowserSemanticActionName(action)) return undefined;
+	if (!locator || !value || !isAgentBrowserSemanticActionName(action) || action === "select") return undefined;
 	const text = action === "fill" ? args[findIndex + 4] : undefined;
 	if (action === "fill" && (!text || text.startsWith("-"))) return undefined;
 	if (locator === "role") {
@@ -1200,12 +1237,35 @@ function compileAgentBrowserSemanticAction(input: unknown): { compiled?: Compile
 	const action = input.action;
 	const locator = input.locator;
 	const value = input.value;
+	const values = input.values;
+	const selector = input.selector;
 	const text = input.text;
 	const role = input.role;
 	const name = input.name;
 	const session = input.session;
 	if (typeof action !== "string" || !AGENT_BROWSER_SEMANTIC_ACTIONS.includes(action as AgentBrowserSemanticActionName)) {
 		return { error: `semanticAction.action must be one of: ${AGENT_BROWSER_SEMANTIC_ACTIONS.join(", ")}.` };
+	}
+	if (session !== undefined && (typeof session !== "string" || session.trim().length === 0)) {
+		return { error: "semanticAction.session must be a non-empty string when provided." };
+	}
+	if (action === "select") {
+		if (locator !== undefined || role !== undefined || name !== undefined) {
+			return { error: "semanticAction.locator, role, and name are not supported for select; use selector plus value or values." };
+		}
+		if (text !== undefined) {
+			return { error: "semanticAction.text is not supported for select; use value or values for option values." };
+		}
+		if (typeof selector !== "string" || selector.trim().length === 0) {
+			return { error: "semanticAction.selector is required for select." };
+		}
+		const selectedValues = getSelectValues(input, "semanticAction");
+		if (selectedValues.error) return { error: selectedValues.error };
+		const args = typeof session === "string" ? ["--session", session, "select", selector, ...(selectedValues.values as string[])] : ["select", selector, ...(selectedValues.values as string[])];
+		return { compiled: { action: "select", selector, values: selectedValues.values, args } };
+	}
+	if (selector !== undefined || values !== undefined) {
+		return { error: "semanticAction.selector and values are only supported for select actions." };
 	}
 	if (typeof locator !== "string" || !AGENT_BROWSER_SEMANTIC_LOCATORS.includes(locator as AgentBrowserSemanticLocator)) {
 		return { error: `semanticAction.locator must be one of: ${AGENT_BROWSER_SEMANTIC_LOCATORS.join(", ")}.` };
@@ -1227,9 +1287,6 @@ function compileAgentBrowserSemanticAction(input: unknown): { compiled?: Compile
 	}
 	if (name !== undefined && (locator !== "role" || typeof name !== "string" || name.length === 0)) {
 		return { error: "semanticAction.name is only supported as a non-empty string for locator=role." };
-	}
-	if (session !== undefined && (typeof session !== "string" || session.trim().length === 0)) {
-		return { error: "semanticAction.session must be a non-empty string when provided." };
 	}
 	const args = typeof session === "string" ? ["--session", session, "find", locator, value, action] : ["find", locator, value, action];
 	if (action === "fill") {
@@ -4873,7 +4930,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (comboboxFocusDiagnostic) {
 						(nextActions ??= []).push(...buildComboboxFocusNextActions(executionPlan.sessionName));
 					}
-					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction) {
+					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction && isCompiledSemanticActionFindCommand(compiledSemanticAction)) {
 						(nextActions ??= []).push({
 							id: "retry-semantic-action-after-stale-ref",
 							params: { args: redactedCompiledSemanticAction.args },

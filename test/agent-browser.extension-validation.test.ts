@@ -1547,11 +1547,26 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 			});
 			assert.equal(sessionClickResult.details?.sessionName, "named");
 
-			const invocations = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("find"));
+			const selectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", selector: "#flavor-select", value: "chocolate", session: "named" },
+			});
+			assert.equal(selectResult.isError, false);
+			assert.deepEqual(selectResult.details?.compiledSemanticAction, {
+				action: "select",
+				selector: "#flavor-select",
+				values: ["chocolate"],
+				args: ["--session", "named", "select", "#flavor-select", "chocolate"],
+			});
+			assert.equal(selectResult.details?.sessionName, "named");
+
+			const invocationLog = await readInvocationLog(logPath);
+			const invocations = invocationLog.filter((entry) => entry.args.includes("find"));
 			assert.deepEqual(invocations[0]?.args.slice(-6), ["find", "role", "button", "click", "--name", "Export"]);
 			assert.deepEqual(invocations[1]?.args.slice(-5), ["find", "label", "Email", "fill", "user@example.test"]);
 			assert.deepEqual(invocations[2]?.args.slice(-4), ["find", "text", "Close", "click"]);
 			assert.deepEqual(invocations[3]?.args.slice(-6), ["--session", "named", "find", "text", "Close", "click"]);
+			const selectInvocation = invocationLog.find((entry) => entry.args.includes("select"));
+			assert.deepEqual(selectInvocation?.args.slice(-5), ["--session", "named", "select", "#flavor-select", "chocolate"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1657,6 +1672,7 @@ process.stdin.on("end", () => {
 					steps: [
 						{ action: "open", url: "https://example.test/" },
 						{ action: "fill", selector: "#email", text: "user@example.test" },
+						{ action: "select", selector: "#theme", values: ["dark", "compact"] },
 						{ action: "click", selector: "#submit" },
 						{ action: "assertText", text: "Welcome" },
 						{ action: "assertUrl", url: "**/dashboard" },
@@ -1678,6 +1694,7 @@ process.stdin.on("end", () => {
 			const expectedCompiledSteps = [
 				["open", "https://example.test/"],
 				["fill", "#email", "user@example.test"],
+				["select", "#theme", "dark", "compact"],
 				["click", "#submit"],
 				["wait", "--text", "Welcome"],
 				["wait", "--url", "**/dashboard"],
@@ -1698,9 +1715,9 @@ process.stdin.on("end", () => {
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
 			const upstreamSteps = JSON.parse(invocations[0]?.stdin ?? "[]") as string[][];
-			assert.deepEqual(upstreamSteps.slice(0, 7), compiledJob?.steps?.slice(0, 7).map((step) => step.args));
-			assert.equal(upstreamSteps[7]?.[0], "screenshot");
-			assert.match(upstreamSteps[7]?.[1] ?? "", /job\.png$/);
+			assert.deepEqual(upstreamSteps.slice(0, 8), compiledJob?.steps?.slice(0, 8).map((step) => step.args));
+			assert.equal(upstreamSteps[8]?.[0], "screenshot");
+			assert.match(upstreamSteps[8]?.[1] ?? "", /job\.png$/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -2033,6 +2050,12 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.equal(invalidJobWait.isError, true);
 			assert.match((invalidJobWait.content[0] as { text: string }).text, /wait requires a positive integer milliseconds/);
 
+			const invalidJobSelect = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "select", selector: "#flavor" }] },
+			});
+			assert.equal(invalidJobSelect.isError, true);
+			assert.match((invalidJobSelect.content[0] as { text: string }).text, /job\.steps\[0\]\.value or job\.steps\[0\]\.values is required for select/);
+
 			const invalidSourceLookup = await executeRegisteredTool(harness.tool, harness.ctx, {
 				sourceLookup: {},
 			});
@@ -2100,6 +2123,27 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match((emptySession.content[0] as { text: string }).text, /semanticAction\.session must be a non-empty string/);
 			assert.equal(emptySession.details?.failureCategory, "validation-error");
 
+			const selectWithoutSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", value: "chocolate" },
+			});
+			assert.equal(selectWithoutSelector.isError, true);
+			assert.match((selectWithoutSelector.content[0] as { text: string }).text, /semanticAction\.selector is required for select/);
+			assert.equal(selectWithoutSelector.details?.failureCategory, "validation-error");
+
+			const selectWithoutValue = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", selector: "#flavor" },
+			});
+			assert.equal(selectWithoutValue.isError, true);
+			assert.match((selectWithoutValue.content[0] as { text: string }).text, /semanticAction\.value or semanticAction\.values is required for select/);
+			assert.equal(selectWithoutValue.details?.failureCategory, "validation-error");
+
+			const selectWithLocator = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "placeholder", selector: "#flavor", value: "chocolate" },
+			});
+			assert.equal(selectWithLocator.isError, true);
+			assert.match((selectWithLocator.content[0] as { text: string }).text, /locator, role, and name are not supported for select/);
+			assert.equal(selectWithLocator.details?.failureCategory, "validation-error");
+
 			const invocations = await readInvocationLog(logPath).catch(() => []);
 			assert.deepEqual(invocations.filter((entry) => entry.args.includes("find")), []);
 		});
@@ -2120,13 +2164,14 @@ if (args.includes("snapshot")) {
     refs: {
       e7: { role: "searchbox", name: "Search Wikipedia" },
       e8: { role: "textbox", name: "Search Wikipedia" },
-      e9: { role: "textbox", name: "Search Wikipedia advanced" }
+      e9: { role: "textbox", name: "Search Wikipedia advanced" },
+      e10: { role: "button", name: "Search Wikipedia" }
     },
-    snapshot: '- searchbox "Search Wikipedia" [ref=e7]\\n- textbox "Search Wikipedia" [ref=e8]\\n- textbox "Search Wikipedia advanced" [ref=e9]'
+    snapshot: '- searchbox "Search Wikipedia" [ref=e7]\\n- textbox "Search Wikipedia" [ref=e8]\\n- textbox "Search Wikipedia advanced" [ref=e9]\\n- button "Search Wikipedia" [ref=e10]'
   } }));
   process.exit(0);
-} else if (args.includes("find")) {
-  process.stdout.write(JSON.stringify({ success: false, error: "Element not found" }));
+} else if (args.includes("find") || args.includes("select")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "selector not found" }));
   process.exit(1);
 }
 process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
@@ -2169,12 +2214,24 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.deepEqual(nextActions?.[4]?.params?.args, ["find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
 			assert.match(nextActions?.[3]?.reason ?? "", /accessible name/);
 
-			const unsupportedSelectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				semanticAction: { action: "select", locator: "placeholder", value: "Country", text: "United States" },
+			const selectMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", selector: "find", values: ["role", "button", "click", "--name", "Search Wikipedia"] },
 			});
-			assert.equal(unsupportedSelectResult.isError, true);
-			assert.equal(unsupportedSelectResult.details?.failureCategory, "validation-error");
-			assert.match((unsupportedSelectResult.content[0] as { text: string }).text, /semanticAction\.action must be one of: check, click, fill, uncheck/);
+			assert.equal(selectMiss.isError, true);
+			assert.equal(selectMiss.details?.failureCategory, "selector-not-found");
+			assert.doesNotMatch((selectMiss.content[0] as { text: string }).text, /Current snapshot ref fallback|Agent-browser candidate fallbacks|@e10/);
+			const selectMissNextActions = selectMiss.details?.nextActions as Array<{ id?: string }> | undefined;
+			assert.deepEqual(selectMissNextActions?.map((action) => action.id), ["refresh-interactive-refs"]);
+
+			const rawSelectMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["select", "find", "role", "button", "click", "--name", "Search Wikipedia"],
+			});
+			assert.equal(rawSelectMiss.isError, true);
+			assert.equal(rawSelectMiss.details?.failureCategory, "selector-not-found");
+			assert.doesNotMatch((rawSelectMiss.content[0] as { text: string }).text, /Current snapshot ref fallback|@e10/);
+			const rawSelectMissNextActions = rawSelectMiss.details?.nextActions as Array<{ id?: string }> | undefined;
+			assert.deepEqual(rawSelectMissNextActions?.map((action) => action.id), ["refresh-interactive-refs"]);
+
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -2254,13 +2311,13 @@ if (args.includes("snapshot")) {
 	}
 });
 
-test("agentBrowserExtension returns a safe semantic retry action for stale-ref failures with compiled targets", { concurrency: false }, async () => {
+test("agentBrowserExtension returns a safe semantic retry action only for stale-ref find shorthand failures", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-stale-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const args = process.argv.slice(2);
-if (args.includes("find")) {
+if (args.includes("find") || args.includes("select")) {
   process.stdout.write(JSON.stringify({ success: false, error: "Unknown ref @e4 while resolving locator" }));
   process.exit(1);
 }
@@ -2282,6 +2339,14 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.deepEqual(nextActions?.map((action) => action.id), ["refresh-interactive-refs", "retry-semantic-action-after-stale-ref"]);
 			assert.deepEqual(nextActions?.[1]?.params?.args, ["find", "text", "Export", "click"]);
 			assert.match(nextActions?.[1]?.safety ?? "", /prior action did not execute|direct stale @refs/);
+
+			const selectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", selector: "@e4", value: "find" },
+			});
+			assert.equal(selectResult.isError, true);
+			assert.equal(selectResult.details?.failureCategory, "stale-ref");
+			const selectNextActions = selectResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
+			assert.deepEqual(selectNextActions?.map((action) => action.id), ["refresh-interactive-refs"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

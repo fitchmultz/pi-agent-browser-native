@@ -271,6 +271,22 @@ if (!REAL_UPSTREAM_ENABLED) {
 						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
 						"chocolate",
 					);
+					const semanticSelect = await executeRegisteredTool(harness.tool, harness.ctx, {
+						semanticAction: { action: "select", selector: "#flavor-select", value: "vanilla" },
+					});
+					assertCoreCommandResult(semanticSelect, shapes.commands.coreCommand, "semanticAction select", managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"vanilla",
+					);
+					const jobSelect = await executeRegisteredTool(harness.tool, harness.ctx, {
+						job: { steps: [{ action: "select", selector: "#flavor-select", value: "chocolate" }] },
+					});
+					assertCoreCommandResult(jobSelect, shapes.commands.batch, "job select", managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"chocolate",
+					);
 					await runCoreCommand(harness, ["upload", "#file-input", uploadPath], shapes.commands.coreCommand, managedSessionName);
 					assert.equal(
 						getResultValue(await runCoreCommand(harness, ["eval", "document.querySelector('#file-input').files[0]?.name"], shapes.commands.eval, managedSessionName), ["result"]),

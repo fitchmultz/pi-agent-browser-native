@@ -185,8 +185,10 @@ export type AgentBrowserToolParams = {
 	args?: string[];
 	semanticAction?: {
 		action: "check" | "click" | "fill" | "select" | "uncheck";
-		locator: "alt" | "label" | "placeholder" | "role" | "testid" | "text" | "title";
-		value: string;
+		locator?: "alt" | "label" | "placeholder" | "role" | "testid" | "text" | "title";
+		value?: string;
+		values?: string[];
+		selector?: string;
 		text?: string;
 		role?: string;
 		name?: string;
@@ -194,10 +196,12 @@ export type AgentBrowserToolParams = {
 	};
 	job?: {
 		steps: Array<{
-			action: "open" | "click" | "fill" | "wait" | "assertText" | "assertUrl" | "waitForDownload" | "screenshot";
+			action: "open" | "click" | "fill" | "select" | "wait" | "assertText" | "assertUrl" | "waitForDownload" | "screenshot";
 			url?: string;
 			selector?: string;
 			text?: string;
+			value?: string;
+			values?: string[];
 			path?: string;
 			milliseconds?: number;
 		}>;

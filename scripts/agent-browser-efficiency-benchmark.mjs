@@ -233,22 +233,23 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
   }),
   Object.freeze({
     id: "job-open-assert-screenshot",
-    title: "Run a constrained job that opens, asserts text, and captures evidence",
+    title: "Run a constrained job that opens, selects a native dropdown value, asserts text, and captures evidence",
     workflow: "native-job",
     steps: Object.freeze([
       Object.freeze({
         call: "agent_browser",
         job: Object.freeze({
           steps: Object.freeze([
-            Object.freeze({ action: "open", url: "https://example.com" }),
-            Object.freeze({ action: "assertText", text: "Example Domain" }),
+            Object.freeze({ action: "open", url: "https://forms.example.test/preferences" }),
+            Object.freeze({ action: "select", selector: "#flavor", value: "chocolate" }),
+            Object.freeze({ action: "assertText", text: "Preferences saved" }),
             Object.freeze({ action: "screenshot", path: ".dogfood/example.png" }),
           ]),
         }),
       }),
     ]),
     modelOutputs: Object.freeze([
-      "Batch results:\n1. Opened https://example.com\n2. Text appeared: Example Domain\n3. Saved image: .dogfood/example.png\nCompiled job: 3 steps",
+      "Batch results:\n1. Opened https://forms.example.test/preferences\n2. Selected #flavor = chocolate\n3. Text appeared: Preferences saved\n4. Saved image: .dogfood/example.png\nCompiled job: 4 steps",
     ]),
     success: true,
     staleRefFailures: 0,
