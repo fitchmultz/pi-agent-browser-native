@@ -3141,7 +3141,9 @@ if (args.includes("get") && args.includes("url")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "120" }, async () => {
+		// Keep the watchdog short enough to exercise timeout progress, but not so short that
+		// immediate helper probes (`get url` / `get title`) flake under full release-suite load.
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "500" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
