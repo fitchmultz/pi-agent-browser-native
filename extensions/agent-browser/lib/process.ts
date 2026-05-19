@@ -22,6 +22,7 @@ const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_M
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
 export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 28_000;
+const EXIT_STDIO_CLOSE_GRACE_MS = 250;
 const httpProxyEnvName = "http_proxy";
 const httpsProxyEnvName = "https_proxy";
 const allProxyEnvName = "all_proxy";
@@ -204,6 +205,7 @@ export async function runAgentBrowserProcess(options: {
 		let pendingStdoutWrite = Promise.resolve();
 		let stdoutSpillError: Error | undefined;
 		let killTimer: NodeJS.Timeout | undefined;
+		let exitFallbackTimer: NodeJS.Timeout | undefined;
 		let timeoutTimer: NodeJS.Timeout | undefined;
 		let abortListener: (() => void) | undefined;
 		let timedOut = false;
@@ -254,6 +256,9 @@ export async function runAgentBrowserProcess(options: {
 				removeAbortListener();
 				if (killTimer) {
 					clearTimeout(killTimer);
+				}
+				if (exitFallbackTimer) {
+					clearTimeout(exitFallbackTimer);
 				}
 				if (timeoutTimer) {
 					clearTimeout(timeoutTimer);
@@ -325,6 +330,18 @@ export async function runAgentBrowserProcess(options: {
 		child.once("error", (error) => {
 			spawnError = error instanceof Error ? error : new Error(String(error));
 			finish(127);
+		});
+		child.once("exit", (code) => {
+			// On Windows, the upstream daemon can leave stdio handles open in child browser processes.
+			// Prefer normal close so stdout/stderr drain; fall back when inherited pipes never close.
+			exitFallbackTimer = setTimeout(() => {
+				if (!settled) {
+					child.stdout.destroy();
+					child.stderr.destroy();
+				}
+				finish(code ?? (timedOut ? 124 : spawnError ? 127 : 0));
+			}, EXIT_STDIO_CLOSE_GRACE_MS);
+			exitFallbackTimer.unref?.();
 		});
 		child.once("close", (code) => {
 			finish(code ?? (timedOut ? 124 : spawnError ? 127 : 0));
