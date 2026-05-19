@@ -2956,7 +2956,12 @@ test("agentBrowserExtension warns when eval stdin returns an empty object from a
 		tempDir,
 		`const fs = require("node:fs");
 const stdin = fs.readFileSync(0, "utf8");
-if (stdin.trim().startsWith("() =>")) {
+const trimmed = stdin.trim();
+if (trimmed === "(() => [])()") {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: [], origin: "https://example.com/" } }));
+} else if (trimmed === "(() => [1])()") {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: [1], origin: "https://example.com/" } }));
+} else if (trimmed.startsWith("() =>")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: {}, origin: "https://example.com/" } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Example Domain" }, origin: "https://example.com/" } }));
@@ -2992,6 +2997,22 @@ if (stdin.trim().startsWith("() =>")) {
 				success: true,
 			});
 			assert.deepEqual(jsonFunctionResult.details?.evalStdinHint, functionResult.details?.evalStdinHint);
+
+			const emptyArrayIifeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "(() => [])()",
+			});
+			assert.equal(emptyArrayIifeResult.isError, false);
+			assert.doesNotMatch((emptyArrayIifeResult.content[0] as { text: string }).text, /Eval stdin hint:/);
+			assert.equal(emptyArrayIifeResult.details?.evalStdinHint, undefined);
+
+			const nonEmptyArrayIifeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "(() => [1])()",
+			});
+			assert.equal(nonEmptyArrayIifeResult.isError, false);
+			assert.doesNotMatch((nonEmptyArrayIifeResult.content[0] as { text: string }).text, /Eval stdin hint:/);
+			assert.equal(nonEmptyArrayIifeResult.details?.evalStdinHint, undefined);
 
 			const expressionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["eval", "--stdin"],

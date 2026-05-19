@@ -3456,14 +3456,16 @@ function looksLikeFunctionEvalStdin(stdin: string | undefined): boolean {
 	return /^(?:async\s+)?function\b/.test(trimmed) || /^(?:async\s*)?\([^)]*\)\s*=>/.test(trimmed) || /^(?:async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(trimmed);
 }
 
-function isEmptyRecord(value: unknown): boolean {
-	return isRecord(value) && Object.keys(value).length === 0;
+function isPlainEmptyObject(value: unknown): boolean {
+	if (!isRecord(value) || Array.isArray(value)) return false;
+	const prototype = Object.getPrototypeOf(value);
+	return (prototype === Object.prototype || prototype === null) && Object.keys(value).length === 0;
 }
 
 function getEvalStdinHint(options: { command?: string; data: unknown; stdin?: string }): EvalStdinHint | undefined {
 	if (options.command !== "eval" || !looksLikeFunctionEvalStdin(options.stdin) || !isRecord(options.data)) return undefined;
 	const result = options.data.result;
-	if (!isEmptyRecord(result)) return undefined;
+	if (!isPlainEmptyObject(result)) return undefined;
 	return {
 		reason: "eval --stdin received a function-shaped snippet and the upstream JSON result was an empty object, which often means the function itself was returned or serialized instead of invoked.",
 		suggestion: "Pass a plain expression such as `({ title: document.title })`, or invoke the function explicitly, for example `(() => ({ title: document.title }))()`.",
