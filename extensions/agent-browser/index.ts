@@ -229,6 +229,7 @@ interface CompiledAgentBrowserNetworkSourceLookup {
 		filter?: string;
 		maxWorkspaceFiles: number;
 		requestId?: string;
+		session?: string;
 		url?: string;
 	};
 }
@@ -308,6 +309,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 		Type.Object({
 			filter: Type.Optional(Type.String({ description: "Optional upstream network requests filter pattern." })),
 			requestId: Type.Optional(Type.String({ description: "Optional network request id to inspect with network request <id>." })),
+			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the generated batch." })),
 			url: Type.Optional(Type.String({ description: "Optional failed request URL or URL fragment to correlate with local source." })),
 			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan for URL literals. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
 		}),
@@ -813,9 +815,11 @@ function compileAgentBrowserNetworkSourceLookup(input: unknown): { compiled?: Co
 	if (!isRecord(input)) return { error: "networkSourceLookup must be an object." };
 	const filter = input.filter;
 	const requestId = input.requestId;
+	const session = input.session;
 	const url = input.url;
 	if (filter !== undefined && (typeof filter !== "string" || filter.trim().length === 0)) return { error: "networkSourceLookup.filter must be a non-empty string when provided." };
 	if (requestId !== undefined && (typeof requestId !== "string" || requestId.trim().length === 0)) return { error: "networkSourceLookup.requestId must be a non-empty string when provided." };
+	if (session !== undefined && (typeof session !== "string" || session.trim().length === 0)) return { error: "networkSourceLookup.session must be a non-empty string when provided." };
 	if (url !== undefined && (typeof url !== "string" || url.trim().length === 0)) return { error: "networkSourceLookup.url must be a non-empty string when provided." };
 	if (filter === undefined && requestId === undefined && url === undefined) return { error: "networkSourceLookup requires requestId, filter, or url." };
 	const maxWorkspaceFiles = validateLookupMaxWorkspaceFiles(input.maxWorkspaceFiles, "networkSourceLookup.maxWorkspaceFiles");
@@ -828,7 +832,8 @@ function compileAgentBrowserNetworkSourceLookup(input: unknown): { compiled?: Co
 	if (effectiveFilter) {
 		steps.push({ action: "network", args: ["network", "requests", "--filter", effectiveFilter] });
 	}
-	return { compiled: { args: ["batch"], query: { filter, maxWorkspaceFiles: maxWorkspaceFiles.value as number, requestId, url }, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
+	const args = typeof session === "string" ? ["--session", session, "batch"] : ["batch"];
+	return { compiled: { args, query: { filter, maxWorkspaceFiles: maxWorkspaceFiles.value as number, requestId, session, url }, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
 }
 
 function getResultPayload(item: Record<string, unknown>): unknown {
@@ -4114,6 +4119,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const redactedCompiledNetworkSourceLookup = compiledNetworkSourceLookup && redactedCompiledNetworkSourceLookupSteps
 				? {
 					...compiledNetworkSourceLookup,
+					args: redactNetworkSourceLookupArgs(compiledNetworkSourceLookup.args),
 					query: {
 						...compiledNetworkSourceLookup.query,
 						filter: redactNetworkSourceLookupUrl(compiledNetworkSourceLookup.query.filter),

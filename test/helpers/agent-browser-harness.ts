@@ -225,6 +225,7 @@ export type AgentBrowserToolParams = {
 	networkSourceLookup?: {
 		filter?: string;
 		requestId?: string;
+		session?: string;
 		url?: string;
 		maxWorkspaceFiles?: number;
 	};

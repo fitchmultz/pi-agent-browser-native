@@ -1039,12 +1039,19 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise non-core browser workflows." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
+			let networkRequestsResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
 				assert.equal(result.isError, false, args.join(" "));
 				assert.doesNotMatch(result.content[0]?.text ?? "", /route-secret|clipboard-secret|chat-secret/);
 				assert.doesNotMatch(JSON.stringify(result.details), /route-secret|clipboard-secret|chat-secret/);
+				if (args[0] === "network" && args[1] === "requests") networkRequestsResult = result;
 			}
+
+			const networkNextActions = networkRequestsResult?.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
+			assert.deepEqual(networkNextActions?.map((action) => action.id), ["inspect-network-request", "filter-network-requests-by-path", "start-network-har-capture"]);
+			assert.deepEqual(networkNextActions?.[0]?.params?.args?.slice(-3), ["network", "request", "n1"]);
+			assert.deepEqual(networkNextActions?.[1]?.params?.args?.slice(-4), ["network", "requests", "--filter", "/app.js"]);
 
 			const invocations = await readInvocationLog(logPath);
 			const userInvocations = invocations.map((entry) => entry.args.slice(3));
@@ -1977,8 +1984,17 @@ process.stdin.on("end", () => {
 			const requestOnlyCompiled = requestOnlyResult.details?.compiledNetworkSourceLookup as { steps?: Array<{ args: string[] }> } | undefined;
 			assert.deepEqual(requestOnlyCompiled?.steps?.map((step) => step.args), [["network", "request", "req-1"]]);
 
+			const sessionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				networkSourceLookup: { requestId: "req-1", session: "named" },
+			});
+			assert.equal(sessionResult.isError, false);
+			const sessionCompiled = sessionResult.details?.compiledNetworkSourceLookup as { args?: string[]; steps?: Array<{ args: string[] }> } | undefined;
+			assert.deepEqual(sessionCompiled?.args, ["--session", "named", "batch"]);
+			assert.deepEqual(sessionCompiled?.steps?.map((step) => step.args), [["network", "request", "req-1"]]);
+
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
+			assert.deepEqual(invocations[2]?.args.slice(-3), ["--session", "named", "batch"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

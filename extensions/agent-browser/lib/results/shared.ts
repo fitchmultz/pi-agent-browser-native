@@ -59,7 +59,13 @@ export interface AgentBrowserNextAction {
 	artifactPath?: string;
 	id: string;
 	params?: {
-		args: string[];
+		args?: string[];
+		networkSourceLookup?: {
+			filter?: string;
+			requestId?: string;
+			session?: string;
+			url?: string;
+		};
 		sessionMode?: "auto" | "fresh";
 		stdin?: string;
 	};

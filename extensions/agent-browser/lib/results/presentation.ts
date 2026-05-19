@@ -96,6 +96,10 @@ const DIAGNOSTIC_REQUEST_PREVIEW_LIMIT = 40;
 const DIAGNOSTIC_LOG_PREVIEW_LIMIT = 80;
 const NETWORK_BODY_PREVIEW_MAX_CHARS = 280;
 const NETWORK_ERROR_PREVIEW_MAX_CHARS = 220;
+const NETWORK_NEXT_ACTION_LIMIT = 4;
+const NETWORK_FILTER_MAX_CHARS = 160;
+const NETWORK_FILTER_SENSITIVE_SEGMENT_TERMS = ["apikey", "api-key", "api_key", "authentication", "authorization", "bearer", "credential", "credentials", "jwt", "passwd", "password", "reset", "secret", "session", "token"] as const;
+const NETWORK_FILTER_OPAQUE_SEGMENT_PATTERN = /^(?:[A-Fa-f0-9]{16,}|(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{16,})$/;
 const NETWORK_PREVIEW_FIELD_CANDIDATES = {
 	request: ["postData"] as const,
 	response: ["responseBody"] as const,
@@ -639,6 +643,145 @@ function formatNetworkRequestText(data: Record<string, unknown>): string | undef
 		return undefined;
 	}
 	return formatNetworkRequestLine(data, 0).join("\n");
+}
+
+interface NetworkRequestActionCandidate {
+	filter?: string;
+	item: Record<string, unknown>;
+	kind: "actionable" | "api" | "benign" | "request";
+	requestId: string;
+}
+
+function getSafeNetworkActionValue(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	const trimmed = value.trim();
+	if (trimmed.length === 0 || redactSensitiveText(trimmed) !== trimmed) return undefined;
+	return trimmed;
+}
+
+function getNetworkRequestId(item: Record<string, unknown>): string | undefined {
+	return getSafeNetworkActionValue(getStringField(item, "requestId") ?? getStringField(item, "id"));
+}
+
+function isSensitiveNetworkPathSegment(segment: string): boolean {
+	const normalized = segment.toLowerCase();
+	return normalized === "auth" || NETWORK_FILTER_SENSITIVE_SEGMENT_TERMS.some((term) => normalized.includes(term));
+}
+
+function pathFilterMayExposeSensitiveSegment(filter: string): boolean {
+	const decoded = (() => {
+		try {
+			return decodeURIComponent(filter);
+		} catch {
+			return filter;
+		}
+	})();
+	return decoded.split("/").some((segment) => isSensitiveNetworkPathSegment(segment) || NETWORK_FILTER_OPAQUE_SEGMENT_PATTERN.test(segment));
+}
+
+function getNetworkRequestPathFilter(item: Record<string, unknown>): string | undefined {
+	const url = getStringField(item, "url");
+	if (!url) return undefined;
+	let filter: string | undefined;
+	try {
+		filter = new URL(url).pathname;
+	} catch {
+		filter = url.split(/[?#]/, 1)[0];
+	}
+	filter = filter?.trim();
+	if (!filter || filter === "/" || filter.length > NETWORK_FILTER_MAX_CHARS || pathFilterMayExposeSensitiveSegment(filter)) return undefined;
+	return getSafeNetworkActionValue(filter);
+}
+
+function isApiLikeNetworkRequest(item: Record<string, unknown>): boolean {
+	const method = (getStringField(item, "method") ?? "GET").toUpperCase();
+	const resourceType = (getStringField(item, "resourceType") ?? "").toLowerCase();
+	const mimeType = (getStringField(item, "mimeType") ?? "").toLowerCase();
+	const filter = getNetworkRequestPathFilter(item) ?? "";
+	return resourceType === "fetch" || resourceType === "xhr" || mimeType.includes("json") || /\/(?:api|graphql|rpc)(?:\/|$)/i.test(filter) || !["GET", "HEAD"].includes(method);
+}
+
+function getNetworkRequestActionCandidate(item: Record<string, unknown>): NetworkRequestActionCandidate | undefined {
+	const requestId = getNetworkRequestId(item);
+	if (!requestId) return undefined;
+	const classification = classifyNetworkRequestFailure(item);
+	const kind: NetworkRequestActionCandidate["kind"] = classification?.impact === "actionable"
+		? "actionable"
+		: classification?.impact === "benign"
+			? "benign"
+			: isApiLikeNetworkRequest(item)
+				? "api"
+				: "request";
+	return { filter: getNetworkRequestPathFilter(item), item, kind, requestId };
+}
+
+function chooseNetworkRequestActionCandidate(candidates: NetworkRequestActionCandidate[]): NetworkRequestActionCandidate | undefined {
+	return candidates.find((candidate) => candidate.kind === "actionable")
+		?? candidates.find((candidate) => candidate.kind === "api")
+		?? candidates.find((candidate) => candidate.kind === "benign")
+		?? candidates[0];
+}
+
+function formatNetworkRequestActionDescriptor(candidate: NetworkRequestActionCandidate): string {
+	const method = getStringField(candidate.item, "method") ?? "GET";
+	const status = typeof candidate.item.status === "number" ? String(candidate.item.status) : "pending";
+	const target = candidate.filter ? ` ${candidate.filter}` : "";
+	return `${status} ${method}${target} [${candidate.requestId}]`;
+}
+
+function getNetworkRequestDetailActionId(candidate: NetworkRequestActionCandidate): string {
+	if (candidate.kind === "actionable") return "inspect-actionable-network-request";
+	if (candidate.kind === "benign") return "inspect-benign-network-request";
+	return "inspect-network-request";
+}
+
+function buildNetworkRequestsNextActions(data: unknown, sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
+	if (!isRecord(data)) return undefined;
+	const requests = getArrayField(data, "requests");
+	if (!requests) return undefined;
+	const candidates = requests.flatMap((item) => {
+		if (!isRecord(item)) return [];
+		const candidate = getNetworkRequestActionCandidate(item);
+		return candidate ? [candidate] : [];
+	});
+	const selected = chooseNetworkRequestActionCandidate(candidates);
+	if (!selected) return undefined;
+	const descriptor = formatNetworkRequestActionDescriptor(selected);
+	const actions: AgentBrowserNextAction[] = [
+		{
+			id: getNetworkRequestDetailActionId(selected),
+			params: { args: withSessionPrefix(sessionName, ["network", "request", selected.requestId]) },
+			reason: `Inspect full request details for ${descriptor}.`,
+			safety: "Read-only network diagnostic; request inspection must not replace the active page/ref context.",
+			tool: "agent_browser",
+		},
+	];
+	if (selected.kind === "actionable") {
+		actions.push({
+			id: "trace-actionable-network-source",
+			params: { networkSourceLookup: { requestId: selected.requestId, ...(sessionName ? { session: sessionName } : {}) } },
+			reason: `Look for local source candidates related to ${descriptor}.`,
+			safety: "Read-only experimental helper; it reports bounded candidates and may miss bundled or dynamic call sites.",
+			tool: "agent_browser",
+		});
+	}
+	if (selected.filter) {
+		actions.push({
+			id: "filter-network-requests-by-path",
+			params: { args: withSessionPrefix(sessionName, ["network", "requests", "--filter", selected.filter]) },
+			reason: `List captured requests matching ${selected.filter}.`,
+			safety: "Read-only request-list filter; absence from a compact preview is not proof the request did not happen.",
+			tool: "agent_browser",
+		});
+	}
+	actions.push({
+		id: "start-network-har-capture",
+		params: { args: withSessionPrefix(sessionName, ["network", "har", "start"]) },
+		reason: "Start HAR capture before reproducing the network behavior again.",
+		safety: "HARs can contain URLs and headers; stop to an explicit path, inspect metadata, and avoid sharing sensitive captures.",
+		tool: "agent_browser",
+	});
+	return actions.slice(0, NETWORK_NEXT_ACTION_LIMIT);
 }
 
 function formatConsoleText(data: Record<string, unknown>): string | undefined {
@@ -1694,7 +1837,7 @@ async function buildBatchStepPresentation(options: {
 		secondaryPaths: presentation.imagePaths,
 	});
 	const text = getPresentationText(presentation) || presentation.summary;
-	const nextActions = buildAgentBrowserNextActions({
+	const nextActions = presentation.nextActions ?? buildAgentBrowserNextActions({
 		artifacts: presentation.artifacts,
 		args: command,
 		command: command?.[0],
@@ -2129,6 +2272,11 @@ function buildSpillArtifactEntries(options: {
 	];
 }
 
+function mergeNextActions(...groups: Array<AgentBrowserNextAction[] | undefined>): AgentBrowserNextAction[] | undefined {
+	const merged = groups.flatMap((group) => group ?? []);
+	return merged.length > 0 ? merged : undefined;
+}
+
 async function compactLargePresentationOutput(options: {
 	artifactManifest?: SessionArtifactManifest;
 	commandInfo: CommandInfo;
@@ -2321,7 +2469,7 @@ export async function buildToolPresentation(options: {
 			savedFile: presentationWithManifest.savedFile,
 		});
 	}
-	presentationWithManifest.nextActions = presentationWithManifest.nextActions ?? buildAgentBrowserNextActions({
+	const genericNextActions = presentationWithManifest.nextActions ? undefined : buildAgentBrowserNextActions({
 		artifacts: presentationWithManifest.artifacts,
 		args,
 		command: commandInfo.command,
@@ -2331,6 +2479,10 @@ export async function buildToolPresentation(options: {
 		savedFilePath: presentationWithManifest.savedFilePath,
 		successCategory: presentationWithManifest.successCategory,
 	});
+	const networkNextActions = commandInfo.command === "network" && commandInfo.subcommand === "requests" && presentationWithManifest.resultCategory === "success"
+		? buildNetworkRequestsNextActions(data, sessionName)
+		: undefined;
+	presentationWithManifest.nextActions = mergeNextActions(presentationWithManifest.nextActions, genericNextActions, networkNextActions);
 	presentationWithManifest.pageChangeSummary = presentationWithManifest.pageChangeSummary ?? buildPageChangeSummary({
 		artifacts: presentationWithManifest.artifacts,
 		commandInfo,

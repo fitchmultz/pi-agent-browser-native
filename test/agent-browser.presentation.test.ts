@@ -821,6 +821,7 @@ test("buildToolPresentation formats redacted network payload, response, and erro
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "network", subcommand: "requests" },
 		cwd: process.cwd(),
+		sessionName: "work",
 		envelope: {
 			success: true,
 			data: {
@@ -855,6 +856,90 @@ test("buildToolPresentation formats redacted network payload, response, and erro
 	assert.match(text, /Response: .*…/);
 	assert.match(text, /Error: net::ERR_FAILED Authorization: Bearer \[REDACTED\]/);
 	assert.doesNotMatch(text, /User-Agent|secret-agent|body-secret|response-secret|header-secret|url-secret|nested-url-secret|error-secret|sentry-secret|write-secret|Set-Cookie/);
+	assert.deepEqual(presentation.nextActions?.map((action) => action.id), [
+		"inspect-actionable-network-request",
+		"trace-actionable-network-source",
+		"filter-network-requests-by-path",
+		"start-network-har-capture",
+	]);
+	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--session", "work", "network", "request", "req-2"]);
+	assert.deepEqual(presentation.nextActions?.[1]?.params?.networkSourceLookup, { requestId: "req-2", session: "work" });
+	assert.deepEqual(presentation.nextActions?.[2]?.params?.args, ["--session", "work", "network", "requests", "--filter", "/items"]);
+	assert.deepEqual(presentation.nextActions?.[3]?.params?.args, ["--session", "work", "network", "har", "start"]);
+	assert.doesNotMatch(JSON.stringify(presentation.nextActions), /url-secret|nested-url-secret|error-secret|sentry-secret|write-secret/);
+});
+
+test("buildToolPresentation returns bounded network request next actions for benign and successful API rows", async () => {
+	const benignPresentation = await buildToolPresentation({
+		commandInfo: { command: "network", subcommand: "requests" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				requests: [
+					{ method: "GET", mimeType: "image/x-icon", requestId: "icon-1", resourceType: "image", status: 404, url: "https://example.test/favicon.ico" },
+				],
+			},
+		},
+	});
+	assert.deepEqual(benignPresentation.nextActions?.map((action) => action.id), [
+		"inspect-benign-network-request",
+		"filter-network-requests-by-path",
+		"start-network-har-capture",
+	]);
+	assert.deepEqual(benignPresentation.nextActions?.[0]?.params?.args, ["network", "request", "icon-1"]);
+	assert.equal(benignPresentation.nextActions?.some((action) => action.id.includes("source")), false);
+
+	const apiPresentation = await buildToolPresentation({
+		commandInfo: { command: "network", subcommand: "requests" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				requests: [
+					{ method: "GET", requestId: "api-1", resourceType: "fetch", status: 200, url: "https://example.test/api/items?token=url-secret" },
+				],
+			},
+		},
+		sessionName: "work",
+	});
+	assert.deepEqual(apiPresentation.nextActions?.map((action) => action.id), [
+		"inspect-network-request",
+		"filter-network-requests-by-path",
+		"start-network-har-capture",
+	]);
+	assert.deepEqual(apiPresentation.nextActions?.[0]?.params?.args, ["--session", "work", "network", "request", "api-1"]);
+	assert.deepEqual(apiPresentation.nextActions?.[1]?.params?.args, ["--session", "work", "network", "requests", "--filter", "/api/items"]);
+	assert.deepEqual(apiPresentation.nextActions?.[2]?.params?.args, ["--session", "work", "network", "har", "start"]);
+	assert.equal(apiPresentation.nextActions?.some((action) => action.id.includes("source")), false);
+	assert.doesNotMatch(JSON.stringify(apiPresentation.nextActions), /url-secret/);
+
+	for (const [requestId, url, forbiddenPattern] of [
+		["reset-1", "https://example.test/reset/token/abc123?code=url-secret", /reset\/token|abc123|url-secret/],
+		["reset-2", "https://example.test/reset-password/abc123?code=url-secret", /reset-password|abc123|url-secret/],
+		["session-1", "https://example.test/accounts/session-id/abc123?code=url-secret", /session-id|abc123|url-secret/],
+		["camel-1", "https://example.test/account/passwordReset/abc123?code=url-secret", /passwordReset|abc123|url-secret/],
+		["camel-2", "https://example.test/account/resetToken/abc123?code=url-secret", /resetToken|abc123|url-secret/],
+		["camel-3", "https://example.test/account/sessionId/abc123?code=url-secret", /sessionId|abc123|url-secret/],
+		["camel-4", "https://example.test/account/apiKey/abc123?code=url-secret", /apiKey|abc123|url-secret/],
+		["opaque-1", "https://example.test/files/0123456789abcdef?code=url-secret", /0123456789abcdef|url-secret/],
+	] as const) {
+		const sensitivePathPresentation = await buildToolPresentation({
+			commandInfo: { command: "network", subcommand: "requests" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					requests: [
+						{ method: "GET", requestId, status: 200, url },
+					],
+				},
+			},
+		});
+		assert.deepEqual(sensitivePathPresentation.nextActions?.map((action) => action.id), ["inspect-network-request", "start-network-har-capture"]);
+		assert.deepEqual(sensitivePathPresentation.nextActions?.[0]?.params?.args, ["network", "request", requestId]);
+		assert.doesNotMatch(JSON.stringify(sensitivePathPresentation.nextActions), forbiddenPattern);
+	}
 });
 
 test("buildToolPresentation keeps failed network rows visible when successful rows would fill the preview", async () => {
