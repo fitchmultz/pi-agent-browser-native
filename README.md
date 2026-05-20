@@ -455,6 +455,8 @@ Configured-source lifecycle validation:
 npm run verify -- lifecycle
 ```
 
+The harness defaults to Pi model `zai/glm-5.1`; pass `--model <id>` after `lifecycle` when you need a different model (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`).
+
 Use lifecycle validation when testing `/reload`, full restart, `/resume`, managed-session continuity, or persisted artifact behavior. Maintainers must run the same harness before every publish; see [Pre-release checks](docs/RELEASE.md#pre-release-checks).
 
 Installed-package validation after publish:
