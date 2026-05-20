@@ -217,6 +217,11 @@ function validatePassthrough(mode, passthrough) {
 		if (!allowed.has(arg)) {
 			throw new UsageError(`Option ${arg} is not supported for verify mode ${mode}.`);
 		}
+		if (arg === "--model") {
+			const value = passthrough[index + 1];
+			if (!value) throw new UsageError("--model requires a value.");
+			index += 1;
+		}
 		if (arg === "--timeout-ms") {
 			const value = passthrough[index + 1];
 			if (!value) throw new UsageError("--timeout-ms requires a value.");
