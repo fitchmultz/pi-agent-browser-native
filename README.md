@@ -437,6 +437,8 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@11.14.0 install`) so optional-platform lockfile metadata does not drift. Align the global `pi` CLI with this repo’s `pi-coding-agent` devDependency range before lifecycle or interactive browser smokes. See [Environment and automation pitfalls](docs/RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+
 Quick isolated checkout smoke test:
 
 ```bash

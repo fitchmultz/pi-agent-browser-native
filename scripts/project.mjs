@@ -81,6 +81,7 @@ Modes:
 
 Options:
   --keep-artifacts    With lifecycle mode, preserve lifecycle temp artifacts.
+  --model <id>        With lifecycle mode, Pi model for tmux prompts (default zai/glm-5.1).
   --verbose           With lifecycle mode, print progress details.
   --timeout-ms <ms>   With lifecycle mode, override the per-step wait timeout.
   --list-files        With package mode, print every packed file path.
@@ -207,7 +208,7 @@ function validatePassthrough(mode, passthrough) {
 		"real-upstream": new Set(),
 		package: new Set(["--list-files"]),
 		"package-pi": new Set(["--list-files"]),
-		lifecycle: new Set(["--keep-artifacts", "--verbose", "--timeout-ms"]),
+		lifecycle: new Set(["--keep-artifacts", "--model", "--verbose", "--timeout-ms"]),
 		release: new Set(),
 	};
 	const allowed = allowedByMode[mode];

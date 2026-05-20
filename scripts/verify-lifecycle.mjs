@@ -3,7 +3,7 @@
  * Responsibilities: Create isolated Pi settings and a temporary package source, inject a deterministic reload sentinel, drive `/reload` plus restart/`/resume`, assert managed browser-session continuity and persisted artifact survival, capture transcripts, and clean up side effects.
  * Scope: Maintainer regression harness invoked only through `npm run verify -- lifecycle` (not part of default `verify` or the `release` compose used by `prepublishOnly`); normal unit/package verification remains in the standard npm scripts.
  * Usage: Run with `node scripts/verify-lifecycle.mjs`, `npm run verify -- lifecycle`, or `node scripts/verify-lifecycle.mjs --keep-artifacts --verbose`.
- * Invariants/Assumptions: `pi` and `tmux` are available on PATH, the configured model can follow explicit tool-use prompts, and the temporary configured package path is the only active Pi package source.
+ * Invariants/Assumptions: `pi` and `tmux` are available on PATH, the configured model (default `zai/glm-5.1`, overridable via `--model`) can follow explicit tool-use prompts, and the temporary configured package path is the only active Pi package source. `/reload` may fail if sent while the TUI still shows a working indicator even after JSONL records a final assistant message; see `docs/RELEASE.md` lifecycle triage.
  * Related: `docs/SUPPORT_MATRIX.md` tracks configured-source lifecycle expectations, passthrough flags, and triage notes for this harness.
  */
 
@@ -17,6 +17,7 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 const DEFAULT_TIMEOUT_MS = 180_000;
+const DEFAULT_LIFECYCLE_MODEL = "zai/glm-5.1";
 const EXPECTED_URL = "https://react.dev/";
 const SENTINEL_CUSTOM_TYPE = "piab-lifecycle-sentinel";
 const SENTINEL_MARKER_START = "// PIAB_LIFECYCLE_SENTINEL_START";
@@ -38,12 +39,14 @@ Usage:
 
 Options:
   --keep-artifacts    Keep the temporary Pi config, fake browser state, session files, and transcripts.
+  --model <id>        Pi model for tmux-driven prompts. Default: ${DEFAULT_LIFECYCLE_MODEL}.
   --timeout-ms <ms>   Override per-step wait timeout. Default: ${DEFAULT_TIMEOUT_MS}.
   --verbose           Print progress while driving tmux.
   -h, --help          Show this help text.
 
 Examples:
   npm run verify -- lifecycle
+  npm run verify -- lifecycle --model openai-codex/gpt-5.5:minimal
   npm run verify -- lifecycle --keep-artifacts
   node scripts/verify-lifecycle.mjs --keep-artifacts --verbose
 
@@ -57,6 +60,7 @@ Exit codes:
 export function parseCliArgs(argv = process.argv.slice(2)) {
 	const options = {
 		keepArtifacts: false,
+		model: DEFAULT_LIFECYCLE_MODEL,
 		showHelp: false,
 		timeoutMs: DEFAULT_TIMEOUT_MS,
 		verbose: false,
@@ -73,6 +77,13 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 		}
 		if (arg === "--verbose") {
 			options.verbose = true;
+			continue;
+		}
+		if (arg === "--model") {
+			const value = argv[index + 1];
+			if (!value) throw new UsageError("--model requires a provider/model id value.");
+			index += 1;
+			options.model = value;
 			continue;
 		}
 		if (arg === "--timeout-ms") {
@@ -323,7 +334,7 @@ async function killTmuxSession(tmuxSession) {
 }
 
 async function launchPiInTmux(options) {
-	const { agentDir, cwd, fakeBinDir, fakeStateDir, tmuxSession } = options;
+	const { agentDir, cwd, fakeBinDir, fakeStateDir, model, tmuxSession } = options;
 	await killTmuxSession(tmuxSession);
 	await run("tmux", [
 		"new-session",
@@ -337,6 +348,8 @@ async function launchPiInTmux(options) {
 		`AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_STATE_DIR=${fakeStateDir}`,
 		`PATH=${fakeBinDir}${delimiter}${process.env.PATH ?? ""}`,
 		"pi",
+		"--model",
+		model,
 	]);
 }
 
@@ -484,6 +497,7 @@ function buildPrompt(args, extra = "") {
 
 async function verifyLifecycle(options = {}) {
 	const repoRoot = options.repoRoot ?? process.cwd();
+	const model = options.model ?? DEFAULT_LIFECYCLE_MODEL;
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const keepArtifacts = options.keepArtifacts ?? false;
 	const verbose = options.verbose ?? false;
@@ -514,8 +528,8 @@ async function verifyLifecycle(options = {}) {
 		assert(settings.extensions.length === 0 && settings.skills.length === 0 && settings.prompts.length === 0 && settings.themes.length === 0, "Isolated settings must clear local resource arrays.");
 
 		log(`Temp root: ${tempRoot}`);
-		log("Launching Pi in tmux...");
-		await launchPiInTmux({ agentDir, cwd: repoRoot, fakeBinDir, fakeStateDir, tmuxSession });
+		log(`Launching Pi in tmux with model ${model}...`);
+		await launchPiInTmux({ agentDir, cwd: repoRoot, fakeBinDir, fakeStateDir, model, tmuxSession });
 		await waitFor({
 			describe: "Pi prompt readiness",
 			timeoutMs,
@@ -584,7 +598,7 @@ async function verifyLifecycle(options = {}) {
 		await capturePane(tmuxSession, join(artifactsDir, "before-restart-pane.txt"));
 		await killTmuxSession(tmuxSession);
 		log("Relaunching Pi and resuming prior session...");
-		await launchPiInTmux({ agentDir, cwd: repoRoot, fakeBinDir, fakeStateDir, tmuxSession });
+		await launchPiInTmux({ agentDir, cwd: repoRoot, fakeBinDir, fakeStateDir, model, tmuxSession });
 		await waitFor({
 			describe: "relaunched Pi prompt readiness",
 			timeoutMs,

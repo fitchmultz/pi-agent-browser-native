@@ -29,7 +29,13 @@ const lifecycleModule = (await import("../scripts/verify-lifecycle.mjs")) as {
 	collectFullOutputPaths: (results: unknown[]) => string[];
 	injectLifecycleSentinelSource: (source: string, token: string) => string;
 	isDirectRun: (metaUrl: string, argv?: string[]) => boolean;
-	parseCliArgs: (argv?: string[]) => { keepArtifacts: boolean; showHelp: boolean; timeoutMs: number; verbose: boolean };
+	parseCliArgs: (argv?: string[]) => {
+		keepArtifacts: boolean;
+		model: string;
+		showHelp: boolean;
+		timeoutMs: number;
+		verbose: boolean;
+	};
 	parseJsonl: (text: string) => unknown[];
 	sentinelTokens: (entries: unknown[]) => string[];
 };
@@ -48,22 +54,26 @@ const {
 test("parseCliArgs supports lifecycle harness options", () => {
 	assert.deepEqual(parseCliArgs([]), {
 		keepArtifacts: false,
+		model: "zai/glm-5.1",
 		showHelp: false,
 		timeoutMs: 180_000,
 		verbose: false,
 	});
 	assert.deepEqual(parseCliArgs(["--keep-artifacts", "--verbose", "--timeout-ms", "42"]), {
 		keepArtifacts: true,
+		model: "zai/glm-5.1",
 		showHelp: false,
 		timeoutMs: 42,
 		verbose: true,
 	});
+	assert.deepEqual(parseCliArgs(["--model", "openai-codex/gpt-5.5:minimal"]).model, "openai-codex/gpt-5.5:minimal");
 	assert.equal(parseCliArgs(["--help"]).showHelp, true);
 	assert.equal(parseCliArgs(["-h"]).showHelp, true);
 });
 
 test("parseCliArgs rejects invalid lifecycle options", () => {
 	assert.throws(() => parseCliArgs(["--wat"]), /Unknown option/);
+	assert.throws(() => parseCliArgs(["--model"]), /requires/);
 	assert.throws(() => parseCliArgs(["--timeout-ms"]), /requires/);
 	assert.throws(() => parseCliArgs(["--timeout-ms", "0"]), /positive integer/);
 	assert.throws(() => parseCliArgs(["--timeout-ms", "1.5"]), /positive integer/);
