@@ -7,6 +7,7 @@
 - Bounded machine `details.nextActions` for compact `network requests` output, including exact request-detail, source-lookup, filter, and HAR-capture follow-ups with session preservation and sensitive path/query suppression.
 
 ### Changed
+- The configured-source lifecycle harness (`npm run verify -- lifecycle`, `scripts/verify-lifecycle.mjs`) now defaults to Pi model `zai/glm-5.1` with `--model <id>` override; `npm run verify` lifecycle passthrough rejects `--model` without a value. Maintainer copy and pitfalls live in `docs/RELEASE.md`, `README.md`, `AGENTS.md`, `docs/SUPPORT_MATRIX.md`, and `scripts/project.mjs` help text.
 - Release smoke guidance now uses bounded extension-focused prompts with `--no-skills` for Sauce Demo validation, keeping skill-enabled dogfood/report routing as a separate test mode.
 - Network diagnostics preserve app page/ref context so request-detail and `networkSourceLookup` URLs do not replace the active browser target or stale current-page refs.
 
