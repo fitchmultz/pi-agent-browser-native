@@ -2,6 +2,7 @@
 
 Related docs:
 - [`../README.md`](../README.md)
+- [`../AGENTS.md`](../AGENTS.md) — maintainer verification (`npm run verify`, lifecycle), Pi `tmux` smoke expectations, and upstream rebaselining
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md) — full `electron` and `qa.attached` field contracts
 - [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md) — workflow snippets in the broader native command surface
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — wrapper design and the closed `RQ-0068` recipe-layer decision
@@ -51,7 +52,7 @@ Discover the app, launch with the default snapshot handoff, work with current re
 { "electron": { "action": "cleanup", "launchId": "electron-…" } }
 ```
 
-The launch result carries both a `launchId` (used by `status`/`probe`/`cleanup`) and an attached `sessionName` (used by browser-style `snapshot`/`tab`/`click`/`find` calls). Read both from `details.electron.launch` and `details.electron.identifiers`.
+The launch result carries both a `launchId` (used by `status`/`probe`/`cleanup`) and an attached `sessionName` (used by browser-style `snapshot`/`tab`/`click`/`find` calls). Read both from `details.electron.launch` and `details.electron.identifiers`. With default implicit session reuse, the quick-start `args: ["snapshot", "-i"]` line uses that attached session without an extra `--session` argument; pass `--session` explicitly when you target a named upstream session instead.
 
 For a quick "is the app actually showing what we expect?" smoke check after attach:
 
@@ -100,7 +101,7 @@ The exact field schemas, validation rules, and `details.*` payload shapes live i
 
 ### `electron.list` — discover apps
 
-Host-only scan; does not spawn upstream `agent-browser`. macOS (`/Applications/*.app`, `~/Applications/*.app`) and Linux (`.desktop` launchers under standard XDG, Flatpak, and Snap locations) are supported in v1. Windows discovery is not in v1; pass `executablePath` instead.
+Host-only scan; does not spawn upstream `agent-browser`. macOS (`/Applications/*.app`, `~/Applications/*.app`) and Linux (`.desktop` launchers under standard XDG, Flatpak, and Snap locations) are supported in v1. On Windows (and any non-macOS/non-Linux host), `list` returns `details.electron.platform: "unsupported"` with an empty `apps` array—use `executablePath` (or a host `appPath` that resolves to a verifiable Electron binary) for `launch` instead; `inspectElectronExecutablePath` in `extensions/agent-browser/lib/electron/discovery.ts` still gates Windows executables before spawn.
 
 ```json
 { "electron": { "action": "list", "query": "code", "maxResults": 25 } }
@@ -292,7 +293,7 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 ### `electron.list` returns nothing
 - On Linux, the binary may be a custom rebrand without `chrome_*.pak` siblings, an AppImage without a `.desktop` entry, or a statically linked fork. Pass `executablePath` directly.
 - On macOS, apps installed outside `/Applications` and `~/Applications` are not scanned in v1. Pass `appPath` or `executablePath` explicitly.
-- Windows discovery is not in v1; always pass `executablePath`.
+- Windows hosts report `platform: "unsupported"` from `electron.list`; always pass `executablePath` (or a resolvable `appPath`) for `launch`.
 
 ### Attach succeeds but `snapshot -i` returns no refs
 - Some Electron apps take a beat to render. The default `handoff: "snapshot"` already retries briefly; if it still reports no refs, run `snapshot -i` once more before treating the UI as blank.
