@@ -354,7 +354,7 @@ const AGENT_BROWSER_PARAMS = Type.Object({
 
 	args: Type.Optional(
 		Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
-			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, qa, sourceLookup, or networkSourceLookup is provided.",
+			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron is provided.",
 			minItems: 1,
 		}),
 	),
@@ -1109,8 +1109,8 @@ function compileAgentBrowserElectron(input: unknown): { compiled?: CompiledAgent
 		const validation = validateOptionalElectronPositiveInteger(input, fieldName);
 		if (validation.error) return { error: validation.error };
 	}
-	if (input.all !== undefined && typeof input.all !== "boolean") {
-		return { error: "electron.all must be a boolean when provided." };
+	if (input.all !== undefined && input.all !== true) {
+		return { error: "electron.all must be true when provided." };
 	}
 	if (action === "list") {
 		const unsupportedListField = Object.keys(input).find((fieldName) => !AGENT_BROWSER_ELECTRON_LIST_FIELDS.has(fieldName));
@@ -5769,7 +5769,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const networkSourceLookupError = networkSourceLookupResult.error;
 			const electronError = electronResult.error;
 			const inputModeError = explicitInputModes !== 1
-				? "Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup, or electron."
+				? "Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron."
 				: undefined;
 			const compiledSemanticAction = semanticActionResult.compiled;
 			const compiledQaPreset = qaResult.compiled;
@@ -5785,7 +5785,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				? compiledGeneratedBatch
 					? "Do not provide stdin with job, qa, sourceLookup, or networkSourceLookup; those modes generate their own batch stdin."
 					: compiledElectron
-						? "Do not provide stdin with job, qa, sourceLookup, or networkSourceLookup; those modes generate their own batch stdin. Do not provide stdin with electron; electron mode is host-only or manages its own input."
+						? "Do not provide stdin with electron; electron mode is host-only or manages its own input."
 						: undefined
 				: undefined;
 			const attachedQaSessionError = compiledQaPreset?.checks.attached

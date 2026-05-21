@@ -784,20 +784,6 @@ plan as the `RQ-0068` revisit evidence.
 - [Playwright Electron](https://playwright.dev/docs/api/class-electron)
 - [chrome-remote-interface](https://github.com/cyrus-and/chrome-remote-interface)
 
-## Orchestration restart status
-
-**Recorded:** 2026-05-20 after restart recovery.
-
-- [x] WI-1 implemented: `RQ-0096` exists and final wording reflects the shipped release shape.
-- [x] WI-2 implemented: `electron.list` discovery, schema, routing, bounded output, and validation coverage exist.
-- [x] WI-3 implemented: `electron.launch` and `electron.cleanup` lifecycle implementation, categories, next actions, and tests.
-- [x] WI-4 implemented: `electron.status` and launch handoff modes.
-- [x] WI-5 implemented: restore/shutdown behavior and lifecycle verification.
-- [x] WI-8 implemented: compact `electron.probe`.
-- [x] WI-9 implemented: `qa.attached` current-session QA.
-- [x] WI-6 implemented: contract docs, command reference, README, playbook, support matrix final wording.
-- [x] WI-7 implemented: deterministic benchmark scenarios and tests.
-
 ## Post-implementation dogfood verification
 
 **Recorded:** 2026-05-21 from a non-destructive local Electron smoke pass against Visual Studio Code.
@@ -828,4 +814,3 @@ Follow-ups resolved from dogfood:
 2. `electron.probe` now accepts `timeoutMs` and applies it to each bounded underlying probe subprocess read.
 
 Other observed diagnostics behaved as intended: page-scoped ref guard blocked unsafe same-batch post-mutation refs, selector visibility warnings surfaced hidden-first-match risk, overlay blocker diagnostics appeared after a potentially blocked click, and unknown upstream commands failed cleanly with readable partial batch output.
-

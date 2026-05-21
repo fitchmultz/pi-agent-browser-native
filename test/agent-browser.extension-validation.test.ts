@@ -267,6 +267,8 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.equal(harness.tool.name, "agent_browser");
 		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
+		const parameterSchema = harness.tool.parameters as { properties?: { args?: { description?: string } } };
+		assert.match(parameterSchema.properties?.args?.description ?? "", /networkSourceLookup, or electron/);
 
 		const docsGuideline = buildInstalledDocsGuideline({
 			readmePath: join(process.cwd(), "README.md"),
@@ -1726,6 +1728,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: true, timeoutMs: 1_000 } }), true);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", all: true, launchId: "launch-1" } }), false);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: true, launchId: "launch-1" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", all: false } }), false);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: false } }), false);
 			assert.equal(Check(harness.tool.parameters, { electron: {} }), false);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe" } }), true);
@@ -1783,6 +1786,13 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			const statusWithHandoff = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", handoff: "tabs" } } as unknown as AgentBrowserToolParams);
 			assert.equal(statusWithHandoff.isError, true);
 			assert.match(statusWithHandoff.content[0]?.text ?? "", /electron\.status does not support electron\.handoff/);
+
+			for (const action of ["status", "cleanup"] as const) {
+				const allFalse = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action, all: false } } as unknown as AgentBrowserToolParams);
+				assert.equal(allFalse.isError, true, action);
+				assert.match(allFalse.content[0]?.text ?? "", /electron\.all must be true when provided/);
+				assert.equal(allFalse.details?.failureCategory, "validation-error");
+			}
 
 			const probeWithListField = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", query: "demo" } } as unknown as AgentBrowserToolParams);
 			assert.equal(probeWithListField.isError, true);
@@ -2446,7 +2456,7 @@ test("agentBrowserExtension rejects electron mixed with other input modes and ca
 	for (const conflict of conflicts) {
 		const result = await executeRegisteredTool(harness.tool, harness.ctx, conflict.params);
 		assert.equal(result.isError, true, conflict.label);
-		assert.match(result.content[0]?.text ?? "", /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup, or electron/);
+		assert.match(result.content[0]?.text ?? "", /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 		assert.equal(result.details?.failureCategory, "validation-error");
 	}
 
@@ -2455,7 +2465,8 @@ test("agentBrowserExtension rejects electron mixed with other input modes and ca
 		stdin: "[]",
 	});
 	assert.equal(stdinResult.isError, true);
-	assert.match(stdinResult.content[0]?.text ?? "", /Do not provide stdin with .*electron/);
+	assert.match(stdinResult.content[0]?.text ?? "", /Do not provide stdin with electron; electron mode is host-only or manages its own input\./);
+	assert.doesNotMatch(stdinResult.content[0]?.text ?? "", /job, qa, sourceLookup, or networkSourceLookup/);
 	assert.equal(stdinResult.details?.failureCategory, "validation-error");
 });
 
@@ -3410,7 +3421,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguous.isError, true);
-			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
+			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 			assert.equal(ambiguous.details?.resultCategory, "failure");
 			assert.equal(ambiguous.details?.failureCategory, "validation-error");
 
@@ -3427,14 +3438,14 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 			});
 			assert.equal(ambiguousJobArgs.isError, true);
-			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
+			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const ambiguousJobSemanticAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguousJobSemanticAction.isError, true);
-			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
+			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const invalidJobAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "unknown" as never }] },
@@ -3477,7 +3488,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				sourceLookup: { componentName: "Panel" },
 			});
 			assert.equal(sourceLookupWithArgs.isError, true);
-			assert.match((sourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
+			assert.match((sourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const sourceLookupWithStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
 				sourceLookup: { componentName: "Panel" },
@@ -3491,7 +3502,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				networkSourceLookup: { url: "/api/fail" },
 			});
 			assert.equal(networkSourceLookupWithArgs.isError, true);
-			assert.match((networkSourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup/);
+			assert.match((networkSourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const networkSourceLookupWithStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
 				networkSourceLookup: { url: "/api/fail" },
