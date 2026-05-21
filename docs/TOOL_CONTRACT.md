@@ -240,6 +240,8 @@ Validation and defaults:
 - `launch.targetType` defaults to `"page"`; supported values are `"page"`, `"webview"`, and `"any"`. When a matching CDP target exposes a WebSocket URL, launch connects to that target; otherwise it falls back to the browser port.
 - `appArgs` are passed to the Electron app, but wrapper-owned lifecycle/debug flags are rejected (`--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and `--`).
 - `allow` and `deny` are optional caller-owned policy lists. Entries match app name, bundle id, desktop id, app path, or executable path by substring. If `allow` is set, the target must match it; `deny` wins on conflict. With neither list, launch is permitted.
+- `electron.status` / `electron.cleanup` accept optional `all` only as the boolean literal `true` to include every wrapper-tracked launch; `all` and `launchId` cannot both be set.
+- `electron.launch` `timeoutMs` is an optional positive integer for the host CDP readiness window. The launcher normalizes missing or non-positive values to **15000 ms** and **caps** at **120000 ms** (`normalizeTimeoutMs` in `extensions/agent-browser/lib/electron/launch.ts`). Optional `timeoutMs` on `status`, `cleanup`, and `probe` is forwarded to each upstream read subprocess when set; when omitted, those calls use the same per-subprocess wrapper timeout as other `agent_browser` invocations (`runAgentBrowserProcess` defaults).
 - Non-Electron targets are rejected as a correctness failure; the wrapper does not blindly launch arbitrary executables as Electron.
 
 Safety defaults and ownership:
