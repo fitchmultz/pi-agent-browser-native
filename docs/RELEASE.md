@@ -202,6 +202,7 @@ These show up often in cloud dev boxes and scripted smokes; they are maintainer 
 | **`pi -p` / print mode** | Non-interactive `pi -p` may hang or emit no stdout for long real-browser smokes without a TTY. | Use **tmux**-driven interactive `pi` for release evidence and checkout smokes; reserve `-p` for short, non-browser checks. |
 | **Real-browser cleanup** | `real-upstream`, Sauce Demo, and live-site runs can leave defunct Chrome/`agent-browser` children if a session aborts mid-flow. | Close via `agent_browser` / `agent-browser` `close`, kill stray tmux sessions, and remove temp screenshots/HARs under `/tmp` or your chosen artifact dirs. |
 | **Automated prompt driving** | Grepping tmux pane text for words that also appear in the **user** prompt (`PASS`, `FAIL`, `checkout overview`, `Smoke result:`) can false-complete before the agent finishes. | Wait for pane idle (no `Working…`), `agent_browser close` / `Artifact lifecycle`, or JSONL tool results—not instruction phrases copied from the prompt. |
+| **Lifecycle verify flags** | `npm run verify -- lifecycle --model` or `--timeout-ms` without the next argv token fails fast with a usage error—the `project.mjs` facade validates passthrough the same way as `scripts/verify-lifecycle.mjs`. | Always pair flags with values (`--model openai-codex/gpt-5.5:minimal`, `--timeout-ms 600000`) or omit `--model` to keep the harness default `zai/glm-5.1`. |
 
 Manual validation remains useful for release confidence and installed-package checks:
 
