@@ -73,3 +73,25 @@ test("verify facade rejects unsupported options before running a partial gate", 
 		showHelp: false,
 	});
 });
+
+test("verify facade lifecycle mode passes --model and other allowed flags through to verify-lifecycle.mjs", () => {
+	const steps = verifySteps({
+		mode: "lifecycle",
+		passthrough: ["--model", "openai-codex/gpt-5.5:minimal", "--keep-artifacts", "--verbose", "--timeout-ms", "600000"],
+		showHelp: false,
+	});
+	assert.deepEqual(labels(steps), [
+		"./scripts/verify-lifecycle.mjs --model openai-codex/gpt-5.5:minimal --keep-artifacts --verbose --timeout-ms 600000",
+	]);
+});
+
+test("verify facade lifecycle mode rejects --model without a value", () => {
+	assert.throws(
+		() => verifySteps({ mode: "lifecycle", passthrough: ["--model"], showHelp: false }),
+		/--model requires a value/,
+	);
+	assert.throws(
+		() => verifySteps({ mode: "lifecycle", passthrough: ["--model", "--keep-artifacts"], showHelp: false }),
+		/--model requires a value/,
+	);
+});

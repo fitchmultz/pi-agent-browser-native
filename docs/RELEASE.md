@@ -181,7 +181,34 @@ Run the automated harness for deterministic configured-source lifecycle regressi
 npm run verify -- lifecycle
 ```
 
-The harness creates an isolated `PI_CODING_AGENT_DIR`, writes settings with exactly one temporary configured package source, runs plain `pi` in `tmux`, puts a deterministic fake `agent-browser` first on `PATH`, and drives `/reload`, full restart, and `/resume`. It asserts same-page managed-session continuity, persisted `details.fullOutputPath` reachability after resume, and updated extension-code pickup through a temporary sentinel command. On failure it retains transcripts/session artifacts; on success it performs best-effort cleanup. It does not replace occasional real-browser manual smoke testing.
+The harness creates an isolated `PI_CODING_AGENT_DIR`, writes settings with exactly one temporary configured package source, runs plain `pi` in `tmux` with default model **`zai/glm-5.1`**, puts a deterministic fake `agent-browser` first on `PATH`, and drives `/reload`, full restart, and `/resume`. Per-step tmux waits default to **180000 ms** (three minutes) in [`scripts/verify-lifecycle.mjs`](../scripts/verify-lifecycle.mjs) (`DEFAULT_TIMEOUT_MS`); override with `--timeout-ms <ms>` when slower models or cold starts need more headroom. Override the model when needed:
+
+```bash
+npm run verify -- lifecycle --model openai-codex/gpt-5.5:minimal
+```
+
+Combine flags in one invocation when both apply (order after `lifecycle` is flexible as long as each value-taking flag is immediately followed by its value):
+
+```bash
+npm run verify -- lifecycle --model openai-codex/gpt-5.5:minimal --timeout-ms 600000
+```
+
+It asserts same-page managed-session continuity, persisted `details.fullOutputPath` reachability after resume, and updated extension-code pickup through a temporary sentinel command. On failure it retains transcripts/session artifacts; on success it performs best-effort cleanup. It does not replace occasional real-browser manual smoke testing.
+
+**Lifecycle triage:** a timeout on sentinel `v2` after `/reload` often means Pi rejected reload while the TUI still showed `Working…` (`Wait for the current response to finish before reloading`), even when the session JSONL already has a final assistant message. Re-run with `--keep-artifacts --verbose`, inspect the retained pane capture, and confirm the configured model follows tool prompts reliably. Slower models may need a higher `--timeout-ms` than the **180000 ms** default.
+
+### Environment and automation pitfalls
+
+These show up often in cloud dev boxes and scripted smokes; they are maintainer notes, not product defects.
+
+| Topic | What to watch for | Mitigation |
+| --- | --- | --- |
+| **Pi CLI vs repo devDependencies** | Global `pi` older than the `@earendil-works/pi-coding-agent` range in `package.json` can change TUI behavior, `/reload`, and tool routing during lifecycle or checkout smokes. | Align `pi` with the repo’s pinned coding-agent release before release gates (`pi update` or install the matching version). |
+| **npm lockfile (`packageManager`)** | `package.json` pins **npm@11**. npm 10 may only strip optional `libc` metadata on `@esbuild/*` platform entries in `package-lock.json` (no dependency version change). | Prefer `npx -y npm@11.14.0 install` when refreshing the lockfile; do not commit npm-10-only lockfile churn. |
+| **`pi -p` / print mode** | Non-interactive `pi -p` may hang or emit no stdout for long real-browser smokes without a TTY. | Use **tmux**-driven interactive `pi` for release evidence and checkout smokes; reserve `-p` for short, non-browser checks. |
+| **Real-browser cleanup** | `real-upstream`, Sauce Demo, and live-site runs can leave defunct Chrome/`agent-browser` children if a session aborts mid-flow. | Close via `agent_browser` / `agent-browser` `close`, kill stray tmux sessions, and remove temp screenshots/HARs under `/tmp` or your chosen artifact dirs. |
+| **Automated prompt driving** | Grepping tmux pane text for words that also appear in the **user** prompt (`PASS`, `FAIL`, `checkout overview`, `Smoke result:`) can false-complete before the agent finishes. | Wait for pane idle (no `Working…`), `agent_browser close` / `Artifact lifecycle`, or JSONL tool results—not instruction phrases copied from the prompt. |
+| **Lifecycle verify flags** | `npm run verify -- lifecycle --model` or `--timeout-ms` without the next argv token fails fast with a usage error—the `project.mjs` facade validates passthrough the same way as `scripts/verify-lifecycle.mjs`. | Always pair flags with values (`--model openai-codex/gpt-5.5:minimal`, `--timeout-ms 600000`) or omit `--model` / `--timeout-ms` to keep the harness defaults (`zai/glm-5.1`, **180000 ms** per-step waits). |
 
 Manual validation remains useful for release confidence and installed-package checks:
 

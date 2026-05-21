@@ -8,6 +8,7 @@
 
 export interface LifecycleCliArgs {
 	keepArtifacts: boolean;
+	model: string;
 	showHelp: boolean;
 	timeoutMs: number;
 	verbose: boolean;

@@ -437,6 +437,8 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@11.14.0 install`) so optional-platform lockfile metadata does not drift. Align the global `pi` CLI with this repo’s `pi-coding-agent` devDependency range before lifecycle or interactive browser smokes. See [Environment and automation pitfalls](docs/RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+
 Quick isolated checkout smoke test:
 
 ```bash
@@ -452,6 +454,8 @@ Configured-source lifecycle validation:
 ```bash
 npm run verify -- lifecycle
 ```
+
+The harness defaults to Pi model `zai/glm-5.1` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`).
 
 Use lifecycle validation when testing `/reload`, full restart, `/resume`, managed-session continuity, or persisted artifact behavior. Maintainers must run the same harness before every publish; see [Pre-release checks](docs/RELEASE.md#pre-release-checks).
 
