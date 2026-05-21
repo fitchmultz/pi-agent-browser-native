@@ -83,7 +83,7 @@ Options:
   --keep-artifacts    With lifecycle mode, preserve lifecycle temp artifacts.
   --model <id>        With lifecycle mode, Pi model for tmux prompts (default zai/glm-5.1).
   --verbose           With lifecycle mode, print progress details.
-  --timeout-ms <ms>   With lifecycle mode, override the per-step wait timeout.
+  --timeout-ms <ms>   With lifecycle mode, override the per-step wait timeout (default 180000).
   --list-files        With package mode, print every packed file path.
 
 Examples:
