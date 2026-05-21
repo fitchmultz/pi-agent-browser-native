@@ -136,6 +136,8 @@ Handoff selection (`handoff` field):
 
 `targetType` defaults to `"page"`; use `"webview"` or `"any"` for apps whose useful UI is exposed as a webview target.
 
+Optional `timeoutMs` on `electron.launch` bounds host-side CDP readiness (waiting for `DevToolsActivePort` and attach). When omitted, the default is **15 seconds** with a hard maximum of **120 seconds**, matching `ELECTRON_LAUNCH_DEFAULT_TIMEOUT_MS` and `ELECTRON_LAUNCH_MAX_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/launch.ts`.
+
 Wrapper-owned launches **always** use an isolated temp profile and an OS-chosen port. `--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and bare `--` in `appArgs` are rejected. There is no caller-supplied port and no way to make `electron.launch` reuse the app's normal signed-in profile or attach to an already-running app — by design. Use the manual path described above when those are the actual requirements.
 
 ### `electron.status` — liveness and targets

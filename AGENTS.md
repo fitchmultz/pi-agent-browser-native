@@ -187,3 +187,4 @@ Before calling the first implementation usable, verify at minimum:
 - explicit `--session` passthrough works
 - configured-source `/reload` picks up changed extension code
 - full restart + `/resume` picks up changed extension code
+- when `electron.*`, attached-session diagnostics, or `qa.attached` change: exercise `electron.list` → `electron.launch` → browser commands → `electron.cleanup` on a local Electron app (see [`docs/RELEASE.md`](docs/RELEASE.md) and [`docs/ELECTRON.md`](docs/ELECTRON.md))
