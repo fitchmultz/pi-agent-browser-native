@@ -48,6 +48,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 - For stateful browser context work, prefer purpose-specific page actions before dumping browser data: use auth save --password-stdin with the tool stdin field for credentials, state save/load for portable test state, cookies get/set/clear and storage local|session only when the task needs those values, and expect cookie/storage/auth/state summaries to redact credential-like fields.
 - For batch chains that touch cookies, storage, auth, or other secret-bearing commands, use details.batchSteps for per-step artifacts, categories, spill paths, and full structured errors; top-level details.data on batch is only a compact redacted step matrix (success, argv-redacted command, redacted result or scrubbed error text) built from the same presentation rules as standalone calls.
 - For non-core families, pass current upstream commands through the native tool directly: network route/requests/har, diff snapshot/screenshot/url, trace/profiler/record, console/errors/highlight/inspect/clipboard, stream enable/disable/status, dashboard start/stop, and chat. For compact network requests output, prefer details.nextActions for request detail, actionable failed-request networkSourceLookup, filtering, or HAR capture follow-ups instead of guessing request-id syntax. Artifact-producing commands report details.artifacts and verification state; long-running starts such as stream, dashboard, trace/profiler, and record should be paired with the matching stop/disable command when the task is done.
+- For Electron desktop apps, prefer top-level electron for wrapper-owned discovery, isolated launch, status, compact probe, and cleanup: list first, treat likely-sensitive annotations as hints rather than enforcement, launch with the default snapshot handoff unless handoff: "tabs" is the safer diagnostic starting point, use electron.probe or snapshot -i/qa.attached for current-session state, and always cleanup the returned launchId when done. If the app was launched externally with a debug port, use raw args connect <port|url> instead and leave shutdown/profile cleanup to the host owner.
 - For provider or specialized app workflows, load version-matched upstream guidance with skills get agentcore|electron|slack|dogfood|vercel-sandbox through the native tool. Provider launches such as -p ios, --provider browserbase/kernel/browseruse/browserless/agentcore, and iOS --device are upstream-owned setup paths; use sessionMode fresh when switching providers and expect external credentials or local Appium/Xcode setup to be required.
 - For dialogs and frames, use dialog status/accept/dismiss and frame <selector|main> through native args; when --confirm-actions produces a pending confirmation, use details.nextActions or exact confirm <id> / deny <id> calls instead of inventing ids.
 - If a session lands on the wrong page or tab, an interaction changes origin unexpectedly, or an open call returns blocked, blank, or otherwise unexpected results, use tab list / tab <tab-id-or-label> / snapshot -i to recover state before retrying different URLs or fallback strategies. Only use wait with an explicit argument like milliseconds, --load <state>, --url <matcher>, --fn <js>, or --text <matcher>.
@@ -64,7 +65,7 @@ Agent-facing efficiency claims are measured with `npm run benchmark:agent-browse
 
 ## Parameters
 
-Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup`):
+Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron`):
 
 ```json
 { "args": ["open", "https://example.com"], "stdin": "optional raw stdin content", "sessionMode": "auto" }
@@ -75,10 +76,15 @@ Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`
 { "semanticAction": { "action": "select", "selector": "#flavor", "value": "chocolate" } }
 ```
 
+```json
+{ "electron": { "action": "list", "query": "code" } }
+{ "electron": { "action": "launch", "appName": "Visual Studio Code", "handoff": "snapshot" } }
+```
+
 ### `args`
 
 - type: `string[]`
-- required unless `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup` is provided
+- required unless `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` is provided
 - exact CLI args passed after `agent-browser`
 - no shell operators
 - do not include the binary name
@@ -95,16 +101,16 @@ Examples:
 ### `semanticAction`
 
 - type: object
-- optional; mutually exclusive with `args`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup` (omit all of them when using this field)
+- optional; mutually exclusive with `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron` (omit all of them when using this field)
 - top-level tool input only: `batch` stdin remains upstream argv arrays; express find steps inside batch as string arrays such as `["find","role","button","click","--name","Export"]`, not nested `semanticAction` objects
 - thin intent schema compiled by this wrapper into existing upstream commands; locator actions compile to `find`, while native dropdown selection compiles to `select <selector> <value...>`; behavior and locator/selector semantics stay upstream-owned
 - supported actions: `click`, `fill`, `check`, `select`, `uncheck`
 - supported locators for `click` / `fill` / `check` / `uncheck`: `role`, `text`, `label`, `placeholder`, `alt`, `title`, `testid`
-- for locator actions, `value` is the locator argument (for example ARIA role token `"button"`, label text, or visible substring), must be a non-empty string after trim
+- for locator actions, `value` is the locator argument (for example ARIA role token `"button"`, label text, or visible substring), must be a non-empty string after trim; for `locator: "role"`, callers may provide `role` instead of redundant `value`
 - `fill` requires non-empty `text` (compiled as the trailing value argument to `find`)
 - `select` requires non-empty `selector` plus either `value` (single option value) or `values` (non-empty array of option values). `select` does not accept `locator`, `role`, `name`, or `text`; upstream `find` does not expose a verified `select` action, so role/name/label dropdown targeting must first be resolved to a stable selector or current `@ref`.
 - optional `name` is only valid with `locator: "role"` and compiles to `--name <name>` after the action (and after `text` for `fill` when present)
-- optional `role` is accepted only when `locator` is `role` and must equal `value` if set (redundant with `value`; prefer `value` alone)
+- optional `role` is accepted only when `locator` is `role`; it may replace `value`, and must equal `value` if both are set
 - optional `session` is an upstream session name; when set, compilation prepends `--session <session>` before the compiled `find` or `select` command so the shorthand targets that named browser context instead of the managed default; this is independent of top-level `sessionMode`, which only injects or rotates the extension-managed implicit session when the planned argv does not already start with `--session` (see `buildExecutionPlan` in `extensions/agent-browser/lib/runtime.ts`). On successful unified results, `details.sessionName` matches that name and `usedImplicitSession` is `false` because the call named upstream directly rather than consuming the extension-managed implicit session slot.
 
 Compilation (then `--json` and session handling apply like any other call):
@@ -112,7 +118,7 @@ Compilation (then `--json` and session handling apply like any other call):
 | Fields | Compiled `args` (conceptually) |
 | --- | --- |
 | `click`, `check`, or `uncheck` + non-`role` locator | `["find", <locator>, <value>, <action>]` |
-| `click` / `check` / `uncheck` + `role` + optional `name` | `["find","role",<value>,<action>]` plus `["--name",<name>]` when `name` is set |
+| `click` / `check` / `uncheck` + `role` or `value` + optional `name` | `["find","role",<role-or-value>,<action>]` plus `["--name",<name>]` when `name` is set |
 | `fill` | `["find",<locator>,<value>,"fill",<text>]` plus optional `["--name",<name>]` after `text` when `locator` is `role` and `name` is set |
 | `select` + `selector` + `value` / `values` | `["select",<selector>,<value...>]` |
 | any supported action + `session` | prepends `["--session",<session>]` before the compiled argv |
@@ -131,6 +137,7 @@ Examples:
 
 ```json
 { "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Export" } }
+{ "semanticAction": { "action": "click", "locator": "role", "role": "button", "name": "Continue without Signing In" } }
 { "semanticAction": { "action": "click", "locator": "text", "value": "Close" } }
 { "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
 { "semanticAction": { "action": "select", "selector": "#flavor", "value": "chocolate" } }
@@ -143,7 +150,7 @@ Examples:
 ### `job`
 
 - type: object with a non-empty `steps` array
-- optional; mutually exclusive with `args`, `semanticAction`, `qa`, `sourceLookup`, and `networkSourceLookup`
+- optional; mutually exclusive with `args`, `semanticAction`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron`
 - top-level tool input only; do not nest `job` inside `batch` stdin
 - constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
 - there is no separate reusable named “browser recipe” extension surface above `job`, `qa`, and raw `batch` yet; the closed `RQ-0068` decision, evidence bar, and revisit criteria are in [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) and [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
@@ -189,10 +196,11 @@ Because `job` still executes as upstream `batch` with generated stdin, the same 
 
 ### `qa`
 
-- type: object with required `url`
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, `sourceLookup`, and `networkSourceLookup`
+- type: object with either required `url` (normal URL-opening QA) or `attached: true` (current attached-session QA)
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, `sourceLookup`, `networkSourceLookup`, and `electron`
 - lightweight preset built on the same batch compiler path as `job`
-- clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load <loadState>`, optionally asserts `expectedText` (string or string array) and/or `expectedSelector` (each may be omitted for a load-plus-diagnostics-only smoke), then runs enabled diagnostics: `network requests`, `console`, and `errors`
+- URL form: clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load <loadState>`, optionally asserts `expectedText` (string or string array) and/or `expectedSelector` (each may be omitted for a load-plus-diagnostics-only smoke), then runs enabled diagnostics: `network requests`, `console`, and `errors`
+- attached form: `qa: { attached: true, expectedText?, expectedSelector?, screenshotPath?, checkNetwork?, checkConsole?, checkErrors?, loadState? }` runs the same waits, optional assertions, diagnostics, and screenshot against the current attached managed session without opening a URL. It rejects `url` and cannot be used with `sessionMode: "fresh"`; attach first with `electron.launch` or raw `args: ["connect", "<port-or-url>"]`, then run `qa.attached`.
 - `loadState` is optional and must be `domcontentloaded`, `load`, or `networkidle`; it defaults to `domcontentloaded` so analytics-heavy or long-polling pages do not hang routine QA. Use `networkidle` only when the site is expected to go fully quiet.
 - `checkNetwork`, `checkConsole`, and `checkErrors` default to `true`; set a field to `false` to omit that diagnostic
 - optional `screenshotPath` adds an evidence screenshot step
@@ -207,10 +215,135 @@ Example:
 
 Use custom `job` or raw `batch` for QA flows that need custom commands, flags, auth setup, HAR capture, or project-specific assertions.
 
+### `electron`
+
+- type: object with required `action`
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`
+- top-level wrapper shorthand for Electron desktop apps; do not nest it inside `batch` stdin
+- `stdin` is rejected with `electron`; host-only actions manage their own local work and `launch` manages its own upstream `connect`
+- supported actions: `list`, `launch`, `status`, `cleanup`, and `probe`
+
+Action schemas:
+
+| Action | Fields | Behavior |
+| --- | --- | --- |
+| `list` | `query?`, `maxResults?` | Scans supported platform app locations for Electron evidence and returns bounded app metadata in `details.electron.apps`. Likely-sensitive app annotations are advisory metadata only. Does not spawn upstream `agent-browser`. |
+| `launch` | exactly one of `appPath`, `appName`, `bundleId`, or `executablePath`; optional `appArgs`, `handoff`, `targetType`, `timeoutMs`, `allow`, `deny` | Resolves and verifies an Electron target, launches it with a wrapper-owned isolated profile and OS-chosen CDP port, attaches through upstream `connect` using `sessionMode: "fresh"`, and records `details.electron.launch`. |
+| `status` | optional `launchId` or `all`, optional `timeoutMs` | Inspects wrapper-tracked launches, debug-port liveness, and current CDP targets without mutating the app. With neither `launchId` nor `all`, selects the single active wrapper launch when unambiguous. |
+| `cleanup` | optional `launchId` or `all`, optional `timeoutMs` | Closes the tracked upstream session when present, stops only the wrapper-tracked process, verifies debug-port shutdown, removes the wrapper-created `userDataDir`, and marks records cleaned or partial. |
+| `probe` | optional `launchId`, optional `timeoutMs` | Runs bounded current-session or launch-scoped state reads (`get title`, `get url`, focused-element `eval --stdin`, `tab list`, compact `snapshot -i`) and reports `details.electron.probe`. Without `launchId`, requires an active attached managed session; with `launchId`, it resolves the tracked launch session and can report mismatch guidance. |
+
+Validation and defaults:
+
+- `launch` requires exactly one target field. `list` accepts only `query` and `maxResults`; `probe` accepts only `launchId` and `timeoutMs` beyond `action`; `status` / `cleanup` accept only `launchId`, `all`, and `timeoutMs`.
+- `launch.handoff` defaults to `"snapshot"`; supported values are `"connect"`, `"tabs"`, and `"snapshot"`. `"connect"` stops after attach, `"tabs"` adds a session-scoped `tab list` and is the safer diagnostic starting point when you do not want to capture refs/content yet, and `"snapshot"` adds `tab list` plus `snapshot -i` so current refs are immediately available.
+- `launch.targetType` defaults to `"page"`; supported values are `"page"`, `"webview"`, and `"any"`. When a matching CDP target exposes a WebSocket URL, launch connects to that target; otherwise it falls back to the browser port.
+- `appArgs` are passed to the Electron app, but wrapper-owned lifecycle/debug flags are rejected (`--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and `--`).
+- `allow` and `deny` are optional caller-owned policy lists. Entries match app name, bundle id, desktop id, app path, or executable path by substring. If `allow` is set, the target must match it; `deny` wins on conflict. With neither list, launch is permitted.
+- Non-Electron targets are rejected as a correctness failure; the wrapper does not blindly launch arbitrary executables as Electron.
+
+Safety defaults and ownership:
+
+- `launch` always uses a new isolated wrapper-created `userDataDir` and `--remote-debugging-port=0`, then reads `DevToolsActivePort`; callers cannot choose a fixed debug port.
+- The wrapper also passes `--disable-extensions`, `--no-first-run`, and `--no-default-browser-check` before any caller `appArgs`.
+- Remote debugging exposes app contents to the attached browser tool. The wrapper gives isolation defaults and optional `allow` / `deny`; the user still owns the decision to launch or attach to a sensitive desktop app.
+- `electron.list` may annotate apps as likely sensitive (`sensitivity.level: "likely-sensitive"`, categories such as `notes`, `chat`, `mail`, `developer-workspace`, or `passwords-auth`) and print `[likely sensitive: …]`. These annotations are non-blocking hints, not enforcement; caller-owned `allow` / `deny` policy still controls launch decisions.
+- Cleanup is wrapper-owned **only** for records created by `electron.launch`. `electron.cleanup` never targets manually launched apps, externally supplied debug ports, or arbitrary Electron processes. Explicit screenshots/downloads/HARs/traces remain host-file cleanup, not Electron cleanup.
+- On Pi session shutdown, active wrapper-owned Electron launches are best-effort cleaned. Stale restored records are reported instead of guessed/killed when the wrapper lacks a live child process.
+
+Details fields:
+
+```json
+{
+  "compiledElectron": {
+    "action": "launch",
+    "appName": "My App",
+    "handoff": "snapshot",
+    "targetType": "page",
+    "appArgs": ["--safe-mode"]
+  },
+  "electron": {
+    "action": "launch",
+    "status": "succeeded",
+    "launch": {
+      "version": 1,
+      "launchId": "electron-…",
+      "launchedByWrapper": true,
+      "appName": "My App",
+      "bundleId": "com.example.my-app",
+      "appPath": "/Applications/My App.app",
+      "executablePath": "/Applications/My App.app/Contents/MacOS/My App",
+      "userDataDir": "/tmp/pi-agent-browser-electron-…",
+      "port": 12345,
+      "pid": 1234,
+      "sessionName": "pi-…",
+      "webSocketDebuggerUrl": "ws://127.0.0.1:12345/devtools/browser/…",
+      "createdAtMs": 1770000000000,
+      "cleanupState": "active"
+    },
+    "targets": [{ "type": "page", "title": "My App", "url": "app://index" }],
+    "handoff": { "handoff": "snapshot" }
+  }
+}
+```
+
+Action-specific `details.electron` fields:
+
+- `list`: `{ action: "list", status: "succeeded", apps, platform, query?, maxResults, skippedCount, omittedCount?, sensitiveAppCount? }`. Each app is platform-tagged and may include `name`, `bundleId`, `desktopId`, `appPath`, `executablePath`, `icon`, `packageSource`, and non-blocking `sensitivity` metadata depending on platform/discovery source.
+- `launch`: `{ action: "launch", status, launch, targets?, version?, handoff?, cleanup?, identifiers? }`. `identifiers` repeats the launch-scoped `launchId` and attached `sessionName` so agents distinguish Electron lifecycle actions from browser session/tab actions. `launch.cleanupState` is one of `"active"`, `"cleaned"`, `"dead"`, `"failed"`, or `"partial"`.
+- `status`: `{ action: "status", status: "succeeded", launches, statuses, targets, identifiers?, identifierList?, managedSession?, managedSessions?, sessionMismatch?, sessionMismatches? }`, where each status includes the tracked `launchId`, port/pid liveness, and bounded CDP target metadata. Mismatch fields explain when the current managed session or tab does not match a live wrapper launch target.
+- `cleanup`: `{ action: "cleanup", status: "succeeded" | "partial", cleanup: { partial, records, results } }`. Partial cleanup is a failed tool result with `failureCategory: "cleanup-failed"` and retry next actions. Cleanup steps may include `managed-session`, `process`, `debug-port`, and `user-data-dir`; managed-session close failures are reported while host-owned process/profile cleanup still runs.
+- `probe`: `{ action: "probe", status: "succeeded" | "partial", probe, probeContext, identifiers?, sessionMismatch?, statusTargets?, launchStatus? }`. `probeContext` records whether the probe inspected the current managed session or a specific `launchId`. `probe` includes bounded `title`, `url`, `focusedElement`, `activeTab`, `tabs`, compact `snapshot` metadata (`refCount`, `refIds`, optional text preview and omission counts), `errors?`, and `summary`. It also updates the normal session target/ref tracking when a snapshot is collected.
+
+Failure categories and next actions:
+
+- `policy-blocked` is used when `electron.launch` is blocked by caller-supplied `allow` / `deny`; inspect `details.electron.failure.policy` for the matched list and entry when present.
+- `cleanup-failed` is used when `electron.cleanup` only partially cleans tracked resources; inspect `details.electron.cleanup.results[].steps` for remaining process, port, or profile cleanup state.
+- Launch timeout maps to `timeout`; non-Electron targets and input issues map to `validation-error`; launch/attach/spawn/CDP failures map to `upstream-error` unless a more specific category applies.
+- Successful active launches/status/probe results may include exact `details.nextActions` with ids `status-electron-launch`, `probe-electron-launch`, `cleanup-electron-launch`, `list-electron-tabs`, and `snapshot-electron-session`. Electron status/probe mismatch diagnostics may also include `reattach-electron-launch` before fresh tab/snapshot inspection. Electron cleanup partial failures may include `status-electron-launch` and `retry-electron-cleanup`.
+
+Next-action payload examples:
+
+```json
+{
+  "tool": "agent_browser",
+  "id": "cleanup-electron-launch",
+  "reason": "Clean the wrapper-owned Electron process and isolated userDataDir when the run is complete.",
+  "safety": "Only operates on the launchId created by electron.launch; explicit artifacts and manually launched apps remain host-owned.",
+  "params": { "electron": { "action": "cleanup", "launchId": "electron-…" } }
+}
+```
+
+```json
+{
+  "tool": "agent_browser",
+  "id": "snapshot-electron-session",
+  "reason": "Refresh interactive refs for the attached Electron session.",
+  "safety": "Use current Electron refs only after a fresh snapshot for this session.",
+  "params": { "args": ["--session", "pi-…", "snapshot", "-i"] }
+}
+```
+
+Examples:
+
+```json
+{ "electron": { "action": "list", "query": "code" } }
+{ "electron": { "action": "launch", "appName": "Visual Studio Code", "handoff": "snapshot" } }
+{ "electron": { "action": "probe" } }
+{ "qa": { "attached": true, "expectedText": "Explorer" } }
+{ "electron": { "action": "cleanup", "launchId": "electron-…" } }
+```
+
+For an app you launched manually with remote debugging enabled, skip `electron.cleanup` and use the upstream path directly:
+
+```json
+{ "args": ["connect", "9222"], "sessionMode": "fresh" }
+```
+
 ### `sourceLookup`
 
 - type: object with at least one of `selector`, `reactFiberId`, or `componentName`
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, and `networkSourceLookup`
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `networkSourceLookup`, and `electron`
 - experimental opt-in helper for local app debugging; it reports candidate source locations with confidence and evidence instead of claiming a guaranteed DOM-to-file mapping
 - compiles to existing upstream `batch` commands only:
   - `selector` adds `is visible <selector>` and, unless `includeDomHints: false`, adds `get html <selector>` for source-like DOM attributes (`data-source-file`, `data-file`, `data-component-file`, `data-source`, plus optional `data-source-line` / `data-line` and `data-source-column` / `data-column`) and for `.ts`/`.tsx`/`.js`/`.jsx` paths embedded in HTML text
@@ -218,10 +351,11 @@ Use custom `job` or raw `batch` for QA flows that need custom commands, flags, a
   - `componentName` runs `react tree` and performs a bounded local workspace scan under the Pi tool session **cwd** for matching component declarations in `.ts`, `.tsx`, `.js`, and `.jsx` files (skipping directories such as `.git`, `node_modules`, `dist`, `build`, `coverage`, `.next`, `out`, `tmp`, and `temp`); the walk stops after `maxWorkspaceFiles` files (default 2000, hard cap 5000) and records at most ten `workspace-search` candidates
 - optional `includeDomHints: false` skips the selector HTML read
 - optional `maxWorkspaceFiles` bounds the local component-name scan; default is 2000 source files and the hard maximum is 5000
-- reports `details.compiledSourceLookup` with the generated batch plan and `details.sourceLookup` with `{ status, candidates, limitations, summary }`
+- reports `details.compiledSourceLookup` with the generated batch plan and `details.sourceLookup` with `{ status, candidates, limitations, summary, workspaceRoot?, electronContext? }`
 - each `candidates[]` entry includes `source` (`react-inspect`, `dom-attribute`, or `workspace-search`), `confidence` (`high`, `medium`, or `low`), `evidence` (string reasons), and optional `file`, `line`, `column`, and `componentName`
 - `details.sourceLookup.status` is one of `candidates-found`, `no-candidates`, or `unsupported`; `unsupported` applies only when **no** candidates were collected **and** at least one compiled `react` batch step failed (for example React DevTools not enabled, no renderer, or inspect errors). If DOM or workspace evidence still produced candidates, `status` stays `candidates-found` even when a `react` step failed
 - when analysis produces a `summary`, the wrapper prepends it to the primary visible text block (or inserts a leading text block) for quick scanning; unlike `qa`, it never flips the unified tool outcome to failed solely because diagnostics look noisy or because `status` is `no-candidates` / metadata was missing—failed upstream batch steps still surface as normal tool errors
+- for wrapper-tracked packaged Electron sessions where `status` is `no-candidates`, the wrapper may add `workspaceRoot` and `electronContext` (`launchId?`, `appName?`, `appPath?`, `executablePath?`, `sessionName?`, `url?`) plus limitations explaining that the local workspace scan only covered the Pi tool cwd and did not unpack installed app resources or `app.asar`; it may also append `snapshot-electron-session`, `probe-electron-launch`, and `list-electron-tabs` next actions for live app inspection
 
 Example:
 
@@ -234,7 +368,7 @@ Use raw `args` for direct upstream React inspection when you already know the ex
 ### `networkSourceLookup`
 
 - type: object with at least one of `requestId`, `filter`, or `url`, plus optional `maxWorkspaceFiles`
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, and `sourceLookup`
+- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, and `electron`
 - experimental failed-request source-hint helper; it reports failed network requests and candidate source hints with evidence instead of assigning blame
 - compiles to existing upstream `batch` commands only: `network request <requestId>` when provided plus `network requests` with `--filter <filter-or-url>` when a filter or URL is provided (if both are set, `filter` wins; when only `url` is set, it becomes the `--filter` argument); optional `session` prepends `--session <name>` before that generated `batch`
 - detects failed requests from `status >= 400`, `failed: true`, or an `error` field
@@ -362,7 +496,7 @@ Stable category fields are part of the machine-readable contract:
 
 - `resultCategory`: always either `"success"` or `"failure"`.
 - `successCategory`: present on successful results. Current values are `"completed"`, `"artifact-saved"`, `"artifact-unverified"`, and `"inspection"`. `artifact-unverified` means upstream reported success but the merged `artifactVerification` summary still reports missing or unverified rows (including manifest-backed spill rows), or the legacy artifact classifier still sees a non-pending file without confirmed disk presence; inspect `artifactVerification` (counts and per-entry `state` / optional `limitation`) before treating paths as durable.
-- `failureCategory`: present on failed results. Current values are `"aborted"`, `"confirmation-required"`, `"download-not-verified"`, `"missing-binary"`, `"parse-failure"`, `"qa-failure"`, `"selector-not-found"`, `"selector-unsupported"`, `"stale-ref"`, `"tab-drift"`, `"timeout"`, `"upstream-error"`, and `"validation-error"`.
+- `failureCategory`: present on failed results. Current values are `"aborted"`, `"cleanup-failed"`, `"confirmation-required"`, `"download-not-verified"`, `"missing-binary"`, `"parse-failure"`, `"policy-blocked"`, `"qa-failure"`, `"selector-not-found"`, `"selector-unsupported"`, `"stale-ref"`, `"tab-drift"`, `"timeout"`, `"upstream-error"`, and `"validation-error"`.
 
 These categories are intentionally bounded and stable so agents can branch on them instead of parsing prose. They do not replace raw diagnostics: `details.error`, `details.stderr`, `details.parseError`, `details.validationError`, and visible content still preserve the specific upstream or wrapper message after normal redaction.
 
@@ -379,7 +513,7 @@ Ref preflight details (implementation in `extensions/agent-browser/index.ts`):
 
 **Presentation redaction (implementation map):** Successful non-`batch` tool calls and each successful `batchSteps[]` row run upstream `data` through `redactPresentationData` in `extensions/agent-browser/lib/results/presentation.ts`: `cookies` and `storage` walk objects/arrays and replace case-insensitive `value` keys with `"[REDACTED]"` (diagnostic formatters still describe rows without expanding secrets); every other command’s payload is recursively scrubbed with `redactStructuredPresentationValue`, which redacts known sensitive key names and applies string-level sensitivity heuristics so network, diff, trace/profiler, stream, dashboard, chat, and other structured results do not echo bearer tokens, proxy credentials, or similar fields verbatim into `details.data`. Echoed `command` arrays in `details` and in batch roll-ups use `redactInvocationArgs` from `extensions/agent-browser/lib/runtime.ts` to mask trailing values for sensitive global flags (including `--body`, `--headers`, `--password`, and `--proxy`), preserve the special positional rules for `cookies set`, `storage local|session set`, and `set credentials`, and scrub other argv tokens for URLs and inline secrets. Failed batch steps additionally run `redactExactValues` on structured step errors so literals taken from that step’s argv (cookie value, storage set value, `--password` / `--password=` tokens) cannot reappear inside formatted error blobs.
 
-`nextActions` is an optional machine-readable list of exact native `agent_browser` follow-ups. Each entry includes `tool: "agent_browser"`, an `id`, a short `reason`, optional `safety`, and either `params` (`args`, optional `stdin`, optional `sessionMode`, optional `networkSourceLookup`) or an `artifactPath` for saved-file workflows. Agents should prefer these payloads over prose when present. Current recommendations include: `open` success → `snapshot -i`; mutating/navigation commands (see `buildAgentBrowserNextActions` in source for the exact command set) → `snapshot -i`; stale refs and selector failures → `snapshot -i` via `refresh-interactive-refs` (prefixed with `--session <name>` when the failed call ran in a named or managed session); selector misses with exact current snapshot role/name matches → direct ref retries via `try-current-visible-ref` or bounded `try-current-visible-ref-N`; unknown getter shortcuts such as `title` / `url` → exact read-only retries like `get title` / `get url` with ids `use-get-title` / `use-get-url`; compact `network requests` results with safe request IDs → bounded read-only request detail, `networkSourceLookup`, path filter, or HAR-capture follow-ups; semantic `selector-not-found` failures that compiled from `semanticAction` may append `try-searchbox-name-candidate`, `try-textbox-name-candidate`, `try-button-name-candidate`, `try-link-name-candidate`, or `try-labeled-textbox-candidate` after presentation `nextActions` only for the bounded fill/click pairs enumerated under `semanticAction`; semantic `stale-ref` failures that compiled from `semanticAction` `find` argv may also include `retry-semantic-action-after-stale-ref` after that snapshot step; qualifying same-URL top-level clicks (see `overlayBlockers` below) with fresh snapshot evidence of likely overlay/banner/dialog close controls may append `inspect-overlay-state` and bounded `try-overlay-blocker-candidate-*` entries; successful top-level `scroll` calls whose pre/post viewport and sampled scroll-container positions do not change may append `inspect-after-noop-scroll` and `verify-noop-scroll-visually`; explicit combobox-targeted actions that focus a combobox without visible options may append `inspect-focused-combobox`, `try-open-combobox-with-arrow`, and `try-open-combobox-with-enter`; `get text <selector>` calls with hidden/multiple CSS matches may append `inspect-visible-text-candidates` with a read-only `eval --stdin` probe (each prefixed with `--session <name>` when `details.sessionName` is set, same `sessionPrefixArgs` rule as other session-scoped follow-ups); confirmations → exact `confirm <id>` and `deny <id>` choices; tab drift → `tab list` then `snapshot -i`; download verification failures or missing successful download artifacts → `wait --download [path]`; saved artifacts → the artifact path to inspect/consume after checking `artifactVerification`/metadata; missing non-download artifacts → `verify-artifact-path` so agents do not trust an absent file. When nothing applies, the field is omitted.
+`nextActions` is an optional machine-readable list of exact native `agent_browser` follow-ups. Each entry includes `tool: "agent_browser"`, an `id`, a short `reason`, optional `safety`, and either `params` (`args`, optional `stdin`, optional `sessionMode`, optional `networkSourceLookup`, optional `electron`) or an `artifactPath` for saved-file workflows. Agents should prefer these payloads over prose when present. Current recommendations include: Electron launches → wrapper-tracked `electron.status` / `electron.probe` / `electron.cleanup` actions plus session-scoped tab/snapshot inspection when attached; Electron status/probe mismatch diagnostics → `reattach-electron-launch` plus fresh tab/snapshot inspection; packaged-Electron `sourceLookup` no-candidate diagnostics → session snapshot, launch probe, and tab list; Electron cleanup partial failures → status plus retry-cleanup for the same wrapper-owned `launchId`; `open` success → `snapshot -i`; mutating/navigation commands (see `buildAgentBrowserNextActions` in source for the exact command set) → `snapshot -i`; stale refs and selector failures → `snapshot -i` via `refresh-interactive-refs` (prefixed with `--session <name>` when the failed call ran in a named or managed session); selector misses with exact current snapshot role/name matches → direct ref retries via `try-current-visible-ref` or bounded `try-current-visible-ref-N`; unknown getter shortcuts such as `title` / `url` → exact read-only retries like `get title` / `get url` with ids `use-get-title` / `use-get-url`; compact `network requests` results with safe request IDs → bounded read-only request detail, `networkSourceLookup`, path filter, or HAR-capture follow-ups; semantic `selector-not-found` failures that compiled from `semanticAction` may append `try-searchbox-name-candidate`, `try-textbox-name-candidate`, `try-button-name-candidate`, `try-link-name-candidate`, or `try-labeled-textbox-candidate` after presentation `nextActions` only for the bounded fill/click pairs enumerated under `semanticAction`; semantic `stale-ref` failures that compiled from `semanticAction` `find` argv may also include `retry-semantic-action-after-stale-ref` after that snapshot step; qualifying same-URL top-level clicks (see `overlayBlockers` below) with fresh snapshot evidence of likely overlay/banner/dialog close controls may append `inspect-overlay-state` and bounded `try-overlay-blocker-candidate-*` entries; successful top-level `scroll` calls whose pre/post viewport and sampled scroll-container positions do not change may append `inspect-after-noop-scroll` and `verify-noop-scroll-visually`; explicit combobox-targeted actions that focus a combobox without visible options may append `inspect-focused-combobox`, `try-open-combobox-with-arrow`, and `try-open-combobox-with-enter`; `get text <selector>` calls with hidden/multiple CSS matches may append `inspect-visible-text-candidates` with a read-only `eval --stdin` probe (each prefixed with `--session <name>` when `details.sessionName` is set, same `sessionPrefixArgs` rule as other session-scoped follow-ups); confirmations → exact `confirm <id>` and `deny <id>` choices; tab drift → `tab list` then `snapshot -i`; `wait --text` assertion failures → `inspect-after-text-assertion-failure` with a read-only snapshot; download verification failures or missing successful download artifacts → `wait --download [path]`; saved artifacts → the artifact path to inspect/consume after checking `artifactVerification`/metadata; missing non-download artifacts → `verify-artifact-path` so agents do not trust an absent file. When nothing applies, the field is omitted.
 
 **Unknown-command getter hints (failure presentation):** `buildToolPresentation` in `extensions/agent-browser/lib/results/presentation.ts` only runs this path when upstream error text (after model-facing redaction) matches `unknown command`, `unknown subcommand`, or `unrecognized command` (case-insensitive) **and** the failed invocation’s primary command token is one of `attr`, `count`, `html`, `text`, `title`, `url`, or `value`. Visible text then includes a grouped-`get` hint line plus per-token guidance (`get text <selector>`, `get html …`, `get attr …`, `get count …`, `get value …`, `get title`, `get url`). Machine `nextActions` with ids `use-get-title` / `use-get-url` are emitted only for `title` / `url`, with `params.args` optionally prefixed by `--session <name>` when the failed call targeted a named session. If the error string already contains `Agent-browser hint:` from selector recovery (stale-ref or unsupported selector dialect appendages), the getter block is skipped so two stacked `Agent-browser hint:` headers are not emitted.
 
@@ -442,14 +576,19 @@ Implementation and precedence:
 - Types, classifiers, and generic follow-up assembly live in `extensions/agent-browser/lib/results/shared.ts`: `classifyAgentBrowserSuccessCategory`, `classifyAgentBrowserFailureCategory`, `buildAgentBrowserResultCategoryDetails` (the last prefers an explicit `failureCategory` when the caller already knows the bucket, otherwise it runs the classifier), and `buildAgentBrowserNextActions`. Failed upstream `network requests` rows also flow through `classifyNetworkRequestFailure` / `summarizeNetworkFailures` there for QA analysis (`analyzeQaPresetResults` in `extensions/agent-browser/index.ts`) and for actionable-vs-benign lines plus request-specific nextActions in `network requests` presentation (`extensions/agent-browser/lib/results/presentation.ts`).
 - Artifact verification: `ArtifactVerificationSummary` / `ArtifactVerificationEntry` types live in `shared.ts`. `buildArtifactVerificationSummary`, `getArtifactVerificationEntry`, and `getManifestVerificationEntry` in `presentation.ts` merge each resolved file artifact with manifest rows whose `storageScope` is not `explicit-path` (those rows duplicate file artifacts) and whose `path` is in the current result’s spill path set. Successful presentation merges then run `classifyPresentationSuccessCategory` in `presentation.ts`, which forces `successCategory: "artifact-unverified"` when `artifactVerification.missingCount` or `artifactVerification.unverifiedCount` is greater than zero before delegating to `classifyAgentBrowserSuccessCategory`.
 - Inner success categories (`classifyAgentBrowserSuccessCategory` in `shared.ts`, after verification counts are clear): if `inspection` is true → `"inspection"`; else if any non-pending artifact lacks confirmed on-disk presence (`exists !== true`) → `"artifact-unverified"`; else if there is a `savedFile` or any `artifacts` → `"artifact-saved"`; else → `"completed"`.
-- Failure: the classifier walks a single ordered chain (first match wins): `confirmation-required` → `timeout` → `missing-binary` → `parse-failure` → `aborted` → `tab-drift` → `stale-ref` (including “unknown ref” text and a narrow `@eN` plus “element not found” heuristic) → `selector-unsupported` → `selector-not-found` → `download-not-verified` (download / wait-download style failures) → `validation-error` when a wrapper `validationError` is present → default `upstream-error`.
+- Failure: the classifier walks a single ordered chain (first match wins): `confirmation-required` → `timeout` → `missing-binary` → `parse-failure` → `aborted` → `policy-blocked` → `cleanup-failed` → `tab-drift` → `stale-ref` (including “unknown ref” text and a narrow `@eN` plus “element not found” heuristic) → `selector-unsupported` → `selector-not-found` → `download-not-verified` (download / wait-download style failures) → `validation-error` when a wrapper `validationError` is present → default `upstream-error`.
 - The main tool implementation merges these fields into Pi-facing `details` from `extensions/agent-browser/index.ts` and from `extensions/agent-browser/lib/results/presentation.ts` for presentation-time failures.
 
 Additional structured fields can appear when relevant:
 - `compiledSemanticAction` when the call used `semanticAction` and the result includes the unified `details` merge: `{ action, locator, args }` for `find` actions or `{ action: "select", selector, values, args }` for `select`, with the same redaction rules as `args` / `effectiveArgs`; omitted for plain `args`/`job` calls and omitted on some early error returns that omit this field (see the `semanticAction` section above)
 - `compiledJob` when the call used `job` or the job-backed `qa` preset: `{ args: ["batch"], stdin, steps: [{ action, args }] }`, with step args redacted the same way as other invocation details
-- `compiledQaPreset` when the call used `qa`: the compiled job fields plus the QA `checks` object
+- `compiledQaPreset` when the call used `qa`: the compiled job fields plus the QA `checks` object. `checks.attached` is `true` for current-session QA and `checks.url` is present only for URL-opening QA.
+- `compiledSourceLookup` when the call used `sourceLookup`: `{ args: ["batch"], stdin, steps, query }` with the generated local-evidence plan and original query fields (`selector?`, `reactFiberId?`, `componentName?`, `includeDomHints?`, `maxWorkspaceFiles?`).
+- `sourceLookup` when the call used `sourceLookup`: `{ status, candidates, limitations, summary, workspaceRoot?, electronContext? }`; wrapper-tracked packaged Electron no-candidate diagnostics may carry `workspaceRoot` plus `electronContext` and live Electron nextActions without marking the successful batch as a tool failure.
+- `compiledNetworkSourceLookup` / `networkSourceLookup` when the call used `networkSourceLookup`: the generated batch plan plus bounded failed-request/candidate evidence as described above.
 - `qaPreset` when the call used `qa`: `{ passed, failedChecks, warnings, summary }`. Network rows inside the `network requests` batch step use `summarizeNetworkFailures` / `classifyNetworkRequestFailure` in `shared.ts`: actionable failures appear in `failedChecks` (and fail the tool when the upstream batch still succeeded); benign icon-classified failures appear only in `warnings` and in `summary` as `QA preset passed with warnings: …` when nothing else failed.
+- `compiledElectron` when the call used `electron`: redacted action plan for `list`, `launch`, `status`, `cleanup`, or `probe`.
+- `electron` when the call used `electron`: action-specific lifecycle, discovery, probe, and cleanup data; see the `electron` section below.
 - `batchFailure` and `batchSteps` for `batch` rendering, including mixed-success runs
 - `navigationSummary` for navigation-style commands like `click`, `back`, `forward`, and `reload`
 - `pageChangeSummary` for compact mutation/artifact/navigation summaries on commands that can change browser state
@@ -459,6 +598,7 @@ Additional structured fields can appear when relevant:
 - `comboboxFocus` after a successful explicit combobox-targeted `click` / `fill` / `find … click|fill` (for example `semanticAction` with role `combobox`, including when that semantic action resolves through a current visible `@ref` before execution) when a read-only probe sees the active element is combobox-like, `aria-expanded` is explicitly present (`false` or `true`), and no visible `listbox` / `option` / menu option elements are open. Shape: `{ reason: "focused-combobox-without-visible-options", message, activeElement, visibleListboxCount, visibleOptionCount, recommendations }`; `activeElement` includes bounded role/tag/expanded/hasPopup/name metadata with normal text redaction. Visible text appends `Combobox diagnostic: focused combobox did not expose visible options`, and `details.nextActions` gains `inspect-focused-combobox` (`snapshot -i`), `try-open-combobox-with-arrow` (`press ArrowDown`), and `try-open-combobox-with-enter` (`press Enter`), session-prefixed when applicable. The diagnostic is deliberately gated to explicit combobox-targeted calls to avoid extra probes or false positives on ordinary clicks/textboxes.
 - `recordingDependencyWarning` after a successful `record start` or `record restart` when the wrapper cannot find an executable `ffmpeg` on the Pi process `PATH`. Shape: `{ reason: "ffmpeg-missing-for-recording", dependency: "ffmpeg", command, message, recommendations }`. Visible text appends `Recording dependency warning: ffmpeg not found on PATH`. This is a non-blocking preflight warning: upstream may start recording, but `record stop` needs `ffmpeg` to encode the WebM.
 - `selectorTextVisibility` after a **successful** upstream `get text <selector>` (standalone or inside a successful `batch`) when the wrapper’s follow-up probe finds a hazard: more than one DOM match (upstream reads the first `querySelectorAll` hit, which may be the wrong tab/panel), or the first match is hidden while at least one other match is visible (requires multiple DOM nodes so a visible peer exists; a lone hidden match is not flagged). The probe is a read-only `eval --stdin` script (`buildVisibleTextProbeScript` in `extensions/agent-browser/index.ts`) that counts matches, applies a small visibility heuristic (`display`/`visibility`/`opacity` plus non-zero client rects), and may include a redacted `firstVisibleTextPreview`. It is **not** run for page-scoped `@e…` selectors or when the selector string is withheld because `selectorMayExposeSensitiveLiteral` would risk echoing secrets in probe output. `details.selectorTextVisibility` mirrors the primary diagnostic (first sorted entry); when several selectors in one `batch` qualify, `selectorTextVisibilityAll` lists every diagnostic sorted so hidden-first cases precede generic multi-match ambiguity. Appended `details.nextActions` use ids `inspect-visible-text-candidates` and `inspect-visible-text-candidates-2`, … with the probe replayed via `eval --stdin` for each hazardous selector.
+- `electronGetTextScopeWarning` after a successful attached Electron `get text <selector>` (standalone or successful `batch`) when a broad non-ref CSS selector such as `body`, `html`, `main`, `div`, or `[role=application]` may read the whole app shell. Shape: `{ selector, summary, electronContext: { launchId?, sessionName?, url? } }`; multiple batched diagnostics use `electronGetTextScopeWarnings`. Visible text appends `Broad Electron get text selector warning`, and next actions use `snapshot-for-electron-text-scope` ids with session-scoped `snapshot -i` payloads.
 - `evalStdinHint` after a successful `eval --stdin` when caller stdin (trimmed) looks function-shaped to the wrapper’s lightweight detector (`looksLikeFunctionEvalStdin` in `extensions/agent-browser/index.ts`: leading `function` / `async function`, parenthesized arrow `(…) =>`, or a concise `name =>` / `async name =>` form) **and** upstream JSON `data` is an object whose `result` field is a plain empty object (`{}`). Arrays such as `[]` do not qualify. It includes `reason` and `suggestion`; visible output appends `Eval stdin hint` with the same guidance. This is a heuristic for the common mistake of returning a function object instead of invoking it or passing a plain expression, not a JavaScript parser or proof that the page returned no useful data.
 - `timeoutPartialProgress` after `runAgentBrowserProcess` reports `timedOut` (wrapper child-process watchdog) when best-effort recovery finds useful context. `summary` is a short sentence counting how many declared artifact paths exist on disk versus how many were scanned, and whether page context came from live session reads or only from a planned URL (when nothing in the plan declares an artifact path, the fraction may read `0/0` while `currentPage` can still carry session or planned URL context). `steps` lists planned argv from the compiled `job` or `qa` batch plan (`compiledJob` in `extensions/agent-browser/index.ts`, which is only populated for those top-level modes) or, when that object is absent, from the same JSON-array `batch` stdin the tool sends upstream—whether caller-authored or wrapper-generated for `sourceLookup` / `networkSourceLookup` (1-based indices; only JSON-array stdin whose elements are string[] argv arrays is parsed); timeouts on other argv shapes may still emit `currentPage` / summary evidence without `steps`. `currentPage` comes from session-scoped `get url` / `get title` when the session answers, otherwise a fallback URL may be inferred from the last `open` / `navigate` / `pushstate` step in the plan. `artifacts` covers declared output paths on `screenshot`, `pdf`, `download`, and `wait --download` steps (absolute path, existence, optional `sizeBytes`, `stepIndex`). Visible text repeats the same block under `Timeout partial progress`, applying URL and path-segment redaction; the prose `Planned steps` list shows at most six steps, then an omitted-count line when the plan is longer. This is recovery evidence only; missing entries do not prove the upstream step never ran or that no other side effects occurred.
 - `managedSessionOutcome` after a managed-session plan reaches process execution (`buildManagedSessionOutcome` / `formatManagedSessionOutcomeText` in `extensions/agent-browser/index.ts`). Populated when `buildExecutionPlan` injects an extension-managed implicit or fresh `--session` (omitted when the caller already set explicit upstream `--session` or for stateless inspection paths that skip injection). Fields: `status` (`created`, `replaced`, `unchanged`, `closed`, `preserved`, or `abandoned`), `sessionMode`, `attemptedSessionName`, `previousSessionName`, `currentSessionName`, optional `replacedSessionName`, `activeBefore`, `activeAfter`, `succeeded`, and `summary`. Model-visible echo: only when `sessionMode` is `"fresh"` **and** `succeeded` is false, the wrapper appends a line of the form `Managed session outcome: ${summary}` after the primary presentation (including missing-binary failures on a fresh plan, where it follows the missing-binary message and no other diagnostic tail runs). When other trailing diagnostic prose is also emitted in the same result, that line is concatenated **after** semantic-action candidate lines, overlay/selector-visibility tails, and `Timeout partial progress` (see `rawAppendedDiagnosticText` in `extensions/agent-browser/index.ts`). For `"auto"` failures the same struct may appear on `details` without that extra line. When post-upstream analysis (for example **`qa`** preset failure) flips the overall tool result after a successful batch, the implementation only realigns `managedSessionOutcome.succeeded` to the final outcome; `status`/`summary` may still describe the managed-session transition (for example `replaced` while `failureCategory` is `qa-failure`), so read `failureCategory` / `qaPreset` / `batchFailure` alongside this object.

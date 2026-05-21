@@ -26,7 +26,7 @@ Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before an
 
 ## Core mental model
 
-Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup`):
+Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron`):
 
 ```json
 { "args": ["open", "https://example.com"], "sessionMode": "auto" }
@@ -53,13 +53,19 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 { "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup` instead (mutually exclusive).
-- `semanticAction`: optional shorthand for common `find` flows and native dropdown `select`; compiles to upstream argv and is rejected together with `args`, `job`, `qa`, `sourceLookup`, or `networkSourceLookup` on the same call.
+```json
+{ "electron": { "action": "list", "query": "code" } }
+{ "electron": { "action": "launch", "appName": "Visual Studio Code", "handoff": "snapshot" } }
+```
+
+- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` instead (mutually exclusive).
+- `semanticAction`: optional shorthand for common `find` flows and native dropdown `select`; compiles to upstream argv and is rejected together with `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` on the same call.
 - `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin and reports the compiled plan in `details.compiledJob`.
 - `qa`: optional lightweight QA preset; compiles to the same batch path and reports `details.compiledQaPreset` plus `details.qaPreset` pass/fail evidence.
 - `sourceLookup`: optional experimental helper for local UI-to-source *candidates*; compiles to the same `batch` path, reports `details.compiledSourceLookup` and `details.sourceLookup`, and never reclassifies a fully successful upstream batch as failed the way `qa` can (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#sourcelookup) and the longer notes below).
 - `networkSourceLookup`: optional experimental helper for failed request-to-source *candidates*; compiles to generated `batch`, reports `details.compiledNetworkSourceLookup` and `details.networkSourceLookup`, and never assigns blame or edits files.
-- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, `sourceLookup`, and `networkSourceLookup` generate their own `batch` stdin.
+- `electron`: optional Electron desktop-app shorthand. `list`, `status`, `cleanup`, and `probe` are wrapper-owned host/session helpers; `launch` starts a wrapper-owned isolated Electron profile and attaches through upstream `connect`.
+- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron` generate or manage their own input.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
@@ -127,6 +133,7 @@ Examples:
 { "args": ["find", "text", "Close", "click"] }
 { "args": ["find", "label", "Email", "fill", "user@example.com"] }
 { "semanticAction": { "action": "click", "locator": "role", "value": "button", "name": "Close" } }
+{ "semanticAction": { "action": "click", "locator": "role", "role": "button", "name": "Continue without Signing In" } }
 { "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
 { "semanticAction": { "action": "select", "selector": "#flavor", "value": "chocolate" } }
 { "semanticAction": { "action": "click", "locator": "text", "value": "Close", "session": "named-browser" } }
@@ -135,7 +142,7 @@ Examples:
 { "args": ["snapshot", "-i"] }
 ```
 
-The optional native `semanticAction` object is only a thin schema for common locator-based actions and native dropdown selection; it compiles locator actions to existing upstream `find` commands, compiles `action: "select"` to upstream `select <selector> <value...>`, and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`, not a nested shape inside `batch` stdin arrays. Add `session` inside `semanticAction` when the shorthand should target a named upstream browser session; the compiled argv prepends `--session <name>` before `find` or `select`, and fallback candidate actions preserve that prefix. For active sessions, role/name click/check/uncheck shorthands may resolve through the current `snapshot -i` refs before execution so hidden duplicate matches do not steal the action; inspect `details.effectiveArgs` when you need the exact executed argv. `select` shorthand intentionally requires a stable selector or current `@ref` plus `value`/`values`; upstream `find` does not expose a verified `select` action, so role/name/label dropdown resolution stays a snapshot/selector decision instead of hidden wrapper magic. If a raw `find` or semantic action misses with `selector-not-found`, the wrapper may take one fresh snapshot and append `Current snapshot ref fallback` with `try-current-visible-ref*` next actions when that snapshot has exact visible role/name matches for the failed target. Semantic misses may also include `Agent-browser candidate fallbacks`; `details.nextActions` first recommends a fresh `snapshot -i` and may include bounded role/name retries—for example `searchbox`/`textbox` for a missed `placeholder` fill, `button`/`link` for a missed `text` click, or a `textbox` retry for a missed `label` fill—each as a `try-*-candidate` entry carrying redacted `find role …` argv.
+The optional native `semanticAction` object is only a thin schema for common locator-based actions and native dropdown selection; it compiles locator actions to existing upstream `find` commands, compiles `action: "select"` to upstream `select <selector> <value...>`, and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). For `locator: "role"`, pass either `value: "button"` or `role: "button"`; if both are present they must match. It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron`, not a nested shape inside `batch` stdin arrays. Add `session` inside `semanticAction` when the shorthand should target a named upstream browser session; the compiled argv prepends `--session <name>` before `find` or `select`, and fallback candidate actions preserve that prefix. For active sessions, role/name click/check/uncheck shorthands may resolve through the current `snapshot -i` refs before execution so hidden duplicate matches do not steal the action; inspect `details.effectiveArgs` when you need the exact executed argv. `select` shorthand intentionally requires a stable selector or current `@ref` plus `value`/`values`; upstream `find` does not expose a verified `select` action, so role/name/label dropdown resolution stays a snapshot/selector decision instead of hidden wrapper magic. If a raw `find` or semantic action misses with `selector-not-found`, the wrapper may take one fresh snapshot and append `Current snapshot ref fallback` with `try-current-visible-ref*` next actions when that snapshot has exact visible role/name matches for the failed target. Semantic misses may also include `Agent-browser candidate fallbacks`; `details.nextActions` first recommends a fresh `snapshot -i` and may include bounded role/name retries—for example `searchbox`/`textbox` for a missed `placeholder` fill, `button`/`link` for a missed `text` click, or a `textbox` retry for a missed `label` fill—each as a `try-*-candidate` entry carrying redacted `find role …` argv.
 
 Do not assume Playwright selector dialects such as `text=Close` or `button:has-text('Close')` are supported wrapper syntax. If you need those forms, verify current upstream `agent-browser` behavior first; otherwise use refs, `find`, or known CSS selectors.
 
@@ -190,7 +197,7 @@ For short constrained flows, use top-level `job` instead of hand-writing `batch`
 
 On app pages that expose a native dropdown, add a `select` step such as `{ "action": "select", "selector": "#flavor", "value": "chocolate" }` before the assertion that depends on it.
 
-Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`, `qa`, `sourceLookup`, or `networkSourceLookup`; those modes generate the batch stdin themselves.
+Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron`; those modes generate or manage their own input.
 
 For quick smoke/QA checks, use top-level `qa`. It clears enabled network/console/page-error buffers before opening the target URL, waits for page readiness, checks expected text/selector, inspects fresh network requests, console messages, and page errors, and can capture an evidence screenshot. The readiness wait defaults to `loadState: "domcontentloaded"`; set `loadState` to `"load"` or `"networkidle"` only when that stricter state is useful and the site is not expected to keep background requests alive. QA network diagnostics classify failed requests by likely impact and list failed rows first in the network preview: actionable document/script/API-style failures fail the preset, while common low-impact browser icon misses such as `favicon.ico` are surfaced as warnings (`qaPreset.warnings`) so they do not fail an otherwise healthy page.
 
@@ -202,9 +209,42 @@ The same classification drives plain `network requests` presentation: when any r
 
 Optional `loadState`, `checkNetwork`, `checkConsole`, and `checkErrors` default to `"domcontentloaded"`, `true`, `true`, and `true`; set a check to `false` to skip that diagnostic. Omit `expectedText` and `expectedSelector` when you only need load plus diagnostics.
 
+For attached Electron or manually connected CDP sessions, use `qa.attached` after the session exists. It does not open a URL and rejects `sessionMode: "fresh"` because it checks the current managed session.
+
+```json
+{ "qa": { "attached": true, "expectedText": "Explorer", "screenshotPath": ".dogfood/electron.png" } }
+```
+
 Use custom `job` or raw `batch` when you need a different check sequence.
 
-For local app debugging, top-level `sourceLookup` can gather candidate component/file locations for a visible element from selector DOM hints, React DevTools inspection, and a bounded workspace component-name search rooted at the Pi session working directory (`maxWorkspaceFiles` defaults to 2000 and cannot exceed 5000; the scan records at most ten `workspace-search` candidates). With a `selector`, the wrapper runs `is visible` and, unless `includeDomHints` is `false`, `get html` so DOM data attributes and embedded source-like paths can become `dom-attribute` candidates. It reports evidence and confidence in `details.sourceLookup` instead of claiming a guaranteed source file. React hints require a session opened with `--enable react-devtools`. The `details.sourceLookup.status` field reads `unsupported` only when no candidates were collected **and** a `react` batch step failed (inspect errors, missing renderer, and similar); it reads `no-candidates` when the batch succeeded but nothing matched. If selector or workspace hints still yield candidates, `status` remains `candidates-found` even when React inspection failed. Unlike `qa`, the wrapper does not downgrade a **fully successful** upstream batch to `isError` solely because those statuses appear—though failed batch steps still produce normal tool errors.
+### Electron desktop apps
+
+Use top-level `electron` when the wrapper should discover, launch, attach to, probe, and clean up a desktop Electron app. The wrapper owns only launches it created. It uses an isolated temporary `userDataDir`, `--remote-debugging-port=0`, and safe launch defaults; remote debugging still exposes app content, so use caller-owned `allow` / `deny` lists for sensitive app policies when needed. `electron.list` may annotate common private-data apps as `[likely sensitive: …]`; this is advisory metadata only and does not block `launch` or replace caller policy.
+
+Typical lifecycle:
+
+```json
+{ "electron": { "action": "list", "query": "code" } }
+{ "electron": { "action": "launch", "appName": "Visual Studio Code", "handoff": "snapshot" } }
+{ "args": ["snapshot", "-i"] }
+{ "electron": { "action": "probe", "timeoutMs": 5000 } }
+{ "electron": { "action": "cleanup", "launchId": "electron-…" } }
+```
+
+`launch.handoff` defaults to `"snapshot"`, which attaches through upstream `connect`, lists targets, and captures a current `snapshot -i` in one call. Use `handoff: "tabs"` as the safer diagnostic starting point when you only need target discovery and do not want to snapshot app content yet, or `handoff: "connect"` when you want to attach first and run your own follow-up commands. `targetType` defaults to `"page"`; use `"webview"` or `"any"` for apps that expose useful webviews. When a matching CDP target exposes a WebSocket URL, launch connects to that target; otherwise it falls back to the browser port.
+
+After launch, prefer the exact `details.nextActions` payloads when present: `status-electron-launch` checks liveness, `probe-electron-launch` runs compact diagnostics for a tracked launch, `snapshot-electron-session` refreshes current refs, `list-electron-tabs` inspects targets, and `cleanup-electron-launch` removes the wrapper-owned process/profile when the run is done. If status/probe detects a session or target mismatch, follow `reattach-electron-launch` or a fresh snapshot action before using old refs. If cleanup is partial (`failureCategory: "cleanup-failed"`), inspect `details.electron.cleanup.results` and use `retry-electron-cleanup` only for the same `launchId`.
+
+Manual path for externally launched apps: if you started the Electron app yourself with a debug port or DevTools URL, skip the wrapper lifecycle and attach directly with upstream `connect`. In this path you own app shutdown and profile cleanup; do not use `electron.cleanup`.
+
+```json
+{ "args": ["connect", "9222"], "sessionMode": "fresh" }
+{ "args": ["snapshot", "-i"] }
+```
+
+For current-session smoke checks after either path, use `qa.attached`; for compact state instead of separate title/url/focus/tab/snapshot calls, use `electron.probe`. `electron.probe.timeoutMs` bounds each underlying read subprocess; `electron.probe.launchId` ties the probe to a wrapper launch and can surface session or target mismatch guidance before you trust page refs.
+
+For local app debugging, top-level `sourceLookup` can gather candidate component/file locations for a visible element from selector DOM hints, React DevTools inspection, and a bounded workspace component-name search rooted at the Pi session working directory (`maxWorkspaceFiles` defaults to 2000 and cannot exceed 5000; the scan records at most ten `workspace-search` candidates). With a `selector`, the wrapper runs `is visible` and, unless `includeDomHints` is `false`, `get html` so DOM data attributes and embedded source-like paths can become `dom-attribute` candidates. It reports evidence and confidence in `details.sourceLookup` instead of claiming a guaranteed source file. React hints require a session opened with `--enable react-devtools`. The `details.sourceLookup.status` field reads `unsupported` only when no candidates were collected **and** a `react` batch step failed (inspect errors, missing renderer, and similar); it reads `no-candidates` when the batch succeeded but nothing matched. If selector or workspace hints still yield candidates, `status` remains `candidates-found` even when React inspection failed. Unlike `qa`, the wrapper does not downgrade a **fully successful** upstream batch to `isError` solely because those statuses appear—though failed batch steps still produce normal tool errors. For wrapper-tracked packaged Electron sessions with no candidates, `details.sourceLookup.workspaceRoot` and optional `details.sourceLookup.electronContext` explain that the scan only covered the Pi tool cwd; installed app resources or `app.asar` bundles are outside that scan and are not unpacked. Those results may add `snapshot-electron-session`, `probe-electron-launch`, and `list-electron-tabs` next actions so you can inspect the live packaged app before deciding whether to change the workspace or app bundle.
 
 ```json
 { "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
@@ -481,7 +521,7 @@ When a snapshot is too large for inline output, the Pi wrapper renders a compact
 | `wait --url <pattern>` | Wait for the URL to match a pattern. |
 | `wait --load <state>` | Wait for load state: `load`, `domcontentloaded`, or `networkidle`. |
 | `wait --fn <expression>` | Wait for a JavaScript expression to become truthy. |
-| `wait --text <text>` | Wait for text to appear on the page. |
+| `wait --text <text>` | Wait for text to appear on the page; failures may include `inspect-after-text-assertion-failure` with a session-scoped `snapshot -i` payload. |
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. In the native Pi wrapper, use `25000` ms or less per call to stay under the upstream CLI IPC budget. |
 | `wait <selector> --state hidden` | Wait for an element to become hidden. |

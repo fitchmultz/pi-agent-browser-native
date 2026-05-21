@@ -1594,6 +1594,33 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 	assert.equal(presentation.pageChangeSummary?.command, "batch");
 });
 
+test("buildToolPresentation adds snapshot recovery for wait text assertion failures inside batch", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			data: [
+				{ command: ["open", "https://example.com"], result: { title: "Example Domain" }, success: true },
+				{ command: ["wait", "--text", "Expected Copy"], error: "Timed out waiting for text", success: false },
+			],
+			success: false,
+		},
+		sessionName: "work",
+	});
+
+	assert.equal(presentation.resultCategory, "failure");
+	assert.equal(presentation.batchFailure?.failedStep.commandText, "wait --text Expected Copy");
+	assert.deepEqual(presentation.batchFailure?.failedStep.nextActions?.map((action) => action.id), ["inspect-after-text-assertion-failure"]);
+	assert.deepEqual(presentation.nextActions?.[0], {
+		id: "inspect-after-text-assertion-failure",
+		params: { args: ["--session", "work", "snapshot", "-i"] },
+		reason: "Inspect the current page after the text assertion failed before concluding the expected text is absent.",
+		safety: "Read-only snapshot; use current refs or visible text from this page before retrying the assertion.",
+		tool: "agent_browser",
+	});
+});
+
+
 test("buildToolPresentation keeps eval image-like string results text-only", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-untrusted-image-"));
 	const imagePath = join(tempDir, "secret.png");

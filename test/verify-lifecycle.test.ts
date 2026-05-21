@@ -38,6 +38,7 @@ const lifecycleModule = (await import("../scripts/verify-lifecycle.mjs")) as {
 	};
 	parseJsonl: (text: string) => unknown[];
 	sentinelTokens: (entries: unknown[]) => string[];
+	tmuxActiveTarget: (tmuxSession: string) => string;
 };
 
 const {
@@ -49,6 +50,7 @@ const {
 	parseCliArgs,
 	parseJsonl,
 	sentinelTokens,
+	tmuxActiveTarget,
 } = lifecycleModule;
 
 test("parseCliArgs supports lifecycle harness options", () => {
@@ -78,6 +80,10 @@ test("parseCliArgs rejects invalid lifecycle options", () => {
 	assert.throws(() => parseCliArgs(["--timeout-ms"]), /requires/);
 	assert.throws(() => parseCliArgs(["--timeout-ms", "0"]), /positive integer/);
 	assert.throws(() => parseCliArgs(["--timeout-ms", "1.5"]), /positive integer/);
+});
+
+test("tmuxActiveTarget uses the active window instead of a hard-coded pane index", () => {
+	assert.equal(tmuxActiveTarget("piab-lifecycle-123"), "piab-lifecycle-123:");
 });
 
 test("buildSettingsPayload isolates the configured package source", () => {

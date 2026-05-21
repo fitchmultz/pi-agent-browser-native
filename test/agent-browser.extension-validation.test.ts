@@ -7,12 +7,13 @@
  */
 
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
+import { Check } from "typebox/value";
 
 import {
 	BRAVE_SEARCH_PROMPT_GUIDELINE,
@@ -24,7 +25,16 @@ import {
 	WRAPPER_TAB_RECOVERY_BEHAVIOR,
 } from "../extensions/agent-browser/lib/playbook.js";
 import {
-	cleanupSecureTempArtifacts
+	discoverElectronApps,
+	ELECTRON_DISCOVERY_MAX_RESULTS,
+	type ElectronAppDiscovery,
+} from "../extensions/agent-browser/lib/electron/discovery.js";
+import {
+	cleanupElectronLaunchResources,
+} from "../extensions/agent-browser/lib/electron/cleanup.js";
+import {
+	cleanupSecureTempArtifacts,
+	createSecureTempDirectory,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
 	TEST_SESSION_ID,
@@ -70,6 +80,184 @@ function createRenderContext(options: {
 		state: {},
 		toolCallId: "render-test",
 	};
+}
+
+async function writeFakeMacElectronApp(options: {
+	applicationsDir: string;
+	bundleId: string;
+	executableName?: string;
+	name: string;
+}): Promise<{ appPath: string; executablePath: string }> {
+	const executableName = options.executableName ?? options.name;
+	const appPath = join(options.applicationsDir, `${options.name}.app`);
+	const executablePath = join(appPath, "Contents", "MacOS", executableName);
+	await mkdir(join(appPath, "Contents", "Frameworks", "Electron Framework.framework"), { recursive: true });
+	await mkdir(join(appPath, "Contents", "Resources"), { recursive: true });
+	await mkdir(join(appPath, "Contents", "MacOS"), { recursive: true });
+	await writeFile(join(appPath, "Contents", "Resources", "app.asar"), "asar", "utf8");
+	await writeFile(executablePath, "#!/bin/sh\n", "utf8");
+	await chmod(executablePath, 0o755);
+	await writeFile(join(appPath, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key><string>${options.name}</string>
+	<key>CFBundleName</key><string>${options.name}</string>
+	<key>CFBundleIdentifier</key><string>${options.bundleId}</string>
+	<key>CFBundleExecutable</key><string>${executableName}</string>
+</dict>
+</plist>
+`, "utf8");
+	return { appPath, executablePath };
+}
+
+async function writeFakeLinuxElectronBinary(root: string, appName: string): Promise<string> {
+	const appDirectory = join(root, appName);
+	const executablePath = join(appDirectory, appName);
+	await mkdir(join(appDirectory, "resources"), { recursive: true });
+	await writeFile(executablePath, "#!/bin/sh\n", "utf8");
+	await chmod(executablePath, 0o755);
+	await writeFile(join(appDirectory, "resources", "app.asar"), "asar", "utf8");
+	await writeFile(join(appDirectory, "chrome_100_percent.pak"), "pak", "utf8");
+	return executablePath;
+}
+
+function electronAppNames(apps: ElectronAppDiscovery[]): string[] {
+	return apps.map((app) => app.name).sort();
+}
+
+function isTestPidAlive(pid: number | undefined): boolean {
+	if (!pid) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function sleepMs(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForTestPidExit(pid: number | undefined, timeoutMs = 2_000): Promise<boolean> {
+	const deadlineMs = Date.now() + timeoutMs;
+	while (Date.now() <= deadlineMs) {
+		if (!isTestPidAlive(pid)) return true;
+		await sleepMs(50);
+	}
+	return !isTestPidAlive(pid);
+}
+
+async function stopTestPid(pid: number | undefined): Promise<void> {
+	if (!pid || !isTestPidAlive(pid)) return;
+	try {
+		process.kill(pid, "SIGTERM");
+	} catch {
+		return;
+	}
+	if (await waitForTestPidExit(pid, 1_000)) return;
+	try {
+		process.kill(pid, "SIGKILL");
+	} catch {
+		// Best-effort test cleanup only.
+	}
+	await waitForTestPidExit(pid, 1_000);
+}
+
+async function writeFakeLaunchableElectronApp(options: {
+	applicationsDir: string;
+	bundleId: string;
+	includeWebview?: boolean;
+	launchLogPath: string;
+	mode?: "invalid-cdp" | "no-port-file" | "normal";
+	name: string;
+}): Promise<{ appPath: string; executablePath: string }> {
+	const app = await writeFakeMacElectronApp(options);
+	const mode = options.mode ?? "normal";
+	await writeFile(app.executablePath, `#!/usr/bin/env node
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const mode = ${JSON.stringify(mode)};
+const includeWebview = ${JSON.stringify(options.includeWebview === true)};
+const args = process.argv.slice(2);
+const userDataArg = args.find((arg) => arg.startsWith("--user-data-dir="));
+const userDataDir = userDataArg && userDataArg.slice("--user-data-dir=".length);
+if (!userDataDir) throw new Error("missing --user-data-dir");
+if (!args.includes("--remote-debugging-port=0")) throw new Error("missing --remote-debugging-port=0");
+const server = http.createServer((request, response) => {
+	const port = server.address().port;
+	if (request.url === "/json/version") {
+		if (mode === "invalid-cdp") {
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end("not-json");
+			return;
+		}
+	response.writeHead(200, { "content-type": "application/json" });
+	response.end(JSON.stringify({ Browser: "Electron/Fake", "Protocol-Version": "1.3", "User-Agent": "FakeElectron", webSocketDebuggerUrl: ` + "`ws://127.0.0.1:${port}/devtools/browser/fake`" + ` }));
+	return;
+	}
+	if (request.url === "/json/list") {
+	response.writeHead(200, { "content-type": "application/json" });
+	const targets = [{ id: "page-1", type: "page", title: "Demo Electron", url: "app://demo", webSocketDebuggerUrl: ` + "`ws://127.0.0.1:${port}/devtools/page/page-1`" + ` }];
+	if (includeWebview) targets.push({ id: "webview-1", type: "webview", title: "Demo Webview", url: "app://webview", webSocketDebuggerUrl: ` + "`ws://127.0.0.1:${port}/devtools/page/webview-1`" + ` });
+	response.end(JSON.stringify(targets));
+	return;
+	}
+	response.writeHead(404);
+	response.end("not found");
+});
+server.listen(0, "127.0.0.1", () => {
+	const port = server.address().port;
+	if (mode !== "no-port-file") fs.writeFileSync(path.join(userDataDir, "DevToolsActivePort"), String(port) + "\\n/devtools/browser/fake\\n");
+	fs.appendFileSync(${JSON.stringify(options.launchLogPath)}, JSON.stringify({ args, mode, pid: process.pid, port, userDataDir }) + "\\n");
+});
+const shutdown = () => server.close(() => process.exit(0));
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+`, "utf8");
+	await chmod(app.executablePath, 0o755);
+	return app;
+}
+
+function fakeAgentBrowserLifecycleScript(logPath: string, options: {
+	sessionTitle?: string;
+	sessionUrl?: string;
+	snapshotTitle?: string;
+	snapshotUrl?: string;
+	tabTitle?: string;
+	tabUrl?: string;
+} = {}): string {
+	const sessionTitle = options.sessionTitle ?? "Demo Electron";
+	const sessionUrl = options.sessionUrl ?? "app://demo";
+	const snapshotTitle = options.snapshotTitle ?? "Demo Electron";
+	const snapshotUrl = options.snapshotUrl ?? "app://demo";
+	const tabTitle = options.tabTitle ?? "Demo Electron";
+	const tabUrl = options.tabUrl ?? "app://demo";
+	return `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS || null }) + "\\n");
+const valueFlags = new Set(["--session", "--profile", "--state", "--session-name", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+	const token = args[i];
+	if (token === "--json") continue;
+	if (valueFlags.has(token)) { i += 1; continue; }
+	if (token.startsWith("--")) continue;
+	commandIndex = i;
+	break;
+}
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+let data = { ok: true };
+if (command === "connect") data = { connected: true, endpoint: subcommand };
+else if (command === "get" && subcommand === "title") data = { result: ${JSON.stringify(sessionTitle)}, title: ${JSON.stringify(sessionTitle)} };
+else if (command === "get" && subcommand === "url") data = { result: ${JSON.stringify(sessionUrl)}, url: ${JSON.stringify(sessionUrl)} };
+else if (command === "eval") data = { result: { focusedElement: { id: "run-button", name: "Run", role: "button", tagName: "button" } } };
+else if (command === "tab" && subcommand === "list") data = { tabs: [{ active: true, index: 0, tabId: "page-1", title: ${JSON.stringify(tabTitle)}, type: "page", url: ${JSON.stringify(tabUrl)} }] };
+else if (command === "snapshot") data = { origin: ${JSON.stringify(snapshotUrl)}, title: ${JSON.stringify(snapshotTitle)}, url: ${JSON.stringify(snapshotUrl)}, refs: { e1: { role: "button", name: "Run" } }, snapshot: "- button \\\"Run\\\" [ref=e1]" };
+else if (command === "close") data = { closed: true };
+process.stdout.write(JSON.stringify({ success: true, data }));`;
 }
 
 test("agentBrowserExtension keeps concise browser guidance plus installed doc pointers in tool metadata", async () => {
@@ -1496,6 +1684,834 @@ else process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 	}
 });
 
+test("agentBrowserExtension accepts action-specific electron schema and routes list without upstream spawn", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-schema-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));`,
+	);
+	if (process.platform === "darwin") {
+		await mkdir(join(tempDir, "Applications"), { recursive: true });
+		await writeFakeMacElectronApp({ applicationsDir: join(tempDir, "Applications"), bundleId: "md.obsidian", name: "Obsidian" });
+	} else if (process.platform === "linux") {
+		const executablePath = await writeFakeLinuxElectronBinary(tempDir, "obsidian");
+		const desktopDir = join(tempDir, ".local", "share", "applications");
+		await mkdir(desktopDir, { recursive: true });
+		await writeFile(join(desktopDir, "obsidian.desktop"), `[Desktop Entry]\nType=Application\nName=Obsidian\nExec=${executablePath}\n`, "utf8");
+	}
+
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "list" } }), true);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: 10, query: "code" } }), true);
+			assert.equal(Check(harness.tool.parameters, {
+				electron: {
+					action: "launch",
+					allow: ["Code"],
+					appArgs: ["--safe-mode"],
+					appName: "Code",
+					deny: ["Slack"],
+					handoff: "tabs",
+					targetType: "webview",
+					timeoutMs: 1_000,
+				},
+			}), true);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", launchId: "launch-1", timeoutMs: 1_000 } }), true);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", timeoutMs: 1_000 } }), true);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: true, timeoutMs: 1_000 } }), true);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", all: true, launchId: "launch-1" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: true, launchId: "launch-1" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: false } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: {} }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe" } }), true);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe", launchId: "launch-1", timeoutMs: 1_000 } }), true);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe", timeoutMs: 0 } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe", handoff: "tabs" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", handoff: "tabs" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", handoff: "tabs" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", launchId: "launch-1" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", query: 42 } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", query: "" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: "10" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: 1.5 } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", allow: [""] } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", launchId: "launch-1" } }), false);
+
+			const listResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "list", maxResults: 1, query: "__piab_no_matching_electron_app__" },
+			});
+			assert.equal(listResult.isError, false);
+			assert.match(listResult.content[0]?.text ?? "", /Electron apps \(0 found\):/);
+			assert.deepEqual(listResult.details?.compiledElectron, { action: "list", maxResults: 1, query: "__piab_no_matching_electron_app__" });
+			assert.equal((listResult.details?.electron as { action?: string; status?: string } | undefined)?.action, "list");
+			assert.equal((listResult.details?.electron as { action?: string; status?: string } | undefined)?.status, "succeeded");
+			assert.equal(listResult.details?.resultCategory, "success");
+			if (process.platform === "darwin" || process.platform === "linux") {
+				const sensitiveListResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "list", maxResults: 5, query: "Obsidian" },
+				});
+				assert.equal(sensitiveListResult.isError, false);
+				assert.match(sensitiveListResult.content[0]?.text ?? "", /Obsidian.*\[likely sensitive: notes\]/);
+				assert.match(sensitiveListResult.content[0]?.text ?? "", /Review likely-sensitive apps and use caller-owned allow\/deny policy before launch\./);
+				const electronDetails = sensitiveListResult.details?.electron as { apps?: Array<{ name?: string; sensitivity?: { categories?: string[]; level?: string } }>; sensitiveAppCount?: number } | undefined;
+				assert.ok((electronDetails?.sensitiveAppCount ?? 0) >= 1);
+				assert.ok(electronDetails?.apps?.some((app) => app.name === "Obsidian" && app.sensitivity?.level === "likely-sensitive" && app.sensitivity.categories?.includes("notes")));
+			}
+			assert.deepEqual(await readInvocationLog(logPath), []);
+
+			const missingAction = await executeRegisteredTool(harness.tool, harness.ctx, { electron: {} } as unknown as AgentBrowserToolParams);
+			assert.equal(missingAction.isError, true);
+			assert.match(missingAction.content[0]?.text ?? "", /electron\.action must be one of: list, launch, status, cleanup, probe/);
+			assert.equal(missingAction.details?.failureCategory, "validation-error");
+
+			const unknownAction = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "bogus" } } as unknown as AgentBrowserToolParams);
+			assert.equal(unknownAction.isError, true);
+			assert.match(unknownAction.content[0]?.text ?? "", /electron\.action must be one of/);
+
+			const statusWithHandoff = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", handoff: "tabs" } } as unknown as AgentBrowserToolParams);
+			assert.equal(statusWithHandoff.isError, true);
+			assert.match(statusWithHandoff.content[0]?.text ?? "", /electron\.status does not support electron\.handoff/);
+
+			const probeWithListField = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", query: "demo" } } as unknown as AgentBrowserToolParams);
+			assert.equal(probeWithListField.isError, true);
+			assert.match(probeWithListField.content[0]?.text ?? "", /electron\.probe only supports action, launchId, and timeoutMs; remove electron\.query/);
+
+			const probeWithoutSession = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId: "launch-1" } });
+			assert.equal(probeWithoutSession.isError, true);
+			assert.deepEqual(probeWithoutSession.details?.compiledElectron, { action: "probe", launchId: "launch-1" });
+			assert.match(probeWithoutSession.content[0]?.text ?? "", /No wrapper-tracked Electron launch found for launchId launch-1/);
+			assert.equal(probeWithoutSession.details?.failureCategory, "validation-error");
+
+			const badQuery = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "list", query: 7 } } as unknown as AgentBrowserToolParams);
+			assert.equal(badQuery.isError, true);
+			assert.match(badQuery.content[0]?.text ?? "", /electron\.query must be a non-empty string/);
+
+			const listWithLaunchField = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "list", appName: "Code" } });
+			assert.equal(listWithLaunchField.isError, true);
+			assert.match(listWithLaunchField.content[0]?.text ?? "", /electron\.list only supports query and maxResults; remove electron\.appName/);
+
+			const missingLaunchTarget = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch" } });
+			assert.equal(missingLaunchTarget.isError, true);
+			assert.match(missingLaunchTarget.content[0]?.text ?? "", /electron\.launch requires exactly one of appPath, appName, bundleId, or executablePath/);
+			assert.equal(missingLaunchTarget.details?.failureCategory, "validation-error");
+
+			const reservedAppArg = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: "/Applications/Demo.app", appArgs: ["--remote-debugging-port=9222"] } });
+			assert.equal(reservedAppArg.isError, true);
+			assert.match(reservedAppArg.content[0]?.text ?? "", /electron\.appArgs must not include wrapper-owned launch flag --remote-debugging-port=9222/);
+			assert.equal(reservedAppArg.details?.failureCategory, "validation-error");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension launches Electron with isolated profile, snapshot handoff, status, and cleanup", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-launch-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.DemoElectron", launchLogPath, name: "Demo Electron" });
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const launchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "launch", appArgs: ["--fixture-mode"], appPath: app.appPath },
+			});
+			assert.equal(launchResult.isError, false);
+			assert.match(launchResult.content[0]?.text ?? "", /Electron launch: Demo Electron attached/);
+			assert.match(launchResult.content[0]?.text ?? "", /Identifiers: launchId .* sessionName .* for browser snapshot\/tab commands/);
+			assert.match(launchResult.content[0]?.text ?? "", /Snapshot handoff: 1 interactive ref/);
+			assert.match(launchResult.content[0]?.text ?? "", /Cleanup: use details\.nextActions cleanup-electron-launch or call electron\.cleanup with launchId/);
+			const launchDetails = launchResult.details as {
+				effectiveArgs: string[];
+				electron: { handoff?: { refSnapshot?: { refIds: string[] } }; identifiers?: { appName?: string; launchId?: string; sessionName?: string }; launch: { launchId: string; port: number; sessionName: string; userDataDir: string } };
+				nextActions: Array<{ id: string; params?: { args?: string[]; electron?: { action: string; launchId?: string } } }>;
+				refSnapshot: { refIds: string[] };
+				sessionMode: string;
+			};
+			assert.equal(launchDetails.sessionMode, "fresh");
+			assert.deepEqual(launchDetails.electron.identifiers, { appName: "Demo Electron", launchId: launchDetails.electron.launch.launchId, sessionName: launchDetails.electron.launch.sessionName });
+			assert.equal(launchDetails.effectiveArgs.at(-2), "connect");
+			assert.match(launchDetails.effectiveArgs.at(-1) ?? "", /\/devtools\/page\/page-1$/);
+			assert.deepEqual(launchDetails.refSnapshot.refIds, ["e1"]);
+			assert.deepEqual(launchDetails.electron.handoff?.refSnapshot?.refIds, ["e1"]);
+			assert.ok(launchDetails.nextActions.some((action) => action.id === "cleanup-electron-launch" && action.params?.electron?.launchId === launchDetails.electron.launch.launchId));
+			assert.ok(launchDetails.nextActions.some((action) => action.id === "snapshot-electron-session" && action.params?.args?.includes("snapshot")));
+
+			const launchLog = (await readFile(launchLogPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { args: string[]; userDataDir: string });
+			assert.equal(launchLog.length, 1);
+			assert.equal(launchLog[0]?.args.includes("--remote-debugging-port=0"), true);
+			assert.equal(launchLog[0]?.args.includes("--fixture-mode"), true);
+			assert.equal(launchLog[0]?.userDataDir, launchDetails.electron.launch.userDataDir);
+			assert.match(launchDetails.electron.launch.userDataDir, /electron-profile-/);
+			await stat(launchDetails.electron.launch.userDataDir);
+
+			const invocationsAfterLaunch = await readInvocationLog(upstreamLogPath);
+			assert.deepEqual(invocationsAfterLaunch.map((entry) => entry.args.at(-2)), ["connect", "tab", "snapshot"]);
+			assert.equal(invocationsAfterLaunch[0]?.args.includes("--session"), true);
+
+			const statusResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "status", launchId: launchDetails.electron.launch.launchId },
+			});
+			assert.equal(statusResult.isError, false);
+			assert.match(statusResult.content[0]?.text ?? "", /debug port alive/);
+			assert.match(statusResult.content[0]?.text ?? "", /Identifiers: launchId .*; sessionName/);
+			assert.deepEqual((statusResult.details?.electron as { identifiers?: unknown } | undefined)?.identifiers, launchDetails.electron.identifiers);
+			assert.equal(((statusResult.details?.electron as { targets?: unknown[] } | undefined)?.targets ?? []).length, 1);
+
+			await rm(upstreamLogPath, { force: true });
+			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 1_000 } });
+			assert.equal(probeResult.isError, false);
+			assert.match(probeResult.content[0]?.text ?? "", /Electron probe: Demo Electron — app:\/\/demo/);
+			assert.match(probeResult.content[0]?.text ?? "", /Focused: button\/button "Run" \(#run-button\)/);
+			assert.match(probeResult.content[0]?.text ?? "", /Snapshot: 1 interactive ref\(s\)/);
+			const probeDetails = probeResult.details as {
+				electron: { action?: string; identifiers?: { appName?: string; launchId?: string; sessionName?: string }; probe?: { focusedElement?: { id?: string }; refSnapshot?: unknown; snapshot?: { refIds?: string[] }; title?: string; url?: string } };
+				sessionName?: string;
+				sessionTabTarget?: { title?: string; url?: string };
+			};
+			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 1_000 });
+			assert.equal(probeDetails.electron.action, "probe");
+			assert.deepEqual(probeDetails.electron.identifiers, launchDetails.electron.identifiers);
+			assert.equal(probeDetails.electron.probe?.title, "Demo Electron");
+			assert.equal(probeDetails.electron.probe?.url, "app://demo");
+			assert.equal(probeDetails.electron.probe?.focusedElement?.id, "run-button");
+			assert.deepEqual(probeDetails.electron.probe?.snapshot?.refIds, ["e1"]);
+			assert.equal(probeDetails.electron.probe?.refSnapshot, undefined);
+			assert.equal(probeDetails.sessionName, launchDetails.electron.launch.sessionName);
+			assert.deepEqual(probeDetails.sessionTabTarget, { title: "Demo Electron", url: "app://demo" });
+			const probeInvocations = await readInvocationLog(upstreamLogPath);
+			assert.deepEqual(probeInvocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
+
+			const broadTextResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "body"] });
+			assert.equal(broadTextResult.isError, false);
+			assert.match(broadTextResult.content[0]?.text ?? "", /Broad Electron get text selector warning: selector "body" may read the entire app shell/);
+			const broadTextDetails = broadTextResult.details as { electronGetTextScopeWarning?: { electronContext?: { launchId?: string; sessionName?: string }; selector?: string }; nextActions?: Array<{ id?: string; params?: { args?: string[] } }> };
+			assert.equal(broadTextDetails.electronGetTextScopeWarning?.selector, "body");
+			assert.deepEqual(broadTextDetails.electronGetTextScopeWarning?.electronContext, { launchId: launchDetails.electron.launch.launchId, sessionName: launchDetails.electron.launch.sessionName, url: "app://demo" });
+			assert.ok(broadTextDetails.nextActions?.some((action) => action.id === "snapshot-for-electron-text-scope" && action.params?.args?.includes("snapshot")));
+
+			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "cleanup", launchId: launchDetails.electron.launch.launchId },
+			});
+			assert.equal(cleanupResult.isError, false);
+			assert.match(cleanupResult.content[0]?.text ?? "", /fully cleaned/);
+			await assert.rejects(stat(launchDetails.electron.launch.userDataDir));
+			const finalInvocations = await readInvocationLog(upstreamLogPath);
+			assert.equal(finalInvocations.some((entry) => entry.args.at(-1) === "close"), true);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports Electron session mismatch and launchId-aware probe", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-mismatch-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	let launchedPid: number | undefined;
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.MismatchElectron", launchLogPath, name: "Mismatch Electron" });
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath, {
+			sessionTitle: "Blank Page",
+			sessionUrl: "about:blank",
+			tabTitle: "Blank Page",
+			tabUrl: "about:blank",
+		}));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const launchResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } });
+			assert.equal(launchResult.isError, false);
+			const launchDetails = launchResult.details as {
+				electron: { launch: { launchId: string; pid: number; sessionName: string; userDataDir: string } };
+			};
+			launchedPid = launchDetails.electron.launch.pid;
+			const { launchId, sessionName } = launchDetails.electron.launch;
+
+			await rm(upstreamLogPath, { force: true });
+			const currentUrlResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(currentUrlResult.isError, false);
+			assert.match(currentUrlResult.content[0]?.text ?? "", /Electron session mismatch: managed session .* is on about:blank, but launch .* still has live target Demo Electron/);
+			const currentUrlDetails = currentUrlResult.details as {
+				electronSessionMismatch?: { launchId?: string; reason?: string; managedSession?: { url?: string }; liveTarget?: { url?: string } };
+				nextActions?: Array<{ id: string; params?: { args?: string[]; electron?: { action?: string; launchId?: string }; sessionMode?: string } }>;
+			};
+			assert.equal(currentUrlDetails.electronSessionMismatch?.launchId, launchId);
+			assert.equal(currentUrlDetails.electronSessionMismatch?.reason, "managed-session-about-blank-while-launch-target-live");
+			assert.equal(currentUrlDetails.electronSessionMismatch?.managedSession?.url, "about:blank");
+			assert.equal(currentUrlDetails.electronSessionMismatch?.liveTarget?.url, "app://demo");
+			const currentUrlActionIds = new Set(currentUrlDetails.nextActions?.map((action) => action.id));
+			for (const actionId of ["status-electron-launch", "probe-electron-launch", "reattach-electron-launch", "cleanup-electron-launch", "snapshot-electron-session"]) {
+				assert.equal(currentUrlActionIds.has(actionId), true, actionId);
+			}
+			assert.ok(currentUrlDetails.nextActions?.some((action) => action.id === "reattach-electron-launch" && action.params?.sessionMode === "fresh" && action.params?.args?.[0] === "connect"));
+
+			const statusResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", launchId } });
+			assert.equal(statusResult.isError, false);
+			assert.match(statusResult.content[0]?.text ?? "", /Electron session mismatch: managed session .* is on about:blank, but launch .* still has live target Demo Electron/);
+			const statusDetails = statusResult.details as {
+				electron?: { managedSession?: { url?: string }; sessionMismatch?: { reason?: string; liveTarget?: { url?: string } } };
+				nextActions?: Array<{ id: string; params?: { electron?: { action?: string; launchId?: string } } }>;
+			};
+			assert.equal(statusDetails.electron?.managedSession?.url, "about:blank");
+			assert.equal(statusDetails.electron?.sessionMismatch?.reason, "managed-session-about-blank-while-launch-target-live");
+			assert.equal(statusDetails.electron?.sessionMismatch?.liveTarget?.url, "app://demo");
+			assert.ok(statusDetails.nextActions?.some((action) => action.id === "probe-electron-launch" && action.params?.electron?.launchId === launchId));
+			assert.ok(statusDetails.nextActions?.some((action) => action.id === "reattach-electron-launch"));
+			const statusActionIds = statusDetails.nextActions?.map((action) => action.id) ?? [];
+			assert.deepEqual(statusActionIds.slice(0, 3), ["status-electron-launch", "probe-electron-launch", "reattach-electron-launch"]);
+			assert.ok(statusActionIds.indexOf("reattach-electron-launch") < statusActionIds.indexOf("snapshot-electron-session"));
+
+			await rm(upstreamLogPath, { force: true });
+			const currentProbeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 1_000 } });
+			assert.equal(currentProbeResult.isError, false);
+			assert.match(currentProbeResult.content[0]?.text ?? "", /Probe context: current managed session .* maps to Electron launch/);
+			assert.match(currentProbeResult.content[0]?.text ?? "", /Electron session mismatch: managed session .* is on about:blank, but launch .* still has live target Demo Electron/);
+			const currentProbeDetails = currentProbeResult.details as {
+				electron?: { probeContext?: { launchId?: string; mode?: string; sessionName?: string }; sessionMismatch?: { reason?: string } };
+			};
+			assert.equal(currentProbeDetails.electron?.probeContext?.mode, "current-managed-session");
+			assert.equal(currentProbeDetails.electron?.probeContext?.launchId, launchId);
+			assert.equal(currentProbeDetails.electron?.probeContext?.sessionName, sessionName);
+			assert.equal(currentProbeDetails.electron?.sessionMismatch?.reason, "managed-session-about-blank-while-launch-target-live");
+
+			await rm(upstreamLogPath, { force: true });
+			const launchProbeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId, timeoutMs: 1_000 } });
+			assert.equal(launchProbeResult.isError, false);
+			assert.match(launchProbeResult.content[0]?.text ?? "", /Probe context: wrapper launch .* session/);
+			const launchProbeDetails = launchProbeResult.details as {
+				compiledElectron?: { action?: string; launchId?: string; timeoutMs?: number };
+				electron?: { probeContext?: { launchId?: string; mode?: string; sessionName?: string } };
+				usedImplicitSession?: boolean;
+			};
+			assert.deepEqual(launchProbeDetails.compiledElectron, { action: "probe", launchId, timeoutMs: 1_000 });
+			assert.equal(launchProbeDetails.electron?.probeContext?.mode, "launchId");
+			assert.equal(launchProbeDetails.electron?.probeContext?.sessionName, sessionName);
+			assert.equal(launchProbeDetails.usedImplicitSession, false);
+			const launchProbeInvocations = await readInvocationLog(upstreamLogPath);
+			assert.equal(launchProbeInvocations.every((entry) => entry.args.includes("--session") && entry.args.includes(sessionName)), true);
+
+			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId } });
+			assert.equal(cleanupResult.isError, false);
+			await assert.rejects(stat(launchDetails.electron.launch.userDataDir));
+			assert.equal(await waitForTestPidExit(launchDetails.electron.launch.pid), true, "electron.cleanup should terminate the launched fake Electron process");
+		});
+	} finally {
+		await stopTestPid(launchedPid);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension applies electron.probe timeoutMs to bounded subprocess probes", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-timeout-"));
+	const logPath = join(tempDir, "agent-browser.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const valueFlags = new Set(["--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+	const token = args[i];
+	if (token === "--json") continue;
+	if (valueFlags.has(token)) { i += 1; continue; }
+	if (token.startsWith("--")) continue;
+	commandIndex = i;
+	break;
+}
+const command = args[commandIndex];
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, command }) + "\\n");
+if (command === "connect") {
+	process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
+	return;
+}
+setTimeout(() => {
+	process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
+}, 200);`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const connectResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
+			assert.equal(connectResult.isError, false);
+
+			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 25 } });
+			assert.equal(probeResult.isError, false);
+			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 25 });
+			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "partial");
+			assert.match(probeResult.content[0]?.text ?? "", /Some probe commands did not return data/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension supports Electron launch handoff modes", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-handoff-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.HandoffElectron", launchLogPath, name: "Handoff Electron" });
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			for (const [handoff, expectedCommands] of [["connect", ["connect"]], ["tabs", ["connect", "tab"]]] as const) {
+				await rm(upstreamLogPath, { force: true });
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath, handoff } });
+				assert.equal(result.isError, false, handoff);
+				assert.match(result.content[0]?.text ?? "", handoff === "tabs" ? /safer diagnostic starting point; no interactive refs were captured/ : /Connect handoff completed: run snapshot -i before using interactive refs/);
+				const commands = (await readInvocationLog(upstreamLogPath)).map((entry) => entry.args.find((token) => ["connect", "tab", "snapshot"].includes(token))).filter(Boolean);
+				assert.deepEqual(commands, expectedCommands, handoff);
+				const launchId = ((result.details?.electron as { launch?: { launchId: string } } | undefined)?.launch?.launchId);
+				assert.ok(launchId);
+				await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId } });
+			}
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension targets Electron webviews and keeps host cleanup after close failures", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-webview-close-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.WebviewElectron", includeWebview: true, launchLogPath, name: "Webview Electron" });
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(upstreamLogPath)}, JSON.stringify({ args }) + "\\n");
+const valueFlags = new Set(["--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+	const token = args[i];
+	if (token === "--json") continue;
+	if (valueFlags.has(token)) { i += 1; continue; }
+	if (token.startsWith("--")) continue;
+	commandIndex = i;
+	break;
+}
+const command = args[commandIndex];
+if (command === "close") {
+	process.stdout.write(JSON.stringify({ success: false, error: "close boom" }));
+	process.exit(1);
+}
+process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));`,
+		);
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const launchResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath, handoff: "connect", targetType: "webview" } });
+			assert.equal(launchResult.isError, false);
+			const launchDetails = launchResult.details as { effectiveArgs: string[]; electron: { launch: { launchId: string; pid: number; userDataDir: string } } };
+			assert.match(launchDetails.effectiveArgs.at(-1) ?? "", /\/devtools\/page\/webview-1$/);
+
+			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: launchDetails.electron.launch.launchId, timeoutMs: 1_000 } });
+			assert.equal(cleanupResult.isError, true);
+			assert.equal(cleanupResult.details?.failureCategory, "cleanup-failed");
+			assert.match(cleanupResult.content[0]?.text ?? "", /managed-session: failed/);
+			await assert.rejects(stat(launchDetails.electron.launch.userDataDir));
+			assert.equal(isTestPidAlive(launchDetails.electron.launch.pid), false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension blocks Electron launch by caller policy without spawning", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-policy-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.PolicyElectron", launchLogPath, name: "Policy Electron" });
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "launch", appPath: app.appPath, deny: ["Policy Electron"] },
+			});
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "policy-blocked");
+			assert.match(result.content[0]?.text ?? "", /deny policy: Policy Electron/);
+			assert.deepEqual(await readInvocationLog(upstreamLogPath), []);
+			await assert.rejects(readFile(launchLogPath, "utf8"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension cleans Electron resources when launch fails before upstream attach", { concurrency: false }, async () => {
+	for (const { expectedCategory, mode, timeoutMs } of [
+		{ expectedCategory: "timeout", mode: "no-port-file", timeoutMs: 500 },
+		{ expectedCategory: "upstream-error", mode: "invalid-cdp", timeoutMs: 1_500 },
+	] as const) {
+		const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-electron-failed-${mode}-`));
+		const applicationsDir = join(tempDir, "Applications");
+		const launchLogPath = join(tempDir, "electron-launch.log");
+		try {
+			await mkdir(applicationsDir, { recursive: true });
+			const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: `com.example.${mode}`, launchLogPath, mode, name: `Failed ${mode}` });
+			await withPatchedEnv({ PATH: dirname(process.execPath) }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "launch", appPath: app.appPath, timeoutMs },
+				});
+				assert.equal(result.isError, true, mode);
+				assert.equal(result.details?.failureCategory, expectedCategory, mode);
+				const [launchLog] = (await readFile(launchLogPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { pid: number; userDataDir: string });
+				assert.ok(launchLog, mode);
+				await assert.rejects(stat(launchLog.userDataDir));
+				assert.equal(isTestPidAlive(launchLog.pid), false, mode);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	}
+});
+
+test("agentBrowserExtension cleans Electron resources when upstream connect cannot spawn", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-missing-upstream-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.MissingUpstreamElectron", launchLogPath, name: "Missing Upstream Electron" });
+		await withPatchedEnv({ PATH: dirname(process.execPath) }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } });
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "missing-binary");
+			assert.match(result.content[0]?.text ?? "", /Electron cleanup after failed attach/);
+			const [launchLog] = (await readFile(launchLogPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { pid: number; userDataDir: string });
+			assert.ok(launchLog);
+			await assert.rejects(stat(launchLog.userDataDir));
+			assert.equal(isTestPidAlive(launchLog.pid), false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps restored Electron profile when process ownership is unverified", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const userDataDir = await createSecureTempDirectory("electron-profile-");
+	try {
+		const cleanupResult = await cleanupElectronLaunchResources({
+			record: {
+				appName: "Unverified Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-unverified-test",
+				launchedByWrapper: true,
+				pid: process.pid,
+				port: 9,
+				userDataDir,
+				version: 1,
+			},
+			timeoutMs: 50,
+		});
+		assert.equal(cleanupResult.partial, true);
+		assert.equal(cleanupResult.steps.find((step) => step.resource === "process")?.state, "failed");
+		assert.equal(cleanupResult.steps.find((step) => step.resource === "user-data-dir")?.state, "skipped");
+		assert.deepEqual(cleanupResult.remainingResources.sort(), ["process", "user-data-dir"]);
+		await stat(userDataDir);
+	} finally {
+		await cleanupSecureTempArtifacts();
+	}
+});
+
+
+test("agentBrowserExtension restores Electron launch records and cleans them on shutdown", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-restore-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	let launchedPid: number | undefined;
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.RestoreElectron", launchLogPath, name: "Restore Electron" });
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const firstHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
+			const launchResult = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, { electron: { action: "launch", appPath: app.appPath, handoff: "connect" } });
+			assert.equal(launchResult.isError, false);
+			const launch = (launchResult.details?.electron as { launch: { launchId: string; pid: number; userDataDir: string } }).launch;
+			launchedPid = launch.pid;
+
+			const restoredHarness = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: launchResult.details as Record<string, unknown> })] });
+			await runExtensionEvent(restoredHarness.handlers, "session_start", { reason: "resume" }, restoredHarness.ctx);
+			const statusResult = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, { electron: { action: "status", launchId: launch.launchId as string } });
+			assert.equal(statusResult.isError, false);
+			assert.match(statusResult.content[0]?.text ?? "", /debug port alive/);
+
+			await runExtensionEvent(restoredHarness.handlers, "session_shutdown", { reason: "reload" }, restoredHarness.ctx);
+			await assert.rejects(stat(launch.userDataDir));
+			assert.equal(await waitForTestPidExit(launch.pid), true, "restored shutdown cleanup should terminate the wrapper-owned Electron process");
+		});
+	} finally {
+		await stopTestPid(launchedPid);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rejects electron mixed with other input modes and caller stdin", async () => {
+	const harness = createExtensionHarness({ cwd: process.cwd() });
+	const conflicts: Array<{ label: string; params: AgentBrowserToolParams }> = [
+		{ label: "args", params: { args: ["open", "https://example.test/"], electron: { action: "list" } } },
+		{ label: "semanticAction", params: { semanticAction: { action: "click", locator: "text", value: "Export" }, electron: { action: "list" } } },
+		{ label: "job", params: { job: { steps: [{ action: "open", url: "https://example.test/" }] }, electron: { action: "list" } } },
+		{ label: "qa", params: { qa: { url: "https://example.test/" }, electron: { action: "list" } } },
+		{ label: "sourceLookup", params: { sourceLookup: { componentName: "Panel" }, electron: { action: "list" } } },
+		{ label: "networkSourceLookup", params: { networkSourceLookup: { url: "/api" }, electron: { action: "list" } } },
+	];
+	for (const conflict of conflicts) {
+		const result = await executeRegisteredTool(harness.tool, harness.ctx, conflict.params);
+		assert.equal(result.isError, true, conflict.label);
+		assert.match(result.content[0]?.text ?? "", /Provide exactly one of args, semanticAction, job, qa, sourceLookup, or networkSourceLookup, or electron/);
+		assert.equal(result.details?.failureCategory, "validation-error");
+	}
+
+	const stdinResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+		electron: { action: "list" },
+		stdin: "[]",
+	});
+	assert.equal(stdinResult.isError, true);
+	assert.match(stdinResult.content[0]?.text ?? "", /Do not provide stdin with .*electron/);
+	assert.equal(stdinResult.details?.failureCategory, "validation-error");
+});
+
+test("electron discovery finds macOS Electron app bundles with query filtering", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-macos-"));
+	try {
+		const applicationsDir = join(tempDir, "Applications");
+		await mkdir(applicationsDir, { recursive: true });
+		const alpha = await writeFakeMacElectronApp({ applicationsDir, bundleId: "com.example.Alpha", executableName: "AlphaBin", name: "Alpha App" });
+		await writeFakeMacElectronApp({ applicationsDir, bundleId: "com.example.Beta", executableName: "BetaBin", name: "Beta App" });
+		const nonElectronPath = join(applicationsDir, "Plain App.app");
+		await mkdir(join(nonElectronPath, "Contents", "Resources"), { recursive: true });
+		await writeFile(join(nonElectronPath, "Contents", "Resources", "app.asar"), "asar", "utf8");
+
+		const all = await discoverElectronApps({
+			locations: { darwinApplicationDirectories: [applicationsDir] },
+			platform: "darwin",
+		});
+		assert.deepEqual(electronAppNames(all.apps), ["Alpha App", "Beta App"]);
+		assert.equal(all.omittedCount, 0);
+		assert.equal(all.apps.find((app) => app.name === "Alpha App")?.bundleId, "com.example.Alpha");
+		assert.equal(all.apps.find((app) => app.name === "Alpha App")?.appPath, alpha.appPath);
+		assert.equal(all.apps.find((app) => app.name === "Alpha App")?.executablePath, alpha.executablePath);
+		assert.equal(all.apps.every((app) => app.platform === "darwin"), true);
+
+		const byName = await discoverElectronApps({
+			locations: { darwinApplicationDirectories: [applicationsDir] },
+			platform: "darwin",
+			query: "beta",
+		});
+		assert.deepEqual(electronAppNames(byName.apps), ["Beta App"]);
+		const byBundleId = await discoverElectronApps({
+			locations: { darwinApplicationDirectories: [applicationsDir] },
+			platform: "darwin",
+			query: "com.example.alpha",
+		});
+		assert.deepEqual(electronAppNames(byBundleId.apps), ["Alpha App"]);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("electron discovery annotates likely sensitive apps without blocking discovery", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-sensitive-"));
+	try {
+		const applicationsDir = join(tempDir, "Applications");
+		await mkdir(applicationsDir, { recursive: true });
+		await writeFakeMacElectronApp({ applicationsDir, bundleId: "md.obsidian", executableName: "Obsidian", name: "Obsidian" });
+		await writeFakeMacElectronApp({ applicationsDir, bundleId: "com.tinyspeck.slackmacgap", executableName: "Slack", name: "Slack" });
+		await writeFakeMacElectronApp({ applicationsDir, bundleId: "com.microsoft.VSCode", executableName: "Code", name: "Visual Studio Code" });
+		await writeFakeMacElectronApp({ applicationsDir, bundleId: "com.example.Plain", executableName: "Plain", name: "Plain Electron" });
+
+		const result = await discoverElectronApps({
+			locations: { darwinApplicationDirectories: [applicationsDir] },
+			platform: "darwin",
+		});
+
+		assert.equal(result.apps.length, 4);
+		const byName = new Map(result.apps.map((app) => [app.name, app]));
+		assert.deepEqual(byName.get("Obsidian")?.sensitivity, {
+			categories: ["notes"],
+			level: "likely-sensitive",
+			reason: "App name, bundle id, desktop id, or path matched common private-data app patterns; discovery still does not enforce policy.",
+		});
+		assert.deepEqual(byName.get("Slack")?.sensitivity?.categories, ["chat"]);
+		assert.deepEqual(byName.get("Visual Studio Code")?.sensitivity?.categories, ["developer-workspace"]);
+		assert.equal(byName.get("Plain Electron")?.sensitivity, undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("electron discovery scans Linux desktop files and applies Electron evidence gates", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-linux-"));
+	try {
+		const desktopDir = join(tempDir, "applications");
+		const appRoot = join(tempDir, "opt");
+		await mkdir(desktopDir, { recursive: true });
+		const electronExecutable = await writeFakeLinuxElectronBinary(appRoot, "demo-electron");
+		const realElectronExecutable = await realpath(electronExecutable);
+		const plainExecutable = join(appRoot, "plain", "plain");
+		await mkdir(dirname(plainExecutable), { recursive: true });
+		await writeFile(plainExecutable, "#!/bin/sh\n", "utf8");
+		await chmod(plainExecutable, 0o755);
+
+		await writeFile(join(desktopDir, "demo.desktop"), `[Desktop Entry]
+Type=Application
+Name=Demo Electron
+Comment=Demo comment
+Exec=${electronExecutable} %U --ignored-field-code %F
+Icon=demo-icon
+`, "utf8");
+		await writeFile(join(desktopDir, "plain.desktop"), `[Desktop Entry]
+Type=Application
+Name=Plain Binary
+Exec=${plainExecutable} %U
+`, "utf8");
+		await writeFile(join(desktopDir, "hidden.desktop"), `[Desktop Entry]
+Type=Application
+Name=Hidden Electron
+Hidden=true
+Exec=${electronExecutable}
+`, "utf8");
+		await writeFile(join(desktopDir, "nodisplay.desktop"), `[Desktop Entry]
+Type=Application
+Name=No Display Electron
+NoDisplay=true
+Exec=${electronExecutable}
+`, "utf8");
+		await writeFile(join(desktopDir, "link.desktop"), `[Desktop Entry]
+Type=Link
+Name=Link Electron
+Exec=${electronExecutable}
+`, "utf8");
+
+		const result = await discoverElectronApps({
+			locations: { linuxDesktopDirectories: [desktopDir], pathEnv: "" },
+			platform: "linux",
+		});
+		assert.deepEqual(electronAppNames(result.apps), ["Demo Electron"]);
+		const app = result.apps[0];
+		assert.equal(app?.platform, "linux");
+		assert.equal(app?.executablePath, realElectronExecutable);
+		assert.equal(app?.comment, "Demo comment");
+		assert.equal(app?.icon, "demo-icon");
+		assert.equal(app?.desktopId, "demo");
+		assert.equal(app?.packageSource, "desktop");
+
+		const binDir = join(tempDir, "bin");
+		await mkdir(binDir, { recursive: true });
+		const symlinkPath = join(binDir, "demo-link");
+		await symlink(electronExecutable, symlinkPath);
+		await writeFile(join(desktopDir, "symlink.desktop"), `[Desktop Entry]
+Type=Application
+Name=Symlink Electron
+Exec=${symlinkPath}
+`, "utf8");
+		const symlinkResult = await discoverElectronApps({
+			locations: { linuxDesktopDirectories: [desktopDir], pathEnv: "" },
+			platform: "linux",
+			query: "symlink",
+		});
+		assert.deepEqual(electronAppNames(symlinkResult.apps), ["Symlink Electron"]);
+		assert.equal(symlinkResult.apps[0]?.executablePath, realElectronExecutable);
+
+		const flatpakUserAppDirectory = join(tempDir, "flatpak", "app");
+		const flatpakExecutable = await writeFakeLinuxElectronBinary(join(flatpakUserAppDirectory, "com.example.Flat", "current", "active", "files"), "flat-electron");
+		const realFlatpakExecutable = await realpath(flatpakExecutable);
+		await writeFile(join(desktopDir, "com.example.Flat.desktop"), `[Desktop Entry]
+Type=Application
+Name=Flatpak Electron
+Exec=/usr/bin/flatpak run com.example.Flat
+`, "utf8");
+		const flatpakResult = await discoverElectronApps({
+			locations: { flatpakUserAppDirectory, linuxDesktopDirectories: [desktopDir], pathEnv: "" },
+			platform: "linux",
+			query: "flatpak",
+		});
+		assert.deepEqual(electronAppNames(flatpakResult.apps), ["Flatpak Electron"]);
+		assert.equal(flatpakResult.apps[0]?.executablePath, realFlatpakExecutable);
+		assert.equal(flatpakResult.apps[0]?.packageSource, "flatpak");
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("electron discovery caps results, clamps maxResults, and reports omittedCount", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cap-"));
+	try {
+		const applicationsDir = join(tempDir, "Applications");
+		await mkdir(applicationsDir, { recursive: true });
+		for (let index = 0; index < ELECTRON_DISCOVERY_MAX_RESULTS + 2; index += 1) {
+			const suffix = String(index).padStart(3, "0");
+			await writeFakeMacElectronApp({ applicationsDir, bundleId: `com.example.Cap${suffix}`, executableName: `Cap${suffix}`, name: `Cap App ${suffix}` });
+		}
+
+		const clamped = await discoverElectronApps({
+			locations: { darwinApplicationDirectories: [applicationsDir] },
+			maxResults: ELECTRON_DISCOVERY_MAX_RESULTS + 1_000,
+			platform: "darwin",
+		});
+		assert.equal(clamped.maxResults, ELECTRON_DISCOVERY_MAX_RESULTS);
+		assert.equal(clamped.apps.length, ELECTRON_DISCOVERY_MAX_RESULTS);
+		assert.equal(clamped.omittedCount, 2);
+
+		const smallCap = await discoverElectronApps({
+			locations: { darwinApplicationDirectories: [applicationsDir] },
+			maxResults: 3,
+			platform: "darwin",
+		});
+		assert.equal(smallCap.apps.length, 3);
+		assert.equal(smallCap.omittedCount, ELECTRON_DISCOVERY_MAX_RESULTS - 1);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension compiles semantic actions to upstream find commands", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -1521,6 +2537,16 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 				action: "click",
 				locator: "role",
 				args: ["find", "role", "button", "click", "--name", "Export"],
+			});
+
+			const roleOnlyClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "role", role: "button", name: "Continue without Signing In" },
+			});
+			assert.equal(roleOnlyClickResult.isError, false);
+			assert.deepEqual(roleOnlyClickResult.details?.compiledSemanticAction, {
+				action: "click",
+				locator: "role",
+				args: ["find", "role", "button", "click", "--name", "Continue without Signing In"],
 			});
 
 			const fillResult = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1569,9 +2595,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 			const invocationLog = await readInvocationLog(logPath);
 			const invocations = invocationLog.filter((entry) => entry.args.includes("find"));
 			assert.deepEqual(invocations[0]?.args.slice(-6), ["find", "role", "button", "click", "--name", "Export"]);
-			assert.deepEqual(invocations[1]?.args.slice(-5), ["find", "label", "Email", "fill", "user@example.test"]);
-			assert.deepEqual(invocations[2]?.args.slice(-4), ["find", "text", "Close", "click"]);
-			assert.deepEqual(invocations[3]?.args.slice(-6), ["--session", "named", "find", "text", "Close", "click"]);
+			assert.deepEqual(invocations[1]?.args.slice(-6), ["find", "role", "button", "click", "--name", "Continue without Signing In"]);
+			assert.deepEqual(invocations[2]?.args.slice(-5), ["find", "label", "Email", "fill", "user@example.test"]);
+			assert.deepEqual(invocations[3]?.args.slice(-4), ["find", "text", "Close", "click"]);
+			assert.deepEqual(invocations[4]?.args.slice(-6), ["--session", "named", "find", "text", "Close", "click"]);
 			const selectInvocation = invocationLog.find((entry) => entry.args.includes("select"));
 			assert.deepEqual(selectInvocation?.args.slice(-5), ["--session", "named", "select", "#flavor-select", "chocolate"]);
 		});
@@ -1754,6 +2781,7 @@ process.stdin.on("end", () => {
     if (name === "open") {
       const url = String(command[1] || "");
       mode = url.includes("fail") ? "fail" : url.includes("favicon") ? "favicon" : "clean";
+      return { command, success: true, result: { title: "QA Page", url } };
     }
     if (name === "network") {
       if (command.includes("--clear")) { staleNetwork = false; return { command, success: true, result: { requests: [] } }; }
@@ -1779,6 +2807,13 @@ process.stdin.on("end", () => {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			assert.equal(Check(harness.tool.parameters, { qa: { attached: true, expectedText: "Welcome" } }), true);
+			assert.equal(Check(harness.tool.parameters, { qa: { attached: true, url: "https://example.test/" } }), false);
+			assert.equal(Check(harness.tool.parameters, { qa: { expectedText: "Welcome" } }), false);
+			const attachedWithoutSession = await executeRegisteredTool(harness.tool, harness.ctx, { qa: { attached: true, expectedText: "Welcome" } });
+			assert.equal(attachedWithoutSession.isError, true);
+			assert.match(attachedWithoutSession.content[0]?.text ?? "", /qa\.attached requires an active attached session/);
+			assert.equal(attachedWithoutSession.details?.failureCategory, "validation-error");
 
 			const cleanResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {
@@ -1842,6 +2877,51 @@ process.stdin.on("end", () => {
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
 			assert.deepEqual(invocations[1]?.args.slice(-1), ["batch"]);
 			assert.deepEqual(invocations[2]?.args.slice(-1), ["batch"]);
+
+			const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: {
+					attached: true,
+					expectedText: "Welcome",
+					expectedSelector: "main",
+				},
+			});
+			assert.equal(attachedResult.isError, false);
+			assert.match((attachedResult.content[0] as { text: string }).text, /QA attached target: .* — QA Page — https:\/\/fail\.example\.test\//);
+			assert.equal((attachedResult.details?.qaAttachedTarget as { title?: string; url?: string } | undefined)?.title, "QA Page");
+			assert.equal((attachedResult.details?.qaAttachedTarget as { title?: string; url?: string } | undefined)?.url, "https://fail.example.test/");
+			const attachedCompiledQaPreset = attachedResult.details?.compiledQaPreset as { checks?: { attached?: boolean; url?: string }; steps?: Array<{ args: string[] }> } | undefined;
+			assert.equal(attachedCompiledQaPreset?.checks?.attached, true);
+			assert.equal(attachedCompiledQaPreset?.checks?.url, undefined);
+			assert.deepEqual(attachedCompiledQaPreset?.steps?.map((step) => step.args), [
+				["network", "requests", "--clear"],
+				["console", "--clear"],
+				["errors", "--clear"],
+				["wait", "--load", "domcontentloaded"],
+				["wait", "--text", "Welcome"],
+				["wait", "main"],
+				["network", "requests"],
+				["console"],
+				["errors"],
+			]);
+			const attachedInvocation = [...await readInvocationLog(logPath)].reverse().find((entry) => entry.args.at(-1) === "batch" && entry.stdin?.trim().startsWith("["));
+			assert.ok(attachedInvocation);
+			const attachedSteps = JSON.parse(attachedInvocation.stdin ?? "[]") as string[][];
+			assert.equal(attachedSteps.some((step) => step[0] === "open"), false);
+
+			const attachedFreshResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: { attached: true, expectedText: "Welcome" },
+				sessionMode: "fresh",
+			});
+			assert.equal(attachedFreshResult.isError, true);
+			assert.match(attachedFreshResult.content[0]?.text ?? "", /qa\.attached cannot be used with sessionMode=fresh/);
+			assert.equal(attachedFreshResult.details?.failureCategory, "validation-error");
+
+			const attachedWithUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: { attached: true, url: "https://example.test/" },
+			} as unknown as AgentBrowserToolParams);
+			assert.equal(attachedWithUrl.isError, true);
+			assert.match(attachedWithUrl.content[0]?.text ?? "", /qa\.url must be omitted when qa\.attached is true/);
+			assert.equal(attachedWithUrl.details?.failureCategory, "validation-error");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1914,6 +2994,173 @@ process.stdin.on("end", () => {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
+
+test("agentBrowserExtension explains packaged Electron sourceLookup no-candidate boundaries", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-source-lookup-electron-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const logPath = join(tempDir, "invocations.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.PackagedElectron", launchLogPath, name: "Packaged Electron" });
+		await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+	fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+	const valueFlags = new Set(["--session"]);
+	let commandIndex = -1;
+	for (let i = 0; i < args.length; i += 1) {
+	const token = args[i];
+	if (token === "--json") continue;
+	if (valueFlags.has(token)) { i += 1; continue; }
+	if (token.startsWith("--")) continue;
+	commandIndex = i;
+	break;
+	}
+	const command = args[commandIndex];
+	const subcommand = args[commandIndex + 1];
+	if (command === "connect") {
+	process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
+	return;
+	}
+	if (command === "tab" && subcommand === "list") {
+	process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ active: true, title: "Packaged Electron", type: "page", url: "app://packaged" }] } }));
+	return;
+	}
+	if (command === "snapshot") {
+	process.stdout.write(JSON.stringify({ success: true, data: { origin: "app://packaged", title: "Packaged Electron", url: "app://packaged", refs: { e1: { role: "button", name: "Save" } }, snapshot: "- button \\\"Save\\\" [ref=e1]" } }));
+	return;
+	}
+	if (command === "batch") {
+	const steps = JSON.parse(stdin || "[]");
+	const results = steps.map((step) => ({ command: step, success: true, result: step[0] === "get" && step[1] === "html" ? "<button>Save</button>" : { ok: true } }));
+	process.stdout.write(JSON.stringify(results));
+	return;
+	}
+	if (command === "close") {
+	process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+	return;
+	}
+	process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+});`);
+
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const launchResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } });
+			assert.equal(launchResult.isError, false);
+			const launch = (launchResult.details?.electron as { launch: { appPath?: string; executablePath?: string; launchId: string; sessionName: string; userDataDir: string } }).launch;
+
+			const lookupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sourceLookup: { componentName: "MissingPackagedComponent", selector: "#save" },
+			});
+			assert.equal(lookupResult.isError, false);
+			assert.match(lookupResult.content[0]?.text ?? "", /Source lookup found no candidate locations/);
+			assert.match(lookupResult.content[0]?.text ?? "", /workspace scan was limited/);
+			assert.match(lookupResult.content[0]?.text ?? "", /packaged Electron app code may live outside/);
+			const sourceLookup = lookupResult.details?.sourceLookup as {
+				electronContext?: { appName?: string; appPath?: string; executablePath?: string; launchId?: string; sessionName?: string; url?: string };
+				limitations?: string[];
+				status?: string;
+				workspaceRoot?: string;
+			} | undefined;
+			assert.equal(sourceLookup?.status, "no-candidates");
+			assert.equal(sourceLookup?.workspaceRoot, tempDir);
+			assert.deepEqual(sourceLookup?.electronContext, {
+				appName: "Packaged Electron",
+				appPath: launch.appPath,
+				executablePath: launch.executablePath,
+				launchId: launch.launchId,
+				sessionName: launch.sessionName,
+				url: "app://packaged",
+			});
+			assert.ok(sourceLookup?.limitations?.some((item) => item.includes("Pi tool session cwd")));
+			assert.ok(sourceLookup?.limitations?.some((item) => item.includes("app.asar")));
+			const nextActions = lookupResult.details?.nextActions as Array<{ id: string; params?: { args?: string[]; electron?: { action?: string; launchId?: string } } }> | undefined;
+			const actionIds = new Set(nextActions?.map((action) => action.id));
+			assert.equal(actionIds.has("snapshot-electron-session"), true);
+			assert.equal(actionIds.has("probe-electron-launch"), true);
+			assert.equal(actionIds.has("list-electron-tabs"), true);
+			assert.ok(nextActions?.some((action) => action.id === "probe-electron-launch" && action.params?.electron?.launchId === launch.launchId));
+			assert.ok(nextActions?.some((action) => action.id === "snapshot-electron-session" && action.params?.args?.includes(launch.sessionName)));
+
+			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: launch.launchId } });
+			assert.equal(cleanupResult.isError, false);
+			await assert.rejects(stat(launch.userDataDir));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not add packaged Electron sourceLookup guidance for plain file pages", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-source-lookup-file-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const fileUrl = `file://${join(tempDir, "plain.html")}`;
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+	fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+	const valueFlags = new Set(["--session"]);
+	let commandIndex = -1;
+	for (let i = 0; i < args.length; i += 1) {
+		const token = args[i];
+		if (token === "--json") continue;
+		if (valueFlags.has(token)) { i += 1; continue; }
+		if (token.startsWith("--")) continue;
+		commandIndex = i;
+		break;
+	}
+	const command = args[commandIndex];
+	if (command === "snapshot") {
+		process.stdout.write(JSON.stringify({ success: true, data: { origin: ${JSON.stringify(fileUrl)}, title: "Plain file", url: ${JSON.stringify(fileUrl)}, refs: { e1: { role: "button", name: "Save" } }, snapshot: "- button \\\"Save\\\" [ref=e1]" } }));
+		return;
+	}
+	if (command === "batch") {
+		const steps = JSON.parse(stdin || "[]");
+		const results = steps.map((step) => ({ command: step, success: true, result: step[0] === "get" && step[1] === "html" ? "<button>Save</button>" : { ok: true } }));
+		process.stdout.write(JSON.stringify(results));
+		return;
+	}
+	process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+});`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshotResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"], sessionMode: "fresh" });
+			assert.equal(snapshotResult.isError, false);
+			assert.equal((snapshotResult.details?.refSnapshot as { target?: { url?: string } } | undefined)?.target?.url, fileUrl);
+
+			const lookupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sourceLookup: { componentName: "MissingLocalComponent", selector: "#save" },
+			});
+			assert.equal(lookupResult.isError, false);
+			assert.match(lookupResult.content[0]?.text ?? "", /Source lookup found no candidate locations\./);
+			assert.doesNotMatch(lookupResult.content[0]?.text ?? "", /packaged Electron|app\.asar|workspace scan was limited/);
+			const sourceLookup = lookupResult.details?.sourceLookup as { electronContext?: unknown; status?: string; workspaceRoot?: string } | undefined;
+			assert.equal(sourceLookup?.status, "no-candidates");
+			assert.equal(sourceLookup?.electronContext, undefined);
+			assert.equal(sourceLookup?.workspaceRoot, undefined);
+			const nextActions = lookupResult.details?.nextActions as Array<{ id: string }> | undefined;
+			assert.equal(nextActions?.some((action) => ["snapshot-electron-session", "probe-electron-launch", "list-electron-tabs"].includes(action.id)) ?? false, false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 
 test("agentBrowserExtension compiles experimental network source lookups and reports failed-request candidates", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-source-lookup-"));
@@ -2131,6 +3378,13 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.equal(unsupportedRoleName.isError, true);
 			assert.match((unsupportedRoleName.content[0] as { text: string }).text, /semanticAction\.name is only supported/);
 			assert.equal(unsupportedRoleName.details?.failureCategory, "validation-error");
+
+			const mismatchedRoleValue = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "role", role: "button", value: "link" },
+			});
+			assert.equal(mismatchedRoleValue.isError, true);
+			assert.match((mismatchedRoleValue.content[0] as { text: string }).text, /semanticAction\.role must match value/);
+			assert.equal(mismatchedRoleValue.details?.failureCategory, "validation-error");
 
 			const emptySession = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "click", locator: "text", value: "Export", session: "" },

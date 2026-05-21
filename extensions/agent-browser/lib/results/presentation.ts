@@ -1704,6 +1704,33 @@ function buildUnknownCommandSuggestionActions(suggestions: CommandSuggestion[], 
 	return actions.length > 0 ? actions : undefined;
 }
 
+function isWaitTextAssertionCommand(command: string[] | undefined): boolean {
+	return command?.[0] === "wait" && command.includes("--text");
+}
+
+function buildWaitTextAssertionFailureNextAction(sessionName: string | undefined): AgentBrowserNextAction {
+	return {
+		id: "inspect-after-text-assertion-failure",
+		params: { args: withSessionPrefix(sessionName, ["snapshot", "-i"]) },
+		reason: "Inspect the current page after the text assertion failed before concluding the expected text is absent.",
+		safety: "Read-only snapshot; use current refs or visible text from this page before retrying the assertion.",
+		tool: "agent_browser",
+	};
+}
+
+function mergePresentationNextActions(...groups: Array<AgentBrowserNextAction[] | undefined>): AgentBrowserNextAction[] | undefined {
+	const actions: AgentBrowserNextAction[] = [];
+	const seen = new Set<string>();
+	for (const group of groups) {
+		for (const action of group ?? []) {
+			if (seen.has(action.id)) continue;
+			actions.push(action);
+			seen.add(action.id);
+		}
+	}
+	return actions.length > 0 ? actions : undefined;
+}
+
 function appendSelectorRecoveryHint(errorText: string): string {
 	const hint = getSelectorRecoveryHint(errorText);
 	if (!hint || errorText.includes("Agent-browser hint:")) {
@@ -1785,13 +1812,16 @@ async function buildBatchStepPresentation(options: {
 			errorText,
 		});
 		const confirmationRequired = detectConfirmationRequired(item.error);
-		const nextActions = buildAgentBrowserNextActions({
-			args: command,
-			command: command?.[0],
-			confirmationId: confirmationRequired?.id,
-			failureCategory,
-			resultCategory: "failure",
-		});
+		const nextActions = mergePresentationNextActions(
+			buildAgentBrowserNextActions({
+				args: command,
+				command: command?.[0],
+				confirmationId: confirmationRequired?.id,
+				failureCategory,
+				resultCategory: "failure",
+			}),
+			isWaitTextAssertionCommand(command) ? [buildWaitTextAssertionFailureNextAction(sessionName)] : undefined,
+		);
 		const presentation: ToolPresentation = {
 			content: [{ type: "text", text: errorText }],
 			failureCategory,

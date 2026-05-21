@@ -9,7 +9,7 @@
 
 import { readFile } from "node:fs/promises";
 
-const CURRENT_BENCHMARK_VERSION = 1;
+const CURRENT_BENCHMARK_VERSION = 2;
 
 export const BENCHMARK_SCENARIOS = Object.freeze([
   Object.freeze({
@@ -230,6 +230,56 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
     artifactSuccesses: 0,
     failureCategories: Object.freeze([]),
     elapsedMsEstimate: 1500,
+  }),
+  Object.freeze({
+    id: "electron-lifecycle",
+    title: "Discover, launch, inspect, and cleanup a wrapper-owned Electron app",
+    workflow: "native-electron-lifecycle",
+    steps: Object.freeze([
+      Object.freeze({
+        call: "agent_browser",
+        electron: Object.freeze({ action: "list", query: "code" }),
+      }),
+      Object.freeze({
+        call: "agent_browser",
+        electron: Object.freeze({ action: "launch", appName: "Visual Studio Code", handoff: "snapshot" }),
+      }),
+      Object.freeze({
+        call: "agent_browser",
+        electron: Object.freeze({ action: "cleanup", launchId: "electron-demo" }),
+      }),
+    ]),
+    modelOutputs: Object.freeze([
+      "Electron apps (1 found):\n- Visual Studio Code — com.microsoft.VSCode — /Applications/Visual Studio Code.app",
+      "Electron launch: Visual Studio Code attached as pi-demo (launchId electron-demo, port 49152).\n- page Visual Studio Code — vscode-file://index\nSnapshot handoff: 14 interactive ref(s).",
+      "Electron cleanup: 1/1 launch(es) fully cleaned.\n- Cleaned Electron launch electron-demo.",
+    ]),
+    success: true,
+    staleRefFailures: 0,
+    staleRefRecoveries: 0,
+    artifactSuccesses: 0,
+    failureCategories: Object.freeze([]),
+    elapsedMsEstimate: 2600,
+  }),
+  Object.freeze({
+    id: "electron-probe",
+    title: "Probe current Electron state in one compact call instead of separate title/url/focus/tab/snapshot reads",
+    workflow: "native-electron-probe",
+    steps: Object.freeze([
+      Object.freeze({
+        call: "agent_browser",
+        electron: Object.freeze({ action: "probe" }),
+      }),
+    ]),
+    modelOutputs: Object.freeze([
+      "Electron probe: Visual Studio Code — vscode-file://workspace\nFocused: textbox \"Search\" (#search, valueLength=0)\nTabs: 3 total; active 0: Explorer\nSnapshot: 12 interactive ref(s).",
+    ]),
+    success: true,
+    staleRefFailures: 0,
+    staleRefRecoveries: 0,
+    artifactSuccesses: 0,
+    failureCategories: Object.freeze([]),
+    elapsedMsEstimate: 900,
   }),
   Object.freeze({
     id: "job-open-assert-screenshot",

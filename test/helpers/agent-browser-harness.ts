@@ -20,6 +20,7 @@ import type {
 	ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
+import type { TSchema } from "typebox";
 
 import agentBrowserExtension from "../../extensions/agent-browser/index.js";
 
@@ -206,7 +207,16 @@ export type AgentBrowserToolParams = {
 			milliseconds?: number;
 		}>;
 	};
-	qa?: {
+	qa?: ({
+		attached: true;
+		expectedText?: string | string[];
+		expectedSelector?: string;
+		screenshotPath?: string;
+		checkConsole?: boolean;
+		checkErrors?: boolean;
+		checkNetwork?: boolean;
+	} | {
+		attached?: false;
 		url: string;
 		expectedText?: string | string[];
 		expectedSelector?: string;
@@ -214,7 +224,7 @@ export type AgentBrowserToolParams = {
 		checkConsole?: boolean;
 		checkErrors?: boolean;
 		checkNetwork?: boolean;
-	};
+	});
 	sourceLookup?: {
 		selector?: string;
 		reactFiberId?: string;
@@ -228,6 +238,23 @@ export type AgentBrowserToolParams = {
 		session?: string;
 		url?: string;
 		maxWorkspaceFiles?: number;
+	};
+	electron?: {
+		action: "list" | "launch" | "status" | "cleanup" | "probe";
+		query?: string;
+		maxResults?: number;
+		appPath?: string;
+		appName?: string;
+		bundleId?: string;
+		executablePath?: string;
+		appArgs?: string[];
+		handoff?: "connect" | "tabs" | "snapshot";
+		targetType?: "page" | "webview" | "any";
+		timeoutMs?: number;
+		allow?: string[];
+		deny?: string[];
+		launchId?: string;
+		all?: boolean;
 	};
 	sessionMode?: "auto" | "fresh";
 	stdin?: string;
@@ -250,6 +277,7 @@ export interface AgentBrowserToolRenderContext {
 
 export type RegisteredTool = {
 	description: string;
+	parameters: TSchema;
 	execute: (
 		toolCallId: string,
 		params: AgentBrowserToolParams,
