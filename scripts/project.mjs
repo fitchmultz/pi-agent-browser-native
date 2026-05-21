@@ -219,7 +219,7 @@ function validatePassthrough(mode, passthrough) {
 		}
 		if (arg === "--model") {
 			const value = passthrough[index + 1];
-			if (!value) throw new UsageError("--model requires a value.");
+			if (!value || value.startsWith("-")) throw new UsageError("--model requires a value.");
 			index += 1;
 		}
 		if (arg === "--timeout-ms") {

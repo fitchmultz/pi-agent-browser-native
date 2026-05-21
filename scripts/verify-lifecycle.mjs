@@ -81,7 +81,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 		}
 		if (arg === "--model") {
 			const value = argv[index + 1];
-			if (!value) throw new UsageError("--model requires a provider/model id value.");
+			if (!value || value.startsWith("-")) throw new UsageError("--model requires a provider/model id value.");
 			index += 1;
 			options.model = value;
 			continue;

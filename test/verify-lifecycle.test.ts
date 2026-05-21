@@ -74,6 +74,7 @@ test("parseCliArgs supports lifecycle harness options", () => {
 test("parseCliArgs rejects invalid lifecycle options", () => {
 	assert.throws(() => parseCliArgs(["--wat"]), /Unknown option/);
 	assert.throws(() => parseCliArgs(["--model"]), /requires/);
+	assert.throws(() => parseCliArgs(["--model", "--verbose"]), /requires/);
 	assert.throws(() => parseCliArgs(["--timeout-ms"]), /requires/);
 	assert.throws(() => parseCliArgs(["--timeout-ms", "0"]), /positive integer/);
 	assert.throws(() => parseCliArgs(["--timeout-ms", "1.5"]), /positive integer/);

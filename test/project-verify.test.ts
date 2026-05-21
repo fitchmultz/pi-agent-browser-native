@@ -90,4 +90,8 @@ test("verify facade lifecycle mode rejects --model without a value", () => {
 		() => verifySteps({ mode: "lifecycle", passthrough: ["--model"], showHelp: false }),
 		/--model requires a value/,
 	);
+	assert.throws(
+		() => verifySteps({ mode: "lifecycle", passthrough: ["--model", "--keep-artifacts"], showHelp: false }),
+		/--model requires a value/,
+	);
 });
