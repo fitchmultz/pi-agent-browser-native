@@ -22,7 +22,9 @@ import {
 	writeFakeAgentBrowserBinary
 } from "./helpers/agent-browser-harness.js";
 
-const CONCURRENCY_TEST_TIMEOUT_MS = 5_000;
+// Full-suite runs spawn many fake upstream processes in parallel; keep this as a deadlock watchdog,
+// not a scheduler-load race. The gated calls normally finish sub-second when run in isolation.
+const CONCURRENCY_TEST_TIMEOUT_MS = 15_000;
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));

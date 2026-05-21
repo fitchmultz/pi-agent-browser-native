@@ -42,5 +42,6 @@ export function sentinelTokens(entries: unknown[]): string[];
 export function collectFullOutputPaths(results: unknown[]): string[];
 export function buildSettingsPayload(options: { packageDir: string; sessionDir: string }): LifecycleSettingsPayload;
 export function injectLifecycleSentinelSource(source: string, token: string): string;
+export function tmuxActiveTarget(tmuxSession: string): string;
 export function isDirectRun(metaUrl: string, argv?: string[]): boolean;
 export function main(argv?: string[]): Promise<number>;

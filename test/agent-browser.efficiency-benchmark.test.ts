@@ -32,6 +32,8 @@ const requiredScenarioIds = new Set([
   "artifact-download",
   "batch-open-snapshot",
   "batch-multi-extract",
+  "electron-lifecycle",
+  "electron-probe",
   "job-open-assert-screenshot",
   "qa-open-diagnostics",
   "source-lookup-visible-element",
@@ -57,7 +59,7 @@ test("scenario summary measures model-visible bytes and workflow outcomes", () =
 test("benchmark report aggregates required efficiency metrics", () => {
   const report = buildBenchmarkReport();
 
-  assert.equal(report.version, 1);
+  assert.equal(report.version, 2);
   assert.equal(report.metrics.scenarios, requiredScenarioIds.size);
   assert.equal(report.metrics.successes, requiredScenarioIds.size);
   assert.equal(report.metrics.staleRefFailures, 1);
@@ -68,6 +70,27 @@ test("benchmark report aggregates required efficiency metrics", () => {
   assert.ok(report.metrics.toolCalls > report.metrics.scenarios);
   assert.ok(report.metrics.modelVisibleBytes > 0);
   assert.ok(report.metrics.elapsedMsEstimate > 0);
+});
+
+test("benchmark includes deterministic Electron lifecycle and probe scenario metric shapes", () => {
+  const report = buildBenchmarkReport();
+  const lifecycle = report.scenarios.find((scenario: { id: string }) => scenario.id === "electron-lifecycle");
+  const probe = report.scenarios.find((scenario: { id: string }) => scenario.id === "electron-probe");
+
+  assert.ok(lifecycle);
+  assert.equal(lifecycle.workflow, "native-electron-lifecycle");
+  assert.equal(lifecycle.toolCalls, 3);
+  assert.equal(lifecycle.success, true);
+  assert.equal(lifecycle.artifactSuccesses, 0);
+  assert.deepEqual(lifecycle.failureCategories, []);
+  assert.ok(lifecycle.modelVisibleBytes > 0);
+
+  assert.ok(probe);
+  assert.equal(probe.workflow, "native-electron-probe");
+  assert.equal(probe.toolCalls, 1);
+  assert.equal(probe.success, true);
+  assert.equal(probe.staleRefFailures, 0);
+  assert.ok(probe.modelVisibleBytes > 0);
 });
 
 test("benchmark comparison detects regressions in agent-visible costs and outcomes", () => {

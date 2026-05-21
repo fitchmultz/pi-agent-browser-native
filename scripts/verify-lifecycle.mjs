@@ -312,8 +312,12 @@ async function createFakeAgentBrowserBinary(binDir) {
 	await writeFile(join(binDir, "agent-browser.cmd"), `@echo off\n${JSON.stringify(process.execPath)} "%~dp0agent-browser" %*\n`, "utf8");
 }
 
+export function tmuxActiveTarget(tmuxSession) {
+	return `${tmuxSession}:`;
+}
+
 async function capturePaneText(tmuxSession) {
-	const { stdout } = await run("tmux", ["capture-pane", "-p", "-S", "-2000", "-t", `${tmuxSession}:0.0`]);
+	const { stdout } = await run("tmux", ["capture-pane", "-p", "-S", "-2000", "-t", tmuxActiveTarget(tmuxSession)]);
 	return stdout;
 }
 
@@ -354,9 +358,10 @@ async function launchPiInTmux(options) {
 }
 
 async function sendLine(tmuxSession, text) {
-	await run("tmux", ["send-keys", "-t", `${tmuxSession}:0.0`, "-l", text]);
+	const target = tmuxActiveTarget(tmuxSession);
+	await run("tmux", ["send-keys", "-t", target, "-l", text]);
 	await sleep(PROMPT_SUBMIT_PAUSE_MS);
-	await run("tmux", ["send-keys", "-t", `${tmuxSession}:0.0`, "Enter"]);
+	await run("tmux", ["send-keys", "-t", target, "Enter"]);
 }
 
 async function listSessionFiles(sessionDir) {
@@ -609,7 +614,7 @@ async function verifyLifecycle(options = {}) {
 		});
 		await sendLine(tmuxSession, "/resume");
 		await sleep(1000);
-		await run("tmux", ["send-keys", "-t", `${tmuxSession}:0.0`, "Enter"]);
+		await run("tmux", ["send-keys", "-t", tmuxActiveTarget(tmuxSession), "Enter"]);
 
 		const resumeSnapshot = await runPromptAndWaitForResult({
 			describe: "post-resume same-page snapshot",

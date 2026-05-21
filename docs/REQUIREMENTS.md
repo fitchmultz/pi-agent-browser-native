@@ -4,6 +4,7 @@ Related docs:
 - [`../README.md`](../README.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
+- [`ELECTRON.md`](ELECTRON.md)
 - [`RELEASE.md`](RELEASE.md)
 - [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 
@@ -63,7 +64,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 
 ### Native `agent_browser` inputs
 
-- Each tool invocation must supply **exactly one** of: `args` (full upstream argv after the binary name), top-level `semanticAction` (a small intent object compiled into existing upstream `find` argv for locator actions or upstream `select <selector> <value...>` argv for native dropdown selection), `job`, `qa`, `sourceLookup`, or `networkSourceLookup`. Supplying multiple modes or none is rejected before launch (`extensions/agent-browser/index.ts`, `test/agent-browser.extension-validation.test.ts`).
+- Each tool invocation must supply **exactly one** of: `args` (full upstream argv after the binary name), top-level `semanticAction` (a small intent object compiled into existing upstream `find` argv for locator actions or upstream `select <selector> <value...>` argv for native dropdown selection), `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` (bounded desktop lifecycle: host `list`, wrapper-owned isolated `launch` with CDP attach, `status`, compact `probe`, and `cleanup`; mutually exclusive with caller `stdin`). Supplying multiple modes or none is rejected before launch (`extensions/agent-browser/index.ts`, `test/agent-browser.extension-validation.test.ts`). Contract and field rules: [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#electron); operator workflow: [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#electron-desktop-apps).
 - `semanticAction` is not a nested shape inside `batch` stdin; batch steps remain upstream argv string arrays, including `find` steps expressed as token lists.
 - Supported actions, locators, exclusivity rules, when `details.compiledSemanticAction` appears, and bounded `try-*-candidate` follow-ups on `selector-not-found` (specific action/locator pairs only; see contract) are specified in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction), with workflow examples in [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md).
 
@@ -103,6 +104,7 @@ The design should comfortably support workflows such as:
 - headless authenticated `chat.com` / ChatGPT / OpenAI browsing without forcing `--headed` or `--auto-connect`
 - upstream profile/debug workflows without adding a local profile-cloning layer in this package
 - provider-backed or iOS device launches where upstream owns credentials, env, and setup; the wrapper forwards argv and a curated provider-related environment without emulating those backends
+- desktop Electron targets using top-level `electron` for discover → isolated launch → attach → probe/cleanup, or raw `args: ["connect", …]` when the operator launches the real app with a debug port for signed-in state (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#electron) and [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#electron-desktop-apps))
 
 ## Implications for the implementation
 

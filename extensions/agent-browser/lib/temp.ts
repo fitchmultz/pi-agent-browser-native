@@ -390,6 +390,32 @@ export async function writeSecureTempFile(options: {
 	return path;
 }
 
+export async function createSecureTempDirectory(prefix: string): Promise<string> {
+	const tempRoot = await getSessionTempRoot();
+	await assertSecureTempRootBudget(tempRoot, 0);
+	const directory = await mkdtemp(join(tempRoot, prefix));
+	await chmod(directory, 0o700).catch(() => undefined);
+	await refreshSecureTempRootLease(tempRoot).catch(() => undefined);
+	return directory;
+}
+
+export async function getSecureTempChildDirectoryValidationError(path: string, childPrefix: string): Promise<string | undefined> {
+	const parentDirectory = dirname(path);
+	const childName = path.slice(parentDirectory.length + 1);
+	if (!childName.startsWith(childPrefix)) {
+		return `Refusing to remove ${path}; expected wrapper temp child prefix ${childPrefix}.`;
+	}
+	const ownershipMarker = await readTempRootOwnershipMarker(parentDirectory);
+	if (!ownershipMarker) {
+		return `Refusing to remove ${path}; parent directory is not a pi-agent-browser owned temp root.`;
+	}
+	const currentUid = getCurrentProcessUid();
+	if (currentUid !== undefined && ownershipMarker.ownerUid !== undefined && ownershipMarker.ownerUid !== currentUid) {
+		return `Refusing to remove ${path}; parent temp root is owned by uid ${ownershipMarker.ownerUid}, not current uid ${currentUid}.`;
+	}
+	return undefined;
+}
+
 export async function writePersistentSessionArtifactFile(options: {
 	content: string | Uint8Array;
 	prefix: string;

@@ -25,10 +25,12 @@ export type AgentBrowserSuccessCategory = "artifact-saved" | "artifact-unverifie
 
 export type AgentBrowserFailureCategory =
 	| "aborted"
+	| "cleanup-failed"
 	| "confirmation-required"
 	| "download-not-verified"
 	| "missing-binary"
 	| "parse-failure"
+	| "policy-blocked"
 	| "qa-failure"
 	| "selector-not-found"
 	| "selector-unsupported"
@@ -60,6 +62,12 @@ export interface AgentBrowserNextAction {
 	id: string;
 	params?: {
 		args?: string[];
+		electron?: {
+			action: "cleanup" | "list" | "launch" | "probe" | "status";
+			all?: boolean;
+			handoff?: "connect" | "snapshot" | "tabs";
+			launchId?: string;
+		};
 		networkSourceLookup?: {
 			filter?: string;
 			requestId?: string;
@@ -359,6 +367,8 @@ export function classifyAgentBrowserFailureCategory(options: {
 	if (/ENOENT|not found on PATH|could not find.*agent-browser|agent-browser is required but was not found/i.test(text)) return "missing-binary";
 	if (options.parseError || /invalid JSON|missing boolean success|success field must be boolean|returned no JSON output/i.test(text)) return "parse-failure";
 	if (/aborted/i.test(text)) return "aborted";
+	if (/policy[- ]blocked|blocked by caller policy|caller deny policy|caller allow policy/i.test(text)) return "policy-blocked";
+	if (/cleanup failed|cleanup.*partial|partial cleanup|remaining resources/i.test(text)) return "cleanup-failed";
 	if (options.tabDrift || /could not re-select the intended tab|about:blank|selected tab looks wrong|tab drift|tab.*wrong/i.test(text)) return "tab-drift";
 	if (/\bUnknown ref\b|\bstale ref\b|@ref may be stale|\bref\b.*\b(?:not found|missing|expired)\b/i.test(text)) return "stale-ref";
 	if (usedRef && /could not locate element|element not found|no element/i.test(text)) return "stale-ref";
@@ -424,6 +434,22 @@ function buildArtifactVerificationAction(artifact: FileArtifactMetadata): AgentB
 	};
 }
 
+function buildElectronToolAction(options: {
+	action: "cleanup" | "probe" | "status";
+	id: string;
+	launchId: string;
+	reason: string;
+	safety?: string;
+}): AgentBrowserNextAction {
+	return {
+		id: options.id,
+		params: { electron: { action: options.action, launchId: options.launchId } },
+		reason: options.reason,
+		...(options.safety ? { safety: options.safety } : {}),
+		tool: "agent_browser",
+	};
+}
+
 const MUTATING_COMMANDS = new Set([
 	"back",
 	"check",
@@ -465,12 +491,74 @@ export function buildAgentBrowserNextActions(options: {
 	args?: string[];
 	command?: string;
 	confirmationId?: string;
+	electron?: {
+		launchId?: string;
+		sessionName?: string;
+		status?: "active" | "cleaned" | "dead" | "failed" | "partial" | "succeeded";
+	};
 	failureCategory?: AgentBrowserFailureCategory;
 	resultCategory: AgentBrowserResultCategory;
 	savedFilePath?: string;
 	successCategory?: AgentBrowserSuccessCategory;
 }): AgentBrowserNextAction[] | undefined {
 	const actions: AgentBrowserNextAction[] = [];
+	if (options.electron?.launchId) {
+		const { launchId, sessionName, status } = options.electron;
+		if (options.resultCategory === "success" && status !== "cleaned") {
+			actions.push(
+				buildElectronToolAction({
+					action: "status",
+					id: "status-electron-launch",
+					launchId,
+					reason: "Check the wrapper-tracked Electron launch liveness and current CDP targets without mutating the app.",
+				}),
+				buildElectronToolAction({
+					action: "probe",
+					id: "probe-electron-launch",
+					launchId,
+					reason: "Probe the attached Electron managed session and carry the wrapper launchId for follow-up diagnostics.",
+				}),
+				buildElectronToolAction({
+					action: "cleanup",
+					id: "cleanup-electron-launch",
+					launchId,
+					reason: "Clean the wrapper-owned Electron process and isolated userDataDir when the run is complete.",
+					safety: "Only operates on the launchId created by electron.launch; explicit artifacts and manually launched apps remain host-owned.",
+				}),
+			);
+			if (sessionName) {
+				actions.push(
+					buildNextToolAction({
+						args: ["--session", sessionName, "tab", "list"],
+						id: "list-electron-tabs",
+						reason: "Inspect attached Electron page/webview targets before choosing the active tab.",
+					}),
+					buildNextToolAction({
+						args: ["--session", sessionName, "snapshot", "-i"],
+						id: "snapshot-electron-session",
+						reason: "Refresh interactive refs for the attached Electron session.",
+						safety: "Use current Electron refs only after a fresh snapshot for this session.",
+					}),
+				);
+			}
+		} else if (options.resultCategory === "failure" && options.failureCategory === "cleanup-failed") {
+			actions.push(
+				buildElectronToolAction({
+					action: "status",
+					id: "status-electron-launch",
+					launchId,
+					reason: "Inspect which wrapper-tracked Electron resources remain after partial cleanup.",
+				}),
+				buildElectronToolAction({
+					action: "cleanup",
+					id: "retry-electron-cleanup",
+					launchId,
+					reason: "Retry cleanup for the same wrapper-owned Electron launch after reviewing remaining resources.",
+					safety: "Only retry for the same launchId; do not use cleanup for manually launched Electron apps.",
+				}),
+			);
+		}
+	}
 	if (options.resultCategory === "success") {
 		if (options.command === "open") {
 			actions.push(buildNextToolAction({

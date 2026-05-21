@@ -37,6 +37,8 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "agent-browser is required but was not found on PATH" }), "missing-binary");
 	assert.equal(classifyAgentBrowserFailureCategory({ parseError: "agent-browser returned invalid JSON" }), "parse-failure");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Confirmation required: c_demo" }), "confirmation-required");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Electron launch blocked by caller deny policy." }), "policy-blocked");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Electron cleanup partial: remaining resources detected." }), "cleanup-failed");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "agent-browser could not re-select the intended tab before running the command." }), "tab-drift");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), "upstream-error");
 });
@@ -65,6 +67,31 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/page.png", kind: "image", path: "/tmp/page.png" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.artifactPath, "/tmp/page.png");
 	assert.deepEqual(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/export.csv", exists: false, kind: "download", path: "/tmp/export.csv" }], resultCategory: "success", savedFilePath: "/tmp/export.csv", successCategory: "artifact-saved" })?.map((action) => action.id), ["wait-for-download"]);
 	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/state.json", exists: false, kind: "file", path: "/tmp/state.json" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.id, "verify-artifact-path");
+	assert.deepEqual(
+		buildAgentBrowserNextActions({
+			electron: { launchId: "el_123", sessionName: "pi-agent-browser-electron-el_123", status: "active" },
+			resultCategory: "success",
+			successCategory: "completed",
+		})?.map((action) => ({ id: action.id, params: action.params })),
+		[
+			{ id: "status-electron-launch", params: { electron: { action: "status", launchId: "el_123" } } },
+			{ id: "probe-electron-launch", params: { electron: { action: "probe", launchId: "el_123" } } },
+			{ id: "cleanup-electron-launch", params: { electron: { action: "cleanup", launchId: "el_123" } } },
+			{ id: "list-electron-tabs", params: { args: ["--session", "pi-agent-browser-electron-el_123", "tab", "list"] } },
+			{ id: "snapshot-electron-session", params: { args: ["--session", "pi-agent-browser-electron-el_123", "snapshot", "-i"] } },
+		],
+	);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({
+			electron: { launchId: "el_456", status: "partial" },
+			failureCategory: "cleanup-failed",
+			resultCategory: "failure",
+		})?.map((action) => ({ id: action.id, params: action.params })),
+		[
+			{ id: "status-electron-launch", params: { electron: { action: "status", launchId: "el_456" } } },
+			{ id: "retry-electron-cleanup", params: { electron: { action: "cleanup", launchId: "el_456" } } },
+		],
+	);
 	assert.equal(buildAgentBrowserNextActions({ resultCategory: "success", successCategory: "completed" }), undefined);
 });
 
