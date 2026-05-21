@@ -184,6 +184,17 @@ For manual launches, close the app yourself and clean its profile/temp files wit
 
 On Pi session shutdown, active wrapper-owned Electron launches are best-effort cleaned. Stale restored records (PID gone, port dead) are **reported** instead of guessed at or killed.
 
+### `timeoutMs` by action (quick reference)
+
+`electron.list` does not take `timeoutMs` (host scan only). For every other action, `timeoutMs` applies to **different surfaces**; treat values as per-call budgets, not one global knob. Authoritative rules and env overrides live under **Validation and defaults** in [`TOOL_CONTRACT.md#electron`](TOOL_CONTRACT.md#electron).
+
+| Action | What `timeoutMs` covers when set | Typical default when omitted |
+| --- | --- | --- |
+| `launch` | Host-side wait for `DevToolsActivePort` and CDP readiness | **15 s**, hard-capped at **120 s** (`normalizeTimeoutMs` in `extensions/agent-browser/lib/electron/launch.ts`) |
+| `status` | Optional managed-session `get title` / `get url` reads used for mismatch diagnostics | Normal tool subprocess budget from `runAgentBrowserProcess` / `AGENT_BROWSER_DEFAULT_TIMEOUT`; localhost CDP HTTP probes keep a short fixed budget (`ELECTRON_STATUS_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cleanup.ts`) |
+| `cleanup` | One combined budget for managed-session `close`, tracked process exit, debug-port verification, and temp profile removal | `PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS` when set, else **5000 ms** (`getImplicitSessionCloseTimeoutMs` in `extensions/agent-browser/lib/runtime.ts`, passed through `cleanupTrackedElectronLaunches` in `extensions/agent-browser/index.ts`) |
+| `probe` | **Each** upstream read in the probe chain (`get title`, `get url`, focused `eval --stdin`, `tab list`, `snapshot -i`) | Same default as other tool calls (typically **28 s** per subprocess unless `AGENT_BROWSER_DEFAULT_TIMEOUT` / `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides `runAgentBrowserProcess` in `extensions/agent-browser/lib/process.ts`) |
+
 ## `qa.attached` — current-session smoke check
 
 `qa` has two forms: the URL form (`qa: { url, … }`) and the attached form (`qa: { attached: true, … }`). The attached form is the right tool for Electron smoke checks after either launch path because it does not open a URL and runs all checks against the current managed session.
