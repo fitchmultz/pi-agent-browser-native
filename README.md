@@ -246,6 +246,8 @@ Use raw `args`/`stdin` when you need full upstream `batch` power, custom flags, 
 
 ### Electron desktop apps
 
+The dedicated guide for this section is [`docs/ELECTRON.md`](docs/ELECTRON.md); it covers intended users, the full lifecycle, wrapper-owned vs manually launched apps, action reference, safety/ownership, `qa.attached`, `sourceLookup` context, troubleshooting, and cleanup. Read it first if Electron support is what brought you here.
+
 For desktop Electron apps, use top-level `electron` to avoid hand-building the discover → launch with CDP → connect → inspect → cleanup sequence. The wrapper owns only apps it launched, uses an isolated temp profile and OS-chosen debug port, and reports exact cleanup/status next actions. It does **not** reuse the app's normal signed-in profile or attach to an already-running authenticated app, so launching Slack/Obsidian/VS Code this way may show first-run or sign-in UI instead of the user's live local state. When the explicit goal is signed-in local app state and host tools are available, launch the normal app with a debug port first (for example `open -a Slack --args --remote-debugging-port=9222 --remote-allow-origins='*'`), then attach with `{ "args": ["connect", "9222"], "sessionMode": "fresh" }`; if the app is already running without a debug port, ask before relaunching it. `electron.list` may annotate likely private apps (for example notes, chat, mail, developer workspaces, or password/auth tools) as `[likely sensitive: …]`; those are hints only, so use caller-owned `allow` / `deny` policy before launching sensitive apps.
 
 ```json
@@ -527,6 +529,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `scripts/check-command-reference-baseline.mjs` | Regenerates or verifies HTML-bounded baseline blocks in `docs/COMMAND_REFERENCE.md` (via `npm run docs -- command-reference …`) |
 | `docs/COMMAND_REFERENCE.md` | Repo-readable native command reference |
 | `docs/TOOL_CONTRACT.md` | Tool parameters, result shape, and behavior contract |
+| `docs/ELECTRON.md` | Dedicated public guide for Electron desktop-app support |
 | `docs/ARCHITECTURE.md` | Design decisions and implementation structure |
 | `docs/REQUIREMENTS.md` | Product requirements and constraints |
 | `docs/RELEASE.md` | Release, package, and lifecycle verification workflow |
@@ -538,6 +541,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 - [`AGENTS.md`](AGENTS.md) — maintainer and agent runbooks, including upstream capability baseline rebaselining and Pi smoke testing in `tmux`
 - [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md) — full native command reference and upstream capability baseline
 - [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) — exact tool contract
+- [`docs/ELECTRON.md`](docs/ELECTRON.md) — Electron desktop-app guide
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the wrapper is designed
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — product constraints and non-goals
 - [`docs/RELEASE.md`](docs/RELEASE.md) — maintainer release workflow

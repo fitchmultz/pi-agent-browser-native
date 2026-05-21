@@ -5,6 +5,7 @@ Related docs:
 - [`../AGENTS.md`](../AGENTS.md) (rebaselining and verification stack)
 - [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
+- [`ELECTRON.md`](ELECTRON.md)
 - [`RELEASE.md`](RELEASE.md)
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 

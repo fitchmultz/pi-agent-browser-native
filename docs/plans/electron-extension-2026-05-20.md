@@ -251,9 +251,9 @@ Validation rules:
    with a clear `policy-blocked` failure category and surface which list
    matched.
 4. Create secure temp `userDataDir`.
-5. Launch with `--remote-debugging-port=0`, `--user-data-dir=<temp>`,
-   `--disable-extensions`, `--no-first-run`, `--no-default-browser-check`,
-   plus sanitized `appArgs`.
+5. Launch with sanitized `appArgs` plus wrapper-owned `--remote-debugging-port=0`,
+   `--user-data-dir=<temp>`, `--disable-extensions`, `--no-first-run`,
+   and `--no-default-browser-check`.
 6. Poll `<userDataDir>/DevToolsActivePort` until populated (bounded by
    `timeoutMs`; polling cadence is an implementation choice).
 7. Read `http://127.0.0.1:<port>/json/version` + `/json/list`.

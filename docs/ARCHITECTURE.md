@@ -5,6 +5,7 @@ Related docs:
 - [`../AGENTS.md`](../AGENTS.md) (maintainer workflows, including upstream capability baseline)
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
+- [`ELECTRON.md`](ELECTRON.md)
 
 ## Decision
 

@@ -4,6 +4,7 @@ Related docs:
 - [`../README.md`](../README.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- [`ELECTRON.md`](ELECTRON.md)
 - [`RELEASE.md`](RELEASE.md)
 - [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 
@@ -218,6 +219,8 @@ For attached Electron or manually connected CDP sessions, use `qa.attached` afte
 Use custom `job` or raw `batch` when you need a different check sequence.
 
 ### Electron desktop apps
+
+Full public guide: [`ELECTRON.md`](ELECTRON.md). Use it as the entry point when Electron support is the task; this section keeps the inline workflow snippets for agents reading the broader command surface.
 
 Use top-level `electron` when the wrapper should discover, launch, attach to, probe, and clean up a desktop Electron app. The wrapper owns only launches it created. It uses an isolated temporary `userDataDir`, `--remote-debugging-port=0`, and safe launch defaults; it does **not** reuse the app's normal signed-in profile or attach to an already-running authenticated app. For already-authenticated desktop app content, do not stop at the isolated-launch warning: when host tools are available and the app is not already running, launch the normal app with a debug port (macOS example: `open -a Slack --args --remote-debugging-port=9222 --remote-allow-origins='*'`), verify the port, then attach with `{ "args": ["connect", "9222"], "sessionMode": "fresh" }`; if the app is already running without a debug port, ask before relaunching it. Remote debugging still exposes app content, so use caller-owned `allow` / `deny` lists for sensitive app policies when needed. `electron.list` may annotate common private-data apps as `[likely sensitive: …]`; this is advisory metadata only and does not block `launch` or replace caller policy.
 

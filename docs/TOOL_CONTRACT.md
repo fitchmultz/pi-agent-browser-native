@@ -5,6 +5,7 @@ Related docs:
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)
+- [`ELECTRON.md`](ELECTRON.md)
 - [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 
 ## V1 tool
@@ -217,6 +218,8 @@ Use custom `job` or raw `batch` for QA flows that need custom commands, flags, a
 
 ### `electron`
 
+Workflow-oriented public guide: [`ELECTRON.md`](ELECTRON.md). This section remains the canonical field contract; the guide covers when and how to use these actions in practice.
+
 - type: object with required `action`
 - optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`
 - top-level wrapper shorthand for Electron desktop apps; do not nest it inside `batch` stdin
@@ -248,7 +251,7 @@ Validation and defaults:
 Safety defaults and ownership:
 
 - `launch` always uses a new isolated wrapper-created `userDataDir` and `--remote-debugging-port=0`, then reads `DevToolsActivePort`; callers cannot choose a fixed debug port, cannot reuse the app's normal signed-in profile, and cannot use this path to attach to an already-running authenticated app.
-- The wrapper also passes `--disable-extensions`, `--no-first-run`, and `--no-default-browser-check` before any caller `appArgs`.
+- The wrapper also passes `--disable-extensions`, `--no-first-run`, and `--no-default-browser-check` alongside sanitized caller `appArgs`.
 - Remote debugging exposes app contents to the attached browser tool. The wrapper gives isolation defaults and optional `allow` / `deny`; the user still owns the decision to launch or attach to a sensitive desktop app.
 - `electron.list` may annotate apps as likely sensitive (`sensitivity.level: "likely-sensitive"`, categories such as `notes`, `chat`, `mail`, `developer-workspace`, or `passwords-auth`) and print `[likely sensitive: …]`. These annotations are non-blocking hints, not enforcement; caller-owned `allow` / `deny` policy still controls launch decisions.
 - Cleanup is wrapper-owned **only** for records created by `electron.launch`. `electron.cleanup` never targets manually launched apps, externally supplied debug ports, or arbitrary Electron processes. Explicit screenshots/downloads/HARs/traces remain host-file cleanup, not Electron cleanup.

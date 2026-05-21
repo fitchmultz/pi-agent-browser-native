@@ -4,6 +4,7 @@ Related docs:
 - [`../README.md`](../README.md)
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
+- [`ELECTRON.md`](ELECTRON.md)
 - [`RELEASE.md`](RELEASE.md)
 - [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 
