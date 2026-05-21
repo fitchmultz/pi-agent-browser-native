@@ -114,6 +114,16 @@ const AGENT_BROWSER_ELECTRON_TARGET_TYPES = ["page", "webview", "any"] as const;
 const AGENT_BROWSER_ELECTRON_LIST_FIELDS = new Set(["action", "query", "maxResults"]);
 const AGENT_BROWSER_ELECTRON_PROBE_FIELDS = new Set(["action", "launchId", "timeoutMs"]);
 const AGENT_BROWSER_ELECTRON_RESERVED_APP_ARGS = ["--user-data-dir", "--remote-debugging-port", "--remote-debugging-address", "--remote-debugging-pipe"] as const;
+const ELECTRON_PROFILE_ISOLATION_NOTE = "Profile note: electron.launch starts an isolated temporary profile; it does not reuse the app's normal signed-in profile or attach to an already-running authenticated app.";
+const ELECTRON_EXISTING_AUTH_GUIDANCE = "For already-authenticated desktop app content, do not stop here: if host tools are allowed and the app is not running, launch the normal app with --remote-debugging-port=<port>, verify the port, then run agent_browser connect <port>; if it is already running without a debug port, ask before relaunching it.";
+const ELECTRON_PROFILE_ISOLATION_DETAILS = {
+	attachesToAlreadyRunningApp: false,
+	existingAuthenticatedAppGuidance: ELECTRON_EXISTING_AUTH_GUIDANCE,
+	hostDebugLaunchExample: "macOS: open -a <App Name> --args --remote-debugging-port=9222 --remote-allow-origins='*'; then agent_browser connect 9222 with sessionMode=fresh",
+	isolatedLaunch: true,
+	note: ELECTRON_PROFILE_ISOLATION_NOTE,
+	reusesExistingSignedInProfile: false,
+} as const;
 const ELECTRON_PROBE_MAX_TABS = 6;
 const ELECTRON_PROBE_MAX_REF_IDS = 20;
 const ELECTRON_PROBE_MAX_SNAPSHOT_LINES = 12;
@@ -2949,6 +2959,8 @@ function formatElectronListVisibleText(result: ElectronDiscoveryResult): string 
 	}
 	if (result.apps.some((app) => app.sensitivity?.level === "likely-sensitive")) {
 		lines.push("Review likely-sensitive apps and use caller-owned allow/deny policy before launch.");
+		lines.push(ELECTRON_PROFILE_ISOLATION_NOTE);
+		lines.push(ELECTRON_EXISTING_AUTH_GUIDANCE);
 	}
 	return lines.join("\n");
 }
@@ -2965,6 +2977,7 @@ function buildElectronListSuccessResult(compiledElectron: CompiledAgentBrowserEl
 			maxResults: discovery.maxResults,
 			omittedCount: discovery.omittedCount || undefined,
 			platform: discovery.platform,
+			profileIsolation: ELECTRON_PROFILE_ISOLATION_DETAILS,
 			query: discovery.query,
 			sensitiveAppCount: sensitiveAppCount || undefined,
 			skippedCount: discovery.skippedCount,
@@ -3902,6 +3915,8 @@ function formatElectronLaunchText(options: {
 	const lines = [
 		`Electron launch: ${options.record.appName} attached as ${options.record.sessionName ?? "managed session"} (launchId ${options.record.launchId}, port ${options.record.port}).`,
 		`Identifiers: launchId ${options.record.launchId} for electron.status/electron.cleanup/electron.probe; sessionName ${options.record.sessionName ?? "not attached"} for browser snapshot/tab commands.`,
+		ELECTRON_PROFILE_ISOLATION_NOTE,
+		ELECTRON_EXISTING_AUTH_GUIDANCE,
 		...formatElectronTargetLines(options.targets),
 	];
 	if (options.handoff?.handoff === "snapshot") lines.push(options.handoff.refSnapshot && options.handoff.refSnapshot.refIds.length > 0
@@ -6996,6 +7011,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							handoff: electronHandoff,
 							identifiers: buildElectronIdentifiers(electronLaunchRecord),
 							launch: electronLaunchRecord,
+							profileIsolation: ELECTRON_PROFILE_ISOLATION_DETAILS,
 							status: succeeded ? "succeeded" as const : "failed" as const,
 							targets: electronLaunch?.targets,
 							version: electronLaunch?.version,
