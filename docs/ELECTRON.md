@@ -23,6 +23,12 @@ This document is structured for users, not implementers. Field-level rules live 
 
 It is **not** an upstream `agent-browser` reference and it does **not** replace the canonical [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#electron) for exact field semantics, validation rules, or failure categories.
 
+## Upstream binary requirement
+
+`electron.list` is **host-only**: it runs install discovery (`discoverElectronApps` in `extensions/agent-browser/lib/electron/discovery.ts`) and never spawns upstream `agent-browser`, so it is the one Electron action that can succeed when the binary is missing from the Pi-visible `PATH`.
+
+Every other action—`launch` (including `connect` / `tab list` / `snapshot` handoffs), `status`, `probe`, and `cleanup`—eventually uses the same `agent-browser` resolution and subprocess path as normal `args` calls (`runAgentBrowserProcess` in `extensions/agent-browser/lib/process.ts`). If the binary is absent, expect the standard tool failure with `failureCategory: "missing-binary"` and the installation diagnostics from the README, not an Electron-specific error code.
+
 ## Mental model
 
 ```
@@ -297,6 +303,9 @@ Policy mismatches fail with `failureCategory: "policy-blocked"` and `details.ele
 Single-instance Electron behavior is a common cause of `timeout` and `upstream-error`. Many Electron apps enforce a single running instance and silently drop a second invocation's `--remote-debugging-port` flag. If the app is already running without a debug port, quit it first or use the manual host-launch path against the existing instance instead.
 
 ## Troubleshooting
+
+### `electron.list` works but `launch` / `probe` / `status` / `cleanup` fails with missing binary
+- `list` never shells out to upstream; the other actions do. Install `agent-browser`, ensure it is on the `PATH` visible to Pi (same guidance as other `agent_browser` calls), then retry.
 
 ### Launch hangs and then times out
 - The app is enforcing single-instance; quit the running copy first, then retry.
