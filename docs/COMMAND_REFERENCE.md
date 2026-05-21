@@ -221,6 +221,8 @@ Use custom `job` or raw `batch` when you need a different check sequence.
 
 Use top-level `electron` when the wrapper should discover, launch, attach to, probe, and clean up a desktop Electron app. The wrapper owns only launches it created. It uses an isolated temporary `userDataDir`, `--remote-debugging-port=0`, and safe launch defaults; it does **not** reuse the app's normal signed-in profile or attach to an already-running authenticated app. For already-authenticated desktop app content, do not stop at the isolated-launch warning: when host tools are available and the app is not already running, launch the normal app with a debug port (macOS example: `open -a Slack --args --remote-debugging-port=9222 --remote-allow-origins='*'`), verify the port, then attach with `{ "args": ["connect", "9222"], "sessionMode": "fresh" }`; if the app is already running without a debug port, ask before relaunching it. Remote debugging still exposes app content, so use caller-owned `allow` / `deny` lists for sensitive app policies when needed. `electron.list` may annotate common private-data apps as `[likely sensitive: …]`; this is advisory metadata only and does not block `launch` or replace caller policy.
 
+Install scans for `electron.list` (and resolving `appName` / `bundleId` targets) are implemented for **macOS and Linux** hosts only. On **Windows**, `list` returns `platform: "unsupported"` with no apps, so prefer `executablePath` (or a host `appPath` that points at the real Electron `.exe`) when launching there—the wrapper still runs Electron evidence checks on that path before spawn.
+
 Typical lifecycle:
 
 ```json
