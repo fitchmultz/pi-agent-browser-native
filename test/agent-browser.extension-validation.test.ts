@@ -2357,11 +2357,21 @@ test("agentBrowserExtension cleans Electron resources when launch fails before u
 test("agentBrowserExtension cleans Electron resources when upstream connect cannot spawn", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-missing-upstream-"));
 	const applicationsDir = join(tempDir, "Applications");
+	const emptyBinDir = join(tempDir, "empty-bin");
+	const nodeOnlyBinDir = join(tempDir, "node-only-bin");
 	const launchLogPath = join(tempDir, "electron-launch.log");
 	try {
 		await mkdir(applicationsDir, { recursive: true });
+		await mkdir(emptyBinDir, { recursive: true });
+		await mkdir(nodeOnlyBinDir, { recursive: true });
+		await symlink(process.execPath, join(nodeOnlyBinDir, "node"), "file");
 		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.MissingUpstreamElectron", launchLogPath, name: "Missing Upstream Electron" });
-		await withPatchedEnv({ PATH: dirname(process.execPath) }, async () => {
+		// Put a `node` shim on PATH so the fake Electron `#!/usr/bin/env node` launcher can start, but keep
+		// `agent-browser` off PATH so upstream `connect` fails with ENOENT (missing-binary) instead of picking up
+		// a real binary from the Node install directory.
+		const pathSeparator = process.platform === "win32" ? ";" : ":";
+		const isolatedPath = `${nodeOnlyBinDir}${pathSeparator}${emptyBinDir}`;
+		await withPatchedEnv({ PATH: isolatedPath }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } });
