@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.32 - 2026-05-21
+
+### Added
+- First-class Electron desktop-app support for `agent_browser`: top-level `electron` now covers bounded app discovery, isolated wrapper-owned launch/attach, status, compact probe, and cleanup without requiring agents to hand-build the CDP launch sequence.
+- Electron launch safety and lifecycle details: wrapper-owned launches use a temporary profile and OS-chosen debug port, record a `launchId`, surface exact status/probe/cleanup next actions, support caller-owned `allow` / `deny` policies, and avoid touching manually launched apps.
+- `qa.attached` for current attached browser/Electron sessions, so agents can run quick smoke checks without opening a URL or replacing the active desktop-app target.
+- A dedicated public Electron guide at [`docs/ELECTRON.md`](docs/ELECTRON.md), linked from the README, command reference, tool contract, architecture, requirements, release, and support-matrix docs and included in the published package.
+
+### Changed
+- `sourceLookup`, broad `get text`, fill verification, tab/session mismatch, and stale-ref guidance now include Electron-aware context and recovery actions for packaged desktop apps.
+- Verification coverage now includes deterministic Electron lifecycle/probe benchmark scenarios, fake-upstream Electron discovery/lifecycle tests, lifecycle restore/shutdown cleanup checks, and real-app dogfood evidence recorded in the Electron plan.
+- The configured-source lifecycle harness (`npm run verify -- lifecycle`, `scripts/verify-lifecycle.mjs`) now defaults to Pi model `zai/glm-5.1` with `--model <id>` override; `npm run verify` lifecycle passthrough rejects `--model` without a value.
+- Updated the local Pi development baseline to `@earendil-works/*` `0.75.4` and refreshed the npm lockfile.
+
+### Fixed
+- Runtime validation now rejects `electron.status` / `electron.cleanup` with `all: false`, keeping runtime behavior aligned with the public schema and contract.
+- Electron + caller `stdin` validation now reports a direct Electron-specific error instead of mixing in generated-batch mode guidance.
+
 ## 0.2.31 - 2026-05-18
 
 ### Added
@@ -7,7 +25,6 @@
 - Bounded machine `details.nextActions` for compact `network requests` output, including exact request-detail, source-lookup, filter, and HAR-capture follow-ups with session preservation and sensitive path/query suppression.
 
 ### Changed
-- The configured-source lifecycle harness (`npm run verify -- lifecycle`, `scripts/verify-lifecycle.mjs`) now defaults to Pi model `zai/glm-5.1` with `--model <id>` override; `npm run verify` lifecycle passthrough rejects `--model` without a value. Maintainer copy and pitfalls live in `docs/RELEASE.md`, `README.md`, `AGENTS.md`, `docs/SUPPORT_MATRIX.md`, and `scripts/project.mjs` help text.
 - Release smoke guidance now uses bounded extension-focused prompts with `--no-skills` for Sauce Demo validation, keeping skill-enabled dogfood/report routing as a separate test mode.
 - Network diagnostics preserve app page/ref context so request-detail and `networkSourceLookup` URLs do not replace the active browser target or stale current-page refs.
 
