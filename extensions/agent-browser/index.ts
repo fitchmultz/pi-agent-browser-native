@@ -118,6 +118,8 @@ const ELECTRON_PROBE_MAX_TABS = 6;
 const ELECTRON_PROBE_MAX_REF_IDS = 20;
 const ELECTRON_PROBE_MAX_SNAPSHOT_LINES = 12;
 const ELECTRON_PROBE_MAX_SNAPSHOT_CHARS = 1_600;
+const ELECTRON_POST_COMMAND_STATUS_SETTLE_MS = 250;
+const ELECTRON_FILL_VERIFICATION_TIMEOUT_MS = 2_000;
 const SOURCE_LOOKUP_WORKSPACE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const SOURCE_LOOKUP_IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", "out", "tmp", "temp"]);
 const SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES = 2_000;
@@ -2547,14 +2549,16 @@ function shouldCaptureNavigationSummary(command: string | undefined, data: unkno
 	);
 }
 
-function extractStringResultField(data: unknown, fieldName: "result" | "title" | "url"): string | undefined {
+function extractStringResultField(data: unknown, fieldName: "result" | "title" | "url" | "value"): string | undefined {
 	if (typeof data === "string") {
+		if (fieldName === "value") return data;
 		const text = data.trim();
 		return text.length > 0 ? text : undefined;
 	}
 	if (!isRecord(data) || typeof data[fieldName] !== "string") {
 		return undefined;
 	}
+	if (fieldName === "value") return data[fieldName];
 	const text = data[fieldName].trim();
 	return text.length > 0 ? text : undefined;
 }
@@ -3004,6 +3008,7 @@ interface ElectronHandoffSummary {
 	handoff: "connect" | "snapshot" | "tabs";
 	refSnapshot?: SessionRefSnapshot;
 	snapshot?: unknown;
+	snapshotRetryCount?: number;
 	tabs?: unknown;
 }
 
@@ -3088,6 +3093,37 @@ interface ElectronSessionMismatch {
 	reason: ElectronSessionMismatchReason;
 	sessionName?: string;
 	statusTargets: ElectronCdpTarget[];
+	summary: string;
+}
+
+type ElectronPostCommandHealthReason = "about-blank-no-live-target" | "debug-port-dead" | "process-dead";
+
+interface ElectronPostCommandHealthDiagnostic {
+	appName: string;
+	command?: string;
+	launchId: string;
+	nextActionIds: string[];
+	reason: ElectronPostCommandHealthReason;
+	sessionName?: string;
+	status: ElectronLaunchStatus;
+	summary: string;
+	target?: SessionTabTarget;
+}
+
+interface FillVerificationDiagnostic {
+	actual?: string;
+	expected: string;
+	nextActionIds: string[];
+	selector: string;
+	status: "mismatch";
+	summary: string;
+}
+
+interface ElectronRefFreshnessDiagnostic {
+	command?: string;
+	launchId: string;
+	nextActionIds: string[];
+	sessionName?: string;
 	summary: string;
 }
 
@@ -3237,6 +3273,72 @@ function formatElectronSessionMismatchText(mismatch: ElectronSessionMismatch): s
 	return `${mismatch.summary}\nNext: run electron.status/electron.probe with launchId ${mismatch.launchId}, reattach with the reattach-electron-launch nextAction if needed, or cleanup when finished.`;
 }
 
+const ELECTRON_POST_COMMAND_HEALTH_COMMANDS = new Set([
+	"back",
+	"check",
+	"click",
+	"dblclick",
+	"fill",
+	"find",
+	"forward",
+	"keyboard",
+	"mouse",
+	"press",
+	"reload",
+	"select",
+	"type",
+	"uncheck",
+]);
+
+function shouldInspectElectronPostCommandHealth(command: string | undefined): boolean {
+	return command !== undefined && ELECTRON_POST_COMMAND_HEALTH_COMMANDS.has(command);
+}
+
+function buildElectronLifecycleNextActions(record: ElectronLaunchRecord): AgentBrowserNextAction[] {
+	return buildAgentBrowserNextActions({
+		electron: { launchId: record.launchId, sessionName: record.sessionName, status: record.cleanupState },
+		resultCategory: "success",
+		successCategory: "completed",
+	}) ?? [];
+}
+
+function buildElectronPostCommandHealthDiagnostic(options: {
+	command?: string;
+	record: ElectronLaunchRecord;
+	status: ElectronLaunchStatus;
+	target?: SessionTabTarget;
+}): ElectronPostCommandHealthDiagnostic | undefined {
+	let reason: ElectronPostCommandHealthReason | undefined;
+	if (options.status.pidAlive === false) reason = "process-dead";
+	else if (!options.status.portAlive) reason = "debug-port-dead";
+	else if (isAboutBlankUrl(options.target?.url) && getLiveElectronRendererTargets(options.status.targets).length === 0) reason = "about-blank-no-live-target";
+	if (!reason) return undefined;
+	const nextActions = buildElectronLifecycleNextActions(options.record);
+	const commandText = options.command ? `${options.command} command` : "command";
+	const statusText = `${options.status.portAlive ? "debug port alive" : "debug port dead"}${options.status.pidAlive === undefined ? "" : options.status.pidAlive ? ", pid alive" : ", pid dead"}`;
+	const summary = `Electron lifecycle warning: ${commandText} completed, but launch ${options.record.launchId} is no longer healthy (${statusText}).`;
+	return {
+		appName: options.record.appName,
+		command: options.command,
+		launchId: options.record.launchId,
+		nextActionIds: nextActions.map((action) => action.id),
+		reason,
+		sessionName: options.record.sessionName,
+		status: options.status,
+		summary,
+		target: options.target,
+	};
+}
+
+function formatElectronPostCommandHealthText(diagnostic: ElectronPostCommandHealthDiagnostic | undefined): string | undefined {
+	if (!diagnostic) return undefined;
+	const lines = [diagnostic.summary];
+	if (diagnostic.target?.url) lines.push(`Current browser session target: ${diagnostic.target.url}.`);
+	lines.push(`Status: ${diagnostic.status.portAlive ? "debug port alive" : "debug port dead"}${diagnostic.status.pidAlive === undefined ? "" : diagnostic.status.pidAlive ? ", pid alive" : ", pid dead"}; ${diagnostic.status.targets.length} CDP target(s).`);
+	lines.push(`Next: run electron.status/electron.probe with launchId ${diagnostic.launchId}, cleanup the wrapper-owned launch if dead, or relaunch the app.`);
+	return lines.join("\n");
+}
+
 function buildElectronIdentifiers(record: ElectronLaunchRecord): { appName: string; launchId: string; sessionName?: string } {
 	return { appName: record.appName, launchId: record.launchId, sessionName: record.sessionName };
 }
@@ -3338,6 +3440,37 @@ function buildElectronCleanupResult(compiledElectron: CompiledAgentBrowserElectr
 	return { content: [{ type: "text", text: redactSensitiveText(formatElectronCleanupVisibleText(cleanupResults)) }], details: redactToolDetails(details, []), isError: partial };
 }
 
+function formatElectronLaunchFailureDiagnostics(failure: ElectronLaunchFailure | undefined): string | undefined {
+	const diagnostics = failure?.diagnostics;
+	if (!diagnostics) return undefined;
+	const lines = ["Electron launch diagnostics:"];
+	if (diagnostics.pid !== undefined) {
+		const pidState = diagnostics.pidAlive === undefined ? "state unknown" : diagnostics.pidAlive ? "alive before cleanup" : "not alive before cleanup";
+		lines.push(`- PID: ${diagnostics.pid} (${pidState}).`);
+	}
+	if (diagnostics.exitCode !== undefined || diagnostics.exitSignal !== undefined) {
+		const exitParts = [diagnostics.exitCode !== undefined ? `code ${diagnostics.exitCode}` : undefined, diagnostics.exitSignal ? `signal ${diagnostics.exitSignal}` : undefined].filter(Boolean).join(", ");
+		lines.push(`- Process exit: ${exitParts || "not observed before cleanup"}.`);
+	}
+	if (diagnostics.userDataDir) lines.push(`- Wrapper profile: ${diagnostics.userDataDir}`);
+	if (diagnostics.devToolsActivePort) {
+		const activePort = diagnostics.devToolsActivePort;
+		const state = activePort.port
+			? `found port ${activePort.port}`
+			: activePort.found
+				? `found but invalid${activePort.error ? ` (${activePort.error})` : ""}`
+				: `missing${activePort.error ? ` (${activePort.error})` : ""}`;
+		lines.push(`- DevToolsActivePort: ${state} at ${activePort.path}.`);
+	}
+	if (diagnostics.cdpVersionReached === false) lines.push("- CDP /json/version: did not return a valid payload before timeout.");
+	if (diagnostics.timeoutMs !== undefined || diagnostics.elapsedMs !== undefined) {
+		lines.push(`- Timing: ${diagnostics.elapsedMs ?? "unknown"}ms elapsed${diagnostics.timeoutMs !== undefined ? ` of ${diagnostics.timeoutMs}ms timeout` : ""}.`);
+	}
+	if (diagnostics.outputCaptured === false) lines.push("- App stdout/stderr: not captured by this wrapper launch path.");
+	lines.push("Retry guidance: increase electron.timeoutMs, try targetType:'any', pass an explicit appPath/executablePath, quit any already-running singleton instance, then retry launch.");
+	return lines.join("\n");
+}
+
 function buildElectronHostFailureResult(options: {
 	compiledElectron: CompiledAgentBrowserElectron;
 	errorText: string;
@@ -3346,9 +3479,11 @@ function buildElectronHostFailureResult(options: {
 	managedSessionOutcome?: ManagedSessionOutcome;
 	status?: string;
 }): AgentBrowserToolResult {
-	const text = options.launchFailure?.cleanupError
-		? `${options.errorText}\nElectron launch cleanup warning: ${options.launchFailure.cleanupError}`
-		: options.errorText;
+	const text = [
+		options.errorText,
+		formatElectronLaunchFailureDiagnostics(options.launchFailure),
+		options.launchFailure?.cleanupError ? `Electron launch cleanup warning: ${options.launchFailure.cleanupError}` : undefined,
+	].filter((item): item is string => item !== undefined && item.length > 0).join("\n");
 	const details = {
 		args: [] as string[],
 		compiledElectron: options.compiledElectron,
@@ -3372,6 +3507,10 @@ function getElectronLaunchFailureCategory(failure: ElectronLaunchFailure): "poli
 	return "upstream-error";
 }
 
+function sleepMs(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function collectElectronHandoff(options: {
 	cwd: string;
 	handoff: "connect" | "snapshot" | "tabs";
@@ -3381,8 +3520,16 @@ async function collectElectronHandoff(options: {
 	if (options.handoff === "connect") return { handoff: "connect" };
 	const tabs = await runSessionCommandData({ args: ["tab", "list"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
 	if (options.handoff === "tabs") return { handoff: "tabs", tabs };
-	const snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	return { handoff: "snapshot", refSnapshot: extractRefSnapshotFromData(snapshot), snapshot, tabs };
+	let snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	let refSnapshot = extractRefSnapshotFromData(snapshot);
+	let snapshotRetryCount = 0;
+	while ((!refSnapshot || refSnapshot.refIds.length === 0) && snapshotRetryCount < 2) {
+		snapshotRetryCount += 1;
+		await sleepMs(250);
+		snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+		refSnapshot = extractRefSnapshotFromData(snapshot);
+	}
+	return { handoff: "snapshot", refSnapshot, snapshot, ...(snapshotRetryCount > 0 ? { snapshotRetryCount } : {}), tabs };
 }
 
 interface ElectronProbeFocusedElement {
@@ -3662,15 +3809,27 @@ function formatElectronProbeContextText(context: ElectronProbeContext): string {
 	return `Probe context: current managed session ${context.sessionName} only; pass electron.probe.launchId to compare wrapper-tracked launch status.`;
 }
 
+function formatElectronProbeLaunchStatusText(status: ElectronLaunchStatus | undefined, probe: ElectronProbeResult): string | undefined {
+	if (!status) return undefined;
+	const lines = [`Launch status: ${status.portAlive ? "debug port alive" : "debug port dead"}${status.pidAlive === undefined ? "" : status.pidAlive ? ", pid alive" : ", pid dead"}; ${status.targets.length} CDP target(s).`];
+	if (isAboutBlankUrl(probe.url) && (!status.portAlive || status.pidAlive === false || getLiveElectronRendererTargets(status.targets).length === 0)) {
+		lines.push("Electron lifecycle warning: the browser session is on about:blank and the wrapper launch has no live renderer target to reattach. Run electron.status, cleanup if dead, or relaunch the app.");
+	}
+	return lines.join("\n");
+}
+
 function formatElectronProbeVisibleText(options: {
 	context?: ElectronProbeContext;
 	mismatch?: ElectronSessionMismatch;
 	probe: ElectronProbeResult;
+	status?: ElectronLaunchStatus;
 }): string {
-	const { context, mismatch, probe } = options;
+	const { context, mismatch, probe, status } = options;
 	const page = [probe.title, probe.url].filter(Boolean).join(" — ");
 	const lines = [`Electron probe: ${page || probe.sessionName}`];
 	if (context) lines.push(formatElectronProbeContextText(context));
+	const launchStatusText = formatElectronProbeLaunchStatusText(status, probe);
+	if (launchStatusText) lines.push(launchStatusText);
 	if (mismatch) lines.push(formatElectronSessionMismatchText(mismatch));
 	const focusedLine = formatElectronProbeFocusedElement(probe.focusedElement);
 	if (focusedLine) lines.push(focusedLine);
@@ -3728,7 +3887,7 @@ function buildElectronProbeResult(options: {
 		usedImplicitSession: options.probeContext.mode === "current-managed-session",
 	};
 	return {
-		content: [{ type: "text", text: redactSensitiveText(formatElectronProbeVisibleText({ context: options.probeContext, mismatch: options.mismatch, probe: options.probe })) }],
+		content: [{ type: "text", text: redactSensitiveText(formatElectronProbeVisibleText({ context: options.probeContext, mismatch: options.mismatch, probe: options.probe, status: options.status })) }],
 		details: redactToolDetails(details, []),
 		isError: false,
 	};
@@ -3745,7 +3904,9 @@ function formatElectronLaunchText(options: {
 		`Identifiers: launchId ${options.record.launchId} for electron.status/electron.cleanup/electron.probe; sessionName ${options.record.sessionName ?? "not attached"} for browser snapshot/tab commands.`,
 		...formatElectronTargetLines(options.targets),
 	];
-	if (options.handoff?.handoff === "snapshot") lines.push(options.handoff.refSnapshot ? `Snapshot handoff: ${options.handoff.refSnapshot.refIds.length} interactive ref(s).` : "Snapshot handoff: no interactive refs returned.");
+	if (options.handoff?.handoff === "snapshot") lines.push(options.handoff.refSnapshot && options.handoff.refSnapshot.refIds.length > 0
+		? `Snapshot handoff: ${options.handoff.refSnapshot.refIds.length} interactive ref(s)${options.handoff.snapshotRetryCount ? ` after ${options.handoff.snapshotRetryCount} retry attempt(s)` : ""}.`
+		: "Snapshot handoff: no interactive refs returned after a short readiness retry; run snapshot -i once more before assuming the Electron UI is unusable.");
 	else if (options.handoff?.handoff === "tabs") lines.push("Tabs handoff completed: safer diagnostic starting point; no interactive refs were captured.");
 	else if (options.handoff?.handoff === "connect") lines.push("Connect handoff completed: run snapshot -i before using interactive refs.");
 	lines.push(`Cleanup: use details.nextActions cleanup-electron-launch or call electron.cleanup with launchId ${options.record.launchId} when finished.`);
@@ -4161,6 +4322,114 @@ async function runSessionCommandData(options: {
 			await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
 		}
 	}
+}
+
+function getTopLevelFillInvocation(commandTokens: string[]): { expected: string; selector: string } | undefined {
+	if (commandTokens[0] !== "fill" || commandTokens.length < 3) return undefined;
+	const selector = commandTokens[1];
+	const expected = commandTokens.slice(2).join(" ");
+	if (!selector || expected.length === 0) return undefined;
+	return { expected, selector };
+}
+
+function buildFillVerificationNextActions(diagnostic: FillVerificationDiagnostic, sessionName: string | undefined): AgentBrowserNextAction[] {
+	return [
+		{
+			id: "inspect-after-fill-verification",
+			params: { args: sessionPrefixArgs(sessionName, ["snapshot", "-i"]) },
+			reason: "Refresh the UI after a fill that reported success but did not appear to update the input value.",
+			safety: "Read-only snapshot; use current refs before retrying.",
+			tool: "agent_browser",
+		},
+		{
+			id: "verify-filled-value",
+			params: { args: sessionPrefixArgs(sessionName, ["get", "value", diagnostic.selector]) },
+			reason: "Check the target input value directly before submitting or creating files.",
+			safety: "Read-only value check; selector may still be stale if the Electron UI rerendered.",
+			tool: "agent_browser",
+		},
+	];
+}
+
+function extractFillVerificationValue(data: unknown): string | undefined {
+	if (typeof data === "string") return data;
+	if (!isRecord(data)) return undefined;
+	if (typeof data.value === "string") return data.value;
+	if (typeof data.result === "string") return data.result;
+	return undefined;
+}
+
+async function collectFillVerificationDiagnostic(options: {
+	commandTokens: string[];
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<FillVerificationDiagnostic | undefined> {
+	const fill = getTopLevelFillInvocation(options.commandTokens);
+	if (!fill || !options.sessionName) return undefined;
+	let valueData: unknown | undefined;
+	try {
+		valueData = await runSessionCommandData({
+			args: ["get", "value", fill.selector],
+			cwd: options.cwd,
+			sessionName: options.sessionName,
+			signal: options.signal,
+			timeoutMs: ELECTRON_FILL_VERIFICATION_TIMEOUT_MS,
+		});
+	} catch {
+		return undefined;
+	}
+	const actual = extractFillVerificationValue(valueData);
+	if (actual === undefined || actual === fill.expected) return undefined;
+	const diagnostic: FillVerificationDiagnostic = {
+		actual: actual.length > 0 ? boundElectronProbeString(actual, 160) : "",
+		expected: boundElectronProbeString(fill.expected, 160) ?? fill.expected,
+		nextActionIds: [],
+		selector: fill.selector,
+		status: "mismatch",
+		summary: `Fill verification warning: fill ${fill.selector} reported success, but get value returned ${actual.length > 0 ? `"${boundElectronProbeString(actual, 80)}"` : "an empty value"}.`,
+	};
+	diagnostic.nextActionIds = buildFillVerificationNextActions(diagnostic, options.sessionName).map((action) => action.id);
+	return diagnostic;
+}
+
+function formatFillVerificationText(diagnostic: FillVerificationDiagnostic | undefined): string | undefined {
+	if (!diagnostic) return undefined;
+	const actual = diagnostic.actual !== undefined ? `actual "${diagnostic.actual}"` : "actual value unavailable";
+	return `${diagnostic.summary}\nExpected: "${diagnostic.expected}"; ${actual}.\nNext: re-run snapshot -i, then prefer click/focus plus keyboard type for custom Electron quick-input controls before submitting.`;
+}
+
+function buildElectronRefFreshnessNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
+	return [{
+		id: "refresh-electron-refs-after-rerender",
+		params: { args: sessionPrefixArgs(sessionName, ["snapshot", "-i"]) },
+		reason: "Electron UIs often rerender without changing URL; refresh refs before using old @e handles again.",
+		safety: "Read-only snapshot; avoids stale same-URL refs after quick-pick, modal, theme, or editor rerenders.",
+		tool: "agent_browser",
+	}];
+}
+
+function buildElectronRefFreshnessDiagnostic(options: {
+	command?: string;
+	commandTokens: string[];
+	record?: ElectronLaunchRecord;
+	sessionName?: string;
+	stdin?: string;
+}): ElectronRefFreshnessDiagnostic | undefined {
+	if (!options.record || !shouldInspectElectronPostCommandHealth(options.command)) return undefined;
+	if (getGuardedRefUsage(options.commandTokens, options.stdin).length === 0) return undefined;
+	const nextActions = buildElectronRefFreshnessNextActions(options.sessionName);
+	return {
+		command: options.command,
+		launchId: options.record.launchId,
+		nextActionIds: nextActions.map((action) => action.id),
+		sessionName: options.sessionName,
+		summary: `Electron ref freshness: ${options.command ?? "mutation"} used page-scoped refs in an Electron UI. Re-run snapshot -i before reusing old @e refs, even if the URL did not change.`,
+	};
+}
+
+function formatElectronRefFreshnessText(diagnostic: ElectronRefFreshnessDiagnostic | undefined): string | undefined {
+	return diagnostic?.summary;
 }
 
 async function collectNavigationSummary(options: {
@@ -6152,7 +6421,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						subcommand: executionPlan.commandInfo.subcommand,
 					});
 					let aboutBlankSessionMismatch: AboutBlankSessionMismatch | undefined;
+					let electronPostCommandHealth: ElectronPostCommandHealthDiagnostic | undefined;
+					let electronRefFreshnessDiagnostic: ElectronRefFreshnessDiagnostic | undefined;
 					let electronSessionMismatch: ElectronSessionMismatch | undefined;
+					let electronStatusAfterCommand: ElectronLaunchStatus | undefined;
 					const shouldTreatAboutBlankAsMismatch =
 						succeeded &&
 						priorSessionTabTarget !== undefined &&
@@ -6187,7 +6459,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						};
 						const electronRecord = findElectronLaunchRecordForSession(executionPlan.sessionName, electronLaunchRecords);
 						if (electronRecord && executionPlan.sessionName) {
-							const electronStatus = await inspectElectronLaunchStatus(electronRecord);
+							electronStatusAfterCommand = await inspectElectronLaunchStatus(electronRecord);
 							electronSessionMismatch = buildElectronSessionMismatch({
 								managedSession: {
 									sessionName: executionPlan.sessionName,
@@ -6195,7 +6467,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 									url: aboutBlankObservedTarget?.url ?? "about:blank",
 								},
 								record: electronRecord,
-								statusTargets: electronStatus.targets,
+								statusTargets: electronStatusAfterCommand.targets,
 							});
 						}
 						currentSessionTabTarget = priorSessionTabTarget;
@@ -6231,6 +6503,30 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							}
 						}
 					}
+					const electronRecordForCommand = findElectronLaunchRecordForSession(executionPlan.sessionName, electronLaunchRecords);
+					if (succeeded && electronRecordForCommand && shouldInspectElectronPostCommandHealth(executionPlan.commandInfo.command)) {
+						electronStatusAfterCommand ??= await inspectElectronLaunchStatus(electronRecordForCommand);
+						electronPostCommandHealth = buildElectronPostCommandHealthDiagnostic({
+							command: executionPlan.commandInfo.command,
+							record: electronRecordForCommand,
+							status: electronStatusAfterCommand,
+							target: observedSessionTabTarget ?? currentSessionTabTarget,
+						});
+						if (electronPostCommandHealth && electronPostCommandHealth.reason !== "process-dead") {
+							await sleepMs(ELECTRON_POST_COMMAND_STATUS_SETTLE_MS);
+							electronStatusAfterCommand = await inspectElectronLaunchStatus(electronRecordForCommand);
+							electronPostCommandHealth = buildElectronPostCommandHealthDiagnostic({
+								command: executionPlan.commandInfo.command,
+								record: electronRecordForCommand,
+								status: electronStatusAfterCommand,
+								target: observedSessionTabTarget ?? currentSessionTabTarget,
+							});
+						}
+						if (electronPostCommandHealth) {
+							succeeded = false;
+						}
+					}
+					let fillVerificationDiagnostic: FillVerificationDiagnostic | undefined;
 					let selectorTextVisibilityDiagnostics: SelectorTextVisibilityDiagnostic[] = [];
 					let electronBroadGetTextScopeDiagnostics: ElectronBroadGetTextScopeDiagnostic[] = [];
 					const timeoutPartialProgress = processResult.timedOut ? await collectTimeoutPartialProgress({
@@ -6240,7 +6536,22 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						sessionName: executionPlan.sessionName,
 						stdin: runtimeToolStdin,
 					}) : undefined;
-					if (succeeded && !sessionTabCorrection && !aboutBlankSessionMismatch) {
+					if (succeeded && electronRecordForCommand) {
+						fillVerificationDiagnostic = await collectFillVerificationDiagnostic({
+							commandTokens,
+							cwd: ctx.cwd,
+							sessionName: executionPlan.sessionName,
+							signal,
+						});
+						electronRefFreshnessDiagnostic = buildElectronRefFreshnessDiagnostic({
+							command: executionPlan.commandInfo.command,
+							commandTokens,
+							record: electronRecordForCommand,
+							sessionName: executionPlan.sessionName,
+							stdin: runtimeToolStdin,
+						});
+					}
+					if (succeeded && !sessionTabCorrection && !aboutBlankSessionMismatch && !electronRecordForCommand) {
 						overlayBlockerDiagnostic = await collectOverlayBlockerDiagnostic({
 							command: executionPlan.commandInfo.command,
 							cwd: ctx.cwd,
@@ -6525,9 +6836,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						manifest: resultArtifactManifest,
 						succeeded,
 					});
-					const warningText = electronSessionMismatch
-						? formatElectronSessionMismatchText(electronSessionMismatch)
-						: aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
+					const warningText = electronPostCommandHealth
+						? formatElectronPostCommandHealthText(electronPostCommandHealth)
+						: electronSessionMismatch
+							? formatElectronSessionMismatchText(electronSessionMismatch)
+							: aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
 					const contentWithSessionWarnings = userRequestedJson && !plainTextInspection
 						? buildJsonVisibleContent({
 								error: presentationEnvelope?.error,
@@ -6561,13 +6874,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						command: executionPlan.commandInfo.command,
 						confirmationRequired: presentation.summary.startsWith("Confirmation required"),
 						errorText: errorText ?? presentation.summary,
-						failureCategory: presentation.failureCategory ?? presentation.batchFailure?.failedStep.failureCategory,
+						failureCategory: presentation.failureCategory ?? presentation.batchFailure?.failedStep.failureCategory ?? (electronPostCommandHealth ? "tab-drift" : undefined),
 						inspection: plainTextInspection,
 						parseError,
 						savedFile: presentation.savedFile,
 						spawnError: processResult.spawnError?.message,
 						succeeded,
-						tabDrift: !succeeded && (aboutBlankSessionMismatch !== undefined || sessionTabCorrection !== undefined),
+						tabDrift: !succeeded && (aboutBlankSessionMismatch !== undefined || electronPostCommandHealth !== undefined || sessionTabCorrection !== undefined),
 						timedOut: processResult.timedOut,
 						validationError: undefined,
 					});
@@ -6593,6 +6906,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					if (visibleRefFallbackDiagnostic) {
 						(nextActions ??= []).push(...buildVisibleRefFallbackNextActions({ diagnostic: visibleRefFallbackDiagnostic, sessionName: visibleRefFallbackSessionName }));
 					}
+					if (electronPostCommandHealth) {
+						const electronRecord = electronLaunchRecords.get(electronPostCommandHealth.launchId);
+						if (electronRecord) {
+							nextActions = appendUniqueNextActions(nextActions ?? [], buildElectronLifecycleNextActions(electronRecord));
+						}
+					}
 					if (electronSessionMismatch) {
 						const electronRecord = electronLaunchRecords.get(electronSessionMismatch.launchId);
 						if (electronRecord) {
@@ -6607,6 +6926,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 					if (overlayBlockerDiagnostic) {
 						(nextActions ??= []).push(...buildOverlayBlockerNextActions({ diagnostic: overlayBlockerDiagnostic, sessionName: executionPlan.sessionName }));
+					}
+					if (fillVerificationDiagnostic) {
+						nextActions = appendUniqueNextActions(nextActions ?? [], buildFillVerificationNextActions(fillVerificationDiagnostic, executionPlan.sessionName));
+					}
+					if (electronRefFreshnessDiagnostic) {
+						nextActions = appendUniqueNextActions(nextActions ?? [], buildElectronRefFreshnessNextActions(executionPlan.sessionName));
 					}
 					if (selectorTextVisibilityDiagnostics.length > 0) {
 						(nextActions ??= []).push(...buildSelectorTextVisibilityNextActions({ diagnostics: selectorTextVisibilityDiagnostics, sessionName: executionPlan.sessionName }));
@@ -6677,6 +7002,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						} : undefined,
 						...categoryDetails,
 						aboutBlankSessionMismatch,
+						electronPostCommandHealth,
+						electronRefFreshness: electronRefFreshnessDiagnostic,
 						electronSessionMismatch,
 						openResultTabCorrection,
 						effectiveArgs: redactedProcessArgs,
@@ -6690,6 +7017,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						nextActions,
 						pageChangeSummary,
 						overlayBlockers: overlayBlockerDiagnostic,
+						fillVerification: fillVerificationDiagnostic,
 						visibleRefFallback: visibleRefFallbackDiagnostic,
 						comboboxFocus: comboboxFocusDiagnostic,
 						recordingDependencyWarning,
@@ -6724,6 +7052,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const visibleRefFallbackText = formatVisibleRefFallbackText(visibleRefFallbackDiagnostic);
 					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
 					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
+					const fillVerificationText = formatFillVerificationText(fillVerificationDiagnostic);
+					const electronRefFreshnessText = formatElectronRefFreshnessText(electronRefFreshnessDiagnostic);
 					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
 					const electronBroadGetTextScopeText = formatElectronBroadGetTextScopeText(electronBroadGetTextScopeDiagnostics);
 					const scrollNoopDiagnosticText = formatScrollNoopDiagnosticText(scrollNoopDiagnostic);
@@ -6733,7 +7063,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
 					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
 					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					const rawAppendedDiagnosticText = [visibleRefFallbackText, semanticActionCandidateText, overlayBlockerText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+					const rawAppendedDiagnosticText = [visibleRefFallbackText, semanticActionCandidateText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
 					const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!userRequestedJson || plainTextInspection);
 					let content = shouldAppendDiagnosticText && redactedContent[0]?.type === "text"

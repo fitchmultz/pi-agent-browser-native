@@ -29,6 +29,27 @@ const ELECTRON_DEFAULT_APP_ARGS = ["--disable-extensions", "--no-first-run", "--
 const ELECTRON_DEVTOOLS_POLL_INTERVAL_MS = 100;
 const ELECTRON_CDP_FETCH_TIMEOUT_MS = 1_000;
 
+export interface ElectronDevToolsActivePortRead {
+	error?: string;
+	found: boolean;
+	path: string;
+	port?: number;
+}
+
+export interface ElectronLaunchFailureDiagnostics {
+	cdpVersionReached?: boolean;
+	devToolsActivePort?: ElectronDevToolsActivePortRead;
+	elapsedMs?: number;
+	exitCode?: number | null;
+	exitSignal?: NodeJS.Signals | null;
+	outputCaptured: false;
+	pid?: number;
+	pidAlive?: boolean;
+	port?: number;
+	timeoutMs?: number;
+	userDataDir?: string;
+}
+
 export type ElectronLaunchCleanupState = "active" | "cleaned" | "dead" | "failed" | "partial";
 export type ElectronLaunchFailureReason =
 	| "non-electron-target"
@@ -96,6 +117,7 @@ export interface ElectronLaunchSuccess {
 export interface ElectronLaunchFailure {
 	appArgs: string[];
 	cleanupError?: string;
+	diagnostics?: ElectronLaunchFailureDiagnostics;
 	error: string;
 	policy?: ElectronPolicyBlock;
 	reason: ElectronLaunchFailureReason;
@@ -237,14 +259,25 @@ async function fetchJson(url: string): Promise<unknown | undefined> {
 	}
 }
 
-async function readDevToolsActivePort(userDataDir: string): Promise<number | undefined> {
+async function readDevToolsActivePort(userDataDir: string): Promise<ElectronDevToolsActivePortRead> {
+	const path = `${userDataDir}/${DEVTOOLS_ACTIVE_PORT_FILE}`;
 	try {
-		const text = await readFile(`${userDataDir}/${DEVTOOLS_ACTIVE_PORT_FILE}`, "utf8");
+		const text = await readFile(path, "utf8");
 		const [portLine] = text.split(/\r?\n/);
 		const port = Number(portLine?.trim());
-		return Number.isSafeInteger(port) && port > 0 && port <= 65_535 ? port : undefined;
-	} catch {
-		return undefined;
+		return {
+			found: true,
+			path,
+			port: Number.isSafeInteger(port) && port > 0 && port <= 65_535 ? port : undefined,
+			...(Number.isSafeInteger(port) && port > 0 && port <= 65_535 ? {} : { error: "DevToolsActivePort did not contain a valid TCP port." }),
+		};
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		return {
+			error: code && code !== "ENOENT" ? `${code}: ${error instanceof Error ? error.message : String(error)}` : undefined,
+			found: false,
+			path,
+		};
 	}
 }
 
@@ -253,19 +286,20 @@ async function pollDevToolsActivePort(options: {
 	getChildExit: () => { code: number | null; signal: NodeJS.Signals | null };
 	getSpawnError: () => Error | undefined;
 	userDataDir: string;
-}): Promise<{ failure?: ElectronLaunchFailureReason; port?: number; spawnError?: Error }> {
+}): Promise<{ devToolsActivePort?: ElectronDevToolsActivePortRead; failure?: ElectronLaunchFailureReason; port?: number; spawnError?: Error }> {
+	let devToolsActivePort: ElectronDevToolsActivePortRead | undefined;
 	while (Date.now() <= options.deadlineMs) {
 		const spawnError = options.getSpawnError();
-		if (spawnError) return { failure: "spawn-error", spawnError };
-		const port = await readDevToolsActivePort(options.userDataDir);
-		if (port) return { port };
+		if (spawnError) return { devToolsActivePort, failure: "spawn-error", spawnError };
+		devToolsActivePort = await readDevToolsActivePort(options.userDataDir);
+		if (devToolsActivePort.port) return { devToolsActivePort, port: devToolsActivePort.port };
 		const exit = options.getChildExit();
 		if (exit.code !== null || exit.signal !== null) {
-			return { failure: exit.code === 0 ? "single-instance-conflict" : "spawn-error" };
+			return { devToolsActivePort, failure: exit.code === 0 ? "single-instance-conflict" : "spawn-error" };
 		}
 		await sleep(ELECTRON_DEVTOOLS_POLL_INTERVAL_MS);
 	}
-	return { failure: "timeout" };
+	return { devToolsActivePort, failure: "timeout" };
 }
 
 async function pollCdpMetadata(port: number, deadlineMs: number): Promise<{ targets: ElectronCdpTarget[]; version: ElectronCdpVersion } | undefined> {
@@ -295,6 +329,17 @@ async function waitForLaunchChildExit(child: ChildProcess, deadlineMs: number): 
 		await sleep(50);
 	}
 	return child.exitCode !== null || child.signalCode !== null;
+}
+
+function isLaunchChildPidAlive(child: ChildProcess): boolean | undefined {
+	if (!child.pid) return undefined;
+	if (child.exitCode !== null || child.signalCode !== null) return false;
+	try {
+		process.kill(child.pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
 }
 
 async function terminateLaunchChild(child: ChildProcess): Promise<string | undefined> {
@@ -402,7 +447,8 @@ export async function launchElectronApp(options: {
 	}
 
 	const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
-	const deadlineMs = Date.now() + timeoutMs;
+	const startedAtMs = Date.now();
+	const deadlineMs = startedAtMs + timeoutMs;
 	const userDataDir = await createSecureTempDirectory(ELECTRON_PROFILE_DIR_PREFIX);
 	let cleanupError: string | undefined;
 	let spawnError: Error | undefined;
@@ -423,7 +469,26 @@ export async function launchElectronApp(options: {
 	});
 	child.unref();
 
-	const fail = async (reason: ElectronLaunchFailureReason, detail?: string): Promise<ElectronLaunchResult> => {
+	const buildFailureDiagnostics = (options: {
+		cdpVersionReached?: boolean;
+		devToolsActivePort?: ElectronDevToolsActivePortRead;
+		port?: number;
+	} = {}): ElectronLaunchFailureDiagnostics => ({
+		cdpVersionReached: options.cdpVersionReached,
+		devToolsActivePort: options.devToolsActivePort,
+		elapsedMs: Math.max(0, Date.now() - startedAtMs),
+		exitCode,
+		exitSignal,
+		outputCaptured: false,
+		pid: child.pid,
+		pidAlive: isLaunchChildPidAlive(child),
+		port: options.port ?? options.devToolsActivePort?.port,
+		timeoutMs,
+		userDataDir,
+	});
+
+	const fail = async (reason: ElectronLaunchFailureReason, detail?: string, diagnosticOptions?: Parameters<typeof buildFailureDiagnostics>[0]): Promise<ElectronLaunchResult> => {
+		const diagnostics = buildFailureDiagnostics(diagnosticOptions);
 		const processCleanupError = await terminateLaunchChild(child);
 		try {
 			await rm(userDataDir, { force: true, recursive: true });
@@ -436,6 +501,7 @@ export async function launchElectronApp(options: {
 			failure: {
 				appArgs,
 				cleanupError,
+				diagnostics,
 				error: launchFailureMessage(reason, target, detail),
 				reason,
 				target,
@@ -451,11 +517,11 @@ export async function launchElectronApp(options: {
 		userDataDir,
 	});
 	if (!portResult.port) {
-		return fail(portResult.failure ?? "timeout", portResult.spawnError?.message);
+		return fail(portResult.failure ?? "timeout", portResult.spawnError?.message, { devToolsActivePort: portResult.devToolsActivePort });
 	}
 	const metadata = await pollCdpMetadata(portResult.port, deadlineMs);
 	if (!metadata) {
-		return fail("port-not-found");
+		return fail("port-not-found", undefined, { cdpVersionReached: false, devToolsActivePort: portResult.devToolsActivePort, port: portResult.port });
 	}
 	const record = buildLaunchRecord({
 		createdAtMs: Date.now(),
