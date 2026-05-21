@@ -3,6 +3,10 @@
 **Date:** 2026-05-20
 **Status:** Implemented; final verification/fix pass complete
 
+## Navigating this plan
+
+File paths with colon line ranges (for example `extensions/agent-browser/index.ts:262–352`) were accurate when this plan was written. They will drift as `main` moves. Prefer **module + exported symbol names** (`compileAgentBrowserElectron`, `discoverElectronApps`, `cleanupTrackedElectronLaunches`) and repository search over brittle line anchors.
+
 ## Goal
 
 Make Electron desktop apps a first-class, token-efficient target for the

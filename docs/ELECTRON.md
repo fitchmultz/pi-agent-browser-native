@@ -7,6 +7,7 @@ Related docs:
 - [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md) — workflow snippets in the broader native command surface
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — wrapper design and the closed `RQ-0068` recipe-layer decision
 - [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) — `RQ-0096` Electron support row and verification gates
+- [`plans/electron-extension-2026-05-20.md`](plans/electron-extension-2026-05-20.md) — design plan, `RQ-0068` revisit evidence, and post-ship dogfood notes (inline line anchors in that file may drift; prefer symbol search)
 
 ## Purpose
 
