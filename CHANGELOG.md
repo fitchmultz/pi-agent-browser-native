@@ -6,6 +6,10 @@
 
 - `npm run typecheck` as a thin alias for the default gate’s `tsc --noEmit` step (`scripts/project.mjs` `verify typecheck`), for fast iteration without docs drift checks, unit tests, or live upstream command-reference sampling.
 
+### Documentation
+
+- [`docs/RELEASE.md`](docs/RELEASE.md#local-development-validation): document that `npm test` passes a file glob to `tsx`, so appending `npm test -- <one-file>` still runs the full suite; use `npx tsx --test <path>` for a single module and map tab-recovery vs routine tab suites. Aligned `test/**/*.test.ts` file-header “Usage” comments with the same fact.
+
 ### Changed
 
 - Real Pi transcripts now treat wrapper-classified failures as tool errors: a `tool_result` hook (`buildAgentBrowserToolResultPatch` in `extensions/agent-browser/index.ts`) sets `isError: true` when `details.resultCategory` is `failure` even if `execute` returned successfully (for example `qa` preset reclassification), appends a model-visible `Result category: failure; …; Pi tool isError: true.` line for prose output, and preserves caller-requested `--json` output as parseable JSON—see [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).

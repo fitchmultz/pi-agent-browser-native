@@ -2,7 +2,7 @@
  * Purpose: Verify model-facing tool presentation formatting for agent-browser results.
  * Responsibilities: Assert snapshot compaction, scalar extraction, download summaries, batch rendering, inline screenshot handling, persisted spills, and temp-budget degradation.
  * Scope: Unit-style Node test-runner coverage for `buildToolPresentation`; extension lifecycle presentation integration lives in focused extension suites.
- * Usage: Run with `npm test -- test/agent-browser.presentation.test.ts` or via `npm run verify`.
+ * Usage: Run this file alone with `npx tsx --test test/agent-browser.presentation.test.ts` (the `npm test` script uses a glob, so `npm test -- <path>` still runs the full suite). Full gate: `npm run verify`.
  * Invariants/Assumptions: Tests isolate temp artifacts and preserve existing cleanup for secure temp roots.
  */
 

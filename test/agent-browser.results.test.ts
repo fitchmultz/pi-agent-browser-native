@@ -2,7 +2,7 @@
  * Purpose: Verify command parsing, envelope parsing, tab-correction selection, and error-text rendering helpers.
  * Responsibilities: Assert stable result facade behavior for valid envelopes, malformed output, fallback failures, command extraction, and tab list presentation.
  * Scope: Unit-style Node test-runner coverage for result/runtime helpers; richer presentation formatting lives in `agent-browser.presentation.test.ts`.
- * Usage: Run with `npm test -- test/agent-browser.results.test.ts` or via `npm run verify`.
+ * Usage: Run this file alone with `npx tsx --test test/agent-browser.results.test.ts` (the `npm test` script uses a glob, so `npm test -- <path>` still runs the full suite). Full gate: `npm run verify`.
  * Invariants/Assumptions: Tests avoid real subprocesses and use deterministic fixture payloads.
  */
 

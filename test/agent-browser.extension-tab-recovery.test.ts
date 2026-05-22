@@ -2,7 +2,7 @@
  * Purpose: Verify extension tab recovery and focus-drift behavior.
  * Responsibilities: Assert restored-tab selection, pinned follow-up commands, about:blank recovery, and overlapping explicit-session target ordering.
  * Scope: Focused integration-style Node test-runner coverage around fake agent-browser tab/session executions.
- * Usage: Run with `npm test -- test/agent-browser.extension-tab-recovery.test.ts` or via `npm run verify`.
+ * Usage: Run this file alone with `npx tsx --test test/agent-browser.extension-tab-recovery.test.ts` (the `npm test` script uses a glob, so `npm test -- <path>` still runs the full suite). Full gate: `npm run verify`.
  * Invariants/Assumptions: Tests patch PATH around fake agent-browser binaries and do not require a real browser.
  */
 

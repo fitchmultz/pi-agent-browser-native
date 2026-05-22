@@ -2,7 +2,7 @@
  * Purpose: Verify extension entrypoint validation and error contracts for the pi-agent-browser tool.
  * Responsibilities: Assert metadata, prompt injection, bash blocking, CLI validation, missing binary, malformed envelope, fallback error, and oversized parse-failure behavior.
  * Scope: Integration-style Node test-runner coverage around the extension harness before result presentation and tab lifecycle suites.
- * Usage: Run with `npm test -- test/agent-browser.extension-validation.test.ts` or via `npm run verify`.
+ * Usage: Run this file alone with `npx tsx --test test/agent-browser.extension-validation.test.ts` (the `npm test` script uses a glob, so `npm test -- <path>` still runs the full suite). Full gate: `npm run verify`.
  * Invariants/Assumptions: Tests use fake agent-browser binaries and isolated env/temp directories to avoid relying on upstream browser behavior.
  */
 

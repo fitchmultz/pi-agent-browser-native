@@ -162,6 +162,17 @@ npm run verify -- package --list-files
 
 Before publishing, validate both local-checkout modes without mixing their assumptions.
 
+### Focused unit tests
+
+The default `npm test` script passes a glob (`test/**/*.test.ts`) to `tsx --test`, so extra path arguments after `npm test --` still run the **entire** suite. To iterate on one module, invoke `tsx` with that file only (same runner as the full gate):
+
+```bash
+npx tsx --test test/agent-browser.extension-tab-recovery.test.ts
+npx tsx --test test/agent-browser.extension-tabs.test.ts
+```
+
+Use `test/agent-browser.extension-tab-recovery.test.ts` for profiled-open tab correction, pinned follow-ups, `about:blank` mismatch recovery, explicit-session ordering, and overlapping CDP-style targets (`RQ-0097` / `RQ-0100` in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)). Use `test/agent-browser.extension-tabs.test.ts` for routine tab-target state, snapshot spill persistence, and related non-recovery presentation paths. Pair with `npm run typecheck` for a fast loop without docs drift checks or live upstream sampling.
+
 ### Quick isolated checkout smoke test
 
 1. Install `agent-browser` separately.
