@@ -9,11 +9,15 @@
 export { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "./results/envelope.js";
 export { buildToolPresentation } from "./results/presentation.js";
 export {
+	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
+	AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS,
 	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
 	compareRefIds,
+	getAgentBrowserRichInputRecoveryNextActionId,
+	getAgentBrowserRichInputRecoveryNextActionIds,
 } from "./results/shared.js";
 export type {
 	AgentBrowserBatchResult,
@@ -22,7 +26,10 @@ export type {
 	AgentBrowserResultCategory,
 	AgentBrowserNextAction,
 	AgentBrowserPageChangeSummary,
+	AgentBrowserRecoveryContext,
+	AgentBrowserRecoveryKind,
 	AgentBrowserResultCategoryDetails,
+	AgentBrowserRichInputRecoveryNextActionKind,
 	AgentBrowserSuccessCategory,
 	FileArtifactKind,
 	FileArtifactMetadata,

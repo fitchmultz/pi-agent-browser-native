@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
+import { Theme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
 
 import {
@@ -50,15 +50,101 @@ import {
 	type AgentBrowserToolRenderContext,
 } from "./helpers/agent-browser-harness.js";
 
-const PLAIN_RENDER_THEME = {
-	fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
-	bg: (_color: string, text: string) => text,
-	bold: (text: string) => `**${text}**`,
-	italic: (text: string) => text,
-	underline: (text: string) => text,
-	inverse: (text: string) => text,
-	strikethrough: (text: string) => text,
-} as unknown as Theme;
+type RenderThemeColor = Parameters<Theme["fg"]>[0];
+type RenderThemeBg = Parameters<Theme["bg"]>[0];
+
+const PLAIN_RENDER_FG_COLORS = {
+	accent: "#ffffff",
+	bashMode: "#ffffff",
+	border: "#ffffff",
+	borderAccent: "#ffffff",
+	borderMuted: "#ffffff",
+	customMessageLabel: "#ffffff",
+	customMessageText: "#ffffff",
+	dim: "#ffffff",
+	error: "#ffffff",
+	mdCode: "#ffffff",
+	mdCodeBlock: "#ffffff",
+	mdCodeBlockBorder: "#ffffff",
+	mdHeading: "#ffffff",
+	mdHr: "#ffffff",
+	mdLink: "#ffffff",
+	mdLinkUrl: "#ffffff",
+	mdListBullet: "#ffffff",
+	mdQuote: "#ffffff",
+	mdQuoteBorder: "#ffffff",
+	muted: "#ffffff",
+	success: "#ffffff",
+	syntaxComment: "#ffffff",
+	syntaxFunction: "#ffffff",
+	syntaxKeyword: "#ffffff",
+	syntaxNumber: "#ffffff",
+	syntaxOperator: "#ffffff",
+	syntaxPunctuation: "#ffffff",
+	syntaxString: "#ffffff",
+	syntaxType: "#ffffff",
+	syntaxVariable: "#ffffff",
+	text: "#ffffff",
+	thinkingHigh: "#ffffff",
+	thinkingLow: "#ffffff",
+	thinkingMedium: "#ffffff",
+	thinkingMinimal: "#ffffff",
+	thinkingOff: "#ffffff",
+	thinkingText: "#ffffff",
+	thinkingXhigh: "#ffffff",
+	toolDiffAdded: "#ffffff",
+	toolDiffContext: "#ffffff",
+	toolDiffRemoved: "#ffffff",
+	toolOutput: "#ffffff",
+	toolTitle: "#ffffff",
+	userMessageText: "#ffffff",
+	warning: "#ffffff",
+} satisfies Record<RenderThemeColor, string>;
+
+const PLAIN_RENDER_BG_COLORS = {
+	customMessageBg: "#000000",
+	selectedBg: "#000000",
+	toolErrorBg: "#000000",
+	toolPendingBg: "#000000",
+	toolSuccessBg: "#000000",
+	userMessageBg: "#000000",
+} satisfies Record<RenderThemeBg, string>;
+
+class PlainRenderTheme extends Theme {
+	constructor() {
+		super(PLAIN_RENDER_FG_COLORS, PLAIN_RENDER_BG_COLORS, "truecolor", { name: "plain-render-test" });
+	}
+
+	override fg(color: RenderThemeColor, text: string): string {
+		return `<${color}>${text}</${color}>`;
+	}
+
+	override bg(_color: RenderThemeBg, text: string): string {
+		return text;
+	}
+
+	override bold(text: string): string {
+		return `**${text}**`;
+	}
+
+	override italic(text: string): string {
+		return text;
+	}
+
+	override underline(text: string): string {
+		return text;
+	}
+
+	override inverse(text: string): string {
+		return text;
+	}
+
+	override strikethrough(text: string): string {
+		return text;
+	}
+}
+
+const PLAIN_RENDER_THEME = new PlainRenderTheme();
 
 function createRenderContext(options: {
 	args: AgentBrowserToolParams;
@@ -164,6 +250,24 @@ async function stopTestPid(pid: number | undefined): Promise<void> {
 	await waitForTestPidExit(pid, 1_000);
 }
 
+interface FakeElectronLaunchLogEntry {
+	args: string[];
+	mode: "invalid-cdp" | "no-port-file" | "normal";
+	pid: number;
+	port?: number;
+	userDataDir: string;
+}
+
+async function readOptionalFakeElectronLaunchLog(path: string): Promise<FakeElectronLaunchLogEntry[]> {
+	try {
+		const text = (await readFile(path, "utf8")).trim();
+		return text.length > 0 ? text.split("\n").map((line) => JSON.parse(line) as FakeElectronLaunchLogEntry) : [];
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
+}
+
 async function writeFakeLaunchableElectronApp(options: {
 	applicationsDir: string;
 	bundleId: string;
@@ -171,6 +275,7 @@ async function writeFakeLaunchableElectronApp(options: {
 	launchLogPath: string;
 	mode?: "invalid-cdp" | "no-port-file" | "normal";
 	name: string;
+	writeLaunchLog?: boolean;
 }): Promise<{ appPath: string; executablePath: string }> {
 	const app = await writeFakeMacElectronApp(options);
 	const mode = options.mode ?? "normal";
@@ -180,6 +285,7 @@ const http = require("node:http");
 const path = require("node:path");
 const mode = ${JSON.stringify(mode)};
 const includeWebview = ${JSON.stringify(options.includeWebview === true)};
+const writeLaunchLog = ${JSON.stringify(options.writeLaunchLog !== false)};
 const args = process.argv.slice(2);
 const userDataArg = args.find((arg) => arg.startsWith("--user-data-dir="));
 const userDataDir = userDataArg && userDataArg.slice("--user-data-dir=".length);
@@ -210,7 +316,7 @@ const server = http.createServer((request, response) => {
 server.listen(0, "127.0.0.1", () => {
 	const port = server.address().port;
 	if (mode !== "no-port-file") fs.writeFileSync(path.join(userDataDir, "DevToolsActivePort"), String(port) + "\\n/devtools/browser/fake\\n");
-	fs.appendFileSync(${JSON.stringify(options.launchLogPath)}, JSON.stringify({ args, mode, pid: process.pid, port, userDataDir }) + "\\n");
+	if (writeLaunchLog) fs.appendFileSync(${JSON.stringify(options.launchLogPath)}, JSON.stringify({ args, mode, pid: process.pid, port, userDataDir }) + "\\n");
 });
 const shutdown = () => server.close(() => process.exit(0));
 process.on("SIGTERM", shutdown);
@@ -263,7 +369,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`;
 test("agentBrowserExtension keeps concise browser guidance plus installed doc pointers in tool metadata", async () => {
 	await withPatchedEnv({ BRAVE_API_KEY: "demo-key" }, async () => {
 		const harness = createExtensionHarness({ cwd: process.cwd() });
-		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "tool_call"]);
+		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "tool_call", "tool_result"]);
 		assert.equal(harness.tool.name, "agent_browser");
 		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
@@ -1774,27 +1880,27 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			}
 			assert.deepEqual(await readInvocationLog(logPath), []);
 
-			const missingAction = await executeRegisteredTool(harness.tool, harness.ctx, { electron: {} } as unknown as AgentBrowserToolParams);
+			const missingAction = await executeRegisteredTool(harness.tool, harness.ctx, { electron: {} });
 			assert.equal(missingAction.isError, true);
 			assert.match(missingAction.content[0]?.text ?? "", /electron\.action must be one of: list, launch, status, cleanup, probe/);
 			assert.equal(missingAction.details?.failureCategory, "validation-error");
 
-			const unknownAction = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "bogus" } } as unknown as AgentBrowserToolParams);
+			const unknownAction = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "bogus" } });
 			assert.equal(unknownAction.isError, true);
 			assert.match(unknownAction.content[0]?.text ?? "", /electron\.action must be one of/);
 
-			const statusWithHandoff = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", handoff: "tabs" } } as unknown as AgentBrowserToolParams);
+			const statusWithHandoff = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", handoff: "tabs" } });
 			assert.equal(statusWithHandoff.isError, true);
 			assert.match(statusWithHandoff.content[0]?.text ?? "", /electron\.status does not support electron\.handoff/);
 
 			for (const action of ["status", "cleanup"] as const) {
-				const allFalse = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action, all: false } } as unknown as AgentBrowserToolParams);
+				const allFalse = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action, all: false } });
 				assert.equal(allFalse.isError, true, action);
 				assert.match(allFalse.content[0]?.text ?? "", /electron\.all must be true when provided/);
 				assert.equal(allFalse.details?.failureCategory, "validation-error");
 			}
 
-			const probeWithListField = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", query: "demo" } } as unknown as AgentBrowserToolParams);
+			const probeWithListField = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", query: "demo" } });
 			assert.equal(probeWithListField.isError, true);
 			assert.match(probeWithListField.content[0]?.text ?? "", /electron\.probe only supports action, launchId, and timeoutMs; remove electron\.query/);
 
@@ -1804,7 +1910,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match(probeWithoutSession.content[0]?.text ?? "", /No wrapper-tracked Electron launch found for launchId launch-1/);
 			assert.equal(probeWithoutSession.details?.failureCategory, "validation-error");
 
-			const badQuery = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "list", query: 7 } } as unknown as AgentBrowserToolParams);
+			const badQuery = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "list", query: 7 } });
 			assert.equal(badQuery.isError, true);
 			assert.match(badQuery.content[0]?.text ?? "", /electron\.query must be a non-empty string/);
 
@@ -2188,12 +2294,264 @@ setTimeout(() => {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const connectResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
 			assert.equal(connectResult.isError, false);
+			const connectNextActions = connectResult.details?.nextActions as Array<{ id: string; params?: { args?: string[] } }> | undefined;
+			const connectedSessionName = connectResult.details?.sessionName as string | undefined;
+			assert.ok(connectedSessionName);
+			assert.deepEqual(connectNextActions?.map((action) => action.id), ["list-connected-session-tabs"]);
+			assert.deepEqual(connectNextActions?.map((action) => action.params?.args), [
+				["--session", connectedSessionName, "tab", "list"],
+			]);
 
 			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 25 } });
 			assert.equal(probeResult.isError, false);
 			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 25 });
 			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "partial");
 			assert.match(probeResult.content[0]?.text ?? "", /Some probe commands did not return data/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension recommends tab recovery after No active page snapshot failures", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-no-active-page-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const valueFlags = new Set(["--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, command }) + "\\n");
+const snapshotStatePath = ${JSON.stringify(join(tempDir, "snapshot-count.txt"))};
+function nextSnapshotCount() {
+  let count = 0;
+  try { count = Number(fs.readFileSync(snapshotStatePath, "utf8")) || 0; } catch {}
+  count += 1;
+  fs.writeFileSync(snapshotStatePath, String(count));
+  return count;
+}
+if (command === "connect") {
+  process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
+} else if (command === "snapshot") {
+  const snapshotCount = nextSnapshotCount();
+  if (snapshotCount === 1) {
+    process.stdout.write(JSON.stringify({ success: true, data: {
+      origin: "https://active.example/",
+      refs: { e1: { role: "button", name: "Old action" } },
+      snapshot: '- button "Old action" [ref=e1]'
+    } }));
+  } else if (snapshotCount === 2) {
+    process.stdout.write(JSON.stringify({ success: false, error: "No active page" }));
+    process.exit(1);
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: {
+      origin: "https://active.example/",
+      refs: { e2: { role: "button", name: "Fresh action" } },
+      snapshot: '- button "Fresh action" [ref=e2]'
+    } }));
+  }
+} else if (command === "click") {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const connectResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
+			assert.equal(connectResult.isError, false);
+			const sessionName = connectResult.details?.sessionName as string | undefined;
+			assert.ok(sessionName);
+
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+			assert.deepEqual((initialSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+			assert.equal("order" in ((initialSnapshot.details?.refSnapshot as Record<string, unknown> | undefined) ?? {}), false);
+
+			const snapshotResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshotResult.isError, true);
+			assert.equal(snapshotResult.details?.command, "snapshot");
+			assert.equal(snapshotResult.details?.failureCategory, "upstream-error");
+			assert.equal(snapshotResult.details?.refSnapshot, undefined);
+			assert.equal((snapshotResult.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "no-active-page");
+			assert.equal("order" in ((snapshotResult.details?.refSnapshotInvalidation as Record<string, unknown> | undefined) ?? {}), false);
+			const nextActions = snapshotResult.details?.nextActions as Array<{ id: string; params?: { args?: string[] } }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.id), ["list-tabs-after-no-active-page"]);
+			assert.deepEqual(nextActions?.map((action) => action.params?.args), [
+				["--session", sessionName, "tab", "list"],
+			]);
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true);
+			assert.equal(staleClick.details?.failureCategory, "stale-ref");
+			assert.deepEqual(staleClick.details?.refIds, ["e1"]);
+			assert.equal((staleClick.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "no-active-page");
+			assert.equal("order" in ((staleClick.details?.refSnapshotInvalidation as Record<string, unknown> | undefined) ?? {}), false);
+			assert.match((staleClick.content[0] as { text: string }).text, /latest snapshot for this session reported No active page/);
+			const staleNextActions = staleClick.details?.nextActions as Array<{ id: string; params?: { args?: string[] } }> | undefined;
+			assert.deepEqual(staleNextActions?.map((action) => action.id), ["refresh-interactive-refs"]);
+			assert.deepEqual(staleNextActions?.map((action) => action.params?.args), [
+				["--session", sessionName, "snapshot", "-i"],
+			]);
+
+			const batchWithInlineSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["snapshot", "-i"], ["click", "@e1"]]),
+			});
+			assert.equal(batchWithInlineSnapshot.isError, true);
+			assert.equal(batchWithInlineSnapshot.details?.failureCategory, "stale-ref");
+			assert.deepEqual(batchWithInlineSnapshot.details?.refIds, ["e1"]);
+			assert.match((batchWithInlineSnapshot.content[0] as { text: string }).text, /latest snapshot for this session reported No active page/);
+
+			const freshSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(freshSnapshot.isError, false, JSON.stringify(freshSnapshot));
+			assert.equal(freshSnapshot.details?.refSnapshotInvalidation, undefined);
+			assert.deepEqual((freshSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e2"]);
+			assert.equal("order" in ((freshSnapshot.details?.refSnapshot as Record<string, unknown> | undefined) ?? {}), false);
+
+			const freshClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e2"] });
+			assert.equal(freshClick.isError, false, JSON.stringify(freshClick));
+			assert.equal((freshClick.details?.data as { clicked?: string } | undefined)?.clicked, "@e2");
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(
+				invocations
+					.map((entry) => entry.args.find((token) => ["connect", "snapshot", "click"].includes(token)))
+					.filter((command): command is string => command !== undefined),
+				["connect", "snapshot", "snapshot", "snapshot", "click"],
+			);
+			assert.equal(invocations.filter((entry) => entry.args.at(-2) === "click" && entry.args.at(-1) === "@e2").length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("@e1")).length, 0);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension invalidates refs after No active page snapshot failures inside batch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-no-active-page-batch-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+const valueFlags = new Set(["--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+	const token = args[i];
+	if (token === "--json") continue;
+	if (valueFlags.has(token)) { i += 1; continue; }
+	if (token.startsWith("--")) continue;
+	commandIndex = i;
+	break;
+}
+const command = args[commandIndex];
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, command, stdin }) + "\\n");
+if (command === "connect") {
+	process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
+} else if (command === "snapshot") {
+	process.stdout.write(JSON.stringify({ success: true, data: {
+	origin: "https://active.example/",
+	refs: { e1: { role: "button", name: "Old action" } },
+	snapshot: '- button "Old action" [ref=e1]'
+	} }));
+} else if (command === "batch") {
+	const steps = JSON.parse(stdin || "[]");
+	process.stdout.write(JSON.stringify(steps.map((step) => {
+		if (step[0] === "snapshot" && step.includes("--recover")) {
+			return { command: step, success: true, result: {
+				origin: "https://active.example/",
+				refs: { e2: { role: "button", name: "Recovered action" } },
+				snapshot: '- button "Recovered action" [ref=e2]'
+			} };
+		}
+		return step[0] === "snapshot"
+			? { command: step, success: false, error: "No active page" }
+			: { command: step, success: true, result: { ok: true } };
+	})));
+	process.exit(1);
+} else if (command === "click") {
+	process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
+} else {
+	process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const connectResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
+			assert.equal(connectResult.isError, false);
+			const sessionName = connectResult.details?.sessionName as string | undefined;
+			assert.ok(sessionName);
+
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+			assert.deepEqual((initialSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+			assert.equal("order" in ((initialSnapshot.details?.refSnapshot as Record<string, unknown> | undefined) ?? {}), false);
+
+			const batchSnapshotFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["snapshot", "-i"]]),
+			});
+			assert.equal(batchSnapshotFailure.isError, true, JSON.stringify(batchSnapshotFailure));
+			assert.equal(batchSnapshotFailure.details?.refSnapshot, undefined);
+			assert.equal((batchSnapshotFailure.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "no-active-page");
+			assert.equal("order" in ((batchSnapshotFailure.details?.refSnapshotInvalidation as Record<string, unknown> | undefined) ?? {}), false);
+			const nextActions = batchSnapshotFailure.details?.nextActions as Array<{ id: string; params?: { args?: string[] } }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.id), ["list-tabs-after-no-active-page"]);
+			assert.deepEqual(nextActions?.map((action) => action.params?.args), [
+				["--session", sessionName, "tab", "list"],
+			]);
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true);
+			assert.equal(staleClick.details?.failureCategory, "stale-ref");
+			assert.deepEqual(staleClick.details?.refIds, ["e1"]);
+			assert.equal((staleClick.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "no-active-page");
+			assert.equal("order" in ((staleClick.details?.refSnapshotInvalidation as Record<string, unknown> | undefined) ?? {}), false);
+
+			const batchSnapshotRecovery = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["snapshot", "-i"], ["snapshot", "-i", "--recover"]]),
+			});
+			assert.equal(batchSnapshotRecovery.isError, true, JSON.stringify(batchSnapshotRecovery));
+			assert.equal(batchSnapshotRecovery.details?.refSnapshotInvalidation, undefined);
+			assert.deepEqual((batchSnapshotRecovery.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e2"]);
+			assert.equal("order" in ((batchSnapshotRecovery.details?.refSnapshot as Record<string, unknown> | undefined) ?? {}), false);
+
+			const recoveredClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e2"] });
+			assert.equal(recoveredClick.isError, false, JSON.stringify(recoveredClick));
+			assert.equal((recoveredClick.details?.data as { clicked?: string } | undefined)?.clicked, "@e2");
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(
+				invocations
+					.map((entry) => entry.args.find((token) => ["connect", "snapshot", "batch", "click"].includes(token)))
+					.filter((command): command is string => command !== undefined),
+				["connect", "snapshot", "batch", "batch", "click"],
+			);
+			assert.equal(invocations.filter((entry) => entry.args.includes("@e1")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("@e2")).length, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -2309,16 +2667,16 @@ test("agentBrowserExtension blocks Electron launch by caller policy without spaw
 });
 
 test("agentBrowserExtension cleans Electron resources when launch fails before upstream attach", { concurrency: false }, async () => {
-	for (const { expectedCategory, mode, timeoutMs } of [
-		{ expectedCategory: "timeout", mode: "no-port-file", timeoutMs: 500 },
-		{ expectedCategory: "upstream-error", mode: "invalid-cdp", timeoutMs: 1_500 },
+	for (const { expectedCategory, mode, timeoutMs, writeLaunchLog } of [
+		{ expectedCategory: "timeout", mode: "no-port-file", timeoutMs: 500, writeLaunchLog: false },
+		{ expectedCategory: "upstream-error", mode: "invalid-cdp", timeoutMs: 1_500, writeLaunchLog: true },
 	] as const) {
 		const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-electron-failed-${mode}-`));
 		const applicationsDir = join(tempDir, "Applications");
 		const launchLogPath = join(tempDir, "electron-launch.log");
 		try {
 			await mkdir(applicationsDir, { recursive: true });
-			const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: `com.example.${mode}`, launchLogPath, mode, name: `Failed ${mode}` });
+			const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: `com.example.${mode}`, launchLogPath, mode, name: `Failed ${mode}`, writeLaunchLog });
 			await withPatchedEnv({ PATH: dirname(process.execPath) }, async () => {
 				const harness = createExtensionHarness({ cwd: tempDir });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
@@ -2329,24 +2687,29 @@ test("agentBrowserExtension cleans Electron resources when launch fails before u
 				assert.equal(result.details?.failureCategory, expectedCategory, mode);
 				assert.match(result.content[0]?.text ?? "", /Electron launch diagnostics:/, mode);
 				assert.match(result.content[0]?.text ?? "", /Retry guidance: increase electron\.timeoutMs/, mode);
-				const [launchLog] = (await readFile(launchLogPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { pid: number; port: number; userDataDir: string });
-				assert.ok(launchLog, mode);
 				const diagnostics = ((result.details?.electron as { failure?: { diagnostics?: { cdpVersionReached?: boolean; devToolsActivePort?: { found?: boolean; port?: number }; pid?: number; pidAlive?: boolean; timeoutMs?: number; userDataDir?: string } } } | undefined)?.failure?.diagnostics);
-				assert.equal(diagnostics?.pid, launchLog.pid, mode);
+				const diagnosticPid = diagnostics?.pid;
+				const diagnosticUserDataDir = diagnostics?.userDataDir;
+				assert.ok(typeof diagnosticPid === "number", mode);
 				assert.equal(diagnostics?.pidAlive, true, mode);
 				assert.equal(diagnostics?.timeoutMs, timeoutMs, mode);
-				assert.equal(diagnostics?.userDataDir, launchLog.userDataDir, mode);
+				assert.ok(typeof diagnosticUserDataDir === "string", mode);
+				const launchLogs = await readOptionalFakeElectronLaunchLog(launchLogPath);
+				const launchLog = launchLogs.find((entry) => entry.pid === diagnosticPid);
 				if (mode === "no-port-file") {
+					assert.equal(launchLogs.length, 0, mode);
 					assert.equal(diagnostics?.devToolsActivePort?.found, false, mode);
 					assert.match(result.content[0]?.text ?? "", /DevToolsActivePort: missing/, mode);
 				} else {
+					assert.ok(launchLog, mode);
+					assert.equal(diagnostics?.userDataDir, launchLog.userDataDir, mode);
 					assert.equal(diagnostics?.devToolsActivePort?.found, true, mode);
 					assert.equal(diagnostics?.devToolsActivePort?.port, launchLog.port, mode);
 					assert.equal(diagnostics?.cdpVersionReached, false, mode);
 					assert.match(result.content[0]?.text ?? "", /CDP \/json\/version: did not return a valid payload/, mode);
 				}
-				await assert.rejects(stat(launchLog.userDataDir));
-				assert.equal(isTestPidAlive(launchLog.pid), false, mode);
+				await assert.rejects(stat(diagnosticUserDataDir));
+				assert.equal(isTestPidAlive(diagnosticPid), false, mode);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -3011,6 +3374,13 @@ process.stdin.on("end", () => {
 
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.failureCategory, "qa-failure");
+			const [realPiFailurePatch] = await runExtensionEventResults<{ content?: Array<{ text?: string; type: string }>; isError?: boolean }>(
+				harness.handlers,
+				"tool_result",
+				{ content: result.content, details: result.details, isError: false, toolName: "agent_browser" },
+			);
+			assert.equal(realPiFailurePatch?.isError, true);
+			assert.match(realPiFailurePatch?.content?.[0]?.text ?? "", /Result category: failure; failureCategory: qa-failure; Pi tool isError: true\./);
 			const managedSessionOutcome = result.details?.managedSessionOutcome as { sessionMode?: string; status?: string; succeeded?: boolean } | undefined;
 			assert.equal(managedSessionOutcome?.sessionMode, "fresh");
 			assert.equal(managedSessionOutcome?.status, "replaced");
@@ -3080,7 +3450,7 @@ process.stdin.on("end", () => {
 
 			const attachedWithUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: { attached: true, url: "https://example.test/" },
-			} as unknown as AgentBrowserToolParams);
+			});
 			assert.equal(attachedWithUrl.isError, true);
 			assert.match(attachedWithUrl.content[0]?.text ?? "", /qa\.url must be omitted when qa\.attached is true/);
 			assert.equal(attachedWithUrl.details?.failureCategory, "validation-error");
@@ -3458,13 +3828,13 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const invalidJobAction = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "unknown" as never }] },
+				job: { steps: [{ action: "unknown" }] },
 			});
 			assert.equal(invalidJobAction.isError, true);
 			assert.match((invalidJobAction.content[0] as { text: string }).text, /action must be one of/);
 
 			const missingJobText = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "open", url: "https://example.test/" }, { action: "assertText" as never }] },
+				job: { steps: [{ action: "open", url: "https://example.test/" }, { action: "assertText" }] },
 			});
 			assert.equal(missingJobText.isError, true);
 			assert.match((missingJobText.content[0] as { text: string }).text, /job step assertText requires a non-empty text string/);
@@ -3584,22 +3954,30 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	}
 });
 
-test("agentBrowserExtension returns semantic locator candidates when semanticAction misses", { concurrency: false }, async () => {
+test("agentBrowserExtension returns rich input recovery when semanticAction fill misses current editable refs", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-candidates-"));
+	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`const args = process.argv.slice(2);
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://search.example/",
     refs: {
+      e6: { role: "searchbox", name: "Search Wikipedia", editable: false },
       e7: { role: "searchbox", name: "Search Wikipedia" },
-      e8: { role: "textbox", name: "Search Wikipedia" },
+      e8: { role: "generic", name: "Search Wikipedia", contentEditable: true },
       e9: { role: "textbox", name: "Search Wikipedia advanced" },
-      e10: { role: "button", name: "Search Wikipedia" }
+      e10: { role: "button", name: "Search Wikipedia" },
+      e11: { role: "textbox", name: "Composer" },
+      e12: { role: "button", name: "Composer" },
+      e13: { role: "unknown", name: "Search Wikipedia", editable: true },
+      e14: { role: "generic", name: "Search Wikipedia", contenteditable: false }
     },
-    snapshot: '- searchbox "Search Wikipedia" [ref=e7]\\n- textbox "Search Wikipedia" [ref=e8]\\n- textbox "Search Wikipedia advanced" [ref=e9]\\n- button "Search Wikipedia" [ref=e10]'
+    snapshot: '- searchbox "Search Wikipedia" [ref=e6] editable=false\\n- searchbox "Search Wikipedia" [ref=e7]\\n- generic "Search Wikipedia" [ref=e8] contenteditable=true\\n- textbox "Search Wikipedia advanced" [ref=e9]\\n- button "Search Wikipedia" [ref=e10]\\n- textbox "Composer" [ref=e11]\\n- button "Composer" [ref=e12]\\n- generic "Search Wikipedia" [ref=e13] editable\\n- generic "Search Wikipedia" [ref=e14] contenteditable=false'
   } }));
   process.exit(0);
 } else if (args.includes("find") || args.includes("select")) {
@@ -3618,7 +3996,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				semanticAction: { action: "fill", locator: "placeholder", value: "Search Wikipedia", text: "agent browser" },
+				semanticAction: { action: "fill", locator: "placeholder", value: "Search Wikipedia", text: "- [ ] item" },
 			});
 
 			assert.equal(result.isError, true);
@@ -3626,25 +4004,114 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			const text = result.content[0] as { text: string };
 			assert.match(text.text, /Current snapshot ref fallback:/);
 			assert.match(text.text, /@e7 searchbox "Search Wikipedia"/);
+			assert.doesNotMatch(text.text, /@e6/);
 			assert.match(text.text, /@e8 textbox "Search Wikipedia"/);
+			assert.match(text.text, /@e13 textbox "Search Wikipedia"/);
 			assert.doesNotMatch(text.text, /@e9/);
-			assert.match(text.text, /Agent-browser candidate fallbacks:/);
-			assert.match(text.text, /try-searchbox-name-candidate/);
-			assert.match(text.text, /"searchbox"/);
+			assert.doesNotMatch(text.text, /@e14/);
+			assert.match(text.text, /Rich input recovery:/);
+			assert.doesNotMatch(text.text, /Agent-browser candidate fallbacks:/);
+			assert.doesNotMatch(text.text, /- \[ \] item/);
+			const visibleRefFallback = result.details?.visibleRefFallback as { candidates?: Array<{ args?: string[]; editableEvidence?: boolean }>; target?: { text?: string } } | undefined;
+			assert.equal(visibleRefFallback?.target?.text, undefined);
+			assert.ok(visibleRefFallback?.candidates?.every((candidate) => candidate.args === undefined));
+			assert.ok(visibleRefFallback?.candidates?.every((candidate) => candidate.editableEvidence === undefined));
+			const richInputRecovery = result.details?.richInputRecovery as { candidates?: Array<{ clickArgs?: string[]; focusArgs?: string[]; ref?: string; role?: string }>; inputMethodHint?: string; nextActionIds?: string[] } | undefined;
+			assert.deepEqual(richInputRecovery?.candidates?.map((candidate) => ({ clickArgs: candidate.clickArgs, focusArgs: candidate.focusArgs, ref: candidate.ref, role: candidate.role })), [
+				{ clickArgs: ["click", "@e7"], focusArgs: ["focus", "@e7"], ref: "@e7", role: "searchbox" },
+				{ clickArgs: ["click", "@e8"], focusArgs: ["focus", "@e8"], ref: "@e8", role: "textbox" },
+				{ clickArgs: ["click", "@e13"], focusArgs: ["focus", "@e13"], ref: "@e13", role: "textbox" },
+			]);
+			assert.match(richInputRecovery?.inputMethodHint ?? "", /keyboard inserttext or keyboard type/);
 			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; reason?: string; safety?: string }> | undefined;
 			assert.deepEqual(nextActions?.map((action) => action.id), [
 				"refresh-interactive-refs",
-				"try-current-visible-ref-1",
-				"try-current-visible-ref-2",
-				"try-searchbox-name-candidate",
-				"try-textbox-name-candidate",
+				"focus-current-editable-ref-1",
+				"click-current-editable-ref-1",
+				"focus-current-editable-ref-2",
+				"click-current-editable-ref-2",
+				"focus-current-editable-ref-3",
+				"click-current-editable-ref-3",
 			]);
-			assert.deepEqual(nextActions?.[1]?.params?.args?.slice(-3), ["fill", "@e7", "agent browser"]);
-			assert.deepEqual(nextActions?.[2]?.params?.args?.slice(-3), ["fill", "@e8", "agent browser"]);
-			assert.match(nextActions?.[1]?.safety ?? "", /Several current refs share/);
-			assert.deepEqual(nextActions?.[3]?.params?.args, ["find", "role", "searchbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
-			assert.deepEqual(nextActions?.[4]?.params?.args, ["find", "role", "textbox", "fill", "agent browser", "--name", "Search Wikipedia"]);
-			assert.match(nextActions?.[3]?.reason ?? "", /accessible name/);
+			assert.deepEqual(nextActions?.[1]?.params?.args?.slice(-2), ["focus", "@e7"]);
+			assert.deepEqual(nextActions?.[2]?.params?.args?.slice(-2), ["click", "@e7"]);
+			assert.deepEqual(nextActions?.[3]?.params?.args?.slice(-2), ["focus", "@e8"]);
+			assert.deepEqual(nextActions?.[4]?.params?.args?.slice(-2), ["click", "@e8"]);
+			assert.deepEqual(nextActions?.[5]?.params?.args?.slice(-2), ["focus", "@e13"]);
+			assert.deepEqual(nextActions?.[6]?.params?.args?.slice(-2), ["click", "@e13"]);
+			assert.match(nextActions?.[1]?.safety ?? "", /Several editable refs share/);
+			const invocationsAfterFirstMiss = await readInvocationLog(logPath);
+			assert.equal(invocationsAfterFirstMiss.length, 3);
+			assert.deepEqual(invocationsAfterFirstMiss.map((entry) => entry.args.slice(3)), [
+				["snapshot", "-i"],
+				["find", "placeholder", "Search Wikipedia", "fill", "- [ ] item"],
+				["snapshot", "-i"],
+			]);
+			for (const action of nextActions ?? []) {
+				assert.ok(!action.params?.args?.includes("- [ ] item"));
+				assert.ok(!action.params?.args?.includes("Enter"));
+				assert.doesNotMatch(action.id ?? "", /submit/i);
+				assert.doesNotMatch(action.reason ?? "", /agent browser/);
+			}
+
+			const rawDashFillMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["find", "placeholder", "Search Wikipedia", "fill", "- [ ] item"],
+			});
+			assert.equal(rawDashFillMiss.isError, true);
+			assert.equal(rawDashFillMiss.details?.failureCategory, "selector-not-found");
+			assert.match((rawDashFillMiss.content[0] as { text: string }).text, /Current snapshot ref fallback:/);
+			assert.match((rawDashFillMiss.content[0] as { text: string }).text, /Rich input recovery:/);
+			assert.match((rawDashFillMiss.content[0] as { text: string }).text, /@e7 searchbox "Search Wikipedia"/);
+			assert.doesNotMatch((rawDashFillMiss.content[0] as { text: string }).text, /- \[ \] item/);
+			const rawVisibleRefFallback = rawDashFillMiss.details?.visibleRefFallback as { candidates?: Array<{ args?: string[]; editableEvidence?: boolean }>; target?: { text?: string } } | undefined;
+			assert.equal(rawVisibleRefFallback?.target?.text, undefined);
+			assert.ok(rawVisibleRefFallback?.candidates?.every((candidate) => candidate.args === undefined));
+			assert.ok(rawVisibleRefFallback?.candidates?.every((candidate) => candidate.editableEvidence === undefined));
+			const rawNextActions = rawDashFillMiss.details?.nextActions as Array<{ params?: { args?: string[] } }> | undefined;
+			for (const action of rawNextActions ?? []) {
+				assert.ok(!action.params?.args?.includes("- [ ] item"));
+			}
+
+			const clickMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", locator: "text", value: "Search Wikipedia" },
+			});
+			assert.equal(clickMiss.isError, true);
+			assert.equal(clickMiss.details?.failureCategory, "selector-not-found");
+			assert.equal(clickMiss.details?.richInputRecovery, undefined);
+			assert.match((clickMiss.content[0] as { text: string }).text, /Agent-browser candidate fallbacks:/);
+			assert.doesNotMatch((clickMiss.content[0] as { text: string }).text, /try-searchbox-name-candidate|try-textbox-name-candidate|try-labeled-textbox-candidate/);
+			const clickNextActions = clickMiss.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
+			assert.deepEqual(clickNextActions?.map((action) => action.id), [
+				"refresh-interactive-refs",
+				"try-current-visible-ref",
+				"try-button-name-candidate",
+				"try-link-name-candidate",
+			]);
+			assert.deepEqual(clickNextActions?.[1]?.params?.args?.slice(-2), ["click", "@e10"]);
+			assert.deepEqual(clickNextActions?.[2]?.params?.args, ["find", "role", "button", "click", "--name", "Search Wikipedia"]);
+			assert.deepEqual(clickNextActions?.[3]?.params?.args, ["find", "role", "link", "click", "--name", "Search Wikipedia"]);
+			assert.ok(!JSON.stringify(clickNextActions).includes("agent browser"));
+
+			const textFillMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "fill", locator: "text", value: "Composer", text: "private smoke prompt" },
+			});
+			assert.equal(textFillMiss.isError, true);
+			assert.equal(textFillMiss.details?.failureCategory, "selector-not-found");
+			assert.match((textFillMiss.content[0] as { text: string }).text, /Rich input recovery:/);
+			assert.match((textFillMiss.content[0] as { text: string }).text, /@e11 textbox "Composer"/);
+			assert.doesNotMatch((textFillMiss.content[0] as { text: string }).text, /private smoke prompt/);
+			const textFillRecovery = textFillMiss.details?.richInputRecovery as { candidates?: Array<{ clickArgs?: string[]; focusArgs?: string[]; ref?: string; role?: string }> } | undefined;
+			assert.deepEqual(textFillRecovery?.candidates?.map((candidate) => ({ clickArgs: candidate.clickArgs, focusArgs: candidate.focusArgs, ref: candidate.ref, role: candidate.role })), [
+				{ clickArgs: ["click", "@e11"], focusArgs: ["focus", "@e11"], ref: "@e11", role: "textbox" },
+			]);
+			const textFillNextActions = textFillMiss.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; reason?: string; safety?: string }> | undefined;
+			assert.deepEqual(textFillNextActions?.map((action) => action.id), ["refresh-interactive-refs", "focus-current-editable-ref", "click-current-editable-ref"]);
+			for (const action of textFillNextActions ?? []) {
+				assert.ok(!action.params?.args?.includes("private smoke prompt"));
+				assert.ok(!action.params?.args?.includes("Enter"));
+				assert.doesNotMatch(action.id ?? "", /submit/i);
+				assert.doesNotMatch(action.reason ?? "", /private smoke prompt/);
+			}
 
 			const selectMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "select", selector: "find", values: ["role", "button", "click", "--name", "Search Wikipedia"] },
@@ -4000,9 +4467,73 @@ if (args.includes("click")) {
 			assert.equal(click.isError, false, JSON.stringify(click));
 			assert.notEqual(click.details?.failureCategory, "stale-ref");
 			assert.deepEqual(click.details?.sessionTabTarget, appTarget);
+			assert.deepEqual((click.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+			assert.equal("order" in ((click.details?.refSnapshot as Record<string, unknown> | undefined) ?? {}), false);
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension restores empty successful batch snapshots as ref state", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-empty-ref-restore-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("click")) {
+	process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else {
+	process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const appTarget = { title: undefined, url: "https://empty.example/" };
+			const harness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "snapshot", "-i"],
+							command: "snapshot",
+							refSnapshotInvalidation: { reason: "no-active-page", summary: "The latest snapshot for this session reported No active page. Old page-scoped refs are invalid until snapshot -i succeeds." },
+							sessionName: "named",
+						},
+						isError: true,
+					}),
+					createToolBranchEntry({
+						details: {
+							args: ["batch"],
+							command: "batch",
+							data: [{ command: ["snapshot", "-i"], result: { origin: appTarget.url, refs: {}, snapshot: "" }, success: true }],
+							refSnapshot: { refIds: [], target: appTarget },
+							sessionName: "named",
+							sessionTabTarget: appTarget,
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "click", "@e1"] });
+			assert.equal(click.isError, true);
+			assert.equal(click.details?.failureCategory, "stale-ref");
+			assert.deepEqual(click.details?.refIds, ["e1"]);
+			assert.deepEqual((click.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, []);
+			assert.equal(click.details?.refSnapshotInvalidation, undefined);
+			assert.match((click.content[0] as { text: string }).text, /was not present in the latest snapshot/);
+
+			const invocations = await readInvocationLog(logPath).catch(() => []);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -4752,6 +5283,7 @@ if (args.includes("get") && args.includes("text")) {
 			assert.equal(result.isError, false);
 			assert.match((result.content[0] as { text: string }).text, /npm init playwright@latest/);
 			assert.match((result.content[0] as { text: string }).text, /Selector text visibility warning:/);
+			assert.match((result.content[0] as { text: string }).text, /Next action: use details\.nextActions inspect-visible-text-candidates before trusting this selector text\./);
 			assert.match((result.content[0] as { text: string }).text, /yarn create playwright/);
 			assert.doesNotMatch((result.content[0] as { text: string }).text, /visible-secret|page-secret/);
 			assert.deepEqual(result.details?.selectorTextVisibility, {
@@ -4783,6 +5315,8 @@ if (args.includes("get") && args.includes("text")) {
 			assert.match((batchResult.content[0] as { text: string }).text, /Selector text visibility warning:/);
 			assert.match((batchResult.content[0] as { text: string }).text, /Selector "\.language-bash" matched 2 elements; the first match is hidden/);
 			assert.match((batchResult.content[0] as { text: string }).text, /Selector "\.ambiguous-language-bash" matched 2 elements; get text reads the first upstream match/);
+			assert.match((batchResult.content[0] as { text: string }).text, /Next action: use details\.nextActions inspect-visible-text-candidates before trusting this selector text\./);
+			assert.match((batchResult.content[0] as { text: string }).text, /Next action: use details\.nextActions inspect-visible-text-candidates-2 before trusting this selector text\./);
 			assert.equal((batchResult.details?.selectorTextVisibility as { selector?: string } | undefined)?.selector, ".language-bash");
 			assert.deepEqual((batchResult.details?.selectorTextVisibilityAll as Array<{ selector?: string }> | undefined)?.map((entry) => entry.selector), [".language-bash", ".ambiguous-language-bash"]);
 			invocations = await readInvocationLog(logPath);
@@ -4944,8 +5478,11 @@ if (args.includes("tab") && args.includes("list")) {
 
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.failureCategory, "tab-drift");
-			const nextActions = result.details?.nextActions as Array<{ params?: { args: string[] } }> | undefined;
-			assert.deepEqual(nextActions?.map((action) => action.params?.args), [["tab", "list"], ["snapshot", "-i"]]);
+			const nextActions = result.details?.nextActions as Array<{ id: string; params?: { args: string[] } }> | undefined;
+			assert.deepEqual(nextActions?.map((action) => action.id), ["list-tabs-for-tab-drift-recovery"]);
+			assert.deepEqual(nextActions?.map((action) => action.params?.args), [
+				["--session", "named", "tab", "list"],
+			]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

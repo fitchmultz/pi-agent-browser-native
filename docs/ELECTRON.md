@@ -85,15 +85,32 @@ When the explicit goal is the user's signed-in local app state and the app is no
 open -a Slack --args --remote-debugging-port=9222 --remote-allow-origins='*'
 ```
 
-Then attach and clean up yourself:
+Then attach and choose a ready target before using refs:
 
 ```json
 { "args": ["connect", "9222"], "sessionMode": "fresh" }
+{ "args": ["tab", "list"] }
+{ "args": ["tab", "t2"] }
 { "args": ["snapshot", "-i"] }
 { "qa": { "attached": true, "expectedText": "Channels" } }
 ```
 
+A successful `connect` means the CDP endpoint accepted the session; it does **not** prove the app has an active rendered page yet. Prefer `details.nextActions` when present: `list-connected-session-tabs` inspects the attached session targets. After that read-only list, select or confirm a stable `t<N>` target and run `snapshot -i` explicitly before trusting refs. If the first `snapshot -i` says `No active page`, follow `list-tabs-after-no-active-page`. If it returns no useful refs without that error, manually run `tab list`, select a stable `t<N>` id for the app surface, then retry a condition wait or `snapshot -i` on that selected target.
+
 If the app is already running without a debug port, ask before relaunching it — relaunching may lose unsaved state and Electron's single-instance behavior will silently drop a second invocation's `--remote-debugging-port` flag.
+
+## Readiness and waits
+
+Use this ladder for desktop-host readiness instead of blind sleep loops:
+
+1. Prefer a real condition when one exists: `wait --text`, `wait --url`, `wait --fn`, `wait --load <state>`, or `wait --download`.
+2. After raw `connect`, inspect targets with `tab list`, select the stable `tab t<N>` app surface, then use a condition wait or `snapshot -i` on that selected surface.
+3. After wrapper-owned `electron.launch`, use `electron.probe` or `electron.status` when launch health, debug-port liveness, or target mismatch matters.
+4. Use `qa.attached` when the readiness check can be expressed as expected text or selector plus diagnostics against the current managed session.
+5. Use fixed waits only as a last resort, and keep each fixed wait below the wrapper IPC budget. `wait 30000` is intentionally blocked; use `25000` ms or less per call when a fixed wait is unavoidable.
+6. Treat a fixed-wait payload such as `"waited":"timeout"` as elapsed time, not proof that the host finished. Verify with an observed condition, fresh `snapshot -i`, or screenshot before continuing.
+
+This project is not adding a first-class host-idle primitive yet. Revisit that only if repeated desktop smokes show that condition waits, `qa.attached`, `electron.probe`, snapshots, and screenshots cannot cover the workflow.
 
 ## Action reference
 
@@ -179,8 +196,9 @@ Closes the tracked managed session, stops only the wrapper-tracked process, veri
 - manually launched apps
 - externally supplied debug ports
 - arbitrary Electron processes the wrapper did not start
+- explicit screenshots, downloads, PDFs, traces, HAR files, or recordings saved to caller-chosen paths
 
-For manual launches, close the app yourself and clean its profile/temp files with normal host tools.
+For manual launches, `close` only closes the browser/CDP session. Close the app yourself and clean its profile/temp files with normal host tools.
 
 On Pi session shutdown, active wrapper-owned Electron launches are best-effort cleaned. Stale restored records (PID gone, port dead) are **reported** instead of guessed at or killed.
 
@@ -309,7 +327,8 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 - Windows hosts report `platform: "unsupported"` from `electron.list`; always pass `executablePath` (or a resolvable `appPath`) for `launch`.
 
 ### Attach succeeds but `snapshot -i` returns no refs
-- Some Electron apps take a beat to render. The default `handoff: "snapshot"` already retries briefly; if it still reports no refs, run `snapshot -i` once more before treating the UI as blank.
+- Some Electron apps take a beat to render. The default `handoff: "snapshot"` already retries briefly; if it still reports no refs, run `tab list`, select the intended stable `t<N>` app tab, then run `snapshot -i` again.
+- For raw `connect`, do the same target check before assuming the signed-in app is ready; the attach can succeed before an active page is available.
 - For apps whose UI lives in a webview, switch `targetType` to `"webview"` or `"any"` so the wrapper attaches to the right CDP target.
 
 ### "I clicked, but nothing happened"
@@ -326,7 +345,7 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 - Expected when the app's source lives inside `app.asar`. The wrapper does not unpack bundles. Use `electron.probe` / `snapshot-electron-session` / `list-electron-tabs` next actions to inspect the live UI, or pull source separately into the Pi session cwd before re-running the lookup.
 
 ### Mismatch between `status` and the active session
-- `electron.status` may report a live wrapper launch while the managed session has drifted to `about:blank`. Follow `reattach-electron-launch`, then refresh refs with `snapshot-electron-session` before continuing.
+- `electron.status` may report a live wrapper launch while the managed session has drifted to `about:blank`. Follow `reattach-electron-launch`, then refresh refs before reusing old `@e…` handles. For non-wrapper tab drift where `details.nextActions` names `select-intended-tab-after-drift`, use that stable `t<N>` action plus `snapshot-after-tab-recovery` before continuing.
 
 ## Cleanup checklist
 

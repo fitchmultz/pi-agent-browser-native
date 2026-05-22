@@ -551,7 +551,7 @@ test("buildToolPresentation returns exact next actions for selector failures and
 		errorText: "agent-browser could not re-select the intended tab before running the command.",
 	});
 	assert.equal(tabDrift.failureCategory, "tab-drift");
-	assert.deepEqual(tabDrift.nextActions?.map((action) => action.params?.args), [["tab", "list"], ["snapshot", "-i"]]);
+	assert.deepEqual(tabDrift.nextActions?.map((action) => action.params?.args), [["tab", "list"]]);
 });
 
 test("buildToolPresentation does not append selector guidance to unrelated errors", async () => {
@@ -2210,6 +2210,246 @@ test("buildToolPresentation surfaces omitted high-value controls in compact snap
 		await rm(presentation.fullOutputPath, { force: true });
 	}
 });
+
+test("buildToolPresentation keeps dense desktop host high-value controls discoverable in compact snapshots", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 170 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e1") return [id, { name: "Desktop host", role: "main" }];
+			if (id === "e130") return [id, { name: "Search workspace", role: "searchbox" }];
+			if (id === "e131") return [id, { name: "Composer", role: "textbox" }];
+			if (id === "e132") return [id, { name: "Model picker", role: "combobox" }];
+			if (id === "e140") return [id, { name: "Canvas", role: "tab" }];
+			if (id === "e141") return [id, { name: "Agents", role: "tab" }];
+			if (id === "e142") return [id, { name: "Canvas surface", role: "button" }];
+			if (id === "e160") return [id, { name: "Send", role: "button" }];
+			if (id === "e161") return [id, { name: "Run task", role: "button" }];
+			if (id === "e162") return [id, { name: "Save", role: "button" }];
+			if (index + 1 >= 90 && index + 1 <= 119) return [id, { name: `Toolbar action ${index + 1}`, role: "button" }];
+			return [id, { name: `Dense host row ${index + 1}`, role: "generic" }];
+		}),
+	);
+	const snapshot = [
+		'- main "Desktop host" [ref=e1]',
+		...Array.from({ length: 88 }, (_, index) => `  - generic "Dense host row ${index + 2}" [ref=e${index + 2}]`),
+		...Array.from({ length: 30 }, (_, index) => `  - button "Toolbar action ${index + 90}" [ref=e${index + 90}]`),
+		'  - searchbox "Search workspace" [ref=e130]',
+		'  - textbox "Composer" [ref=e131] editable',
+		'  - combobox "Model picker" [ref=e132]',
+		'  - tablist "Host surfaces"',
+		'    - tab "Canvas" [ref=e140]',
+		'    - tab "Agents" [ref=e141]',
+		'    - button "Canvas surface" [ref=e142]',
+		'  - button "Send" [ref=e160]',
+		'  - button "Run task" [ref=e161]',
+		'  - button "Save" [ref=e162]',
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "app://desktop-host",
+				refs,
+				snapshot,
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Compact snapshot view/);
+	assert.match(text, /e130 searchbox "Search workspace"/);
+	assert.match(text, /e131 textbox "Composer"/);
+	assert.match(text, /e132 combobox "Model picker"/);
+	assert.match(text, /Omitted high-value controls:/);
+	assert.match(text, /e140 tab "Canvas"/);
+	assert.match(text, /e141 tab "Agents"/);
+	assert.match(text, /e142 button "Canvas surface"/);
+	assert.match(text, /e160 button "Send"/);
+	assert.match(text, /e161 button "Run task"/);
+	assert.match(text, /e162 button "Save"/);
+
+	const highValueControlRefIds = (presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds ?? [];
+	assert.ok(highValueControlRefIds.length <= 10);
+	for (const expectedRef of ["e140", "e141", "e142", "e160", "e161", "e162"]) {
+		assert.ok(highValueControlRefIds.includes(expectedRef), `${expectedRef} should remain surfaced in high-value refs`);
+	}
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
+test("buildToolPresentation round-robins omitted high-value control categories in compact snapshots", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 140 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e1") return [id, { name: "Settings", role: "main" }];
+			if (index + 1 >= 120 && index + 1 <= 129) return [id, { name: `Field ${index + 1}`, role: "textbox" }];
+			if (id === "e130") return [id, { name: "Enable sync", role: "checkbox" }];
+			if (id === "e131") return [id, { name: "Beta channel", role: "radio" }];
+			if (id === "e132") return [id, { name: "Workspace option", role: "option" }];
+			if (id === "e133") return [id, { name: "Archive project", role: "menuitem" }];
+			return [id, { name: `Result ${index + 1}`, role: "link" }];
+		}),
+	);
+	const snapshot = [
+		'- main "Settings" [ref=e1]',
+		...Array.from({ length: 118 }, (_, index) => `  - link "Result ${index + 2}" [ref=e${index + 2}]`),
+		...Array.from({ length: 10 }, (_, index) => `  - textbox "Field ${index + 120}" [ref=e${index + 120}]`),
+		'  - checkbox "Enable sync" [ref=e130]',
+		'  - radio "Beta channel" [ref=e131]',
+		'  - option "Workspace option" [ref=e132]',
+		'  - menuitem "Archive project" [ref=e133]',
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "app://settings",
+				refs,
+				snapshot,
+			},
+		},
+	});
+
+	const highValueControlRefIds = (presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds ?? [];
+	assert.ok(highValueControlRefIds.length <= 10);
+	for (const expectedRef of ["e130", "e131", "e132", "e133"]) {
+		assert.ok(highValueControlRefIds.includes(expectedRef), `${expectedRef} should not be starved by editable controls`);
+	}
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
+test("buildToolPresentation reserves compact snapshot slots for lower high-value categories on saturated desktop screens", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 180 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e1") return [id, { name: "Desktop", role: "main" }];
+			if (["e160", "e161", "e162", "e163"].includes(id)) return [id, { name: `Editor ${id.slice(1)}`, role: "textbox" }];
+			if (id === "e164") return [id, { name: "Canvas", role: "tab" }];
+			if (id === "e165") return [id, { name: "Agents", role: "tab" }];
+			if (id === "e166") return [id, { name: "Canvas surface", role: "button" }];
+			if (id === "e167") return [id, { name: "Send", role: "button" }];
+			if (id === "e168") return [id, { name: "Run", role: "button" }];
+			if (id === "e169") return [id, { name: "Save", role: "button" }];
+			if (id === "e170") return [id, { name: "Enable sync", role: "checkbox" }];
+			if (id === "e171") return [id, { name: "Beta channel", role: "radio" }];
+			if (id === "e172") return [id, { name: "Workspace option", role: "option" }];
+			if (id === "e173") return [id, { name: "Archive project", role: "menuitem" }];
+			return [id, { name: `Dense row ${index + 1}`, role: "generic" }];
+		}),
+	);
+	const snapshot = [
+		'- main "Desktop" [ref=e1]',
+		...Array.from({ length: 158 }, (_, index) => `  - generic "Dense row ${index + 2}" [ref=e${index + 2}]`),
+		...Array.from({ length: 4 }, (_, index) => `  - textbox "Editor ${index + 160}" [ref=e${index + 160}]`),
+		'  - tab "Canvas" [ref=e164]',
+		'  - tab "Agents" [ref=e165]',
+		'  - button "Canvas surface" [ref=e166]',
+		'  - button "Send" [ref=e167]',
+		'  - button "Run" [ref=e168]',
+		'  - button "Save" [ref=e169]',
+		'  - checkbox "Enable sync" [ref=e170]',
+		'  - radio "Beta channel" [ref=e171]',
+		'  - option "Workspace option" [ref=e172]',
+		'  - menuitem "Archive project" [ref=e173]',
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { origin: "app://desktop", refs, snapshot } },
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /e160 textbox "Editor 160"/);
+	assert.match(text, /e164 tab "Canvas"/);
+	assert.match(text, /e167 button "Send"/);
+	const highValueControlRefIds = (presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds ?? [];
+	assert.ok(highValueControlRefIds.length <= 10);
+	for (const expectedRef of ["e170", "e171", "e172", "e173"]) {
+		assert.ok(highValueControlRefIds.includes(expectedRef), `${expectedRef} should be reserved in saturated compact high-value refs`);
+	}
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
+test("buildToolPresentation does not promote false editable markers in compact snapshots", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 112 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e1") return [id, { name: "Host", role: "main" }];
+			if (id === "e100") return [id, { contenteditable: false, name: "Read-only composer", role: "generic" }];
+			if (id === "e101") return [id, { editable: false, name: "Disabled editor", role: "unknown" }];
+			if (id === "e102") return [id, { name: "Composer", role: "generic" }];
+			if (id === "e103") return [id, { name: "Editable settings", role: "generic" }];
+			if (id === "e104") return [id, { name: "contenteditable demo", role: "unknown" }];
+			if (id === "e105") return [id, { editable: false, name: "Read-only search", role: "searchbox" }];
+			if (id === "e106") return [id, { contenteditable: false, name: "Read-only textbox", role: "textbox" }];
+			if (id === "e107") return [id, { contentEditable: false, name: "Read-only combo", role: "combobox" }];
+			return [id, { name: `Result ${index + 1}`, role: "link" }];
+		}),
+	);
+	const snapshot = [
+		'- main "Host" [ref=e1]',
+		...Array.from({ length: 98 }, (_, index) => `  - link "Result ${index + 2}" [ref=e${index + 2}]`),
+		'  - generic "Read-only composer" [ref=e100] contenteditable=false',
+		'  - generic "Disabled editor" [ref=e101] editable=false',
+		'  - generic "Composer" [ref=e102] contenteditable=true',
+		'  - generic "Editable settings" [ref=e103]',
+		'  - unknown "contenteditable demo" [ref=e104]',
+		'  - searchbox "Read-only search" [ref=e105] editable=false',
+		'  - textbox "Read-only textbox" [ref=e106] contenteditable=false',
+		'  - combobox "Read-only combo" [ref=e107] contenteditable=false',
+		...Array.from({ length: 5 }, (_, index) => `  - link "Result ${index + 108}" [ref=e${index + 108}]`),
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				origin: "app://desktop-host",
+				refs,
+				snapshot,
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Compact snapshot view/);
+	assert.match(text, /e102 textbox "Composer"/);
+	assert.doesNotMatch(text, /e100 textbox "Read-only composer"/);
+	assert.doesNotMatch(text, /e101 textbox "Disabled editor"/);
+	assert.doesNotMatch(text, /e103 textbox "Editable settings"/);
+	assert.doesNotMatch(text, /e104 textbox "contenteditable demo"/);
+	const data = presentation.data as { highValueControlRefIds?: string[]; roleCounts?: Record<string, number> };
+	assert.equal(data.roleCounts?.textbox, 2);
+	assert.equal(data.highValueControlRefIds?.includes("e100"), false);
+	assert.equal(data.highValueControlRefIds?.includes("e101"), false);
+	assert.equal(data.highValueControlRefIds?.includes("e103"), false);
+	assert.equal(data.highValueControlRefIds?.includes("e104"), false);
+	assert.equal(data.highValueControlRefIds?.includes("e105"), false);
+	assert.equal(data.highValueControlRefIds?.includes("e106"), false);
+	assert.equal(data.highValueControlRefIds?.includes("e107"), false);
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
 
 test("buildToolPresentation falls back to an outline when the raw snapshot format is unfamiliar", async () => {
 	const refs = Object.fromEntries(

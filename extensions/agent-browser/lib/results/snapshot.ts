@@ -21,6 +21,7 @@ import {
 	compareRefIds,
 	countLines,
 	formatSessionArtifactRetentionSummary,
+	getEditableRefEvidence,
 	mergeSessionArtifactManifest,
 	normalizeWhitespace,
 	truncateText,
@@ -35,6 +36,9 @@ const SNAPSHOT_MAX_ADDITIONAL_SECTIONS = 2;
 const SNAPSHOT_KEY_REF_MAX_LINES = 8;
 const SNAPSHOT_OTHER_REF_MAX_LINES = 4;
 const SNAPSHOT_HIGH_VALUE_REF_MAX_LINES = 10;
+const SNAPSHOT_HIGH_VALUE_EDITABLE_REF_TARGET_LINES = 4;
+const SNAPSHOT_HIGH_VALUE_SURFACE_REF_TARGET_LINES = 3;
+const SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_TARGET_LINES = 3;
 const SNAPSHOT_ROLE_COUNT_MAX_ENTRIES = 4;
 const SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES = 12;
 const SNAPSHOT_NAME_MAX_CHARS = 96;
@@ -128,10 +132,20 @@ const SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY: Record<string, number> = {
 	option: 7,
 	menuitem: 8,
 };
+const SNAPSHOT_SURFACE_CONTROL_NAME_PATTERNS = [
+	/\b(?:agents?|browser|canvas|chat|editor|panel|pane|preview|surface|tab|terminal|thread|view|window|workspace)\b/i,
+];
+const SNAPSHOT_PRIMARY_ACTION_BUTTON_NAME_PATTERNS = [
+	/^(?:add|apply|ask|attach|choose|confirm|connect|continue|create|deploy|done|download|go|insert|launch|log in|new|next|ok|open|publish|refresh|retry|run|save|search|select|send|sign in|sign up|start|submit|upload)$/i,
+	/^(?:add|apply|ask|confirm|connect|continue|create|launch|new|open|refresh|retry|run|save|search|send|start|submit)\b/i,
+];
 
 interface SnapshotRefEntry {
 	id: string;
+	isEditable?: boolean;
+	lineIndex?: number;
 	name: string;
+	refData?: Record<string, unknown>;
 	role: string;
 }
 
@@ -188,7 +202,8 @@ function getSnapshotRefEntries(data: Record<string, unknown>): SnapshotRefEntry[
 			}
 			const name = typeof value.name === "string" ? normalizeWhitespace(value.name) : "";
 			const role = typeof value.role === "string" && value.role.length > 0 ? value.role : "unknown";
-			return { id, name, role } satisfies SnapshotRefEntry;
+			const isEditable = getEditableRefEvidence({ ref: value });
+			return { id, isEditable, name, refData: value, role } satisfies SnapshotRefEntry;
 		})
 		.sort((a, b) => compareRefIds(a.id, b.id));
 }
@@ -452,6 +467,37 @@ function buildRefLineOrderMap(snapshotLines: SnapshotLine[]): Map<string, number
 	return map;
 }
 
+function isEditableSnapshotLine(line: SnapshotLine): boolean | undefined {
+	const editableEvidence = getEditableRefEvidence({ text: line.raw });
+	if (editableEvidence !== undefined) return editableEvidence;
+	return line.role === "searchbox" || line.role === "textbox" || line.role === "combobox" ? true : undefined;
+}
+
+function enrichSnapshotRefEntries(refEntries: SnapshotRefEntry[], snapshotLines: SnapshotLine[]): SnapshotRefEntry[] {
+	const lineByRef = new Map<string, SnapshotLine>();
+	for (const line of snapshotLines) {
+		if (!line.ref || lineByRef.has(line.ref)) continue;
+		lineByRef.set(line.ref, line);
+	}
+
+	return refEntries.map((entry) => {
+		const line = lineByRef.get(entry.id);
+		const lineRole = line && line.role !== "unknown" ? line.role : undefined;
+		const editableEvidence = getEditableRefEvidence({ ref: entry.refData, text: line?.raw });
+		const hasEditableRole = line ? isEditableSnapshotLine(line) === true && !["unknown", "generic"].includes(line.role) : false;
+		const isEditable = editableEvidence === true || (editableEvidence !== false && hasEditableRole);
+		const roleFromRefOrLine = entry.role !== "unknown" && entry.role !== "generic" ? entry.role : lineRole ?? entry.role;
+		const role = isEditable && (roleFromRefOrLine === "unknown" || roleFromRefOrLine === "generic") ? "textbox" : roleFromRefOrLine;
+		return {
+			...entry,
+			isEditable,
+			lineIndex: line?.index,
+			name: entry.name.length > 0 ? entry.name : (line?.name ?? ""),
+			role,
+		} satisfies SnapshotRefEntry;
+	});
+}
+
 function rankRefEntries(
 	refEntries: SnapshotRefEntry[],
 	previewRefIds: Set<string>,
@@ -483,23 +529,135 @@ function formatCompactRef(entry: SnapshotRefEntry): string {
 	return `- ${entry.id} ${entry.role}${suffix}`;
 }
 
+function getHighValueControlRole(entry: SnapshotRefEntry): string {
+	return entry.isEditable === true && (entry.role === "unknown" || entry.role === "generic") ? "textbox" : entry.role;
+}
+
+function isEditableControlRef(entry: SnapshotRefEntry): boolean {
+	if (entry.isEditable === false) return false;
+	const role = getHighValueControlRole(entry);
+	return entry.isEditable === true || role === "searchbox" || role === "textbox" || role === "combobox";
+}
+
+function isNamedSurfaceControlRef(entry: SnapshotRefEntry): boolean {
+	if (entry.name.length === 0) return false;
+	const role = getHighValueControlRole(entry);
+	if (role === "tab") return true;
+	if (role !== "button" && role !== "menuitem" && role !== "option") return false;
+	return SNAPSHOT_SURFACE_CONTROL_NAME_PATTERNS.some((pattern) => pattern.test(entry.name));
+}
+
+function isPrimaryActionButtonRef(entry: SnapshotRefEntry): boolean {
+	return (
+		getHighValueControlRole(entry) === "button" &&
+		entry.name.length > 0 &&
+		SNAPSHOT_PRIMARY_ACTION_BUTTON_NAME_PATTERNS.some((pattern) => pattern.test(entry.name))
+	);
+}
+
 function isHighValueControlRef(entry: SnapshotRefEntry): boolean {
-	if (!SNAPSHOT_HIGH_VALUE_CONTROL_ROLES.has(entry.role)) return false;
+	const role = getHighValueControlRole(entry);
+	if (!SNAPSHOT_HIGH_VALUE_CONTROL_ROLES.has(role)) return false;
+	if (entry.isEditable === false && (role === "searchbox" || role === "textbox" || role === "combobox")) return false;
 	if (isNoiseName(entry.name) || isChromeSectionName(entry.name)) return false;
-	return entry.name.length > 0 || entry.role === "searchbox" || entry.role === "textbox" || entry.role === "combobox";
+	return entry.name.length > 0 || isEditableControlRef(entry);
+}
+
+function getHighValueControlCategoryPriority(entry: SnapshotRefEntry): number {
+	if (isEditableControlRef(entry)) return 0;
+	if (isNamedSurfaceControlRef(entry)) return 1;
+	if (isPrimaryActionButtonRef(entry)) return 2;
+	return 3;
 }
 
 function rankHighValueControlRefs(left: SnapshotRefEntry, right: SnapshotRefEntry): number {
+	const categoryPriority = getHighValueControlCategoryPriority(left) - getHighValueControlCategoryPriority(right);
+	if (categoryPriority !== 0) return categoryPriority;
+
 	const rolePriority =
-		(SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[left.role] ?? 50) -
-		(SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[right.role] ?? 50);
+		(SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[getHighValueControlRole(left)] ?? 50) -
+		(SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[getHighValueControlRole(right)] ?? 50);
 	if (rolePriority !== 0) return rolePriority;
 
 	const leftHasName = left.name.length > 0 ? 0 : 1;
 	const rightHasName = right.name.length > 0 ? 0 : 1;
 	if (leftHasName !== rightHasName) return leftHasName - rightHasName;
 
+	const leftLineIndex = left.lineIndex ?? Number.MAX_SAFE_INTEGER;
+	const rightLineIndex = right.lineIndex ?? Number.MAX_SAFE_INTEGER;
+	if (leftLineIndex !== rightLineIndex) return leftLineIndex - rightLineIndex;
+
 	return compareRefIds(left.id, right.id);
+}
+
+function getHighValueControlDiversityBucketKey(entry: SnapshotRefEntry): string {
+	if (isEditableControlRef(entry)) return "0:editable";
+	if (isNamedSurfaceControlRef(entry)) return "1:named-surface";
+	if (isPrimaryActionButtonRef(entry)) return "2:primary-action";
+	return `3:${getHighValueControlRole(entry)}`;
+}
+
+function selectHighValueControlEntries(entries: SnapshotRefEntry[], limit: number): SnapshotRefEntry[] {
+	const rankedEntries = [...entries].sort(rankHighValueControlRefs);
+	const selectedEntries: SnapshotRefEntry[] = [];
+	const selectedIds = new Set<string>();
+	const takeEntry = (entry: SnapshotRefEntry): void => {
+		selectedEntries.push(entry);
+		selectedIds.add(entry.id);
+	};
+	const takeMatchingEntries = (predicate: (entry: SnapshotRefEntry) => boolean, maxCount: number): void => {
+		let taken = selectedEntries.filter(predicate).length;
+		for (const entry of rankedEntries) {
+			if (selectedEntries.length >= limit || taken >= maxCount) break;
+			if (selectedIds.has(entry.id) || !predicate(entry)) continue;
+			takeEntry(entry);
+			taken += 1;
+		}
+	};
+
+	const diversityBuckets = new Map<string, SnapshotRefEntry>();
+	for (const entry of rankedEntries) {
+		const bucketKey = getHighValueControlDiversityBucketKey(entry);
+		if (!diversityBuckets.has(bucketKey)) diversityBuckets.set(bucketKey, entry);
+	}
+	for (const entry of diversityBuckets.values()) {
+		if (selectedEntries.length >= limit) break;
+		takeEntry(entry);
+	}
+
+	takeMatchingEntries(isEditableControlRef, SNAPSHOT_HIGH_VALUE_EDITABLE_REF_TARGET_LINES);
+	takeMatchingEntries(isNamedSurfaceControlRef, SNAPSHOT_HIGH_VALUE_SURFACE_REF_TARGET_LINES);
+	takeMatchingEntries(isPrimaryActionButtonRef, SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_TARGET_LINES);
+	const finalBuckets = new Map<string, SnapshotRefEntry[]>();
+	for (const entry of rankedEntries) {
+		if (selectedIds.has(entry.id)) continue;
+		const bucketKey = `${getHighValueControlCategoryPriority(entry)}:${getHighValueControlRole(entry)}`;
+		const bucket = finalBuckets.get(bucketKey);
+		if (bucket) {
+			bucket.push(entry);
+		} else {
+			finalBuckets.set(bucketKey, [entry]);
+		}
+	}
+	const roundRobinBuckets = [...finalBuckets.entries()]
+		.sort(([leftKey], [rightKey]) => {
+			const [leftCategory, leftRole = ""] = leftKey.split(":");
+			const [rightCategory, rightRole = ""] = rightKey.split(":");
+			const categoryPriority = Number(leftCategory) - Number(rightCategory);
+			if (categoryPriority !== 0) return categoryPriority;
+			return (SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[leftRole] ?? 50) - (SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[rightRole] ?? 50);
+		})
+		.map(([, entries]) => entries);
+	let bucketIndex = 0;
+	while (selectedEntries.length < limit && roundRobinBuckets.some((bucket) => bucket.length > 0)) {
+		const bucket = roundRobinBuckets[bucketIndex % roundRobinBuckets.length];
+		const entry = bucket.shift();
+		if (entry) {
+			takeEntry(entry);
+		}
+		bucketIndex += 1;
+	}
+	return selectedEntries;
 }
 
 function shouldCompactSnapshot(rawText: string, data: Record<string, unknown>): boolean {
@@ -610,11 +768,11 @@ export async function buildSnapshotPresentation(
 		spillErrorText = error instanceof Error ? error.message : String(error);
 	}
 
-	const refEntries = getSnapshotRefEntries(data);
-	const roleCounts = getSnapshotRoleCounts(refEntries);
-	const roleCountsText = formatRoleCounts(roleCounts);
 	const snapshot = getSnapshotText(data) ?? "(no interactive elements)";
 	const snapshotLines = parseSnapshotLines(snapshot);
+	const refEntries = enrichSnapshotRefEntries(getSnapshotRefEntries(data), snapshotLines);
+	const roleCounts = getSnapshotRoleCounts(refEntries);
+	const roleCountsText = formatRoleCounts(roleCounts);
 	const useStructuredPreview = canUseStructuredSnapshotPreview(snapshotLines, refEntries);
 	const snapshotSegments = useStructuredPreview ? buildSnapshotSegments(snapshotLines) : [];
 	const primarySegment = useStructuredPreview ? choosePrimarySegment(snapshotSegments) : undefined;
@@ -659,7 +817,7 @@ export async function buildSnapshotPresentation(
 	const omittedHighValueControlEntries = visibleRankedRefEntries
 		.filter((entry) => !displayedRefIdSet.has(entry.id) && isHighValueControlRef(entry))
 		.sort(rankHighValueControlRefs);
-	const visibleHighValueControlEntries = omittedHighValueControlEntries.slice(0, SNAPSHOT_HIGH_VALUE_REF_MAX_LINES);
+	const visibleHighValueControlEntries = selectHighValueControlEntries(omittedHighValueControlEntries, SNAPSHOT_HIGH_VALUE_REF_MAX_LINES);
 	const omittedHighValueControls = Math.max(0, omittedHighValueControlEntries.length - visibleHighValueControlEntries.length);
 	const omittedNonHighlightedRefs = Math.max(
 		0,

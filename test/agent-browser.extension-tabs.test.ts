@@ -521,6 +521,14 @@ if (args.includes("batch")) {
 				targetTitle: "Example Domain",
 				targetUrl: "https://example.com/",
 			});
+			const tabRecoveryActions = (clickedSelector.details?.nextActions as Array<{ id: string; params?: { args?: string[] } }> | undefined)
+				?.filter((action) => ["list-tabs-for-tab-drift-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"].includes(action.id));
+			assert.deepEqual(tabRecoveryActions?.map((action) => action.id), ["list-tabs-for-tab-drift-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"]);
+			assert.deepEqual(tabRecoveryActions?.map((action) => action.params?.args), [
+				["--session", "named", "tab", "list"],
+				["--session", "named", "tab", "t1"],
+				["--session", "named", "snapshot", "-i"],
+			]);
 			assert.match((clickedSelector.content[0] as { text: string }).text, /Current page:/);
 			assert.match((clickedSelector.content[0] as { text: string }).text, /Example Domain/);
 
@@ -637,6 +645,14 @@ if (args.includes("batch")) {
 				targetTitle: "Example Domain",
 				targetUrl: "https://example.com/",
 			});
+			const aboutBlankRecoveryActions = (result.details?.nextActions as Array<{ id: string; params?: { args?: string[] } }> | undefined)
+				?.filter((action) => ["list-tabs-for-about-blank-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"].includes(action.id));
+			assert.deepEqual(aboutBlankRecoveryActions?.map((action) => action.id), ["list-tabs-for-about-blank-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"]);
+			assert.deepEqual(aboutBlankRecoveryActions?.map((action) => action.params?.args), [
+				["--session", "named", "tab", "list"],
+				["--session", "named", "tab", "t1"],
+				["--session", "named", "snapshot", "-i"],
+			]);
 			assert.deepEqual(result.details?.sessionTabTarget, {
 				title: "Example Domain",
 				url: "https://example.com/",
@@ -659,21 +675,47 @@ if (args.includes("batch")) {
 	}
 });
 
-test("agentBrowserExtension warns and preserves the prior target when about:blank has no recoverable tab", { concurrency: false }, async () => {
+test("agentBrowserExtension records about:blank and blocks stale refs when about:blank has no recoverable tab", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-about-blank-missing-"));
 	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "tab-state.json");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-if (args.includes("tab") && args.includes("list")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { tabId: "blank", title: "", url: "about:blank", active: true }
-  ] } }));
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const exampleSite = { title: "Example Domain", url: "https://example.com/" };
+let state = { targetGone: false };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+const save = () => fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  const results = steps.map((step) => {
+    const [command, value] = step;
+    if (command === "tab") return { command: step, success: true, result: { tabId: value, ...exampleSite } };
+    if (command === "click") {
+      state.targetGone = true;
+      save();
+      return { command: step, success: true, result: { clicked: value } };
+    }
+    if (command === "eval") return { command: step, success: true, result: { title: "", url: "about:blank" } };
+    return { command: step, success: true, result: {} };
+  });
+  save();
+  process.stdout.write(JSON.stringify(results));
+} else if (args.includes("tab") && args.includes("list")) {
+  const tabs = state.targetGone
+    ? [{ tabId: "blank", title: "", url: "about:blank", active: true }]
+    : [
+        { tabId: "blank", title: "", url: "about:blank", active: true },
+        { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: false }
+      ];
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs } }));
 } else {
-  process.stdout.write(JSON.stringify({ success: true, data: { origin: "about:blank", snapshot: "Origin: about:blank" } }));
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "", url: "about:blank" } }));
 }`,
 	);
 
@@ -690,27 +732,71 @@ if (args.includes("tab") && args.includes("list")) {
 						},
 						isError: false,
 					}),
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "snapshot", "-i"],
+							command: "snapshot",
+							refSnapshot: {
+								refIds: ["e9"],
+								target: { title: "Example Domain", url: "https://example.com/" },
+							},
+							sessionName: "named",
+							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+						},
+						isError: false,
+					}),
 				],
 				cwd: tempDir,
 			});
 			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
 
 			const result = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
-				args: ["--session", "named", "snapshot", "-i"],
+				args: ["--session", "named", "click", "@e9"],
 			});
 			assert.equal(result.isError, false, JSON.stringify(result));
 			assert.match((result.content[0] as { text: string }).text, /No matching tab could be re-selected/);
 			assert.match((result.content[0] as { text: string }).text, /sessionMode=fresh/);
 			assert.equal((result.details?.aboutBlankSessionMismatch as { recoveryApplied?: boolean } | undefined)?.recoveryApplied, false);
-			assert.equal(result.details?.sessionTabCorrection, undefined);
+			assert.deepEqual(result.details?.sessionTabCorrection, {
+				selectedTab: "t1",
+				selectionKind: "tabId",
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			});
 			assert.deepEqual(result.details?.sessionTabTarget, {
+				title: undefined,
+				url: "about:blank",
+			});
+			const nextActions = result.details?.nextActions as Array<{ id: string; params?: { args?: string[]; stdin?: string } }> | undefined;
+			const recoveryActions = nextActions
+				?.filter((action) => ["list-tabs-for-about-blank-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"].includes(action.id));
+			assert.deepEqual(recoveryActions?.map((action) => action.id), ["list-tabs-for-about-blank-recovery"]);
+			assert.deepEqual(recoveryActions?.[0]?.params?.args, ["--session", "named", "tab", "list"]);
+			assert.equal(nextActions?.some((action) => action.id === "inspect-after-mutation" || (action.params?.args?.at(-2) === "snapshot" && action.params?.stdin === undefined)), false);
+			const pageChangeSummary = result.details?.pageChangeSummary as { nextActionIds?: string[] } | undefined;
+			assert.equal(pageChangeSummary?.nextActionIds, undefined);
+
+			const staleRefRetry = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", "named", "click", "@e9"],
+			});
+			assert.equal(staleRefRetry.isError, true, JSON.stringify(staleRefRetry));
+			assert.equal(staleRefRetry.details?.failureCategory, "stale-ref");
+			assert.match((staleRefRetry.content[0] as { text: string }).text, /current session target is about:blank/);
+			assert.deepEqual((staleRefRetry.details?.refSnapshot as { target?: unknown } | undefined)?.target, {
 				title: "Example Domain",
 				url: "https://example.com/",
 			});
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.length, 3);
-			assert.deepEqual(invocations.at(-1)?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
+				["tab", "t1"],
+				["click", "@e9"],
+				["eval", "({ title: document.title, url: location.href })"],
+			]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -763,6 +849,8 @@ if (args.includes("tab") && args.includes("list")) {
 			assert.equal(result.details?.sessionTabCorrection, undefined);
 			assert.deepEqual(result.details?.sessionTabTarget, { title: undefined, url: "about:blank" });
 			assert.doesNotMatch((result.content[0] as { text: string }).text, /^Warning:/);
+			const explicitAboutBlankActionIds = ((result.details?.nextActions as Array<{ id: string }> | undefined) ?? []).map((action) => action.id);
+			assert.equal(explicitAboutBlankActionIds.some((id) => ["list-tabs-for-about-blank-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"].includes(id)), false);
 
 			const snapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
 				args: ["--session", "named", "snapshot", "-i"],
@@ -772,6 +860,8 @@ if (args.includes("tab") && args.includes("list")) {
 			assert.equal(snapshot.details?.sessionTabCorrection, undefined);
 			assert.deepEqual(snapshot.details?.sessionTabTarget, { title: undefined, url: "about:blank" });
 			assert.doesNotMatch((snapshot.content[0] as { text: string }).text, /^Warning:/);
+			const snapshotActionIds = ((snapshot.details?.nextActions as Array<{ id: string }> | undefined) ?? []).map((action) => action.id);
+			assert.equal(snapshotActionIds.some((id) => ["list-tabs-for-about-blank-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"].includes(id)), false);
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "open", "about:blank"]);
@@ -972,4 +1062,3 @@ if (args.includes("tab") && args.includes("list")) {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-
