@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `npm run typecheck` as a thin alias for the default gate’s `tsc --noEmit` step (`scripts/project.mjs` `verify typecheck`), for fast iteration without docs drift checks, unit tests, or live upstream command-reference sampling.
+
+### Changed
+
+- Real Pi transcripts now treat wrapper-classified failures as tool errors: a `tool_result` hook (`buildAgentBrowserToolResultPatch` in `extensions/agent-browser/index.ts`) sets `isError: true` when `details.resultCategory` is `failure` even if `execute` returned successfully (for example `qa` preset reclassification), and appends a model-visible `Result category: failure; …; Pi tool isError: true.` line—see [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
+- Desktop and attach workflows: documented readiness ladders (condition waits, `tab list` → `tab t<N>` → `snapshot -i`, `electron.probe` / `qa.attached`) instead of blind sleeps; clarified that raw `connect` success only means the CDP endpoint accepted the session, and that `close` does not quit manually launched apps or remove explicit artifacts.
+- Page-scoped refs: when `snapshot -i` reports `No active page`, prior session refs are cleared and `details.refSnapshotInvalidation` records `reason: "no-active-page"` until a successful snapshot restores refs; compact snapshots’ `Omitted high-value controls` heuristics favor editables, named tab/surface controls, and primary actions on dense desktop-host UIs.
+- Semantic `fill` recovery on host-controlled rich inputs: `details.richInputRecovery`, visible `Rich input recovery`, and bounded `focus-current-editable-ref*` / `click-current-editable-ref*` next actions (no embedded fill text, no auto-submit); click misses still get bounded role/name `find` candidates where applicable.
+- `get text` selector-visibility warnings now name the matching `details.nextActions` id; `about:blank` drift recovery records the observed blank target when re-selecting the prior tab fails instead of implying the old page stayed active.
+
 ## 0.2.32 - 2026-05-21
 
 ### Added

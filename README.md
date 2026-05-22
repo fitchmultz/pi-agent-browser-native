@@ -403,7 +403,13 @@ The local verification gate is:
 npm run verify
 ```
 
-It runs:
+For a fast TypeScript-only iteration loop (same `tsc --noEmit` as the default gate, without docs drift checks, unit tests, or live upstream command-reference sampling):
+
+```bash
+npm run typecheck
+```
+
+The full `npm run verify` gate runs:
 
 - generated playbook/documentation drift checks
 - `tsc --noEmit`
