@@ -36,9 +36,9 @@ const SNAPSHOT_MAX_ADDITIONAL_SECTIONS = 2;
 const SNAPSHOT_KEY_REF_MAX_LINES = 8;
 const SNAPSHOT_OTHER_REF_MAX_LINES = 4;
 const SNAPSHOT_HIGH_VALUE_REF_MAX_LINES = 10;
-const SNAPSHOT_HIGH_VALUE_EDITABLE_REF_TARGET_LINES = 4;
-const SNAPSHOT_HIGH_VALUE_SURFACE_REF_TARGET_LINES = 3;
-const SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_TARGET_LINES = 3;
+const SNAPSHOT_HIGH_VALUE_EDITABLE_REF_FILL_TARGET_LINES = 4;
+const SNAPSHOT_HIGH_VALUE_SURFACE_REF_FILL_TARGET_LINES = 3;
+const SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_FILL_TARGET_LINES = 3;
 const SNAPSHOT_ROLE_COUNT_MAX_ENTRIES = 4;
 const SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES = 12;
 const SNAPSHOT_NAME_MAX_CHARS = 96;
@@ -625,9 +625,10 @@ function selectHighValueControlEntries(entries: SnapshotRefEntry[], limit: numbe
 		takeEntry(entry);
 	}
 
-	takeMatchingEntries(isEditableControlRef, SNAPSHOT_HIGH_VALUE_EDITABLE_REF_TARGET_LINES);
-	takeMatchingEntries(isNamedSurfaceControlRef, SNAPSHOT_HIGH_VALUE_SURFACE_REF_TARGET_LINES);
-	takeMatchingEntries(isPrimaryActionButtonRef, SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_TARGET_LINES);
+	// Diversity runs first so scarce lower-role controls stay visible; fill targets only top up dominant classes when capacity remains.
+	takeMatchingEntries(isEditableControlRef, SNAPSHOT_HIGH_VALUE_EDITABLE_REF_FILL_TARGET_LINES);
+	takeMatchingEntries(isNamedSurfaceControlRef, SNAPSHOT_HIGH_VALUE_SURFACE_REF_FILL_TARGET_LINES);
+	takeMatchingEntries(isPrimaryActionButtonRef, SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_FILL_TARGET_LINES);
 	const finalBuckets = new Map<string, SnapshotRefEntry[]>();
 	for (const entry of rankedEntries) {
 		if (selectedIds.has(entry.id)) continue;

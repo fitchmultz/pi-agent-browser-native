@@ -3381,6 +3381,37 @@ process.stdin.on("end", () => {
 			);
 			assert.equal(realPiFailurePatch?.isError, true);
 			assert.match(realPiFailurePatch?.content?.[0]?.text ?? "", /Result category: failure; failureCategory: qa-failure; Pi tool isError: true\./);
+
+			const jsonFailureText = JSON.stringify({ error: "boom", success: false }, null, 2);
+			const [jsonFailurePatch] = await runExtensionEventResults<{ content?: Array<{ text?: string; type: string }>; isError?: boolean }>(
+				harness.handlers,
+				"tool_result",
+				{
+					content: [{ type: "text", text: jsonFailureText }],
+					details: { args: ["--json", "get", "url"], failureCategory: "upstream-error", resultCategory: "failure" },
+					input: { args: ["--json", "get", "url"] },
+					isError: false,
+					toolName: "agent_browser",
+				},
+			);
+			assert.equal(jsonFailurePatch?.isError, true);
+			assert.equal(jsonFailurePatch?.content, undefined);
+			assert.deepEqual(JSON.parse(jsonFailureText), { error: "boom", success: false });
+
+			const [proseJsonArgsFailurePatch] = await runExtensionEventResults<{ content?: Array<{ text?: string; type: string }>; isError?: boolean }>(
+				harness.handlers,
+				"tool_result",
+				{
+					content: [{ type: "text", text: "Wrapper validation failed before upstream JSON output was available." }],
+					details: { args: ["--json", "get", "url"], failureCategory: "validation-error", resultCategory: "failure" },
+					input: { args: ["--json", "get", "url"] },
+					isError: false,
+					toolName: "agent_browser",
+				},
+			);
+			assert.equal(proseJsonArgsFailurePatch?.isError, true);
+			assert.match(proseJsonArgsFailurePatch?.content?.[0]?.text ?? "", /Result category: failure; failureCategory: validation-error; Pi tool isError: true\./);
+
 			const managedSessionOutcome = result.details?.managedSessionOutcome as { sessionMode?: string; status?: string; succeeded?: boolean } | undefined;
 			assert.equal(managedSessionOutcome?.sessionMode, "fresh");
 			assert.equal(managedSessionOutcome?.status, "replaced");
@@ -4539,6 +4570,68 @@ if (args.includes("click")) {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
+
+test("agentBrowserExtension treats successful snapshots without refs as empty ref state", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-missing-refs-snapshot-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "snapshot-count.txt");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+	let count = 0;
+	try { count = Number(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+	count += 1;
+	fs.writeFileSync(${JSON.stringify(statePath)}, String(count));
+	if (count === 1) {
+	process.stdout.write(JSON.stringify({ success: true, data: {
+		origin: "https://missing-refs.example/",
+		refs: { e1: { role: "button", name: "Old Search" } },
+		snapshot: '- button "Old Search" [ref=e1]'
+	} }));
+	} else {
+	process.stdout.write(JSON.stringify({ success: true, data: {
+		origin: "https://missing-refs.example/",
+		snapshot: 'No interactive controls are visible.'
+	} }));
+	}
+} else if (args.includes("click")) {
+	process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else {
+	process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(firstSnapshot.isError, false, JSON.stringify(firstSnapshot));
+			assert.deepEqual((firstSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const emptySnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(emptySnapshot.isError, false, JSON.stringify(emptySnapshot));
+			assert.deepEqual((emptySnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, []);
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
+			assert.equal(staleClick.details?.failureCategory, "stale-ref");
+			assert.match((staleClick.content[0] as { text: string }).text, /was not present in the latest snapshot/);
+			assert.deepEqual((staleClick.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, []);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 
 test("agentBrowserExtension blocks stale refs after page-changing steps inside a batch", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-"));

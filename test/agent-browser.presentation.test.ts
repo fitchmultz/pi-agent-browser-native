@@ -2329,7 +2329,7 @@ test("buildToolPresentation round-robins omitted high-value control categories i
 	}
 });
 
-test("buildToolPresentation reserves compact snapshot slots for lower high-value categories on saturated desktop screens", async () => {
+test("buildToolPresentation keeps lower high-value categories visible on saturated desktop screens", async () => {
 	const refs = Object.fromEntries(
 		Array.from({ length: 180 }, (_, index) => {
 			const id = `e${index + 1}`;
@@ -2377,7 +2377,7 @@ test("buildToolPresentation reserves compact snapshot slots for lower high-value
 	const highValueControlRefIds = (presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds ?? [];
 	assert.ok(highValueControlRefIds.length <= 10);
 	for (const expectedRef of ["e170", "e171", "e172", "e173"]) {
-		assert.ok(highValueControlRefIds.includes(expectedRef), `${expectedRef} should be reserved in saturated compact high-value refs`);
+		assert.ok(highValueControlRefIds.includes(expectedRef), `${expectedRef} should stay visible in saturated compact high-value refs`);
 	}
 
 	if (presentation.fullOutputPath) {

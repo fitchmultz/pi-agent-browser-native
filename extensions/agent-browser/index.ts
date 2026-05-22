@@ -1886,6 +1886,27 @@ type AgentBrowserToolResultPatch = {
 	isError?: boolean;
 };
 
+function agentBrowserToolResultRequestedJson(event: ToolResultEvent): boolean {
+	const details = isRecord(event.details) ? event.details : undefined;
+	const detailArgs = Array.isArray(details?.args) ? details.args : undefined;
+	const inputArgs = isRecord(event.input) && Array.isArray(event.input.args) ? event.input.args : undefined;
+	return detailArgs?.includes("--json") === true || inputArgs?.includes("--json") === true;
+}
+
+function agentBrowserToolResultHasParseableJsonContent(content: AgentBrowserToolContent): boolean {
+	return content.some((item) => {
+		if (item.type !== "text" || typeof item.text !== "string") return false;
+		const text = item.text.trim();
+		if (text.length === 0) return false;
+		try {
+			JSON.parse(text);
+			return true;
+		} catch {
+			return false;
+		}
+	});
+}
+
 function appendModelVisibleFailureCategoryNotice(content: AgentBrowserToolContent, notice: string): AgentBrowserToolContent | undefined {
 	const noticeContent: AgentBrowserToolContentItem = { type: "text", text: notice };
 	const textIndex = content.findIndex((item) => item.type === "text" && typeof item.text === "string");
@@ -1899,7 +1920,8 @@ function appendModelVisibleFailureCategoryNotice(content: AgentBrowserToolConten
 
 function buildAgentBrowserToolResultPatch(event: ToolResultEvent): AgentBrowserToolResultPatch | undefined {
 	if (event.toolName !== "agent_browser") return undefined;
-	const notice = formatModelVisibleFailureCategoryNotice(event.details);
+	const preservesParseableJson = agentBrowserToolResultRequestedJson(event) && agentBrowserToolResultHasParseableJsonContent(event.content);
+	const notice = preservesParseableJson ? undefined : formatModelVisibleFailureCategoryNotice(event.details);
 	const content = notice ? appendModelVisibleFailureCategoryNotice(event.content, notice) : undefined;
 	const shouldMarkError = isRecord(event.details) && event.details.resultCategory === "failure" && event.isError !== true;
 	if (!shouldMarkError && !content) return undefined;
@@ -3011,20 +3033,15 @@ function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, Orde
 }
 
 function extractRefSnapshotFromData(data: unknown): SessionRefSnapshot | undefined {
-	if (!isRecord(data) || !isRecord(data.refs)) return undefined;
+	if (!isRecord(data)) return undefined;
 	return {
-		refIds: Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId)),
+		refIds: isRecord(data.refs) ? Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId)) : [],
 		target: extractSessionTabTargetFromData(data),
 	};
 }
 
 function extractBatchRefSnapshotFromData(data: unknown): SessionRefSnapshot | undefined {
-	if (!isRecord(data)) return undefined;
-	if (!isRecord(data.refs)) return extractRefSnapshotFromData(data);
-	return {
-		refIds: Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId)),
-		target: extractSessionTabTargetFromData(data),
-	};
+	return extractRefSnapshotFromData(data);
 }
 
 function extractLatestRefSnapshotStateFromBatchResults(data: unknown): BatchRefSnapshotState | undefined {
