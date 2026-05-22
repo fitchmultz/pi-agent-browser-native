@@ -8,10 +8,11 @@
 
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
-import { chmod, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
 	buildAgentBrowserProcessEnv,
@@ -141,6 +142,61 @@ test("runAgentBrowserProcess handles abort during stdin-bearing command", async 
 		assert.equal(processResult.spawnError, undefined);
 		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess resolves after exit when descendants keep stdio handles open", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stdio-"));
+	const basePath = process.env.PATH ?? "";
+	const lingerPidPath = join(tempDir, "linger.pid");
+	const fakeScript = `const { spawn } = require("node:child_process");
+const { writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const linger = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 10000); setInterval(() => undefined, 1000);"], {
+	cwd: tmpdir(),
+	detached: true,
+	stdio: ["ignore", "inherit", "inherit"],
+});
+writeFileSync(process.env.PI_AGENT_BROWSER_TEST_LINGER_PID_PATH, String(linger.pid));
+linger.unref();
+process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }), () => process.exit(0));`;
+	if (process.platform === "win32") {
+		await copyFile(process.execPath, join(tempDir, "agent-browser.exe"));
+		await writeFile(join(tempDir, "open"), fakeScript, "utf8");
+	} else {
+		await writeFakeAgentBrowserBinary(tempDir, fakeScript);
+	}
+	let lingerPid: number | undefined;
+
+	try {
+		const startedAt = Date.now();
+		const processResult = await runAgentBrowserProcess({
+			args: ["open", "https://example.com"],
+			cwd: tempDir,
+			env: {
+				PATH: `${tempDir}${delimiter}${basePath}`,
+				PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
+			},
+			timeoutMs: 3_000,
+		});
+		const elapsedMs = Date.now() - startedAt;
+
+		lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
+		assert.equal(processResult.exitCode, 0);
+		assert.equal(processResult.timedOut, false);
+		assert.equal(processResult.spawnError, undefined);
+		assert.match(processResult.stdout, /\"ok\":true/);
+		assert.ok(elapsedMs < 2_500, `expected inherited stdio handles not to delay process resolution, got ${elapsedMs}ms`);
+	} finally {
+		if (Number.isInteger(lingerPid)) {
+			try {
+				process.kill(lingerPid as number, "SIGTERM");
+			} catch {
+				// The linger process may have already exited.
+			}
+		}
+		await delay(process.platform === "win32" ? 250 : 0);
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });

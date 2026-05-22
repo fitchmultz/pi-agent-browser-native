@@ -6,7 +6,7 @@
  * Invariants/Assumptions: The binary name is always `agent-browser`, the wrapper never shells out, and callers handle semantic success/error interpretation.
  */
 
-import { spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { chmod, mkdir } from "node:fs/promises";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
@@ -22,6 +22,7 @@ const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_M
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
 export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 28_000;
+const EXIT_STDIO_GRACE_MS = 100;
 const httpProxyEnvName = "http_proxy";
 const httpsProxyEnvName = "https_proxy";
 const allProxyEnvName = "all_proxy";
@@ -205,8 +206,10 @@ export async function runAgentBrowserProcess(options: {
 		let stdoutSpillError: Error | undefined;
 		let killTimer: NodeJS.Timeout | undefined;
 		let timeoutTimer: NodeJS.Timeout | undefined;
+		let postExitTimer: NodeJS.Timeout | undefined;
 		let abortListener: (() => void) | undefined;
 		let timedOut = false;
+		let child: ChildProcessWithoutNullStreams | undefined;
 
 		const queueStdoutChunk = (buffer: Buffer) => {
 			stdoutTail = appendTail(stdoutTail, buffer.toString("utf8"), MAX_BUFFERED_STDOUT_TAIL_CHARS);
@@ -258,12 +261,18 @@ export async function runAgentBrowserProcess(options: {
 				if (timeoutTimer) {
 					clearTimeout(timeoutTimer);
 				}
+				if (postExitTimer) {
+					clearTimeout(postExitTimer);
+				}
 				if (stdoutSpillHandle) {
 					await stdoutSpillHandle.close().catch(() => undefined);
 				}
 				if (!spawnError && stdoutSpillError) {
 					spawnError = stdoutSpillError;
 				}
+				child?.stdin?.destroy();
+				child?.stdout?.destroy();
+				child?.stderr?.destroy();
 				resolve({
 					aborted,
 					exitCode,
@@ -277,11 +286,12 @@ export async function runAgentBrowserProcess(options: {
 			});
 		};
 
-		const child = spawn("agent-browser", args, {
+		const spawnedChild = spawn("agent-browser", args, {
 			cwd,
 			env: buildAgentBrowserProcessEnv(processEnv, effectiveEnv),
 			stdio: ["pipe", "pipe", "pipe"],
 		});
+		child = spawnedChild;
 
 		const terminateChild = (reason: "abort" | "timeout") => {
 			if (settled) return;
@@ -290,9 +300,9 @@ export async function runAgentBrowserProcess(options: {
 			} else {
 				timedOut = true;
 			}
-			child.kill("SIGTERM");
+			spawnedChild.kill("SIGTERM");
 			killTimer = setTimeout(() => {
-				child.kill("SIGKILL");
+				spawnedChild.kill("SIGKILL");
 			}, 2_000);
 		};
 		const recordStdinError = (error: unknown) => {
@@ -307,32 +317,44 @@ export async function runAgentBrowserProcess(options: {
 		};
 		const writeChildStdin = () => {
 			if (aborted || signal?.aborted) {
-				child.stdin.destroy();
+				spawnedChild.stdin.destroy();
 				return;
 			}
 			try {
 				if (stdin) {
-					child.stdin.write(stdin);
+					spawnedChild.stdin.write(stdin);
 				}
-				child.stdin.end();
+				spawnedChild.stdin.end();
 			} catch (error) {
 				recordStdinError(error);
-				child.stdin.destroy();
+				spawnedChild.stdin.destroy();
 			}
 		};
 
-		child.stdin.on("error", recordStdinError);
-		child.once("error", (error) => {
+		spawnedChild.stdin.on("error", recordStdinError);
+		spawnedChild.once("error", (error) => {
 			spawnError = error instanceof Error ? error : new Error(String(error));
 			finish(127);
 		});
-		child.once("close", (code) => {
-			finish(code ?? (timedOut ? 124 : spawnError ? 127 : 0));
+		let exited = false;
+		let exitCode: number | null = null;
+		// Prefer `close` so stdout/stderr drain normally, but do not wait forever when a
+		// detached descendant inherits the child's stdio handles and keeps them open.
+		spawnedChild.once("exit", (code) => {
+			exited = true;
+			exitCode = code;
+			postExitTimer = setTimeout(() => {
+				finish(exitCode ?? (timedOut ? 124 : spawnError ? 127 : 0));
+			}, EXIT_STDIO_GRACE_MS);
+			postExitTimer.unref?.();
 		});
-		child.stdout.on("data", (chunk: Buffer | string) => {
+		spawnedChild.once("close", (code) => {
+			finish(code ?? (exited ? exitCode : undefined) ?? (timedOut ? 124 : spawnError ? 127 : 0));
+		});
+		spawnedChild.stdout.on("data", (chunk: Buffer | string) => {
 			queueStdoutChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
 		});
-		child.stderr.on("data", (chunk: Buffer | string) => {
+		spawnedChild.stderr.on("data", (chunk: Buffer | string) => {
 			stderr = appendTail(stderr, chunk.toString(), MAX_BUFFERED_STDERR_CHARS);
 		});
 
