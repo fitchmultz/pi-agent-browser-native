@@ -4013,6 +4013,592 @@ function getInstalledDocsPaths(): { readmePath: string; commandReferencePath: st
 	};
 }
 
+
+async function prepareFinalResultRecoveryState(options: {
+	aboutBlankSessionMismatch?: AboutBlankSessionMismatch;
+	batchRefSnapshotState?: { invalidation?: SessionRefSnapshotInvalidation; snapshot?: SessionRefSnapshot };
+	commandTokens: string[];
+	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
+	currentRefSnapshot?: SessionRefSnapshot;
+	currentRefSnapshotInvalidation?: SessionRefSnapshotInvalidation;
+	currentSessionTabTarget?: SessionTabTarget;
+	cwd: string;
+	electronPostCommandHealth?: ElectronPostCommandHealthDiagnostic;
+	errorText?: string;
+	executionPlan: ReturnType<typeof buildExecutionPlan>;
+	parseError?: string;
+	plainTextInspection: boolean;
+	presentation: Awaited<ReturnType<typeof buildToolPresentation>>;
+	processResult: Awaited<ReturnType<typeof runAgentBrowserProcess>>;
+	redactedProcessArgs: string[];
+	runtimeToolArgs: string[];
+	sessionPageState: SessionPageState;
+	sessionPageStateUpdate: ReturnType<SessionPageState["beginUpdate"]>;
+	sessionTabCorrection?: OpenResultTabCorrection;
+	signal?: AbortSignal;
+	succeeded: boolean;
+}): Promise<{
+	categoryDetails: ReturnType<typeof buildAgentBrowserResultCategoryDetails>;
+	currentRefSnapshot?: SessionRefSnapshot;
+	currentRefSnapshotInvalidation?: SessionRefSnapshotInvalidation;
+	noActivePageSnapshotFailure: boolean;
+	richInputRecoveryDiagnostic?: RichInputRecoveryDiagnostic;
+	visibleRefFallbackDiagnostic?: VisibleRefFallbackDiagnostic;
+	visibleRefFallbackSessionName?: string;
+}> {
+	const {
+		aboutBlankSessionMismatch,
+		batchRefSnapshotState,
+		commandTokens,
+		compiledSemanticAction,
+		currentSessionTabTarget,
+		cwd,
+		electronPostCommandHealth,
+		errorText,
+		executionPlan,
+		parseError,
+		plainTextInspection,
+		presentation,
+		processResult,
+		redactedProcessArgs,
+		runtimeToolArgs,
+		sessionPageState,
+		sessionPageStateUpdate,
+		sessionTabCorrection,
+		signal,
+		succeeded,
+	} = options;
+	let currentRefSnapshot = options.currentRefSnapshot;
+	let currentRefSnapshotInvalidation = options.currentRefSnapshotInvalidation;
+	const categoryDetails = buildAgentBrowserResultCategoryDetails({
+		artifacts: presentation.artifacts,
+		args: redactedProcessArgs,
+		command: executionPlan.commandInfo.command,
+		confirmationRequired: presentation.summary.startsWith("Confirmation required"),
+		errorText: errorText ?? presentation.summary,
+		failureCategory: presentation.failureCategory ?? presentation.batchFailure?.failedStep.failureCategory ?? (electronPostCommandHealth ? "tab-drift" : undefined),
+		inspection: plainTextInspection,
+		parseError,
+		savedFile: presentation.savedFile,
+		spawnError: processResult.spawnError?.message,
+		succeeded,
+		tabDrift: !succeeded && (aboutBlankSessionMismatch !== undefined || electronPostCommandHealth !== undefined || sessionTabCorrection !== undefined),
+		timedOut: processResult.timedOut,
+		validationError: undefined,
+	});
+	let visibleRefFallbackDiagnostic: VisibleRefFallbackDiagnostic | undefined;
+	const visibleRefFallbackSessionName = executionPlan.sessionName ?? extractExplicitSessionName(runtimeToolArgs);
+	if (categoryDetails.failureCategory === "selector-not-found") {
+		visibleRefFallbackDiagnostic = await collectVisibleRefFallbackDiagnostic({
+			commandTokens,
+			compiledSemanticAction,
+			cwd,
+			sessionName: visibleRefFallbackSessionName,
+			signal,
+		});
+		if (visibleRefFallbackDiagnostic && visibleRefFallbackSessionName) {
+			const refUpdate = sessionPageState.applyRefSnapshot({
+				fallbackTarget: currentSessionTabTarget,
+				sessionName: visibleRefFallbackSessionName,
+				snapshot: visibleRefFallbackDiagnostic.snapshot,
+				update: sessionPageStateUpdate,
+			});
+			currentRefSnapshot = refUpdate.refSnapshot;
+			currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
+		}
+	}
+	const richInputRecoveryDiagnostic = buildRichInputRecoveryDiagnostic(visibleRefFallbackDiagnostic);
+	const noActivePageSnapshotFailure = categoryDetails.resultCategory === "failure" && (
+		isNoActivePageSnapshotFailure(executionPlan.commandInfo.command, errorText ?? presentation.summary) ||
+		batchRefSnapshotState?.invalidation !== undefined
+	);
+	if (noActivePageSnapshotFailure && executionPlan.sessionName) {
+		const refUpdate = sessionPageState.applyRefSnapshotInvalidation({
+			invalidation: buildNoActivePageRefSnapshotInvalidation(),
+			sessionName: executionPlan.sessionName,
+			update: sessionPageStateUpdate,
+		});
+		currentRefSnapshot = refUpdate.refSnapshot;
+		currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
+	}
+	return {
+		categoryDetails,
+		currentRefSnapshot,
+		currentRefSnapshotInvalidation,
+		noActivePageSnapshotFailure,
+		richInputRecoveryDiagnostic,
+		visibleRefFallbackDiagnostic,
+		visibleRefFallbackSessionName,
+	};
+}
+
+function buildRedactedPresentationContent(options: {
+	exactSensitiveValues: string[];
+	plainTextInspection: boolean;
+	presentation: Awaited<ReturnType<typeof buildToolPresentation>>;
+	presentationEnvelope?: AgentBrowserEnvelope;
+	succeeded: boolean;
+	userRequestedJson: boolean;
+	warningText?: string;
+}): AgentBrowserToolResult["content"] {
+	const { exactSensitiveValues, plainTextInspection, presentation, presentationEnvelope, succeeded, userRequestedJson, warningText } = options;
+	const contentWithSessionWarnings = userRequestedJson && !plainTextInspection
+		? buildJsonVisibleContent({
+				error: presentationEnvelope?.error,
+				presentation,
+				succeeded,
+				warnings: warningText ? [warningText] : undefined,
+			})
+		: warningText
+			? [...presentation.content]
+			: presentation.content;
+	if (warningText && !userRequestedJson) {
+		if (contentWithSessionWarnings[0]?.type === "text") {
+			contentWithSessionWarnings[0] = {
+				...contentWithSessionWarnings[0],
+				text: `${warningText}\n\n${contentWithSessionWarnings[0].text}`,
+			};
+		} else {
+			contentWithSessionWarnings.unshift({ type: "text", text: warningText });
+		}
+	}
+	return contentWithSessionWarnings.map((item) => {
+		if (item.type !== "text") return item;
+		const exactRedactedText = redactExactSensitiveText(item.text, exactSensitiveValues);
+		return userRequestedJson && !plainTextInspection
+			? { ...item, text: exactRedactedText }
+			: { ...item, text: redactSensitiveText(exactRedactedText) };
+	});
+}
+
+function buildFinalAgentBrowserToolResult(options: {
+	aboutBlankSessionMismatch?: AboutBlankSessionMismatch;
+	artifactCleanup?: ArtifactCleanupGuidance;
+	categoryDetails: ReturnType<typeof buildAgentBrowserResultCategoryDetails>;
+	comboboxFocusDiagnostic?: ComboboxFocusDiagnostic;
+	compiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
+	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
+	compatibilityWorkaround?: CompatibilityWorkaround;
+	currentRefSnapshot?: SessionRefSnapshot;
+	currentRefSnapshotInvalidation?: SessionRefSnapshotInvalidation;
+	currentSessionTabTarget?: SessionTabTarget;
+	electronBroadGetTextScopeDiagnostics: ElectronBroadGetTextScopeDiagnostic[];
+	electronFailedConnectCleanup?: ElectronCleanupResult;
+	electronHandoff?: ElectronHandoffSummary;
+	electronLaunch?: ElectronLaunchSuccess;
+	electronLaunchRecord?: ElectronLaunchRecord;
+	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
+	electronPostCommandHealth?: ElectronPostCommandHealthDiagnostic;
+	electronRefFreshnessDiagnostic?: ElectronRefFreshnessDiagnostic;
+	electronSessionMismatch?: ElectronSessionMismatch;
+	errorText?: string;
+	evalStdinHint?: EvalStdinHint;
+	exactSensitiveValues: string[];
+	executionPlan: ReturnType<typeof buildExecutionPlan>;
+	fillVerificationDiagnostic?: FillVerificationDiagnostic;
+	inspectionText?: string;
+	managedSessionOutcome?: ManagedSessionOutcome;
+	navigationSummary?: NavigationSummary;
+	networkSourceLookup?: AgentBrowserNetworkSourceLookupAnalysis;
+	noActivePageSnapshotFailure: boolean;
+	openResultTabCorrection?: OpenResultTabCorrection;
+	overlayBlockerDiagnostic?: OverlayBlockerDiagnostic;
+	parseError?: string;
+	parseFailureOutput: Awaited<ReturnType<typeof preserveParseFailureOutput>>;
+	parseSucceeded: boolean;
+	plainTextInspection: boolean;
+	presentation: Awaited<ReturnType<typeof buildToolPresentation>>;
+	presentationEnvelope?: AgentBrowserEnvelope;
+	priorSessionTabTarget?: SessionTabTarget;
+	processResult: Awaited<ReturnType<typeof runAgentBrowserProcess>>;
+	qaAttachedTarget?: QaAttachedTarget;
+	qaPreset?: AgentBrowserQaPresetAnalysis;
+	recordingDependencyWarning?: RecordingDependencyWarning;
+	redactedArgs: string[];
+	redactedCompiledElectron?: CompiledAgentBrowserElectron;
+	redactedCompiledJob?: CompiledAgentBrowserJob;
+	redactedCompiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
+	redactedCompiledQaPreset?: CompiledAgentBrowserQaPreset;
+	redactedCompiledSemanticAction?: CompiledAgentBrowserSemanticAction;
+	redactedCompiledSourceLookup?: CompiledAgentBrowserSourceLookup;
+	redactedContent: AgentBrowserToolResult["content"];
+	redactedProcessArgs: string[];
+	redactedRecoveryHint?: unknown;
+	resultArtifactManifest?: SessionArtifactManifest;
+	richInputRecoveryDiagnostic?: RichInputRecoveryDiagnostic;
+	scrollNoopDiagnostic?: ScrollNoopDiagnostic;
+	selectorTextVisibilityDiagnostics: SelectorTextVisibilityDiagnostic[];
+	sessionMode: "auto" | "fresh";
+	sessionTabCorrection?: OpenResultTabCorrection;
+	sourceLookup?: AgentBrowserSourceLookupAnalysis;
+	succeeded: boolean;
+	timeoutPartialProgress?: TimeoutPartialProgress;
+	userRequestedJson: boolean;
+	visibleRefFallbackDiagnostic?: VisibleRefFallbackDiagnostic;
+	visibleRefFallbackSessionName?: string;
+}): AgentBrowserToolResult {
+	const {
+		aboutBlankSessionMismatch,
+		artifactCleanup,
+		categoryDetails,
+		comboboxFocusDiagnostic,
+		compiledNetworkSourceLookup,
+		compiledSemanticAction,
+		compatibilityWorkaround,
+		currentRefSnapshot,
+		currentRefSnapshotInvalidation,
+		currentSessionTabTarget,
+		electronBroadGetTextScopeDiagnostics,
+		electronFailedConnectCleanup,
+		electronHandoff,
+		electronLaunch,
+		electronLaunchRecord,
+		electronLaunchRecords,
+		electronPostCommandHealth,
+		electronRefFreshnessDiagnostic,
+		electronSessionMismatch,
+		errorText,
+		evalStdinHint,
+		exactSensitiveValues,
+		executionPlan,
+		fillVerificationDiagnostic,
+		inspectionText,
+		managedSessionOutcome,
+		navigationSummary,
+		networkSourceLookup,
+		noActivePageSnapshotFailure,
+		openResultTabCorrection,
+		overlayBlockerDiagnostic,
+		parseError,
+		parseFailureOutput,
+		parseSucceeded,
+		plainTextInspection,
+		presentation,
+		presentationEnvelope,
+		priorSessionTabTarget,
+		processResult,
+		qaAttachedTarget,
+		qaPreset,
+		recordingDependencyWarning,
+		redactedArgs,
+		redactedCompiledElectron,
+		redactedCompiledJob,
+		redactedCompiledNetworkSourceLookup,
+		redactedCompiledQaPreset,
+		redactedCompiledSemanticAction,
+		redactedCompiledSourceLookup,
+		redactedContent,
+		redactedProcessArgs,
+		redactedRecoveryHint,
+		resultArtifactManifest,
+		richInputRecoveryDiagnostic,
+		scrollNoopDiagnostic,
+		selectorTextVisibilityDiagnostics,
+		sessionMode,
+		sessionTabCorrection,
+		sourceLookup,
+		succeeded,
+		timeoutPartialProgress,
+		userRequestedJson,
+		visibleRefFallbackDiagnostic,
+		visibleRefFallbackSessionName,
+	} = options;
+	const nextActionCollector = new AgentBrowserNextActionCollector(presentation.nextActions);
+	if (categoryDetails.resultCategory === "success" && executionPlan.commandInfo.command === "connect" && !electronLaunchRecord) {
+		nextActionCollector.appendUnique(buildConnectedSessionNextActions(executionPlan.sessionName));
+	}
+	if (noActivePageSnapshotFailure) {
+		nextActionCollector.appendUnique(buildNoActivePageNextActions(executionPlan.sessionName));
+	}
+	if (aboutBlankSessionMismatch) {
+		nextActionCollector.appendUnique(buildSessionTabRecoveryNextActions({
+			kind: "about-blank",
+			recoveryApplied: aboutBlankSessionMismatch.recoveryApplied,
+			sessionName: executionPlan.sessionName,
+			tabCorrection: aboutBlankSessionMismatch.recoveryApplied ? sessionTabCorrection : undefined,
+			target: { title: aboutBlankSessionMismatch.targetTitle, url: aboutBlankSessionMismatch.targetUrl },
+		}));
+		if (!aboutBlankSessionMismatch.recoveryApplied) {
+			nextActionCollector.removeWhere(isStandaloneSnapshotNextAction);
+		}
+	} else if (categoryDetails.resultCategory === "success" && (sessionTabCorrection || openResultTabCorrection)) {
+		nextActionCollector.appendUnique(buildSessionTabRecoveryNextActions({
+			kind: "tab-drift",
+			recoveryApplied: true,
+			sessionName: executionPlan.sessionName,
+			tabCorrection: sessionTabCorrection ?? openResultTabCorrection,
+			target: currentSessionTabTarget ?? priorSessionTabTarget,
+		}));
+	}
+	if (categoryDetails.failureCategory === "stale-ref") {
+		nextActionCollector.replace(buildSessionAwareStaleRefNextActions(executionPlan.sessionName));
+	}
+	if (visibleRefFallbackDiagnostic) {
+		nextActionCollector.append(buildVisibleRefFallbackNextActions({ diagnostic: visibleRefFallbackDiagnostic, sessionName: visibleRefFallbackSessionName }));
+	}
+	if (richInputRecoveryDiagnostic) {
+		nextActionCollector.append(buildRichInputRecoveryNextActions({ diagnostic: richInputRecoveryDiagnostic, sessionName: visibleRefFallbackSessionName }));
+	}
+	if (electronPostCommandHealth) {
+		const electronRecord = electronLaunchRecords.get(electronPostCommandHealth.launchId);
+		if (electronRecord) {
+			nextActionCollector.appendUnique(buildElectronLifecycleNextActions(electronRecord));
+		}
+	}
+	if (electronSessionMismatch) {
+		const electronRecord = electronLaunchRecords.get(electronSessionMismatch.launchId);
+		if (electronRecord) {
+			nextActionCollector.appendUnique(buildElectronMismatchNextActions(electronRecord, electronSessionMismatch.liveTarget));
+		}
+	}
+	if (categoryDetails.failureCategory === "selector-not-found" && redactedCompiledSemanticAction) {
+		const candidateActions = buildSemanticActionCandidateActions(redactedCompiledSemanticAction);
+		if (candidateActions.length > 0) {
+			nextActionCollector.append(candidateActions);
+		}
+	}
+	if (overlayBlockerDiagnostic) {
+		nextActionCollector.append(buildOverlayBlockerNextActions({ diagnostic: overlayBlockerDiagnostic, sessionName: executionPlan.sessionName }));
+	}
+	if (fillVerificationDiagnostic) {
+		nextActionCollector.appendUnique(buildFillVerificationNextActions(fillVerificationDiagnostic, executionPlan.sessionName));
+	}
+	if (electronRefFreshnessDiagnostic) {
+		nextActionCollector.appendUnique(buildElectronRefFreshnessNextActions(executionPlan.sessionName));
+	}
+	if (selectorTextVisibilityDiagnostics.length > 0) {
+		nextActionCollector.append(buildSelectorTextVisibilityNextActions({ diagnostics: selectorTextVisibilityDiagnostics, sessionName: executionPlan.sessionName }));
+	}
+	if (electronBroadGetTextScopeDiagnostics.length > 0) {
+		nextActionCollector.append(buildElectronBroadGetTextScopeNextActions({ diagnostics: electronBroadGetTextScopeDiagnostics, sessionName: executionPlan.sessionName }));
+	}
+	if (sourceLookup?.electronContext) {
+		nextActionCollector.appendUnique(buildSourceLookupElectronNextActions(sourceLookup));
+	}
+	if (scrollNoopDiagnostic) {
+		nextActionCollector.append(buildScrollNoopNextActions(executionPlan.sessionName));
+	}
+	if (comboboxFocusDiagnostic) {
+		nextActionCollector.append(buildComboboxFocusNextActions(executionPlan.sessionName));
+	}
+	if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction && isCompiledSemanticActionFindCommand(compiledSemanticAction)) {
+		nextActionCollector.append([{
+			id: "retry-semantic-action-after-stale-ref",
+			params: { args: redactedCompiledSemanticAction.args },
+			reason: "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.",
+			safety: "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.",
+			tool: "agent_browser" as const,
+		}]);
+	}
+	if (electronLaunchRecord) {
+		nextActionCollector.append(buildAgentBrowserNextActions({
+			electron: { launchId: electronLaunchRecord.launchId, sessionName: electronLaunchRecord.sessionName, status: electronLaunchRecord.cleanupState },
+			failureCategory: categoryDetails.failureCategory,
+			resultCategory: categoryDetails.resultCategory,
+			successCategory: categoryDetails.successCategory,
+		}));
+	}
+	const nextActions = nextActionCollector.toArray();
+	const publicVisibleRefFallbackDiagnostic = visibleRefFallbackDiagnostic
+		? sanitizeVisibleRefFallbackDiagnostic(visibleRefFallbackDiagnostic)
+		: undefined;
+	const rawPageChangeSummary = (scrollNoopDiagnostic || comboboxFocusDiagnostic) && presentation.pageChangeSummary
+		? { ...presentation.pageChangeSummary, nextActionIds: nextActions?.map((action) => action.id) }
+		: presentation.pageChangeSummary;
+	const pageChangeSummary = alignPageChangeSummaryNextActionIds(rawPageChangeSummary, nextActions);
+	const details = {
+		args: redactedArgs,
+		compiledElectron: redactedCompiledElectron,
+		compiledJob: redactedCompiledJob,
+		compiledQaPreset: redactedCompiledQaPreset,
+		compiledSourceLookup: redactedCompiledSourceLookup,
+		compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
+		artifactManifest: resultArtifactManifest,
+		artifactRetentionSummary: presentation.artifactRetentionSummary ?? (resultArtifactManifest ? formatSessionArtifactRetentionSummary(resultArtifactManifest) : undefined),
+		artifactCleanup,
+		artifactVerification: presentation.artifactVerification,
+		artifacts: presentation.artifacts,
+		batchFailure: presentation.batchFailure,
+		batchSteps: presentation.batchSteps,
+		command: executionPlan.commandInfo.command,
+		compiledSemanticAction: redactedCompiledSemanticAction,
+		compatibilityWorkaround,
+		subcommand: executionPlan.commandInfo.subcommand,
+		data: presentation.data,
+		error: plainTextInspection ? undefined : presentationEnvelope?.error,
+		inspection: plainTextInspection || undefined,
+		navigationSummary,
+		electron: electronLaunchRecord ? {
+			action: "launch" as const,
+			cleanup: electronFailedConnectCleanup,
+			handoff: electronHandoff,
+			identifiers: buildElectronIdentifiers(electronLaunchRecord),
+			launch: electronLaunchRecord,
+			profileIsolation: ELECTRON_PROFILE_ISOLATION_DETAILS,
+			status: succeeded ? "succeeded" as const : "failed" as const,
+			targets: electronLaunch?.targets,
+			version: electronLaunch?.version,
+		} : undefined,
+		...categoryDetails,
+		aboutBlankSessionMismatch,
+		electronPostCommandHealth,
+		electronRefFreshness: electronRefFreshnessDiagnostic,
+		electronSessionMismatch,
+		openResultTabCorrection,
+		effectiveArgs: redactedProcessArgs,
+		exitCode: processResult.exitCode,
+		fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
+		fullOutputPaths: presentation.fullOutputPaths,
+		fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
+		managedSessionOutcome,
+		imagePath: presentation.imagePath,
+		imagePaths: presentation.imagePaths,
+		nextActions,
+		pageChangeSummary,
+		overlayBlockers: overlayBlockerDiagnostic,
+		fillVerification: fillVerificationDiagnostic,
+		visibleRefFallback: publicVisibleRefFallbackDiagnostic,
+		richInputRecovery: richInputRecoveryDiagnostic,
+		comboboxFocus: comboboxFocusDiagnostic,
+		recordingDependencyWarning,
+		scrollNoop: scrollNoopDiagnostic,
+		qaPreset,
+		qaAttachedTarget,
+		electronGetTextScopeWarning: electronBroadGetTextScopeDiagnostics[0],
+		electronGetTextScopeWarnings: electronBroadGetTextScopeDiagnostics.length > 1 ? electronBroadGetTextScopeDiagnostics : undefined,
+		selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
+		selectorTextVisibilityAll: selectorTextVisibilityDiagnostics.length > 1 ? selectorTextVisibilityDiagnostics : undefined,
+		evalStdinHint,
+		timeoutPartialProgress,
+		parseError: plainTextInspection ? undefined : parseError,
+		savedFile: presentation.savedFile,
+		savedFilePath: presentation.savedFilePath,
+		sourceLookup,
+		networkSourceLookup,
+		sessionMode,
+		sessionTabCorrection,
+		sessionTabTarget: currentSessionTabTarget,
+		refSnapshot: currentRefSnapshot,
+		refSnapshotInvalidation: currentRefSnapshotInvalidation,
+		...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+		sessionRecoveryHint: redactedRecoveryHint,
+		startupScopedFlags: executionPlan.startupScopedFlags,
+		stderr: processResult.stderr,
+		stdout: plainTextInspection ? inspectionText ?? "" : parseSucceeded ? undefined : processResult.stdout,
+		summary: presentation.summary,
+		timedOut: processResult.timedOut || undefined,
+		timeoutMs: processResult.timeoutMs,
+	};
+
+	const visibleRefFallbackText = formatVisibleRefFallbackText(visibleRefFallbackDiagnostic);
+	const richInputRecoveryText = formatRichInputRecoveryText(richInputRecoveryDiagnostic);
+	const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
+	const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
+	const fillVerificationText = formatFillVerificationText(fillVerificationDiagnostic);
+	const electronRefFreshnessText = formatElectronRefFreshnessText(electronRefFreshnessDiagnostic);
+	const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
+	const electronBroadGetTextScopeText = formatElectronBroadGetTextScopeText(electronBroadGetTextScopeDiagnostics);
+	const scrollNoopDiagnosticText = formatScrollNoopDiagnosticText(scrollNoopDiagnostic);
+	const comboboxFocusDiagnosticText = formatComboboxFocusDiagnosticText(comboboxFocusDiagnostic);
+	const recordingDependencyWarningText = formatRecordingDependencyWarningText(recordingDependencyWarning);
+	const evalStdinHintText = formatEvalStdinHintText(evalStdinHint);
+	const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
+	const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
+	const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
+	const rawAppendedDiagnosticText = [visibleRefFallbackText, richInputRecoveryText, semanticActionCandidateText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+	const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
+	const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!userRequestedJson || plainTextInspection);
+	let content = shouldAppendDiagnosticText && redactedContent[0]?.type === "text"
+		? [
+			{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${appendedDiagnosticText}` },
+			...redactedContent.slice(1),
+		]
+		: redactedContent;
+	if (electronLaunchRecord && succeeded && content[0]?.type === "text") {
+		content = [{
+			...content[0],
+			text: redactSensitiveText(formatElectronLaunchText({
+				handoff: electronHandoff,
+				record: electronLaunchRecord,
+				targets: electronLaunch?.targets ?? [],
+				upstreamText: content[0].text,
+			})),
+		}, ...content.slice(1)];
+	}
+	const result = {
+		content,
+		details: redactToolDetails(details, exactSensitiveValues),
+		isError: !succeeded,
+	};
+	return compiledNetworkSourceLookup ? redactNetworkSourceLookupSurface(result) as typeof result : result;
+}
+
+async function buildMissingBinaryFailureResult(options: {
+	compatibilityWorkaround?: CompatibilityWorkaround;
+	electronLaunch?: ElectronLaunchSuccess;
+	executionPlan: ReturnType<typeof buildExecutionPlan>;
+	implicitSessionCloseTimeoutMs: number;
+	managedSessionActive: boolean;
+	managedSessionName: string;
+	processResult: Awaited<ReturnType<typeof runAgentBrowserProcess>>;
+	redactedArgs: string[];
+	redactedProcessArgs: string[];
+	sessionMode: "auto" | "fresh";
+	sessionTabCorrection?: OpenResultTabCorrection;
+}): Promise<AgentBrowserToolResult | undefined> {
+	const { compatibilityWorkaround, electronLaunch, executionPlan, implicitSessionCloseTimeoutMs, managedSessionActive, managedSessionName, processResult, redactedArgs, redactedProcessArgs, sessionMode, sessionTabCorrection } = options;
+	if (!processResult.spawnError?.message.includes("ENOENT")) return undefined;
+	const errorText = buildMissingBinaryMessage();
+	const managedSessionOutcome = buildManagedSessionOutcome({
+		activeAfter: managedSessionActive,
+		activeBefore: managedSessionActive,
+		attemptedSessionName: executionPlan.managedSessionName,
+		command: executionPlan.commandInfo.command,
+		currentSessionName: managedSessionName,
+		previousSessionName: managedSessionName,
+		sessionMode,
+		succeeded: false,
+	});
+	const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
+	let missingBinaryElectronCleanup: ElectronCleanupResult | undefined;
+	let missingBinaryElectronRecord: ElectronLaunchRecord | undefined;
+	if (electronLaunch) {
+		missingBinaryElectronCleanup = await cleanupElectronLaunchResources({
+			child: electronLaunch.child,
+			record: electronLaunch.record,
+			timeoutMs: implicitSessionCloseTimeoutMs,
+		});
+		missingBinaryElectronRecord = missingBinaryElectronCleanup.record;
+	}
+	const textParts = [
+		errorText,
+		managedSessionOutcomeText,
+		missingBinaryElectronCleanup ? `Electron cleanup after failed attach: ${missingBinaryElectronCleanup.summary}` : undefined,
+	].filter((part): part is string => part !== undefined && part.length > 0);
+	return {
+		content: [{ type: "text", text: textParts.join("\n\n") }],
+		details: {
+			args: redactedArgs,
+			compatibilityWorkaround,
+			effectiveArgs: redactedProcessArgs,
+			electron: missingBinaryElectronRecord ? {
+				action: "launch" as const,
+				cleanup: missingBinaryElectronCleanup,
+				launch: missingBinaryElectronRecord,
+				status: "failed" as const,
+				targets: electronLaunch?.targets,
+				version: electronLaunch?.version,
+			} : undefined,
+			managedSessionOutcome,
+			sessionMode,
+			sessionTabCorrection,
+			...buildAgentBrowserResultCategoryDetails({ args: redactedProcessArgs, command: executionPlan.commandInfo.command, errorText, failureCategory: "missing-binary", spawnError: processResult.spawnError.message, succeeded: false }),
+			spawnError: processResult.spawnError.message,
+		},
+		isError: true,
+	};
+}
+
 async function handleElectronHostInput(options: {
 	cleanupTrackedElectronLaunches: (records: ElectronLaunchRecord[], cwd: string, timeoutMs?: number) => Promise<ElectronCleanupResult[]>;
 	compiledElectron?: CompiledAgentBrowserElectron;
@@ -4665,54 +5251,23 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					stdin: processStdin,
 				});
 
-				if (processResult.spawnError?.message.includes("ENOENT")) {
-					const errorText = buildMissingBinaryMessage();
-					const managedSessionOutcome = buildManagedSessionOutcome({
-						activeAfter: managedSessionActive,
-						activeBefore: managedSessionActive,
-						attemptedSessionName: executionPlan.managedSessionName,
-						command: executionPlan.commandInfo.command,
-						currentSessionName: managedSessionName,
-						previousSessionName: managedSessionName,
-						sessionMode,
-						succeeded: false,
-					});
-					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					let missingBinaryElectronCleanup: ElectronCleanupResult | undefined;
-					let missingBinaryElectronRecord: ElectronLaunchRecord | undefined;
-					if (electronLaunch) {
-						missingBinaryElectronCleanup = await cleanupElectronLaunchResources({
-							child: electronLaunch.child,
-							record: electronLaunch.record,
-							timeoutMs: implicitSessionCloseTimeoutMs,
-						});
-						missingBinaryElectronRecord = missingBinaryElectronCleanup.record;
-					}
-					const textParts = [errorText, managedSessionOutcomeText, missingBinaryElectronCleanup ? `Electron cleanup after failed attach: ${missingBinaryElectronCleanup.summary}` : undefined]
-						.filter((part): part is string => part !== undefined && part.length > 0);
-					return {
-						content: [{ type: "text", text: textParts.join("\n\n") }],
-						details: {
-							args: redactedArgs,
-							compatibilityWorkaround,
-							effectiveArgs: redactedProcessArgs,
-							electron: missingBinaryElectronRecord ? {
-								action: "launch" as const,
-								cleanup: missingBinaryElectronCleanup,
-								launch: missingBinaryElectronRecord,
-								status: "failed" as const,
-								targets: electronLaunch?.targets,
-								version: electronLaunch?.version,
-							} : undefined,
-							managedSessionOutcome,
-							sessionMode,
-							sessionTabCorrection,
-							...buildAgentBrowserResultCategoryDetails({ args: redactedProcessArgs, command: executionPlan.commandInfo.command, errorText, failureCategory: "missing-binary", spawnError: processResult.spawnError.message, succeeded: false }),
-							spawnError: processResult.spawnError.message,
-						},
-						isError: true,
-					};
+				const missingBinaryResult = await buildMissingBinaryFailureResult({
+					compatibilityWorkaround,
+					electronLaunch,
+					executionPlan,
+					implicitSessionCloseTimeoutMs,
+					managedSessionActive,
+					managedSessionName,
+					processResult,
+					redactedArgs,
+					redactedProcessArgs,
+					sessionMode,
+					sessionTabCorrection,
+				});
+				if (missingBinaryResult) {
+					return missingBinaryResult;
 				}
+
 
 				try {
 					const persistentArtifactStore = getPersistentSessionArtifactStore(ctx);
@@ -5268,312 +5823,108 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						: electronSessionMismatch
 							? formatElectronSessionMismatchText(electronSessionMismatch)
 							: aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
-					const contentWithSessionWarnings = userRequestedJson && !plainTextInspection
-						? buildJsonVisibleContent({
-								error: presentationEnvelope?.error,
-								presentation,
-								succeeded,
-								warnings: warningText ? [warningText] : undefined,
-						  })
-						: warningText
-							? [...presentation.content]
-							: presentation.content;
-					if (warningText && !userRequestedJson) {
-						if (contentWithSessionWarnings[0]?.type === "text") {
-							contentWithSessionWarnings[0] = {
-								...contentWithSessionWarnings[0],
-								text: `${warningText}\n\n${contentWithSessionWarnings[0].text}`,
-							};
-						} else {
-							contentWithSessionWarnings.unshift({ type: "text", text: warningText });
-						}
-					}
-					const redactedContent = contentWithSessionWarnings.map((item) => {
-						if (item.type !== "text") return item;
-						const exactRedactedText = redactExactSensitiveText(item.text, exactSensitiveValues);
-						return userRequestedJson && !plainTextInspection
-							? { ...item, text: exactRedactedText }
-							: { ...item, text: redactSensitiveText(exactRedactedText) };
-					});
-					const categoryDetails = buildAgentBrowserResultCategoryDetails({
-						artifacts: presentation.artifacts,
-						args: redactedProcessArgs,
-						command: executionPlan.commandInfo.command,
-						confirmationRequired: presentation.summary.startsWith("Confirmation required"),
-						errorText: errorText ?? presentation.summary,
-						failureCategory: presentation.failureCategory ?? presentation.batchFailure?.failedStep.failureCategory ?? (electronPostCommandHealth ? "tab-drift" : undefined),
-						inspection: plainTextInspection,
-						parseError,
-						savedFile: presentation.savedFile,
-						spawnError: processResult.spawnError?.message,
+					const redactedContent = buildRedactedPresentationContent({
+						exactSensitiveValues,
+						plainTextInspection,
+						presentation,
+						presentationEnvelope,
 						succeeded,
-						tabDrift: !succeeded && (aboutBlankSessionMismatch !== undefined || electronPostCommandHealth !== undefined || sessionTabCorrection !== undefined),
-						timedOut: processResult.timedOut,
-						validationError: undefined,
+						userRequestedJson,
+						warningText,
 					});
-					let visibleRefFallbackDiagnostic: VisibleRefFallbackDiagnostic | undefined;
-					const visibleRefFallbackSessionName = executionPlan.sessionName ?? extractExplicitSessionName(runtimeToolArgs);
-					if (categoryDetails.failureCategory === "selector-not-found") {
-						visibleRefFallbackDiagnostic = await collectVisibleRefFallbackDiagnostic({
-							commandTokens,
-							compiledSemanticAction,
-							cwd: ctx.cwd,
-							sessionName: visibleRefFallbackSessionName,
-							signal,
-						});
-						if (visibleRefFallbackDiagnostic && visibleRefFallbackSessionName) {
-							const refUpdate = sessionPageState.applyRefSnapshot({
-								fallbackTarget: currentSessionTabTarget,
-								sessionName: visibleRefFallbackSessionName,
-								snapshot: visibleRefFallbackDiagnostic.snapshot,
-								update: sessionPageStateUpdate,
-							});
-							currentRefSnapshot = refUpdate.refSnapshot;
-							currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
-						}
-					}
-					const richInputRecoveryDiagnostic = buildRichInputRecoveryDiagnostic(visibleRefFallbackDiagnostic);
-					const noActivePageSnapshotFailure = categoryDetails.resultCategory === "failure" && (
-						isNoActivePageSnapshotFailure(executionPlan.commandInfo.command, errorText ?? presentation.summary) ||
-						batchRefSnapshotState?.invalidation !== undefined
-					);
-					if (noActivePageSnapshotFailure && executionPlan.sessionName) {
-						const refUpdate = sessionPageState.applyRefSnapshotInvalidation({
-							invalidation: buildNoActivePageRefSnapshotInvalidation(),
-							sessionName: executionPlan.sessionName,
-							update: sessionPageStateUpdate,
-						});
-						currentRefSnapshot = refUpdate.refSnapshot;
-						currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
-					}
-					const nextActionCollector = new AgentBrowserNextActionCollector(presentation.nextActions);
-					if (categoryDetails.resultCategory === "success" && executionPlan.commandInfo.command === "connect" && !electronLaunchRecord) {
-						nextActionCollector.appendUnique(buildConnectedSessionNextActions(executionPlan.sessionName));
-					}
-					if (noActivePageSnapshotFailure) {
-						nextActionCollector.appendUnique(buildNoActivePageNextActions(executionPlan.sessionName));
-					}
-					if (aboutBlankSessionMismatch) {
-						nextActionCollector.appendUnique(buildSessionTabRecoveryNextActions({
-							kind: "about-blank",
-							recoveryApplied: aboutBlankSessionMismatch.recoveryApplied,
-							sessionName: executionPlan.sessionName,
-							tabCorrection: aboutBlankSessionMismatch.recoveryApplied ? sessionTabCorrection : undefined,
-							target: { title: aboutBlankSessionMismatch.targetTitle, url: aboutBlankSessionMismatch.targetUrl },
-						}));
-						if (!aboutBlankSessionMismatch.recoveryApplied) {
-							nextActionCollector.removeWhere(isStandaloneSnapshotNextAction);
-						}
-					} else if (categoryDetails.resultCategory === "success" && (sessionTabCorrection || openResultTabCorrection)) {
-						nextActionCollector.appendUnique(buildSessionTabRecoveryNextActions({
-							kind: "tab-drift",
-							recoveryApplied: true,
-							sessionName: executionPlan.sessionName,
-							tabCorrection: sessionTabCorrection ?? openResultTabCorrection,
-							target: currentSessionTabTarget ?? priorSessionTabTarget,
-						}));
-					}
-					if (categoryDetails.failureCategory === "stale-ref") {
-						nextActionCollector.replace(buildSessionAwareStaleRefNextActions(executionPlan.sessionName));
-					}
-					if (visibleRefFallbackDiagnostic) {
-						nextActionCollector.append(buildVisibleRefFallbackNextActions({ diagnostic: visibleRefFallbackDiagnostic, sessionName: visibleRefFallbackSessionName }));
-					}
-					if (richInputRecoveryDiagnostic) {
-						nextActionCollector.append(buildRichInputRecoveryNextActions({ diagnostic: richInputRecoveryDiagnostic, sessionName: visibleRefFallbackSessionName }));
-					}
-					if (electronPostCommandHealth) {
-						const electronRecord = electronLaunchRecords.get(electronPostCommandHealth.launchId);
-						if (electronRecord) {
-							nextActionCollector.appendUnique(buildElectronLifecycleNextActions(electronRecord));
-						}
-					}
-					if (electronSessionMismatch) {
-						const electronRecord = electronLaunchRecords.get(electronSessionMismatch.launchId);
-						if (electronRecord) {
-							nextActionCollector.appendUnique(buildElectronMismatchNextActions(electronRecord, electronSessionMismatch.liveTarget));
-						}
-					}
-					if (categoryDetails.failureCategory === "selector-not-found" && redactedCompiledSemanticAction) {
-						const candidateActions = buildSemanticActionCandidateActions(redactedCompiledSemanticAction);
-						if (candidateActions.length > 0) {
-							nextActionCollector.append(candidateActions);
-						}
-					}
-					if (overlayBlockerDiagnostic) {
-						nextActionCollector.append(buildOverlayBlockerNextActions({ diagnostic: overlayBlockerDiagnostic, sessionName: executionPlan.sessionName }));
-					}
-					if (fillVerificationDiagnostic) {
-						nextActionCollector.appendUnique(buildFillVerificationNextActions(fillVerificationDiagnostic, executionPlan.sessionName));
-					}
-					if (electronRefFreshnessDiagnostic) {
-						nextActionCollector.appendUnique(buildElectronRefFreshnessNextActions(executionPlan.sessionName));
-					}
-					if (selectorTextVisibilityDiagnostics.length > 0) {
-						nextActionCollector.append(buildSelectorTextVisibilityNextActions({ diagnostics: selectorTextVisibilityDiagnostics, sessionName: executionPlan.sessionName }));
-					}
-					if (electronBroadGetTextScopeDiagnostics.length > 0) {
-						nextActionCollector.append(buildElectronBroadGetTextScopeNextActions({ diagnostics: electronBroadGetTextScopeDiagnostics, sessionName: executionPlan.sessionName }));
-					}
-					if (sourceLookup?.electronContext) {
-						nextActionCollector.appendUnique(buildSourceLookupElectronNextActions(sourceLookup));
-					}
-					if (scrollNoopDiagnostic) {
-						nextActionCollector.append(buildScrollNoopNextActions(executionPlan.sessionName));
-					}
-					if (comboboxFocusDiagnostic) {
-						nextActionCollector.append(buildComboboxFocusNextActions(executionPlan.sessionName));
-					}
-					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction && isCompiledSemanticActionFindCommand(compiledSemanticAction)) {
-						nextActionCollector.append([{
-							id: "retry-semantic-action-after-stale-ref",
-							params: { args: redactedCompiledSemanticAction.args },
-							reason: "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.",
-							safety: "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.",
-							tool: "agent_browser" as const,
-						}]);
-					}
-					if (electronLaunchRecord) {
-						nextActionCollector.append(buildAgentBrowserNextActions({
-							electron: { launchId: electronLaunchRecord.launchId, sessionName: electronLaunchRecord.sessionName, status: electronLaunchRecord.cleanupState },
-							failureCategory: categoryDetails.failureCategory,
-							resultCategory: categoryDetails.resultCategory,
-							successCategory: categoryDetails.successCategory,
-						}));
-					}
-					const nextActions = nextActionCollector.toArray();
-					const publicVisibleRefFallbackDiagnostic = visibleRefFallbackDiagnostic
-						? sanitizeVisibleRefFallbackDiagnostic(visibleRefFallbackDiagnostic)
-						: undefined;
-					const rawPageChangeSummary = (scrollNoopDiagnostic || comboboxFocusDiagnostic) && presentation.pageChangeSummary
-						? { ...presentation.pageChangeSummary, nextActionIds: nextActions?.map((action) => action.id) }
-						: presentation.pageChangeSummary;
-					const pageChangeSummary = alignPageChangeSummaryNextActionIds(rawPageChangeSummary, nextActions);
-					const details = {
-						args: redactedArgs,
-						compiledElectron: redactedCompiledElectron,
-						compiledJob: redactedCompiledJob,
-						compiledQaPreset: redactedCompiledQaPreset,
-						compiledSourceLookup: redactedCompiledSourceLookup,
-						compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
-						artifactManifest: resultArtifactManifest,
-						artifactRetentionSummary: presentation.artifactRetentionSummary ?? (resultArtifactManifest ? formatSessionArtifactRetentionSummary(resultArtifactManifest) : undefined),
-						artifactCleanup,
-						artifactVerification: presentation.artifactVerification,
-						artifacts: presentation.artifacts,
-						batchFailure: presentation.batchFailure,
-						batchSteps: presentation.batchSteps,
-						command: executionPlan.commandInfo.command,
-						compiledSemanticAction: redactedCompiledSemanticAction,
-						compatibilityWorkaround,
-						subcommand: executionPlan.commandInfo.subcommand,
-						data: presentation.data,
-						error: plainTextInspection ? undefined : presentationEnvelope?.error,
-						inspection: plainTextInspection || undefined,
-						navigationSummary,
-						electron: electronLaunchRecord ? {
-							action: "launch" as const,
-							cleanup: electronFailedConnectCleanup,
-							handoff: electronHandoff,
-							identifiers: buildElectronIdentifiers(electronLaunchRecord),
-							launch: electronLaunchRecord,
-							profileIsolation: ELECTRON_PROFILE_ISOLATION_DETAILS,
-							status: succeeded ? "succeeded" as const : "failed" as const,
-							targets: electronLaunch?.targets,
-							version: electronLaunch?.version,
-						} : undefined,
-						...categoryDetails,
+					const finalRecoveryState = await prepareFinalResultRecoveryState({
 						aboutBlankSessionMismatch,
+						batchRefSnapshotState,
+						commandTokens,
+						compiledSemanticAction,
+						currentRefSnapshot,
+						currentRefSnapshotInvalidation,
+						currentSessionTabTarget,
+						cwd: ctx.cwd,
 						electronPostCommandHealth,
-						electronRefFreshness: electronRefFreshnessDiagnostic,
+						errorText,
+						executionPlan,
+						parseError,
+						plainTextInspection,
+						presentation,
+						processResult,
+						redactedProcessArgs,
+						runtimeToolArgs,
+						sessionPageState,
+						sessionPageStateUpdate,
+						sessionTabCorrection,
+						signal,
+						succeeded,
+					});
+					const { categoryDetails, noActivePageSnapshotFailure, richInputRecoveryDiagnostic, visibleRefFallbackDiagnostic, visibleRefFallbackSessionName } = finalRecoveryState;
+					currentRefSnapshot = finalRecoveryState.currentRefSnapshot;
+					currentRefSnapshotInvalidation = finalRecoveryState.currentRefSnapshotInvalidation;
+					return buildFinalAgentBrowserToolResult({
+						aboutBlankSessionMismatch,
+						artifactCleanup,
+						categoryDetails,
+						comboboxFocusDiagnostic,
+						compiledNetworkSourceLookup,
+						compiledSemanticAction,
+						compatibilityWorkaround,
+						currentRefSnapshot,
+						currentRefSnapshotInvalidation,
+						currentSessionTabTarget,
+						electronBroadGetTextScopeDiagnostics,
+						electronFailedConnectCleanup,
+						electronHandoff,
+						electronLaunch,
+						electronLaunchRecord,
+						electronLaunchRecords,
+						electronPostCommandHealth,
+						electronRefFreshnessDiagnostic,
 						electronSessionMismatch,
-						openResultTabCorrection,
-						effectiveArgs: redactedProcessArgs,
-						exitCode: processResult.exitCode,
-						fullOutputPath: parseFailureOutput.fullOutputPath ?? presentation.fullOutputPath,
-						fullOutputPaths: presentation.fullOutputPaths,
-						fullOutputUnavailable: parseFailureOutput.fullOutputUnavailable,
-						managedSessionOutcome,
-						imagePath: presentation.imagePath,
-						imagePaths: presentation.imagePaths,
-						nextActions,
-						pageChangeSummary,
-						overlayBlockers: overlayBlockerDiagnostic,
-						fillVerification: fillVerificationDiagnostic,
-						visibleRefFallback: publicVisibleRefFallbackDiagnostic,
-						richInputRecovery: richInputRecoveryDiagnostic,
-						comboboxFocus: comboboxFocusDiagnostic,
-						recordingDependencyWarning,
-						scrollNoop: scrollNoopDiagnostic,
-						qaPreset,
-						qaAttachedTarget,
-						electronGetTextScopeWarning: electronBroadGetTextScopeDiagnostics[0],
-						electronGetTextScopeWarnings: electronBroadGetTextScopeDiagnostics.length > 1 ? electronBroadGetTextScopeDiagnostics : undefined,
-						selectorTextVisibility: selectorTextVisibilityDiagnostics[0],
-						selectorTextVisibilityAll: selectorTextVisibilityDiagnostics.length > 1 ? selectorTextVisibilityDiagnostics : undefined,
+						errorText,
 						evalStdinHint,
-						timeoutPartialProgress,
-						parseError: plainTextInspection ? undefined : parseError,
-						savedFile: presentation.savedFile,
-						savedFilePath: presentation.savedFilePath,
-						sourceLookup,
+						exactSensitiveValues,
+						executionPlan,
+						fillVerificationDiagnostic,
+						inspectionText,
+						managedSessionOutcome,
+						navigationSummary,
 						networkSourceLookup,
+						noActivePageSnapshotFailure,
+						openResultTabCorrection,
+						overlayBlockerDiagnostic,
+						parseError,
+						parseFailureOutput,
+						parseSucceeded,
+						plainTextInspection,
+						presentation,
+						presentationEnvelope,
+						priorSessionTabTarget,
+						processResult,
+						qaAttachedTarget,
+						qaPreset,
+						recordingDependencyWarning,
+						redactedArgs,
+						redactedCompiledElectron,
+						redactedCompiledJob,
+						redactedCompiledNetworkSourceLookup,
+						redactedCompiledQaPreset,
+						redactedCompiledSemanticAction,
+						redactedCompiledSourceLookup,
+						redactedContent,
+						redactedProcessArgs,
+						redactedRecoveryHint,
+						resultArtifactManifest,
+						richInputRecoveryDiagnostic,
+						scrollNoopDiagnostic,
+						selectorTextVisibilityDiagnostics,
 						sessionMode,
 						sessionTabCorrection,
-						sessionTabTarget: currentSessionTabTarget,
-						refSnapshot: currentRefSnapshot,
-						refSnapshotInvalidation: currentRefSnapshotInvalidation,
-						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-						sessionRecoveryHint: redactedRecoveryHint,
-						startupScopedFlags: executionPlan.startupScopedFlags,
-						stderr: processResult.stderr,
-						stdout: plainTextInspection ? inspectionText ?? "" : parseSucceeded ? undefined : processResult.stdout,
-						summary: presentation.summary,
-						timedOut: processResult.timedOut || undefined,
-						timeoutMs: processResult.timeoutMs,
-					};
-
-					const visibleRefFallbackText = formatVisibleRefFallbackText(visibleRefFallbackDiagnostic);
-					const richInputRecoveryText = formatRichInputRecoveryText(richInputRecoveryDiagnostic);
-					const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
-					const overlayBlockerText = overlayBlockerDiagnostic ? formatOverlayBlockerText(overlayBlockerDiagnostic) : undefined;
-					const fillVerificationText = formatFillVerificationText(fillVerificationDiagnostic);
-					const electronRefFreshnessText = formatElectronRefFreshnessText(electronRefFreshnessDiagnostic);
-					const selectorTextVisibilityText = formatSelectorTextVisibilityText(selectorTextVisibilityDiagnostics);
-					const electronBroadGetTextScopeText = formatElectronBroadGetTextScopeText(electronBroadGetTextScopeDiagnostics);
-					const scrollNoopDiagnosticText = formatScrollNoopDiagnosticText(scrollNoopDiagnostic);
-					const comboboxFocusDiagnosticText = formatComboboxFocusDiagnosticText(comboboxFocusDiagnostic);
-					const recordingDependencyWarningText = formatRecordingDependencyWarningText(recordingDependencyWarning);
-					const evalStdinHintText = formatEvalStdinHintText(evalStdinHint);
-					const artifactCleanupText = formatArtifactCleanupGuidanceText(artifactCleanup);
-					const timeoutPartialProgressText = timeoutPartialProgress ? formatTimeoutPartialProgressText(timeoutPartialProgress) : undefined;
-					const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
-					const rawAppendedDiagnosticText = [visibleRefFallbackText, richInputRecoveryText, semanticActionCandidateText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
-					const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, exactSensitiveValues));
-					const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!userRequestedJson || plainTextInspection);
-					let content = shouldAppendDiagnosticText && redactedContent[0]?.type === "text"
-						? [
-							{ ...redactedContent[0], text: `${redactedContent[0].text}\n\n${appendedDiagnosticText}` },
-							...redactedContent.slice(1),
-						]
-						: redactedContent;
-					if (electronLaunchRecord && succeeded && content[0]?.type === "text") {
-						content = [{
-							...content[0],
-							text: redactSensitiveText(formatElectronLaunchText({
-								handoff: electronHandoff,
-								record: electronLaunchRecord,
-								targets: electronLaunch?.targets ?? [],
-								upstreamText: content[0].text,
-							})),
-						}, ...content.slice(1)];
-					}
-					const result = {
-						content,
-						details: redactToolDetails(details, exactSensitiveValues),
-						isError: !succeeded,
-					};
-					return compiledNetworkSourceLookup ? redactNetworkSourceLookupSurface(result) as typeof result : result;
+						sourceLookup,
+						succeeded,
+						timeoutPartialProgress,
+						userRequestedJson,
+						visibleRefFallbackDiagnostic,
+						visibleRefFallbackSessionName,
+					});
 				} finally {
 					if (processResult.stdoutSpillPath) {
 						await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
