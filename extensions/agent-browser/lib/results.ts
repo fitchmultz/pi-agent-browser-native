@@ -9,25 +9,27 @@
 export { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "./results/envelope.js";
 export { buildToolPresentation } from "./results/presentation.js";
 export {
-	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
-	AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS,
-	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
-	compareRefIds,
+} from "./results/categories.js";
+export { buildAgentBrowserNextActions } from "./results/action-recommendations.js";
+export { compareRefIds } from "./results/text.js";
+export {
+	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
+	AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS,
 	getAgentBrowserRichInputRecoveryNextActionId,
 	getAgentBrowserRichInputRecoveryNextActionIds,
-} from "./results/shared.js";
+} from "./results/recovery-actions.js";
 export type {
 	AgentBrowserBatchResult,
 	AgentBrowserEnvelope,
 	AgentBrowserFailureCategory,
-	AgentBrowserResultCategory,
 	AgentBrowserNextAction,
 	AgentBrowserPageChangeSummary,
 	AgentBrowserRecoveryContext,
 	AgentBrowserRecoveryKind,
+	AgentBrowserResultCategory,
 	AgentBrowserResultCategoryDetails,
 	AgentBrowserRichInputRecoveryNextActionKind,
 	AgentBrowserSuccessCategory,

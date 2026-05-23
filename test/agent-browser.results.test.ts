@@ -22,6 +22,12 @@ import {
 	parseAgentBrowserEnvelope,
 } from "../extensions/agent-browser/lib/results.js";
 import {
+	AgentBrowserNextActionCollector,
+	alignPageChangeSummaryNextActionIds,
+	isStandaloneSnapshotNextAction,
+	type AgentBrowserNextAction,
+} from "../extensions/agent-browser/lib/results/next-actions.js";
+import {
 	chooseOpenResultTabCorrection,
 	extractCommandTokens,
 	parseCommandInfo
@@ -57,6 +63,44 @@ test("rich input recovery nextAction id helpers lock exact ids", () => {
 		"focus-current-editable-ref-3",
 		"click-current-editable-ref-3",
 	]);
+});
+
+test("AgentBrowserNextActionCollector preserves order, first-id wins, replacement, and snapshot removal", () => {
+	const action = (id: string, args?: string[], stdin?: string): AgentBrowserNextAction => ({
+		id,
+		params: args ? { args, ...(stdin ? { stdin } : {}) } : undefined,
+		reason: id,
+		tool: "agent_browser",
+	});
+	const collector = new AgentBrowserNextActionCollector([action("a")]);
+	collector.appendUnique([action("b"), action("a", ["ignored"])]);
+	collector.append([action("a", ["kept-when-not-unique"])]);
+	assert.deepEqual(collector.toArray()?.map((item) => [item.id, item.params?.args?.[0]]), [
+		["a", undefined],
+		["b", undefined],
+		["a", "kept-when-not-unique"],
+	]);
+
+	collector.replace([action("snapshot", ["snapshot", "-i"]), action("session-snapshot", ["--session", "s1", "snapshot", "-i"]), action("batched-snapshot", ["batch"], JSON.stringify([["snapshot", "-i"]]))]);
+	collector.removeWhere(isStandaloneSnapshotNextAction);
+	assert.deepEqual(collector.toArray()?.map((item) => item.id), ["batched-snapshot"]);
+});
+
+test("alignPageChangeSummaryNextActionIds keeps only emitted action ids", () => {
+	assert.deepEqual(
+		alignPageChangeSummaryNextActionIds(
+			{ changeType: "mutation" as const, nextActionIds: ["keep", "drop"], summary: "changed" },
+			[{ id: "keep", reason: "keep", tool: "agent_browser" }],
+		),
+		{ changeType: "mutation", nextActionIds: ["keep"], summary: "changed" },
+	);
+	assert.deepEqual(
+		alignPageChangeSummaryNextActionIds(
+			{ changeType: "mutation" as const, nextActionIds: ["drop"], summary: "changed" },
+			[{ id: "keep", reason: "keep", tool: "agent_browser" }],
+		),
+		{ changeType: "mutation", nextActionIds: undefined, summary: "changed" },
+	);
 });
 
 test("classifyAgentBrowserFailureCategory locks common machine-readable failure categories", () => {

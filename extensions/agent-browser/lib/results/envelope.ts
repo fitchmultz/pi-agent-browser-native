@@ -10,7 +10,8 @@ import { readFile } from "node:fs/promises";
 
 import { isRecord } from "../parsing.js";
 import { detectConfirmationRequired } from "./confirmation.js";
-import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, stringifyUnknown } from "./shared.js";
+import type { AgentBrowserBatchResult, AgentBrowserEnvelope } from "./contracts.js";
+import { stringifyUnknown } from "./text.js";
 
 function hasStructuredBatchStepFailure(data: unknown): data is AgentBrowserBatchResult[] {
 	return Array.isArray(data) && data.some((item) => isRecord(item) && item.success === false);

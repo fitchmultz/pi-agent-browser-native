@@ -64,6 +64,25 @@ import {
 	type AgentBrowserPageChangeSummary,
 } from "./lib/results.js";
 import {
+	SessionPageState,
+	buildNoActivePageRefSnapshotInvalidation,
+	commandExplicitlyTargetsAboutBlank,
+	deriveSessionTabTarget,
+	extractLatestRefSnapshotStateFromBatchResults,
+	extractRefSnapshotFromData,
+	extractSessionTabTargetFromBatchResults,
+	extractSessionTabTargetFromCommandData,
+	isAboutBlankSessionTabTarget,
+	isAboutBlankUrl,
+	isNoActivePageSnapshotFailure,
+	normalizeComparableUrl,
+	normalizeSessionTabTarget,
+	targetsMatch,
+	type SessionRefSnapshot,
+	type SessionRefSnapshotInvalidation,
+	type SessionTabTarget,
+} from "./lib/session-page-state.js";
+import {
 	buildExecutionPlan,
 	buildPromptPolicy,
 	chooseOpenResultTabCorrection,
@@ -95,15 +114,21 @@ import {
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 } from "./lib/temp.js";
+import type { SessionArtifactManifest } from "./lib/results/contracts.js";
 import {
-	type SessionArtifactManifest,
 	buildEvictedSessionArtifactEntries,
 	formatSessionArtifactRetentionSummary,
-	getEditableRefEvidence,
 	isSessionArtifactManifest,
 	mergeSessionArtifactManifest,
-	summarizeNetworkFailures,
-} from "./lib/results/shared.js";
+} from "./lib/results/artifact-manifest.js";
+import { getEditableRefEvidence } from "./lib/results/editable-ref-evidence.js";
+import { summarizeNetworkFailures } from "./lib/results/network.js";
+import {
+	AgentBrowserNextActionCollector,
+	alignPageChangeSummaryNextActionIds,
+	appendUniqueAgentBrowserNextActions,
+	isStandaloneSnapshotNextAction,
+} from "./lib/results/next-actions.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
 const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
@@ -2774,44 +2799,11 @@ interface PinnedBatchPlan {
 	unwrapMode: PinnedBatchUnwrapMode;
 }
 
-interface SessionTabTarget {
-	title?: string;
-	url: string;
-}
-
-interface OrderedSessionTabTarget {
-	order: number;
-	target: SessionTabTarget;
-}
-
-interface SessionRefSnapshot {
-	refIds: string[];
-	target?: SessionTabTarget;
-}
-
-interface OrderedSessionRefSnapshot extends SessionRefSnapshot {
-	order: number;
-}
-
-interface SessionRefSnapshotInvalidation {
-	reason: "no-active-page";
-	summary: string;
-}
-
-interface OrderedSessionRefSnapshotInvalidation extends SessionRefSnapshotInvalidation {
-	order: number;
-}
-
 interface StaleRefPreflight {
 	message: string;
 	refIds: string[];
 	snapshot?: SessionRefSnapshot;
 	snapshotInvalidation?: SessionRefSnapshotInvalidation;
-}
-
-interface BatchRefSnapshotState {
-	invalidation?: SessionRefSnapshotInvalidation;
-	snapshot?: SessionRefSnapshot;
 }
 
 interface AboutBlankSessionMismatch {
@@ -2822,64 +2814,6 @@ interface AboutBlankSessionMismatch {
 	targetUrl: string;
 }
 
-function getLatestSessionTabTargetOrder(targets: Map<string, { order: number }>): number {
-	let latestOrder = 0;
-	for (const target of targets.values()) {
-		latestOrder = Math.max(latestOrder, target.order);
-	}
-	return latestOrder;
-}
-
-function shouldApplySessionTabTargetUpdate(options: {
-	current?: { order: number };
-	updateOrder: number;
-}): boolean {
-	return !options.current || options.updateOrder >= options.current.order;
-}
-
-function shouldApplySessionRefStateUpdate(options: {
-	currentInvalidation?: { order: number };
-	currentSnapshot?: { order: number };
-	updateOrder: number;
-}): boolean {
-	const currentOrder = Math.max(options.currentSnapshot?.order ?? 0, options.currentInvalidation?.order ?? 0);
-	return options.updateOrder >= currentOrder;
-}
-
-function stripSessionRefSnapshotOrder(snapshot: SessionRefSnapshot | undefined): SessionRefSnapshot | undefined {
-	return snapshot ? { refIds: snapshot.refIds, target: snapshot.target } : undefined;
-}
-
-function stripSessionRefSnapshotInvalidationOrder(invalidation: SessionRefSnapshotInvalidation | undefined): SessionRefSnapshotInvalidation | undefined {
-	return invalidation ? { reason: invalidation.reason, summary: invalidation.summary } : undefined;
-}
-
-function normalizeComparableUrl(url: string | undefined): string | undefined {
-	const normalizedUrl = url?.trim();
-	if (!normalizedUrl) {
-		return undefined;
-	}
-	try {
-		const parsedUrl = new URL(normalizedUrl);
-		parsedUrl.hash = "";
-		return parsedUrl.toString();
-	} catch {
-		return undefined;
-	}
-}
-
-function isAboutBlankUrl(url: string | undefined): boolean {
-	return normalizeComparableUrl(url) === "about:blank";
-}
-
-function isAboutBlankSessionTabTarget(target: SessionTabTarget | undefined): boolean {
-	return isAboutBlankUrl(target?.url);
-}
-
-function commandExplicitlyTargetsAboutBlank(commandTokens: string[]): boolean {
-	return commandTokens.some((token) => isAboutBlankUrl(token));
-}
-
 function buildAboutBlankRecoveryHint(): string {
 	return "agent_browser detected that the active tab became about:blank while this session still had a prior intended tab. Run tab list for this session and re-select the intended tab, or retry with sessionMode=fresh if the tab is gone.";
 }
@@ -2888,261 +2822,8 @@ function buildAboutBlankWarning(mismatch: AboutBlankSessionMismatch): string {
 	return `Warning: agent_browser detected that this session returned about:blank while the prior intended tab was ${mismatch.targetUrl}. ${mismatch.recoveryApplied ? "The wrapper re-selected the intended tab for the session." : "No matching tab could be re-selected; run tab list for the same session or retry with sessionMode=fresh."}`;
 }
 
-function normalizeSessionTabTarget(target: { title?: string; url?: string } | undefined): SessionTabTarget | undefined {
-	if (!target) {
-		return undefined;
-	}
-	const url = normalizeComparableUrl(target.url);
-	if (!url) {
-		return undefined;
-	}
-	const title = target.title?.trim();
-	return { title: title && title.length > 0 ? title : undefined, url };
-}
-
-function extractSessionTabTargetFromData(data: unknown): SessionTabTarget | undefined {
-	const directTarget = normalizeSessionTabTarget({
-		title: extractStringResultField(data, "title"),
-		url: extractStringResultField(data, "url"),
-	});
-	if (directTarget) {
-		return directTarget;
-	}
-	if (isRecord(data) && typeof data.origin === "string") {
-		return normalizeSessionTabTarget({ url: data.origin });
-	}
-	return undefined;
-}
-
-function isReadOnlyDiagnosticSessionTargetCommand(command: string | undefined, _subcommand: string | undefined): boolean {
-	return command !== undefined && READ_ONLY_DIAGNOSTIC_SESSION_TARGET_COMMANDS.has(command);
-}
-
-function extractSessionTabTargetFromCommandData(commandTokens: string[], data: unknown): SessionTabTarget | undefined {
-	const [command, subcommand] = commandTokens;
-	return isReadOnlyDiagnosticSessionTargetCommand(command, subcommand) ? undefined : extractSessionTabTargetFromData(data);
-}
-
 function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 	return Array.isArray(item.command) ? item.command.filter((token): token is string => typeof token === "string") : [];
-}
-
-function extractSessionTabTargetFromBatchResults(data: unknown): SessionTabTarget | undefined {
-	if (!Array.isArray(data)) {
-		return undefined;
-	}
-
-	let currentTarget: SessionTabTarget | undefined;
-	let pendingTitle: string | undefined;
-	for (const item of data) {
-		if (!isRecord(item) || item.success === false) {
-			continue;
-		}
-		const [name, subcommand] = extractBatchResultCommand(item);
-		const result = item.result;
-
-		if (name === "get" && subcommand === "title") {
-			pendingTitle = extractStringResultField(result, "title");
-			continue;
-		}
-		if (name === "get" && subcommand === "url") {
-			const url = extractStringResultField(result, "url");
-			const target = normalizeSessionTabTarget({ title: pendingTitle, url });
-			if (target) {
-				currentTarget = target;
-			}
-			pendingTitle = undefined;
-			continue;
-		}
-		const resultTarget = extractSessionTabTargetFromCommandData([name, subcommand].filter((token): token is string => token !== undefined), result);
-		if (resultTarget) {
-			currentTarget = resultTarget;
-		}
-		pendingTitle = undefined;
-	}
-	return currentTarget;
-}
-
-function batchContainsOnlyReadOnlyDiagnosticTargets(data: unknown): boolean {
-	if (!Array.isArray(data) || data.length === 0) {
-		return false;
-	}
-	return data.every((item) => {
-		if (!isRecord(item)) return false;
-		const [command, subcommand] = extractBatchResultCommand(item);
-		return isReadOnlyDiagnosticSessionTargetCommand(command, subcommand);
-	});
-}
-
-function getRestoredSessionTabTarget(details: Record<string, unknown>, command: string | undefined, subcommand: string | undefined): SessionTabTarget | undefined {
-	if (isReadOnlyDiagnosticSessionTargetCommand(command, subcommand)) {
-		return undefined;
-	}
-	const storedTarget = isRecord(details.sessionTabTarget)
-		? normalizeSessionTabTarget({
-				title: typeof details.sessionTabTarget.title === "string" ? details.sessionTabTarget.title : undefined,
-				url: typeof details.sessionTabTarget.url === "string" ? details.sessionTabTarget.url : undefined,
-		  })
-		: undefined;
-	if (command !== "batch") {
-		return storedTarget;
-	}
-	const batchTarget = extractSessionTabTargetFromBatchResults(details.data);
-	if (batchTarget) {
-		return batchTarget;
-	}
-	if (isRecord(details.compiledNetworkSourceLookup) || batchContainsOnlyReadOnlyDiagnosticTargets(details.data)) {
-		return undefined;
-	}
-	return storedTarget;
-}
-
-function restoreSessionTabTargetsFromBranch(branch: unknown[]): Map<string, OrderedSessionTabTarget> {
-	const restoredTargets = new Map<string, OrderedSessionTabTarget>();
-	let restoredOrder = 0;
-	for (const entry of branch) {
-		if (!isRecord(entry) || entry.type !== "message") {
-			continue;
-		}
-		const message = isRecord(entry.message) ? entry.message : undefined;
-		if (!message || message.toolName !== "agent_browser") {
-			continue;
-		}
-		const details = isRecord(message.details) ? message.details : undefined;
-		if (!details) {
-			continue;
-		}
-		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
-		if (!sessionName) {
-			continue;
-		}
-		const command = typeof details.command === "string" ? details.command : undefined;
-		const subcommand = typeof details.subcommand === "string" ? details.subcommand : undefined;
-		if (command === "close" && message.isError !== true) {
-			restoredOrder += 1;
-			restoredTargets.delete(sessionName);
-			continue;
-		}
-		const sessionTabTarget = getRestoredSessionTabTarget(details, command, subcommand);
-		if (sessionTabTarget) {
-			restoredOrder += 1;
-			restoredTargets.set(sessionName, { order: restoredOrder, target: sessionTabTarget });
-		}
-	}
-	return restoredTargets;
-}
-
-function extractRefSnapshotFromData(data: unknown): SessionRefSnapshot | undefined {
-	if (!isRecord(data)) return undefined;
-	return {
-		refIds: isRecord(data.refs) ? Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId)) : [],
-		target: extractSessionTabTargetFromData(data),
-	};
-}
-
-function extractBatchRefSnapshotFromData(data: unknown): SessionRefSnapshot | undefined {
-	return extractRefSnapshotFromData(data);
-}
-
-function extractLatestRefSnapshotStateFromBatchResults(data: unknown): BatchRefSnapshotState | undefined {
-	if (!Array.isArray(data)) return undefined;
-	let latestState: BatchRefSnapshotState | undefined;
-	for (const item of data) {
-		if (!isRecord(item)) continue;
-		const [name] = extractBatchResultCommand(item);
-		if (name !== "snapshot") continue;
-		if (item.success === false) {
-			if (isNoActivePageSnapshotFailure(name, getBatchResultFailureText(item))) {
-				latestState = { invalidation: buildNoActivePageRefSnapshotInvalidation() };
-			}
-			continue;
-		}
-		const snapshot = extractBatchRefSnapshotFromData(item.result);
-		if (snapshot) {
-			latestState = { snapshot };
-		}
-	}
-	return latestState;
-}
-
-function getBatchResultFailureText(item: Record<string, unknown>): string | undefined {
-	const result = isRecord(item.result) ? item.result : undefined;
-	const parts = [item.error, result?.error, typeof item.result === "string" ? item.result : undefined]
-		.filter((part): part is string => typeof part === "string" && part.trim().length > 0);
-	return parts.length > 0 ? parts.join("\n") : undefined;
-}
-
-function buildNoActivePageRefSnapshotInvalidation(): SessionRefSnapshotInvalidation {
-	return {
-		reason: "no-active-page",
-		summary: "The latest snapshot for this session reported No active page. Old page-scoped refs are invalid until snapshot -i succeeds.",
-	};
-}
-
-function getRestoredRefSnapshotInvalidation(details: Record<string, unknown>, command: string | undefined): SessionRefSnapshotInvalidation | undefined {
-	const invalidation = isRecord(details.refSnapshotInvalidation) ? details.refSnapshotInvalidation : undefined;
-	if (invalidation && invalidation.reason === "no-active-page") {
-		return buildNoActivePageRefSnapshotInvalidation();
-	}
-	const errorText = typeof details.error === "string"
-		? details.error
-		: typeof details.summary === "string"
-			? details.summary
-			: undefined;
-	return isNoActivePageSnapshotFailure(command, errorText) ? buildNoActivePageRefSnapshotInvalidation() : undefined;
-}
-
-function getRestoredRefSnapshot(details: Record<string, unknown>): SessionRefSnapshot | undefined {
-	if (!isRecord(details.refSnapshot) || !Array.isArray(details.refSnapshot.refIds)) return undefined;
-	const refIds = details.refSnapshot.refIds.filter((refId): refId is string => typeof refId === "string" && /^e\d+$/.test(refId));
-	return {
-		refIds,
-		target: isRecord(details.refSnapshot.target)
-			? normalizeSessionTabTarget({
-				title: typeof details.refSnapshot.target.title === "string" ? details.refSnapshot.target.title : undefined,
-				url: typeof details.refSnapshot.target.url === "string" ? details.refSnapshot.target.url : undefined,
-			  })
-			: undefined,
-	};
-}
-
-function restoreSessionRefSnapshotStateFromBranch(branch: unknown[]): {
-	invalidations: Map<string, OrderedSessionRefSnapshotInvalidation>;
-	snapshots: Map<string, OrderedSessionRefSnapshot>;
-} {
-	const restoredInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
-	const restoredSnapshots = new Map<string, OrderedSessionRefSnapshot>();
-	let restoredOrder = 0;
-	for (const entry of branch) {
-		if (!isRecord(entry) || entry.type !== "message") continue;
-		const message = isRecord(entry.message) ? entry.message : undefined;
-		if (!message || message.toolName !== "agent_browser") continue;
-		const details = isRecord(message.details) ? message.details : undefined;
-		if (!details) continue;
-		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
-		if (!sessionName) continue;
-		const command = typeof details.command === "string" ? details.command : undefined;
-		if (command === "close" && message.isError !== true) {
-			restoredOrder += 1;
-			restoredInvalidations.delete(sessionName);
-			restoredSnapshots.delete(sessionName);
-			continue;
-		}
-		const refSnapshotInvalidation = getRestoredRefSnapshotInvalidation(details, command);
-		if (refSnapshotInvalidation) {
-			restoredOrder += 1;
-			restoredSnapshots.delete(sessionName);
-			restoredInvalidations.set(sessionName, { ...refSnapshotInvalidation, order: restoredOrder });
-			continue;
-		}
-		const refSnapshot = getRestoredRefSnapshot(details);
-		if (refSnapshot) {
-			restoredOrder += 1;
-			restoredInvalidations.delete(sessionName);
-			restoredSnapshots.set(sessionName, { ...refSnapshot, order: restoredOrder });
-		}
-	}
-	return { invalidations: restoredInvalidations, snapshots: restoredSnapshots };
 }
 
 function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactManifest | undefined {
@@ -3447,16 +3128,6 @@ function buildElectronReattachNextAction(record: ElectronLaunchRecord, liveTarge
 	};
 }
 
-function appendUniqueNextActions(target: AgentBrowserNextAction[], additions: AgentBrowserNextAction[]): AgentBrowserNextAction[] {
-	const existingIds = new Set(target.map((action) => action.id));
-	for (const action of additions) {
-		if (existingIds.has(action.id)) continue;
-		target.push(action);
-		existingIds.add(action.id);
-	}
-	return target;
-}
-
 function buildElectronMismatchNextActions(record: ElectronLaunchRecord, liveTarget?: ElectronCdpTarget): AgentBrowserNextAction[] {
 	const baseActions = buildAgentBrowserNextActions({
 		electron: { launchId: record.launchId, sessionName: record.sessionName, status: record.cleanupState },
@@ -3657,8 +3328,8 @@ function buildElectronStatusResult(options: {
 		return record ? buildElectronMismatchNextActions(record, mismatch.liveTarget) : [];
 	});
 	const nextActions = options.mismatches?.length
-		? appendUniqueNextActions([...mismatchNextActions], baseNextActions)
-		: appendUniqueNextActions([...baseNextActions], mismatchNextActions);
+		? appendUniqueAgentBrowserNextActions([...mismatchNextActions], baseNextActions)
+		: appendUniqueAgentBrowserNextActions([...baseNextActions], mismatchNextActions);
 	const details = {
 		args: [] as string[],
 		compiledElectron: options.compiledElectron,
@@ -4141,8 +3812,8 @@ function buildElectronProbeResult(options: {
 	}) ?? [] : [];
 	const mismatchNextActions = options.mismatch && options.record ? buildElectronMismatchNextActions(options.record, options.mismatch.liveTarget) : [];
 	const nextActions = options.mismatch
-		? appendUniqueNextActions([...mismatchNextActions], baseNextActions)
-		: appendUniqueNextActions([...baseNextActions], mismatchNextActions);
+		? appendUniqueAgentBrowserNextActions([...mismatchNextActions], baseNextActions)
+		: appendUniqueAgentBrowserNextActions([...baseNextActions], mismatchNextActions);
 	const details = {
 		args: [] as string[],
 		compiledElectron: options.compiledElectron,
@@ -4363,11 +4034,6 @@ function getGuardedRefUsage(commandTokens: string[], stdin?: string, options: { 
 	return refsBeforeInBatchSnapshot;
 }
 
-function targetsMatch(left: SessionTabTarget | undefined, right: SessionTabTarget | undefined): boolean {
-	if (!left || !right) return true;
-	return normalizeComparableUrl(left.url) === normalizeComparableUrl(right.url);
-}
-
 function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string): string | undefined {
 	if (commandTokens[0] !== "batch" || stdin === undefined) return undefined;
 	const parsed = parseUserBatchStdin(stdin);
@@ -4479,31 +4145,6 @@ function buildSessionTabRecoveryNextActions(options: {
 	}) ?? [];
 }
 
-function isNoActivePageSnapshotFailure(command: string | undefined, text: string | undefined): boolean {
-	return command === "snapshot" && /\bno active page\b/i.test(text ?? "");
-}
-
-function isStandaloneSnapshotNextAction(action: AgentBrowserNextAction): boolean {
-	const args = action.params?.args;
-	if (!args || action.params?.stdin) return false;
-	const commandIndex = args[0] === "--session" ? 2 : 0;
-	return args[commandIndex] === "snapshot";
-}
-
-function removeStandaloneSnapshotNextActions(actions: AgentBrowserNextAction[] | undefined): AgentBrowserNextAction[] | undefined {
-	if (!actions) return undefined;
-	const filtered = actions.filter((action) => !isStandaloneSnapshotNextAction(action));
-	return filtered.length > 0 ? filtered : undefined;
-}
-
-function alignPageChangeSummaryNextActionIds(summary: AgentBrowserPageChangeSummary | undefined, nextActions: AgentBrowserNextAction[] | undefined): AgentBrowserPageChangeSummary | undefined {
-	if (!summary?.nextActionIds) return summary;
-	const actionIds = new Set((nextActions ?? []).map((action) => action.id));
-	const nextActionIds = summary.nextActionIds.filter((id) => actionIds.has(id));
-	if (nextActionIds.length === summary.nextActionIds.length) return summary;
-	return nextActionIds.length > 0 ? { ...summary, nextActionIds } : { ...summary, nextActionIds: undefined };
-}
-
 function sessionAwareStaleRefNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
 	return (buildAgentBrowserNextActions({ failureCategory: "stale-ref", resultCategory: "failure" }) ?? []).map((action) => {
 		const actionArgs = action.params?.args;
@@ -4566,26 +4207,6 @@ function selectSessionTargetTab(options: {
 	});
 }
 
-function deriveSessionTabTarget(options: {
-	command?: string;
-	data: unknown;
-	navigationSummary?: NavigationSummary;
-	previousTarget?: SessionTabTarget;
-	subcommand?: string;
-}): SessionTabTarget | undefined {
-	if (options.command === "close") {
-		return undefined;
-	}
-	const commandDataTarget = isReadOnlyDiagnosticSessionTargetCommand(options.command, options.subcommand)
-		? undefined
-		: extractSessionTabTargetFromData(options.data);
-	return (
-		normalizeSessionTabTarget(options.navigationSummary) ??
-		extractSessionTabTargetFromBatchResults(options.data) ??
-		commandDataTarget ??
-		options.previousTarget
-	);
-}
 
 function unwrapPinnedSessionBatchEnvelope(options: {
 	envelope?: AgentBrowserEnvelope;
@@ -5970,11 +5591,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let managedSessionName = managedSessionBaseName;
 	let managedSessionCwd = process.cwd();
 	let freshSessionOrdinal = 0;
-	let sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
-	let sessionRefSnapshots = new Map<string, OrderedSessionRefSnapshot>();
-	let sessionRefSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
-	let sessionTabPinningReasons = new Map<string, "drift" | "restore">();
-	let sessionTabTargetUpdateOrder = 0;
+	let sessionPageState = new SessionPageState();
 	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
 	let electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
@@ -6017,13 +5634,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		managedSessionCwd = ctx.cwd;
 		freshSessionOrdinal = restoredState.freshSessionOrdinal;
 		const branch = ctx.sessionManager.getBranch();
-		sessionTabTargets = restoreSessionTabTargetsFromBranch(branch);
-		const restoredRefSnapshotState = restoreSessionRefSnapshotStateFromBranch(branch);
-		sessionRefSnapshots = restoredRefSnapshotState.snapshots;
-		sessionRefSnapshotInvalidations = restoredRefSnapshotState.invalidations;
-		sessionTabPinningReasons = new Map([...sessionTabTargets.keys()].map((sessionName) => [sessionName, "restore"]));
-		sessionTabTargetUpdateOrder = Math.max(getLatestSessionTabTargetOrder(sessionTabTargets), getLatestSessionTabTargetOrder(sessionRefSnapshots), getLatestSessionTabTargetOrder(sessionRefSnapshotInvalidations));
-		artifactManifest = restoreArtifactManifestFromBranch(ctx.sessionManager.getBranch());
+		sessionPageState = SessionPageState.fromBranch(branch);
+		artifactManifest = restoreArtifactManifestFromBranch(branch);
 		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(ctx.sessionManager.getBranch());
 		electronChildProcesses = new Map<string, ChildProcess>();
 	});
@@ -6043,11 +5655,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 		});
 		managedSessionActive = false;
-		sessionTabTargets = new Map<string, OrderedSessionTabTarget>();
-		sessionRefSnapshots = new Map<string, OrderedSessionRefSnapshot>();
-		sessionRefSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
-		sessionTabPinningReasons = new Map<string, "drift" | "restore">();
-		sessionTabTargetUpdateOrder = 0;
+		sessionPageState.reset();
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
 		electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
@@ -6294,18 +5902,16 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							title: probe.title ?? probe.activeTab?.title ?? probe.refSnapshot?.target?.title,
 							url: probe.url ?? probe.activeTab?.url ?? probe.refSnapshot?.target?.url,
 						});
-						const order = ++sessionTabTargetUpdateOrder;
-						if (sessionTabTarget) sessionTabTargets.set(probe.sessionName, { order, target: sessionTabTarget });
-						if (probe.refSnapshot && shouldApplySessionRefStateUpdate({
-							currentInvalidation: sessionRefSnapshotInvalidations.get(probe.sessionName),
-							currentSnapshot: sessionRefSnapshots.get(probe.sessionName),
-							updateOrder: order,
-						})) {
-							sessionRefSnapshotInvalidations.delete(probe.sessionName);
-							sessionRefSnapshots.set(probe.sessionName, {
-								...probe.refSnapshot,
-								order,
-								target: probe.refSnapshot.target ?? sessionTabTarget,
+						const pageStateUpdate = sessionPageState.beginUpdate();
+						if (sessionTabTarget) {
+							sessionPageState.applyTabTarget({ sessionName: probe.sessionName, target: sessionTabTarget, update: pageStateUpdate });
+						}
+						if (probe.refSnapshot) {
+							sessionPageState.applyRefSnapshot({
+								fallbackTarget: sessionTabTarget,
+								sessionName: probe.sessionName,
+								snapshot: probe.refSnapshot,
+								update: pageStateUpdate,
 							});
 						}
 						return buildElectronProbeResult({
@@ -6330,7 +5936,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				return buildElectronCleanupResult(redactedCompiledElectron ?? compiledElectron, cleanupResults);
 			}
 
-			const tabTargetUpdateOrder = ++sessionTabTargetUpdateOrder;
+			const sessionPageStateUpdate = sessionPageState.beginUpdate();
 			const runTool = async (): Promise<AgentBrowserToolResult> => {
 				let runtimeToolArgs = toolArgs;
 				let runtimeToolStdin = toolStdin;
@@ -6485,11 +6091,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					};
 				}
 
-				const priorSessionTabTargetState = executionPlan.sessionName ? sessionTabTargets.get(executionPlan.sessionName) : undefined;
-				const priorSessionTabTarget = priorSessionTabTargetState?.target;
-				const sessionTabPinningReason = executionPlan.sessionName ? sessionTabPinningReasons.get(executionPlan.sessionName) : undefined;
-				const priorRefSnapshotState = executionPlan.sessionName ? sessionRefSnapshots.get(executionPlan.sessionName) : undefined;
-				const priorRefSnapshotInvalidation = executionPlan.sessionName ? sessionRefSnapshotInvalidations.get(executionPlan.sessionName) : undefined;
+				const priorSessionPageState = sessionPageState.get(executionPlan.sessionName);
+				const priorSessionTabTarget = priorSessionPageState.tabTarget;
+				const sessionTabPinningReason = priorSessionPageState.pinningReason;
+				const priorRefSnapshotState = priorSessionPageState.refSnapshot;
+				const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
 				const resolvedSemanticActionRefSnapshot = semanticActionVisibleRefResolution?.snapshot
 					? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
 					: undefined;
@@ -6510,8 +6116,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							effectiveArgs: redactedEffectiveArgs,
 							nextActions: sessionAwareStaleRefNextActions(executionPlan.sessionName),
 							refIds: staleRefPreflight.refIds,
-							refSnapshot: stripSessionRefSnapshotOrder(staleRefPreflight.snapshot),
-							refSnapshotInvalidation: stripSessionRefSnapshotInvalidationOrder(staleRefPreflight.snapshotInvalidation),
+							refSnapshot: staleRefPreflight.snapshot,
+							refSnapshotInvalidation: staleRefPreflight.snapshotInvalidation,
 							sessionMode,
 							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: staleRefPreflight.message, failureCategory: "stale-ref", succeeded: false }),
 							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
@@ -6999,20 +6605,19 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data)
 						: undefined;
 					if (executionPlan.sessionName) {
-						const activeSessionTabTargetState = sessionTabTargets.get(executionPlan.sessionName);
-						if (shouldApplySessionTabTargetUpdate({ current: activeSessionTabTargetState, updateOrder: tabTargetUpdateOrder })) {
-							if (executionPlan.commandInfo.command === "close" && succeeded) {
-								sessionTabTargets.delete(executionPlan.sessionName);
-								sessionRefSnapshots.delete(executionPlan.sessionName);
-								sessionRefSnapshotInvalidations.delete(executionPlan.sessionName);
-								sessionTabPinningReasons.delete(executionPlan.sessionName);
-							} else if (currentSessionTabTarget) {
-								sessionTabTargets.set(executionPlan.sessionName, { order: tabTargetUpdateOrder, target: currentSessionTabTarget });
+						if (executionPlan.commandInfo.command === "close" && succeeded) {
+							sessionPageState.clearSession(executionPlan.sessionName);
+						} else if (currentSessionTabTarget) {
+							const tabUpdate = sessionPageState.applyTabTarget({
+								sessionName: executionPlan.sessionName,
+								target: currentSessionTabTarget,
+								update: sessionPageStateUpdate,
+							});
+							if (!tabUpdate.applied && succeeded) {
+								// A stale overlapping command may have moved browser focus even though its older target
+								// must not replace the newer logical target. Require tab pinning on the next call.
+								sessionPageState.markPinning(executionPlan.sessionName, "drift");
 							}
-						} else if (succeeded && currentSessionTabTarget) {
-							// A stale overlapping command may have moved browser focus even though its older target
-							// must not replace the newer logical target. Require tab pinning on the next call.
-							sessionTabPinningReasons.set(executionPlan.sessionName, "drift");
 						}
 						const refSnapshot = executionPlan.commandInfo.command === "batch"
 							? batchRefSnapshotState?.snapshot
@@ -7021,17 +6626,19 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 									? extractRefSnapshotFromData(presentationEnvelope?.data)
 									: resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot
 								: undefined;
-						if (refSnapshot && shouldApplySessionRefStateUpdate({
-							currentInvalidation: sessionRefSnapshotInvalidations.get(executionPlan.sessionName),
-							currentSnapshot: sessionRefSnapshots.get(executionPlan.sessionName),
-							updateOrder: tabTargetUpdateOrder,
-						})) {
-							currentRefSnapshot = { ...refSnapshot, target: refSnapshot.target ?? currentSessionTabTarget };
-							sessionRefSnapshotInvalidations.delete(executionPlan.sessionName);
-							sessionRefSnapshots.set(executionPlan.sessionName, { ...currentRefSnapshot, order: tabTargetUpdateOrder });
+						if (refSnapshot) {
+							const refUpdate = sessionPageState.applyRefSnapshot({
+								fallbackTarget: currentSessionTabTarget,
+								sessionName: executionPlan.sessionName,
+								snapshot: refSnapshot,
+								update: sessionPageStateUpdate,
+							});
+							currentRefSnapshot = refUpdate.refSnapshot;
+							currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
 						} else {
-							currentRefSnapshot = sessionRefSnapshots.get(executionPlan.sessionName);
-							currentRefSnapshotInvalidation = sessionRefSnapshotInvalidations.get(executionPlan.sessionName);
+							const stateView = sessionPageState.get(executionPlan.sessionName);
+							currentRefSnapshot = stateView.refSnapshot;
+							currentRefSnapshotInvalidation = stateView.refSnapshotInvalidation;
 						}
 					}
 
@@ -7064,17 +6671,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 					if (executionPlan.sessionName && succeeded) {
 						if (openResultTabCorrection || sessionTabCorrection || aboutBlankSessionMismatch?.recoveryApplied) {
-							sessionTabPinningReasons.set(executionPlan.sessionName, "drift");
+							sessionPageState.markPinning(executionPlan.sessionName, "drift");
 						} else if (sessionTabPinningReason === "restore") {
-							sessionTabPinningReasons.delete(executionPlan.sessionName);
+							sessionPageState.clearRestorePinning(executionPlan.sessionName);
 						}
 					}
 
 					if (replacedManagedSessionName) {
-						sessionTabTargets.delete(replacedManagedSessionName);
-						sessionRefSnapshots.delete(replacedManagedSessionName);
-						sessionRefSnapshotInvalidations.delete(replacedManagedSessionName);
-						sessionTabPinningReasons.delete(replacedManagedSessionName);
+						sessionPageState.clearSession(replacedManagedSessionName);
 						await closeManagedSession({
 							cwd: priorManagedSessionCwd,
 							sessionName: replacedManagedSessionName,
@@ -7099,18 +6703,21 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							} catch (error) {
 								electronHandoff = { error: error instanceof Error ? error.message : String(error), handoff: electronHandoffMode };
 							}
-							if (electronHandoff.refSnapshot && shouldApplySessionRefStateUpdate({
-								currentInvalidation: sessionRefSnapshotInvalidations.get(executionPlan.sessionName),
-								currentSnapshot: sessionRefSnapshots.get(executionPlan.sessionName),
-								updateOrder: tabTargetUpdateOrder,
-							})) {
-								currentRefSnapshot = electronHandoff.refSnapshot;
-								currentRefSnapshotInvalidation = undefined;
-								sessionRefSnapshotInvalidations.delete(executionPlan.sessionName);
-								sessionRefSnapshots.set(executionPlan.sessionName, { ...electronHandoff.refSnapshot, order: tabTargetUpdateOrder });
+							if (electronHandoff.refSnapshot) {
+								const refUpdate = sessionPageState.applyRefSnapshot({
+									sessionName: executionPlan.sessionName,
+									snapshot: electronHandoff.refSnapshot,
+									update: sessionPageStateUpdate,
+								});
+								currentRefSnapshot = refUpdate.refSnapshot;
+								currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
 								if (electronHandoff.refSnapshot.target) {
 									currentSessionTabTarget = electronHandoff.refSnapshot.target;
-									sessionTabTargets.set(executionPlan.sessionName, { order: tabTargetUpdateOrder, target: electronHandoff.refSnapshot.target });
+									sessionPageState.applyTabTarget({
+										sessionName: executionPlan.sessionName,
+										target: electronHandoff.refSnapshot.target,
+										update: sessionPageStateUpdate,
+									});
 								}
 							}
 						} else {
@@ -7299,15 +6906,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							sessionName: visibleRefFallbackSessionName,
 							signal,
 						});
-						if (visibleRefFallbackDiagnostic && visibleRefFallbackSessionName && shouldApplySessionRefStateUpdate({
-							currentInvalidation: sessionRefSnapshotInvalidations.get(visibleRefFallbackSessionName),
-							currentSnapshot: sessionRefSnapshots.get(visibleRefFallbackSessionName),
-							updateOrder: tabTargetUpdateOrder,
-						})) {
-							currentRefSnapshot = { ...visibleRefFallbackDiagnostic.snapshot, target: visibleRefFallbackDiagnostic.snapshot.target ?? currentSessionTabTarget };
-							currentRefSnapshotInvalidation = undefined;
-							sessionRefSnapshotInvalidations.delete(visibleRefFallbackSessionName);
-							sessionRefSnapshots.set(visibleRefFallbackSessionName, { ...currentRefSnapshot, order: tabTargetUpdateOrder });
+						if (visibleRefFallbackDiagnostic && visibleRefFallbackSessionName) {
+							const refUpdate = sessionPageState.applyRefSnapshot({
+								fallbackTarget: currentSessionTabTarget,
+								sessionName: visibleRefFallbackSessionName,
+								snapshot: visibleRefFallbackDiagnostic.snapshot,
+								update: sessionPageStateUpdate,
+							});
+							currentRefSnapshot = refUpdate.refSnapshot;
+							currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
 						}
 					}
 					const richInputRecoveryDiagnostic = buildRichInputRecoveryDiagnostic(visibleRefFallbackDiagnostic);
@@ -7316,30 +6923,23 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						batchRefSnapshotState?.invalidation !== undefined
 					);
 					if (noActivePageSnapshotFailure && executionPlan.sessionName) {
-						const invalidation = buildNoActivePageRefSnapshotInvalidation();
-						if (shouldApplySessionRefStateUpdate({
-							currentInvalidation: sessionRefSnapshotInvalidations.get(executionPlan.sessionName),
-							currentSnapshot: sessionRefSnapshots.get(executionPlan.sessionName),
-							updateOrder: tabTargetUpdateOrder,
-						})) {
-							currentRefSnapshot = undefined;
-							currentRefSnapshotInvalidation = invalidation;
-							sessionRefSnapshots.delete(executionPlan.sessionName);
-							sessionRefSnapshotInvalidations.set(executionPlan.sessionName, { ...invalidation, order: tabTargetUpdateOrder });
-						} else {
-							currentRefSnapshot = sessionRefSnapshots.get(executionPlan.sessionName);
-							currentRefSnapshotInvalidation = sessionRefSnapshotInvalidations.get(executionPlan.sessionName);
-						}
+						const refUpdate = sessionPageState.applyRefSnapshotInvalidation({
+							invalidation: buildNoActivePageRefSnapshotInvalidation(),
+							sessionName: executionPlan.sessionName,
+							update: sessionPageStateUpdate,
+						});
+						currentRefSnapshot = refUpdate.refSnapshot;
+						currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
 					}
-					let nextActions = presentation.nextActions ? [...presentation.nextActions] : undefined;
+					const nextActionCollector = new AgentBrowserNextActionCollector(presentation.nextActions);
 					if (categoryDetails.resultCategory === "success" && executionPlan.commandInfo.command === "connect" && !electronLaunchRecord) {
-						nextActions = appendUniqueNextActions(nextActions ?? [], buildConnectedSessionNextActions(executionPlan.sessionName));
+						nextActionCollector.appendUnique(buildConnectedSessionNextActions(executionPlan.sessionName));
 					}
 					if (noActivePageSnapshotFailure) {
-						nextActions = appendUniqueNextActions(nextActions ?? [], buildNoActivePageNextActions(executionPlan.sessionName));
+						nextActionCollector.appendUnique(buildNoActivePageNextActions(executionPlan.sessionName));
 					}
 					if (aboutBlankSessionMismatch) {
-						nextActions = appendUniqueNextActions(nextActions ?? [], buildSessionTabRecoveryNextActions({
+						nextActionCollector.appendUnique(buildSessionTabRecoveryNextActions({
 							kind: "about-blank",
 							recoveryApplied: aboutBlankSessionMismatch.recoveryApplied,
 							sessionName: executionPlan.sessionName,
@@ -7347,10 +6947,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							target: { title: aboutBlankSessionMismatch.targetTitle, url: aboutBlankSessionMismatch.targetUrl },
 						}));
 						if (!aboutBlankSessionMismatch.recoveryApplied) {
-							nextActions = removeStandaloneSnapshotNextActions(nextActions);
+							nextActionCollector.removeWhere(isStandaloneSnapshotNextAction);
 						}
 					} else if (categoryDetails.resultCategory === "success" && (sessionTabCorrection || openResultTabCorrection)) {
-						nextActions = appendUniqueNextActions(nextActions ?? [], buildSessionTabRecoveryNextActions({
+						nextActionCollector.appendUnique(buildSessionTabRecoveryNextActions({
 							kind: "tab-drift",
 							recoveryApplied: true,
 							sessionName: executionPlan.sessionName,
@@ -7359,73 +6959,74 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						}));
 					}
 					if (categoryDetails.failureCategory === "stale-ref") {
-						nextActions = sessionAwareStaleRefNextActions(executionPlan.sessionName);
+						nextActionCollector.replace(sessionAwareStaleRefNextActions(executionPlan.sessionName));
 					}
 					if (visibleRefFallbackDiagnostic) {
-						(nextActions ??= []).push(...buildVisibleRefFallbackNextActions({ diagnostic: visibleRefFallbackDiagnostic, sessionName: visibleRefFallbackSessionName }));
+						nextActionCollector.append(buildVisibleRefFallbackNextActions({ diagnostic: visibleRefFallbackDiagnostic, sessionName: visibleRefFallbackSessionName }));
 					}
 					if (richInputRecoveryDiagnostic) {
-						(nextActions ??= []).push(...buildRichInputRecoveryNextActions({ diagnostic: richInputRecoveryDiagnostic, sessionName: visibleRefFallbackSessionName }));
+						nextActionCollector.append(buildRichInputRecoveryNextActions({ diagnostic: richInputRecoveryDiagnostic, sessionName: visibleRefFallbackSessionName }));
 					}
 					if (electronPostCommandHealth) {
 						const electronRecord = electronLaunchRecords.get(electronPostCommandHealth.launchId);
 						if (electronRecord) {
-							nextActions = appendUniqueNextActions(nextActions ?? [], buildElectronLifecycleNextActions(electronRecord));
+							nextActionCollector.appendUnique(buildElectronLifecycleNextActions(electronRecord));
 						}
 					}
 					if (electronSessionMismatch) {
 						const electronRecord = electronLaunchRecords.get(electronSessionMismatch.launchId);
 						if (electronRecord) {
-							nextActions = appendUniqueNextActions(nextActions ?? [], buildElectronMismatchNextActions(electronRecord, electronSessionMismatch.liveTarget));
+							nextActionCollector.appendUnique(buildElectronMismatchNextActions(electronRecord, electronSessionMismatch.liveTarget));
 						}
 					}
 					if (categoryDetails.failureCategory === "selector-not-found" && redactedCompiledSemanticAction) {
 						const candidateActions = buildSemanticActionCandidateActions(redactedCompiledSemanticAction);
 						if (candidateActions.length > 0) {
-							(nextActions ??= []).push(...candidateActions);
+							nextActionCollector.append(candidateActions);
 						}
 					}
 					if (overlayBlockerDiagnostic) {
-						(nextActions ??= []).push(...buildOverlayBlockerNextActions({ diagnostic: overlayBlockerDiagnostic, sessionName: executionPlan.sessionName }));
+						nextActionCollector.append(buildOverlayBlockerNextActions({ diagnostic: overlayBlockerDiagnostic, sessionName: executionPlan.sessionName }));
 					}
 					if (fillVerificationDiagnostic) {
-						nextActions = appendUniqueNextActions(nextActions ?? [], buildFillVerificationNextActions(fillVerificationDiagnostic, executionPlan.sessionName));
+						nextActionCollector.appendUnique(buildFillVerificationNextActions(fillVerificationDiagnostic, executionPlan.sessionName));
 					}
 					if (electronRefFreshnessDiagnostic) {
-						nextActions = appendUniqueNextActions(nextActions ?? [], buildElectronRefFreshnessNextActions(executionPlan.sessionName));
+						nextActionCollector.appendUnique(buildElectronRefFreshnessNextActions(executionPlan.sessionName));
 					}
 					if (selectorTextVisibilityDiagnostics.length > 0) {
-						(nextActions ??= []).push(...buildSelectorTextVisibilityNextActions({ diagnostics: selectorTextVisibilityDiagnostics, sessionName: executionPlan.sessionName }));
+						nextActionCollector.append(buildSelectorTextVisibilityNextActions({ diagnostics: selectorTextVisibilityDiagnostics, sessionName: executionPlan.sessionName }));
 					}
 					if (electronBroadGetTextScopeDiagnostics.length > 0) {
-						(nextActions ??= []).push(...buildElectronBroadGetTextScopeNextActions({ diagnostics: electronBroadGetTextScopeDiagnostics, sessionName: executionPlan.sessionName }));
+						nextActionCollector.append(buildElectronBroadGetTextScopeNextActions({ diagnostics: electronBroadGetTextScopeDiagnostics, sessionName: executionPlan.sessionName }));
 					}
 					if (sourceLookup?.electronContext) {
-						nextActions = appendUniqueNextActions(nextActions ?? [], buildSourceLookupElectronNextActions(sourceLookup));
+						nextActionCollector.appendUnique(buildSourceLookupElectronNextActions(sourceLookup));
 					}
 					if (scrollNoopDiagnostic) {
-						(nextActions ??= []).push(...buildScrollNoopNextActions(executionPlan.sessionName));
+						nextActionCollector.append(buildScrollNoopNextActions(executionPlan.sessionName));
 					}
 					if (comboboxFocusDiagnostic) {
-						(nextActions ??= []).push(...buildComboboxFocusNextActions(executionPlan.sessionName));
+						nextActionCollector.append(buildComboboxFocusNextActions(executionPlan.sessionName));
 					}
 					if (categoryDetails.failureCategory === "stale-ref" && redactedCompiledSemanticAction && isCompiledSemanticActionFindCommand(compiledSemanticAction)) {
-						(nextActions ??= []).push({
+						nextActionCollector.append([{
 							id: "retry-semantic-action-after-stale-ref",
 							params: { args: redactedCompiledSemanticAction.args },
 							reason: "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.",
 							safety: "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.",
 							tool: "agent_browser" as const,
-						});
+						}]);
 					}
 					if (electronLaunchRecord) {
-						(nextActions ??= []).push(...(buildAgentBrowserNextActions({
+						nextActionCollector.append(buildAgentBrowserNextActions({
 							electron: { launchId: electronLaunchRecord.launchId, sessionName: electronLaunchRecord.sessionName, status: electronLaunchRecord.cleanupState },
 							failureCategory: categoryDetails.failureCategory,
 							resultCategory: categoryDetails.resultCategory,
 							successCategory: categoryDetails.successCategory,
-						}) ?? []));
+						}));
 					}
+					const nextActions = nextActionCollector.toArray();
 					const publicVisibleRefFallbackDiagnostic = visibleRefFallbackDiagnostic
 						? sanitizeVisibleRefFallbackDiagnostic(visibleRefFallbackDiagnostic)
 						: undefined;
@@ -7505,8 +7106,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						sessionMode,
 						sessionTabCorrection,
 						sessionTabTarget: currentSessionTabTarget,
-						refSnapshot: stripSessionRefSnapshotOrder(currentRefSnapshot),
-						refSnapshotInvalidation: stripSessionRefSnapshotInvalidationOrder(currentRefSnapshotInvalidation),
+						refSnapshot: currentRefSnapshot,
+						refSnapshotInvalidation: currentRefSnapshotInvalidation,
 						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
 						sessionRecoveryHint: redactedRecoveryHint,
 						startupScopedFlags: executionPlan.startupScopedFlags,

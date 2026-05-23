@@ -19,35 +19,36 @@ import {
 } from "../temp.js";
 import { detectConfirmationRequired, type ConfirmationRequiredPresentation } from "./confirmation.js";
 import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary } from "./snapshot.js";
+import type {
+	AgentBrowserBatchResult,
+	AgentBrowserEnvelope,
+	AgentBrowserNextAction,
+	AgentBrowserPageChangeSummary,
+	ArtifactStorageScope,
+	ArtifactVerificationEntry,
+	ArtifactVerificationSummary,
+	BatchFailurePresentationDetails,
+	BatchStepPresentationDetails,
+	FileArtifactKind,
+	FileArtifactMetadata,
+	SavedFilePresentationDetails,
+	SessionArtifactManifest,
+	SessionArtifactManifestEntry,
+	ToolPresentation,
+} from "./contracts.js";
+import { buildAgentBrowserNextActions } from "./action-recommendations.js";
 import {
-	type AgentBrowserBatchResult,
-	type AgentBrowserEnvelope,
-	type AgentBrowserNextAction,
-	type AgentBrowserPageChangeSummary,
-	type ArtifactVerificationEntry,
-	type ArtifactVerificationSummary,
-	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
-	classifyNetworkRequestFailure,
-	type BatchFailurePresentationDetails,
-	type BatchStepPresentationDetails,
-	type ArtifactStorageScope,
-	type FileArtifactKind,
-	type FileArtifactMetadata,
-	type SavedFilePresentationDetails,
-	type SessionArtifactManifest,
-	type SessionArtifactManifestEntry,
-	type ToolPresentation,
+} from "./categories.js";
+import {
 	buildEvictedSessionArtifactEntries,
-	countLines,
 	formatSessionArtifactRetentionSummary,
 	mergeSessionArtifactManifest,
-	stringifyUnknown,
-	summarizeNetworkFailures,
-	truncateText,
-} from "./shared.js";
+} from "./artifact-manifest.js";
+import { classifyNetworkRequestFailure, summarizeNetworkFailures } from "./network.js";
+import { countLines, stringifyUnknown, truncateText } from "./text.js";
 
 const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
 	".gif": "image/gif",

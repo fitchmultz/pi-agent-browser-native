@@ -15,13 +15,15 @@ import test from "node:test";
 import {
 	buildToolPresentation
 } from "../extensions/agent-browser/lib/results.js";
+import type {
+	SessionArtifactManifest,
+	SessionArtifactManifestEntry,
+} from "../extensions/agent-browser/lib/results/contracts.js";
 import {
 	DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
 	getSessionArtifactManifestMaxEntries,
 	mergeSessionArtifactManifest,
-	type SessionArtifactManifest,
-	type SessionArtifactManifestEntry,
-} from "../extensions/agent-browser/lib/results/shared.js";
+} from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 import {
 	cleanupSecureTempArtifacts
 } from "../extensions/agent-browser/lib/temp.js";

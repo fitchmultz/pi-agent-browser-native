@@ -13,19 +13,18 @@ import {
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 } from "../temp.js";
+import type {
+	SessionArtifactManifest,
+	SessionArtifactManifestEntry,
+	ToolPresentation,
+} from "./contracts.js";
 import {
-	type SessionArtifactManifest,
-	type SessionArtifactManifestEntry,
-	type ToolPresentation,
 	buildEvictedSessionArtifactEntries,
-	compareRefIds,
-	countLines,
 	formatSessionArtifactRetentionSummary,
-	getEditableRefEvidence,
 	mergeSessionArtifactManifest,
-	normalizeWhitespace,
-	truncateText,
-} from "./shared.js";
+} from "./artifact-manifest.js";
+import { getEditableRefEvidence } from "./editable-ref-evidence.js";
+import { compareRefIds, countLines, normalizeWhitespace, truncateText } from "./text.js";
 
 const SNAPSHOT_INLINE_MAX_CHARS = 6_000;
 const SNAPSHOT_INLINE_MAX_LINES = 80;
@@ -555,110 +554,197 @@ function isPrimaryActionButtonRef(entry: SnapshotRefEntry): boolean {
 	);
 }
 
-function isHighValueControlRef(entry: SnapshotRefEntry): boolean {
-	const role = getHighValueControlRole(entry);
+type HighValueControlCategory = "editable" | "named-surface" | "primary-action" | "role";
+
+interface HighValueControlCategoryRule {
+	bucketKey(entry: SnapshotRefEntry, role: string): string;
+	fillTarget?: number;
+	id: HighValueControlCategory;
+	matches(entry: SnapshotRefEntry, role: string): boolean;
+	priority: number;
+}
+
+interface HighValueControlScore {
+	category: HighValueControlCategory;
+	categoryPriority: number;
+	diversityBucketKey: string;
+	fillTarget?: number;
+	lineIndex: number;
+	namePriority: 0 | 1;
+	refId: string;
+	role: string;
+	rolePriority: number;
+	roundRobinBucketKey: string;
+}
+
+interface HighValueControlCandidate {
+	entry: SnapshotRefEntry;
+	score: HighValueControlScore;
+}
+
+const SNAPSHOT_HIGH_VALUE_CONTROL_CATEGORY_RULES: readonly HighValueControlCategoryRule[] = [
+	{
+		bucketKey: () => "editable",
+		fillTarget: SNAPSHOT_HIGH_VALUE_EDITABLE_REF_FILL_TARGET_LINES,
+		id: "editable",
+		matches: (entry) => isEditableControlRef(entry),
+		priority: 0,
+	},
+	{
+		bucketKey: () => "named-surface",
+		fillTarget: SNAPSHOT_HIGH_VALUE_SURFACE_REF_FILL_TARGET_LINES,
+		id: "named-surface",
+		matches: (entry) => isNamedSurfaceControlRef(entry),
+		priority: 1,
+	},
+	{
+		bucketKey: () => "primary-action",
+		fillTarget: SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_FILL_TARGET_LINES,
+		id: "primary-action",
+		matches: (entry) => isPrimaryActionButtonRef(entry),
+		priority: 2,
+	},
+	{
+		bucketKey: (_entry, role) => role,
+		id: "role",
+		matches: () => true,
+		priority: 3,
+	},
+] as const;
+
+function isEligibleHighValueControlRef(entry: SnapshotRefEntry, role: string): boolean {
 	if (!SNAPSHOT_HIGH_VALUE_CONTROL_ROLES.has(role)) return false;
 	if (entry.isEditable === false && (role === "searchbox" || role === "textbox" || role === "combobox")) return false;
 	if (isNoiseName(entry.name) || isChromeSectionName(entry.name)) return false;
 	return entry.name.length > 0 || isEditableControlRef(entry);
 }
 
-function getHighValueControlCategoryPriority(entry: SnapshotRefEntry): number {
-	if (isEditableControlRef(entry)) return 0;
-	if (isNamedSurfaceControlRef(entry)) return 1;
-	if (isPrimaryActionButtonRef(entry)) return 2;
-	return 3;
+function getHighValueControlCategoryRule(entry: SnapshotRefEntry, role: string): HighValueControlCategoryRule | undefined {
+	return SNAPSHOT_HIGH_VALUE_CONTROL_CATEGORY_RULES.find((rule) => rule.matches(entry, role));
 }
 
-function rankHighValueControlRefs(left: SnapshotRefEntry, right: SnapshotRefEntry): number {
-	const categoryPriority = getHighValueControlCategoryPriority(left) - getHighValueControlCategoryPriority(right);
-	if (categoryPriority !== 0) return categoryPriority;
+function classifyHighValueControlRef(entry: SnapshotRefEntry): HighValueControlCandidate | undefined {
+	const role = getHighValueControlRole(entry);
+	if (!isEligibleHighValueControlRef(entry, role)) return undefined;
 
-	const rolePriority =
-		(SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[getHighValueControlRole(left)] ?? 50) -
-		(SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[getHighValueControlRole(right)] ?? 50);
-	if (rolePriority !== 0) return rolePriority;
+	const rule = getHighValueControlCategoryRule(entry, role);
+	if (!rule) return undefined;
 
-	const leftHasName = left.name.length > 0 ? 0 : 1;
-	const rightHasName = right.name.length > 0 ? 0 : 1;
-	if (leftHasName !== rightHasName) return leftHasName - rightHasName;
-
-	const leftLineIndex = left.lineIndex ?? Number.MAX_SAFE_INTEGER;
-	const rightLineIndex = right.lineIndex ?? Number.MAX_SAFE_INTEGER;
-	if (leftLineIndex !== rightLineIndex) return leftLineIndex - rightLineIndex;
-
-	return compareRefIds(left.id, right.id);
+	return {
+		entry,
+		score: {
+			category: rule.id,
+			categoryPriority: rule.priority,
+			diversityBucketKey: `${rule.priority}:${rule.bucketKey(entry, role)}`,
+			fillTarget: rule.fillTarget,
+			lineIndex: entry.lineIndex ?? Number.MAX_SAFE_INTEGER,
+			namePriority: entry.name.length > 0 ? 0 : 1,
+			refId: entry.id,
+			role,
+			rolePriority: SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[role] ?? 50,
+			roundRobinBucketKey: `${rule.priority}:${role}`,
+		},
+	};
 }
 
-function getHighValueControlDiversityBucketKey(entry: SnapshotRefEntry): string {
-	if (isEditableControlRef(entry)) return "0:editable";
-	if (isNamedSurfaceControlRef(entry)) return "1:named-surface";
-	if (isPrimaryActionButtonRef(entry)) return "2:primary-action";
-	return `3:${getHighValueControlRole(entry)}`;
+function compareHighValueControlCandidates(left: HighValueControlCandidate, right: HighValueControlCandidate): number {
+	return (
+		left.score.categoryPriority - right.score.categoryPriority ||
+		left.score.rolePriority - right.score.rolePriority ||
+		left.score.namePriority - right.score.namePriority ||
+		left.score.lineIndex - right.score.lineIndex ||
+		compareRefIds(left.score.refId, right.score.refId)
+	);
+}
+
+function takeHighValueCandidate(
+	candidate: HighValueControlCandidate,
+	selected: HighValueControlCandidate[],
+	selectedIds: Set<string>,
+): void {
+	selected.push(candidate);
+	selectedIds.add(candidate.entry.id);
+}
+
+function takeFirstPerDiversityBucket(
+	candidates: HighValueControlCandidate[],
+	selected: HighValueControlCandidate[],
+	selectedIds: Set<string>,
+	limit: number,
+): void {
+	const seenBuckets = new Set<string>();
+	for (const candidate of candidates) {
+		if (selected.length >= limit) break;
+		if (seenBuckets.has(candidate.score.diversityBucketKey)) continue;
+		seenBuckets.add(candidate.score.diversityBucketKey);
+		takeHighValueCandidate(candidate, selected, selectedIds);
+	}
+}
+
+function topUpHighValueCategory(
+	candidates: HighValueControlCandidate[],
+	selected: HighValueControlCandidate[],
+	selectedIds: Set<string>,
+	category: HighValueControlCategory,
+	target: number,
+	limit: number,
+): void {
+	let count = selected.filter((candidate) => candidate.score.category === category).length;
+	for (const candidate of candidates) {
+		if (selected.length >= limit || count >= target) break;
+		if (selectedIds.has(candidate.entry.id) || candidate.score.category !== category) continue;
+		takeHighValueCandidate(candidate, selected, selectedIds);
+		count += 1;
+	}
+}
+
+function buildRemainingHighValueBuckets(
+	candidates: HighValueControlCandidate[],
+	selectedIds: Set<string>,
+): HighValueControlCandidate[][] {
+	const buckets = new Map<string, HighValueControlCandidate[]>();
+	for (const candidate of candidates) {
+		if (selectedIds.has(candidate.entry.id)) continue;
+		const bucket = buckets.get(candidate.score.roundRobinBucketKey);
+		if (bucket) bucket.push(candidate);
+		else buckets.set(candidate.score.roundRobinBucketKey, [candidate]);
+	}
+	return [...buckets.values()].sort((left, right) => compareHighValueControlCandidates(left[0], right[0]));
+}
+
+function roundRobinHighValueBuckets(
+	buckets: HighValueControlCandidate[][],
+	selected: HighValueControlCandidate[],
+	selectedIds: Set<string>,
+	limit: number,
+): void {
+	let bucketIndex = 0;
+	while (selected.length < limit && buckets.some((bucket) => bucket.length > 0)) {
+		const bucket = buckets[bucketIndex % buckets.length];
+		const candidate = bucket.shift();
+		if (candidate) takeHighValueCandidate(candidate, selected, selectedIds);
+		bucketIndex += 1;
+	}
 }
 
 function selectHighValueControlEntries(entries: SnapshotRefEntry[], limit: number): SnapshotRefEntry[] {
-	const rankedEntries = [...entries].sort(rankHighValueControlRefs);
-	const selectedEntries: SnapshotRefEntry[] = [];
+	const candidates = entries
+		.map(classifyHighValueControlRef)
+		.filter((candidate): candidate is HighValueControlCandidate => Boolean(candidate))
+		.sort(compareHighValueControlCandidates);
+	const selected: HighValueControlCandidate[] = [];
 	const selectedIds = new Set<string>();
-	const takeEntry = (entry: SnapshotRefEntry): void => {
-		selectedEntries.push(entry);
-		selectedIds.add(entry.id);
-	};
-	const takeMatchingEntries = (predicate: (entry: SnapshotRefEntry) => boolean, maxCount: number): void => {
-		let taken = selectedEntries.filter(predicate).length;
-		for (const entry of rankedEntries) {
-			if (selectedEntries.length >= limit || taken >= maxCount) break;
-			if (selectedIds.has(entry.id) || !predicate(entry)) continue;
-			takeEntry(entry);
-			taken += 1;
-		}
-	};
 
-	const diversityBuckets = new Map<string, SnapshotRefEntry>();
-	for (const entry of rankedEntries) {
-		const bucketKey = getHighValueControlDiversityBucketKey(entry);
-		if (!diversityBuckets.has(bucketKey)) diversityBuckets.set(bucketKey, entry);
-	}
-	for (const entry of diversityBuckets.values()) {
-		if (selectedEntries.length >= limit) break;
-		takeEntry(entry);
-	}
+	takeFirstPerDiversityBucket(candidates, selected, selectedIds, limit);
 
 	// Diversity runs first so scarce lower-role controls stay visible; fill targets only top up dominant classes when capacity remains.
-	takeMatchingEntries(isEditableControlRef, SNAPSHOT_HIGH_VALUE_EDITABLE_REF_FILL_TARGET_LINES);
-	takeMatchingEntries(isNamedSurfaceControlRef, SNAPSHOT_HIGH_VALUE_SURFACE_REF_FILL_TARGET_LINES);
-	takeMatchingEntries(isPrimaryActionButtonRef, SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_FILL_TARGET_LINES);
-	const finalBuckets = new Map<string, SnapshotRefEntry[]>();
-	for (const entry of rankedEntries) {
-		if (selectedIds.has(entry.id)) continue;
-		const bucketKey = `${getHighValueControlCategoryPriority(entry)}:${getHighValueControlRole(entry)}`;
-		const bucket = finalBuckets.get(bucketKey);
-		if (bucket) {
-			bucket.push(entry);
-		} else {
-			finalBuckets.set(bucketKey, [entry]);
-		}
+	for (const rule of SNAPSHOT_HIGH_VALUE_CONTROL_CATEGORY_RULES) {
+		if (rule.fillTarget === undefined) continue;
+		topUpHighValueCategory(candidates, selected, selectedIds, rule.id, rule.fillTarget, limit);
 	}
-	const roundRobinBuckets = [...finalBuckets.entries()]
-		.sort(([leftKey], [rightKey]) => {
-			const [leftCategory, leftRole = ""] = leftKey.split(":");
-			const [rightCategory, rightRole = ""] = rightKey.split(":");
-			const categoryPriority = Number(leftCategory) - Number(rightCategory);
-			if (categoryPriority !== 0) return categoryPriority;
-			return (SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[leftRole] ?? 50) - (SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY[rightRole] ?? 50);
-		})
-		.map(([, entries]) => entries);
-	let bucketIndex = 0;
-	while (selectedEntries.length < limit && roundRobinBuckets.some((bucket) => bucket.length > 0)) {
-		const bucket = roundRobinBuckets[bucketIndex % roundRobinBuckets.length];
-		const entry = bucket.shift();
-		if (entry) {
-			takeEntry(entry);
-		}
-		bucketIndex += 1;
-	}
-	return selectedEntries;
+
+	roundRobinHighValueBuckets(buildRemainingHighValueBuckets(candidates, selectedIds), selected, selectedIds, limit);
+	return selected.map((candidate) => candidate.entry);
 }
 
 function shouldCompactSnapshot(rawText: string, data: Record<string, unknown>): boolean {
@@ -815,9 +901,7 @@ export async function buildSnapshotPresentation(
 		.filter((entry) => !keyRefIdSet.has(entry.id))
 		.slice(0, SNAPSHOT_OTHER_REF_MAX_LINES);
 	const displayedRefIdSet = new Set([...keyRefEntries, ...otherRefEntries].map((entry) => entry.id));
-	const omittedHighValueControlEntries = visibleRankedRefEntries
-		.filter((entry) => !displayedRefIdSet.has(entry.id) && isHighValueControlRef(entry))
-		.sort(rankHighValueControlRefs);
+	const omittedHighValueControlEntries = visibleRankedRefEntries.filter((entry) => !displayedRefIdSet.has(entry.id));
 	const visibleHighValueControlEntries = selectHighValueControlEntries(omittedHighValueControlEntries, SNAPSHOT_HIGH_VALUE_REF_MAX_LINES);
 	const omittedHighValueControls = Math.max(0, omittedHighValueControlEntries.length - visibleHighValueControlEntries.length);
 	const omittedNonHighlightedRefs = Math.max(
