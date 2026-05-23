@@ -8,15 +8,16 @@
 
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
-import { chmod, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 
 import {
 	buildAgentBrowserProcessEnv,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
+	resolveSpawnedChildExitCode,
 	runAgentBrowserProcess,
 } from "../extensions/agent-browser/lib/process.js";
 import {
@@ -27,12 +28,81 @@ import {
 	getSecureTempDebugState,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
+	buildStdioLingerFakeScript,
 	createExtensionHarness,
 	executeRegisteredTool,
 	runExtensionEvent,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+test("resolveSpawnedChildExitCode prefers close, then timeout, then exit fallback", () => {
+	assert.equal(
+		resolveSpawnedChildExitCode({
+			closeCode: 1,
+			exitCode: 0,
+			useExitFallback: true,
+			timedOut: true,
+			spawnError: undefined,
+		}),
+		1,
+	);
+	assert.equal(
+		resolveSpawnedChildExitCode({
+			closeCode: null,
+			exitCode: 143,
+			useExitFallback: true,
+			timedOut: true,
+			spawnError: undefined,
+		}),
+		124,
+	);
+	assert.equal(
+		resolveSpawnedChildExitCode({
+			closeCode: undefined,
+			exitCode: 0,
+			useExitFallback: true,
+			timedOut: false,
+			spawnError: undefined,
+		}),
+		0,
+	);
+	assert.equal(
+		resolveSpawnedChildExitCode({
+			closeCode: undefined,
+			exitCode: undefined,
+			useExitFallback: false,
+			timedOut: false,
+			spawnError: new Error("spawn failed"),
+		}),
+		127,
+	);
+});
+
+test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is win32", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-win32-launcher-"));
+
+	try {
+		const launcherPath = await writeFakeAgentBrowserBinary(
+			tempDir,
+			`process.stdout.write(JSON.stringify({ ok: true }));`,
+			"win32",
+		);
+		const [cmdText, scriptText] = await Promise.all([
+			readFile(join(tempDir, "agent-browser.cmd"), "utf8"),
+			readFile(join(tempDir, "agent-browser-fake.cjs"), "utf8"),
+		]);
+
+		assert.equal(launcherPath, join(tempDir, "agent-browser.cmd"));
+		assert.match(cmdText, /@ECHO OFF/i);
+		assert.match(cmdText, /agent-browser-fake\.cjs/);
+		assert.match(cmdText, /%*\r?\n/);
+		assert.match(scriptText, /ok: true/);
+		await assert.rejects(stat(join(tempDir, "agent-browser")), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
 
 test("process helpers clamp upstream operation timeouts below the CLI IPC read timeout", () => {
 	assert.equal(getAgentBrowserProcessTimeoutMs({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "1234" }), 1234);
@@ -141,6 +211,99 @@ test("runAgentBrowserProcess handles abort during stdin-bearing command", async 
 		assert.equal(processResult.spawnError, undefined);
 		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess resolves after exit when descendants keep stdio handles open", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stdio-"));
+	const basePath = process.env.PATH ?? "";
+	const lingerPidPath = join(tempDir, "linger.pid");
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		buildStdioLingerFakeScript({
+			afterSpawnBody:
+				'process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }), () => process.exit(0));',
+		}),
+	);
+	let lingerPid: number | undefined;
+
+	try {
+		const startedAt = Date.now();
+		const processResult = await runAgentBrowserProcess({
+			args: ["open", "https://example.com"],
+			cwd: tempDir,
+			env: {
+				PATH: `${tempDir}${delimiter}${basePath}`,
+				PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
+			},
+			timeoutMs: 3_000,
+		});
+		const elapsedMs = Date.now() - startedAt;
+
+		lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
+		assert.equal(processResult.exitCode, 0);
+		assert.equal(processResult.timedOut, false);
+		assert.equal(processResult.spawnError, undefined);
+		assert.match(processResult.stdout, /"ok":true/);
+		assert.ok(
+			elapsedMs < 1_500,
+			`expected inherited stdio handles not to delay process resolution, got ${elapsedMs}ms`,
+		);
+	} finally {
+		if (Number.isInteger(lingerPid)) {
+			try {
+				process.kill(lingerPid as number, "SIGTERM");
+			} catch {
+				// The linger process may have already exited.
+			}
+		}
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess returns timeout exit code when descendants keep stdio handles open", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stdio-timeout-"));
+	const basePath = process.env.PATH ?? "";
+	const lingerPidPath = join(tempDir, "linger.pid");
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		buildStdioLingerFakeScript({
+			afterSpawnBody: 'process.stdin.resume();\nsetTimeout(() => process.exit(0), 5000);',
+		}),
+	);
+	let lingerPid: number | undefined;
+
+	try {
+		const startedAt = Date.now();
+		const processResult = await runAgentBrowserProcess({
+			args: ["wait", "5000"],
+			cwd: tempDir,
+			env: {
+				PATH: `${tempDir}${delimiter}${basePath}`,
+				PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
+			},
+			timeoutMs: 1_500,
+		});
+		const elapsedMs = Date.now() - startedAt;
+
+		lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
+		assert.equal(processResult.timedOut, true);
+		assert.equal(processResult.timeoutMs, 1_500);
+		assert.equal(processResult.exitCode, 124);
+		assert.equal(processResult.spawnError, undefined);
+		assert.ok(
+			elapsedMs < 3_500,
+			`expected inherited stdio handles not to delay timeout resolution, got ${elapsedMs}ms`,
+		);
+	} finally {
+		if (Number.isInteger(lingerPid)) {
+			try {
+				process.kill(lingerPid as number, "SIGTERM");
+			} catch {
+				// The linger process may have already exited.
+			}
+		}
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });

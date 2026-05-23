@@ -3,7 +3,7 @@
  * Responsibilities: Build fake pi extension contexts, run registered extension events/tools, patch process env safely, create fake agent-browser binaries, read invocation logs, and manage child-process fixtures.
  * Scope: Test-only utilities for `test/agent-browser.*.test.ts`; production code must not import this module.
  * Usage: Import focused helpers from `./helpers/agent-browser-harness.js` inside Node test-runner suites.
- * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run.
+ * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run. `writeFakeAgentBrowserBinary` installs a Unix shell-script launcher or a Windows `agent-browser.cmd` that runs the same Node script body; pass `platform: "win32"` to assert Windows launcher layout from non-Windows hosts (spawn/PATHEXT behavior still needs a real Windows runner).
  */
 
 import assert from "node:assert/strict";
@@ -13,6 +13,7 @@ import { chmod, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
+import { execPath as nodeExecPath, platform as processPlatform } from "node:process";
 
 import type {
 	AgentToolResult,
@@ -396,7 +397,39 @@ export async function withPatchedEnv<T>(patch: Record<string, string | undefined
 	}
 }
 
-export async function writeFakeAgentBrowserBinary(tempDir: string, scriptBody: string): Promise<string> {
+/** Fake script body that spawns a detached descendant inheriting stdio (stdio-linger regressions). */
+export function buildStdioLingerFakeScript(options: { afterSpawnBody: string }): string {
+	return `const { spawn } = require("node:child_process");
+const { writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const linger = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 10000); setInterval(() => undefined, 1000);"], {
+	cwd: tmpdir(),
+	detached: true,
+	stdio: ["ignore", "inherit", "inherit"],
+});
+writeFileSync(process.env.PI_AGENT_BROWSER_TEST_LINGER_PID_PATH, String(linger.pid));
+linger.unref();
+${options.afterSpawnBody}`;
+}
+
+export async function writeFakeAgentBrowserBinary(
+	tempDir: string,
+	scriptBody: string,
+	platform: NodeJS.Platform = processPlatform,
+): Promise<string> {
+	const scriptPath = join(tempDir, "agent-browser-fake.cjs");
+	await writeFile(scriptPath, `${scriptBody}\n`, "utf8");
+
+	if (platform === "win32") {
+		const launcherPath = join(tempDir, "agent-browser.cmd");
+		await writeFile(
+			launcherPath,
+			`@ECHO OFF\r\n"${nodeExecPath.replaceAll('"', '""')}" "${scriptPath.replaceAll('"', '""')}" %*\r\n`,
+			"utf8",
+		);
+		return launcherPath;
+	}
+
 	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
 	await writeFile(fakeAgentBrowserPath, `#!/usr/bin/env node\n${scriptBody}\n`, "utf8");
 	await chmod(fakeAgentBrowserPath, 0o755);
