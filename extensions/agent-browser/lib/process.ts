@@ -107,18 +107,26 @@ function appendTail(text: string, addition: string, maxChars: number): string {
 	return combined.length <= maxChars ? combined : combined.slice(combined.length - maxChars);
 }
 
-function resolveSpawnedChildExitCode(input: {
+/** Exported for unit tests that lock subprocess exit-code precedence. */
+export function resolveSpawnedChildExitCode(input: {
 	closeCode?: number | null;
 	exitCode?: number | null;
 	useExitFallback: boolean;
 	timedOut: boolean;
 	spawnError?: Error;
 }): number {
-	return (
-		input.closeCode ??
-		(input.useExitFallback ? input.exitCode : undefined) ??
-		(input.timedOut ? 124 : input.spawnError ? 127 : 0)
-	);
+	// Precedence: observed `close` code when present, then wrapper timeout (124), then
+	// post-`exit` fallback when inherited stdio delays `close`, then spawn failure (127).
+	if (input.closeCode !== null && input.closeCode !== undefined) {
+		return input.closeCode;
+	}
+	if (input.timedOut) {
+		return 124;
+	}
+	if (input.useExitFallback && input.exitCode !== null && input.exitCode !== undefined) {
+		return input.exitCode;
+	}
+	return input.spawnError ? 127 : 0;
 }
 
 interface SpawnedChildCompletionWatcher {
@@ -136,6 +144,7 @@ function watchSpawnedChildCompletion(
 	let exited = false;
 	let exitCode: number | null = null;
 	let postExitTimer: NodeJS.Timeout | undefined;
+	// `completed` suppresses duplicate exit/close callbacks; `settled` in `finish` guards async spill cleanup.
 	let completed = false;
 
 	const complete = (closeCode?: number | null) => {
@@ -160,6 +169,7 @@ function watchSpawnedChildCompletion(
 	child.once("exit", (code) => {
 		exited = true;
 		exitCode = code;
+		destroySpawnedChildStreams(child);
 		postExitTimer = setTimeout(() => {
 			complete(undefined);
 		}, options.graceMs);
