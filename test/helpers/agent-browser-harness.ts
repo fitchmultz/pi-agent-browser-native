@@ -397,6 +397,21 @@ export async function withPatchedEnv<T>(patch: Record<string, string | undefined
 	}
 }
 
+/** Fake script body that spawns a detached descendant inheriting stdio (stdio-linger regressions). */
+export function buildStdioLingerFakeScript(options: { afterSpawnBody: string }): string {
+	return `const { spawn } = require("node:child_process");
+const { writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const linger = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 10000); setInterval(() => undefined, 1000);"], {
+	cwd: tmpdir(),
+	detached: true,
+	stdio: ["ignore", "inherit", "inherit"],
+});
+writeFileSync(process.env.PI_AGENT_BROWSER_TEST_LINGER_PID_PATH, String(linger.pid));
+linger.unref();
+${options.afterSpawnBody}`;
+}
+
 export async function writeFakeAgentBrowserBinary(
 	tempDir: string,
 	scriptBody: string,

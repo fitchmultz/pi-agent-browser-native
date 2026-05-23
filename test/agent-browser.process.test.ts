@@ -28,37 +28,13 @@ import {
 	getSecureTempDebugState,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
+	buildStdioLingerFakeScript,
 	createExtensionHarness,
 	executeRegisteredTool,
 	runExtensionEvent,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
-
-const FAKE_AGENT_BROWSER_STDIO_LINGER_SUCCESS_SCRIPT = `const { spawn } = require("node:child_process");
-const { writeFileSync } = require("node:fs");
-const { tmpdir } = require("node:os");
-const linger = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 10000); setInterval(() => undefined, 1000);"], {
-	cwd: tmpdir(),
-	detached: true,
-	stdio: ["ignore", "inherit", "inherit"],
-});
-writeFileSync(process.env.PI_AGENT_BROWSER_TEST_LINGER_PID_PATH, String(linger.pid));
-linger.unref();
-process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }), () => process.exit(0));`;
-
-const FAKE_AGENT_BROWSER_STDIO_LINGER_TIMEOUT_SCRIPT = `const { spawn } = require("node:child_process");
-const { writeFileSync } = require("node:fs");
-const { tmpdir } = require("node:os");
-const linger = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 10000); setInterval(() => undefined, 1000);"], {
-	cwd: tmpdir(),
-	detached: true,
-	stdio: ["ignore", "inherit", "inherit"],
-});
-writeFileSync(process.env.PI_AGENT_BROWSER_TEST_LINGER_PID_PATH, String(linger.pid));
-linger.unref();
-process.stdin.resume();
-setTimeout(() => process.exit(0), 5000);`;
 
 test("resolveSpawnedChildExitCode prefers close, then timeout, then exit fallback", () => {
 	assert.equal(
@@ -243,7 +219,13 @@ test("runAgentBrowserProcess resolves after exit when descendants keep stdio han
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stdio-"));
 	const basePath = process.env.PATH ?? "";
 	const lingerPidPath = join(tempDir, "linger.pid");
-	await writeFakeAgentBrowserBinary(tempDir, FAKE_AGENT_BROWSER_STDIO_LINGER_SUCCESS_SCRIPT);
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		buildStdioLingerFakeScript({
+			afterSpawnBody:
+				'process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }), () => process.exit(0));',
+		}),
+	);
 	let lingerPid: number | undefined;
 
 	try {
@@ -284,7 +266,12 @@ test("runAgentBrowserProcess returns timeout exit code when descendants keep std
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stdio-timeout-"));
 	const basePath = process.env.PATH ?? "";
 	const lingerPidPath = join(tempDir, "linger.pid");
-	await writeFakeAgentBrowserBinary(tempDir, FAKE_AGENT_BROWSER_STDIO_LINGER_TIMEOUT_SCRIPT);
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		buildStdioLingerFakeScript({
+			afterSpawnBody: 'process.stdin.resume();\nsetTimeout(() => process.exit(0), 5000);',
+		}),
+	);
 	let lingerPid: number | undefined;
 
 	try {
@@ -296,17 +283,17 @@ test("runAgentBrowserProcess returns timeout exit code when descendants keep std
 				PATH: `${tempDir}${delimiter}${basePath}`,
 				PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
 			},
-			timeoutMs: 100,
+			timeoutMs: 1_500,
 		});
 		const elapsedMs = Date.now() - startedAt;
 
 		lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
 		assert.equal(processResult.timedOut, true);
-		assert.equal(processResult.timeoutMs, 100);
+		assert.equal(processResult.timeoutMs, 1_500);
 		assert.equal(processResult.exitCode, 124);
 		assert.equal(processResult.spawnError, undefined);
 		assert.ok(
-			elapsedMs < 2_500,
+			elapsedMs < 3_500,
 			`expected inherited stdio handles not to delay timeout resolution, got ${elapsedMs}ms`,
 		);
 	} finally {

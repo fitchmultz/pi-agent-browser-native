@@ -169,8 +169,8 @@ function watchSpawnedChildCompletion(
 	child.once("exit", (code) => {
 		exited = true;
 		exitCode = code;
-		destroySpawnedChildStreams(child);
 		postExitTimer = setTimeout(() => {
+			destroySpawnedChildStreams(child);
 			complete(undefined);
 		}, options.graceMs);
 		postExitTimer.unref?.();
@@ -356,6 +356,7 @@ export async function runAgentBrowserProcess(options: {
 				if (!spawnError && stdoutSpillError) {
 					spawnError = stdoutSpillError;
 				}
+				// Idempotent teardown: streams may already be destroyed by the post-`exit` fallback.
 				destroySpawnedChildStreams(child);
 				resolve({
 					aborted,
@@ -417,7 +418,13 @@ export async function runAgentBrowserProcess(options: {
 		child.stdin.on("error", recordStdinError);
 		child.once("error", (error) => {
 			spawnError = error instanceof Error ? error : new Error(String(error));
-			finish(127);
+			finish(
+				resolveSpawnedChildExitCode({
+					useExitFallback: false,
+					timedOut,
+					spawnError,
+				}),
+			);
 		});
 		completionWatcher = watchSpawnedChildCompletion(child, {
 			graceMs: EXIT_STDIO_GRACE_MS,
