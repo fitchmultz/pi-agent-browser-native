@@ -29,7 +29,9 @@ export interface AgentBrowserExecuteParams {
 	stdin?: string;
 }
 
-export interface ResolvedAgentBrowserInput {
+export type ResolvedAgentBrowserInputKind = "args" | "electron" | "job" | "networkSourceLookup" | "qa" | "semanticAction" | "sourceLookup";
+
+interface ResolvedAgentBrowserInputFields {
 	compiledElectron?: CompiledAgentBrowserElectron;
 	compiledGeneratedBatch?: CompiledAgentBrowserJob | CompiledAgentBrowserNetworkSourceLookup | CompiledAgentBrowserSourceLookup;
 	compiledJob?: CompiledAgentBrowserJob;
@@ -46,8 +48,20 @@ export interface ResolvedAgentBrowserInput {
 	redactedCompiledSourceLookup?: CompiledAgentBrowserSourceLookup;
 	toolArgs: string[];
 	toolStdin?: string;
-	validationError?: string;
 }
+
+export type ResolvedAgentBrowserInput =
+	| (ResolvedAgentBrowserInputFields & {
+		kind: ResolvedAgentBrowserInputKind;
+		status: "valid";
+		validationError?: undefined;
+	})
+	| (ResolvedAgentBrowserInputFields & {
+		attemptedKind?: ResolvedAgentBrowserInputKind;
+		kind: "invalid";
+		status: "invalid";
+		validationError: string;
+	});
 
 function redactCompiledElectron(compiled: CompiledAgentBrowserElectron | undefined): CompiledAgentBrowserElectron | undefined {
 	if (!compiled) return undefined;
@@ -156,8 +170,23 @@ export function resolveAgentBrowserInput(options: {
 	const redactedCompiledSemanticAction = compiledSemanticAction
 		? { ...compiledSemanticAction, args: redactInvocationArgs(compiledSemanticAction.args) }
 		: undefined;
+	const attemptedKind: ResolvedAgentBrowserInputKind | undefined = compiledElectron
+		? "electron"
+		: compiledNetworkSourceLookup
+			? "networkSourceLookup"
+			: compiledSourceLookup
+				? "sourceLookup"
+				: compiledQaPreset
+					? "qa"
+					: jobResult.compiled
+						? "job"
+						: compiledSemanticAction
+							? "semanticAction"
+							: hasExplicitArgs
+								? "args"
+								: undefined;
 
-	return {
+	const resolvedFields: ResolvedAgentBrowserInputFields = {
 		compiledElectron,
 		compiledGeneratedBatch,
 		compiledJob,
@@ -174,8 +203,10 @@ export function resolveAgentBrowserInput(options: {
 		redactedCompiledSourceLookup: redactCompiledSourceLookup(compiledSourceLookup),
 		toolArgs,
 		toolStdin,
-		validationError,
 	};
+	return validationError
+		? { ...resolvedFields, attemptedKind, kind: "invalid", status: "invalid", validationError }
+		: { ...resolvedFields, kind: attemptedKind ?? "args", status: "valid" };
 }
 
 export function buildValidationFailureResult(input: ResolvedAgentBrowserInput): {
