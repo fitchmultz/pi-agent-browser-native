@@ -33,7 +33,25 @@ const NETWORK_NEXT_ACTION_LIMIT = 4;
 
 const NETWORK_FILTER_MAX_CHARS = 160;
 
-const NETWORK_FILTER_SENSITIVE_SEGMENT_TERMS = ["apikey", "api-key", "api_key", "authentication", "authorization", "bearer", "credential", "credentials", "jwt", "passwd", "password", "reset", "secret", "session", "token"] as const;
+const NETWORK_FILTER_SENSITIVE_SEGMENT_TERMS = [
+	"apikey",
+	"api-key",
+	"api_key",
+	"authentication",
+	"authorization",
+	"bearer",
+	"credential",
+	"credentials",
+	"jwt",
+	"passwd",
+	"password",
+	"reset",
+	"secret",
+	"session",
+	"token",
+] as const;
+
+const SENSITIVE_PRESENTATION_FIELD_PATTERN = /^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|x(?:_|-)?api(?:_|-)?key)$/i;
 
 const NETWORK_FILTER_OPAQUE_SEGMENT_PATTERN = /^(?:[A-Fa-f0-9]{16,}|(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{16,})$/;
 
@@ -644,7 +662,7 @@ function formatStateText(data: Record<string, unknown>): string | undefined {
 }
 
 function isSensitivePresentationField(key: string): boolean {
-	return /^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|x(?:_|-)?api(?:_|-)?key)$/i.test(key);
+	return SENSITIVE_PRESENTATION_FIELD_PATTERN.test(key);
 }
 
 function redactStructuredPresentationValue(value: unknown): unknown {
