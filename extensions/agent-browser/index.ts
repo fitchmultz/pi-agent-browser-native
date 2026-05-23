@@ -8,11 +8,10 @@
 
 import { constants as fsConstants } from "node:fs";
 import type { ChildProcess } from "node:child_process";
-import { access, copyFile, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	highlightCode,
 	isToolCallEventType,
@@ -23,8 +22,6 @@ import {
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-
 import {
 	discoverElectronApps,
 	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
@@ -53,7 +50,6 @@ import {
 	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	buildToolPresentation,
-	compareRefIds,
 	getAgentBrowserErrorText,
 	parseAgentBrowserEnvelope,
 	type AgentBrowserBatchResult,
@@ -112,6 +108,35 @@ import {
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 } from "./lib/temp.js";
+import {
+	AGENT_BROWSER_PARAMS,
+	analyzeNetworkSourceLookupResults,
+	analyzeQaPresetResults,
+	analyzeSourceLookupResults,
+	compileAgentBrowserElectron,
+	compileAgentBrowserJob,
+	compileAgentBrowserNetworkSourceLookup,
+	compileAgentBrowserQaPreset,
+	compileAgentBrowserSemanticAction,
+	compileAgentBrowserSourceLookup,
+	getCompiledSemanticActionCommandIndex,
+	getCompiledSemanticActionSessionPrefix,
+	isCompiledSemanticActionFindCommand,
+	redactNetworkSourceLookupAnalysis,
+	redactNetworkSourceLookupArgs,
+	redactNetworkSourceLookupSurface,
+	redactNetworkSourceLookupUrl,
+	type AgentBrowserNetworkSourceLookupAnalysis,
+	type AgentBrowserQaPresetAnalysis,
+	type AgentBrowserSourceLookupAnalysis,
+	type AgentBrowserSourceLookupElectronContext,
+	type CompiledAgentBrowserElectron,
+	type CompiledAgentBrowserJob,
+	type CompiledAgentBrowserNetworkSourceLookup,
+	type CompiledAgentBrowserQaPreset,
+	type CompiledAgentBrowserSemanticAction,
+	type CompiledAgentBrowserSourceLookup,
+} from "./lib/input-modes.js";
 import type { SessionArtifactManifest } from "./lib/results/contracts.js";
 import {
 	buildEvictedSessionArtifactEntries,
@@ -119,7 +144,6 @@ import {
 	isSessionArtifactManifest,
 	mergeSessionArtifactManifest,
 } from "./lib/results/artifact-manifest.js";
-import { summarizeNetworkFailures } from "./lib/results/network.js";
 import {
 	buildRichInputRecoveryDiagnostic,
 	buildRichInputRecoveryNextActions,
@@ -128,7 +152,7 @@ import {
 	formatRichInputRecoveryText,
 	formatVisibleRefFallbackText,
 	getVisibleRefFallbackTarget,
-	normalizeSemanticActionAccessibleName,
+	resolveVisibleRefActionFromSnapshot,
 	sanitizeVisibleRefFallbackDiagnostic,
 	type RichInputRecoveryDiagnostic,
 	type VisibleRefFallbackDiagnostic,
@@ -151,16 +175,6 @@ const DEFAULT_SESSION_MODE = "auto" as const;
 const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
 const PACKAGE_NAME = "pi-agent-browser-native";
 
-const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select", "uncheck"] as const;
-const AGENT_BROWSER_SEMANTIC_LOCATORS = ["alt", "label", "placeholder", "role", "testid", "text", "title"] as const;
-const AGENT_BROWSER_JOB_STEP_ACTIONS = ["open", "click", "fill", "select", "wait", "assertText", "assertUrl", "waitForDownload", "screenshot"] as const;
-const AGENT_BROWSER_QA_LOAD_STATES = ["domcontentloaded", "load", "networkidle"] as const;
-const AGENT_BROWSER_ELECTRON_ACTIONS = ["list", "launch", "status", "cleanup", "probe"] as const;
-const AGENT_BROWSER_ELECTRON_HANDOFFS = ["connect", "tabs", "snapshot"] as const;
-const AGENT_BROWSER_ELECTRON_TARGET_TYPES = ["page", "webview", "any"] as const;
-const AGENT_BROWSER_ELECTRON_LIST_FIELDS = new Set(["action", "query", "maxResults"]);
-const AGENT_BROWSER_ELECTRON_PROBE_FIELDS = new Set(["action", "launchId", "timeoutMs"]);
-const AGENT_BROWSER_ELECTRON_RESERVED_APP_ARGS = ["--user-data-dir", "--remote-debugging-port", "--remote-debugging-address", "--remote-debugging-pipe"] as const;
 const ELECTRON_PROFILE_ISOLATION_NOTE = "Profile note: electron.launch starts an isolated temporary profile; it does not reuse the app's normal signed-in profile or attach to an already-running authenticated app.";
 const ELECTRON_EXISTING_AUTH_GUIDANCE = "For already-authenticated desktop app content, do not stop here: if host tools are allowed and the app is not running, launch the normal app with --remote-debugging-port=<port>, verify the port, then run agent_browser connect <port>; if it is already running without a debug port, ask before relaunching it.";
 const ELECTRON_PROFILE_ISOLATION_DETAILS = {
@@ -177,38 +191,9 @@ const ELECTRON_PROBE_MAX_SNAPSHOT_LINES = 12;
 const ELECTRON_PROBE_MAX_SNAPSHOT_CHARS = 1_600;
 const ELECTRON_POST_COMMAND_STATUS_SETTLE_MS = 250;
 const ELECTRON_FILL_VERIFICATION_TIMEOUT_MS = 2_000;
-const SOURCE_LOOKUP_WORKSPACE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
-const SOURCE_LOOKUP_IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", "out", "tmp", "temp"]);
-const SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES = 2_000;
-const SOURCE_LOOKUP_MAX_WORKSPACE_FILES = 5_000;
 
-type AgentBrowserSemanticActionName = (typeof AGENT_BROWSER_SEMANTIC_ACTIONS)[number];
-type AgentBrowserSemanticLocator = (typeof AGENT_BROWSER_SEMANTIC_LOCATORS)[number];
-type AgentBrowserJobStepAction = (typeof AGENT_BROWSER_JOB_STEP_ACTIONS)[number];
-type AgentBrowserQaLoadState = (typeof AGENT_BROWSER_QA_LOAD_STATES)[number];
-type AgentBrowserElectronAction = (typeof AGENT_BROWSER_ELECTRON_ACTIONS)[number];
-type AgentBrowserSourceLookupStatus = "candidates-found" | "no-candidates" | "unsupported";
-type AgentBrowserNetworkSourceLookupStatus = "failed-requests-found" | "no-failed-requests" | "no-candidates";
 
-interface AgentBrowserSemanticActionInput {
-	action: AgentBrowserSemanticActionName;
-	locator?: AgentBrowserSemanticLocator;
-	value?: string;
-	values?: string[];
-	selector?: string;
-	text?: string;
-	role?: string;
-	name?: string;
-	session?: string;
-}
 
-interface CompiledAgentBrowserSemanticAction {
-	action: AgentBrowserSemanticActionName;
-	locator?: AgentBrowserSemanticLocator;
-	selector?: string;
-	values?: string[];
-	args: string[];
-}
 
 interface ScrollPositionSnapshot {
 	containerCount: number;
@@ -252,315 +237,20 @@ interface RecordingDependencyWarning {
 	recommendations: string[];
 }
 
-interface CompiledAgentBrowserJobStep {
-	action: AgentBrowserJobStepAction;
-	args: string[];
-}
 
-interface CompiledAgentBrowserJob {
-	args: string[];
-	stdin: string;
-	steps: CompiledAgentBrowserJobStep[];
-}
 
-interface CompiledAgentBrowserQaPreset extends CompiledAgentBrowserJob {
-	checks: {
-		checkConsole: boolean;
-		checkErrors: boolean;
-		checkNetwork: boolean;
-		loadState: AgentBrowserQaLoadState;
-		expectedText: string[];
-		expectedSelector?: string;
-		screenshotPath?: string;
-		attached: boolean;
-		url?: string;
-	};
-}
 
-interface CompiledAgentBrowserSourceLookupStep {
-	action: "dom" | "react";
-	args: string[];
-}
 
-interface CompiledAgentBrowserSourceLookup {
-	args: string[];
-	stdin: string;
-	steps: CompiledAgentBrowserSourceLookupStep[];
-	query: {
-		componentName?: string;
-		includeDomHints: boolean;
-		maxWorkspaceFiles: number;
-		reactFiberId?: string;
-		selector?: string;
-	};
-}
 
-interface AgentBrowserSourceLookupCandidate {
-	column?: number;
-	componentName?: string;
-	confidence: "high" | "medium" | "low";
-	evidence: string[];
-	file?: string;
-	line?: number;
-	source: "react-inspect" | "dom-attribute" | "workspace-search";
-}
 
-interface AgentBrowserSourceLookupElectronContext {
-	appName?: string;
-	appPath?: string;
-	executablePath?: string;
-	launchId?: string;
-	sessionName?: string;
-	url?: string;
-}
 
-interface AgentBrowserSourceLookupAnalysis {
-	candidates: AgentBrowserSourceLookupCandidate[];
-	electronContext?: AgentBrowserSourceLookupElectronContext;
-	limitations: string[];
-	status: AgentBrowserSourceLookupStatus;
-	summary: string;
-	workspaceRoot?: string;
-}
 
-interface AgentBrowserSourceLookupAnalysisContext {
-	electronContext?: AgentBrowserSourceLookupElectronContext;
-	workspaceRoot: string;
-}
 
-interface CompiledAgentBrowserNetworkSourceLookup {
-	args: string[];
-	stdin: string;
-	steps: Array<{ action: "network"; args: string[] }>;
-	query: {
-		filter?: string;
-		maxWorkspaceFiles: number;
-		requestId?: string;
-		session?: string;
-		url?: string;
-	};
-}
 
-type CompiledAgentBrowserElectron =
-	| {
-		action: "list";
-		maxResults?: number;
-		query?: string;
-	}
-	| {
-		action: "launch";
-		allow?: string[];
-		appArgs?: string[];
-		deny?: string[];
-		appName?: string;
-		appPath?: string;
-		bundleId?: string;
-		executablePath?: string;
-		handoff: "connect" | "snapshot" | "tabs";
-		targetType: "any" | "page" | "webview";
-		timeoutMs?: number;
-	}
-	| {
-		action: "cleanup" | "status";
-		all?: boolean;
-		launchId?: string;
-		timeoutMs?: number;
-	}
-	| {
-		action: "probe";
-		launchId?: string;
-		timeoutMs?: number;
-	};
 
-interface AgentBrowserNetworkSourceLookupRequest {
-	error?: string;
-	method?: string;
-	requestId?: string;
-	status?: number;
-	url?: string;
-}
 
-interface AgentBrowserNetworkSourceLookupCandidate {
-	confidence: "high" | "medium" | "low";
-	evidence: string[];
-	file?: string;
-	line?: number;
-	requestUrl?: string;
-	source: "initiator" | "workspace-search";
-}
 
-interface AgentBrowserNetworkSourceLookupAnalysis {
-	candidates: AgentBrowserNetworkSourceLookupCandidate[];
-	failedRequests: AgentBrowserNetworkSourceLookupRequest[];
-	limitations: string[];
-	status: AgentBrowserNetworkSourceLookupStatus;
-	summary: string;
-}
 
-const AGENT_BROWSER_PARAMS = Type.Object({
-
-	args: Type.Optional(
-		Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
-			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron is provided.",
-			minItems: 1,
-		}),
-	),
-	semanticAction: Type.Optional(
-		Type.Object({
-			action: StringEnum(AGENT_BROWSER_SEMANTIC_ACTIONS, {
-				description: "Intent action to compile to an existing agent-browser find command, or to upstream select when action=select.",
-			}),
-			locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, {
-				description: "Upstream find locator family to use for check/click/fill/uncheck actions.",
-			})),
-			value: Type.Optional(Type.String({ description: "Locator value for find actions, or a single option value for select actions. For locator=role, role may be supplied instead." })),
-			values: Type.Optional(Type.Array(Type.String({ description: "Option value for select actions." }), { description: "One or more option values for select actions.", minItems: 1 })),
-			selector: Type.Optional(Type.String({ description: "Selector or @ref for select actions; compiled to select <selector> <value...>." })),
-			text: Type.Optional(Type.String({ description: "Text/value argument for fill actions." })),
-			role: Type.Optional(Type.String({ description: "Role locator value for locator=role. May be used instead of value; when both are set they must match." })),
-			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
-			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the compiled command." })),
-		}),
-	),
-	qa: Type.Optional(
-		Type.Union([
-			Type.Object({
-				attached: Type.Literal(true, { description: "Run the QA preset against the currently attached session instead of opening qa.url." }),
-				expectedText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must appear on the page." })),
-				expectedSelector: Type.Optional(Type.String({ description: "Selector or @ref that must appear on the page." })),
-				screenshotPath: Type.Optional(Type.String({ description: "Optional evidence screenshot path captured at the end of the QA preset." })),
-				checkConsole: Type.Optional(Type.Boolean({ description: "Whether to fail on console error messages. Defaults to true." })),
-				checkErrors: Type.Optional(Type.Boolean({ description: "Whether to fail on page errors. Defaults to true." })),
-				checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to inspect network requests and fail on actionable request failures; benign icon misses warn. Defaults to true." })),
-				loadState: Type.Optional(StringEnum(AGENT_BROWSER_QA_LOAD_STATES, { description: "Page readiness state for the QA preset before assertions and diagnostics. Defaults to domcontentloaded; use networkidle only for pages without long-lived background requests." })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				url: Type.String({ description: "URL to open for a lightweight QA preset." }),
-				attached: Type.Optional(Type.Literal(false, { description: "When omitted or false, qa.url is required and opened before checks." })),
-				expectedText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must appear on the page." })),
-				expectedSelector: Type.Optional(Type.String({ description: "Selector or @ref that must appear on the page." })),
-				screenshotPath: Type.Optional(Type.String({ description: "Optional evidence screenshot path captured at the end of the QA preset." })),
-				checkConsole: Type.Optional(Type.Boolean({ description: "Whether to fail on console error messages. Defaults to true." })),
-				checkErrors: Type.Optional(Type.Boolean({ description: "Whether to fail on page errors. Defaults to true." })),
-				checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to inspect network requests and fail on actionable request failures; benign icon misses warn. Defaults to true." })),
-				loadState: Type.Optional(StringEnum(AGENT_BROWSER_QA_LOAD_STATES, { description: "Page readiness state for the QA preset before assertions and diagnostics. Defaults to domcontentloaded; use networkidle only for pages without long-lived background requests." })),
-			}, { additionalProperties: false }),
-		], { description: "Lightweight QA preset. Use qa.url to open a URL, or qa.attached=true to check the current attached session without opening a URL." }),
-	),
-	sourceLookup: Type.Optional(
-		Type.Object({
-			selector: Type.Optional(Type.String({ description: "Visible selector or @ref whose DOM metadata should be inspected for source hints." })),
-			reactFiberId: Type.Optional(Type.String({ description: "React fiber id to inspect with upstream react inspect. Requires a session opened with --enable react-devtools." })),
-			componentName: Type.Optional(Type.String({ description: "Component name to correlate with react tree output and bounded local workspace search." })),
-			includeDomHints: Type.Optional(Type.Boolean({ description: "Whether selector lookups should inspect DOM HTML attributes for source-like metadata. Defaults to true." })),
-			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan when componentName is provided. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
-		}),
-	),
-	networkSourceLookup: Type.Optional(
-		Type.Object({
-			filter: Type.Optional(Type.String({ description: "Optional upstream network requests filter pattern." })),
-			requestId: Type.Optional(Type.String({ description: "Optional network request id to inspect with network request <id>." })),
-			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the generated batch." })),
-			url: Type.Optional(Type.String({ description: "Optional failed request URL or URL fragment to correlate with local source." })),
-			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan for URL literals. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
-		}),
-	),
-	electron: Type.Optional(
-		Type.Union([
-			Type.Object({
-				action: StringEnum(["list"] as const, { description: "List discovered Electron apps." }),
-				query: Type.Optional(Type.String({ description: "Optional case-insensitive substring filter for electron.list across app name, bundle id, desktop id, and paths.", minLength: 1 })),
-				maxResults: Type.Optional(Type.Integer({ description: `Maximum electron.list apps to return. Defaults to ${ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS}; values above ${ELECTRON_DISCOVERY_MAX_RESULTS} are clamped.`, minimum: 1 })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
-				appPath: Type.String({ description: "Electron launch target: macOS .app bundle path. Exactly one launch target is required for electron.launch.", minLength: 1 }),
-				appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
-				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
-				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
-				allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
-				deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
-				appName: Type.String({ description: "Electron launch target: app display name discovered by electron.list. Exactly one launch target is required for electron.launch.", minLength: 1 }),
-				appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
-				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
-				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
-				allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
-				deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
-				bundleId: Type.String({ description: "Electron launch target: macOS bundle identifier discovered by electron.list. Exactly one launch target is required for electron.launch.", minLength: 1 }),
-				appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
-				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
-				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
-				allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
-				deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
-				executablePath: Type.String({ description: "Electron launch target: executable path. Discovery is not required when this is provided. Exactly one launch target is required for electron.launch.", minLength: 1 }),
-				appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
-				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
-				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
-				allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
-				deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["status", "cleanup"] as const, { description: "Inspect or cleanup one wrapper-tracked Electron launch by launchId." }),
-				launchId: Type.String({ description: "Wrapper launch id for electron.status and electron.cleanup.", minLength: 1 }),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded status/cleanup timeout in milliseconds.", minimum: 1 })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["status", "cleanup"] as const, { description: "Inspect or cleanup all wrapper-tracked Electron launches." }),
-				all: Type.Literal(true, { description: "Apply electron.status or electron.cleanup to all wrapper-owned launches." }),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded status/cleanup timeout in milliseconds.", minimum: 1 })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["status", "cleanup"] as const, { description: "Inspect or cleanup the only active wrapper-tracked Electron launch." }),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded status/cleanup timeout in milliseconds.", minimum: 1 })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["probe"] as const, { description: "Probe the current attached Electron managed session; launchId is accepted for launch-scoped follow-up actions." }),
-				launchId: Type.Optional(Type.String({ description: "Wrapper launch id for electron.probe follow-up targeting.", minLength: 1 })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded probe timeout in milliseconds.", minimum: 1 })),
-			}, { additionalProperties: false }),
-		], { description: "Electron wrapper action. Fields are action-specific and unsupported fields are rejected." }),
-	),
-	job: Type.Optional(
-		Type.Object({
-			steps: Type.Array(
-				Type.Object({
-					action: StringEnum(AGENT_BROWSER_JOB_STEP_ACTIONS, {
-						description: "Constrained one-call job step compiled to existing upstream batch commands.",
-					}),
-					url: Type.Optional(Type.String({ description: "URL for open steps, or URL pattern for assertUrl steps." })),
-					selector: Type.Optional(Type.String({ description: "Selector or @ref for click/fill/select-like steps." })),
-					text: Type.Optional(Type.String({ description: "Text for fill steps or visible text for assertText steps." })),
-					value: Type.Optional(Type.String({ description: "Single option value for select steps." })),
-					values: Type.Optional(Type.Array(Type.String({ description: "Option value for select steps." }), { description: "One or more option values for select steps.", minItems: 1 })),
-					path: Type.Optional(Type.String({ description: "Artifact/download path for waitForDownload or screenshot steps." })),
-					milliseconds: Type.Optional(Type.Number({ description: "Milliseconds for wait steps." })),
-				}),
-				{ minItems: 1 },
-			),
-		}),
-	),
-	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, auth save --password-stdin, and is generated internally by job, qa, sourceLookup, or networkSourceLookup mode. Do not use with electron mode." })),
-	sessionMode: Type.Optional(
-		StringEnum(["auto", "fresh"] as const, {
-			description:
-				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device apply and later auto calls follow the new browser.",
-			default: DEFAULT_SESSION_MODE,
-		}),
-	),
-});
 function buildMissingBinaryMessage(): string {
 	return [
 		"agent-browser is required but was not found on PATH.",
@@ -576,819 +266,50 @@ function buildInvocationPreview(effectiveArgs: string[]): string {
 	return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
 }
 
-function getRequiredJobString(step: Record<string, unknown>, field: "path" | "selector" | "text" | "url", action: AgentBrowserJobStepAction): { value?: string; error?: string } {
-	const value = step[field];
-	if (typeof value !== "string" || value.trim().length === 0) {
-		return { error: `job step ${action} requires a non-empty ${field} string.` };
-	}
-	return { value };
-}
 
-function getSelectValues(input: Record<string, unknown>, context: string): { values?: string[]; error?: string } {
-	const rawValue = input.value;
-	const rawValues = input.values;
-	if (rawValue !== undefined && rawValues !== undefined) {
-		return { error: `${context}.value and ${context}.values cannot both be provided for select.` };
-	}
-	if (rawValues !== undefined) {
-		if (!Array.isArray(rawValues) || rawValues.length === 0 || rawValues.some((value) => typeof value !== "string" || value.trim().length === 0)) {
-			return { error: `${context}.values must be a non-empty array of non-empty strings for select.` };
-		}
-		return { values: rawValues };
-	}
-	if (typeof rawValue === "string" && rawValue.trim().length > 0) {
-		return { values: [rawValue] };
-	}
-	return { error: `${context}.value or ${context}.values is required for select.` };
-}
 
-function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAgentBrowserJob; error?: string } {
-	if (!isRecord(input)) {
-		return { error: "job must be an object." };
-	}
-	const rawSteps = input.steps;
-	if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
-		return { error: "job.steps must be a non-empty array." };
-	}
-	const steps: CompiledAgentBrowserJobStep[] = [];
-	for (const [index, rawStep] of rawSteps.entries()) {
-		if (!isRecord(rawStep)) {
-			return { error: `job.steps[${index}] must be an object.` };
-		}
-		const action = rawStep.action;
-		if (typeof action !== "string" || !AGENT_BROWSER_JOB_STEP_ACTIONS.includes(action as AgentBrowserJobStepAction)) {
-			return { error: `job.steps[${index}].action must be one of: ${AGENT_BROWSER_JOB_STEP_ACTIONS.join(", ")}.` };
-		}
-		const jobAction = action as AgentBrowserJobStepAction;
-		let args: string[];
-		if (jobAction === "open") {
-			const result = getRequiredJobString(rawStep, "url", jobAction);
-			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
-			args = ["open", result.value as string];
-		} else if (jobAction === "click") {
-			const result = getRequiredJobString(rawStep, "selector", jobAction);
-			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
-			args = ["click", result.value as string];
-		} else if (jobAction === "fill") {
-			const selector = getRequiredJobString(rawStep, "selector", jobAction);
-			if (selector.error) return { error: `job.steps[${index}]: ${selector.error}` };
-			const text = getRequiredJobString(rawStep, "text", jobAction);
-			if (text.error) return { error: `job.steps[${index}]: ${text.error}` };
-			args = ["fill", selector.value as string, text.value as string];
-		} else if (jobAction === "select") {
-			const selector = getRequiredJobString(rawStep, "selector", jobAction);
-			if (selector.error) return { error: `job.steps[${index}]: ${selector.error}` };
-			const values = getSelectValues(rawStep, `job.steps[${index}]`);
-			if (values.error) return { error: values.error };
-			args = ["select", selector.value as string, ...(values.values as string[])];
-		} else if (jobAction === "wait") {
-			const milliseconds = rawStep.milliseconds;
-			if (typeof milliseconds !== "number" || !Number.isInteger(milliseconds) || milliseconds <= 0) {
-				return { error: `job.steps[${index}]: job step wait requires a positive integer milliseconds value.` };
-			}
-			args = ["wait", String(milliseconds)];
-		} else if (jobAction === "assertText") {
-			const result = getRequiredJobString(rawStep, "text", jobAction);
-			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
-			args = ["wait", "--text", result.value as string];
-		} else if (jobAction === "assertUrl") {
-			const result = getRequiredJobString(rawStep, "url", jobAction);
-			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
-			args = ["wait", "--url", result.value as string];
-		} else if (jobAction === "waitForDownload") {
-			const result = getRequiredJobString(rawStep, "path", jobAction);
-			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
-			args = ["wait", "--download", result.value as string];
-		} else {
-			const result = getRequiredJobString(rawStep, "path", jobAction);
-			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
-			args = ["screenshot", result.value as string];
-		}
-		steps.push({ action: jobAction, args });
-	}
-	return { compiled: { args: ["batch"], stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
-}
 
-interface AgentBrowserQaPresetAnalysis {
-	failedChecks: string[];
-	passed: boolean;
-	summary: string;
-	warnings: string[];
-}
 
-function getBatchResultItems(data: unknown): Array<Record<string, unknown>> {
-	return Array.isArray(data) ? data.filter(isRecord) : [];
-}
 
-function getCommandNameFromBatchItem(item: Record<string, unknown>): string | undefined {
-	const command = item.command;
-	return Array.isArray(command) && typeof command[0] === "string" ? command[0] : undefined;
-}
 
-function analyzeQaPresetResults(data: unknown): AgentBrowserQaPresetAnalysis | undefined {
-	const items = getBatchResultItems(data);
-	if (items.length === 0) return undefined;
-	const failedChecks: string[] = [];
-	const warnings: string[] = [];
-	for (const item of items) {
-		if (item.success === false) {
-			failedChecks.push(`${getCommandNameFromBatchItem(item) ?? "step"} failed`);
-		}
-		const result = isRecord(item.result) ? item.result : undefined;
-		const commandName = getCommandNameFromBatchItem(item);
-		if (commandName === "errors" && Array.isArray(result?.errors) && result.errors.length > 0) {
-			failedChecks.push(`${result.errors.length} page error(s)`);
-		}
-		if (commandName === "console" && Array.isArray(result?.messages)) {
-			const errorCount = result.messages.filter((message) => isRecord(message) && /error/i.test(String(message.type ?? message.level ?? ""))).length;
-			if (errorCount > 0) failedChecks.push(`${errorCount} console error message(s)`);
-		}
-		if (commandName === "network" && Array.isArray(result?.requests)) {
-			const networkFailures = summarizeNetworkFailures(result.requests);
-			if (networkFailures.actionableCount > 0) failedChecks.push(`${networkFailures.actionableCount} actionable failed network request(s)`);
-			if (networkFailures.benignCount > 0) warnings.push(`${networkFailures.benignCount} benign network request failure(s) ignored`);
-		}
-	}
-	const uniqueFailures = [...new Set(failedChecks)];
-	const uniqueWarnings = [...new Set(warnings)];
-	return {
-		failedChecks: uniqueFailures,
-		passed: uniqueFailures.length === 0,
-		summary: uniqueFailures.length === 0
-			? uniqueWarnings.length === 0 ? "QA preset passed." : `QA preset passed with warnings: ${uniqueWarnings.join("; ")}.`
-			: `QA preset failed: ${uniqueFailures.join("; ")}.`,
-		warnings: uniqueWarnings,
-	};
-}
 
-function compileAgentBrowserQaPreset(input: unknown): { compiled?: CompiledAgentBrowserQaPreset; error?: string } {
-	if (!isRecord(input)) {
-		return { error: "qa must be an object." };
-	}
-	const attached = input.attached === true;
-	if (input.attached !== undefined && typeof input.attached !== "boolean") {
-		return { error: "qa.attached must be a boolean when provided." };
-	}
-	const url = input.url;
-	if (attached && url !== undefined) {
-		return { error: "qa.url must be omitted when qa.attached is true." };
-	}
-	if (!attached && (typeof url !== "string" || url.trim().length === 0)) {
-		return { error: "qa.url must be a non-empty string." };
-	}
-	const normalizedUrl = typeof url === "string" ? url.trim() : undefined;
-	const expectedText = input.expectedText === undefined
-		? []
-		: typeof input.expectedText === "string"
-			? [input.expectedText]
-			: Array.isArray(input.expectedText)
-				? input.expectedText
-				: undefined;
-	if (!expectedText || expectedText.some((text) => typeof text !== "string" || text.trim().length === 0)) {
-		return { error: "qa.expectedText must be a non-empty string or array of non-empty strings when provided." };
-	}
-	const expectedSelector = input.expectedSelector;
-	if (expectedSelector !== undefined && (typeof expectedSelector !== "string" || expectedSelector.trim().length === 0)) {
-		return { error: "qa.expectedSelector must be a non-empty string when provided." };
-	}
-	const screenshotPath = input.screenshotPath;
-	if (screenshotPath !== undefined && (typeof screenshotPath !== "string" || screenshotPath.trim().length === 0)) {
-		return { error: "qa.screenshotPath must be a non-empty string when provided." };
-	}
-	for (const field of ["checkConsole", "checkErrors", "checkNetwork"] as const) {
-		if (input[field] !== undefined && typeof input[field] !== "boolean") {
-			return { error: `qa.${field} must be a boolean when provided.` };
-		}
-	}
-	const rawLoadState = input.loadState;
-	if (rawLoadState !== undefined && (typeof rawLoadState !== "string" || !AGENT_BROWSER_QA_LOAD_STATES.includes(rawLoadState as AgentBrowserQaLoadState))) {
-		return { error: `qa.loadState must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.` };
-	}
-	const checkConsole = input.checkConsole !== false;
-	const checkErrors = input.checkErrors !== false;
-	const checkNetwork = input.checkNetwork !== false;
-	const loadState = (rawLoadState as AgentBrowserQaLoadState | undefined) ?? "domcontentloaded";
-	const steps: CompiledAgentBrowserJobStep[] = [];
-	if (checkNetwork) steps.push({ action: "wait", args: ["network", "requests", "--clear"] });
-	if (checkConsole) steps.push({ action: "wait", args: ["console", "--clear"] });
-	if (checkErrors) steps.push({ action: "wait", args: ["errors", "--clear"] });
-	if (!attached && normalizedUrl) steps.push({ action: "open", args: ["open", normalizedUrl] });
-	steps.push({ action: "wait", args: ["wait", "--load", loadState] });
-	for (const text of expectedText) {
-		steps.push({ action: "assertText", args: ["wait", "--text", text] });
-	}
-	if (typeof expectedSelector === "string") {
-		steps.push({ action: "wait", args: ["wait", expectedSelector] });
-	}
-	if (checkNetwork) steps.push({ action: "wait", args: ["network", "requests"] });
-	if (checkConsole) steps.push({ action: "wait", args: ["console"] });
-	if (checkErrors) steps.push({ action: "wait", args: ["errors"] });
-	if (typeof screenshotPath === "string") steps.push({ action: "screenshot", args: ["screenshot", screenshotPath] });
-	return {
-		compiled: {
-			args: ["batch"],
-			checks: { attached, checkConsole, checkErrors, checkNetwork, expectedSelector, expectedText, loadState, screenshotPath, url: normalizedUrl },
-			stdin: JSON.stringify(steps.map((step) => step.args)),
-			steps,
-		},
-	};
-}
 
-function compileAgentBrowserSourceLookup(input: unknown): { compiled?: CompiledAgentBrowserSourceLookup; error?: string } {
-	if (!isRecord(input)) {
-		return { error: "sourceLookup must be an object." };
-	}
-	const selector = input.selector;
-	const reactFiberId = input.reactFiberId;
-	const componentName = input.componentName;
-	if (selector !== undefined && (typeof selector !== "string" || selector.trim().length === 0)) {
-		return { error: "sourceLookup.selector must be a non-empty string when provided." };
-	}
-	if (reactFiberId !== undefined && (typeof reactFiberId !== "string" || reactFiberId.trim().length === 0)) {
-		return { error: "sourceLookup.reactFiberId must be a non-empty string when provided." };
-	}
-	if (componentName !== undefined && (typeof componentName !== "string" || componentName.trim().length === 0)) {
-		return { error: "sourceLookup.componentName must be a non-empty string when provided." };
-	}
-	if (selector === undefined && reactFiberId === undefined && componentName === undefined) {
-		return { error: "sourceLookup requires selector, reactFiberId, or componentName." };
-	}
-	if (input.includeDomHints !== undefined && typeof input.includeDomHints !== "boolean") {
-		return { error: "sourceLookup.includeDomHints must be a boolean when provided." };
-	}
-	const rawMaxWorkspaceFiles = input.maxWorkspaceFiles;
-	if (rawMaxWorkspaceFiles !== undefined && (typeof rawMaxWorkspaceFiles !== "number" || !Number.isInteger(rawMaxWorkspaceFiles) || rawMaxWorkspaceFiles <= 0)) {
-		return { error: "sourceLookup.maxWorkspaceFiles must be a positive integer when provided." };
-	}
-	if (typeof rawMaxWorkspaceFiles === "number" && rawMaxWorkspaceFiles > SOURCE_LOOKUP_MAX_WORKSPACE_FILES) {
-		return { error: `sourceLookup.maxWorkspaceFiles must be ${SOURCE_LOOKUP_MAX_WORKSPACE_FILES} or less.` };
-	}
-	const includeDomHints = input.includeDomHints !== false;
-	const maxWorkspaceFiles = (rawMaxWorkspaceFiles as number | undefined) ?? SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES;
-	const steps: CompiledAgentBrowserSourceLookupStep[] = [];
-	if (typeof selector === "string") {
-		steps.push({ action: "dom", args: ["is", "visible", selector] });
-		if (includeDomHints) {
-			steps.push({ action: "dom", args: ["get", "html", selector] });
-		}
-	}
-	if (typeof reactFiberId === "string") {
-		steps.push({ action: "react", args: ["react", "inspect", reactFiberId] });
-	}
-	if (typeof componentName === "string") {
-		steps.push({ action: "react", args: ["react", "tree"] });
-	}
-	return {
-		compiled: {
-			args: ["batch"],
-			query: { componentName, includeDomHints, maxWorkspaceFiles, reactFiberId, selector },
-			stdin: JSON.stringify(steps.map((step) => step.args)),
-			steps,
-		},
-	};
-}
 
-function extractStringField(value: Record<string, unknown>, names: string[]): string | undefined {
-	for (const name of names) {
-		const field = value[name];
-		if (typeof field === "string" && field.trim().length > 0) return field;
-	}
-	return undefined;
-}
 
-function extractNumberField(value: Record<string, unknown>, names: string[]): number | undefined {
-	for (const name of names) {
-		const field = value[name];
-		if (typeof field === "number" && Number.isFinite(field)) return field;
-		if (typeof field === "string" && /^\d+$/.test(field)) return Number(field);
-	}
-	return undefined;
-}
 
-function candidateKey(candidate: AgentBrowserSourceLookupCandidate): string {
-	return [candidate.source, candidate.file ?? "", candidate.line ?? "", candidate.column ?? "", candidate.componentName ?? ""].join(":");
-}
 
-function addSourceLookupCandidate(candidates: AgentBrowserSourceLookupCandidate[], candidate: AgentBrowserSourceLookupCandidate): void {
-	if (!candidates.some((existing) => candidateKey(existing) === candidateKey(candidate))) {
-		candidates.push(candidate);
-	}
-}
 
-function collectSourceCandidatesFromValue(value: unknown, source: "react-inspect" | "dom-attribute", candidates: AgentBrowserSourceLookupCandidate[], evidence: string[], depth = 0): void {
-	if (depth > 6 || value === undefined || value === null) return;
-	if (typeof value === "string") {
-		const sourcePattern = /([A-Za-z0-9_./@-]+\.(?:tsx|jsx|ts|js))(?:[:#](\d+))?(?:[:#](\d+))?/g;
-		for (const match of value.matchAll(sourcePattern)) {
-			addSourceLookupCandidate(candidates, {
-				column: match[3] ? Number(match[3]) : undefined,
-				confidence: source === "react-inspect" ? "high" : "medium",
-				evidence,
-				file: match[1],
-				line: match[2] ? Number(match[2]) : undefined,
-				source,
-			});
-		}
-		return;
-	}
-	if (Array.isArray(value)) {
-		for (const item of value) collectSourceCandidatesFromValue(item, source, candidates, evidence, depth + 1);
-		return;
-	}
-	if (!isRecord(value)) return;
-	const file = extractStringField(value, ["file", "fileName", "filename", "filePath", "path", "source", "url"]);
-	if (file && /\.(?:tsx|jsx|ts|js)(?:$|[:?#])/.test(file)) {
-		addSourceLookupCandidate(candidates, {
-			column: extractNumberField(value, ["column", "columnNumber", "col"]),
-			confidence: source === "react-inspect" ? "high" : "medium",
-			evidence,
-			file,
-			line: extractNumberField(value, ["line", "lineNumber"]),
-			source,
-		});
-	}
-	for (const nested of Object.values(value)) {
-		collectSourceCandidatesFromValue(nested, source, candidates, evidence, depth + 1);
-	}
-}
 
-function getHtmlAttributeValue(html: string, name: string): string | undefined {
-	const pattern = new RegExp(`${name}=["']([^"']+)["']`, "i");
-	return pattern.exec(html)?.[1];
-}
 
-function collectDomSourceCandidates(html: unknown, candidates: AgentBrowserSourceLookupCandidate[]): void {
-	if (typeof html !== "string") return;
-	const file = getHtmlAttributeValue(html, "(?:data-source-file|data-file|data-component-file|data-source)");
-	if (file && /\.(?:tsx|jsx|ts|js)$/.test(file)) {
-		const line = getHtmlAttributeValue(html, "(?:data-source-line|data-line)");
-		const column = getHtmlAttributeValue(html, "(?:data-source-column|data-column)");
-		addSourceLookupCandidate(candidates, {
-			column: column && /^\d+$/.test(column) ? Number(column) : undefined,
-			confidence: "medium",
-			evidence: ["selector HTML contained source-like data attributes"],
-			file,
-			line: line && /^\d+$/.test(line) ? Number(line) : undefined,
-			source: "dom-attribute",
-		});
-	}
-	collectSourceCandidatesFromValue(html, "dom-attribute", candidates, ["selector HTML contained source-like text"]);
-}
 
-async function walkWorkspaceSourceFiles(root: string, maxFiles: number): Promise<string[]> {
-	const files: string[] = [];
-	async function visit(directory: string): Promise<void> {
-		if (files.length >= maxFiles) return;
-		let entries: Array<{ isDirectory: () => boolean; isFile: () => boolean; name: string }>;
-		try {
-			entries = await readdir(directory, { withFileTypes: true });
-		} catch {
-			return;
-		}
-		for (const entry of entries) {
-			if (files.length >= maxFiles) return;
-			const path = join(directory, entry.name);
-			if (entry.isDirectory()) {
-				if (!SOURCE_LOOKUP_IGNORED_DIRECTORIES.has(entry.name)) await visit(path);
-			} else if (entry.isFile() && SOURCE_LOOKUP_WORKSPACE_EXTENSIONS.has(extname(entry.name))) {
-				files.push(path);
-			}
-		}
-	}
-	await visit(root);
-	return files;
-}
 
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
-async function collectWorkspaceComponentCandidates(query: CompiledAgentBrowserSourceLookup["query"], cwd: string, candidates: AgentBrowserSourceLookupCandidate[], limitations: string[]): Promise<void> {
-	if (!query.componentName) return;
-	const files = await walkWorkspaceSourceFiles(cwd, query.maxWorkspaceFiles);
-	if (files.length >= query.maxWorkspaceFiles) {
-		limitations.push(`Workspace source scan stopped at ${query.maxWorkspaceFiles} files.`);
-	}
-	const componentPattern = new RegExp(`(?:function|class)\\s+${escapeRegExp(query.componentName)}\\b|(?:const|let|var)\\s+${escapeRegExp(query.componentName)}\\s*=|export\\s+default\\s+function\\s+${escapeRegExp(query.componentName)}\\b`);
-	for (const file of files) {
-		let text: string;
-		try {
-			text = await readFile(file, "utf8");
-		} catch {
-			continue;
-		}
-		const match = componentPattern.exec(text);
-		if (!match) continue;
-		const line = text.slice(0, match.index).split("\n").length;
-		addSourceLookupCandidate(candidates, {
-			componentName: query.componentName,
-			confidence: "low",
-			evidence: [`local workspace contains a matching ${query.componentName} declaration`],
-			file,
-			line,
-			source: "workspace-search",
-		});
-		if (candidates.filter((candidate) => candidate.source === "workspace-search").length >= 10) break;
-	}
-}
 
-function validateLookupMaxWorkspaceFiles(value: unknown, fieldName: string): { value?: number; error?: string } {
-	if (value === undefined) return { value: SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES };
-	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-		return { error: `${fieldName} must be a positive integer when provided.` };
-	}
-	if (value > SOURCE_LOOKUP_MAX_WORKSPACE_FILES) {
-		return { error: `${fieldName} must be ${SOURCE_LOOKUP_MAX_WORKSPACE_FILES} or less.` };
-	}
-	return { value };
-}
 
-async function analyzeSourceLookupResults(
-	data: unknown,
-	compiled: CompiledAgentBrowserSourceLookup,
-	cwd: string,
-	context?: AgentBrowserSourceLookupAnalysisContext,
-): Promise<AgentBrowserSourceLookupAnalysis> {
-	const items = getBatchResultItems(data);
-	const candidates: AgentBrowserSourceLookupCandidate[] = [];
-	const limitations = [
-		"Experimental lookup only reports candidates with evidence; it cannot guarantee a DOM node maps to one source file.",
-		"React source hints require the page to be opened with --enable react-devtools and source information from the app build.",
-	];
-	let unsupported = false;
-	for (const item of items) {
-		const command = Array.isArray(item.command) ? item.command : [];
-		const result = isRecord(item.result) && "data" in item.result ? item.result.data : item.result;
-		if (item.success === false && command[0] === "react") unsupported = true;
-		if (command[0] === "react" && command[1] === "inspect") {
-			collectSourceCandidatesFromValue(result, "react-inspect", candidates, ["react inspect returned source-like metadata"]);
-		}
-		if (command[0] === "get" && command[1] === "html") {
-			collectDomSourceCandidates(result, candidates);
-		}
-	}
-	await collectWorkspaceComponentCandidates(compiled.query, cwd, candidates, limitations);
-	const status: AgentBrowserSourceLookupStatus = candidates.length > 0 ? "candidates-found" : unsupported ? "unsupported" : "no-candidates";
-	const electronContext = status === "no-candidates" ? context?.electronContext : undefined;
-	const workspaceRoot = context?.workspaceRoot ?? cwd;
-	if (electronContext) {
-		limitations.push(
-			`Workspace source scan is limited to the Pi tool session cwd: ${workspaceRoot}.`,
-			"Packaged Electron app code may live inside installed app resources or app.asar outside the workspace; the wrapper does not unpack asar files or scan app bundle resources.",
-		);
-	}
-	return {
-		candidates,
-		electronContext,
-		limitations,
-		status,
-		summary: candidates.length > 0
-			? `Source lookup found ${candidates.length} candidate location(s).`
-			: unsupported
-				? "Source lookup could not inspect React metadata in this session."
-				: electronContext
-					? `Source lookup found no candidate locations. The workspace scan was limited to ${workspaceRoot}; packaged Electron app code may live outside that cwd in app resources or app.asar.`
-					: "Source lookup found no candidate locations.",
-		workspaceRoot: electronContext ? workspaceRoot : undefined,
-	};
-}
 
-function compileAgentBrowserNetworkSourceLookup(input: unknown): { compiled?: CompiledAgentBrowserNetworkSourceLookup; error?: string } {
-	if (!isRecord(input)) return { error: "networkSourceLookup must be an object." };
-	const filter = input.filter;
-	const requestId = input.requestId;
-	const session = input.session;
-	const url = input.url;
-	if (filter !== undefined && (typeof filter !== "string" || filter.trim().length === 0)) return { error: "networkSourceLookup.filter must be a non-empty string when provided." };
-	if (requestId !== undefined && (typeof requestId !== "string" || requestId.trim().length === 0)) return { error: "networkSourceLookup.requestId must be a non-empty string when provided." };
-	if (session !== undefined && (typeof session !== "string" || session.trim().length === 0)) return { error: "networkSourceLookup.session must be a non-empty string when provided." };
-	if (url !== undefined && (typeof url !== "string" || url.trim().length === 0)) return { error: "networkSourceLookup.url must be a non-empty string when provided." };
-	if (filter === undefined && requestId === undefined && url === undefined) return { error: "networkSourceLookup requires requestId, filter, or url." };
-	const maxWorkspaceFiles = validateLookupMaxWorkspaceFiles(input.maxWorkspaceFiles, "networkSourceLookup.maxWorkspaceFiles");
-	if (maxWorkspaceFiles.error) return { error: maxWorkspaceFiles.error };
-	const steps: Array<{ action: "network"; args: string[] }> = [];
-	if (typeof requestId === "string") {
-		steps.push({ action: "network", args: ["network", "request", requestId] });
-	}
-	const effectiveFilter = typeof filter === "string" ? filter : typeof url === "string" ? url : undefined;
-	if (effectiveFilter) {
-		steps.push({ action: "network", args: ["network", "requests", "--filter", effectiveFilter] });
-	}
-	const args = typeof session === "string" ? ["--session", session, "batch"] : ["batch"];
-	return { compiled: { args, query: { filter, maxWorkspaceFiles: maxWorkspaceFiles.value as number, requestId, session, url }, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
-}
 
-function validateOptionalNonEmptyString(input: Record<string, unknown>, fieldName: string): { value?: string; error?: string } {
-	const value = input[fieldName];
-	if (value === undefined) return {};
-	if (typeof value !== "string" || value.trim().length === 0) {
-		return { error: `electron.${fieldName} must be a non-empty string when provided.` };
-	}
-	return { value: value.trim() };
-}
 
-function validateOptionalElectronStringArray(input: Record<string, unknown>, fieldName: "allow" | "appArgs" | "deny"): string | undefined {
-	const value = input[fieldName];
-	if (value === undefined) return undefined;
-	if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim().length === 0)) {
-		return `electron.${fieldName} must be an array of non-empty strings when provided.`;
-	}
-	return undefined;
-}
 
-function validateOptionalElectronEnum<T extends string>(input: Record<string, unknown>, fieldName: string, values: readonly T[]): string | undefined {
-	const value = input[fieldName];
-	if (value === undefined) return undefined;
-	if (typeof value !== "string" || !values.includes(value as T)) {
-		return `electron.${fieldName} must be one of: ${values.join(", ")}.`;
-	}
-	return undefined;
-}
 
-function getReservedElectronAppArg(appArgs: string[] | undefined): string | undefined {
-	return appArgs?.find((arg) => {
-		const trimmed = arg.trim();
-		return trimmed === "--" || AGENT_BROWSER_ELECTRON_RESERVED_APP_ARGS.some((reserved) => trimmed === reserved || trimmed.startsWith(`${reserved}=`));
-	});
-}
 
-function validateElectronLaunchAppArgs(appArgs: string[] | undefined): string | undefined {
-	const reservedArg = getReservedElectronAppArg(appArgs);
-	return reservedArg
-		? `electron.appArgs must not include wrapper-owned launch flag ${reservedArg}.`
-		: undefined;
-}
 
-function validateOptionalElectronPositiveInteger(input: Record<string, unknown>, fieldName: "maxResults" | "timeoutMs"): { value?: number; error?: string } {
-	const value = input[fieldName];
-	if (value === undefined) return {};
-	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-		return { error: `electron.${fieldName} must be a positive integer when provided.` };
-	}
-	return { value };
-}
 
-function onlyAllowedElectronFields(input: Record<string, unknown>, action: string, allowedFields: ReadonlySet<string>): string | undefined {
-	return Object.keys(input).find((fieldName) => !allowedFields.has(fieldName))
-		? `electron.${action} does not support electron.${Object.keys(input).find((fieldName) => !allowedFields.has(fieldName))}.`
-		: undefined;
-}
 
-function compileAgentBrowserElectron(input: unknown): { compiled?: CompiledAgentBrowserElectron; error?: string } {
-	if (!isRecord(input)) return { error: "electron must be an object." };
-	const action = input.action;
-	if (typeof action !== "string" || !AGENT_BROWSER_ELECTRON_ACTIONS.includes(action as AgentBrowserElectronAction)) {
-		return { error: `electron.action must be one of: ${AGENT_BROWSER_ELECTRON_ACTIONS.join(", ")}.` };
-	}
-	for (const fieldName of ["query", "appPath", "appName", "bundleId", "executablePath", "launchId"] as const) {
-		const validation = validateOptionalNonEmptyString(input, fieldName);
-		if (validation.error) return { error: validation.error };
-	}
-	for (const fieldName of ["appArgs", "allow", "deny"] as const) {
-		const error = validateOptionalElectronStringArray(input, fieldName);
-		if (error) return { error };
-	}
-	const handoffError = validateOptionalElectronEnum(input, "handoff", AGENT_BROWSER_ELECTRON_HANDOFFS);
-	if (handoffError) return { error: handoffError };
-	const targetTypeError = validateOptionalElectronEnum(input, "targetType", AGENT_BROWSER_ELECTRON_TARGET_TYPES);
-	if (targetTypeError) return { error: targetTypeError };
-	for (const fieldName of ["maxResults", "timeoutMs"] as const) {
-		const validation = validateOptionalElectronPositiveInteger(input, fieldName);
-		if (validation.error) return { error: validation.error };
-	}
-	if (input.all !== undefined && input.all !== true) {
-		return { error: "electron.all must be true when provided." };
-	}
-	if (action === "list") {
-		const unsupportedListField = Object.keys(input).find((fieldName) => !AGENT_BROWSER_ELECTRON_LIST_FIELDS.has(fieldName));
-		if (unsupportedListField) {
-			return { error: `electron.list only supports query and maxResults; remove electron.${unsupportedListField}.` };
-		}
-		return {
-			compiled: {
-				action: "list",
-				maxResults: validateOptionalElectronPositiveInteger(input, "maxResults").value,
-				query: validateOptionalNonEmptyString(input, "query").value,
-			},
-		};
-	}
-	if (action === "probe") {
-		const unsupportedProbeField = Object.keys(input).find((fieldName) => !AGENT_BROWSER_ELECTRON_PROBE_FIELDS.has(fieldName));
-		if (unsupportedProbeField) {
-			return { error: `electron.probe only supports action, launchId, and timeoutMs; remove electron.${unsupportedProbeField}.` };
-		}
-		const launchId = validateOptionalNonEmptyString(input, "launchId").value;
-		const timeoutMs = validateOptionalElectronPositiveInteger(input, "timeoutMs").value;
-		return {
-			compiled: {
-				action: "probe",
-				...(launchId ? { launchId } : {}),
-				...(timeoutMs ? { timeoutMs } : {}),
-			},
-		};
-	}
-	if (action === "launch") {
-		const allowedFields = new Set(["action", "allow", "appArgs", "appName", "appPath", "bundleId", "deny", "executablePath", "handoff", "targetType", "timeoutMs"]);
-		const unsupportedFieldError = onlyAllowedElectronFields(input, action, allowedFields);
-		if (unsupportedFieldError) return { error: unsupportedFieldError };
-		const appArgs = (input.appArgs as string[] | undefined)?.map((item) => item.trim());
-		const appArgsError = validateElectronLaunchAppArgs(appArgs);
-		if (appArgsError) return { error: appArgsError };
-		const targetFields = ["appPath", "appName", "bundleId", "executablePath"] as const;
-		const providedTargets = targetFields.filter((fieldName) => input[fieldName] !== undefined);
-		if (providedTargets.length !== 1) {
-			return { error: "electron.launch requires exactly one of appPath, appName, bundleId, or executablePath." };
-		}
-		return {
-			compiled: {
-				action: "launch",
-				allow: (input.allow as string[] | undefined)?.map((item) => item.trim()),
-				appArgs,
-				deny: (input.deny as string[] | undefined)?.map((item) => item.trim()),
-				appName: validateOptionalNonEmptyString(input, "appName").value,
-				appPath: validateOptionalNonEmptyString(input, "appPath").value,
-				bundleId: validateOptionalNonEmptyString(input, "bundleId").value,
-				executablePath: validateOptionalNonEmptyString(input, "executablePath").value,
-				handoff: (input.handoff as "connect" | "snapshot" | "tabs" | undefined) ?? "snapshot",
-				targetType: (input.targetType as "any" | "page" | "webview" | undefined) ?? "page",
-				timeoutMs: validateOptionalElectronPositiveInteger(input, "timeoutMs").value,
-			},
-		};
-	}
-	const allowedFields = new Set(["action", "all", "launchId", "timeoutMs"]);
-	const unsupportedFieldError = onlyAllowedElectronFields(input, action, allowedFields);
-	if (unsupportedFieldError) return { error: unsupportedFieldError };
-	if (input.all === true && input.launchId !== undefined) {
-		return { error: `electron.${action} accepts launchId or all, not both.` };
-	}
-	return {
-		compiled: {
-			action: action as "cleanup" | "status",
-			all: input.all === true || undefined,
-			launchId: validateOptionalNonEmptyString(input, "launchId").value,
-			timeoutMs: validateOptionalElectronPositiveInteger(input, "timeoutMs").value,
-		},
-	};
-}
 
-function getResultPayload(item: Record<string, unknown>): unknown {
-	return isRecord(item.result) && "data" in item.result ? item.result.data : item.result;
-}
 
-function networkRequestMatchesQuery(url: string | undefined, queryText: string | undefined): boolean {
-	return queryText === undefined || url === undefined || url.includes(queryText) || queryText.includes(url);
-}
 
-function isFailedNetworkRecord(request: Record<string, unknown>): boolean {
-	const status = typeof request.status === "number" ? request.status : undefined;
-	const error = typeof request.error === "string" ? request.error : undefined;
-	return request.failed === true || error !== undefined || (status !== undefined && status >= 400);
-}
 
-function getFailedNetworkRequests(data: unknown, queryText?: string): AgentBrowserNetworkSourceLookupRequest[] {
-	const failed: AgentBrowserNetworkSourceLookupRequest[] = [];
-	for (const item of getBatchResultItems(data)) {
-		const payload = getResultPayload(item);
-		const requests = isRecord(payload) && Array.isArray(payload.requests) ? payload.requests : Array.isArray(payload) ? payload : isRecord(payload) ? [payload] : [];
-		for (const request of requests) {
-			if (!isRecord(request)) continue;
-			const url = typeof request.url === "string" ? request.url : undefined;
-			if (!networkRequestMatchesQuery(url, queryText) || !isFailedNetworkRecord(request)) continue;
-			failed.push({
-				error: typeof request.error === "string" ? request.error : undefined,
-				method: typeof request.method === "string" ? request.method : undefined,
-				requestId: typeof request.id === "string" ? request.id : typeof request.requestId === "string" ? request.requestId : undefined,
-				status: typeof request.status === "number" ? request.status : undefined,
-				url,
-			});
-		}
-	}
-	return failed;
-}
 
-function addNetworkCandidate(candidates: AgentBrowserNetworkSourceLookupCandidate[], candidate: AgentBrowserNetworkSourceLookupCandidate): void {
-	const key = [candidate.source, candidate.file ?? "", candidate.line ?? "", candidate.requestUrl ?? ""].join(":");
-	if (!candidates.some((existing) => [existing.source, existing.file ?? "", existing.line ?? "", existing.requestUrl ?? ""].join(":") === key)) candidates.push(candidate);
-}
 
-function collectInitiatorCandidates(data: unknown, failedRequests: AgentBrowserNetworkSourceLookupRequest[], candidates: AgentBrowserNetworkSourceLookupCandidate[]): void {
-	const failedRequestIds = new Set(failedRequests.map((request) => request.requestId).filter((value): value is string => value !== undefined));
-	const failedRequestUrls = new Set(failedRequests.map((request) => request.url).filter((value): value is string => value !== undefined));
-	for (const item of getBatchResultItems(data)) {
-		const payload = getResultPayload(item);
-		const requestValues = isRecord(payload) && Array.isArray(payload.requests) ? payload.requests : [payload];
-		for (const value of requestValues) {
-			if (!isRecord(value)) continue;
-			const requestUrl = typeof value.url === "string" ? value.url : undefined;
-			const requestId = typeof value.id === "string" ? value.id : typeof value.requestId === "string" ? value.requestId : undefined;
-			const correlatesWithFailedRequest = (requestId !== undefined && failedRequestIds.has(requestId)) || (requestUrl !== undefined && failedRequestUrls.has(requestUrl));
-			if (!correlatesWithFailedRequest && !isFailedNetworkRecord(value)) continue;
-			for (const field of [value.initiator, value.stack, value.source, value.trace]) {
-				const localCandidates: AgentBrowserSourceLookupCandidate[] = [];
-				collectSourceCandidatesFromValue(field, "dom-attribute", localCandidates, ["failed network request included source-like initiator metadata"]);
-				for (const candidate of localCandidates) {
-					addNetworkCandidate(candidates, { confidence: "medium", evidence: candidate.evidence, file: candidate.file, line: candidate.line, requestUrl, source: "initiator" });
-				}
-			}
-		}
-	}
-}
 
-async function collectWorkspaceRequestCandidates(query: CompiledAgentBrowserNetworkSourceLookup["query"], failedRequests: AgentBrowserNetworkSourceLookupRequest[], cwd: string, candidates: AgentBrowserNetworkSourceLookupCandidate[], limitations: string[]): Promise<void> {
-	const needles = [...new Set([query.url, query.filter, ...failedRequests.map((request) => request.url)].filter((value): value is string => typeof value === "string" && value.length > 0).flatMap((value) => {
-		try {
-			const parsed = new URL(value);
-			return [value, parsed.pathname].filter((item) => item && item !== "/");
-		} catch {
-			return [value];
-		}
-	}))].slice(0, 8);
-	if (needles.length === 0) return;
-	const files = await walkWorkspaceSourceFiles(cwd, query.maxWorkspaceFiles);
-	if (files.length >= query.maxWorkspaceFiles) limitations.push(`Workspace source scan stopped at ${query.maxWorkspaceFiles} files.`);
-	for (const file of files) {
-		let text: string;
-		try { text = await readFile(file, "utf8"); } catch { continue; }
-		for (const needle of needles) {
-			const index = text.indexOf(needle);
-			if (index === -1) continue;
-			addNetworkCandidate(candidates, { confidence: "low", evidence: [`local workspace contains request URL literal ${needle}`], file, line: text.slice(0, index).split("\n").length, requestUrl: needle, source: "workspace-search" });
-			if (candidates.filter((candidate) => candidate.source === "workspace-search").length >= 10) return;
-		}
-	}
-}
 
-function redactNetworkSourceLookupUrl(value: string | undefined): string | undefined {
-	if (!value) return value;
-	try {
-		const isRelative = value.startsWith("/");
-		const url = new URL(value, isRelative ? "https://redacted.invalid" : undefined);
-		url.username = url.username ? "[REDACTED]" : "";
-		url.password = url.password ? "[REDACTED]" : "";
-		for (const key of [...url.searchParams.keys()]) {
-			url.searchParams.set(key, "[REDACTED]");
-		}
-		if (/(?:token|secret|password|passwd|pwd|key|auth|session|jwt|credential)/i.test(url.hash)) {
-			url.hash = "#[REDACTED]";
-		}
-		return isRelative ? `${url.pathname}${url.search}${url.hash}` : url.toString();
-	} catch {
-		return redactSensitiveText(value
-			.replace(/([a-z][a-z0-9+.-]*:\/\/)\S+:\S+@/gi, "$1[REDACTED]@")
-			.replace(/([?&][^=]+)=([^&#\s"'\]]+)/g, "$1=[REDACTED]"));
-	}
-}
 
-function redactNetworkSourceLookupArgs(args: string[]): string[] {
-	return redactInvocationArgs(args).map((arg) => redactNetworkSourceLookupUrl(arg) ?? arg);
-}
 
-function redactNetworkSourceLookupSurface(value: unknown): unknown {
-	if (typeof value === "string") return redactNetworkSourceLookupUrl(value) ?? value;
-	if (Array.isArray(value)) return value.map((item) => redactNetworkSourceLookupSurface(item));
-	if (!isRecord(value)) return value;
-	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactNetworkSourceLookupSurface(item)]));
-}
 
-function redactNetworkSourceLookupAnalysis(analysis: AgentBrowserNetworkSourceLookupAnalysis): AgentBrowserNetworkSourceLookupAnalysis {
-	return {
-		...analysis,
-		candidates: analysis.candidates.map((candidate) => ({
-			...candidate,
-			evidence: candidate.evidence.map((item) => redactNetworkSourceLookupUrl(item) ?? redactSensitiveText(item)),
-			file: redactNetworkSourceLookupUrl(candidate.file),
-			requestUrl: redactNetworkSourceLookupUrl(candidate.requestUrl),
-		})),
-		failedRequests: analysis.failedRequests.map((request) => ({ ...request, error: redactNetworkSourceLookupUrl(request.error), url: redactNetworkSourceLookupUrl(request.url) })),
-	};
-}
 
-async function analyzeNetworkSourceLookupResults(data: unknown, compiled: CompiledAgentBrowserNetworkSourceLookup, cwd: string): Promise<AgentBrowserNetworkSourceLookupAnalysis> {
-	const limitations = [
-		"Experimental network source hints report candidates only; failed requests can be triggered indirectly by frameworks, caches, service workers, or third-party scripts.",
-		"Initiator/source-map metadata is upstream/browser-build dependent and may be absent.",
-	];
-	const failedRequests = getFailedNetworkRequests(data, compiled.query.url ?? compiled.query.filter);
-	const candidates: AgentBrowserNetworkSourceLookupCandidate[] = [];
-	collectInitiatorCandidates(data, failedRequests, candidates);
-	await collectWorkspaceRequestCandidates(compiled.query, failedRequests, cwd, candidates, limitations);
-	const status: AgentBrowserNetworkSourceLookupStatus = failedRequests.length === 0 ? "no-failed-requests" : candidates.length > 0 ? "failed-requests-found" : "no-candidates";
-	return { candidates, failedRequests, limitations, status, summary: failedRequests.length === 0 ? "Network source lookup found no failed requests." : candidates.length > 0 ? `Network source lookup found ${failedRequests.length} failed request(s) and ${candidates.length} candidate source hint(s).` : `Network source lookup found ${failedRequests.length} failed request(s) but no source candidates.` };
-}
 
-function getCompiledSemanticActionCommandIndex(compiled: CompiledAgentBrowserSemanticAction): number {
-	return compiled.args[0] === "--session" ? 2 : 0;
-}
 
-function getCompiledSemanticActionSessionPrefix(compiled: CompiledAgentBrowserSemanticAction): string[] {
-	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
-	return commandIndex > 0 ? compiled.args.slice(0, commandIndex) : [];
-}
 
-function isCompiledSemanticActionFindCommand(compiled: CompiledAgentBrowserSemanticAction | undefined): boolean {
-	if (!compiled) return false;
-	return compiled.args[getCompiledSemanticActionCommandIndex(compiled)] === "find";
-}
 
 const SEMANTIC_ACTION_CANDIDATE_ACTION_IDS = new Set([
 	"try-button-name-candidate",
@@ -1445,37 +366,6 @@ async function collectVisibleRefFallbackDiagnostic(options: {
 	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
 	return buildVisibleRefFallbackDiagnosticFromSnapshot({ snapshotData, target });
 }
-function semanticActionNameMatches(candidateName: string, targetName: string): boolean {
-	const normalizedCandidate = normalizeSemanticActionAccessibleName(candidateName);
-	const normalizedTarget = normalizeSemanticActionAccessibleName(targetName);
-	return normalizedCandidate === normalizedTarget || normalizedCandidate.startsWith(`${normalizedTarget} `);
-}
-
-function getCompiledSemanticActionRoleTarget(compiled: CompiledAgentBrowserSemanticAction): { role: string; targetName: string } | undefined {
-	if (compiled.locator !== "role" || !["check", "click", "uncheck"].includes(compiled.action)) return undefined;
-	const findIndex = compiled.args.indexOf("find");
-	if (findIndex < 0 || compiled.args[findIndex + 1] !== "role") return undefined;
-	const role = compiled.args[findIndex + 2];
-	const nameFlagIndex = compiled.args.indexOf("--name");
-	const targetName = nameFlagIndex >= 0 ? compiled.args[nameFlagIndex + 1] : undefined;
-	if (!role || !targetName) return undefined;
-	return { role, targetName };
-}
-
-function findSemanticActionRefInSnapshot(compiled: CompiledAgentBrowserSemanticAction, snapshotData: unknown): string | undefined {
-	const target = getCompiledSemanticActionRoleTarget(compiled);
-	const refs = getSnapshotRefRecord(snapshotData);
-	if (!target || !refs) return undefined;
-	const candidates = Object.entries(refs).flatMap(([ref, entry]) => {
-		if (!/^e\d+$/.test(ref) || !isRecord(entry)) return [];
-		const role = typeof entry.role === "string" ? entry.role : undefined;
-		const name = typeof entry.name === "string" ? entry.name : undefined;
-		if (!role || !name || role.toLowerCase() !== target.role.toLowerCase() || !semanticActionNameMatches(name, target.targetName)) return [];
-		return [{ exact: normalizeSemanticActionAccessibleName(name) === normalizeSemanticActionAccessibleName(target.targetName), name, ref }];
-	});
-	candidates.sort((left, right) => Number(right.exact) - Number(left.exact) || left.name.length - right.name.length || compareRefIds(left.ref, right.ref));
-	return candidates[0]?.ref;
-}
 
 interface SemanticActionVisibleRefResolution {
 	args: string[];
@@ -1488,91 +378,13 @@ async function resolveSemanticActionVisibleRefArgs(options: {
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<SemanticActionVisibleRefResolution | undefined> {
-	if (!options.compiled || !options.sessionName || !getCompiledSemanticActionRoleTarget(options.compiled)) return undefined;
+	if (!options.compiled || !options.sessionName || options.compiled.locator !== "role" || !["check", "click", "uncheck"].includes(options.compiled.action)) return undefined;
 	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const ref = findSemanticActionRefInSnapshot(options.compiled, snapshotData);
-	const snapshot = extractRefSnapshotFromData(snapshotData);
-	if (!ref || !snapshot) return undefined;
-	return { args: [...getCompiledSemanticActionSessionPrefix(options.compiled), options.compiled.action, `@${ref}`], snapshot };
+	const resolution = resolveVisibleRefActionFromSnapshot({ compiledAction: options.compiled, snapshotData });
+	if (!resolution) return undefined;
+	return { args: [...getCompiledSemanticActionSessionPrefix(options.compiled), ...resolution.args], snapshot: resolution.snapshot };
 }
 
-function compileAgentBrowserSemanticAction(input: unknown): { compiled?: CompiledAgentBrowserSemanticAction; error?: string } {
-	if (!isRecord(input)) {
-		return { error: "semanticAction must be an object." };
-	}
-	const action = input.action;
-	const locator = input.locator;
-	const value = input.value;
-	const values = input.values;
-	const selector = input.selector;
-	const text = input.text;
-	const role = input.role;
-	const name = input.name;
-	const session = input.session;
-	if (typeof action !== "string" || !AGENT_BROWSER_SEMANTIC_ACTIONS.includes(action as AgentBrowserSemanticActionName)) {
-		return { error: `semanticAction.action must be one of: ${AGENT_BROWSER_SEMANTIC_ACTIONS.join(", ")}.` };
-	}
-	if (session !== undefined && (typeof session !== "string" || session.trim().length === 0)) {
-		return { error: "semanticAction.session must be a non-empty string when provided." };
-	}
-	if (action === "select") {
-		if (locator !== undefined || role !== undefined || name !== undefined) {
-			return { error: "semanticAction.locator, role, and name are not supported for select; use selector plus value or values." };
-		}
-		if (text !== undefined) {
-			return { error: "semanticAction.text is not supported for select; use value or values for option values." };
-		}
-		if (typeof selector !== "string" || selector.trim().length === 0) {
-			return { error: "semanticAction.selector is required for select." };
-		}
-		const selectedValues = getSelectValues(input, "semanticAction");
-		if (selectedValues.error) return { error: selectedValues.error };
-		const args = typeof session === "string" ? ["--session", session, "select", selector, ...(selectedValues.values as string[])] : ["select", selector, ...(selectedValues.values as string[])];
-		return { compiled: { action: "select", selector, values: selectedValues.values, args } };
-	}
-	if (selector !== undefined || values !== undefined) {
-		return { error: "semanticAction.selector and values are only supported for select actions." };
-	}
-	if (typeof locator !== "string" || !AGENT_BROWSER_SEMANTIC_LOCATORS.includes(locator as AgentBrowserSemanticLocator)) {
-		return { error: `semanticAction.locator must be one of: ${AGENT_BROWSER_SEMANTIC_LOCATORS.join(", ")}.` };
-	}
-	if (value !== undefined && (typeof value !== "string" || value.trim().length === 0)) {
-		return { error: "semanticAction.value must be a non-empty string when provided." };
-	}
-	if (role !== undefined && (typeof role !== "string" || role.trim().length === 0)) {
-		return { error: "semanticAction.role must be a non-empty string when provided." };
-	}
-	const locatorValue = locator === "role" && typeof role === "string" ? role : value;
-	if (typeof locatorValue !== "string" || locatorValue.trim().length === 0) {
-		return { error: locator === "role" ? "semanticAction.value or semanticAction.role must be a non-empty string for locator=role." : "semanticAction.value must be a non-empty string." };
-	}
-	if (text !== undefined && typeof text !== "string") {
-		return { error: "semanticAction.text must be a string when provided." };
-	}
-	if (action === "fill" && (typeof text !== "string" || text.length === 0)) {
-		return { error: `semanticAction.text is required for ${action}.` };
-	}
-	if (action !== "fill" && text !== undefined) {
-		return { error: "semanticAction.text is only supported for fill actions." };
-	}
-	if (role !== undefined && locator !== "role") {
-		return { error: "semanticAction.role is only supported for locator=role." };
-	}
-	if (role !== undefined && value !== undefined && role !== value) {
-		return { error: "semanticAction.role must match value when both are provided for locator=role." };
-	}
-	if (name !== undefined && (locator !== "role" || typeof name !== "string" || name.length === 0)) {
-		return { error: "semanticAction.name is only supported as a non-empty string for locator=role." };
-	}
-	const args = typeof session === "string" ? ["--session", session, "find", locator, locatorValue, action] : ["find", locator, locatorValue, action];
-	if (action === "fill") {
-		args.push(text as string);
-	}
-	if (locator === "role" && typeof name === "string") {
-		args.push("--name", name);
-	}
-	return { compiled: { action: action as AgentBrowserSemanticActionName, locator: locator as AgentBrowserSemanticLocator, args } };
-}
 
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 10;
 const TUI_INVOCATION_PREVIEW_MAX_CHARS = 120;

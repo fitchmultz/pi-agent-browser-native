@@ -137,10 +137,10 @@ if (args.includes("open")) {
   fs.writeFileSync(statePath, String(count + 1));
   const refs = count === 0
     ? { e2: { role: "button", name: "Old Search Documentation" } }
-    : { e17: { role: "button", name: "Search Documentation ⌘ K" } };
+    : { e17: { role: "button", name: "Search Documentation" } };
   const snapshot = count === 0
     ? '- button "Old Search Documentation" [ref=e2]'
-    : '- button "Search Documentation ⌘ K" [ref=e17]';
+    : '- button "Search Documentation" [ref=e17]';
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://docs.example.test/",
     refs,

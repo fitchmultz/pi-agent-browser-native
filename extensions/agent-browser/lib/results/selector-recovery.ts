@@ -193,6 +193,24 @@ export function buildVisibleRefFallbackDiagnosticFromSnapshot(options: {
 	};
 }
 
+export interface VisibleRefActionResolution {
+	args: string[];
+	snapshot: SessionRefSnapshot;
+}
+
+export function resolveVisibleRefActionFromSnapshot(options: {
+	compiledAction: SelectorRecoveryCompiledAction;
+	snapshotData: unknown;
+}): VisibleRefActionResolution | undefined {
+	const target = getFindVisibleRefFallbackTarget(options.compiledAction.args, { allowLeadingDashFillText: true });
+	if (!target || target.action === "fill" || target.action === "select") return undefined;
+	const snapshot = extractRefSnapshotFromData(options.snapshotData);
+	if (!snapshot) return undefined;
+	const candidate = getVisibleRefFallbackCandidates(target, options.snapshotData).find((item) => item.args !== undefined);
+	if (!candidate?.args) return undefined;
+	return { args: candidate.args, snapshot };
+}
+
 export function buildVisibleRefFallbackNextActions(options: { diagnostic: VisibleRefFallbackDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
 	const ambiguous = options.diagnostic.candidates.length > 1;
 	return options.diagnostic.candidates.flatMap((candidate, index) => candidate.args ? [{

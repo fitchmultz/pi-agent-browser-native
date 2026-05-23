@@ -17,6 +17,7 @@ import {
 	formatRichInputRecoveryText,
 	formatVisibleRefFallbackText,
 	getVisibleRefFallbackTarget,
+	resolveVisibleRefActionFromSnapshot,
 	sanitizeVisibleRefFallbackDiagnostic,
 } from "../extensions/agent-browser/lib/results/selector-recovery.js";
 
@@ -94,4 +95,26 @@ test("selector recovery excludes select actions and non-exact names", () => {
 	const target = getVisibleRefFallbackTarget({ commandTokens: ["find", "label", "Email address", "fill", "value"] });
 	assert.ok(target);
 	assert.equal(buildVisibleRefFallbackDiagnosticFromSnapshot({ snapshotData, target: target! }), undefined);
+});
+
+test("semantic visible-ref resolution requires exact role/name matches", () => {
+	const resolution = resolveVisibleRefActionFromSnapshot({
+		compiledAction: {
+			action: "click",
+			args: ["find", "role", "button", "click", "--name", "Submit"],
+			locator: "role",
+		},
+		snapshotData,
+	});
+	assert.deepEqual(resolution?.args, ["click", "@e3"]);
+
+	const prefixOnly = resolveVisibleRefActionFromSnapshot({
+		compiledAction: {
+			action: "click",
+			args: ["find", "role", "button", "click", "--name", "Sub"],
+			locator: "role",
+		},
+		snapshotData,
+	});
+	assert.equal(prefixOnly, undefined);
 });

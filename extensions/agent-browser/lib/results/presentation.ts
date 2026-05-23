@@ -6,18 +6,9 @@
  * Invariants/Assumptions: Presentation logic should stay close to upstream data while remaining small enough to reason about without mixing in snapshot-parser or envelope-parser internals.
  */
 
-import { readFile, stat } from "node:fs/promises";
-import { extname, resolve } from "node:path";
-
-import { isRecord, parsePositiveInteger } from "../parsing.js";
+import { isRecord } from "../parsing.js";
 import { extractCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../runtime.js";
-import {
-	type PersistentSessionArtifactEviction,
-	type PersistentSessionArtifactStore,
-	writePersistentSessionArtifactFile,
-	writeSecureTempFile,
-} from "../temp.js";
-import { isPendingRecordingArtifact } from "./artifact-state.js";
+import type { PersistentSessionArtifactStore } from "../temp.js";
 import { detectConfirmationRequired, type ConfirmationRequiredPresentation } from "./confirmation.js";
 import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary } from "./snapshot.js";
 import type {
@@ -41,973 +32,129 @@ import { buildAgentBrowserNextActions } from "./action-recommendations.js";
 import {
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
-	classifyAgentBrowserSuccessCategory,
 } from "./categories.js";
-import {
-	buildEvictedSessionArtifactEntries,
-	formatSessionArtifactRetentionSummary,
-	mergeSessionArtifactManifest,
-} from "./artifact-manifest.js";
-import { classifyNetworkRequestFailure, summarizeNetworkFailures } from "./network.js";
+import { formatSessionArtifactRetentionSummary } from "./artifact-manifest.js";
 import { withOptionalSessionArgs } from "./next-actions.js";
-import { countLines, stringifyUnknown, truncateText } from "./text.js";
-
-const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
-	".gif": "image/gif",
-	".jpeg": "image/jpeg",
-	".jpg": "image/jpeg",
-	".png": "image/png",
-	".webp": "image/webp",
-};
-
-const INLINE_IMAGE_MAX_BYTES_ENV = "PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES";
-const DEFAULT_INLINE_IMAGE_MAX_BYTES = 5 * 1_024 * 1_024;
-const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
-const PAGE_CHANGE_SUMMARY_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"dialog",
-	"download",
-	"fill",
-	"forward",
-	"goto",
-	"hover",
-	"navigate",
-	"open",
-	"pdf",
-	"press",
-	"pushstate",
-	"reload",
-	"screenshot",
-	"scroll",
-	"scrollintoview",
-	"select",
-	"swipe",
-	"tap",
-	"type",
-	"uncheck",
-]);
-const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
-const LARGE_OUTPUT_INLINE_MAX_CHARS = 8_000;
-const LARGE_OUTPUT_INLINE_MAX_LINES = 120;
-const LARGE_OUTPUT_PREVIEW_MAX_CHARS = 2_500;
-const LARGE_OUTPUT_PREVIEW_MAX_LINES = 40;
-const LARGE_OUTPUT_FILE_PREFIX = "pi-agent-browser-output";
-const DIAGNOSTIC_REQUEST_PREVIEW_LIMIT = 40;
-const DIAGNOSTIC_LOG_PREVIEW_LIMIT = 80;
-const NETWORK_BODY_PREVIEW_MAX_CHARS = 280;
-const NETWORK_ERROR_PREVIEW_MAX_CHARS = 220;
-const NETWORK_NEXT_ACTION_LIMIT = 4;
-const NETWORK_FILTER_MAX_CHARS = 160;
-const NETWORK_FILTER_SENSITIVE_SEGMENT_TERMS = ["apikey", "api-key", "api_key", "authentication", "authorization", "bearer", "credential", "credentials", "jwt", "passwd", "password", "reset", "secret", "session", "token"] as const;
-const NETWORK_FILTER_OPAQUE_SEGMENT_PATTERN = /^(?:[A-Fa-f0-9]{16,}|(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{16,})$/;
-const NETWORK_PREVIEW_FIELD_CANDIDATES = {
-	request: ["postData"] as const,
-	response: ["responseBody"] as const,
-	error: ["error", "failureText", "errorText"] as const,
-};
-const AUTH_SHOW_SAFE_FIELDS = ["name", "profile", "url", "username", "createdAt", "updatedAt"] as const;
-
-interface NavigationSummary {
-	title?: string;
-	url?: string;
-}
-
-function getImageMimeType(filePath: string): string | undefined {
-	const extension = extname(filePath).toLowerCase();
-	return IMAGE_EXTENSION_TO_MIME_TYPE[extension];
-}
-
-function getInlineImageMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
-	return parsePositiveInteger(env[INLINE_IMAGE_MAX_BYTES_ENV]) ?? DEFAULT_INLINE_IMAGE_MAX_BYTES;
-}
-
-function formatByteCount(bytes: number): string {
-	if (bytes < 1_024) return `${bytes} B`;
-	if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KiB`;
-	return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
-}
-
-function appendPresentationNotice(presentation: ToolPresentation, message: string): void {
-	const existingText = presentation.content[0]?.type === "text" ? presentation.content[0].text : "";
-	presentation.content[0] = {
-		type: "text",
-		text: existingText.length > 0 ? `${existingText}\n\n${message}` : message,
-	};
-}
-
-function shouldAppendArtifactRetentionNotice(entries: SessionArtifactManifestEntry[]): boolean {
-	return entries.some((entry) => entry.retentionState === "evicted" || entry.storageScope !== "explicit-path");
-}
-
-function getManifestEntryKey(entry: SessionArtifactManifestEntry): string {
-	return entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
-}
-
-function manifestHasNewNoticeWorthyEntries(base: SessionArtifactManifest | undefined, current: SessionArtifactManifest | undefined): boolean {
-	if (!current) return false;
-	const baseKeys = new Set((base?.entries ?? []).map(getManifestEntryKey));
-	return current.entries.some((entry) => !baseKeys.has(getManifestEntryKey(entry)) && (entry.retentionState === "evicted" || entry.storageScope !== "explicit-path"));
-}
-
-function applyArtifactManifest(presentation: ToolPresentation, baseManifest: SessionArtifactManifest | undefined, entries: SessionArtifactManifestEntry[]): ToolPresentation {
-	if (entries.length === 0) return presentation;
-	const artifactManifest = mergeSessionArtifactManifest({ base: baseManifest, entries });
-	if (!artifactManifest) return presentation;
-	presentation.artifactManifest = artifactManifest;
-	presentation.artifactRetentionSummary = formatSessionArtifactRetentionSummary(artifactManifest);
-	if (shouldAppendArtifactRetentionNotice(entries)) {
-		appendPresentationNotice(presentation, presentation.artifactRetentionSummary);
-	}
-	return presentation;
-}
-
-function stringifyModelFacing(value: unknown): string {
-	return stringifyUnknown(redactSensitiveValue(value));
-}
-
-function redactModelFacingText(text: string): string {
-	const parsed = parseJsonPreviewString(text);
-	if (parsed !== text) {
-		return stringifyModelFacing(parsed);
-	}
-	return redactSensitiveText(text);
-}
-
-function redactModelFacingTextIfSensitive(text: string): string {
-	return /(?:@|\b(?:api[_-]?key|auth|authorization|basic|bearer|cookie|pass(?:word)?|secret|session[_-]?id|token)\b)/i.test(text)
-		? redactModelFacingText(text)
-		: text;
-}
-
-function getTabSummary(data: Record<string, unknown>): string | undefined {
-	const tabs = Array.isArray(data.tabs) ? data.tabs : undefined;
-	if (!tabs) return undefined;
-
-	const lines = tabs.map((tab, index) => {
-		if (!isRecord(tab)) return `${index}: <invalid tab>`;
-		const marker = tab.active === true ? "*" : "-";
-		const title = typeof tab.title === "string" ? tab.title : "(untitled)";
-		const url = typeof tab.url === "string" ? tab.url : "(no url)";
-		const tabSelector =
-			typeof tab.tabId === "string" && tab.tabId.trim().length > 0
-				? tab.tabId.trim()
-				: typeof tab.label === "string" && tab.label.trim().length > 0
-					? tab.label.trim()
-					: typeof tab.index === "number"
-						? String(tab.index)
-						: String(index);
-		return `${marker} [${tabSelector}] ${title} — ${url}`;
-	});
-	return lines.join("\n");
-}
-
-function getStreamSummary(data: Record<string, unknown>): string | undefined {
-	if (typeof data.enabled !== "boolean" || typeof data.connected !== "boolean") {
-		return undefined;
-	}
-
-	const lines = [
-		`Enabled: ${data.enabled}`,
-		`Connected: ${data.connected}`,
-		`Screencasting: ${data.screencasting === true}`,
-	];
-	if (typeof data.port === "number") {
-		lines.push(`Port: ${data.port}`);
-		lines.push(`WebSocket URL: ${getStreamWebSocketUrl(data.port)}`);
-		lines.push(`Frame format: JSON messages with base64 JPEG frame data`);
-	}
-	return lines.join("\n");
-}
-
-function getStreamWebSocketUrl(port: number): string {
-	return `ws://127.0.0.1:${port}`;
-}
-
-function enrichStreamStatusData(commandInfo: CommandInfo, data: unknown): unknown {
-	if (commandInfo.command !== "stream" || commandInfo.subcommand !== "status" || !isRecord(data) || typeof data.port !== "number") {
-		return data;
-	}
-	return {
-		...data,
-		frameFormat: "JSON messages with base64 JPEG frame data",
-		wsUrl: getStreamWebSocketUrl(data.port),
-	};
-}
-
-function getArrayField(data: Record<string, unknown>, key: string): unknown[] | undefined {
-	return Array.isArray(data[key]) ? data[key] : undefined;
-}
-
-function getStringField(data: Record<string, unknown>, key: string): string | undefined {
-	const value = data[key];
-	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function formatCount(count: number, singular: string, plural = `${singular}s`): string {
-	return `${count} ${count === 1 ? singular : plural}`;
-}
-
-function firstLine(value: string, maxChars = 160): string {
-	return truncateText(value.split("\n", 1)[0] ?? value, maxChars);
-}
-
-function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
-	if (commandInfo.command === "session") {
-		const sessions = getArrayField(data, "sessions");
-		if (sessions) return `Sessions: ${sessions.length}`;
-		const session = getStringField(data, "session");
-		if (session) return `Session: ${session}`;
-	}
-
-	if (commandInfo.command === "profiles") {
-		const profiles = getArrayField(data, "profiles");
-		if (profiles) return `Chrome profiles: ${profiles.length}`;
-	}
-
-	if (commandInfo.command === "auth") {
-		const profiles = getArrayField(data, "profiles");
-		if (profiles) return `Auth profiles: ${profiles.length}`;
-		const name = getStringField(data, "name") ?? getStringField(data, "profile") ?? commandInfo.subcommand;
-		if (name && commandInfo.subcommand === "show") return `Auth profile: ${name}`;
-		if (name && ["save", "login", "delete"].includes(commandInfo.subcommand ?? "")) return `Auth ${commandInfo.subcommand}: ${name}`;
-	}
-
-	if (commandInfo.command === "cookies") {
-		const cookies = getArrayField(data, "cookies");
-		if (cookies) return `Cookies: ${cookies.length}`;
-		const name = getStringField(data, "name");
-		if (name) return name;
-		if (data.set === true) return "Cookie set";
-		if (data.cleared === true || data.clear === true) return "Cookies cleared";
-	}
-
-	if (commandInfo.command === "storage") {
-		const entries = getArrayField(data, "entries") ?? getArrayField(data, "items");
-		if (entries) return `Storage entries: ${entries.length}`;
-		const key = getStringField(data, "key");
-		if (key && (commandInfo.subcommand === "set" || data.set === true || Object.hasOwn(data, "value"))) return `Storage set: ${key}`;
-		if (data.cleared === true || data.clear === true) return "Storage cleared";
-	}
-
-	if (commandInfo.command === "dialog") {
-		const open = typeof data.open === "boolean" ? data.open : undefined;
-		if (open !== undefined) return open ? "Dialog open" : "No dialog open";
-		if (data.accepted === true) return "Dialog accepted";
-		if (data.dismissed === true) return "Dialog dismissed";
-	}
-
-	if (commandInfo.command === "frame") {
-		const frame = getStringField(data, "frame") ?? getStringField(data, "name") ?? getStringField(data, "selector") ?? commandInfo.subcommand;
-		if (frame) return `Frame: ${frame}`;
-	}
-
-	if (commandInfo.command === "state") {
-		const states = getArrayField(data, "states") ?? getArrayField(data, "files");
-		if (states) return `States: ${states.length}`;
-		if (commandInfo.subcommand === "load") return undefined;
-		const stateName = getStringField(data, "name") ?? getStringField(data, "file") ?? getStringField(data, "path") ?? commandInfo.subcommand;
-		if (stateName) return `State ${commandInfo.subcommand ?? "result"}: ${stateName}`;
-	}
-
-	if (commandInfo.command === "network") {
-		if (commandInfo.subcommand === "requests") {
-			const requests = getArrayField(data, "requests");
-			if (requests) return `Network requests: ${requests.length}`;
-		}
-		if (commandInfo.subcommand === "route") {
-			const routed = getStringField(data, "routed") ?? getStringField(data, "url") ?? getStringField(data, "pattern");
-			return routed ? `Network route: ${redactModelFacingTextIfSensitive(routed)}` : "Network route configured";
-		}
-		if (commandInfo.subcommand === "unroute") {
-			const unrouted = getStringField(data, "unrouted") ?? getStringField(data, "url") ?? getStringField(data, "pattern");
-			return unrouted ? `Network unroute: ${redactModelFacingTextIfSensitive(unrouted)}` : "Network route removed";
-		}
-		if (commandInfo.subcommand === "har") {
-			const state = getStringField(data, "state") ?? getStringField(data, "status") ?? commandInfo.subcommand;
-			return `Network HAR: ${state}`;
-		}
-	}
-
-	if (commandInfo.command === "diff") {
-		if (commandInfo.subcommand === "snapshot") return "Snapshot diff completed";
-		if (commandInfo.subcommand === "url") return "URL diff completed";
-	}
-
-	if (["trace", "profiler"].includes(commandInfo.command ?? "")) {
-		const state = getStringField(data, "state") ?? getStringField(data, "status") ?? commandInfo.subcommand;
-		if (state) return `${commandInfo.command === "trace" ? "Trace" : "Profiler"}: ${state}`;
-	}
-
-	if (commandInfo.command === "highlight") return "Element highlighted";
-	if (commandInfo.command === "inspect") return "DevTools inspect opened";
-	if (commandInfo.command === "clipboard") return `Clipboard ${commandInfo.subcommand ?? "completed"}`;
-
-	if (commandInfo.command === "stream") {
-		if (commandInfo.subcommand === "enable") {
-			const port = typeof data.port === "number" ? ` on port ${data.port}` : "";
-			return `Stream enabled${port}`;
-		}
-		if (commandInfo.subcommand === "disable") return "Stream disabled";
-	}
-
-	if (commandInfo.command === "chat") return "Chat response";
-
-	if (commandInfo.command === "console") {
-		const messages = getArrayField(data, "messages");
-		if (messages) return `Console messages: ${messages.length}`;
-	}
-
-	if (commandInfo.command === "errors") {
-		const errors = getArrayField(data, "errors");
-		if (errors) return `Page errors: ${errors.length}`;
-	}
-
-	if (commandInfo.command === "dashboard") {
-		if (typeof data.port === "number") return `Dashboard running on port ${data.port}`;
-		if (data.stopped === true) return "Dashboard stopped";
-		if (data.stopped === false) {
-			const reason = getStringField(data, "reason");
-			return reason ? `Dashboard not stopped: ${reason}` : "Dashboard not stopped";
-		}
-	}
-
-	if (commandInfo.command === "doctor") {
-		const status = getStringField(data, "status") ?? getStringField(data, "result");
-		if (status) return `Doctor: ${status}`;
-		const checks = getArrayField(data, "checks") ?? getArrayField(data, "issues") ?? getArrayField(data, "problems");
-		if (checks) return `Doctor: ${formatCount(checks.length, "item")}`;
-	}
-
-	return undefined;
-}
-
-function formatSessionText(data: Record<string, unknown>): string | undefined {
-	const sessions = getArrayField(data, "sessions");
-	if (sessions) {
-		if (sessions.length === 0) return "No active sessions.";
-		return sessions
-			.map((item, index) => {
-				if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
-				const name = redactModelFacingText(getStringField(item, "name") ?? getStringField(item, "session") ?? getStringField(item, "id") ?? `(session ${index + 1})`);
-				const active = item.active === true ? " *active*" : "";
-				const details = [getStringField(item, "url"), getStringField(item, "title")]
-					.flatMap((detail) => (detail ? [redactModelFacingTextIfSensitive(detail)] : []))
-					.join(" — ");
-				return details ? `${index + 1}. ${name}${active} — ${details}` : `${index + 1}. ${name}${active}`;
-			})
-			.join("\n");
-	}
-	const session = getStringField(data, "session");
-	return session ? `Current session: ${redactModelFacingText(session)}` : undefined;
-}
-
-function formatProfilesText(profiles: unknown[], label: string): string {
-	if (profiles.length === 0) return `No ${label}.`;
-	return profiles
-		.map((item, index) => {
-			if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
-			const name = redactModelFacingText(getStringField(item, "name") ?? getStringField(item, "profile") ?? `(unnamed ${index + 1})`);
-			const directory = getStringField(item, "directory") ?? getStringField(item, "path");
-			return directory ? `${index + 1}. ${name} (${redactModelFacingText(directory)})` : `${index + 1}. ${name}`;
-		})
-		.join("\n");
-}
-
-function formatSkillsListText(skills: unknown[]): string {
-	if (skills.length === 0) return "No agent-browser skills found.";
-	return skills
-		.map((item, index) => {
-			if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
-			const name = redactModelFacingText(getStringField(item, "name") ?? `(skill ${index + 1})`);
-			const description = getStringField(item, "description");
-			return description ? `${index + 1}. ${name} — ${redactModelFacingText(description)}` : `${index + 1}. ${name}`;
-		})
-		.join("\n");
-}
-
-function getSkillContent(data: unknown): string | undefined {
-	if (typeof data === "string") return data;
-	if (isRecord(data) && typeof data.content === "string") return data.content;
-	if (!Array.isArray(data)) return undefined;
-	const content = data.flatMap((item) => (isRecord(item) && typeof item.content === "string" ? [item.content] : []));
-	return content.length > 0 ? content.join("\n\n") : undefined;
-}
-
-function splitShellWords(input: string): string[] | undefined {
-	const words: string[] = [];
-	let current = "";
-	let quote: 'single' | 'double' | undefined;
-	for (let index = 0; index < input.length; index += 1) {
-		const char = input[index];
-		if (quote === "single") {
-			if (char === "'") quote = undefined;
-			else current += char;
-			continue;
-		}
-		if (quote === "double") {
-			if (char === '"') quote = undefined;
-			else if (char === "\\" && index + 1 < input.length) {
-				index += 1;
-				current += input[index];
-			} else current += char;
-			continue;
-		}
-		if (char === "'") {
-			quote = "single";
-			continue;
-		}
-		if (char === '"') {
-			quote = "double";
-			continue;
-		}
-		if (char === "\\" && index + 1 < input.length) {
-			index += 1;
-			current += input[index];
-			continue;
-		}
-		if (char === "#" && current.length === 0) {
-			break;
-		}
-		if (/\s/.test(char)) {
-			if (current.length > 0) {
-				words.push(current);
-				current = "";
-			}
-			continue;
-		}
-		current += char;
-	}
-	if (quote) return undefined;
-	if (current.length > 0) words.push(current);
-	return words;
-}
-
-function formatNativeAgentBrowserCall(args: string[], stdin?: string): string {
-	return stdin === undefined
-		? `agent_browser { "args": ${JSON.stringify(args)} }`
-		: `agent_browser { "args": ${JSON.stringify(args)}, "stdin": ${JSON.stringify(stdin)} }`;
-}
-
-function formatNativeSkillContent(content: string): string {
-	const lines = content.replace(/^allowed-tools:.*agent-browser.*\n?/gim, "").replace(/^```bash\s*$/gim, "```text").split("\n");
-	const output: string[] = [];
-	for (let index = 0; index < lines.length; index += 1) {
-		const line = lines[index];
-		const commandMatch = /^(\s*)agent-browser\s+(.+?)\s*$/.exec(line);
-		if (!commandMatch) {
-			output.push(line);
-			continue;
-		}
-		const indent = commandMatch[1];
-		const rawArgsText = commandMatch[2];
-		const heredocMatch = /^(.*?)\s+(<<-?)['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\s*$/.exec(rawArgsText);
-		const argsText = heredocMatch?.[1] ?? rawArgsText;
-		const args = splitShellWords(argsText);
-		if (!args || args.length === 0) {
-			output.push(line);
-			continue;
-		}
-		if (!heredocMatch) {
-			output.push(`${indent}${formatNativeAgentBrowserCall(args)}`);
-			continue;
-		}
-		const stripsLeadingTabs = heredocMatch[2] === "<<-";
-		const delimiter = heredocMatch[3];
-		const stdinLines: string[] = [];
-		let cursor = index + 1;
-		while (cursor < lines.length) {
-			const candidate = stripsLeadingTabs ? lines[cursor].replace(/^\t+/, "") : lines[cursor];
-			if (candidate === delimiter) break;
-			stdinLines.push(candidate);
-			cursor += 1;
-		}
-		if (cursor >= lines.length) {
-			output.push(line);
-			continue;
-		}
-		output.push(`${indent}${formatNativeAgentBrowserCall(args, stdinLines.join("\n"))}`);
-		index = cursor;
-	}
-	return output.join("\n");
-}
-
-function formatSkillsText(commandInfo: CommandInfo, data: unknown): string | undefined {
-	if (commandInfo.command !== "skills") return undefined;
-	if (commandInfo.subcommand === "path") return typeof data === "string" ? redactModelFacingText(data) : undefined;
-	if (commandInfo.subcommand === "list" && Array.isArray(data)) return formatSkillsListText(data);
-	const content = getSkillContent(data);
-	if (content) {
-		const note = [
-			"Pi native-tool note: upstream skill text was adapted for this native tool.",
-			"Use args for CLI tokens and stdin only for batch, eval --stdin, or auth save --password-stdin; do not pipe heredocs through bash unless the user explicitly asks for a bash workflow.",
-		].join("\n");
-		return `${note}\n\n${redactModelFacingText(formatNativeSkillContent(content))}`;
-	}
-	if (typeof data === "string") return redactModelFacingText(formatNativeSkillContent(data));
-	return undefined;
-}
-
-function formatAuthShowText(data: Record<string, unknown>): string | undefined {
-	const lines = AUTH_SHOW_SAFE_FIELDS.flatMap((key) => {
-		const value = data[key];
-		return typeof value === "string" && value.trim().length > 0 ? [`${key}: ${redactModelFacingText(value.trim())}`] : [];
-	});
-	return lines.length > 0 ? lines.join("\n") : undefined;
-}
-
-function getPreviewCandidate(item: Record<string, unknown>, keys: readonly string[]): unknown {
-	for (const key of keys) {
-		const value = item[key];
-		if (value !== undefined && value !== null && value !== "") return value;
-	}
-	return undefined;
-}
-
-function parseJsonPreviewString(value: string): unknown {
-	const trimmed = value.trim();
-	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
-	try {
-		return JSON.parse(trimmed) as unknown;
-	} catch {
-		return value;
-	}
-}
-
-function formatNetworkPreviewValue(value: unknown, maxChars: number): string | undefined {
-	if (value === undefined || value === null) return undefined;
-	const previewValue = typeof value === "string" ? parseJsonPreviewString(value) : value;
-	const redacted = redactSensitiveValue(previewValue);
-	const raw = typeof redacted === "string" ? redacted : stringifyUnknown(redacted);
-	const normalized = raw.replace(/\s+/g, " ").trim();
-	if (normalized.length === 0) return undefined;
-	return truncateText(redactSensitiveText(normalized), maxChars);
-}
-
-function appendNetworkPreview(lines: string[], label: string, value: unknown, maxChars: number): void {
-	const preview = formatNetworkPreviewValue(value, maxChars);
-	if (!preview) return;
-	lines.push(`   ${label}: ${preview}`);
-}
-
-function formatNetworkRequestLine(item: Record<string, unknown>, index: number): string[] {
-	const method = getStringField(item, "method") ?? "GET";
-	const status = typeof item.status === "number" ? String(item.status) : "pending";
-	const type = getStringField(item, "resourceType") ?? getStringField(item, "mimeType");
-	const url = getStringField(item, "url") ?? "(no url)";
-	const requestId = getStringField(item, "requestId") ?? getStringField(item, "id");
-	const idText = requestId ? ` [${redactSensitiveText(requestId)}]` : "";
-	const failureClassification = classifyNetworkRequestFailure(item);
-	const impactText = failureClassification ? ` [${failureClassification.impact}: ${failureClassification.reason}]` : "";
-	const lines = [`${index + 1}. ${status} ${method} ${truncateText(redactSensitiveText(url), 180)}${type ? ` (${type})` : ""}${idText}${impactText}`];
-	appendNetworkPreview(lines, "Payload", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.request), NETWORK_BODY_PREVIEW_MAX_CHARS);
-	appendNetworkPreview(lines, "Response", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.response), NETWORK_BODY_PREVIEW_MAX_CHARS);
-	appendNetworkPreview(lines, "Error", getPreviewCandidate(item, NETWORK_PREVIEW_FIELD_CANDIDATES.error), NETWORK_ERROR_PREVIEW_MAX_CHARS);
-	return lines;
-}
-
-function formatNetworkRequestsText(data: Record<string, unknown>): string | undefined {
-	const requests = getArrayField(data, "requests");
-	if (!requests) return undefined;
-	if (requests.length === 0) return "No network requests captured.";
-	const networkFailureSummary = summarizeNetworkFailures(requests);
-	const shown = networkFailureSummary.totalCount > 0
-		? [`Network failure summary: ${networkFailureSummary.actionableCount} actionable, ${networkFailureSummary.benignCount} benign low-impact (${networkFailureSummary.totalCount} total).`]
-		: [];
-	const indexedRequests = requests.map((item, index) => ({ index, item }));
-	const failedRequests: typeof indexedRequests = [];
-	const normalRequests: typeof indexedRequests = [];
-	for (const indexed of indexedRequests) {
-		if (isRecord(indexed.item) && classifyNetworkRequestFailure(indexed.item)) failedRequests.push(indexed);
-		else normalRequests.push(indexed);
-	}
-	failedRequests.sort((left, right) => {
-		const leftClassification = isRecord(left.item) ? classifyNetworkRequestFailure(left.item) : undefined;
-		const rightClassification = isRecord(right.item) ? classifyNetworkRequestFailure(right.item) : undefined;
-		const leftRank = leftClassification?.impact === "actionable" ? 0 : 1;
-		const rightRank = rightClassification?.impact === "actionable" ? 0 : 1;
-		return leftRank - rightRank || left.index - right.index;
-	});
-	const prioritizedRequests = [...failedRequests, ...normalRequests];
-	shown.push(...prioritizedRequests.slice(0, DIAGNOSTIC_REQUEST_PREVIEW_LIMIT).flatMap(({ item, index }) => {
-		if (!isRecord(item)) return [`${index + 1}. ${stringifyModelFacing(item)}`];
-		return formatNetworkRequestLine(item, index);
-	}));
-	if (requests.length > DIAGNOSTIC_REQUEST_PREVIEW_LIMIT) {
-		shown.push(`... (${requests.length - DIAGNOSTIC_REQUEST_PREVIEW_LIMIT} additional requests omitted from preview; failed requests are shown first when present)`);
-	}
-	return shown.join("\n");
-}
-
-function formatNetworkRequestText(data: Record<string, unknown>): string | undefined {
-	if (!getStringField(data, "url") && !getStringField(data, "requestId") && !getStringField(data, "id")) {
-		return undefined;
-	}
-	return formatNetworkRequestLine(data, 0).join("\n");
-}
-
-interface NetworkRequestActionCandidate {
-	filter?: string;
-	item: Record<string, unknown>;
-	kind: "actionable" | "api" | "benign" | "request";
-	requestId: string;
-}
-
-function getSafeNetworkActionValue(value: string | undefined): string | undefined {
-	if (!value) return undefined;
-	const trimmed = value.trim();
-	if (trimmed.length === 0 || redactSensitiveText(trimmed) !== trimmed) return undefined;
-	return trimmed;
-}
-
-function getNetworkRequestId(item: Record<string, unknown>): string | undefined {
-	return getSafeNetworkActionValue(getStringField(item, "requestId") ?? getStringField(item, "id"));
-}
-
-function isSensitiveNetworkPathSegment(segment: string): boolean {
-	const normalized = segment.toLowerCase();
-	return normalized === "auth" || NETWORK_FILTER_SENSITIVE_SEGMENT_TERMS.some((term) => normalized.includes(term));
-}
-
-function pathFilterMayExposeSensitiveSegment(filter: string): boolean {
-	const decoded = (() => {
-		try {
-			return decodeURIComponent(filter);
-		} catch {
-			return filter;
-		}
-	})();
-	return decoded.split("/").some((segment) => isSensitiveNetworkPathSegment(segment) || NETWORK_FILTER_OPAQUE_SEGMENT_PATTERN.test(segment));
-}
-
-function getNetworkRequestPathFilter(item: Record<string, unknown>): string | undefined {
-	const url = getStringField(item, "url");
-	if (!url) return undefined;
-	let filter: string | undefined;
-	try {
-		filter = new URL(url).pathname;
-	} catch {
-		filter = url.split(/[?#]/, 1)[0];
-	}
-	filter = filter?.trim();
-	if (!filter || filter === "/" || filter.length > NETWORK_FILTER_MAX_CHARS || pathFilterMayExposeSensitiveSegment(filter)) return undefined;
-	return getSafeNetworkActionValue(filter);
-}
-
-function isApiLikeNetworkRequest(item: Record<string, unknown>): boolean {
-	const method = (getStringField(item, "method") ?? "GET").toUpperCase();
-	const resourceType = (getStringField(item, "resourceType") ?? "").toLowerCase();
-	const mimeType = (getStringField(item, "mimeType") ?? "").toLowerCase();
-	const filter = getNetworkRequestPathFilter(item) ?? "";
-	return resourceType === "fetch" || resourceType === "xhr" || mimeType.includes("json") || /\/(?:api|graphql|rpc)(?:\/|$)/i.test(filter) || !["GET", "HEAD"].includes(method);
-}
-
-function getNetworkRequestActionCandidate(item: Record<string, unknown>): NetworkRequestActionCandidate | undefined {
-	const requestId = getNetworkRequestId(item);
-	if (!requestId) return undefined;
-	const classification = classifyNetworkRequestFailure(item);
-	const kind: NetworkRequestActionCandidate["kind"] = classification?.impact === "actionable"
-		? "actionable"
-		: classification?.impact === "benign"
-			? "benign"
-			: isApiLikeNetworkRequest(item)
-				? "api"
-				: "request";
-	return { filter: getNetworkRequestPathFilter(item), item, kind, requestId };
-}
-
-function chooseNetworkRequestActionCandidate(candidates: NetworkRequestActionCandidate[]): NetworkRequestActionCandidate | undefined {
-	return candidates.find((candidate) => candidate.kind === "actionable")
-		?? candidates.find((candidate) => candidate.kind === "api")
-		?? candidates.find((candidate) => candidate.kind === "benign")
-		?? candidates[0];
-}
-
-function formatNetworkRequestActionDescriptor(candidate: NetworkRequestActionCandidate): string {
-	const method = getStringField(candidate.item, "method") ?? "GET";
-	const status = typeof candidate.item.status === "number" ? String(candidate.item.status) : "pending";
-	const target = candidate.filter ? ` ${candidate.filter}` : "";
-	return `${status} ${method}${target} [${candidate.requestId}]`;
-}
-
-function getNetworkRequestDetailActionId(candidate: NetworkRequestActionCandidate): string {
-	if (candidate.kind === "actionable") return "inspect-actionable-network-request";
-	if (candidate.kind === "benign") return "inspect-benign-network-request";
-	return "inspect-network-request";
-}
-
-function buildNetworkRequestsNextActions(data: unknown, sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
-	if (!isRecord(data)) return undefined;
-	const requests = getArrayField(data, "requests");
-	if (!requests) return undefined;
-	const candidates = requests.flatMap((item) => {
-		if (!isRecord(item)) return [];
-		const candidate = getNetworkRequestActionCandidate(item);
-		return candidate ? [candidate] : [];
-	});
-	const selected = chooseNetworkRequestActionCandidate(candidates);
-	if (!selected) return undefined;
-	const descriptor = formatNetworkRequestActionDescriptor(selected);
-	const actions: AgentBrowserNextAction[] = [
-		{
-			id: getNetworkRequestDetailActionId(selected),
-			params: { args: withOptionalSessionArgs(sessionName, ["network", "request", selected.requestId]) },
-			reason: `Inspect full request details for ${descriptor}.`,
-			safety: "Read-only network diagnostic; request inspection must not replace the active page/ref context.",
-			tool: "agent_browser",
-		},
-	];
-	if (selected.kind === "actionable") {
-		actions.push({
-			id: "trace-actionable-network-source",
-			params: { networkSourceLookup: { requestId: selected.requestId, ...(sessionName ? { session: sessionName } : {}) } },
-			reason: `Look for local source candidates related to ${descriptor}.`,
-			safety: "Read-only experimental helper; it reports bounded candidates and may miss bundled or dynamic call sites.",
-			tool: "agent_browser",
-		});
-	}
-	if (selected.filter) {
-		actions.push({
-			id: "filter-network-requests-by-path",
-			params: { args: withOptionalSessionArgs(sessionName, ["network", "requests", "--filter", selected.filter]) },
-			reason: `List captured requests matching ${selected.filter}.`,
-			safety: "Read-only request-list filter; absence from a compact preview is not proof the request did not happen.",
-			tool: "agent_browser",
-		});
-	}
-	actions.push({
-		id: "start-network-har-capture",
-		params: { args: withOptionalSessionArgs(sessionName, ["network", "har", "start"]) },
-		reason: "Start HAR capture before reproducing the network behavior again.",
-		safety: "HARs can contain URLs and headers; stop to an explicit path, inspect metadata, and avoid sharing sensitive captures.",
-		tool: "agent_browser",
-	});
-	return actions.slice(0, NETWORK_NEXT_ACTION_LIMIT);
-}
-
-function formatConsoleText(data: Record<string, unknown>): string | undefined {
-	const messages = getArrayField(data, "messages");
-	if (!messages) return undefined;
-	if (messages.length === 0) return "No console messages.";
-	const shown = messages.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
-		if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
-		const type = redactModelFacingText(getStringField(item, "type") ?? "message");
-		const text = getStringField(item, "text") ?? stringifyModelFacing(item);
-		return `${index + 1}. [${type}] ${firstLine(redactModelFacingText(text).replace(/\s+/g, " ").trim(), 220)}`;
-	});
-	if (messages.length > shown.length) {
-		shown.push(`... (${messages.length - shown.length} additional console messages omitted from preview)`);
-	}
-	return shown.join("\n");
-}
-
-function formatErrorsText(data: Record<string, unknown>): string | undefined {
-	const errors = getArrayField(data, "errors");
-	if (!errors) return undefined;
-	if (errors.length === 0) return "No page errors.";
-	const shown = errors.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
-		if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
-		const text = getStringField(item, "text") ?? stringifyModelFacing(item);
-		const location = [
-			getStringField(item, "url"),
-			typeof item.line === "number" ? `line ${item.line}` : undefined,
-			typeof item.column === "number" ? `column ${item.column}` : undefined,
-		]
-			.filter(Boolean)
-			.map((item) => redactModelFacingText(String(item)))
-			.join(":");
-		const safeText = firstLine(redactModelFacingText(text), 220);
-		return location ? `${index + 1}. ${safeText} (${location})` : `${index + 1}. ${safeText}`;
-	});
-	if (errors.length > shown.length) {
-		shown.push(`... (${errors.length - shown.length} additional errors omitted from preview)`);
-	}
-	return shown.join("\n");
-}
-
-function formatDashboardText(data: Record<string, unknown>): string | undefined {
-	const lines: string[] = [];
-	if (typeof data.port === "number") lines.push(`Port: ${data.port}`);
-	if (typeof data.pid === "number") lines.push(`PID: ${data.pid}`);
-	if (typeof data.stopped === "boolean") lines.push(`Stopped: ${data.stopped}`);
-	const reason = getStringField(data, "reason");
-	if (reason) lines.push(`Reason: ${redactModelFacingText(reason)}`);
-	return lines.length > 0 ? lines.join("\n") : undefined;
-}
-
-function formatChatText(data: Record<string, unknown>): string | undefined {
-	const response = getStringField(data, "response") ?? getStringField(data, "message") ?? getStringField(data, "text") ?? getStringField(data, "result");
-	if (response) return redactModelFacingText(response);
-	const model = getStringField(data, "model");
-	const provider = getStringField(data, "provider");
-	const lines = [model ? `Model: ${redactModelFacingText(model)}` : undefined, provider ? `Provider: ${redactModelFacingText(provider)}` : undefined].filter(Boolean);
-	return lines.length > 0 ? lines.join("\n") : undefined;
-}
-
-function formatDoctorText(data: Record<string, unknown>): string | undefined {
-	const lines: string[] = [];
-	const status = getStringField(data, "status") ?? getStringField(data, "result");
-	if (status) lines.push(`Status: ${redactModelFacingText(status)}`);
-	for (const key of ["checks", "issues", "problems"] as const) {
-		const items = getArrayField(data, key);
-		if (items) lines.push(`${key}: ${items.length}`);
-	}
-	return lines.length > 0 ? lines.join("\n") : undefined;
-}
-
-function formatCookieRecordText(item: Record<string, unknown>, fallbackName: string): string {
-	const name = redactModelFacingText(getStringField(item, "name") ?? fallbackName);
-	const domain = getStringField(item, "domain");
-	const path = getStringField(item, "path");
-	const flags = [item.httpOnly === true ? "httpOnly" : undefined, item.secure === true ? "secure" : undefined].filter(Boolean).join(", ");
-	const location = [domain, path].filter(Boolean).join("");
-	return [name, location ? `(${redactModelFacingText(location)})` : undefined, flags ? `[${flags}]` : undefined].filter(Boolean).join(" ");
-}
-
-function formatCookiesText(data: Record<string, unknown>): string | undefined {
-	const cookies = getArrayField(data, "cookies");
-	if (cookies) {
-		if (cookies.length === 0) return "No cookies.";
-		return cookies
-			.map((item, index) => (isRecord(item) ? formatCookieRecordText(item, `(cookie ${index + 1})`) : `${index + 1}. [REDACTED]`))
-			.join("\n");
-	}
-	if (getStringField(data, "name") || getStringField(data, "domain") || getStringField(data, "path") || Object.hasOwn(data, "value")) {
-		return formatCookieRecordText(data, "cookie");
-	}
-	if (data.set === true) return "Cookie set.";
-	if (data.cleared === true || data.clear === true) return "Cookies cleared.";
-	return undefined;
-}
-
-function formatStorageText(data: Record<string, unknown>): string | undefined {
-	const type = getStringField(data, "type") ?? getStringField(data, "storage") ?? "storage";
-	const entries = getArrayField(data, "entries") ?? getArrayField(data, "items");
-	if (entries) {
-		if (entries.length === 0) return `${type}: no entries.`;
-		return entries
-			.map((item, index) => {
-				if (!isRecord(item)) return `${index + 1}. [REDACTED]`;
-				const rawKey = getStringField(item, "key") ?? getStringField(item, "name") ?? `(entry ${index + 1})`;
-				const key = redactModelFacingText(rawKey);
-				return Object.hasOwn(item, "value") ? `${key}: [REDACTED]` : key;
-			})
-			.join("\n");
-	}
-	const key = getStringField(data, "key");
-	if (key && Object.hasOwn(data, "value")) return `${type} ${redactModelFacingText(key)}: [REDACTED]`;
-	if (key && data.set === true) return `${type} set: ${redactModelFacingText(key)}`;
-	if (data.cleared === true || data.clear === true) return `${type} cleared.`;
-	return undefined;
-}
-
-function formatDialogText(data: Record<string, unknown>): string | undefined {
-	const lines: string[] = [];
-	if (typeof data.open === "boolean") lines.push(data.open ? "Dialog open." : "No dialog open.");
-	const type = getStringField(data, "type");
-	if (type) lines.push(`Type: ${redactModelFacingText(type)}`);
-	const message = getStringField(data, "message");
-	if (message) lines.push(`Message: ${/(?:auth|authorization|bearer|cookie|pass(?:word)?|secret|session|token)/i.test(message) ? "[REDACTED]" : redactModelFacingText(message)}`);
-	if (data.accepted === true) lines.push("Accepted.");
-	if (data.dismissed === true) lines.push("Dismissed.");
-	return lines.length > 0 ? lines.join("\n") : undefined;
-}
-
-function formatFrameText(data: Record<string, unknown>): string | undefined {
-	const frame = getStringField(data, "frame") ?? getStringField(data, "name") ?? getStringField(data, "selector");
-	const url = getStringField(data, "url");
-	const title = getStringField(data, "title");
-	const lines = [frame ? `Frame: ${redactModelFacingText(frame)}` : undefined, title ? `Title: ${redactModelFacingText(title)}` : undefined, url ? `URL: ${redactModelFacingTextIfSensitive(url)}` : undefined].filter(Boolean);
-	return lines.length > 0 ? lines.join("\n") : undefined;
-}
-
-function formatStateText(data: Record<string, unknown>): string | undefined {
-	const states = getArrayField(data, "states") ?? getArrayField(data, "files");
-	if (states) {
-		if (states.length === 0) return "No saved states.";
-		return states
-			.map((item, index) => {
-				if (!isRecord(item)) return `${index + 1}. ${redactModelFacingTextIfSensitive(stringifyModelFacing(item))}`;
-				const name = getStringField(item, "name") ?? getStringField(item, "file") ?? getStringField(item, "path") ?? `(state ${index + 1})`;
-				const url = getStringField(item, "url");
-				return url ? `${index + 1}. ${redactModelFacingText(name)} — ${redactModelFacingTextIfSensitive(url)}` : `${index + 1}. ${redactModelFacingText(name)}`;
-			})
-			.join("\n");
-	}
-	if (data.loaded === true) return `State loaded: ${redactModelFacingText(getStringField(data, "path") ?? getStringField(data, "name") ?? "ok")}`;
-	if (data.cleared === true || data.clear === true) return "State cleared.";
-	return undefined;
-}
-
-function isSensitivePresentationField(key: string): boolean {
-	return /^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|x(?:_|-)?api(?:_|-)?key)$/i.test(key);
-}
-
-function redactStructuredPresentationValue(value: unknown): unknown {
-	if (typeof value === "string") return redactModelFacingTextIfSensitive(value);
-	if (Array.isArray(value)) return value.map((item) => redactStructuredPresentationValue(item));
-	if (!isRecord(value)) return value;
-	return Object.fromEntries(
-		Object.entries(value).map(([key, entryValue]) => [
-			key,
-			isSensitivePresentationField(key) ? "[REDACTED]" : redactStructuredPresentationValue(entryValue),
-		]),
-	);
-}
-
-function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unknown {
-	if (Array.isArray(value)) return value.map((item) => redactStatefulValues(item, sensitiveKeys));
-	if (!isRecord(value)) return redactStructuredPresentationValue(value);
-	return Object.fromEntries(
-		Object.entries(value).map(([key, entryValue]) => [
-			key,
-			sensitiveKeys.has(key.toLowerCase()) ? "[REDACTED]" : redactStatefulValues(entryValue, sensitiveKeys),
-		]),
-	);
-}
-
-function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
-	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
-	if (commandInfo.command === "storage") return redactStatefulValues(data, new Set(["value"]));
-	return redactStructuredPresentationValue(data);
-}
-
-function formatDiagnosticText(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
-	if (commandInfo.command === "session") return formatSessionText(data);
-	if (commandInfo.command === "profiles") {
-		const profiles = getArrayField(data, "profiles");
-		if (profiles) return formatProfilesText(profiles, "Chrome profiles");
-	}
-	if (commandInfo.command === "auth") {
-		const profiles = getArrayField(data, "profiles");
-		if (profiles) return formatProfilesText(profiles, "auth profiles");
-		if (commandInfo.subcommand === "show") return formatAuthShowText(data);
-	}
-	if (commandInfo.command === "cookies") return formatCookiesText(data);
-	if (commandInfo.command === "storage") return formatStorageText(data);
-	if (commandInfo.command === "dialog") return formatDialogText(data);
-	if (commandInfo.command === "frame") return formatFrameText(data);
-	if (commandInfo.command === "state") return formatStateText(data);
-	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") return formatNetworkRequestsText(data);
-	if (commandInfo.command === "network" && commandInfo.subcommand === "request") return formatNetworkRequestText(data);
-	if (commandInfo.command === "diff") return stringifyModelFacing(data);
-	if (commandInfo.command === "clipboard") {
-		const text = getStringField(data, "text") ?? getStringField(data, "value") ?? getStringField(data, "result");
-		if (text) return redactModelFacingText(text);
-	}
-	if (commandInfo.command === "stream") {
-		const streamSummary = getStreamSummary(data);
-		if (streamSummary) return streamSummary;
-	}
-	if (commandInfo.command === "chat") return formatChatText(data);
-	if (commandInfo.command === "console") return formatConsoleText(data);
-	if (commandInfo.command === "errors") return formatErrorsText(data);
-	if (commandInfo.command === "dashboard") return formatDashboardText(data);
-	if (commandInfo.command === "doctor") return formatDoctorText(data);
-	return undefined;
-}
+import { stringifyUnknown } from "./text.js";
+import {
+	getArrayField,
+	getStringField,
+	parseJsonPreviewString,
+	redactModelFacingText,
+	redactModelFacingTextIfSensitive,
+	stringifyModelFacing,
+} from "./presentation/common.js";
+import {
+	applyArtifactManifest,
+	attachInlineImage,
+	buildArtifactVerificationSummary,
+	buildManifestEntriesForFileArtifacts,
+	classifyPresentationSuccessCategory,
+	extractFileArtifacts,
+	extractImagePath,
+	formatArtifactMetadataLines,
+	formatArtifactSummary,
+	getSavedFileDetails,
+	getScreenshotSummary,
+	isManifestFileArtifact,
+	manifestHasNewNoticeWorthyEntries,
+	type ArtifactRequestContext,
+} from "./presentation/artifacts.js";
+import {
+	buildNetworkRequestsNextActions,
+	enrichStreamStatusData,
+	formatDiagnosticSummary,
+	formatDiagnosticText,
+	formatProfilesText,
+	getStreamSummary,
+	getTabSummary,
+	redactPresentationData,
+} from "./presentation/diagnostics.js";
+import { formatSkillsText } from "./presentation/skills.js";
+import {
+	formatBatchStepCommand,
+	getPresentationImages,
+	getPresentationPaths,
+	getPresentationText,
+	isStringArray,
+} from "./presentation/content.js";
+import { compactLargePresentationOutput } from "./presentation/large-output.js";
+import {
+	buildPageChangeSummary,
+	formatExtractionSummary,
+	formatExtractionText,
+	formatNavigationActionResult,
+	formatNavigationSummary,
+	getNavigationSummary,
+	isNavigationObservableCommand,
+} from "./presentation/navigation.js";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function getPageSummary(data: Record<string, unknown>): string | undefined {
 	const title = typeof data.title === "string" ? data.title : undefined;
@@ -1038,572 +185,45 @@ function formatConfirmationRequiredText(confirmation: ConfirmationRequiredPresen
 	return lines.join("\n");
 }
 
-function getScreenshotSummary(data: Record<string, unknown>): string | undefined {
-	return typeof data.path === "string" ? `Saved image: ${data.path}` : undefined;
-}
 
-const PATH_FIELD_CANDIDATES = [
-	"path",
-	"file",
-	"filePath",
-	"outputPath",
-	"downloadPath",
-	"diffPath",
-	"harPath",
-	"savedPath",
-	"statePath",
-	"tracePath",
-	"profilePath",
-	"videoPath",
-] as const;
 
-const ARTIFACT_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
-	".cpuprofile": "application/json",
-	".har": "application/json",
-	".html": "text/html",
-	".json": "application/json",
-	".pdf": "application/pdf",
-	".txt": "text/plain",
-	".webm": "video/webm",
-	".zip": "application/zip",
-	...IMAGE_EXTENSION_TO_MIME_TYPE,
-};
 
-function getArtifactKind(commandInfo: CommandInfo): FileArtifactKind | undefined {
-	if (commandInfo.command === "screenshot") return "image";
-	if (commandInfo.command === "diff" && commandInfo.subcommand === "screenshot") return "image";
-	if (commandInfo.command === "pdf") return "pdf";
-	if (commandInfo.command === "download") return "download";
-	if (commandInfo.command === "wait" && commandInfo.subcommand === "--download") return "download";
-	if (commandInfo.command === "state" && commandInfo.subcommand === "save") return "file";
-	if (commandInfo.command === "trace") return "trace";
-	if (commandInfo.command === "profiler") return "profile";
-	if (commandInfo.command === "record") return "video";
-	if (commandInfo.command === "network" && commandInfo.subcommand === "har") return "har";
-	return undefined;
-}
 
-function extractPathStrings(data: unknown): string[] {
-	if (typeof data === "string") {
-		return data.trim().length > 0 ? [data] : [];
-	}
-	if (!isRecord(data)) {
-		return [];
-	}
 
-	const paths: string[] = [];
-	for (const key of PATH_FIELD_CANDIDATES) {
-		const value = data[key];
-		if (typeof value === "string" && value.trim().length > 0) {
-			paths.push(value);
-		}
-		if (Array.isArray(value)) {
-			for (const item of value) {
-				if (typeof item === "string" && item.trim().length > 0) {
-					paths.push(item);
-				}
-			}
-		}
-	}
-	return [...new Set(paths)];
-}
 
-interface ArtifactRequestContext {
-	absolutePath: string;
-	path: string;
-	status?: FileArtifactMetadata["status"];
-	tempPath?: string;
-}
 
-async function buildFileArtifactMetadata(options: {
-	artifactRequest?: ArtifactRequestContext;
-	commandInfo: CommandInfo;
-	cwd: string;
-	path: string;
-	sessionName?: string;
-}): Promise<FileArtifactMetadata | undefined> {
-	const kind = getArtifactKind(options.commandInfo);
-	if (!kind) {
-		return undefined;
-	}
 
-	const absolutePath = options.artifactRequest?.absolutePath ?? resolve(options.cwd, options.path);
-	const displayPath = options.artifactRequest?.path ?? options.path;
-	const extension = extname(absolutePath || options.path).toLowerCase() || undefined;
-	let exists: boolean | undefined;
-	let sizeBytes: number | undefined;
-	try {
-		const fileStats = await stat(absolutePath);
-		exists = true;
-		sizeBytes = fileStats.size;
-	} catch {
-		exists = false;
-	}
 
-	return {
-		absolutePath,
-		artifactType: kind,
-		command: options.commandInfo.command,
-		cwd: options.cwd,
-		exists,
-		extension,
-		kind,
-		mediaType: extension ? ARTIFACT_EXTENSION_TO_MEDIA_TYPE[extension] : undefined,
-		path: displayPath,
-		requestedPath: options.artifactRequest?.path,
-		session: options.sessionName,
-		sizeBytes,
-		status: options.artifactRequest?.status ?? (exists === false ? "missing" : "saved"),
-		subcommand: options.commandInfo.subcommand,
-		tempPath: options.artifactRequest?.tempPath,
-	};
-}
 
-async function extractFileArtifacts(options: {
-	artifactRequest?: ArtifactRequestContext;
-	commandInfo: CommandInfo;
-	cwd: string;
-	data: unknown;
-	sessionName?: string;
-}): Promise<FileArtifactMetadata[]> {
-	const candidates = extractPathStrings(options.data);
-	const artifacts = await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ ...options, path })));
-	return artifacts.filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
-}
 
-function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMetadata[], nowMs = Date.now()): SessionArtifactManifestEntry[] {
-	return artifacts.map((artifact) => ({
-		absolutePath: artifact.absolutePath,
-		command: artifact.command,
-		createdAtMs: nowMs,
-		cwd: artifact.cwd,
-		exists: artifact.exists,
-		extension: artifact.extension,
-		kind: artifact.kind,
-		mediaType: artifact.mediaType,
-		path: artifact.path,
-		requestedPath: artifact.requestedPath,
-		retentionState: artifact.exists === false ? "missing" : "live",
-		session: artifact.session,
-		sizeBytes: artifact.sizeBytes,
-		storageScope: "explicit-path",
-		subcommand: artifact.subcommand,
-	}));
-}
 
-function isManifestFileArtifact(artifact: FileArtifactMetadata): boolean {
-	return !isPendingRecordingArtifact(artifact);
-}
 
-function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactVerificationEntry {
-	if (isPendingRecordingArtifact(artifact)) {
-		return {
-			absolutePath: artifact.absolutePath,
-			exists: artifact.exists,
-			kind: artifact.kind,
-			limitation: "Recording output is pending until record stop completes.",
-			mediaType: artifact.mediaType,
-			path: artifact.path,
-			requestedPath: artifact.requestedPath,
-			retentionState: undefined,
-			sizeBytes: artifact.sizeBytes,
-			state: "pending",
-			status: artifact.status,
-			storageScope: undefined,
-		};
-	}
-	const state = artifact.exists === true
-		? "verified"
-		: artifact.exists === false
-			? "missing"
-			: "unverified";
-	return {
-		absolutePath: artifact.absolutePath,
-		exists: artifact.exists,
-		kind: artifact.kind,
-		limitation: state === "missing"
-			? "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated."
-			: state === "unverified"
-				? "The wrapper could not prove local filesystem existence for this artifact."
-				: undefined,
-		mediaType: artifact.mediaType,
-		path: artifact.path,
-		requestedPath: artifact.requestedPath,
-		retentionState: artifact.exists === false ? "missing" : "live",
-		sizeBytes: artifact.sizeBytes,
-		state,
-		status: artifact.status,
-		storageScope: "explicit-path",
-	};
-}
 
-function getManifestVerificationEntry(entry: SessionArtifactManifestEntry): ArtifactVerificationEntry | undefined {
-	if (entry.storageScope === "explicit-path") return undefined;
-	const state = entry.retentionState === "live"
-		? "verified"
-		: entry.retentionState === "missing" || entry.retentionState === "evicted"
-			? "missing"
-			: "unverified";
-	return {
-		absolutePath: entry.absolutePath,
-		exists: entry.exists,
-		kind: entry.kind,
-		limitation: entry.retentionState === "ephemeral"
-			? "This spill file is process-temporary and may not survive reload or restart."
-			: entry.retentionState === "evicted"
-				? "This persisted spill file was evicted from the bounded session artifact store."
-				: undefined,
-		mediaType: entry.mediaType,
-		path: entry.path,
-		requestedPath: entry.requestedPath,
-		retentionState: entry.retentionState,
-		sizeBytes: entry.sizeBytes,
-		state,
-		storageScope: entry.storageScope,
-	};
-}
 
-function buildArtifactVerificationSummary(
-	artifacts: FileArtifactMetadata[],
-	manifest?: SessionArtifactManifest,
-	manifestPaths?: ReadonlySet<string>,
-): ArtifactVerificationSummary | undefined {
-	const entries = [
-		...artifacts.map(getArtifactVerificationEntry),
-		...(manifest?.entries.flatMap((entry) => {
-			if (manifestPaths && !manifestPaths.has(entry.path)) return [];
-			const verificationEntry = getManifestVerificationEntry(entry);
-			return verificationEntry ? [verificationEntry] : [];
-		}) ?? []),
-	];
-	if (entries.length === 0) return undefined;
-	const verifiedCount = entries.filter((entry) => entry.state === "verified").length;
-	const missingCount = entries.filter((entry) => entry.state === "missing").length;
-	const pendingCount = entries.filter((entry) => entry.state === "pending").length;
-	const unverifiedCount = entries.filter((entry) => entry.state === "unverified").length;
-	return {
-		artifacts: entries,
-		missingCount,
-		pendingCount,
-		unverifiedCount,
-		verified: entries.length > 0 && verifiedCount === entries.length,
-		verifiedCount,
-	};
-}
 
-function classifyPresentationSuccessCategory(options: {
-	artifactVerification?: ArtifactVerificationSummary;
-	artifacts?: FileArtifactMetadata[];
-	inspection?: boolean;
-	savedFile?: SavedFilePresentationDetails;
-}) {
-	if ((options.artifactVerification?.missingCount ?? 0) > 0 || (options.artifactVerification?.unverifiedCount ?? 0) > 0) {
-		return "artifact-unverified" as const;
-	}
-	return classifyAgentBrowserSuccessCategory(options);
-}
 
-function formatArtifactLabel(artifact: FileArtifactMetadata): string {
-	switch (artifact.kind) {
-		case "download":
-			return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download completed" : "Downloaded file";
-		case "file":
-			return artifact.command === "state" ? "State file" : "Saved file";
-		case "har":
-			return "Saved HAR";
-		case "image":
-			return artifact.command === "diff" && artifact.subcommand === "screenshot" ? "Saved diff image" : "Saved image";
-		case "pdf":
-			return "Saved PDF";
-		case "profile":
-			return "Saved profile";
-		case "trace":
-			return "Saved trace";
-		case "video":
-			return isPendingRecordingArtifact(artifact) ? "Recording started; output will be written on stop" : "Saved recording";
-	}
-}
 
-function formatArtifactSummary(artifacts: FileArtifactMetadata[]): string | undefined {
-	if (artifacts.length === 0) {
-		return undefined;
-	}
-	if (artifacts.length === 1) {
-		const artifact = artifacts[0];
-		return `${formatArtifactLabel(artifact)}: ${artifact.path}`;
-	}
-	return `Saved ${artifacts.length} artifacts: ${artifacts.map((artifact) => `${artifact.kind} ${artifact.path}`).join(", ")}`;
-}
 
-function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): string[] {
-	return artifacts.map((artifact, index) => {
-		if (isPendingRecordingArtifact(artifact)) {
-			return [
-				`${formatArtifactLabel(artifact)}: ${artifact.path}`,
-				`Artifact type: ${artifact.kind}`,
-				`Requested path: ${artifact.requestedPath ?? artifact.path}`,
-				`Absolute path: ${artifact.absolutePath}`,
-				`Exists: ${artifact.exists === true}`,
-				`Status: ${artifact.status ?? (artifact.exists === false ? "missing" : "saved")}`,
-				artifact.session ? `Session: ${artifact.session}` : undefined,
-				artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
-				`Machine data: details.artifacts[${index}]`,
-			].filter((item): item is string => item !== undefined).join("\n");
-		}
 
-		return [
-			`${formatArtifactLabel(artifact)}: ${artifact.path}`,
-			`Artifact type: ${artifact.kind}`,
-			`Requested path: ${artifact.requestedPath ?? artifact.path}`,
-			`Absolute path: ${artifact.absolutePath}`,
-			`Exists: ${artifact.exists === true}`,
-			artifact.exists === false ? "not found on disk" : undefined,
-			typeof artifact.sizeBytes === "number" ? `Size: ${formatByteCount(artifact.sizeBytes)}` : undefined,
-			typeof artifact.sizeBytes === "number" ? `Size bytes: ${artifact.sizeBytes}` : undefined,
-			`Status: ${artifact.status ?? (artifact.exists === false ? "missing" : "saved")}`,
-			artifact.tempPath ? `Temp path: ${artifact.tempPath}` : undefined,
-			artifact.mediaType ? `Media type: ${artifact.mediaType}` : undefined,
-			artifact.session ? `Session: ${artifact.session}` : undefined,
-			artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
-			`Machine data: details.artifacts[${index}]`,
-		].filter((item): item is string => item !== undefined).join("\n");
-	});
-}
 
-function isDownloadWaitCommand(commandInfo: CommandInfo): boolean {
-	return commandInfo.command === "wait" && commandInfo.subcommand === "--download";
-}
 
-function extractSavedFilePath(data: Record<string, unknown>): string | undefined {
-	return typeof data.path === "string" && data.path.trim().length > 0 ? data.path : undefined;
-}
 
-function getSavedFileDetails(commandInfo: CommandInfo, data: Record<string, unknown>): SavedFilePresentationDetails | undefined {
-	const path = extractSavedFilePath(data);
-	if (!path) {
-		return undefined;
-	}
-	const savedFileCommand = isDownloadWaitCommand(commandInfo)
-		? "wait"
-		: commandInfo.command === "download" || commandInfo.command === "pdf"
-			? commandInfo.command
-			: undefined;
-	if (!savedFileCommand) {
-		return undefined;
-	}
 
-	const { path: _path, ...metadata } = data;
-	const details: SavedFilePresentationDetails = {
-		command: savedFileCommand,
-		kind: savedFileCommand === "pdf" ? "pdf" : "download",
-		path,
-	};
-	if (Object.keys(metadata).length > 0) {
-		details.metadata = metadata;
-	}
-	if (commandInfo.subcommand) {
-		details.subcommand = commandInfo.subcommand;
-	}
-	return details;
-}
 
-function getScalarExtractionResult(data: Record<string, unknown>): string | undefined {
-	const { result } = data;
-	if (typeof result === "string") {
-		return result.trim().length > 0 ? result : undefined;
-	}
-	if (typeof result === "number" || typeof result === "boolean") {
-		return String(result);
-	}
-	return undefined;
-}
 
-function getExtractionOrigin(data: Record<string, unknown>): string | undefined {
-	if (typeof data.origin === "string" && data.origin.trim().length > 0) {
-		return data.origin.trim();
-	}
-	if (typeof data.url === "string" && data.url.trim().length > 0) {
-		return data.url.trim();
-	}
-	return undefined;
-}
 
-function formatGetSummaryLabel(subcommand: string | undefined): string {
-	if (!subcommand) {
-		return "Get result";
-	}
-	if (subcommand.toLowerCase() === "url") {
-		return "URL";
-	}
-	return `${subcommand.slice(0, 1).toUpperCase()}${subcommand.slice(1)}`;
-}
 
-function formatExtractionSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
-	const scalarResult = getScalarExtractionResult(data);
-	if (!scalarResult) {
-		return undefined;
-	}
-	const safeScalarResult = redactModelFacingText(scalarResult);
-	const firstResultLine = safeScalarResult.split("\n", 1)[0] ?? safeScalarResult;
-	if (commandInfo.command === "get") {
-		return `${formatGetSummaryLabel(commandInfo.subcommand)}: ${firstResultLine}`;
-	}
-	if (commandInfo.command === "eval") {
-		return `Eval result: ${firstResultLine}`;
-	}
-	return undefined;
-}
 
-function formatExtractionText(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
-	if (commandInfo.command !== "get" && commandInfo.command !== "eval") {
-		return undefined;
-	}
-	const scalarResult = getScalarExtractionResult(data);
-	if (!scalarResult) {
-		return undefined;
-	}
-	const origin = getExtractionOrigin(data);
-	const safeScalarResult = redactModelFacingText(scalarResult);
-	const safeOrigin = origin ? redactModelFacingText(origin) : undefined;
-	return safeOrigin && safeOrigin !== safeScalarResult ? `${safeScalarResult}\n\nOrigin: ${safeOrigin}` : safeScalarResult;
-}
 
-function isNavigationObservableCommand(command: string | undefined): boolean {
-	return command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(command);
-}
 
-function isNavigationSummary(value: unknown): value is NavigationSummary {
-	return isRecord(value) && (typeof value.title === "string" || typeof value.url === "string");
-}
 
-function getNavigationSummary(data: Record<string, unknown>): NavigationSummary | undefined {
-	const candidate = data[NAVIGATION_SUMMARY_FIELD];
-	return isNavigationSummary(candidate) ? candidate : undefined;
-}
 
-function getTopLevelNavigationSummary(data: Record<string, unknown>): NavigationSummary | undefined {
-	return isNavigationSummary(data)
-		? {
-			title: typeof data.title === "string" ? data.title : undefined,
-			url: typeof data.url === "string" ? data.url : undefined,
-		}
-		: undefined;
-}
 
-function getNormalizedNavigationSummary(summary: NavigationSummary | undefined): { title?: string; url?: string } | undefined {
-	const title = typeof summary?.title === "string" && summary.title.trim().length > 0 ? summary.title.trim() : undefined;
-	const url = typeof summary?.url === "string" && summary.url.trim().length > 0 ? summary.url.trim() : undefined;
-	return title || url ? { title, url } : undefined;
-}
 
-function formatNavigationSummary(summary: NavigationSummary): string | undefined {
-	const normalized = getNormalizedNavigationSummary(summary);
-	if (!normalized) return undefined;
-	if (normalized.title && normalized.url) return `${normalized.title}\n${normalized.url}`;
-	return normalized.title ?? normalized.url;
-}
 
-function isPageChangeSummaryCommand(command: string | undefined): boolean {
-	return command !== undefined && PAGE_CHANGE_SUMMARY_COMMANDS.has(command);
-}
 
-function buildPageChangeSummary(options: {
-	artifacts?: FileArtifactMetadata[];
-	commandInfo: CommandInfo;
-	data: unknown;
-	nextActions?: Array<{ id: string }>;
-	savedFilePath?: string;
-	summary: string;
-}): AgentBrowserPageChangeSummary | undefined {
-	const { artifacts, commandInfo, data, nextActions, savedFilePath } = options;
-	const artifactCount = artifacts?.length ?? 0;
-	const navigation = isRecord(data)
-		? getNormalizedNavigationSummary(getNavigationSummary(data) ?? (isPageChangeSummaryCommand(commandInfo.command) ? getTopLevelNavigationSummary(data) : undefined))
-		: undefined;
-	const confirmationRequired = detectConfirmationRequired(data) !== undefined;
-	if (!navigation && !confirmationRequired && artifactCount === 0 && !savedFilePath && !isPageChangeSummaryCommand(commandInfo.command)) {
-		return undefined;
-	}
-	const changeType: AgentBrowserPageChangeSummary["changeType"] = savedFilePath || artifactCount > 0
-		? "artifact"
-		: navigation
-			? "navigation"
-			: confirmationRequired
-				? "confirmation"
-				: "mutation";
-	const parts = [commandInfo.command ?? "agent-browser", changeType];
-	if (navigation?.title) parts.push(navigation.title);
-	if (navigation?.url) parts.push(navigation.url);
-	if (savedFilePath) parts.push(savedFilePath);
-	else if (artifactCount > 0) parts.push(`${artifactCount} artifact${artifactCount === 1 ? "" : "s"}`);
-	return {
-		...(artifactCount > 0 ? { artifactCount } : {}),
-		changeType,
-		...(commandInfo.command ? { command: commandInfo.command } : {}),
-		...(nextActions ? { nextActionIds: nextActions.map((action) => action.id) } : {}),
-		...(savedFilePath ? { savedFilePath } : {}),
-		summary: parts.join(" → "),
-		...(navigation?.title ? { title: navigation.title } : {}),
-		...(navigation?.url ? { url: navigation.url } : {}),
-	};
-}
 
-function stripNavigationSummary(data: Record<string, unknown>): Record<string, unknown> {
-	const { [NAVIGATION_SUMMARY_FIELD]: _navigationSummary, ...rest } = data;
-	return rest;
-}
 
-function formatNavigationActionResult(data: Record<string, unknown>): string | undefined {
-	const actionData = stripNavigationSummary(data);
-	const lines: string[] = [];
-	if (typeof actionData.clicked === "string" || typeof actionData.clicked === "boolean") {
-		lines.push(`Clicked: ${String(actionData.clicked)}`);
-	}
-	if (typeof actionData.href === "string") {
-		lines.push(`Href: ${redactModelFacingText(actionData.href)}`);
-	}
-	if (typeof actionData.navigated === "boolean") {
-		lines.push(`Navigated: ${actionData.navigated}`);
-	}
-	if (lines.length > 0) {
-		return lines.join("\n");
-	}
-
-	const actionText = stringifyModelFacing(actionData).trim();
-	if (actionText.length === 0 || actionText === "{}") {
-		return undefined;
-	}
-	return actionText;
-}
-
-function isStringArray(value: unknown): value is string[] {
-	return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-function getPresentationText(presentation: ToolPresentation): string {
-	return presentation.content
-		.filter((part): part is Extract<ToolPresentation["content"][number], { type: "text" }> => part.type === "text")
-		.map((part) => part.text.trim())
-		.filter((text) => text.length > 0)
-		.join("\n\n");
-}
-
-function getPresentationImages(presentation: ToolPresentation): Array<Extract<ToolPresentation["content"][number], { type: "image" }>> {
-	return presentation.content.filter(
-		(part): part is Extract<ToolPresentation["content"][number], { type: "image" }> => part.type === "image",
-	);
-}
-
-function getPresentationPaths(options: {
-	primaryPath?: string;
-	secondaryPaths?: string[];
-}): string[] {
-	return options.secondaryPaths ?? (options.primaryPath ? [options.primaryPath] : []);
-}
-
-function formatBatchStepCommand(command: string[] | undefined, index: number): string {
-	return command && command.length > 0 ? command.join(" ") : `step-${index + 1}`;
-}
 
 const STALE_REF_ERROR_HINT = [
 	"Agent-browser hint: This ref may be stale after navigation, scrolling, or re-rendering.",
@@ -2162,24 +782,7 @@ function formatContentText(commandInfo: CommandInfo, data: unknown): string {
 	return stringifyModelFacing(data);
 }
 
-function isTrustedScreenshotOutput(commandInfo: CommandInfo): boolean {
-	return commandInfo.command === "screenshot";
-}
 
-function extractImagePath(commandInfo: CommandInfo, cwd: string, data: unknown): string | undefined {
-	if (!isTrustedScreenshotOutput(commandInfo)) {
-		return undefined;
-	}
-	if (typeof data === "string") {
-		const mimeType = getImageMimeType(data);
-		return mimeType ? resolve(cwd, data) : undefined;
-	}
-	if (!isRecord(data) || typeof data.path !== "string") {
-		return undefined;
-	}
-	const mimeType = getImageMimeType(data.path);
-	return mimeType ? resolve(cwd, data.path) : undefined;
-}
 
 function sanitizeModelFacingPresentation(presentation: ToolPresentation): ToolPresentation {
 	presentation.content = presentation.content.map((item) => {
@@ -2191,193 +794,17 @@ function sanitizeModelFacingPresentation(presentation: ToolPresentation): ToolPr
 	return presentation;
 }
 
-async function attachInlineImage(presentation: ToolPresentation, imagePath: string): Promise<ToolPresentation> {
-	const mimeType = getImageMimeType(imagePath);
-	if (!mimeType) {
-		return presentation;
-	}
 
-	try {
-		const fileStats = await stat(imagePath);
-		const inlineImageMaxBytes = getInlineImageMaxBytes();
-		if (fileStats.size > inlineImageMaxBytes) {
-			appendPresentationNotice(
-				presentation,
-				`Image attachment skipped: ${formatByteCount(fileStats.size)} exceeds the inline limit of ${formatByteCount(inlineImageMaxBytes)}.`,
-			);
-			presentation.imagePath = imagePath;
-			return presentation;
-		}
 
-		const file = await readFile(imagePath);
-		presentation.content.push({ type: "image", data: file.toString("base64"), mimeType });
-		presentation.imagePath = imagePath;
-		return presentation;
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		appendPresentationNotice(presentation, `Image attachment failed: ${message}`);
-		presentation.imagePath = imagePath;
-		return presentation;
-	}
-}
 
-function shouldCompactLargeOutput(text: string): boolean {
-	return text.length > LARGE_OUTPUT_INLINE_MAX_CHARS || countLines(text) > LARGE_OUTPUT_INLINE_MAX_LINES;
-}
 
-function buildLargeOutputPreview(text: string): { omittedLineCount: number; previewText: string } {
-	const lines = text.split("\n");
-	const previewLines: string[] = [];
-	let previewChars = 0;
-	for (const line of lines) {
-		if (previewLines.length >= LARGE_OUTPUT_PREVIEW_MAX_LINES || previewChars >= LARGE_OUTPUT_PREVIEW_MAX_CHARS) {
-			break;
-		}
-		const remainingChars = LARGE_OUTPUT_PREVIEW_MAX_CHARS - previewChars;
-		const previewLine = truncateText(line, Math.max(40, remainingChars));
-		previewLines.push(previewLine);
-		previewChars += previewLine.length + 1;
-	}
-	return {
-		omittedLineCount: Math.max(0, lines.length - previewLines.length),
-		previewText: previewLines.join("\n"),
-	};
-}
 
-interface LargeOutputSpillWriteResult {
-	evictedArtifacts: PersistentSessionArtifactEviction[];
-	path: string;
-	storageScope: ArtifactStorageScope;
-}
-
-async function writeLargeOutputSpillFile(options: {
-	data: unknown;
-	persistentArtifactStore?: PersistentSessionArtifactStore;
-	text: string;
-}): Promise<LargeOutputSpillWriteResult> {
-	const payload =
-		typeof options.data === "string"
-			? redactModelFacingText(options.data)
-			: typeof options.data === "number" || typeof options.data === "boolean"
-				? String(options.data)
-				: options.data === undefined
-					? redactModelFacingText(options.text)
-					: stringifyModelFacing(options.data);
-	const isStructuredPayload = typeof options.data !== "string" && typeof options.data !== "number" && typeof options.data !== "boolean";
-	const fileOptions = {
-		content: payload,
-		prefix: LARGE_OUTPUT_FILE_PREFIX,
-		suffix: isStructuredPayload ? ".json" : ".txt",
-	};
-	if (options.persistentArtifactStore) {
-		const result = await writePersistentSessionArtifactFile({ ...fileOptions, store: options.persistentArtifactStore });
-		return { ...result, storageScope: "persistent-session" };
-	}
-	return { evictedArtifacts: [], path: await writeSecureTempFile(fileOptions), storageScope: "process-temp" };
-}
-
-function buildSpillArtifactEntries(options: {
-	commandInfo: CommandInfo;
-	evictedArtifacts: PersistentSessionArtifactEviction[];
-	path: string;
-	storageScope: ArtifactStorageScope;
-}): SessionArtifactManifestEntry[] {
-	const nowMs = Date.now();
-	return [
-		{
-			command: options.commandInfo.command,
-			createdAtMs: nowMs,
-			kind: "spill",
-			path: options.path,
-			retentionState: options.storageScope === "persistent-session" ? "live" : "ephemeral",
-			storageScope: options.storageScope,
-			subcommand: options.commandInfo.subcommand,
-		},
-		...buildEvictedSessionArtifactEntries(options.evictedArtifacts, nowMs),
-	];
-}
 
 function mergeNextActions(...groups: Array<AgentBrowserNextAction[] | undefined>): AgentBrowserNextAction[] | undefined {
 	const merged = groups.flatMap((group) => group ?? []);
 	return merged.length > 0 ? merged : undefined;
 }
 
-async function compactLargePresentationOutput(options: {
-	artifactManifest?: SessionArtifactManifest;
-	commandInfo: CommandInfo;
-	data: unknown;
-	persistentArtifactStore?: PersistentSessionArtifactStore;
-	presentation: ToolPresentation;
-}): Promise<ToolPresentation> {
-	const text = getPresentationText(options.presentation);
-	if (text.length === 0 || !shouldCompactLargeOutput(text)) {
-		return options.presentation;
-	}
-
-	let fullOutputPath: string | undefined;
-	let spill: LargeOutputSpillWriteResult | undefined;
-	let spillErrorText: string | undefined;
-	try {
-		spill = await writeLargeOutputSpillFile({
-			data: options.data,
-			persistentArtifactStore: options.persistentArtifactStore,
-			text,
-		});
-		fullOutputPath = spill.path;
-	} catch (error) {
-		spillErrorText = error instanceof Error ? error.message : String(error);
-	}
-
-	const { omittedLineCount, previewText } = buildLargeOutputPreview(text);
-	const commandLabel = options.commandInfo.command ?? "agent-browser";
-	const lines = [
-		`Large ${commandLabel} output compacted.`,
-		"",
-		"Preview:",
-		previewText,
-	];
-	if (omittedLineCount > 0) {
-		lines.push(`- ... (${omittedLineCount} additional lines omitted)`);
-	}
-	lines.push(
-		"",
-		fullOutputPath
-			? `Full output path: ${fullOutputPath}`
-			: `Full output unavailable: ${spillErrorText ?? "spill file could not be created."}`,
-	);
-
-	const firstTextIndex = options.presentation.content.findIndex((part) => part.type === "text");
-	const compactedText = lines.join("\n");
-	if (firstTextIndex >= 0) {
-		options.presentation.content[firstTextIndex] = { type: "text", text: compactedText };
-	} else {
-		options.presentation.content.unshift({ type: "text", text: compactedText });
-	}
-	options.presentation.data = {
-		compacted: true,
-		fullOutputPath,
-		outputCharCount: text.length,
-		outputLineCount: countLines(text),
-		previewCharCount: previewText.length,
-		previewLineCount: countLines(previewText),
-		spillError: spillErrorText,
-	};
-	options.presentation.fullOutputPath = fullOutputPath;
-	options.presentation.summary = `${options.presentation.summary} (compact)`;
-	if (fullOutputPath && spill) {
-		return applyArtifactManifest(
-			options.presentation,
-			options.presentation.artifactManifest ?? options.artifactManifest,
-			buildSpillArtifactEntries({
-				commandInfo: options.commandInfo,
-				evictedArtifacts: spill.evictedArtifacts,
-				path: fullOutputPath,
-				storageScope: spill.storageScope,
-			}),
-		);
-	}
-	return options.presentation;
-}
 
 export async function buildToolPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
