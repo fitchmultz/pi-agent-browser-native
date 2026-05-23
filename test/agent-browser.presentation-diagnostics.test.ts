@@ -646,4 +646,3 @@ test("buildToolPresentation compacts large diagnostic output and preserves spill
 	assert.match(await readFile(String(spillPath), "utf8"), /diagnostic console row 180/);
 	await rm(String(spillPath), { force: true });
 });
-

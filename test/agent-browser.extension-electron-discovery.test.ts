@@ -542,4 +542,3 @@ test("electron discovery caps results, clamps maxResults, and reports omittedCou
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-

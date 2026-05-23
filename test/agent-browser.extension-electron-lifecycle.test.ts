@@ -829,4 +829,3 @@ if (command === "connect") {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-

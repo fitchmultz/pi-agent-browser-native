@@ -327,4 +327,3 @@ else if (command === "snapshot") data = { origin: ${JSON.stringify(snapshotUrl)}
 else if (command === "close") data = { closed: true };
 process.stdout.write(JSON.stringify({ success: true, data }));`;
 }
-

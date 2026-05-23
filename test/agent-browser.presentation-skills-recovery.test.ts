@@ -338,4 +338,3 @@ test("buildToolPresentation does not append selector guidance to non-dialect sel
 	);
 	assert.equal(presentation.summary, "Element not visible: getByRole('button', { name: 'Submit' })");
 });
-

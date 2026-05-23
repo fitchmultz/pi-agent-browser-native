@@ -626,4 +626,3 @@ if (args.includes("snapshot")) {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-

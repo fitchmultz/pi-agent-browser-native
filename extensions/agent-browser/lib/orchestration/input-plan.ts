@@ -31,7 +31,7 @@ export interface AgentBrowserExecuteParams {
 
 export type ResolvedAgentBrowserInputKind = "args" | "electron" | "job" | "networkSourceLookup" | "qa" | "semanticAction" | "sourceLookup";
 
-interface ResolvedAgentBrowserInputFields {
+type ResolvedAgentBrowserInputModeFields = {
 	compiledElectron?: CompiledAgentBrowserElectron;
 	compiledGeneratedBatch?: CompiledAgentBrowserJob | CompiledAgentBrowserNetworkSourceLookup | CompiledAgentBrowserSourceLookup;
 	compiledJob?: CompiledAgentBrowserJob;
@@ -39,29 +39,74 @@ interface ResolvedAgentBrowserInputFields {
 	compiledQaPreset?: CompiledAgentBrowserQaPreset;
 	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
 	compiledSourceLookup?: CompiledAgentBrowserSourceLookup;
-	redactedArgs: string[];
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
 	redactedCompiledJob?: CompiledAgentBrowserJob;
 	redactedCompiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
 	redactedCompiledQaPreset?: CompiledAgentBrowserQaPreset;
 	redactedCompiledSemanticAction?: CompiledAgentBrowserSemanticAction;
 	redactedCompiledSourceLookup?: CompiledAgentBrowserSourceLookup;
+};
+
+interface ResolvedAgentBrowserInputBase {
+	redactedArgs: string[];
 	toolArgs: string[];
 	toolStdin?: string;
 }
 
-export type ResolvedAgentBrowserInput =
-	| (ResolvedAgentBrowserInputFields & {
-		kind: ResolvedAgentBrowserInputKind;
-		status: "valid";
-		validationError?: undefined;
+interface ResolvedAgentBrowserValidInputBase extends ResolvedAgentBrowserInputBase {
+	status: "valid";
+	validationError?: undefined;
+}
+
+export interface ResolvedAgentBrowserInvalidInput extends ResolvedAgentBrowserInputBase, ResolvedAgentBrowserInputModeFields {
+	attemptedKind?: ResolvedAgentBrowserInputKind;
+	kind: "invalid";
+	status: "invalid";
+	validationError: string;
+}
+
+export type ResolvedAgentBrowserValidInput =
+	| (ResolvedAgentBrowserValidInputBase & {
+		kind: "args";
 	})
-	| (ResolvedAgentBrowserInputFields & {
-		attemptedKind?: ResolvedAgentBrowserInputKind;
-		kind: "invalid";
-		status: "invalid";
-		validationError: string;
+	| (ResolvedAgentBrowserValidInputBase & {
+		compiledElectron: CompiledAgentBrowserElectron;
+		kind: "electron";
+		redactedCompiledElectron: CompiledAgentBrowserElectron;
+	})
+	| (ResolvedAgentBrowserValidInputBase & {
+		compiledGeneratedBatch: CompiledAgentBrowserJob;
+		compiledJob: CompiledAgentBrowserJob;
+		kind: "job";
+		redactedCompiledJob: CompiledAgentBrowserJob;
+	})
+	| (ResolvedAgentBrowserValidInputBase & {
+		compiledGeneratedBatch: CompiledAgentBrowserNetworkSourceLookup;
+		compiledNetworkSourceLookup: CompiledAgentBrowserNetworkSourceLookup;
+		kind: "networkSourceLookup";
+		redactedCompiledNetworkSourceLookup: CompiledAgentBrowserNetworkSourceLookup;
+	})
+	| (ResolvedAgentBrowserValidInputBase & {
+		compiledGeneratedBatch: CompiledAgentBrowserQaPreset;
+		compiledJob: CompiledAgentBrowserQaPreset;
+		compiledQaPreset: CompiledAgentBrowserQaPreset;
+		kind: "qa";
+		redactedCompiledJob: CompiledAgentBrowserJob;
+		redactedCompiledQaPreset: CompiledAgentBrowserQaPreset;
+	})
+	| (ResolvedAgentBrowserValidInputBase & {
+		compiledSemanticAction: CompiledAgentBrowserSemanticAction;
+		kind: "semanticAction";
+		redactedCompiledSemanticAction: CompiledAgentBrowserSemanticAction;
+	})
+	| (ResolvedAgentBrowserValidInputBase & {
+		compiledGeneratedBatch: CompiledAgentBrowserSourceLookup;
+		compiledSourceLookup: CompiledAgentBrowserSourceLookup;
+		kind: "sourceLookup";
+		redactedCompiledSourceLookup: CompiledAgentBrowserSourceLookup;
 	});
+
+export type ResolvedAgentBrowserInput = ResolvedAgentBrowserInvalidInput | ResolvedAgentBrowserValidInput;
 
 function redactCompiledElectron(compiled: CompiledAgentBrowserElectron | undefined): CompiledAgentBrowserElectron | undefined {
 	if (!compiled) return undefined;
@@ -186,30 +231,85 @@ export function resolveAgentBrowserInput(options: {
 								? "args"
 								: undefined;
 
-	const resolvedFields: ResolvedAgentBrowserInputFields = {
-		compiledElectron,
-		compiledGeneratedBatch,
-		compiledJob,
-		compiledNetworkSourceLookup,
-		compiledQaPreset,
-		compiledSemanticAction,
-		compiledSourceLookup,
-		redactedArgs,
-		redactedCompiledElectron: redactCompiledElectron(compiledElectron),
-		redactedCompiledJob,
-		redactedCompiledNetworkSourceLookup: redactCompiledNetworkSourceLookup(compiledNetworkSourceLookup),
-		redactedCompiledQaPreset: compiledQaPreset && redactedCompiledJob ? { ...redactedCompiledJob, checks: compiledQaPreset.checks } : undefined,
-		redactedCompiledSemanticAction,
-		redactedCompiledSourceLookup: redactCompiledSourceLookup(compiledSourceLookup),
-		toolArgs,
-		toolStdin,
-	};
-	return validationError
-		? { ...resolvedFields, attemptedKind, kind: "invalid", status: "invalid", validationError }
-		: { ...resolvedFields, kind: attemptedKind ?? "args", status: "valid" };
+	const redactedCompiledElectron = redactCompiledElectron(compiledElectron);
+	const redactedCompiledNetworkSourceLookup = redactCompiledNetworkSourceLookup(compiledNetworkSourceLookup);
+	const redactedCompiledQaPreset = compiledQaPreset && redactedCompiledJob ? { ...redactedCompiledJob, checks: compiledQaPreset.checks } : undefined;
+	const redactedCompiledSourceLookup = redactCompiledSourceLookup(compiledSourceLookup);
+	const resolvedBase: ResolvedAgentBrowserInputBase = { redactedArgs, toolArgs, toolStdin };
+	if (validationError) {
+		return {
+			...resolvedBase,
+			attemptedKind,
+			compiledElectron,
+			compiledGeneratedBatch,
+			compiledJob,
+			compiledNetworkSourceLookup,
+			compiledQaPreset,
+			compiledSemanticAction,
+			compiledSourceLookup,
+			kind: "invalid",
+			redactedCompiledElectron,
+			redactedCompiledJob,
+			redactedCompiledNetworkSourceLookup,
+			redactedCompiledQaPreset,
+			redactedCompiledSemanticAction,
+			redactedCompiledSourceLookup,
+			status: "invalid",
+			validationError,
+		};
+	}
+	if (compiledElectron && redactedCompiledElectron) {
+		return { ...resolvedBase, compiledElectron, kind: "electron", redactedCompiledElectron, status: "valid" };
+	}
+	if (compiledNetworkSourceLookup && redactedCompiledNetworkSourceLookup) {
+		return {
+			...resolvedBase,
+			compiledGeneratedBatch: compiledNetworkSourceLookup,
+			compiledNetworkSourceLookup,
+			kind: "networkSourceLookup",
+			redactedCompiledNetworkSourceLookup,
+			status: "valid",
+		};
+	}
+	if (compiledSourceLookup && redactedCompiledSourceLookup) {
+		return {
+			...resolvedBase,
+			compiledGeneratedBatch: compiledSourceLookup,
+			compiledSourceLookup,
+			kind: "sourceLookup",
+			redactedCompiledSourceLookup,
+			status: "valid",
+		};
+	}
+	if (compiledQaPreset && redactedCompiledJob && redactedCompiledQaPreset) {
+		return {
+			...resolvedBase,
+			compiledGeneratedBatch: compiledQaPreset,
+			compiledJob: compiledQaPreset,
+			compiledQaPreset,
+			kind: "qa",
+			redactedCompiledJob,
+			redactedCompiledQaPreset,
+			status: "valid",
+		};
+	}
+	if (jobResult.compiled && redactedCompiledJob) {
+		return {
+			...resolvedBase,
+			compiledGeneratedBatch: jobResult.compiled,
+			compiledJob: jobResult.compiled,
+			kind: "job",
+			redactedCompiledJob,
+			status: "valid",
+		};
+	}
+	if (compiledSemanticAction && redactedCompiledSemanticAction) {
+		return { ...resolvedBase, compiledSemanticAction, kind: "semanticAction", redactedCompiledSemanticAction, status: "valid" };
+	}
+	return { ...resolvedBase, kind: "args", status: "valid" };
 }
 
-export function buildValidationFailureResult(input: ResolvedAgentBrowserInput): {
+export function buildValidationFailureResult(input: ResolvedAgentBrowserInvalidInput): {
 	content: Array<{ text: string; type: "text" }>;
 	details: Record<string, unknown>;
 	isError: true;

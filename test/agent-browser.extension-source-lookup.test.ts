@@ -383,4 +383,3 @@ process.stdin.on("end", () => {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-

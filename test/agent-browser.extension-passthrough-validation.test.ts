@@ -673,4 +673,3 @@ test("agentBrowserExtension guards wrapper-known trace and profiler ownership", 
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-

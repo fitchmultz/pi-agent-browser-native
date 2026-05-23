@@ -715,4 +715,3 @@ test("buildToolPresentation skips oversized inline image attachments", { concurr
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-

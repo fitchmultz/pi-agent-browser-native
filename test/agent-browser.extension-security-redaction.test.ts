@@ -291,4 +291,3 @@ else process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
-
