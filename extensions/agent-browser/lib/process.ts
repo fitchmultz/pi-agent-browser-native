@@ -6,7 +6,7 @@
  * Invariants/Assumptions: The binary name is always `agent-browser`, the wrapper never shells out, and callers handle semantic success/error interpretation.
  */
 
-import { spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { chmod, mkdir } from "node:fs/promises";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
@@ -22,6 +22,8 @@ const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_M
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
 export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 28_000;
+/** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
+const EXIT_STDIO_GRACE_MS = 100;
 const httpProxyEnvName = "http_proxy";
 const httpsProxyEnvName = "https_proxy";
 const allProxyEnvName = "all_proxy";
@@ -103,6 +105,84 @@ export interface ProcessRunResult {
 function appendTail(text: string, addition: string, maxChars: number): string {
 	const combined = text + addition;
 	return combined.length <= maxChars ? combined : combined.slice(combined.length - maxChars);
+}
+
+function resolveSpawnedChildExitCode(input: {
+	closeCode?: number | null;
+	exitCode?: number | null;
+	useExitFallback: boolean;
+	timedOut: boolean;
+	spawnError?: Error;
+}): number {
+	return (
+		input.closeCode ??
+		(input.useExitFallback ? input.exitCode : undefined) ??
+		(input.timedOut ? 124 : input.spawnError ? 127 : 0)
+	);
+}
+
+interface SpawnedChildCompletionWatcher {
+	clear: () => void;
+}
+
+function watchSpawnedChildCompletion(
+	child: ChildProcessWithoutNullStreams,
+	options: {
+		graceMs: number;
+		onComplete: (exitCode: number) => void;
+		getContext: () => { timedOut: boolean; spawnError?: Error };
+	},
+): SpawnedChildCompletionWatcher {
+	let exited = false;
+	let exitCode: number | null = null;
+	let postExitTimer: NodeJS.Timeout | undefined;
+	let completed = false;
+
+	const complete = (closeCode?: number | null) => {
+		if (completed) return;
+		completed = true;
+		if (postExitTimer) {
+			clearTimeout(postExitTimer);
+			postExitTimer = undefined;
+		}
+		const context = options.getContext();
+		options.onComplete(
+			resolveSpawnedChildExitCode({
+				closeCode,
+				exitCode,
+				useExitFallback: exited,
+				timedOut: context.timedOut,
+				spawnError: context.spawnError,
+			}),
+		);
+	};
+
+	child.once("exit", (code) => {
+		exited = true;
+		exitCode = code;
+		postExitTimer = setTimeout(() => {
+			complete(undefined);
+		}, options.graceMs);
+		postExitTimer.unref?.();
+	});
+	child.once("close", (code) => {
+		complete(code);
+	});
+
+	return {
+		clear: () => {
+			if (postExitTimer) {
+				clearTimeout(postExitTimer);
+				postExitTimer = undefined;
+			}
+		},
+	};
+}
+
+function destroySpawnedChildStreams(child: ChildProcessWithoutNullStreams): void {
+	child.stdin?.destroy();
+	child.stdout?.destroy();
+	child.stderr?.destroy();
 }
 
 function parsePositiveIntegerEnv(value: string | undefined): number | undefined {
@@ -207,6 +287,7 @@ export async function runAgentBrowserProcess(options: {
 		let timeoutTimer: NodeJS.Timeout | undefined;
 		let abortListener: (() => void) | undefined;
 		let timedOut = false;
+		let completionWatcher: SpawnedChildCompletionWatcher | undefined;
 
 		const queueStdoutChunk = (buffer: Buffer) => {
 			stdoutTail = appendTail(stdoutTail, buffer.toString("utf8"), MAX_BUFFERED_STDOUT_TAIL_CHARS);
@@ -258,12 +339,14 @@ export async function runAgentBrowserProcess(options: {
 				if (timeoutTimer) {
 					clearTimeout(timeoutTimer);
 				}
+				completionWatcher?.clear();
 				if (stdoutSpillHandle) {
 					await stdoutSpillHandle.close().catch(() => undefined);
 				}
 				if (!spawnError && stdoutSpillError) {
 					spawnError = stdoutSpillError;
 				}
+				destroySpawnedChildStreams(child);
 				resolve({
 					aborted,
 					exitCode,
@@ -326,8 +409,10 @@ export async function runAgentBrowserProcess(options: {
 			spawnError = error instanceof Error ? error : new Error(String(error));
 			finish(127);
 		});
-		child.once("close", (code) => {
-			finish(code ?? (timedOut ? 124 : spawnError ? 127 : 0));
+		completionWatcher = watchSpawnedChildCompletion(child, {
+			graceMs: EXIT_STDIO_GRACE_MS,
+			onComplete: finish,
+			getContext: () => ({ timedOut, spawnError }),
 		});
 		child.stdout.on("data", (chunk: Buffer | string) => {
 			queueStdoutChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
