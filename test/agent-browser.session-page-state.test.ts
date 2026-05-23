@@ -2,7 +2,7 @@
  * Purpose: Verify the session-page-state owner for tab targets, page-scoped refs, invalidations, and pinning.
  * Responsibilities: Lock restore, ordered update, clear, and batch snapshot extraction behavior outside the extension entrypoint.
  * Scope: Unit tests for `lib/session-page-state.ts`; extension integration stays in tab-recovery and validation suites.
- * Usage: Run with `npm test -- test/agent-browser.session-page-state.test.ts` or via targeted PR #48 remediation gates.
+ * Usage: Run with `npx tsx --test test/agent-browser.session-page-state.test.ts` or via targeted PR #48 remediation gates.
  * Invariants/Assumptions: Public state views never expose internal ordering metadata.
  */
 

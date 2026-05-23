@@ -55,8 +55,6 @@ import {
 	buildToolPresentation,
 	compareRefIds,
 	getAgentBrowserErrorText,
-	getAgentBrowserRichInputRecoveryNextActionId,
-	getAgentBrowserRichInputRecoveryNextActionIds,
 	parseAgentBrowserEnvelope,
 	type AgentBrowserBatchResult,
 	type AgentBrowserEnvelope,
@@ -121,14 +119,33 @@ import {
 	isSessionArtifactManifest,
 	mergeSessionArtifactManifest,
 } from "./lib/results/artifact-manifest.js";
-import { getEditableRefEvidence } from "./lib/results/editable-ref-evidence.js";
 import { summarizeNetworkFailures } from "./lib/results/network.js";
+import {
+	buildRichInputRecoveryDiagnostic,
+	buildRichInputRecoveryNextActions,
+	buildVisibleRefFallbackDiagnosticFromSnapshot,
+	buildVisibleRefFallbackNextActions,
+	formatRichInputRecoveryText,
+	formatVisibleRefFallbackText,
+	getVisibleRefFallbackTarget,
+	normalizeSemanticActionAccessibleName,
+	sanitizeVisibleRefFallbackDiagnostic,
+	type RichInputRecoveryDiagnostic,
+	type VisibleRefFallbackDiagnostic,
+} from "./lib/results/selector-recovery.js";
 import {
 	AgentBrowserNextActionCollector,
 	alignPageChangeSummaryNextActionIds,
 	appendUniqueAgentBrowserNextActions,
 	isStandaloneSnapshotNextAction,
+	withOptionalSessionArgs,
 } from "./lib/results/next-actions.js";
+import {
+	buildConnectedSessionNextActions,
+	buildNoActivePageNextActions,
+	buildSessionAwareStaleRefNextActions,
+	buildSessionTabRecoveryNextActions,
+} from "./lib/results/recovery-next-actions.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
 const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
@@ -1415,105 +1432,6 @@ function buildSemanticActionCandidateActions(compiled: CompiledAgentBrowserSeman
 	return [];
 }
 
-function isAgentBrowserSemanticActionName(value: string | undefined): value is AgentBrowserSemanticActionName {
-	return typeof value === "string" && AGENT_BROWSER_SEMANTIC_ACTIONS.includes(value as AgentBrowserSemanticActionName);
-}
-
-function getFindNameFlagValue(args: string[], startIndex: number): string | undefined {
-	const nameFlagIndex = args.indexOf("--name", startIndex);
-	const name = nameFlagIndex >= 0 ? args[nameFlagIndex + 1] : undefined;
-	return name && !name.startsWith("-") ? name : undefined;
-}
-
-function getFindVisibleRefFallbackTarget(args: string[], options: { allowLeadingDashFillText?: boolean } = {}): VisibleRefFallbackTarget | undefined {
-	const findIndex = args[0] === "--session" ? 2 : 0;
-	if (args[findIndex] !== "find") return undefined;
-	const locator = args[findIndex + 1];
-	const value = args[findIndex + 2];
-	const action = args[findIndex + 3];
-	if (!locator || !value || !isAgentBrowserSemanticActionName(action) || action === "select") return undefined;
-	const text = action === "fill" ? args[findIndex + 4] : undefined;
-	if (action === "fill" && (!text || (!options.allowLeadingDashFillText && text.startsWith("-")))) return undefined;
-	if (locator === "role") {
-		const targetName = getFindNameFlagValue(args, findIndex + 4);
-		return targetName ? { action, roles: [value], targetName, text } : undefined;
-	}
-	if (locator === "text" && action === "click") {
-		return { action, roles: ["button", "link"], targetName: value };
-	}
-	if (locator === "text" && action === "fill") {
-		return { action, roles: ["searchbox", "textbox"], targetName: value, text };
-	}
-	if (locator === "label" && action === "fill") {
-		return { action, roles: ["textbox"], targetName: value, text };
-	}
-	if (locator === "placeholder" && action === "fill") {
-		return { action, roles: ["searchbox", "textbox"], targetName: value, text };
-	}
-	return undefined;
-}
-
-function getVisibleRefFallbackTarget(options: {
-	commandTokens: string[];
-	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
-}): VisibleRefFallbackTarget | undefined {
-	return getFindVisibleRefFallbackTarget(options.commandTokens, { allowLeadingDashFillText: true }) ?? (options.compiledSemanticAction ? getFindVisibleRefFallbackTarget(options.compiledSemanticAction.args, { allowLeadingDashFillText: true }) : undefined);
-}
-
-const VISIBLE_REF_FALLBACK_CANDIDATE_LIMIT = 3;
-const EDITABLE_CONTROL_ROLES = new Set(["combobox", "searchbox", "textbox"]);
-const RICH_INPUT_RECOVERY_EDITABLE_ROLES = new Set(["searchbox", "textbox"]);
-const RICH_INPUT_RECOVERY_HINT = "After the editable ref is focused, use keyboard inserttext or keyboard type with the intended text in a separate call, and do not press Enter or otherwise submit unless the user flow explicitly calls for it.";
-
-function getSnapshotLineTextByRef(data: unknown): Map<string, string> {
-	const snapshot = isRecord(data) && typeof data.snapshot === "string" ? data.snapshot : "";
-	const lineByRef = new Map<string, string>();
-	for (const line of snapshot.split("\n")) {
-		const ref = line.match(/\bref=([^,\]\s]+)/)?.[1];
-		if (!ref || lineByRef.has(ref)) continue;
-		lineByRef.set(ref, line);
-	}
-	return lineByRef;
-}
-
-function getVisibleRefFallbackRole(entry: Record<string, unknown>, editableEvidence: boolean | undefined): string | undefined {
-	const rawRole = typeof entry.role === "string" && entry.role.length > 0 ? entry.role : "unknown";
-	const normalizedRole = rawRole.toLowerCase();
-	if ((normalizedRole === "generic" || normalizedRole === "unknown") && editableEvidence === true) {
-		return "textbox";
-	}
-	return rawRole;
-}
-
-function getVisibleRefFallbackCandidates(target: VisibleRefFallbackTarget, snapshotData: unknown): VisibleRefFallbackCandidate[] {
-	const refs = getSnapshotRefRecord(snapshotData);
-	if (!refs) return [];
-	const snapshotLineByRef = getSnapshotLineTextByRef(snapshotData);
-	const roleOrder = target.roles.map((role) => role.toLowerCase());
-	const targetName = normalizeSemanticActionAccessibleName(target.targetName);
-	const candidates = Object.entries(refs).flatMap(([ref, entry]): VisibleRefFallbackCandidate[] => {
-		if (!/^e\d+$/.test(ref) || !isRecord(entry)) return [];
-		const snapshotLine = snapshotLineByRef.get(ref);
-		const editableEvidence = getEditableRefEvidence({ ref: entry, text: snapshotLine });
-		const role = getVisibleRefFallbackRole(entry, editableEvidence);
-		const name = typeof entry.name === "string" ? entry.name : undefined;
-		if (!role || !name || !roleOrder.includes(role.toLowerCase()) || normalizeSemanticActionAccessibleName(name) !== targetName) return [];
-		if (target.action === "fill" && editableEvidence === false && EDITABLE_CONTROL_ROLES.has(role.toLowerCase())) return [];
-		const directRefArgs = target.action === "fill" ? undefined : [target.action, `@${ref}`];
-		return [{
-			action: target.action,
-			...(directRefArgs ? { args: directRefArgs } : {}),
-			name,
-			reason: `Current snapshot shows ${role} ${JSON.stringify(name)} at @${ref}, matching the failed ${target.action} locator exactly.`,
-			ref: `@${ref}`,
-			role,
-			...(editableEvidence !== undefined ? { editableEvidence } : {}),
-		}];
-	});
-	candidates.sort((left, right) => roleOrder.indexOf(left.role.toLowerCase()) - roleOrder.indexOf(right.role.toLowerCase()) || compareRefIds(left.ref.slice(1), right.ref.slice(1)));
-	return candidates.slice(0, VISIBLE_REF_FALLBACK_CANDIDATE_LIMIT);
-}
-
 async function collectVisibleRefFallbackDiagnostic(options: {
 	commandTokens: string[];
 	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
@@ -1525,120 +1443,8 @@ async function collectVisibleRefFallbackDiagnostic(options: {
 	const target = getVisibleRefFallbackTarget({ commandTokens: options.commandTokens, compiledSemanticAction: options.compiledSemanticAction });
 	if (!target) return undefined;
 	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const snapshot = extractRefSnapshotFromData(snapshotData);
-	if (!snapshot) return undefined;
-	const candidates = getVisibleRefFallbackCandidates(target, snapshotData);
-	if (candidates.length === 0) return undefined;
-	return {
-		candidates,
-		snapshot,
-		summary: candidates.length === 1
-			? `Current snapshot has one exact visible ref match for ${target.action} ${JSON.stringify(target.targetName)}.`
-			: `Current snapshot has ${candidates.length} exact visible ref matches for ${target.action} ${JSON.stringify(target.targetName)}; choose only if the intended control is unambiguous.`,
-		target: { action: target.action, roles: target.roles, targetName: target.targetName },
-	};
+	return buildVisibleRefFallbackDiagnosticFromSnapshot({ snapshotData, target });
 }
-
-function buildVisibleRefFallbackNextActions(options: { diagnostic: VisibleRefFallbackDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
-	const ambiguous = options.diagnostic.candidates.length > 1;
-	return options.diagnostic.candidates.flatMap((candidate, index) => candidate.args ? [{
-		id: ambiguous ? `try-current-visible-ref-${index + 1}` : "try-current-visible-ref",
-		params: { args: sessionPrefixArgs(options.sessionName, candidate.args) },
-		reason: candidate.reason,
-		safety: ambiguous
-			? "Several current refs share the same exact role/name. Inspect the snapshot and use only the ref that clearly matches the intended target."
-			: "Use only while this current snapshot still represents the page; refresh refs first if the page changed.",
-		tool: "agent_browser" as const,
-	}] : []);
-}
-
-function formatVisibleRefFallbackText(diagnostic: VisibleRefFallbackDiagnostic | undefined): string | undefined {
-	if (!diagnostic) return undefined;
-	return [
-		"Current snapshot ref fallback:",
-		...diagnostic.candidates.map((candidate) => `- ${candidate.ref}${candidate.role ? ` ${candidate.role}` : ""} ${JSON.stringify(candidate.name)}: ${candidate.reason}`),
-	].join("\n");
-}
-
-function sanitizeVisibleRefFallbackDiagnostic(diagnostic: VisibleRefFallbackDiagnostic): PublicVisibleRefFallbackDiagnostic {
-	return {
-		candidates: diagnostic.candidates.map(({ editableEvidence: _editableEvidence, ...candidate }) => candidate),
-		snapshot: diagnostic.snapshot,
-		summary: diagnostic.summary,
-		target: diagnostic.target,
-	};
-}
-
-function isRichInputRecoveryCandidate(candidate: VisibleRefFallbackCandidate): boolean {
-	return candidate.action === "fill" && candidate.editableEvidence !== false && RICH_INPUT_RECOVERY_EDITABLE_ROLES.has(candidate.role.toLowerCase());
-}
-
-function buildRichInputRecoveryDiagnostic(diagnostic: VisibleRefFallbackDiagnostic | undefined): RichInputRecoveryDiagnostic | undefined {
-	if (!diagnostic || diagnostic.target.action !== "fill") return undefined;
-	const candidates = diagnostic.candidates.filter(isRichInputRecoveryCandidate).map((candidate): RichInputRecoveryCandidate => ({
-		clickArgs: ["click", candidate.ref],
-		focusArgs: ["focus", candidate.ref],
-		name: candidate.name,
-		reason: `Current snapshot shows editable ${candidate.role} ${JSON.stringify(candidate.name)} at ${candidate.ref}; focus or click it before keyboard insertion instead of retrying fill with copied text.`,
-		ref: candidate.ref,
-		role: candidate.role,
-	}));
-	if (candidates.length === 0) return undefined;
-	return {
-		candidates,
-		inputMethodHint: RICH_INPUT_RECOVERY_HINT,
-		nextActionIds: getAgentBrowserRichInputRecoveryNextActionIds(candidates.length),
-		summary: candidates.length === 1
-			? "Fill locator missed, but the current snapshot has one exact editable ref candidate for safe keyboard-based recovery."
-			: `Fill locator missed, but the current snapshot has ${candidates.length} exact editable ref candidates; choose only if the intended input is unambiguous.`,
-		target: { roles: diagnostic.target.roles, targetName: diagnostic.target.targetName },
-	};
-}
-
-function buildRichInputRecoveryNextActions(options: { diagnostic: RichInputRecoveryDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
-	const candidateCount = options.diagnostic.candidates.length;
-	const ambiguous = candidateCount > 1;
-	return options.diagnostic.candidates.flatMap((candidate, index): AgentBrowserNextAction[] => {
-		const focusId = getAgentBrowserRichInputRecoveryNextActionId("focus", index, candidateCount);
-		const clickId = getAgentBrowserRichInputRecoveryNextActionId("click", index, candidateCount);
-		const safety = ambiguous
-			? `Several editable refs share the same exact name. Inspect the current snapshot and use only the ${candidate.ref} ${candidate.role} if it is clearly the intended input. No fill text or submit key is included.`
-			: "Does not include fill text or submit the form. After focus/click succeeds, use keyboard inserttext or keyboard type with the intended text only if this is the right input.";
-		return [
-			{
-				id: focusId,
-				params: { args: sessionPrefixArgs(options.sessionName, candidate.focusArgs) },
-				reason: candidate.reason,
-				safety,
-				tool: "agent_browser" as const,
-			},
-			{
-				id: clickId,
-				params: { args: sessionPrefixArgs(options.sessionName, candidate.clickArgs) },
-				reason: `Click ${candidate.ref} to focus the editable ${candidate.role} before keyboard insertion when focus alone is insufficient.`,
-				safety: `${safety} A click may run normal focus/click handlers, but this action does not press Enter or auto-submit.`,
-				tool: "agent_browser" as const,
-			},
-		];
-	});
-}
-
-function formatRichInputRecoveryText(diagnostic: RichInputRecoveryDiagnostic | undefined): string | undefined {
-	if (!diagnostic) return undefined;
-	return [
-		"Rich input recovery:",
-		...diagnostic.candidates.map((candidate, index) => {
-			const [focusId, clickId] = diagnostic.nextActionIds.slice(index * 2, index * 2 + 2);
-			return `- ${candidate.ref} ${candidate.role} ${JSON.stringify(candidate.name)}: use ${focusId} or ${clickId}; then use keyboard inserttext/type with the intended text.`;
-		}),
-		`- ${diagnostic.inputMethodHint}`,
-	].join("\n");
-}
-
-function normalizeSemanticActionAccessibleName(name: string): string {
-	return name.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
 function semanticActionNameMatches(candidateName: string, targetName: string): boolean {
 	const normalizedCandidate = normalizeSemanticActionAccessibleName(candidateName);
 	const normalizedTarget = normalizeSemanticActionAccessibleName(targetName);
@@ -2226,70 +2032,6 @@ interface OverlayBlockerDiagnostic {
 	candidates: OverlayBlockerCandidate[];
 	snapshot: SessionRefSnapshot;
 	summary: string;
-}
-
-interface VisibleRefFallbackCandidate {
-	action: AgentBrowserSemanticActionName;
-	args?: string[];
-	editableEvidence?: boolean;
-	name: string;
-	reason: string;
-	ref: string;
-	role: string;
-}
-
-interface VisibleRefFallbackDiagnostic {
-	candidates: VisibleRefFallbackCandidate[];
-	snapshot: SessionRefSnapshot;
-	summary: string;
-	target: {
-		action: AgentBrowserSemanticActionName;
-		roles: string[];
-		targetName: string;
-	};
-}
-
-interface PublicVisibleRefFallbackCandidate {
-	action: AgentBrowserSemanticActionName;
-	args?: string[];
-	name: string;
-	reason: string;
-	ref: string;
-	role: string;
-}
-
-interface PublicVisibleRefFallbackDiagnostic {
-	candidates: PublicVisibleRefFallbackCandidate[];
-	snapshot: SessionRefSnapshot;
-	summary: string;
-	target: VisibleRefFallbackDiagnostic["target"];
-}
-
-interface VisibleRefFallbackTarget {
-	action: AgentBrowserSemanticActionName;
-	roles: string[];
-	text?: string;
-	targetName: string;
-}
-
-interface RichInputRecoveryCandidate {
-	clickArgs: string[];
-	focusArgs: string[];
-	name: string;
-	reason: string;
-	ref: string;
-	role: string;
-}
-
-interface RichInputRecoveryDiagnostic {
-	candidates: RichInputRecoveryCandidate[];
-	inputMethodHint: string;
-	nextActionIds: string[];
-	summary: string;
-	target: {
-		roles: string[];
-		targetName: string;
-	};
 }
 
 interface SelectorTextVisibilityDiagnostic {
@@ -4101,60 +3843,6 @@ function buildStaleRefPreflight(options: {
 	return undefined;
 }
 
-function sessionPrefixArgs(sessionName: string | undefined, args: string[]): string[] {
-	return sessionName && args[0] !== "--session" ? ["--session", sessionName, ...args] : args;
-}
-
-function buildConnectedSessionNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
-	if (!sessionName) return [];
-	return buildAgentBrowserNextActions({
-		recovery: { kind: "connected-session", sessionName },
-		resultCategory: "success",
-		successCategory: "completed",
-	}) ?? [];
-}
-
-function buildNoActivePageNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
-	if (!sessionName) return [];
-	return buildAgentBrowserNextActions({
-		recovery: { kind: "no-active-page", sessionName },
-		resultCategory: "failure",
-	}) ?? [];
-}
-
-function buildSessionTabRecoveryNextActions(options: {
-	kind: "about-blank" | "tab-drift";
-	recoveryApplied?: boolean;
-	resultCategory?: "failure" | "success";
-	sessionName?: string;
-	tabCorrection?: OpenResultTabCorrection;
-	target?: SessionTabTarget;
-}): AgentBrowserNextAction[] {
-	const resultCategory = options.resultCategory ?? "success";
-	return buildAgentBrowserNextActions({
-		recovery: {
-			kind: options.kind,
-			recoveryApplied: options.recoveryApplied,
-			selectedTab: options.tabCorrection?.selectedTab,
-			sessionName: options.sessionName,
-			targetTitle: options.tabCorrection?.targetTitle ?? options.target?.title,
-			targetUrl: options.tabCorrection?.targetUrl ?? options.target?.url,
-		},
-		resultCategory,
-		successCategory: resultCategory === "success" ? "completed" : undefined,
-	}) ?? [];
-}
-
-function sessionAwareStaleRefNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
-	return (buildAgentBrowserNextActions({ failureCategory: "stale-ref", resultCategory: "failure" }) ?? []).map((action) => {
-		const actionArgs = action.params?.args;
-		return {
-			...action,
-			params: action.params && actionArgs ? { ...action.params, args: sessionPrefixArgs(sessionName, actionArgs) } : action.params,
-		};
-	});
-}
-
 function buildPinnedBatchPlan(options: {
 	command?: string;
 	commandTokens: string[];
@@ -4313,14 +4001,14 @@ function buildFillVerificationNextActions(diagnostic: FillVerificationDiagnostic
 	return [
 		{
 			id: "inspect-after-fill-verification",
-			params: { args: sessionPrefixArgs(sessionName, ["snapshot", "-i"]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
 			reason: "Refresh the UI after a fill that reported success but did not appear to update the input value.",
 			safety: "Read-only snapshot; use current refs before retrying.",
 			tool: "agent_browser",
 		},
 		{
 			id: "verify-filled-value",
-			params: { args: sessionPrefixArgs(sessionName, ["get", "value", diagnostic.selector]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["get", "value", diagnostic.selector]) },
 			reason: "Check the target input value directly before submitting or creating files.",
 			safety: "Read-only value check; selector may still be stale if the Electron UI rerendered.",
 			tool: "agent_browser",
@@ -4379,7 +4067,7 @@ function formatFillVerificationText(diagnostic: FillVerificationDiagnostic | und
 function buildElectronRefFreshnessNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
 	return [{
 		id: "refresh-electron-refs-after-rerender",
-		params: { args: sessionPrefixArgs(sessionName, ["snapshot", "-i"]) },
+		params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
 		reason: "Electron UIs often rerender without changing URL; refresh refs before using old @e handles again.",
 		safety: "Read-only snapshot; avoids stale same-URL refs after quick-pick, modal, theme, or editor rerenders.",
 		tool: "agent_browser",
@@ -4528,18 +4216,17 @@ function buildScrollNoopDiagnostic(before: ScrollPositionSnapshot | undefined, a
 }
 
 function buildScrollNoopNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
-	const withSession = (args: string[]): string[] => sessionName ? ["--session", sessionName, ...args] : args;
 	return [
 		{
 			id: "inspect-after-noop-scroll",
-			params: { args: withSession(["snapshot", "-i"]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
 			reason: "Refresh interactive refs and inspect whether the intended target is inside a nested scroll container.",
 			safety: "Do not assume repeated page scrolls will move dashboard panels or nested panes.",
 			tool: "agent_browser",
 		},
 		{
 			id: "verify-noop-scroll-visually",
-			params: { args: withSession(["screenshot"]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["screenshot"]) },
 			reason: "Capture the current viewport to verify whether the scroll actually changed visible content.",
 			safety: "Use screenshot evidence before concluding a dense dashboard did or did not move.",
 			tool: "agent_browser",
@@ -4647,25 +4334,24 @@ async function collectComboboxFocusDiagnostic(options: {
 }
 
 function buildComboboxFocusNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
-	const withSession = (args: string[]): string[] => sessionName ? ["--session", sessionName, ...args] : args;
 	return [
 		{
 			id: "inspect-focused-combobox",
-			params: { args: withSession(["snapshot", "-i"]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
 			reason: "Inspect the focused combobox and any portal/listbox refs before choosing an option.",
 			safety: "Prefer visible option refs or select when a native/selectable option list is exposed.",
 			tool: "agent_browser",
 		},
 		{
 			id: "try-open-combobox-with-arrow",
-			params: { args: withSession(["press", "ArrowDown"]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["press", "ArrowDown"]) },
 			reason: "Many searchable comboboxes open their option list with ArrowDown after focus.",
 			safety: "Use only when the focused combobox is still the intended control, then re-snapshot before selecting.",
 			tool: "agent_browser",
 		},
 		{
 			id: "try-open-combobox-with-enter",
-			params: { args: withSession(["press", "Enter"]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["press", "Enter"]) },
 			reason: "Some comboboxes open or confirm their option list with Enter after focus.",
 			safety: "Enter may select a highlighted/default option; prefer ArrowDown first unless Enter is the app's expected opener.",
 			tool: "agent_browser",
@@ -4787,14 +4473,14 @@ function buildOverlayBlockerNextActions(options: { diagnostic: OverlayBlockerDia
 	return [
 		{
 			id: "inspect-overlay-state",
-			params: { args: sessionPrefixArgs(options.sessionName, ["snapshot", "-i"]) },
+			params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) },
 			reason: "Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.",
 			safety: "Read-only inspection; use current refs from this snapshot before interacting.",
 			tool: "agent_browser" as const,
 		},
 		...options.diagnostic.candidates.map((candidate, index) => ({
 			id: `try-overlay-blocker-candidate-${index + 1}`,
-			params: { args: sessionPrefixArgs(options.sessionName, candidate.args) },
+			params: { args: withOptionalSessionArgs(options.sessionName, candidate.args) },
 			reason: candidate.reason,
 			safety: "Only click this if the candidate is clearly a close/dismiss control for an overlay that blocks the intended workflow.",
 			tool: "agent_browser" as const,
@@ -4970,7 +4656,7 @@ function buildSourceLookupElectronNextActions(sourceLookup: AgentBrowserSourceLo
 	if (sessionName) {
 		actions.push({
 			id: "snapshot-electron-session",
-			params: { args: sessionPrefixArgs(sessionName, ["snapshot", "-i"]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
 			reason: "Refresh interactive refs in the attached Electron session before retrying source lookup with a narrower target.",
 			safety: "Read-only snapshot; no app mutation.",
 			tool: "agent_browser",
@@ -4988,7 +4674,7 @@ function buildSourceLookupElectronNextActions(sourceLookup: AgentBrowserSourceLo
 	if (sessionName) {
 		actions.push({
 			id: "list-electron-tabs",
-			params: { args: sessionPrefixArgs(sessionName, ["tab", "list"]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["tab", "list"]) },
 			reason: "Check current Electron tabs/targets before choosing a narrower selector or @ref.",
 			safety: "Read-only tab listing.",
 			tool: "agent_browser",
@@ -5024,7 +4710,7 @@ function formatElectronBroadGetTextScopeText(diagnostics: ElectronBroadGetTextSc
 function buildElectronBroadGetTextScopeNextActions(options: { diagnostics: ElectronBroadGetTextScopeDiagnostic[]; sessionName?: string }): AgentBrowserNextAction[] {
 	return options.diagnostics.map((diagnostic, index) => ({
 		id: index === 0 ? "snapshot-for-electron-text-scope" : `snapshot-for-electron-text-scope-${index + 1}`,
-		params: { args: sessionPrefixArgs(options.sessionName, ["snapshot", "-i"]) },
+		params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) },
 		reason: `Refresh Electron refs before trusting broad get text selector ${JSON.stringify(diagnostic.selector)}.`,
 		safety: "Read-only snapshot; prefer a current @ref or narrower selector before extracting app-shell text.",
 		tool: "agent_browser" as const,
@@ -5118,7 +4804,7 @@ function buildSelectorTextVisibilityNextActions(options: { diagnostics: Selector
 	return options.diagnostics.map((diagnostic, index) => ({
 		id: index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`,
 		params: {
-			args: sessionPrefixArgs(options.sessionName, ["eval", "--stdin"]),
+			args: withOptionalSessionArgs(options.sessionName, ["eval", "--stdin"]),
 			stdin: buildVisibleTextProbeScript(diagnostic.selector),
 		},
 		reason: "Inspect selector match count and visible text before trusting get text on tabbed or hidden DOM content.",
@@ -6114,7 +5800,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							command: executionPlan.commandInfo.command,
 							compatibilityWorkaround,
 							effectiveArgs: redactedEffectiveArgs,
-							nextActions: sessionAwareStaleRefNextActions(executionPlan.sessionName),
+							nextActions: buildSessionAwareStaleRefNextActions(executionPlan.sessionName),
 							refIds: staleRefPreflight.refIds,
 							refSnapshot: staleRefPreflight.snapshot,
 							refSnapshotInvalidation: staleRefPreflight.snapshotInvalidation,
@@ -6959,7 +6645,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						}));
 					}
 					if (categoryDetails.failureCategory === "stale-ref") {
-						nextActionCollector.replace(sessionAwareStaleRefNextActions(executionPlan.sessionName));
+						nextActionCollector.replace(buildSessionAwareStaleRefNextActions(executionPlan.sessionName));
 					}
 					if (visibleRefFallbackDiagnostic) {
 						nextActionCollector.append(buildVisibleRefFallbackNextActions({ diagnostic: visibleRefFallbackDiagnostic, sessionName: visibleRefFallbackSessionName }));

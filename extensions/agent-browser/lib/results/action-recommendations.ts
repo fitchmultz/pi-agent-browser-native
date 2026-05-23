@@ -6,6 +6,7 @@
  * Invariants/Assumptions: Action ids are public machine-readable contracts; preserve first-observed order.
  */
 
+import { isPendingRecordingArtifact } from "./artifact-state.js";
 import type {
 	AgentBrowserFailureCategory,
 	AgentBrowserResultCategory,
@@ -18,10 +19,6 @@ import {
 	buildRecoveryNextActions,
 	type AgentBrowserRecoveryContext,
 } from "./recovery-actions.js";
-
-function isPendingFileArtifact(artifact: FileArtifactMetadata): boolean {
-	return artifact.command === "record" && artifact.subcommand === "start" && artifact.kind === "video";
-}
 
 function buildArtifactAction(path: string): AgentBrowserNextAction {
 	return {
@@ -193,7 +190,7 @@ export function buildAgentBrowserNextActions(options: {
 			actions.push(buildArtifactAction(options.savedFilePath));
 		}
 		for (const artifact of artifacts) {
-			if (isPendingFileArtifact(artifact)) {
+			if (isPendingRecordingArtifact(artifact)) {
 				continue;
 			}
 			if (artifact.exists === false) {

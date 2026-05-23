@@ -222,7 +222,7 @@ Manual validation remains useful for release confidence and installed-package ch
 
 ### Real upstream contract validation
 
-The default `npm test` and `npm run verify` paths use fast deterministic tests and fake binaries. When a change touches upstream command planning, result presentation, managed-session behavior, or the canonical capability baseline, also run the opt-in real-upstream contract suite:
+The default `npm test` and `npm run verify` paths use fast deterministic tests and fake binaries. For a focused single-file rerun, use `npx tsx --test test/<file>.test.ts`; `npm test -- test/<file>.test.ts` still runs the package script's full glob. When a change touches upstream command planning, result presentation, managed-session behavior, or the canonical capability baseline, also run the opt-in real-upstream contract suite:
 
 ```bash
 npm run verify -- real-upstream

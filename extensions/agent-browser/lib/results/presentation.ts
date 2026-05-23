@@ -17,6 +17,7 @@ import {
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 } from "../temp.js";
+import { isPendingRecordingArtifact } from "./artifact-state.js";
 import { detectConfirmationRequired, type ConfirmationRequiredPresentation } from "./confirmation.js";
 import { buildSnapshotPresentation, formatRawSnapshotText, formatSnapshotSummary } from "./snapshot.js";
 import type {
@@ -48,6 +49,7 @@ import {
 	mergeSessionArtifactManifest,
 } from "./artifact-manifest.js";
 import { classifyNetworkRequestFailure, summarizeNetworkFailures } from "./network.js";
+import { withOptionalSessionArgs } from "./next-actions.js";
 import { countLines, stringifyUnknown, truncateText } from "./text.js";
 
 const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
@@ -751,7 +753,7 @@ function buildNetworkRequestsNextActions(data: unknown, sessionName: string | un
 	const actions: AgentBrowserNextAction[] = [
 		{
 			id: getNetworkRequestDetailActionId(selected),
-			params: { args: withSessionPrefix(sessionName, ["network", "request", selected.requestId]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["network", "request", selected.requestId]) },
 			reason: `Inspect full request details for ${descriptor}.`,
 			safety: "Read-only network diagnostic; request inspection must not replace the active page/ref context.",
 			tool: "agent_browser",
@@ -769,7 +771,7 @@ function buildNetworkRequestsNextActions(data: unknown, sessionName: string | un
 	if (selected.filter) {
 		actions.push({
 			id: "filter-network-requests-by-path",
-			params: { args: withSessionPrefix(sessionName, ["network", "requests", "--filter", selected.filter]) },
+			params: { args: withOptionalSessionArgs(sessionName, ["network", "requests", "--filter", selected.filter]) },
 			reason: `List captured requests matching ${selected.filter}.`,
 			safety: "Read-only request-list filter; absence from a compact preview is not proof the request did not happen.",
 			tool: "agent_browser",
@@ -777,7 +779,7 @@ function buildNetworkRequestsNextActions(data: unknown, sessionName: string | un
 	}
 	actions.push({
 		id: "start-network-har-capture",
-		params: { args: withSessionPrefix(sessionName, ["network", "har", "start"]) },
+		params: { args: withOptionalSessionArgs(sessionName, ["network", "har", "start"]) },
 		reason: "Start HAR capture before reproducing the network behavior again.",
 		safety: "HARs can contain URLs and headers; stop to an explicit path, inspect metadata, and avoid sharing sensitive captures.",
 		tool: "agent_browser",
@@ -1189,16 +1191,12 @@ function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMetadata[],
 	}));
 }
 
-function isRecordingStartArtifact(artifact: FileArtifactMetadata): boolean {
-	return artifact.command === "record" && artifact.subcommand === "start" && artifact.kind === "video";
-}
-
 function isManifestFileArtifact(artifact: FileArtifactMetadata): boolean {
-	return !isRecordingStartArtifact(artifact);
+	return !isPendingRecordingArtifact(artifact);
 }
 
 function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactVerificationEntry {
-	if (isRecordingStartArtifact(artifact)) {
+	if (isPendingRecordingArtifact(artifact)) {
 		return {
 			absolutePath: artifact.absolutePath,
 			exists: artifact.exists,
@@ -1322,7 +1320,7 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 		case "trace":
 			return "Saved trace";
 		case "video":
-			return isRecordingStartArtifact(artifact) ? "Recording started; output will be written on stop" : "Saved recording";
+			return isPendingRecordingArtifact(artifact) ? "Recording started; output will be written on stop" : "Saved recording";
 	}
 }
 
@@ -1339,7 +1337,7 @@ function formatArtifactSummary(artifacts: FileArtifactMetadata[]): string | unde
 
 function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): string[] {
 	return artifacts.map((artifact, index) => {
-		if (isRecordingStartArtifact(artifact)) {
+		if (isPendingRecordingArtifact(artifact)) {
 			return [
 				`${formatArtifactLabel(artifact)}: ${artifact.path}`,
 				`Artifact type: ${artifact.kind}`,
@@ -1688,16 +1686,12 @@ function formatUnknownCommandSuggestionText(suggestions: CommandSuggestion[]): s
 	return ["Agent-browser hint: This looks like a getter shortcut, but upstream getter commands are grouped under `get`.", ...suggestions.map((suggestion) => suggestion.description)].join(" ");
 }
 
-function withSessionPrefix(sessionName: string | undefined, args: string[]): string[] {
-	return sessionName ? ["--session", sessionName, ...args] : args;
-}
-
 function buildUnknownCommandSuggestionActions(suggestions: CommandSuggestion[], sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
 	const actions = suggestions
 		.filter((suggestion): suggestion is CommandSuggestion & { args: string[]; id: string } => suggestion.args !== undefined && suggestion.id !== undefined)
 		.map((suggestion) => ({
 			id: suggestion.id,
-			params: { args: withSessionPrefix(sessionName, suggestion.args) },
+			params: { args: withOptionalSessionArgs(sessionName, suggestion.args) },
 			reason: suggestion.description,
 			safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
 			tool: "agent_browser" as const,
@@ -1712,7 +1706,7 @@ function isWaitTextAssertionCommand(command: string[] | undefined): boolean {
 function buildWaitTextAssertionFailureNextAction(sessionName: string | undefined): AgentBrowserNextAction {
 	return {
 		id: "inspect-after-text-assertion-failure",
-		params: { args: withSessionPrefix(sessionName, ["snapshot", "-i"]) },
+		params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
 		reason: "Inspect the current page after the text assertion failed before concluding the expected text is absent.",
 		safety: "Read-only snapshot; use current refs or visible text from this page before retrying the assertion.",
 		tool: "agent_browser",

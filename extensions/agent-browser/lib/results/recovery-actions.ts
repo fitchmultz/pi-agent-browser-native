@@ -6,7 +6,7 @@
  * Invariants/Assumptions: Ids are public machine-readable contracts mirrored by docs and tests.
  */
 
-import { buildNextToolAction, type AgentBrowserNextAction } from "./next-actions.js";
+import { buildNextToolAction, type AgentBrowserNextAction, withOptionalSessionArgs } from "./next-actions.js";
 
 export type AgentBrowserRecoveryKind = "about-blank" | "connected-session" | "no-active-page" | "tab-drift";
 
@@ -55,10 +55,6 @@ export function getAgentBrowserRichInputRecoveryNextActionIds(candidateCount: nu
 	return ids;
 }
 
-function withSessionPrefix(sessionName: string | undefined, args: string[]): string[] {
-	return sessionName && args[0] !== "--session" ? ["--session", sessionName, ...args] : args;
-}
-
 function getRecoveryTargetDescription(recovery: AgentBrowserRecoveryContext): string {
 	const target = [recovery.targetTitle, recovery.targetUrl].filter((item): item is string => item !== undefined && item.length > 0).join(" at ");
 	return target.length > 0 ? target : "the intended tab";
@@ -94,7 +90,7 @@ function buildTabSnapshotRecoveryAction(options: {
 }
 
 export function buildRecoveryNextActions(recovery: AgentBrowserRecoveryContext): AgentBrowserNextAction[] {
-	const sessionArgs = (args: string[]) => withSessionPrefix(recovery.sessionName, args);
+	const sessionArgs = (args: string[]) => withOptionalSessionArgs(recovery.sessionName, args);
 	if (recovery.kind === "connected-session") {
 		return [
 			buildNextToolAction({

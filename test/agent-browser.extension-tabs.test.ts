@@ -2,7 +2,7 @@
  * Purpose: Verify extension integration for presentation artifacts and non-recovery tab targeting behavior.
  * Responsibilities: Assert persisted snapshot spills, batch rendering, click/open enrichment, and routine tab-target state handling.
  * Scope: Integration-style Node test-runner coverage around fake agent-browser executions; process wrapper and resume-state suites cover adjacent concerns.
- * Usage: Run with `npm test -- test/agent-browser.extension-tabs.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.extension-tabs.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests run serially where they patch env or secure temp state and do not require a real browser.
  */
 

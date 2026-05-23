@@ -27,13 +27,15 @@ export type {
 	AgentBrowserFailureCategory,
 	AgentBrowserNextAction,
 	AgentBrowserPageChangeSummary,
-	AgentBrowserRecoveryContext,
-	AgentBrowserRecoveryKind,
 	AgentBrowserResultCategory,
 	AgentBrowserResultCategoryDetails,
-	AgentBrowserRichInputRecoveryNextActionKind,
 	AgentBrowserSuccessCategory,
 	FileArtifactKind,
 	FileArtifactMetadata,
 	ToolPresentation,
-} from "./results/shared.js";
+} from "./results/contracts.js";
+export type {
+	AgentBrowserRecoveryContext,
+	AgentBrowserRecoveryKind,
+	AgentBrowserRichInputRecoveryNextActionKind,
+} from "./results/recovery-actions.js";

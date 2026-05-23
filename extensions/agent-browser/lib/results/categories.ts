@@ -13,13 +13,10 @@ import type {
 	FileArtifactMetadata,
 	SavedFilePresentationDetails,
 } from "./contracts.js";
-
-function isPendingFileArtifact(artifact: FileArtifactMetadata): boolean {
-	return artifact.command === "record" && artifact.subcommand === "start" && artifact.kind === "video";
-}
+import { isPendingRecordingArtifact } from "./artifact-state.js";
 
 function hasUnverifiedFileArtifact(artifacts: FileArtifactMetadata[] | undefined): boolean {
-	return (artifacts ?? []).some((artifact) => !isPendingFileArtifact(artifact) && artifact.exists !== true);
+	return (artifacts ?? []).some((artifact) => !isPendingRecordingArtifact(artifact) && artifact.exists !== true);
 }
 
 export function classifyAgentBrowserSuccessCategory(options: {

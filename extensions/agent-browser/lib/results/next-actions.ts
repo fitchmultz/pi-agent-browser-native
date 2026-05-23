@@ -31,6 +31,10 @@ export interface AgentBrowserNextAction {
 	tool: "agent_browser";
 }
 
+export function withOptionalSessionArgs(sessionName: string | undefined, args: string[]): string[] {
+	return sessionName && args[0] !== "--session" ? ["--session", sessionName, ...args] : args;
+}
+
 export function buildNextToolAction(options: {
 	args: string[];
 	id: string;
