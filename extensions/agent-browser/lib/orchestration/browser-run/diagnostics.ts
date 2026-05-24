@@ -4,9 +4,10 @@ import { delimiter, isAbsolute, join, resolve } from "node:path";
 
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import type { AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserJob, CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
+import { isHttpOrHttpsUrl } from "../../input-modes/job.js";
 import type { AgentBrowserNextAction } from "../../results.js";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.js";
-import { withOptionalSessionArgs } from "../../results/next-actions.js";
+import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTarget, type VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import { extractRefSnapshotFromData, normalizeComparableUrl, type SessionTabTarget } from "../../session-page-state.js";
 import { redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
@@ -29,6 +30,7 @@ import type {
 	NavigationSummary,
 	OverlayBlockerCandidate,
 	OverlayBlockerDiagnostic,
+	QaAttachedPreconditionFailure,
 	QaAttachedTarget,
 	RecordingDependencyWarning,
 	ScrollNoopDiagnostic,
@@ -491,6 +493,18 @@ async function collectManagedSessionCommandData(options: { args: string[]; cwd: 
 	try { return { data: await runSessionCommandData(options) }; } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
 }
 
+async function collectElectronManagedSessionUrl(options: { cwd: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ error?: string; url?: string }> {
+	const urlResult = await collectManagedSessionCommandData({
+		args: ["get", "url"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		signal: options.signal,
+		timeoutMs: options.timeoutMs,
+	});
+	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);
+	return urlResult.error ? { error: urlResult.error } : { url };
+}
+
 async function collectElectronManagedSessionTarget(options: { cwd: string; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<QaAttachedTarget | undefined> {
 	if (!options.sessionName) return undefined;
 	const [titleResult, urlResult] = await Promise.all([
@@ -512,6 +526,58 @@ export async function collectQaAttachedTarget(options: { currentTarget?: Session
 export function formatQaAttachedTargetText(target: QaAttachedTarget | undefined): string | undefined {
 	if (!target) return undefined;
 	return ["QA attached target:", target.sessionName, target.title, target.url].filter((part): part is string => typeof part === "string" && part.length > 0).join(" — ");
+}
+
+export function buildQaAttachedRecoveryNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
+	const sessionArgs = (args: string[]) => withOptionalSessionArgs(sessionName, args);
+	return [
+		buildNextToolAction({
+			args: sessionArgs(["tab", "list"]),
+			id: "list-tabs-before-qa-attached",
+			reason: "Inspect the connected session tabs before retrying qa.attached.",
+			safety: "Read-only tab listing for the attached session.",
+		}),
+		buildNextToolAction({
+			args: sessionArgs(["snapshot", "-i"]),
+			id: "snapshot-before-qa-attached",
+			reason: "Capture interactive refs on the active http(s) page before retrying qa.attached.",
+			safety: "Read-only snapshot; confirms a renderable page is selected.",
+		}),
+	];
+}
+
+export async function validateQaAttachedPrecondition(options: {
+	cwd: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<QaAttachedPreconditionFailure | undefined> {
+	if (!options.sessionName) {
+		return {
+			error: "qa.attached requires an active attached session with a resolvable session name.",
+			nextActions: buildQaAttachedRecoveryNextActions(options.sessionName),
+		};
+	}
+	const urlProbe = await collectElectronManagedSessionUrl({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	if (urlProbe.error) {
+		return {
+			error: `qa.attached could not read the attached session URL: ${urlProbe.error}. Run tab list or snapshot -i before retrying qa.attached.`,
+			nextActions: buildQaAttachedRecoveryNextActions(options.sessionName),
+		};
+	}
+	const url = urlProbe.url?.trim();
+	if (!url) {
+		return {
+			error: "qa.attached requires an attached session with a readable http(s) page URL. Run tab list, select a stable tab, then snapshot -i before retrying.",
+			nextActions: buildQaAttachedRecoveryNextActions(options.sessionName),
+		};
+	}
+	if (!isHttpOrHttpsUrl(url)) {
+		return {
+			error: `qa.attached requires an http(s) page URL; the current attached URL is "${url}". Use tab list and snapshot -i to recover a web surface before retrying.`,
+			nextActions: buildQaAttachedRecoveryNextActions(options.sessionName),
+		};
+	}
+	return undefined;
 }
 
 function getTopLevelFillInvocation(commandTokens: string[]): { expected: string; selector: string } | undefined {

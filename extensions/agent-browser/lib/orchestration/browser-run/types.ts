@@ -140,9 +140,15 @@ export interface ElectronBroadGetTextScopeDiagnostic {
 }
 
 export interface QaAttachedTarget {
+	error?: string;
 	sessionName: string;
 	title?: string;
 	url?: string;
+}
+
+export interface QaAttachedPreconditionFailure {
+	error: string;
+	nextActions: AgentBrowserNextAction[];
 }
 
 export interface TimeoutArtifactEvidence {

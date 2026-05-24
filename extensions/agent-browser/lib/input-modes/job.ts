@@ -4,6 +4,7 @@
  * Scope: Job and QA modes only.
  */
 
+import type { ArtifactVerificationSummary } from "../results/contracts.js";
 import { isRecord } from "../parsing.js";
 import { summarizeNetworkFailures } from "../results/network.js";
 import { getBatchResultItems, getCommandNameFromBatchItem, getSelectValues } from "./shared.js";
@@ -91,6 +92,67 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 		steps.push({ action: jobAction, args });
 	}
 	return { compiled: { args: ["batch"], stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
+}
+
+export function isHttpOrHttpsUrl(url: string): boolean {
+	try {
+		const protocol = new URL(url).protocol;
+		return protocol === "http:" || protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
+function describeQaChecksRun(checks: CompiledAgentBrowserQaPreset["checks"]): string {
+	const parts = [`load:${checks.loadState}`];
+	if (checks.expectedText.length > 0) parts.push(`text×${checks.expectedText.length}`);
+	if (checks.expectedSelector) parts.push("selector");
+	if (checks.checkNetwork) parts.push("network");
+	if (checks.checkConsole) parts.push("console");
+	if (checks.checkErrors) parts.push("errors");
+	if (checks.screenshotPath) parts.push("screenshot");
+	return parts.join(", ");
+}
+
+export function extractQaPageContext(options: {
+	attachedTarget?: { title?: string; url?: string };
+	batchData?: unknown;
+	compiled?: CompiledAgentBrowserQaPreset;
+}): { title?: string; url?: string } {
+	if (options.attachedTarget?.title || options.attachedTarget?.url) {
+		return { title: options.attachedTarget.title, url: options.attachedTarget.url };
+	}
+	for (const item of getBatchResultItems(options.batchData)) {
+		if (getCommandNameFromBatchItem(item) !== "open" || !isRecord(item.result)) continue;
+		const url = typeof item.result.url === "string" ? item.result.url : undefined;
+		const title = typeof item.result.title === "string" ? item.result.title : undefined;
+		if (url || title) return { title, url };
+	}
+	if (options.compiled?.checks.url) {
+		return { url: options.compiled.checks.url };
+	}
+	return {};
+}
+
+export function buildQaCompactPassText(options: {
+	artifactVerification?: ArtifactVerificationSummary;
+	batchStepCount: number;
+	checks: CompiledAgentBrowserQaPreset["checks"];
+	page?: { title?: string; url?: string };
+	qaPreset: AgentBrowserQaPresetAnalysis;
+}): string {
+	const lines = [options.qaPreset.summary];
+	const pageParts = [options.page?.title, options.page?.url].filter((part): part is string => typeof part === "string" && part.length > 0);
+	if (pageParts.length > 0) lines.push(`Page: ${pageParts.join(" — ")}`);
+	lines.push(`Checks run: ${describeQaChecksRun(options.checks)} (${options.batchStepCount} batch step${options.batchStepCount === 1 ? "" : "s"})`);
+	if (options.checks.screenshotPath) {
+		const verification = options.artifactVerification;
+		lines.push(verification
+			? `Screenshot: ${options.checks.screenshotPath} (${verification.verifiedCount}/${verification.artifacts.length} verified on disk)`
+			: `Screenshot: ${options.checks.screenshotPath}`);
+	}
+	lines.push("Full diagnostic matrix: see details.qaPreset and details.batchSteps.");
+	return lines.join("\n");
 }
 
 export function analyzeQaPresetResults(data: unknown): AgentBrowserQaPresetAnalysis | undefined {

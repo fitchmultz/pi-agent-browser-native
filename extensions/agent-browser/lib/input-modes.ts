@@ -7,8 +7,11 @@
 export { AGENT_BROWSER_PARAMS } from "./input-modes/params.js";
 export {
 	analyzeQaPresetResults,
+	buildQaCompactPassText,
 	compileAgentBrowserJob,
 	compileAgentBrowserQaPreset,
+	extractQaPageContext,
+	isHttpOrHttpsUrl,
 } from "./input-modes/job.js";
 export {
 	analyzeNetworkSourceLookupResults,

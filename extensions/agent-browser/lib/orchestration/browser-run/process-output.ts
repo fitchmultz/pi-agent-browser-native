@@ -6,6 +6,8 @@ import {
 	analyzeNetworkSourceLookupResults,
 	analyzeQaPresetResults,
 	analyzeSourceLookupResults,
+	buildQaCompactPassText,
+	extractQaPageContext,
 	redactNetworkSourceLookupAnalysis,
 } from "../../input-modes.js";
 import {
@@ -357,7 +359,9 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		if (presentation.artifactManifest) artifactManifest = presentation.artifactManifest;
 		const qaPreset = prepared.compiledQaPreset ? analyzeQaPresetResults(presentationEnvelope?.data) : undefined;
-		const qaAttachedTarget = prepared.compiledQaPreset?.checks.attached ? await collectQaAttachedTarget({ currentTarget: currentSessionTabTarget ?? prepared.priorSessionTabTarget, cwd, sessionName: prepared.executionPlan.sessionName, signal }) : undefined;
+		let qaAttachedTarget = prepared.compiledQaPreset?.checks.attached
+			? await collectQaAttachedTarget({ currentTarget: currentSessionTabTarget ?? prepared.priorSessionTabTarget, cwd, sessionName: prepared.executionPlan.sessionName, signal })
+			: undefined;
 		const sourceLookupElectronContext = prepared.compiledSourceLookup ? getSourceLookupElectronContext({ currentTarget: currentSessionTabTarget, electronLaunchRecords, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName }) : undefined;
 		const sourceLookup = prepared.compiledSourceLookup ? await analyzeSourceLookupResults(presentationEnvelope?.data, prepared.compiledSourceLookup, cwd, { electronContext: sourceLookupElectronContext, workspaceRoot: cwd }) : undefined;
 		const networkSourceLookup = prepared.compiledNetworkSourceLookup ? redactNetworkSourceLookupAnalysis(await analyzeNetworkSourceLookupResults(presentationEnvelope?.data, prepared.compiledNetworkSourceLookup, cwd)) : undefined;
@@ -365,15 +369,32 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		else if (networkSourceLookup) presentation.content.unshift({ type: "text", text: networkSourceLookup.summary });
 		if (sourceLookup && presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${sourceLookup.summary}\n\n${presentation.content[0].text}` };
 		else if (sourceLookup) presentation.content.unshift({ type: "text", text: sourceLookup.summary });
-		if (qaPreset && (!qaPreset.passed || qaPreset.warnings.length > 0)) {
-			if (!qaPreset.passed) { succeeded = false; presentation.failureCategory = "qa-failure"; }
+		if (qaPreset && !qaPreset.passed) {
+			succeeded = false;
+			presentation.failureCategory = "qa-failure";
 			presentation.summary = qaPreset.summary;
 			if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${qaPreset.summary}\n\n${presentation.content[0].text}` };
 			else presentation.content.unshift({ type: "text", text: qaPreset.summary });
+		} else if (qaPreset?.passed && prepared.compiledQaPreset) {
+			const compactText = buildQaCompactPassText({
+				artifactVerification: presentation.artifactVerification,
+				batchStepCount: presentation.batchSteps?.length ?? prepared.compiledQaPreset.steps.length,
+				checks: prepared.compiledQaPreset.checks,
+				page: extractQaPageContext({
+					attachedTarget: qaAttachedTarget,
+					batchData: presentationEnvelope?.data,
+					compiled: prepared.compiledQaPreset,
+				}),
+				qaPreset,
+			});
+			presentation.summary = qaPreset.summary;
+			const nonTextContent = presentation.content.filter((item) => item.type !== "text");
+			presentation.content = [{ type: "text", text: compactText }, ...nonTextContent];
 		}
 		const qaAttachedTargetText = formatQaAttachedTargetText(qaAttachedTarget);
-		if (qaAttachedTargetText && presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${qaAttachedTargetText}\n\n${presentation.content[0].text}` };
-		else if (qaAttachedTargetText) presentation.content.unshift({ type: "text", text: qaAttachedTargetText });
+		const skipAttachedTargetBanner = qaPreset?.passed && prepared.compiledQaPreset?.checks.attached;
+		if (!skipAttachedTargetBanner && qaAttachedTargetText && presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${qaAttachedTargetText}\n\n${presentation.content[0].text}` };
+		else if (!skipAttachedTargetBanner && qaAttachedTargetText) presentation.content.unshift({ type: "text", text: qaAttachedTargetText });
 		if (managedSessionOutcome && managedSessionOutcome.succeeded !== succeeded) managedSessionOutcome = { ...managedSessionOutcome, succeeded };
 		const evalStdinHint = getEvalStdinHint({ command: prepared.executionPlan.commandInfo.command, data: presentationEnvelope?.data, stdin: prepared.runtimeToolStdin });
 		const resultArtifactManifest = presentation.artifactManifest ?? artifactManifest;
