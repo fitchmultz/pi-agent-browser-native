@@ -53,6 +53,12 @@ That means:
 - no manual user orchestration as the main workflow
 - any future slash commands should be minimal and secondary
 
+### Prompt guidance budget
+
+Runtime `promptGuidelines` are a Tier A budget, not a full manual. They stay short enough to load on every `agent_browser`-aware turn and carry only high-impact rules: input-mode choice, the open → snapshot → ref loop, launch-scoped session handling, artifact verification, structured `nextActions`, extraction basics, and hard safety boundaries such as “stop before order/post/purchase/submit.”
+
+Tier B guidance lives in `SHARED_BROWSER_PLAYBOOK_GUIDELINES`, generated README/command-reference fragments, and targeted docs. When a workflow needs examples, caveats, or long command-family coverage, add it there instead of expanding always-on prompt text. If a Tier B rule prevents a repeated real failure, promote only the smallest durable sentence into Tier A and keep the generated-doc mirrors aligned.
+
 ### No reusable recipe layer yet
 
 Do **not** add reusable browser recipes as a first-class runtime surface yet.

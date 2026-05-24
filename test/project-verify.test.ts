@@ -34,10 +34,13 @@ test("verify facade default gate keeps docs, typecheck, unit/fake, and command-r
 	]);
 });
 
-test("verify facade opt-in modes keep real-upstream and package-pi gates explicit", () => {
+test("verify facade opt-in modes keep real-upstream, dogfood, and package-pi gates explicit", () => {
 	const realUpstream = verifySteps({ mode: "real-upstream", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(realUpstream), ["--test test/agent-browser.real-upstream-contract.test.ts"]);
 	assert.equal(realUpstream[0]?.env?.PI_AGENT_BROWSER_REAL_UPSTREAM, "1");
+
+	const dogfood = verifySteps({ mode: "dogfood", passthrough: ["--keep-artifacts"], showHelp: false });
+	assert.deepEqual(labels(dogfood), ["./scripts/verify-agent-browser-dogfood.ts --keep-artifacts"]);
 
 	const packagePi = verifySteps({ mode: "package-pi", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(packagePi), ["./scripts/verify-package.mjs --smoke-pi"]);
@@ -66,6 +69,10 @@ test("verify facade rejects unsupported options before running a partial gate", 
 	assert.throws(
 		() => verifySteps({ mode: "real-upstream", passthrough: ["--list-files"], showHelp: false }),
 		/Option --list-files is not supported for verify mode real-upstream/,
+	);
+	assert.throws(
+		() => verifySteps({ mode: "dogfood", passthrough: ["--artifact-dir"], showHelp: false }),
+		/--artifact-dir requires a path/,
 	);
 	assert.deepEqual(parseVerifyArgs(["package", "--list-files"]), {
 		mode: "package",

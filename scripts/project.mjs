@@ -74,13 +74,16 @@ Modes:
   command-reference   Check generated command-reference block and live upstream help drift.
   benchmark           Run the deterministic agent-browser efficiency benchmark and focused tests.
   real-upstream       Run the opt-in real upstream browser contract suite (localhost fixtures, broad core commands).
+  dogfood             Run a deterministic model-free live-browser smoke through the native tool wrapper.
   package             Verify package contents.
   package-pi          Verify package contents plus isolated Pi package smoke.
   lifecycle           Run the tmux-driven configured-source lifecycle harness.
   release             Run default verification plus package-pi.
 
 Options:
-  --keep-artifacts    With lifecycle mode, preserve lifecycle temp artifacts.
+  --artifact-dir <p>  With dogfood mode, write screenshots to this directory.
+  --keep-artifacts    With lifecycle mode, preserve lifecycle temp artifacts; with dogfood, keep temp screenshots.
+  --json              With dogfood mode, print the machine-readable report only.
   --model <id>        With lifecycle mode, Pi model for tmux prompts (default zai/glm-5.1).
   --verbose           With lifecycle mode, print progress details.
   --timeout-ms <ms>   With lifecycle mode, override the per-step wait timeout (default 180000).
@@ -90,6 +93,7 @@ Examples:
   npm run verify
   npm run verify -- command-reference
   npm run verify -- real-upstream
+  npm run verify -- dogfood --keep-artifacts
   npm run verify -- package --list-files
   npm run verify -- package-pi
   npm run verify -- lifecycle --keep-artifacts --verbose
@@ -97,7 +101,7 @@ Examples:
 
 Publisher note:
   package.json prepublishOnly runs release (default + package-pi), then npm pack --dry-run during npm publish.
-  It does not run lifecycle, real-upstream, or benchmark; see docs/RELEASE.md#pre-release-checks.
+  It does not run lifecycle, real-upstream, dogfood, or benchmark; see docs/RELEASE.md#pre-release-checks.
 
 Exit codes:
   0  Verification passed or help was shown.
@@ -188,6 +192,7 @@ export function parseVerifyArgs(argv) {
 		"command-reference",
 		"benchmark",
 		"real-upstream",
+		"dogfood",
 		"package",
 		"package-pi",
 		"lifecycle",
@@ -206,6 +211,7 @@ function validatePassthrough(mode, passthrough) {
 		"command-reference": new Set(),
 		benchmark: new Set(),
 		"real-upstream": new Set(),
+		dogfood: new Set(["--artifact-dir", "--keep-artifacts", "--json"]),
 		package: new Set(["--list-files"]),
 		"package-pi": new Set(["--list-files"]),
 		lifecycle: new Set(["--keep-artifacts", "--model", "--verbose", "--timeout-ms"]),
@@ -225,6 +231,11 @@ function validatePassthrough(mode, passthrough) {
 		if (arg === "--timeout-ms") {
 			const value = passthrough[index + 1];
 			if (!value) throw new UsageError("--timeout-ms requires a value.");
+			index += 1;
+		}
+		if (arg === "--artifact-dir") {
+			const value = passthrough[index + 1];
+			if (!value || value.startsWith("-")) throw new UsageError("--artifact-dir requires a path.");
 			index += 1;
 		}
 	}
@@ -258,6 +269,8 @@ export function verifySteps(options) {
 			];
 		case "real-upstream":
 			return [localToolStep("tsx", ["--test", "test/agent-browser.real-upstream-contract.test.ts"], { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" })];
+		case "dogfood":
+			return [localToolStep("tsx", ["./scripts/verify-agent-browser-dogfood.ts", ...options.passthrough])];
 		case "package":
 			return [scriptStep(["./scripts/verify-package.mjs", ...options.passthrough])];
 		case "package-pi":
