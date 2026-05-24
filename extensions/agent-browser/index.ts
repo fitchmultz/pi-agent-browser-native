@@ -234,94 +234,21 @@ interface RecordingDependencyWarning {
 	recommendations: string[];
 }
 
-function buildMissingBinaryMessage(): string {
-	return [
-		"agent-browser is required but was not found on PATH.",
-		"This project does not bundle agent-browser.",
-		"Run `pi-agent-browser-doctor` for package/PATH diagnostics, then install agent-browser using the upstream docs:",
-		"- https://agent-browser.dev/",
-		"- https://github.com/vercel-labs/agent-browser",
-	].join("\n");
-}
 
-function buildInvocationPreview(effectiveArgs: string[]): string {
-	const preview = effectiveArgs.join(" ");
-	return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
-}
 
 const SEMANTIC_ACTION_CANDIDATE_ACTION_IDS = new Set([
 	"try-button-name-candidate",
 	"try-link-name-candidate",
 ]);
 
-function formatSemanticActionCandidateText(actions: AgentBrowserNextAction[]): string | undefined {
-	const candidateActions = actions.filter((action) => SEMANTIC_ACTION_CANDIDATE_ACTION_IDS.has(action.id) && action.params?.args);
-	if (candidateActions.length === 0) return undefined;
-	return [
-		"Agent-browser candidate fallbacks:",
-		...candidateActions.map((action) => `- ${action.id}: agent_browser ${JSON.stringify({ args: action.params?.args })} — ${action.reason}`),
-	].join("\n");
-}
 
-function buildSemanticActionCandidateActions(compiled: CompiledAgentBrowserSemanticAction): AgentBrowserNextAction[] {
-	const commandIndex = getCompiledSemanticActionCommandIndex(compiled);
-	if (commandIndex < 0 || compiled.args[commandIndex] !== "find") return [];
-	const locator = compiled.args[commandIndex + 1];
-	const value = compiled.args[commandIndex + 2];
-	if (!locator || !value) return [];
-	const sessionPrefix = getCompiledSemanticActionSessionPrefix(compiled);
-	const buildRoleCandidate = (role: string, id: string, reason: string): AgentBrowserNextAction => {
-		const args = [...sessionPrefix, "find", "role", role, compiled.action];
-		args.push("--name", value);
-		return {
-			id,
-			params: { args: redactInvocationArgs(args) },
-			reason,
-			safety: "Candidate locator fallback only; inspect the page if multiple elements could match the same accessible name.",
-			tool: "agent_browser" as const,
-		};
-	};
 
-	if (locator === "text" && compiled.action === "click") {
-		return [
-			buildRoleCandidate("button", "try-button-name-candidate", "Retry against a button with the same accessible name when text lookup misses."),
-			buildRoleCandidate("link", "try-link-name-candidate", "Retry against a link with the same accessible name when text lookup misses."),
-		];
-	}
-	return [];
-}
-
-async function collectVisibleRefFallbackDiagnostic(options: {
-	commandTokens: string[];
-	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<VisibleRefFallbackDiagnostic | undefined> {
-	if (!options.sessionName) return undefined;
-	const target = getVisibleRefFallbackTarget({ commandTokens: options.commandTokens, compiledSemanticAction: options.compiledSemanticAction });
-	if (!target) return undefined;
-	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	return buildVisibleRefFallbackDiagnosticFromSnapshot({ snapshotData, target });
-}
 
 interface SemanticActionVisibleRefResolution {
 	args: string[];
 	snapshot: SessionRefSnapshot;
 }
 
-async function resolveSemanticActionVisibleRefArgs(options: {
-	compiled: CompiledAgentBrowserSemanticAction | undefined;
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<SemanticActionVisibleRefResolution | undefined> {
-	if (!options.compiled || !options.sessionName || options.compiled.locator !== "role" || !["check", "click", "uncheck"].includes(options.compiled.action)) return undefined;
-	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const resolution = resolveVisibleRefActionFromSnapshot({ compiledAction: options.compiled, snapshotData });
-	if (!resolution) return undefined;
-	return { args: [...getCompiledSemanticActionSessionPrefix(options.compiled), ...resolution.args], snapshot: resolution.snapshot };
-}
 
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 10;
 const TUI_INVOCATION_PREVIEW_MAX_CHARS = 120;
@@ -543,19 +470,6 @@ class AgentBrowserResultComponent {
 	}
 }
 
-function buildWrapperRecoveryHint(options: {
-	pinnedBatchUnwrapMode?: PinnedBatchUnwrapMode;
-	sessionTabCorrection?: OpenResultTabCorrection;
-}): string | undefined {
-	const wrapperManagedContexts = [
-		options.sessionTabCorrection ? "session tab correction" : undefined,
-		options.pinnedBatchUnwrapMode ? "pinned batch routing" : undefined,
-	].filter((item): item is string => item !== undefined);
-	if (wrapperManagedContexts.length === 0) {
-		return undefined;
-	}
-	return `Wrapper recovery hint: this call used ${wrapperManagedContexts.join(" and ")}. Inspect details.effectiveArgs and details.sessionTabCorrection; if the selected tab looks wrong, run tab list for the same session before retrying.`;
-}
 
 const DIRECT_AGENT_BROWSER_EXECUTABLE_PATTERN = /^(?:[.~]|\.\.?|\/)?(?:[^\s;&|]+\/)?agent-browser$/;
 const HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN = /^\s*(?:command\s+-v|which|type\s+-P)\s+agent-browser\s*$/;
@@ -1021,54 +935,7 @@ function buildIpcUnsafeWaitError(source: string, timeoutMs: number, batchStep?: 
 	return `${location} requests ${timeoutMs}ms, but upstream agent-browser CLI calls must stay under its 30s IPC read timeout. Use ${SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS}ms or less per wait, split long waits into multiple tool calls, or use a page-specific shorter condition.`;
 }
 
-function validateWaitIpcTimeoutContract(commandTokens: string[], stdin: string | undefined): string | undefined {
-	const directWaitTimeout = findWaitTimeoutMs(commandTokens);
-	if (directWaitTimeout && directWaitTimeout.timeoutMs > SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS) {
-		return buildIpcUnsafeWaitError(directWaitTimeout.source, directWaitTimeout.timeoutMs);
-	}
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
-		return undefined;
-	}
-	let steps: unknown;
-	try {
-		steps = JSON.parse(stdin);
-	} catch {
-		return undefined;
-	}
-	if (!Array.isArray(steps)) {
-		return undefined;
-	}
-	for (let index = 0; index < steps.length; index += 1) {
-		const step = steps[index];
-		if (!Array.isArray(step) || !step.every((item) => typeof item === "string")) {
-			continue;
-		}
-		const waitTimeout = findWaitTimeoutMs(step);
-		if (waitTimeout && waitTimeout.timeoutMs > SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS) {
-			return buildIpcUnsafeWaitError(waitTimeout.source, waitTimeout.timeoutMs, index);
-		}
-	}
-	return undefined;
-}
 
-async function prepareAgentBrowserArgs(args: string[], stdin: string | undefined, cwd: string): Promise<PreparedAgentBrowserArgs> {
-	const preparedBatch = await prepareBatchScreenshotPaths(args, stdin, cwd);
-	if (preparedBatch) {
-		return preparedBatch;
-	}
-
-	const commandTokens = extractCommandTokens(args);
-	const normalized = await normalizeScreenshotPathInTokens(commandTokens, cwd);
-	if (!normalized.request) {
-		return { args };
-	}
-
-	const commandStartIndex = args.length - commandTokens.length;
-	return {
-		args: [...args.slice(0, commandStartIndex), ...normalized.tokens],
-		screenshotPathRequest: normalized.request,
-	};
-}
 
 async function pathExists(path: string): Promise<boolean> {
 	try {
@@ -1112,73 +979,8 @@ async function repairScreenshotData(options: {
 	};
 }
 
-async function repairScreenshotArtifact(options: {
-	cwd: string;
-	envelope?: AgentBrowserEnvelope;
-	request?: ScreenshotPathRequest;
-}): Promise<{ envelope?: AgentBrowserEnvelope; request?: ScreenshotArtifactRequest }> {
-	const { cwd, envelope, request } = options;
-	if (!request || !envelope || !isRecord(envelope.data)) {
-		return { envelope, request };
-	}
 
-	const repaired = await repairScreenshotData({ cwd, data: envelope.data, request });
-	return {
-		envelope: { ...envelope, data: repaired.data },
-		request: repaired.request,
-	};
-}
 
-async function repairBatchScreenshotArtifacts(options: {
-	cwd: string;
-	envelope?: AgentBrowserEnvelope;
-	requests?: Array<ScreenshotPathRequest | undefined>;
-}): Promise<{ envelope?: AgentBrowserEnvelope; requests?: Array<ScreenshotArtifactRequest | undefined> }> {
-	const { cwd, envelope, requests } = options;
-	if (!envelope || !Array.isArray(envelope.data) || !requests?.some((request) => request !== undefined)) {
-		return { envelope, requests };
-	}
-
-	const repairedRequests: Array<ScreenshotArtifactRequest | undefined> = [];
-	const repairedData = await Promise.all(envelope.data.map(async (item, index) => {
-		const request = requests[index];
-		if (!request || !isRecord(item) || !isRecord(item.result)) {
-			return item;
-		}
-		const repaired = await repairScreenshotData({ cwd, data: item.result, request });
-		repairedRequests[index] = repaired.request;
-		return {
-			...item,
-			result: repaired.data,
-		};
-	}));
-
-	return {
-		envelope: { ...envelope, data: repairedData },
-		requests: repairedRequests,
-	};
-}
-
-function buildJsonVisibleContent(options: {
-	error: unknown;
-	presentation: Awaited<ReturnType<typeof buildToolPresentation>>;
-	succeeded: boolean;
-	warnings?: string[];
-}): Array<{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }> {
-	const { error, presentation, succeeded, warnings } = options;
-	const payload = redactSensitiveValue({
-		artifacts: presentation.artifacts,
-		data: presentation.data,
-		error,
-		success: succeeded,
-		warnings: warnings && warnings.length > 0 ? warnings : undefined,
-	});
-	if (isRecord(payload) && isRecord(payload.data) && isRecord(presentation.data) && typeof presentation.data.wsUrl === "string") {
-		payload.data.wsUrl = presentation.data.wsUrl;
-	}
-	const images = presentation.content.filter((item): item is { data: string; mimeType: string; type: "image" } => item.type === "image");
-	return [{ type: "text", text: JSON.stringify(payload, null, 2) }, ...images];
-}
 
 function getBatchAnnotateValidationError(args: string[], stdin: string | undefined): string | undefined {
 	const commandTokens = extractCommandTokens(args);
@@ -1208,51 +1010,8 @@ function getTraceOwner(command: string | undefined): TraceOwner | undefined {
 	return command === "trace" || command === "profiler" ? command : undefined;
 }
 
-function getTraceOwnerGuardMessage(options: {
-	command: string | undefined;
-	sessionName: string | undefined;
-	subcommand: string | undefined;
-	traceOwners: Map<string, TraceOwner>;
-}): string | undefined {
-	const owner = getTraceOwner(options.command);
-	if (!owner || !options.sessionName || (options.subcommand !== "start" && options.subcommand !== "stop")) {
-		return undefined;
-	}
-	const activeOwner = options.traceOwners.get(options.sessionName);
-	if (!activeOwner || activeOwner === owner) {
-		return undefined;
-	}
-	return options.subcommand === "start"
-		? `Wrapper believes ${activeOwner} tracing is active for session ${options.sessionName}; stop ${activeOwner} before starting ${owner}.`
-		: `Wrapper believes tracing for session ${options.sessionName} is owned by ${activeOwner}; run ${activeOwner} stop instead of ${owner} stop.`;
-}
 
-function updateTraceOwnerState(options: {
-	command: string | undefined;
-	sessionName: string | undefined;
-	subcommand: string | undefined;
-	succeeded: boolean;
-	traceOwners: Map<string, TraceOwner>;
-}): void {
-	const owner = getTraceOwner(options.command);
-	if (!owner || !options.sessionName || !options.succeeded) {
-		return;
-	}
-	if (options.subcommand === "start") {
-		options.traceOwners.set(options.sessionName, owner);
-	}
-	if (options.subcommand === "stop" && options.traceOwners.get(options.sessionName) === owner) {
-		options.traceOwners.delete(options.sessionName);
-	}
-}
 
-function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {
-	return (
-		command !== undefined &&
-		NAVIGATION_SUMMARY_COMMANDS.has(command) &&
-		(!isRecord(data) || (typeof data.title !== "string" && typeof data.url !== "string"))
-	);
-}
 
 function extractStringResultField(data: unknown, fieldName: "result" | "title" | "url" | "value"): string | undefined {
 	if (typeof data === "string") {
@@ -1305,13 +1064,7 @@ interface AboutBlankSessionMismatch {
 	targetUrl: string;
 }
 
-function buildAboutBlankRecoveryHint(): string {
-	return "agent_browser detected that the active tab became about:blank while this session still had a prior intended tab. Run tab list for this session and re-select the intended tab, or retry with sessionMode=fresh if the tab is gone.";
-}
 
-function buildAboutBlankWarning(mismatch: AboutBlankSessionMismatch): string {
-	return `Warning: agent_browser detected that this session returned about:blank while the prior intended tab was ${mismatch.targetUrl}. ${mismatch.recoveryApplied ? "The wrapper re-selected the intended tab for the session." : "No matching tab could be re-selected; run tab list for the same session or retry with sessionMode=fresh."}`;
-}
 
 function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 	return Array.isArray(item.command) ? item.command.filter((token): token is string => typeof token === "string") : [];
@@ -1335,12 +1088,6 @@ function isPasswordStdinAuthSave(options: { command?: string; commandTokens: str
 	return options.command === "auth" && options.commandTokens[1] === "save" && options.commandTokens.includes("--password-stdin");
 }
 
-function getExactSensitiveStdinValues(options: { command?: string; commandTokens: string[]; stdin?: string }): string[] {
-	if (options.stdin === undefined || !isPasswordStdinAuthSave(options)) {
-		return [];
-	}
-	return [...new Set([options.stdin, options.stdin.trimEnd(), options.stdin.trim()].filter((value) => value.length > 0))];
-}
 
 function redactExactSensitiveText(text: string, sensitiveValues: string[]): string {
 	let redacted = text;
@@ -1741,42 +1488,7 @@ function buildElectronLifecycleNextActions(record: ElectronLaunchRecord): AgentB
 	}) ?? [];
 }
 
-function buildElectronPostCommandHealthDiagnostic(options: {
-	command?: string;
-	record: ElectronLaunchRecord;
-	status: ElectronLaunchStatus;
-	target?: SessionTabTarget;
-}): ElectronPostCommandHealthDiagnostic | undefined {
-	let reason: ElectronPostCommandHealthReason | undefined;
-	if (options.status.pidAlive === false) reason = "process-dead";
-	else if (!options.status.portAlive) reason = "debug-port-dead";
-	else if (isAboutBlankUrl(options.target?.url) && getLiveElectronRendererTargets(options.status.targets).length === 0) reason = "about-blank-no-live-target";
-	if (!reason) return undefined;
-	const nextActions = buildElectronLifecycleNextActions(options.record);
-	const commandText = options.command ? `${options.command} command` : "command";
-	const statusText = `${options.status.portAlive ? "debug port alive" : "debug port dead"}${options.status.pidAlive === undefined ? "" : options.status.pidAlive ? ", pid alive" : ", pid dead"}`;
-	const summary = `Electron lifecycle warning: ${commandText} completed, but launch ${options.record.launchId} is no longer healthy (${statusText}).`;
-	return {
-		appName: options.record.appName,
-		command: options.command,
-		launchId: options.record.launchId,
-		nextActionIds: nextActions.map((action) => action.id),
-		reason,
-		sessionName: options.record.sessionName,
-		status: options.status,
-		summary,
-		target: options.target,
-	};
-}
 
-function formatElectronPostCommandHealthText(diagnostic: ElectronPostCommandHealthDiagnostic | undefined): string | undefined {
-	if (!diagnostic) return undefined;
-	const lines = [diagnostic.summary];
-	if (diagnostic.target?.url) lines.push(`Current browser session target: ${diagnostic.target.url}.`);
-	lines.push(`Status: ${diagnostic.status.portAlive ? "debug port alive" : "debug port dead"}${diagnostic.status.pidAlive === undefined ? "" : diagnostic.status.pidAlive ? ", pid alive" : ", pid dead"}; ${diagnostic.status.targets.length} CDP target(s).`);
-	lines.push(`Next: run electron.status/electron.probe with launchId ${diagnostic.launchId}, cleanup the wrapper-owned launch if dead, or relaunch the app.`);
-	return lines.join("\n");
-}
 
 function buildElectronIdentifiers(record: ElectronLaunchRecord): { appName: string; launchId: string; sessionName?: string } {
 	return { appName: record.appName, launchId: record.launchId, sessionName: record.sessionName };
@@ -1939,37 +1651,11 @@ function buildElectronHostFailureResult(options: {
 	return { content: [{ type: "text", text: redactSensitiveText(text) }], details: redactToolDetails(details, []), isError: true };
 }
 
-function getElectronLaunchFailureCategory(failure: ElectronLaunchFailure): "policy-blocked" | "timeout" | "upstream-error" | "validation-error" {
-	if (failure.reason === "policy-blocked") return "policy-blocked";
-	if (failure.reason === "timeout") return "timeout";
-	if (failure.reason === "non-electron-target") return "validation-error";
-	return "upstream-error";
-}
 
 function sleepMs(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function collectElectronHandoff(options: {
-	cwd: string;
-	handoff: "connect" | "snapshot" | "tabs";
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<ElectronHandoffSummary> {
-	if (options.handoff === "connect") return { handoff: "connect" };
-	const tabs = await runSessionCommandData({ args: ["tab", "list"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	if (options.handoff === "tabs") return { handoff: "tabs", tabs };
-	let snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	let refSnapshot = extractRefSnapshotFromData(snapshot);
-	let snapshotRetryCount = 0;
-	while ((!refSnapshot || refSnapshot.refIds.length === 0) && snapshotRetryCount < 2) {
-		snapshotRetryCount += 1;
-		await sleepMs(250);
-		snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-		refSnapshot = extractRefSnapshotFromData(snapshot);
-	}
-	return { handoff: "snapshot", refSnapshot, snapshot, ...(snapshotRetryCount > 0 ? { snapshotRetryCount } : {}), tabs };
-}
 
 interface ElectronProbeFocusedElement {
 	ariaLabel?: string;
@@ -2332,46 +2018,7 @@ function buildElectronProbeResult(options: {
 	};
 }
 
-function formatElectronLaunchText(options: {
-	handoff?: ElectronHandoffSummary;
-	record: ElectronLaunchRecord;
-	targets: ElectronCdpTarget[];
-	upstreamText: string;
-}): string {
-	const lines = [
-		`Electron launch: ${options.record.appName} attached as ${options.record.sessionName ?? "managed session"} (launchId ${options.record.launchId}, port ${options.record.port}).`,
-		`Identifiers: launchId ${options.record.launchId} for electron.status/electron.cleanup/electron.probe; sessionName ${options.record.sessionName ?? "not attached"} for browser snapshot/tab commands.`,
-		ELECTRON_PROFILE_ISOLATION_NOTE,
-		ELECTRON_EXISTING_AUTH_GUIDANCE,
-		...formatElectronTargetLines(options.targets),
-	];
-	if (options.handoff?.handoff === "snapshot") lines.push(options.handoff.refSnapshot && options.handoff.refSnapshot.refIds.length > 0
-		? `Snapshot handoff: ${options.handoff.refSnapshot.refIds.length} interactive ref(s)${options.handoff.snapshotRetryCount ? ` after ${options.handoff.snapshotRetryCount} retry attempt(s)` : ""}.`
-		: "Snapshot handoff: no interactive refs returned after a short readiness retry; run snapshot -i once more before assuming the Electron UI is unusable.");
-	else if (options.handoff?.handoff === "tabs") lines.push("Tabs handoff completed: safer diagnostic starting point; no interactive refs were captured.");
-	else if (options.handoff?.handoff === "connect") lines.push("Connect handoff completed: run snapshot -i before using interactive refs.");
-	lines.push(`Cleanup: use details.nextActions cleanup-electron-launch or call electron.cleanup with launchId ${options.record.launchId} when finished.`);
-	if (options.handoff?.error) lines.push(`Handoff warning: ${options.handoff.error}`);
-	if (options.upstreamText.trim().length > 0) lines.push("", options.upstreamText.trim());
-	return lines.join("\n");
-}
 
-function validateStdinCommandContract(options: { command?: string; commandTokens: string[]; stdin?: string }): string | undefined {
-	if (options.stdin === undefined) {
-		return undefined;
-	}
-	if (options.command === "batch") {
-		return undefined;
-	}
-	if (options.command === "eval" && options.commandTokens.includes("--stdin")) {
-		return undefined;
-	}
-	if (isPasswordStdinAuthSave(options)) {
-		return undefined;
-	}
-	const commandLabel = options.command ? `\`${options.command}\`` : "the requested command";
-	return `agent_browser stdin is only supported for \`batch\`, \`eval --stdin\`, and \`auth save --password-stdin\`; remove stdin from ${commandLabel} or use one of those command forms.`;
-}
 
 function supportsPinnedStdinCommand(options: { command?: string; commandTokens: string[]; stdin?: string }): boolean {
 	if (options.command === "batch") {
@@ -2386,21 +2033,6 @@ function supportsPinnedStdinCommand(options: { command?: string; commandTokens: 
 	return false;
 }
 
-function shouldPinSessionTabForCommand(options: {
-	command?: string;
-	commandTokens: string[];
-	pinningRequired?: boolean;
-	sessionName?: string;
-	stdin?: string;
-}): boolean {
-	return (
-		options.pinningRequired === true &&
-		options.sessionName !== undefined &&
-		options.command !== undefined &&
-		!SESSION_TAB_PINNING_EXCLUDED_COMMANDS.has(options.command) &&
-		supportsPinnedStdinCommand(options)
-	);
-}
 
 function validateUserBatchStep(
 	step: unknown,
@@ -2493,16 +2125,6 @@ const REF_GUARDED_COMMANDS = new Set([
 	"upload",
 ]);
 
-function getStaleRefArgs(commandTokens: string[], stdin?: string): string[] {
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
-		return commandTokens;
-	}
-	const parsed = parseUserBatchStdin(stdin);
-	if (parsed.error || parsed.steps === undefined) {
-		return commandTokens;
-	}
-	return parsed.steps.flatMap((step) => step);
-}
 
 function collectRefsFromTokens(tokens: string[]): string[] {
 	return tokens.filter((token) => /^@e\d+\b/.test(token)).map((token) => token.slice(1));
@@ -2545,93 +2167,8 @@ function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string)
 	return undefined;
 }
 
-function buildStaleRefPreflight(options: {
-	commandTokens: string[];
-	currentTarget?: SessionTabTarget;
-	refSnapshot?: SessionRefSnapshot;
-	refSnapshotInvalidation?: SessionRefSnapshotInvalidation;
-	stdin?: string;
-}): StaleRefPreflight | undefined {
-	const guardedRefIds = [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin))];
-	const usedRefIds = options.refSnapshotInvalidation
-		? [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin, { includeRefsAfterBatchSnapshot: true }))]
-		: guardedRefIds;
-	const batchInvalidationMessage = getBatchRefInvalidationMessage(options.commandTokens, options.stdin);
-	if (batchInvalidationMessage && guardedRefIds.length > 0) {
-		return {
-			message: batchInvalidationMessage,
-			refIds: guardedRefIds,
-			snapshot: options.refSnapshot,
-		};
-	}
-	if (usedRefIds.length === 0) return undefined;
-	if (options.refSnapshotInvalidation) {
-		return {
-			message: `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} cannot be used because the latest snapshot for this session reported No active page. Run snapshot -i successfully before using page-scoped refs.`,
-			refIds: usedRefIds,
-			snapshotInvalidation: options.refSnapshotInvalidation,
-		};
-	}
-	if (!options.refSnapshot) return undefined;
-	if (!targetsMatch(options.refSnapshot.target, options.currentTarget)) {
-		return {
-			message: `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} came from a snapshot for ${options.refSnapshot.target?.url ?? "a prior page"}, but the current session target is ${options.currentTarget?.url ?? "unknown"}. Run snapshot -i again before using page-scoped refs.`,
-			refIds: usedRefIds,
-			snapshot: options.refSnapshot,
-		};
-	}
-	const knownRefs = new Set(options.refSnapshot.refIds);
-	const missingRefs = usedRefIds.filter((refId) => !knownRefs.has(refId));
-	if (missingRefs.length > 0) {
-		return {
-			message: `Ref ${missingRefs.map((refId) => `@${refId}`).join(", ")} was not present in the latest snapshot for this session. Run snapshot -i again before using page-scoped refs.`,
-			refIds: missingRefs,
-			snapshot: options.refSnapshot,
-		};
-	}
-	return undefined;
-}
 
-function buildPinnedBatchPlan(options: {
-	command?: string;
-	commandTokens: string[];
-	selectedTab: string;
-	stdin?: string;
-}): PinnedBatchPlan | { error: string } | undefined {
-	if (options.command === "batch") {
-		const parsed = parseUserBatchStdin(options.stdin);
-		if (parsed.error) {
-			return { error: parsed.error };
-		}
-		const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
-		return {
-			includeNavigationSummary: false,
-			steps: [tabSelectionStep, ...(parsed.steps ?? [])],
-			unwrapMode: "user-batch",
-		};
-	}
-	if (options.commandTokens.length === 0) {
-		return undefined;
-	}
-	const includeNavigationSummary = options.command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(options.command);
-	const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
-	const commandStep = options.commandTokens as BatchCommandStep;
-	const navigationSummarySteps: BatchCommandStep[] = includeNavigationSummary ? [["eval", NAVIGATION_SUMMARY_EVAL]] : [];
-	return {
-		includeNavigationSummary,
-		steps: [tabSelectionStep, commandStep, ...navigationSummarySteps],
-		unwrapMode: "single-command",
-	};
-}
 
-function shouldCorrectSessionTabAfterCommand(options: { command?: string; pinningRequired?: boolean; sessionName?: string }): boolean {
-	return (
-		options.pinningRequired === true &&
-		options.sessionName !== undefined &&
-		options.command !== undefined &&
-		!SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS.has(options.command)
-	);
-}
 
 function selectSessionTargetTab(options: {
 	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }>;
@@ -2644,61 +2181,6 @@ function selectSessionTargetTab(options: {
 	});
 }
 
-function unwrapPinnedSessionBatchEnvelope(options: {
-	envelope?: AgentBrowserEnvelope;
-	includeNavigationSummary: boolean;
-	mode?: PinnedBatchUnwrapMode;
-}): { envelope?: AgentBrowserEnvelope; navigationSummary?: NavigationSummary; parseError?: string } {
-	if (!options.envelope) {
-		return {};
-	}
-	if (!Array.isArray(options.envelope.data)) {
-		return {
-			parseError: "agent-browser returned an unexpected response while applying the wrapper's tab-pinning batch.",
-		};
-	}
-
-	const steps = options.envelope.data.filter(isRecord) as AgentBrowserBatchResult[];
-	const tabSelectionStep = steps[0];
-	const commandStep = steps[1];
-	if (tabSelectionStep?.success === false) {
-		return {
-			envelope: {
-				success: false,
-				error: tabSelectionStep.error ?? "agent-browser could not re-select the intended tab before running the command.",
-			},
-		};
-	}
-	if (options.mode === "user-batch") {
-		const userSteps = steps.slice(1);
-		return {
-			envelope: {
-				success: userSteps.every((step) => step.success !== false),
-				data: userSteps,
-				error: userSteps.find((step) => step.success === false)?.error,
-			},
-		};
-	}
-	if (!commandStep) {
-		return {
-			envelope: {
-				success: false,
-				error: "agent-browser did not return the corrected command result.",
-			},
-		};
-	}
-
-	const navigationSummaryStep = options.includeNavigationSummary ? steps[2] : undefined;
-	const navigationSummary = normalizeSessionTabTarget(extractNavigationSummaryFromData(navigationSummaryStep?.result));
-	return {
-		envelope: {
-			success: commandStep.success !== false,
-			data: commandStep.result,
-			error: commandStep.success === false ? commandStep.error : undefined,
-		},
-		navigationSummary,
-	};
-}
 
 async function runSessionCommandData(options: {
 	args: string[];
@@ -2772,45 +2254,7 @@ function extractFillVerificationValue(data: unknown): string | undefined {
 	return undefined;
 }
 
-async function collectFillVerificationDiagnostic(options: {
-	commandTokens: string[];
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<FillVerificationDiagnostic | undefined> {
-	const fill = getTopLevelFillInvocation(options.commandTokens);
-	if (!fill || !options.sessionName) return undefined;
-	let valueData: unknown | undefined;
-	try {
-		valueData = await runSessionCommandData({
-			args: ["get", "value", fill.selector],
-			cwd: options.cwd,
-			sessionName: options.sessionName,
-			signal: options.signal,
-			timeoutMs: ELECTRON_FILL_VERIFICATION_TIMEOUT_MS,
-		});
-	} catch {
-		return undefined;
-	}
-	const actual = extractFillVerificationValue(valueData);
-	if (actual === undefined || actual === fill.expected) return undefined;
-	const diagnostic: FillVerificationDiagnostic = {
-		actual: actual.length > 0 ? boundElectronProbeString(actual, 160) : "",
-		expected: boundElectronProbeString(fill.expected, 160) ?? fill.expected,
-		nextActionIds: [],
-		selector: fill.selector,
-		status: "mismatch",
-		summary: `Fill verification warning: fill ${fill.selector} reported success, but get value returned ${actual.length > 0 ? `"${boundElectronProbeString(actual, 80)}"` : "an empty value"}.`,
-	};
-	diagnostic.nextActionIds = buildFillVerificationNextActions(diagnostic, options.sessionName).map((action) => action.id);
-	return diagnostic;
-}
 
-function formatFillVerificationText(diagnostic: FillVerificationDiagnostic | undefined): string | undefined {
-	if (!diagnostic) return undefined;
-	const actual = diagnostic.actual !== undefined ? `actual "${diagnostic.actual}"` : "actual value unavailable";
-	return `${diagnostic.summary}\nExpected: "${diagnostic.expected}"; ${actual}.\nNext: re-run snapshot -i, then prefer click/focus plus keyboard type for custom Electron quick-input controls before submitting.`;
-}
 
 function buildElectronRefFreshnessNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
 	return [{
@@ -2822,42 +2266,8 @@ function buildElectronRefFreshnessNextActions(sessionName: string | undefined): 
 	}];
 }
 
-function buildElectronRefFreshnessDiagnostic(options: {
-	command?: string;
-	commandTokens: string[];
-	record?: ElectronLaunchRecord;
-	sessionName?: string;
-	stdin?: string;
-}): ElectronRefFreshnessDiagnostic | undefined {
-	if (!options.record || !shouldInspectElectronPostCommandHealth(options.command)) return undefined;
-	if (getGuardedRefUsage(options.commandTokens, options.stdin).length === 0) return undefined;
-	const nextActions = buildElectronRefFreshnessNextActions(options.sessionName);
-	return {
-		command: options.command,
-		launchId: options.record.launchId,
-		nextActionIds: nextActions.map((action) => action.id),
-		sessionName: options.sessionName,
-		summary: `Electron ref freshness: ${options.command ?? "mutation"} used page-scoped refs in an Electron UI. Re-run snapshot -i before reusing old @e refs, even if the URL did not change.`,
-	};
-}
 
-function formatElectronRefFreshnessText(diagnostic: ElectronRefFreshnessDiagnostic | undefined): string | undefined {
-	return diagnostic?.summary;
-}
 
-async function collectNavigationSummary(options: {
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<NavigationSummary | undefined> {
-	return extractNavigationSummaryFromData(await runSessionCommandData({
-		args: ["eval", "--stdin"],
-		cwd: options.cwd,
-		sessionName: options.sessionName,
-		signal: options.signal,
-		stdin: NAVIGATION_SUMMARY_EVAL,
-	}));
-}
 
 function extractScrollPositionSnapshot(data: unknown): ScrollPositionSnapshot | undefined {
 	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
@@ -2919,19 +2329,6 @@ const SCROLL_POSITION_EVAL = `(() => {
   return { ...viewport, containerCount: containers.length, containers };
 })()`;
 
-async function collectScrollPositionSnapshot(options: {
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<ScrollPositionSnapshot | undefined> {
-	return extractScrollPositionSnapshot(await runSessionCommandData({
-		args: ["eval", "--stdin"],
-		cwd: options.cwd,
-		sessionName: options.sessionName,
-		signal: options.signal,
-		stdin: SCROLL_POSITION_EVAL,
-	}));
-}
 
 function sameScrollPositionSnapshot(left: ScrollPositionSnapshot, right: ScrollPositionSnapshot): boolean {
 	if (
@@ -2949,55 +2346,9 @@ function sameScrollPositionSnapshot(left: ScrollPositionSnapshot, right: ScrollP
 	});
 }
 
-function buildScrollNoopDiagnostic(before: ScrollPositionSnapshot | undefined, after: ScrollPositionSnapshot | undefined): ScrollNoopDiagnostic | undefined {
-	if (!before || !after || !sameScrollPositionSnapshot(before, after)) return undefined;
-	return {
-		after,
-		before,
-		message: "Scroll reported success, but the viewport and sampled scrollable containers did not change position.",
-		reason: "no-observed-scroll-position-change",
-		recommendations: [
-			"Run snapshot -i or screenshot to confirm what is visible before choosing the next action.",
-			"On dashboards and panes with nested scrolling, use scrollintoview <@ref> for a visible target or target the actual scrollable region instead of repeating page scrolls.",
-		],
-	};
-}
 
-function buildScrollNoopNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
-	return [
-		{
-			id: "inspect-after-noop-scroll",
-			params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
-			reason: "Refresh interactive refs and inspect whether the intended target is inside a nested scroll container.",
-			safety: "Do not assume repeated page scrolls will move dashboard panels or nested panes.",
-			tool: "agent_browser",
-		},
-		{
-			id: "verify-noop-scroll-visually",
-			params: { args: withOptionalSessionArgs(sessionName, ["screenshot"]) },
-			reason: "Capture the current viewport to verify whether the scroll actually changed visible content.",
-			safety: "Use screenshot evidence before concluding a dense dashboard did or did not move.",
-			tool: "agent_browser",
-		},
-	];
-}
 
-function formatScrollNoopDiagnosticText(diagnostic: ScrollNoopDiagnostic | undefined): string | undefined {
-	if (!diagnostic) return undefined;
-	return [
-		"Scroll diagnostic: no observed scroll movement.",
-		`Reason: ${diagnostic.message}`,
-		`Sampled scrollable containers: ${diagnostic.after.containers.length}/${diagnostic.after.containerCount}.`,
-		...diagnostic.recommendations.map((recommendation) => `- ${recommendation}`),
-	].join("\n");
-}
 
-function mergeNavigationSummaryIntoData(data: unknown, navigationSummary: NavigationSummary): unknown {
-	if (isRecord(data)) {
-		return { ...data, navigationSummary };
-	}
-	return { navigationSummary, result: data };
-}
 
 const COMBOBOX_FOCUS_EVAL = `(() => {
   const isVisible = (element) => {
@@ -3063,59 +2414,8 @@ function isComboboxFocusDiagnosticSemanticAction(compiled: CompiledAgentBrowserS
 	return /^(?:combobox|listbox)$/i.test(getCompiledSemanticActionRoleValue(compiled) ?? "");
 }
 
-async function collectComboboxFocusDiagnostic(options: {
-	command?: string;
-	commandTokens: string[];
-	cwd: string;
-	semanticAction?: CompiledAgentBrowserSemanticAction;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<ComboboxFocusDiagnostic | undefined> {
-	if (!isComboboxFocusDiagnosticCommand(options.command, options.commandTokens) && !isComboboxFocusDiagnosticSemanticAction(options.semanticAction)) return undefined;
-	return extractComboboxFocusDiagnostic(await runSessionCommandData({
-		args: ["eval", "--stdin"],
-		cwd: options.cwd,
-		sessionName: options.sessionName,
-		signal: options.signal,
-		stdin: COMBOBOX_FOCUS_EVAL,
-	}));
-}
 
-function buildComboboxFocusNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
-	return [
-		{
-			id: "inspect-focused-combobox",
-			params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
-			reason: "Inspect the focused combobox and any portal/listbox refs before choosing an option.",
-			safety: "Prefer visible option refs or select when a native/selectable option list is exposed.",
-			tool: "agent_browser",
-		},
-		{
-			id: "try-open-combobox-with-arrow",
-			params: { args: withOptionalSessionArgs(sessionName, ["press", "ArrowDown"]) },
-			reason: "Many searchable comboboxes open their option list with ArrowDown after focus.",
-			safety: "Use only when the focused combobox is still the intended control, then re-snapshot before selecting.",
-			tool: "agent_browser",
-		},
-		{
-			id: "try-open-combobox-with-enter",
-			params: { args: withOptionalSessionArgs(sessionName, ["press", "Enter"]) },
-			reason: "Some comboboxes open or confirm their option list with Enter after focus.",
-			safety: "Enter may select a highlighted/default option; prefer ArrowDown first unless Enter is the app's expected opener.",
-			tool: "agent_browser",
-		},
-	];
-}
 
-function formatComboboxFocusDiagnosticText(diagnostic: ComboboxFocusDiagnostic | undefined): string | undefined {
-	if (!diagnostic) return undefined;
-	const label = diagnostic.activeElement.name ? ` (${diagnostic.activeElement.name})` : "";
-	return [
-		`Combobox diagnostic: focused combobox did not expose visible options${label}.`,
-		`Reason: ${diagnostic.message}`,
-		...diagnostic.recommendations.map((recommendation) => `- ${recommendation}`),
-	].join("\n");
-}
 
 function getRecordStartLikeCommand(command: string | undefined, commandTokens: string[]): RecordingDependencyWarning["command"] | undefined {
 	if (command !== "record") return undefined;
@@ -3144,35 +2444,7 @@ async function executableExistsOnPath(command: string): Promise<boolean> {
 	return false;
 }
 
-async function collectRecordingDependencyWarning(options: {
-	command: string | undefined;
-	commandTokens: string[];
-	succeeded: boolean;
-}): Promise<RecordingDependencyWarning | undefined> {
-	if (!options.succeeded) return undefined;
-	const recordCommand = getRecordStartLikeCommand(options.command, options.commandTokens);
-	if (!recordCommand) return undefined;
-	if (await executableExistsOnPath("ffmpeg")) return undefined;
-	return {
-		command: recordCommand,
-		dependency: "ffmpeg",
-		message: `${recordCommand} can begin recording, but record stop needs ffmpeg on PATH to encode the WebM output.`,
-		reason: "ffmpeg-missing-for-recording",
-		recommendations: [
-			"Install ffmpeg before relying on this recording workflow; on macOS with Homebrew, brew install ffmpeg or brew install ffmpeg-full.",
-			"If ffmpeg was just installed, restart pi or ensure the PATH visible to pi includes the ffmpeg binary before running record stop.",
-		],
-	};
-}
 
-function formatRecordingDependencyWarningText(warning: RecordingDependencyWarning | undefined): string | undefined {
-	if (!warning) return undefined;
-	return [
-		"Recording dependency warning: ffmpeg not found on PATH.",
-		`Reason: ${warning.message}`,
-		...warning.recommendations.map((recommendation) => `- ${recommendation}`),
-	].join("\n");
-}
 
 function getSnapshotRefRecord(data: unknown): Record<string, unknown> | undefined {
 	return isRecord(data) && isRecord(data.refs) ? data.refs : undefined;
@@ -3210,31 +2482,7 @@ function getOverlayBlockerCandidates(snapshotData: unknown): OverlayBlockerCandi
 	return candidates;
 }
 
-function formatOverlayBlockerText(diagnostic: OverlayBlockerDiagnostic): string {
-	return [
-		"Possible overlay blockers:",
-		...diagnostic.candidates.map((candidate) => `- ${candidate.ref}${candidate.role ? ` ${candidate.role}` : ""}${candidate.name ? ` ${JSON.stringify(candidate.name)}` : ""}: ${candidate.reason}`),
-	].join("\n");
-}
 
-function buildOverlayBlockerNextActions(options: { diagnostic: OverlayBlockerDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
-	return [
-		{
-			id: "inspect-overlay-state",
-			params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) },
-			reason: "Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.",
-			safety: "Read-only inspection; use current refs from this snapshot before interacting.",
-			tool: "agent_browser" as const,
-		},
-		...options.diagnostic.candidates.map((candidate, index) => ({
-			id: `try-overlay-blocker-candidate-${index + 1}`,
-			params: { args: withOptionalSessionArgs(options.sessionName, candidate.args) },
-			reason: candidate.reason,
-			safety: "Only click this if the candidate is clearly a close/dismiss control for an overlay that blocks the intended workflow.",
-			tool: "agent_browser" as const,
-		})),
-	];
-}
 
 function buildVisibleTextProbeScript(selector: string): string {
 	return `(() => {\n  const selector = ${JSON.stringify(selector)};\n  const isVisible = (element) => {\n    const style = window.getComputedStyle(element);\n    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;\n    return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);\n  };\n  let matches = [];\n  try {\n    matches = Array.from(document.querySelectorAll(selector));\n  } catch (error) {\n    return JSON.stringify({ selector, error: error instanceof Error ? error.message : String(error) });\n  }\n  const visible = matches.filter(isVisible);\n  const trim = (value) => typeof value === 'string' ? value.trim().replace(/\\s+/g, ' ').slice(0, 200) : undefined;\n  return JSON.stringify({\n    selector,\n    matchCount: matches.length,\n    visibleCount: visible.length,\n    firstMatchVisible: matches[0] ? isVisible(matches[0]) : undefined,\n    firstTextPreview: trim(matches[0]?.textContent),\n    firstVisibleTextPreview: trim(visible[0]?.textContent),\n  });\n})()`;
@@ -3309,38 +2557,7 @@ function getSuccessfulGetTextSelectors(options: { commandInfo: CommandInfo; comm
 			: [];
 }
 
-async function collectSelectorTextVisibilityDiagnostics(options: {
-	commandInfo: CommandInfo;
-	commandTokens: string[];
-	cwd: string;
-	data: unknown;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<SelectorTextVisibilityDiagnostic[]> {
-	const selectors = getSuccessfulGetTextSelectors(options);
-	const diagnostics: SelectorTextVisibilityDiagnostic[] = [];
-	for (const selector of selectors) {
-		const diagnostic = await collectSelectorTextVisibilityDiagnosticForSelector({
-			cwd: options.cwd,
-			selector,
-			sessionName: options.sessionName,
-			signal: options.signal,
-		});
-		if (diagnostic) diagnostics.push(diagnostic);
-	}
-	return diagnostics.sort((left, right) => Number(right.firstMatchVisible === false) - Number(left.firstMatchVisible === false));
-}
 
-function formatSelectorTextVisibilityText(diagnostics: SelectorTextVisibilityDiagnostic[]): string | undefined {
-	if (diagnostics.length === 0) return undefined;
-	return diagnostics.flatMap((diagnostic, index) => {
-		const actionId = index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`;
-		const lines = [`Selector text visibility warning: ${diagnostic.summary}`];
-		if (diagnostic.firstVisibleTextPreview) lines.push(`First visible text preview: ${JSON.stringify(diagnostic.firstVisibleTextPreview)}`);
-		lines.push(`Next action: use details.nextActions ${actionId} before trusting this selector text.`);
-		return lines;
-	}).join("\n");
-}
 
 function isElectronLikeRendererUrl(url: string | undefined): boolean {
 	if (!url) return false;
@@ -3378,92 +2595,10 @@ function getElectronTextScopeContext(options: {
 	return undefined;
 }
 
-function getSourceLookupElectronContext(options: {
-	currentTarget?: SessionTabTarget;
-	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
-	priorTarget?: SessionTabTarget;
-	sessionName?: string;
-}): AgentBrowserSourceLookupElectronContext | undefined {
-	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords);
-	if (!record) return undefined;
-	const url = options.currentTarget?.url ?? options.priorTarget?.url;
-	return {
-		appName: record.appName,
-		appPath: record.appPath,
-		executablePath: record.executablePath,
-		launchId: record.launchId,
-		sessionName: record.sessionName ?? options.sessionName,
-		url,
-	};
-}
 
-function buildSourceLookupElectronNextActions(sourceLookup: AgentBrowserSourceLookupAnalysis | undefined): AgentBrowserNextAction[] {
-	if (sourceLookup?.status !== "no-candidates" || !sourceLookup.electronContext) return [];
-	const actions: AgentBrowserNextAction[] = [];
-	const { launchId, sessionName } = sourceLookup.electronContext;
-	if (sessionName) {
-		actions.push({
-			id: "snapshot-electron-session",
-			params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) },
-			reason: "Refresh interactive refs in the attached Electron session before retrying source lookup with a narrower target.",
-			safety: "Read-only snapshot; no app mutation.",
-			tool: "agent_browser",
-		});
-	}
-	if (launchId) {
-		actions.push({
-			id: "probe-electron-launch",
-			params: { electron: { action: "probe", launchId } },
-			reason: "Collect bounded wrapper/session context for the packaged Electron launch after sourceLookup found no candidates.",
-			safety: "Read-only probe of title, URL, focus, tabs, and compact snapshot metadata.",
-			tool: "agent_browser",
-		});
-	}
-	if (sessionName) {
-		actions.push({
-			id: "list-electron-tabs",
-			params: { args: withOptionalSessionArgs(sessionName, ["tab", "list"]) },
-			reason: "Check current Electron tabs/targets before choosing a narrower selector or @ref.",
-			safety: "Read-only tab listing.",
-			tool: "agent_browser",
-		});
-	}
-	return actions;
-}
 
-function collectElectronBroadGetTextScopeDiagnostics(options: {
-	commandInfo: CommandInfo;
-	commandTokens: string[];
-	currentTarget?: SessionTabTarget;
-	data: unknown;
-	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
-	priorTarget?: SessionTabTarget;
-	sessionName?: string;
-}): ElectronBroadGetTextScopeDiagnostic[] {
-	const electronContext = getElectronTextScopeContext(options);
-	if (!electronContext) return [];
-	return getSuccessfulGetTextSelectors(options)
-		.filter(isBroadGetTextSelector)
-		.map((selector) => ({
-			electronContext,
-			selector,
-			summary: `Broad Electron get text selector warning: selector ${JSON.stringify(selector)} may read the entire app shell; prefer snapshot -i and a current @ref or a narrower panel selector.`,
-		}));
-}
 
-function formatElectronBroadGetTextScopeText(diagnostics: ElectronBroadGetTextScopeDiagnostic[]): string | undefined {
-	return diagnostics.length > 0 ? diagnostics.map((diagnostic) => diagnostic.summary).join("\n") : undefined;
-}
 
-function buildElectronBroadGetTextScopeNextActions(options: { diagnostics: ElectronBroadGetTextScopeDiagnostic[]; sessionName?: string }): AgentBrowserNextAction[] {
-	return options.diagnostics.map((diagnostic, index) => ({
-		id: index === 0 ? "snapshot-for-electron-text-scope" : `snapshot-for-electron-text-scope-${index + 1}`,
-		params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) },
-		reason: `Refresh Electron refs before trusting broad get text selector ${JSON.stringify(diagnostic.selector)}.`,
-		safety: "Read-only snapshot; prefer a current @ref or narrower selector before extracting app-shell text.",
-		tool: "agent_browser" as const,
-	}));
-}
 
 function looksLikeFunctionEvalStdin(stdin: string | undefined): boolean {
 	const trimmed = stdin?.trim();
@@ -3477,89 +2612,12 @@ function isPlainEmptyObject(value: unknown): boolean {
 	return (prototype === Object.prototype || prototype === null) && Object.keys(value).length === 0;
 }
 
-function getEvalStdinHint(options: { command?: string; data: unknown; stdin?: string }): EvalStdinHint | undefined {
-	if (options.command !== "eval" || !looksLikeFunctionEvalStdin(options.stdin) || !isRecord(options.data)) return undefined;
-	const result = options.data.result;
-	if (!isPlainEmptyObject(result)) return undefined;
-	return {
-		reason: "eval --stdin received a function-shaped snippet and the upstream JSON result was an empty object, which often means the function itself was returned or serialized instead of invoked.",
-		suggestion: "Pass a plain expression such as `({ title: document.title })`, or invoke the function explicitly, for example `(() => ({ title: document.title }))()`.",
-	};
-}
 
-function formatEvalStdinHintText(hint: EvalStdinHint | undefined): string | undefined {
-	return hint ? `Eval stdin hint: ${hint.reason} ${hint.suggestion}` : undefined;
-}
 
-async function getArtifactCleanupGuidance(options: { command?: string; cwd: string; manifest?: SessionArtifactManifest; succeeded: boolean }): Promise<ArtifactCleanupGuidance | undefined> {
-	if (!options.succeeded || options.command !== "close" || !options.manifest || options.manifest.entries.length === 0) return undefined;
-	const explicitEntries = options.manifest.entries.filter((entry) => entry.storageScope === "explicit-path");
-	const explicitArtifactPaths: string[] = [];
-	const seenPaths = new Set<string>();
-	for (const entry of explicitEntries) {
-		if (explicitArtifactPaths.length >= 10) break;
-		const displayPath = entry.path;
-		if (seenPaths.has(displayPath)) continue;
-		const absolutePath = entry.absolutePath ?? (isAbsolute(entry.path) ? entry.path : resolve(options.cwd, entry.path));
-		try {
-			await stat(absolutePath);
-		} catch {
-			continue;
-		}
-		seenPaths.add(displayPath);
-		explicitArtifactPaths.push(displayPath);
-	}
-	return {
-		explicitArtifactPaths,
-		note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean existing paths with host file tools when no longer needed.",
-		owner: "host-file-tools",
-		summary: formatSessionArtifactRetentionSummary(options.manifest),
-	};
-}
 
-function formatArtifactCleanupGuidanceText(guidance: ArtifactCleanupGuidance | undefined): string | undefined {
-	if (!guidance) return undefined;
-	const lines = [
-		"Artifact lifecycle:",
-		`- ${guidance.summary}`,
-		`- ${guidance.note}`,
-	];
-	if (guidance.explicitArtifactPaths.length > 0) {
-		lines.push(`- Explicit artifact paths to review: ${guidance.explicitArtifactPaths.join(", ")}`);
-	}
-	return lines.join("\n");
-}
 
-async function collectQaAttachedTarget(options: {
-	currentTarget?: SessionTabTarget;
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<QaAttachedTarget | undefined> {
-	if (!options.sessionName) return undefined;
-	if (options.currentTarget?.title || options.currentTarget?.url) {
-		return { sessionName: options.sessionName, title: options.currentTarget.title, url: options.currentTarget.url };
-	}
-	return collectElectronManagedSessionTarget({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-}
 
-function formatQaAttachedTargetText(target: QaAttachedTarget | undefined): string | undefined {
-	if (!target) return undefined;
-	return ["QA attached target:", target.sessionName, target.title, target.url].filter((part): part is string => typeof part === "string" && part.length > 0).join(" — ");
-}
 
-function buildSelectorTextVisibilityNextActions(options: { diagnostics: SelectorTextVisibilityDiagnostic[]; sessionName?: string }): AgentBrowserNextAction[] {
-	return options.diagnostics.map((diagnostic, index) => ({
-		id: index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`,
-		params: {
-			args: withOptionalSessionArgs(options.sessionName, ["eval", "--stdin"]),
-			stdin: buildVisibleTextProbeScript(diagnostic.selector),
-		},
-		reason: "Inspect selector match count and visible text before trusting get text on tabbed or hidden DOM content.",
-		safety: "Read-only DOM inspection; use a more specific visible selector or current @ref before acting on hidden-tab text.",
-		tool: "agent_browser" as const,
-	}));
-}
 
 function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, command: string | undefined, stdin: string | undefined): Array<{ args: string[]; index: number }> {
 	if (compiledJob) return compiledJob.steps.map((step, index) => ({ args: step.args, index: index + 1 }));
@@ -3625,33 +2683,6 @@ function getPlannedCurrentPageUrl(steps: Array<{ args: string[]; index: number }
 	return undefined;
 }
 
-async function collectTimeoutPartialProgress(options: {
-	command?: string;
-	compiledJob?: CompiledAgentBrowserJob;
-	cwd: string;
-	sessionName?: string;
-	stdin?: string;
-}): Promise<TimeoutPartialProgress | undefined> {
-	const steps = getTimeoutProgressSteps(options.compiledJob, options.command, options.stdin);
-	const artifacts = await collectTimeoutArtifactEvidence(options.cwd, steps);
-	const [urlData, titleData] = await Promise.all([
-		runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName }),
-		runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName }),
-	]);
-	const recoveredUrl = extractStringResultField(urlData, "result") ?? extractStringResultField(urlData, "url");
-	const title = extractStringResultField(titleData, "result") ?? extractStringResultField(titleData, "title");
-	const plannedUrl = recoveredUrl ? undefined : getPlannedCurrentPageUrl(steps);
-	const url = recoveredUrl ?? plannedUrl;
-	if (steps.length === 0 && artifacts.length === 0 && !url && !title) return undefined;
-	const foundArtifacts = artifacts.filter((artifact) => artifact.exists).length;
-	const pageStateSummary = recoveredUrl || title ? " and current page state" : plannedUrl ? " and planned page URL" : "";
-	return {
-		artifacts,
-		currentPage: url || title ? { title, url } : undefined,
-		steps: steps.length > 0 ? steps : undefined,
-		summary: `Timed out before upstream returned final results; recovered ${foundArtifacts}/${artifacts.length} declared artifact path${artifacts.length === 1 ? "" : "s"}${pageStateSummary}.`,
-	};
-}
 
 function redactSensitivePathSegmentsForDiagnostic(path: string): string {
 	return path.split(/([/\\]+)/).map((segment) => {
@@ -3678,277 +2709,16 @@ function sanitizeCurrentPageUrlForTimeoutDiagnostic(url: string): string {
 	}
 }
 
-function formatTimeoutPartialProgressText(progress: TimeoutPartialProgress): string {
-	const lines = [`Timeout partial progress: ${progress.summary}`];
-	const currentPageTitle = progress.currentPage?.title ? redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(progress.currentPage.title)) : undefined;
-	const currentPageUrl = progress.currentPage?.url ? sanitizeCurrentPageUrlForTimeoutDiagnostic(progress.currentPage.url) : undefined;
-	if (currentPageTitle || currentPageUrl) {
-		lines.push(`Current page: ${[currentPageTitle, currentPageUrl].filter(Boolean).join(" — ")}`);
-	}
-	if (progress.steps && progress.steps.length > 0) {
-		const shownSteps = progress.steps.slice(0, 6);
-		lines.push("Planned steps:");
-		for (const step of shownSteps) {
-			const command = redactSensitivePathSegmentsForDiagnostic(redactInvocationArgs(step.args).join(" "));
-			lines.push(`- Step ${step.index}: ${command}`);
-		}
-		if (progress.steps.length > shownSteps.length) {
-			lines.push(`- ... ${progress.steps.length - shownSteps.length} more step${progress.steps.length - shownSteps.length === 1 ? "" : "s"} omitted`);
-		}
-	}
-	for (const artifact of progress.artifacts) {
-		const path = redactSensitivePathSegmentsForDiagnostic(artifact.path);
-		lines.push(`Artifact from step ${artifact.stepIndex}: ${path} (${artifact.exists ? `exists${typeof artifact.sizeBytes === "number" ? `, ${artifact.sizeBytes} bytes` : ""}` : "missing"})`);
-	}
-	return lines.join("\n");
-}
 
-async function collectOverlayBlockerDiagnostic(options: {
-	command?: string;
-	cwd: string;
-	data: unknown;
-	navigationSummary?: NavigationSummary;
-	priorTarget?: SessionTabTarget;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<OverlayBlockerDiagnostic | undefined> {
-	if (options.command !== "click" || !isRecord(options.data) || typeof options.data.clicked !== "string") return undefined;
-	const priorUrl = normalizeComparableUrl(options.priorTarget?.url);
-	const currentUrl = normalizeComparableUrl(options.navigationSummary?.url);
-	if (!priorUrl || !currentUrl || priorUrl !== currentUrl) return undefined;
-	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const candidates = getOverlayBlockerCandidates(snapshotData);
-	const snapshot = extractRefSnapshotFromData(snapshotData);
-	if (candidates.length === 0 || !snapshot) return undefined;
-	return {
-		candidates,
-		snapshot,
-		summary: `Click completed but the page stayed on ${currentUrl}; a fresh snapshot contains likely overlay close/dismiss controls.`,
-	};
-}
 
-async function collectOpenResultTabCorrection(options: {
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-	targetTitle?: string;
-	targetUrl?: string;
-}): Promise<OpenResultTabCorrection | undefined> {
-	const { cwd, sessionName, signal, targetTitle, targetUrl } = options;
-	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, sessionName, signal });
-	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) {
-		return undefined;
-	}
-	const tabs = tabData.tabs.filter(isRecord).map((tab, index) => ({
-		active: tab.active === true,
-		index: typeof tab.index === "number" ? tab.index : index,
-		label: typeof tab.label === "string" ? tab.label : undefined,
-		tabId: typeof tab.tabId === "string" ? tab.tabId : undefined,
-		title: typeof tab.title === "string" ? tab.title : undefined,
-		url: typeof tab.url === "string" ? tab.url : undefined,
-	}));
-	return chooseOpenResultTabCorrection({ tabs, targetTitle, targetUrl });
-}
 
-async function collectSessionTabSelection(options: {
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-	target: SessionTabTarget;
-}): Promise<OpenResultTabCorrection | undefined> {
-	const { cwd, sessionName, signal, target } = options;
-	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, sessionName, signal });
-	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) {
-		return undefined;
-	}
-	const tabs = tabData.tabs.filter(isRecord).map((tab, index) => ({
-		active: tab.active === true,
-		index: typeof tab.index === "number" ? tab.index : index,
-		label: typeof tab.label === "string" ? tab.label : undefined,
-		tabId: typeof tab.tabId === "string" ? tab.tabId : undefined,
-		title: typeof tab.title === "string" ? tab.title : undefined,
-		url: typeof tab.url === "string" ? tab.url : undefined,
-	}));
-	return selectSessionTargetTab({ tabs, target });
-}
 
-async function applyOpenResultTabCorrection(options: {
-	correction: OpenResultTabCorrection;
-	cwd: string;
-	sessionName?: string;
-	signal?: AbortSignal;
-}): Promise<OpenResultTabCorrection | undefined> {
-	const { correction, cwd, sessionName, signal } = options;
-	const result = await runSessionCommandData({
-		args: ["tab", correction.selectedTab],
-		cwd,
-		sessionName,
-		signal,
-	});
-	return result === undefined ? undefined : correction;
-}
 
-function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean): Record<string, unknown> {
-	return sessionName ? { sessionName, usedImplicitSession } : {};
-}
 
-function buildManagedSessionOutcome(options: {
-	activeAfter: boolean;
-	activeBefore: boolean;
-	attemptedSessionName?: string;
-	command?: string;
-	currentSessionName: string;
-	previousSessionName: string;
-	replacedSessionName?: string;
-	sessionMode: "auto" | "fresh";
-	succeeded: boolean;
-}): ManagedSessionOutcome | undefined {
-	const { activeAfter, activeBefore, attemptedSessionName, command, currentSessionName, previousSessionName, replacedSessionName, sessionMode, succeeded } = options;
-	if (!attemptedSessionName) return undefined;
-	let status: ManagedSessionOutcome["status"];
-	let summary: string;
-	if (command === "close") {
-		status = succeeded ? "closed" : activeBefore ? "preserved" : "abandoned";
-		summary = succeeded
-			? `Managed session ${attemptedSessionName} was closed.`
-			: activeBefore
-				? `Managed session close failed; previous managed session ${previousSessionName} remains current.`
-				: `Managed session close failed; no managed session is active.`;
-	} else if (succeeded) {
-		if (replacedSessionName) {
-			status = "replaced";
-			summary = `Managed session ${replacedSessionName} was replaced by ${currentSessionName}.`;
-		} else if (!activeBefore && activeAfter) {
-			status = "created";
-			summary = `Managed session ${currentSessionName} is now current.`;
-		} else {
-			status = "unchanged";
-			summary = `Managed session ${currentSessionName} remains current.`;
-		}
-	} else if (activeBefore) {
-		status = "preserved";
-		summary = sessionMode === "fresh" && attemptedSessionName !== previousSessionName
-			? `Fresh managed session ${attemptedSessionName} failed before becoming current; previous managed session ${previousSessionName} was preserved.`
-			: `Managed session call failed; previous managed session ${previousSessionName} was preserved.`;
-	} else {
-		status = "abandoned";
-		summary = sessionMode === "fresh"
-			? `Fresh managed session ${attemptedSessionName} failed before becoming current; no previous managed session was active, so no managed session is current.`
-			: `Managed session call failed before any managed session became current.`;
-	}
-	return {
-		activeAfter,
-		activeBefore,
-		attemptedSessionName,
-		currentSessionName,
-		previousSessionName,
-		replacedSessionName,
-		sessionMode,
-		status,
-		succeeded,
-		summary,
-	};
-}
 
-function formatManagedSessionOutcomeText(outcome: ManagedSessionOutcome | undefined): string | undefined {
-	return outcome && !outcome.succeeded && outcome.sessionMode === "fresh" ? `Managed session outcome: ${outcome.summary}` : undefined;
-}
 
-function getPersistentSessionArtifactStore(ctx: {
-	sessionManager: {
-		getSessionDir?: () => string;
-		getSessionId: () => string | undefined;
-	};
-}): PersistentSessionArtifactStore | undefined {
-	const sessionDir = typeof ctx.sessionManager.getSessionDir === "function" ? ctx.sessionManager.getSessionDir() : undefined;
-	const sessionId = ctx.sessionManager.getSessionId();
-	return sessionDir && sessionId ? { sessionDir, sessionId } : undefined;
-}
 
-async function preserveParseFailureOutput(options: {
-	artifactManifest?: SessionArtifactManifest;
-	exactSensitiveValues?: string[];
-	persistentArtifactStore?: PersistentSessionArtifactStore;
-	stdoutSpillPath?: string;
-}): Promise<{
-	artifactManifest?: SessionArtifactManifest;
-	artifactRetentionSummary?: string;
-	fullOutputPath?: string;
-	fullOutputUnavailable?: string;
-}> {
-	if (!options.stdoutSpillPath) {
-		return {};
-	}
 
-	try {
-		const rawOutput = redactExactSensitiveText(await readFile(options.stdoutSpillPath, "utf8"), options.exactSensitiveValues ?? []);
-		const nowMs = Date.now();
-		let evictedArtifacts: PersistentSessionArtifactEviction[] = [];
-		let fullOutputPath: string;
-		let storageScope: "persistent-session" | "process-temp";
-		if (options.persistentArtifactStore) {
-			const result = await writePersistentSessionArtifactFile({
-				content: rawOutput,
-				prefix: "pi-agent-browser-parse-failure-output",
-				store: options.persistentArtifactStore,
-				suffix: ".txt",
-			});
-			fullOutputPath = result.path;
-			evictedArtifacts = result.evictedArtifacts;
-			storageScope = "persistent-session";
-		} else {
-			fullOutputPath = await writeSecureTempFile({
-				content: rawOutput,
-				prefix: "pi-agent-browser-parse-failure-output",
-				suffix: ".txt",
-			});
-			storageScope = "process-temp";
-		}
-		const artifactManifest = mergeSessionArtifactManifest({
-			base: options.artifactManifest,
-			entries: [
-				{
-					command: "agent-browser",
-					createdAtMs: nowMs,
-					kind: "spill",
-					path: fullOutputPath,
-					retentionState: storageScope === "persistent-session" ? "live" : "ephemeral",
-					storageScope,
-				},
-				...buildEvictedSessionArtifactEntries(evictedArtifacts, nowMs),
-			],
-			nowMs,
-		});
-		return {
-			artifactManifest,
-			artifactRetentionSummary: artifactManifest ? formatSessionArtifactRetentionSummary(artifactManifest) : undefined,
-			fullOutputPath,
-		};
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { fullOutputUnavailable: message };
-	}
-}
-
-function redactRecoveryHint(recoveryHint: {
-	exampleArgs: string[];
-	exampleParams: { args: string[]; sessionMode: "fresh" };
-	reason: string;
-	recommendedSessionMode: "fresh";
-} | undefined): typeof recoveryHint {
-	if (!recoveryHint) {
-		return undefined;
-	}
-	const exampleArgs = redactInvocationArgs(recoveryHint.exampleArgs);
-	return {
-		...recoveryHint,
-		exampleArgs,
-		exampleParams: {
-			...recoveryHint.exampleParams,
-			args: exampleArgs,
-		},
-	};
-}
 
 // Serializes managed-session read/modify/write work so overlapping tool calls cannot promote stale state or close an in-use session.
 class AsyncExecutionQueue {
@@ -4015,99 +2785,6 @@ function getInstalledDocsPaths(): { readmePath: string; commandReferencePath: st
 }
 
 
-function buildBrowserRunServices() {
-	return {
-	applyOpenResultTabCorrection,
-	buildAboutBlankRecoveryHint,
-	buildAboutBlankWarning,
-	buildComboboxFocusNextActions,
-	buildElectronBroadGetTextScopeNextActions,
-	buildElectronHostFailureResult,
-	buildElectronIdentifiers,
-	buildElectronLifecycleNextActions,
-	buildElectronMismatchNextActions,
-	buildElectronPostCommandHealthDiagnostic,
-	buildElectronRefFreshnessNextActions,
-	buildElectronRefFreshnessDiagnostic,
-	buildElectronSessionMismatch,
-	buildFillVerificationNextActions,
-	buildInvocationPreview,
-	buildJsonVisibleContent,
-	buildManagedSessionOutcome,
-	buildMissingBinaryMessage,
-	buildOverlayBlockerNextActions,
-	buildPinnedBatchPlan,
-	buildScrollNoopDiagnostic,
-	buildScrollNoopNextActions,
-	buildSelectorTextVisibilityNextActions,
-	buildSemanticActionCandidateActions,
-	buildSessionDetailFields,
-	buildSourceLookupElectronNextActions,
-	buildStaleRefPreflight,
-	buildWrapperRecoveryHint,
-	closeManagedSession,
-	collectComboboxFocusDiagnostic,
-	collectElectronBroadGetTextScopeDiagnostics,
-	collectElectronHandoff,
-	collectFillVerificationDiagnostic,
-	collectNavigationSummary,
-	collectOpenResultTabCorrection,
-	collectOverlayBlockerDiagnostic,
-	collectQaAttachedTarget,
-	collectRecordingDependencyWarning,
-	collectScrollPositionSnapshot,
-	collectSelectorTextVisibilityDiagnostics,
-	collectSessionTabSelection,
-	collectTimeoutPartialProgress,
-	collectVisibleRefFallbackDiagnostic,
-	extractStringResultField,
-	findElectronLaunchRecordForSession,
-	formatArtifactCleanupGuidanceText,
-	formatComboboxFocusDiagnosticText,
-	formatElectronBroadGetTextScopeText,
-	formatElectronLaunchText,
-	formatElectronPostCommandHealthText,
-	formatElectronRefFreshnessText,
-	formatElectronSessionMismatchText,
-	formatEvalStdinHintText,
-	formatFillVerificationText,
-	formatManagedSessionOutcomeText,
-	formatOverlayBlockerText,
-	formatQaAttachedTargetText,
-	formatRecordingDependencyWarningText,
-	formatScrollNoopDiagnosticText,
-	formatSelectorTextVisibilityText,
-	formatSemanticActionCandidateText,
-	formatTimeoutPartialProgressText,
-	getArtifactCleanupGuidance,
-	getElectronLaunchFailureCategory,
-	getEvalStdinHint,
-	getExactSensitiveStdinValues,
-	getPersistentSessionArtifactStore,
-	getSourceLookupElectronContext,
-	getStaleRefArgs,
-	getTraceOwnerGuardMessage,
-	mergeNavigationSummaryIntoData,
-	prepareAgentBrowserArgs,
-	preserveParseFailureOutput,
-	redactExactSensitiveText,
-	redactExactSensitiveValue,
-	redactRecoveryHint,
-	redactToolDetails,
-	repairBatchScreenshotArtifacts,
-	repairScreenshotArtifact,
-	resolveSemanticActionVisibleRefArgs,
-	shouldCaptureNavigationSummary,
-	shouldCorrectSessionTabAfterCommand,
-	shouldInspectElectronPostCommandHealth,
-	shouldPinSessionTabForCommand,
-	sleepMs,
-	unwrapPinnedSessionBatchEnvelope,
-	updateTraceOwnerState,
-	validateStdinCommandContract,
-	validateWaitIpcTimeoutContract,
-};
-}
 
 async function handleElectronHostInput(options: {
 	cleanupTrackedElectronLaunches: (records: ElectronLaunchRecord[], cwd: string, timeoutMs?: number) => Promise<ElectronCleanupResult[]>;
@@ -4432,7 +3109,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			const sessionPageStateUpdate = sessionPageState.beginUpdate();
-			const browserRunServices = buildBrowserRunServices();
 			const runBrowserCommand = async () => {
 				const browserRunState: BrowserRunState = {
 					artifactManifest,
@@ -4457,7 +3133,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					input: resolvedInput,
 					onUpdate,
 					params,
-					services: browserRunServices,
 					sessionPageStateUpdate,
 					signal,
 					state: browserRunState,
