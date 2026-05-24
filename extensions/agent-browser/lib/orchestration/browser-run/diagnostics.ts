@@ -493,6 +493,18 @@ async function collectManagedSessionCommandData(options: { args: string[]; cwd: 
 	try { return { data: await runSessionCommandData(options) }; } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
 }
 
+async function collectElectronManagedSessionUrl(options: { cwd: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ error?: string; url?: string }> {
+	const urlResult = await collectManagedSessionCommandData({
+		args: ["get", "url"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		signal: options.signal,
+		timeoutMs: options.timeoutMs,
+	});
+	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);
+	return urlResult.error ? { error: urlResult.error } : { url };
+}
+
 async function collectElectronManagedSessionTarget(options: { cwd: string; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<QaAttachedTarget | undefined> {
 	if (!options.sessionName) return undefined;
 	const [titleResult, urlResult] = await Promise.all([
@@ -545,14 +557,14 @@ export async function validateQaAttachedPrecondition(options: {
 			nextActions: buildQaAttachedRecoveryNextActions(options.sessionName),
 		};
 	}
-	const target = await collectElectronManagedSessionTarget({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	if (target?.error) {
+	const urlProbe = await collectElectronManagedSessionUrl({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	if (urlProbe.error) {
 		return {
-			error: `qa.attached could not read the attached session URL: ${target.error}. Run tab list or snapshot -i before retrying qa.attached.`,
+			error: `qa.attached could not read the attached session URL: ${urlProbe.error}. Run tab list or snapshot -i before retrying qa.attached.`,
 			nextActions: buildQaAttachedRecoveryNextActions(options.sessionName),
 		};
 	}
-	const url = target?.url?.trim();
+	const url = urlProbe.url?.trim();
 	if (!url) {
 		return {
 			error: "qa.attached requires an attached session with a readable http(s) page URL. Run tab list, select a stable tab, then snapshot -i before retrying.",

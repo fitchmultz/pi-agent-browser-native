@@ -122,14 +122,14 @@ export function extractQaPageContext(options: {
 	if (options.attachedTarget?.title || options.attachedTarget?.url) {
 		return { title: options.attachedTarget.title, url: options.attachedTarget.url };
 	}
-	if (options.compiled?.checks.url) {
-		return { url: options.compiled.checks.url };
-	}
 	for (const item of getBatchResultItems(options.batchData)) {
 		if (getCommandNameFromBatchItem(item) !== "open" || !isRecord(item.result)) continue;
 		const url = typeof item.result.url === "string" ? item.result.url : undefined;
 		const title = typeof item.result.title === "string" ? item.result.title : undefined;
 		if (url || title) return { title, url };
+	}
+	if (options.compiled?.checks.url) {
+		return { url: options.compiled.checks.url };
 	}
 	return {};
 }

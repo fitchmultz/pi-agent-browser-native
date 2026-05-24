@@ -528,6 +528,35 @@ test("getAgentBrowserErrorText prefers spill/write failures over downstream pars
 	assert.equal(errorText, "pi-agent-browser temp spill budget exceeded");
 });
 
+test("extractQaPageContext prefers batch open title over compiled checks url", async () => {
+	const { extractQaPageContext } = await import("../extensions/agent-browser/lib/input-modes/job.js");
+	const page = extractQaPageContext({
+		batchData: [
+			{
+				command: ["open", "https://example.test/"],
+				success: true,
+				result: { title: "Open Title", url: "https://example.test/" },
+			},
+		],
+		compiled: {
+			checks: {
+				attached: false,
+				checkConsole: true,
+				checkErrors: true,
+				checkNetwork: true,
+				expectedText: [],
+				loadState: "domcontentloaded",
+				url: "https://example.test/",
+			},
+			steps: [],
+			args: ["batch"],
+			stdin: "[]",
+		},
+	});
+	assert.equal(page.title, "Open Title");
+	assert.equal(page.url, "https://example.test/");
+});
+
 test("isHttpOrHttpsUrl accepts http(s) only", async () => {
 	const { buildQaCompactPassText, isHttpOrHttpsUrl } = await import("../extensions/agent-browser/lib/input-modes/job.js");
 	assert.equal(isHttpOrHttpsUrl("https://example.test/"), true);
