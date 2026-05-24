@@ -25,8 +25,8 @@ import {
 export const AGENT_BROWSER_PARAMS = Type.Object({
 
 	args: Type.Optional(
-		Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name." }), {
-			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron is provided.",
+		Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name. Do not pass --json; the wrapper injects it. First-call recipe: open → snapshot -i → click/fill @eN → snapshot -i." }), {
+			description: "Exact agent-browser CLI arguments, excluding the binary name and any shell operators. Required unless semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron is provided. Do not include --json (wrapper injects it). Typical first calls: open, snapshot -i, click/fill current @refs, then snapshot -i again after navigation or DOM changes.",
 			minItems: 1,
 		}),
 	),
@@ -79,7 +79,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 			componentName: Type.Optional(Type.String({ description: "Component name to correlate with react tree output and bounded local workspace search." })),
 			includeDomHints: Type.Optional(Type.Boolean({ description: "Whether selector lookups should inspect DOM HTML attributes for source-like metadata. Defaults to true." })),
 			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan when componentName is provided. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
-		}),
+		}, { description: "EXPERIMENTAL: local UI-to-source candidates only (confidence/evidence, not guaranteed mappings). Compiles to batch; mutually exclusive with other input modes." }),
 	),
 	networkSourceLookup: Type.Optional(
 		Type.Object({
@@ -88,7 +88,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the generated batch." })),
 			url: Type.Optional(Type.String({ description: "Optional failed request URL or URL fragment to correlate with local source." })),
 			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan for URL literals. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
-		}),
+		}, { description: "EXPERIMENTAL: failed-request-to-source candidates only (initiator metadata and bounded workspace URL literals; not definitive blame). Compiles to batch; mutually exclusive with other input modes." }),
 	),
 	electron: Type.Optional(
 		Type.Union([

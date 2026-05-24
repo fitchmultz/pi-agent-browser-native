@@ -96,15 +96,23 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 				`missing concise runtime guideline: ${guideline}`,
 			);
 		}
-		assert.match(guidelineText, /Default flow: open/);
+		assert.match(guidelineText, /Use exactly one input mode/);
+		assert.match(guidelineText, /Common flow: open, snapshot -i/);
+		assert.match(guidelineText, /Respect explicit stop boundaries/);
 		assert.match(guidelineText, /stop before order\/post\/purchase\/submit/);
 		assert.equal(
 			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("stop before order/post/purchase/submit")),
 			true,
 		);
 		assert.match(guidelineText, /sessionMode=fresh/);
+		assert.match(guidelineText, /exact user path/);
+		assert.match(guidelineText, /signed-in\/account-specific content/);
+		assert.match(guidelineText, /three or more known refs\/selectors/);
+		assert.match(guidelineText, /Do not pass --json in args/);
+		assert.match(harness.tool.description, /Input choice:/);
+		assert.match(guidelineText, /record stop needs ffmpeg/);
+		assert.match(guidelineText, /For dashboards, verify scroll/);
 		assert.match(guidelineText, /When details\.nextActions is present/);
-		assert.match(guidelineText, /three or more reads/);
 		assert.equal(harness.tool.promptGuidelines.includes(SHARED_BROWSER_PLAYBOOK_GUIDELINES[12]), false);
 		assert.equal(harness.tool.promptGuidelines.includes(QUICK_START_GUIDELINES[0]), false);
 		assert.equal(

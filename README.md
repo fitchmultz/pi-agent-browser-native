@@ -150,12 +150,14 @@ It does **not** edit Pi settings and does **not** run upstream `agent-browser do
 
 You usually prompt the agent in natural language. These JSON snippets show the exact native tool shape the agent should use.
 
-Open a page and inspect it:
+Open a page and inspect it (first-call recipe: open → snapshot -i → interact with current `@refs` → snapshot -i after changes). Do not pass `--json` in `args`; the wrapper injects it.
 
 ```json
 { "args": ["open", "https://example.com"] }
 { "args": ["snapshot", "-i"] }
 ```
+
+On `https://example.com/`, the main link label is **Learn more**—use exact visible text from your snapshot, not guessed copy such as `More information...`.
 
 Click a visible ref, then refresh refs after navigation or a DOM update:
 
@@ -211,7 +213,8 @@ For supported upstream `find` flows and native dropdown selection you can omit h
 
 Typical pitfalls:
 
-- Supply **exactly one** of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` per call (not more, not none).
+- Supply **exactly one** of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` per call (not more, not none). Prefer `args` for routine browse; `semanticAction` for stable locators; `job`/`qa` for multi-step checks; `electron` for desktop apps; treat `sourceLookup` / `networkSourceLookup` as experimental candidates-only.
+- Do not pass `--json` in `args`; the wrapper injects it automatically.
 - `semanticAction` and `job` are **not** valid inside `batch` stdin; batch steps stay upstream argv string arrays (spell a `find` step as tokens there if you need it in a batch).
 - Commands or locators outside the supported shorthand still require explicit `args`. Common page getters are grouped under `get`: use `get title`, `get url`, or `get text <selector>` rather than shortcut commands such as `title` or `url`; unknown getter shortcuts can return read-only `details.nextActions` like `use-get-title`.
 - For `locator: "role"`, pass either `value: "button"` or `role: "button"`; if both are present they must match.
@@ -400,7 +403,7 @@ Use SPA and Web Vitals helpers as normal command tokens:
 
 ```json
 { "args": ["pushstate", "/dashboard"] }
-{ "args": ["vitals", "https://example.com", "--json"] }
+{ "args": ["vitals", "https://example.com"] }
 ```
 
 For setup that must happen before first navigation, open a blank fresh page, stage routes/cookies/scripts, then navigate:

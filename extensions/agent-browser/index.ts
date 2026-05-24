@@ -3063,7 +3063,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		name: "agent_browser",
 		label: "Agent Browser",
 		description:
-			"Browse and interact with websites using agent-browser. Use this for web research, reading live docs, opening pages, taking snapshots or screenshots, clicking links, filling forms, extracting page content, and authenticated/profile-based browser work.",
+			"Browse and interact with websites using agent-browser. Use this for web research, reading live docs, opening pages, taking snapshots or screenshots, clicking links, filling forms, extracting page content, and authenticated/profile-based browser work. Input choice: default `args` for open → snapshot -i → click/fill @refs; `semanticAction` for stable role/text/label targets; `job` or `qa` for multi-step checks; `electron` only for desktop apps; experimental `sourceLookup` / `networkSourceLookup` for candidates only.",
 		promptSnippet:
 			"Browse websites, read live docs, click and fill pages, extract browser content, take screenshots, and automate real web workflows.",
 		promptGuidelines: toolPromptGuidelines,

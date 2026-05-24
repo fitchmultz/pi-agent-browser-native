@@ -23,7 +23,7 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
     ]),
     modelOutputs: Object.freeze([
       "Opened https://example.com\nTitle: Example Domain\nURL: https://example.com/",
-      "Page: Example Domain\nURL: https://example.com/\n@e1 [link] \"More information...\"",
+      "Page: Example Domain\nURL: https://example.com/\n@e1 [link] \"Learn more\"",
     ]),
     success: true,
     staleRefFailures: 0,
@@ -134,7 +134,7 @@ export const BENCHMARK_SCENARIOS = Object.freeze([
       }),
     ]),
     modelOutputs: Object.freeze([
-      "Batch results:\n1. Opened https://example.com\n2. Page: Example Domain\n@e1 [link] \"More information...\"",
+      "Batch results:\n1. Opened https://example.com\n2. Page: Example Domain\n@e1 [link] \"Learn more\"",
     ]),
     success: true,
     staleRefFailures: 0,
