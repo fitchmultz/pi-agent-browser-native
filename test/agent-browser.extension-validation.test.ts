@@ -18,6 +18,7 @@ import { Check } from "typebox/value";
 import {
 	BRAVE_SEARCH_PROMPT_GUIDELINE,
 	QUICK_START_GUIDELINES,
+	RUNTIME_PROMPT_GUIDELINES,
 	buildInstalledDocsGuideline,
 	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
 	TOOL_PROMPT_GUIDELINES_PREFIX,
@@ -83,8 +84,10 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		const requiredGuidelines = [
 			...TOOL_PROMPT_GUIDELINES_PREFIX,
 			docsGuideline,
+			...RUNTIME_PROMPT_GUIDELINES,
 			BRAVE_SEARCH_PROMPT_GUIDELINE,
 			TOOL_PROMPT_GUIDELINES_SUFFIX[0],
+			TOOL_PROMPT_GUIDELINES_SUFFIX[1],
 		];
 		for (const guideline of requiredGuidelines) {
 			assert.equal(
@@ -93,20 +96,24 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 				`missing concise runtime guideline: ${guideline}`,
 			);
 		}
-		assert.match(guidelineText, /Use exactly one input mode/);
-		assert.match(guidelineText, /Common flow: open, snapshot -i/);
-		assert.match(guidelineText, /Respect explicit stop boundaries/);
-		assert.match(guidelineText, /exact user path/);
-		assert.match(guidelineText, /signed-in\/account-specific content/);
-		assert.match(guidelineText, /reading several known refs\/selectors/);
-		assert.match(guidelineText, /record stop needs ffmpeg/);
-		assert.match(guidelineText, /For dashboards, verify scroll/);
+		assert.match(guidelineText, /Default flow: open/);
+		assert.match(guidelineText, /stop before order\/post\/purchase\/submit/);
+		assert.equal(
+			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("stop before order/post/purchase/submit")),
+			true,
+		);
+		assert.match(guidelineText, /sessionMode=fresh/);
 		assert.match(guidelineText, /When details\.nextActions is present/);
+		assert.match(guidelineText, /three or more reads/);
 		assert.equal(harness.tool.promptGuidelines.includes(SHARED_BROWSER_PLAYBOOK_GUIDELINES[12]), false);
 		assert.equal(harness.tool.promptGuidelines.includes(QUICK_START_GUIDELINES[0]), false);
-		assert.ok(harness.tool.promptGuidelines.length <= 15, "promptGuidelines should stay bounded");
+		assert.equal(
+			SHARED_BROWSER_PLAYBOOK_GUIDELINES.some((line) => line.includes("evidence-only screenshots")),
+			true,
+		);
+		assert.ok(harness.tool.promptGuidelines.length <= 12, "promptGuidelines should stay bounded");
 		assert.ok(
-			guidelineText.length < 4_500,
+			guidelineText.length < 2_800,
 			"promptGuidelines should point to docs instead of carrying the full command reference/playbook",
 		);
 		assert.equal(
