@@ -14,6 +14,7 @@ import test from "node:test";
 
 import { Check } from "typebox/value";
 
+import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -23,6 +24,33 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+test("compileAgentBrowserJob preserves explicit assertUrl and assertText immediately after click", () => {
+	const { compiled, error } = compileAgentBrowserJob({
+		steps: [
+			{ action: "open", url: "https://shop.example/checkout" },
+			{ action: "fill", selector: "#email", text: "user@example.com" },
+			{ action: "click", selector: "#continue" },
+			{ action: "assertUrl", url: "**/shipping" },
+			{ action: "assertText", text: "Shipping address" },
+			{ action: "screenshot", path: ".dogfood/shipping.png" },
+		],
+	});
+	assert.equal(error, undefined);
+	assert.deepEqual(
+		compiled?.steps?.map((step) => step.action),
+		["open", "fill", "click", "assertUrl", "assertText", "screenshot"],
+	);
+	assert.deepEqual(compiled?.steps?.map((step) => step.args), [
+		["open", "https://shop.example/checkout"],
+		["fill", "#email", "user@example.com"],
+		["click", "#continue"],
+		["wait", "--url", "**/shipping"],
+		["wait", "--text", "Shipping address"],
+		["screenshot", ".dogfood/shipping.png"],
+	]);
+	assert.deepEqual(JSON.parse(compiled?.stdin ?? "[]"), compiled?.steps?.map((step) => step.args));
+});
 
 test("agentBrowserExtension compiles semantic actions to upstream find commands", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-"));

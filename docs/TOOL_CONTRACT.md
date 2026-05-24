@@ -170,7 +170,9 @@ Examples:
   - `waitForDownload` with `path` (compiled as `wait --download <path>`)
   - `screenshot` with `path`
 
-Example:
+**Navigation assertions are explicit only.** `job` never treats a successful `click` (or a `select` / submit-style interaction that may navigate) as proof that the expected next page loaded. Top-level `click` may still surface optional `details.navigationSummary` or `pageChangeSummary` hints for operators, but compiled `job` / `batch` steps do **not** auto-insert `assertUrl` or `assertText` after clicks—there is no deterministic expected URL source without caller intent. After any navigation-prone step (link/submit clicks, checkout or form flows, tab-sensitive UI), add an explicit `assertUrl` with the destination pattern you expect, `assertText` for on-page copy, or both, **before** screenshots or steps that assume the new page state.
+
+Example (static landing page):
 
 ```json
 {
@@ -184,12 +186,29 @@ Example:
 }
 ```
 
-Compiled shape:
+Example (open → fill → click → assert destination → screenshot):
+
+```json
+{
+  "job": {
+    "steps": [
+      { "action": "open", "url": "https://shop.example/checkout" },
+      { "action": "fill", "selector": "#email", "text": "user@example.com" },
+      { "action": "click", "selector": "#continue" },
+      { "action": "assertUrl", "url": "**/shipping" },
+      { "action": "assertText", "text": "Shipping address" },
+      { "action": "screenshot", "path": ".dogfood/shipping.png" }
+    ]
+  }
+}
+```
+
+Compiled shape for the navigation example:
 
 ```json
 {
   "args": ["batch"],
-  "stdin": "[[\"open\",\"https://example.com\"],[\"wait\",\"--text\",\"Example Domain\"],[\"screenshot\",\".dogfood/example.png\"]]"
+  "stdin": "[[\"open\",\"https://shop.example/checkout\"],[\"fill\",\"#email\",\"user@example.com\"],[\"click\",\"#continue\"],[\"wait\",\"--url\",\"**/shipping\"],[\"wait\",\"--text\",\"Shipping address\"],[\"screenshot\",\".dogfood/shipping.png\"]]"
 }
 ```
 

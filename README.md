@@ -228,6 +228,8 @@ Typical pitfalls:
 
 For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability. The same compile path backs top-level `qa`, so long `qa` runs surface the same timeout evidence shape. If a long `job`, `qa`, or `batch` hits the wrapper watchdog, `details.timeoutPartialProgress` may recover planned steps, current page title/URL, and declared artifact paths that already exist on disk (see [`docs/TOOL_CONTRACT.md#details`](docs/TOOL_CONTRACT.md#details)). There is no separate catalog of reusable named browser recipes above `job`, `qa`, and raw `batch`; see [`docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and when to revisit it.
 
+**Navigation inside `job` is explicit.** A successful `click` does not prove the next page loaded; add `assertUrl` and/or `assertText` after navigation-prone clicks (forms, checkout, tabs, submit buttons) before screenshots or steps that assume the new page.
+
 ```json
 {
   "job": {
@@ -235,6 +237,21 @@ For short repeatable workflows, pass a top-level `job` instead of hand-writing `
       { "action": "open", "url": "https://example.com" },
       { "action": "assertText", "text": "Example Domain" },
       { "action": "screenshot", "path": ".dogfood/example.png" }
+    ]
+  }
+}
+```
+
+```json
+{
+  "job": {
+    "steps": [
+      { "action": "open", "url": "https://shop.example/checkout" },
+      { "action": "fill", "selector": "#email", "text": "user@example.com" },
+      { "action": "click", "selector": "#continue" },
+      { "action": "assertUrl", "url": "**/shipping" },
+      { "action": "assertText", "text": "Shipping address" },
+      { "action": "screenshot", "path": ".dogfood/shipping.png" }
     ]
   }
 }

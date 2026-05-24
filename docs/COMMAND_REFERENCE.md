@@ -186,6 +186,8 @@ Use `batch --bail` when later steps should stop after the first failed command.
 
 For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`; `select` requires `selector` plus `value` or `values`, and compiles to upstream `select <selector> <value...>`. The wrapper compiles steps to upstream `batch` and records `details.compiledJob.steps[]`. There is still no separate first-class catalog of reusable named browser recipes above `job`, the `qa` preset, and raw `batch`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and revisit bar.
 
+**Job navigation is explicit.** A `click` step (or other navigation-prone interaction) does not prove the next page loaded. The wrapper does not auto-insert `assertUrl` or `assertText` after clicks inside `job`; add those steps yourself with the URL pattern or on-page text you expect, especially after forms, checkout, tabs, or submit buttons, before screenshots or later steps.
+
 ```json
 {
   "job": {
@@ -193,6 +195,23 @@ For short constrained flows, use top-level `job` instead of hand-writing `batch`
       { "action": "open", "url": "https://example.com" },
       { "action": "assertText", "text": "Example Domain" },
       { "action": "screenshot", "path": ".dogfood/example.png" }
+    ]
+  }
+}
+```
+
+Navigation-prone flow (open → fill → click → assert destination → screenshot):
+
+```json
+{
+  "job": {
+    "steps": [
+      { "action": "open", "url": "https://shop.example/checkout" },
+      { "action": "fill", "selector": "#email", "text": "user@example.com" },
+      { "action": "click", "selector": "#continue" },
+      { "action": "assertUrl", "url": "**/shipping" },
+      { "action": "assertText", "text": "Shipping address" },
+      { "action": "screenshot", "path": ".dogfood/shipping.png" }
     ]
   }
 }
