@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- Deterministic maintainer dogfood mode: `npm run verify -- dogfood` runs a model-free live-browser smoke through the native wrapper against public `example.com`, covering top-level `qa`, `semanticAction`, `qa.attached`, constrained `job`, screenshot artifact verification, and session close.
+- Opt-in efficiency-benchmark JSONL sampling via `--sample-jsonl`, so maintainers can measure real transcript model-visible byte output without changing deterministic scenario metrics.
+- Architecture note for the Tier A/Tier B prompt-guidance budget, keeping always-on `promptGuidelines` short while preserving detailed browser playbook guidance in docs.
+
+### Changed
+
+- Always-on `agent_browser` prompt guidance is smaller and focused on Tier A rules: input-mode choice, refs/session/artifacts/nextActions, extraction basics, and explicit stop-before-order/post/purchase/submit boundaries.
+- `semanticAction` success output now better mirrors raw browser-action navigation and page-change summaries, while docs make the input-mode chooser clearer.
+- QA preset pass output is more compact, and `qa.attached` preflight now treats URL-only current-page checks as valid attached-session evidence.
+- Constrained `job` docs now make post-click navigation assertions explicit with `assertUrl` / `assertText` instead of implying hidden automatic navigation checks.
+
+### Fixed
+
+- Stabilized concurrency-sensitive fake-upstream tests by waiting for the older explicit-session open to reach the fake binary before launching the newer one, and by covering the documented planned-URL fallback separately from strict live current-page recovery assertions.
+
 ## 0.2.33 - 2026-05-23
 
 ### Added

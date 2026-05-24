@@ -26,6 +26,19 @@ function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForInvocation(
+	logPath: string,
+	predicate: (entry: Awaited<ReturnType<typeof readInvocationLog>>[number]) => boolean,
+	timeoutMs = 1_000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if ((await readInvocationLog(logPath)).some(predicate)) return;
+		await delay(5);
+	}
+	assert.fail(`Timed out waiting for invocation in ${logPath}`);
+}
+
 test("agentBrowserExtension re-selects the navigated tab after profiled opens when restored tabs steal focus", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -528,7 +541,7 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + 
 const slow = { title: "Slow First", url: "https://example.com/slow-first" };
 const fast = { title: "Fast Second", url: "https://example.com/fast-second" };
 if (args.includes("https://example.com/slow-first")) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750);
   process.stdout.write(JSON.stringify({ success: true, data: slow }));
 } else if (args.includes("https://example.com/fast-second")) {
   process.stdout.write(JSON.stringify({ success: true, data: fast }));
@@ -566,7 +579,7 @@ if (args.includes("https://example.com/slow-first")) {
 			const slowOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "named", "open", "https://example.com/slow-first"],
 			});
-			await delay(5);
+			await waitForInvocation(logPath, (entry) => entry.args.includes("https://example.com/slow-first"));
 			const fastOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "named", "open", "https://example.com/fast-second"],
 			});

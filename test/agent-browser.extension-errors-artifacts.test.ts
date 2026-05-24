@@ -13,6 +13,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+	collectTimeoutPartialProgress,
+	formatTimeoutPartialProgressText,
+} from "../extensions/agent-browser/lib/orchestration/browser-run/diagnostics.js";
+import {
 	cleanupSecureTempArtifacts,
 	createSecureTempDirectory,
 } from "../extensions/agent-browser/lib/temp.js";
@@ -381,6 +385,33 @@ if (args.includes("get") && args.includes("url")) {
 			const waitNoPathProgress = waitNoPathResult.details?.timeoutPartialProgress as { artifacts?: Array<{ path?: string }> } | undefined;
 			assert.deepEqual(waitNoPathProgress?.artifacts, []);
 		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("collectTimeoutPartialProgress falls back to the planned page URL when live page recovery is unavailable", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	try {
+		const progress = await collectTimeoutPartialProgress({
+			command: "batch",
+			cwd: tempDir,
+			stdin: JSON.stringify([
+				["open", "https://example.test/planned"],
+				["screenshot", "planned.png"],
+				["wait", "--download", "download.csv"],
+			]),
+		});
+
+		assert.ok(progress);
+		assert.equal(progress.currentPage?.url, "https://example.test/planned");
+		assert.equal(progress.currentPage?.title, undefined);
+		assert.match(progress.summary, /planned page URL/);
+		assert.deepEqual(progress.artifacts.map((artifact) => ({ exists: artifact.exists, path: artifact.path, stepIndex: artifact.stepIndex })), [
+			{ exists: false, path: "planned.png", stepIndex: 2 },
+			{ exists: false, path: "download.csv", stepIndex: 3 },
+		]);
+		assert.match(formatTimeoutPartialProgressText(progress), /Current page: https:\/\/example.test\/planned/);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
