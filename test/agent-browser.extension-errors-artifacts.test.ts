@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -320,6 +320,13 @@ if (args.includes("get") && args.includes("url")) {
 	);
 
 	try {
+		// The timed-out fake upstream normally writes this before hanging, but pre-create it
+		// so this diagnostic test is about wrapper timeout progress instead of Node process
+		// startup timing under full-suite load.
+		await mkdir(join(tempDir, "dogfood/secret-token"), { recursive: true });
+		await writeFile(join(tempDir, "dogfood/secret-token/filled.png"), "fake image");
+		await mkdir(join(tempDir, "dogfood"), { recursive: true });
+		await writeFile(join(tempDir, "dogfood/option-full-page.png"), "fake image");
 		// Keep the watchdog short enough to exercise timeout progress, but not so short that
 		// immediate helper probes (`get url` / `get title`) flake under full release-suite load.
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "2000" }, async () => {

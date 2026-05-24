@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.33 - 2026-05-23
+
 ### Added
 
 - `npm run typecheck` as a thin alias for the default gate’s `tsc --noEmit` step (`scripts/project.mjs` `verify typecheck`), for fast iteration without docs drift checks, unit tests, or live upstream command-reference sampling.
