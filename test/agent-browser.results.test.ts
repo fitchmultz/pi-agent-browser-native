@@ -117,6 +117,10 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Electron launch blocked by caller deny policy." }), "policy-blocked");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Electron cleanup partial: remaining resources detected." }), "cleanup-failed");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "agent-browser could not re-select the intended tab before running the command." }), "tab-drift");
+	assert.equal(classifyAgentBrowserFailureCategory({
+		errorText: 'qa.attached requires an http(s) page URL; the current attached URL is "about:blank".',
+		validationError: 'qa.attached requires an http(s) page URL; the current attached URL is "about:blank".',
+	}), "validation-error");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), "upstream-error");
 });
 
@@ -522,5 +526,35 @@ test("getAgentBrowserErrorText prefers spill/write failures over downstream pars
 	});
 
 	assert.equal(errorText, "pi-agent-browser temp spill budget exceeded");
+});
+
+test("isHttpOrHttpsUrl accepts http(s) only", async () => {
+	const { buildQaCompactPassText, isHttpOrHttpsUrl } = await import("../extensions/agent-browser/lib/input-modes/job.js");
+	assert.equal(isHttpOrHttpsUrl("https://example.test/"), true);
+	assert.equal(isHttpOrHttpsUrl("http://127.0.0.1/"), true);
+	assert.equal(isHttpOrHttpsUrl("about:blank"), false);
+	assert.equal(isHttpOrHttpsUrl("app://demo"), false);
+	assert.equal(isHttpOrHttpsUrl("not-a-url"), false);
+	const compact = buildQaCompactPassText({
+		batchStepCount: 8,
+		checks: {
+			attached: false,
+			checkConsole: true,
+			checkErrors: true,
+			checkNetwork: true,
+			expectedText: ["Welcome"],
+			loadState: "domcontentloaded",
+		},
+		page: { title: "Example", url: "https://example.test/" },
+		qaPreset: {
+			failedChecks: [],
+			passed: true,
+			summary: "QA preset passed.",
+			warnings: [],
+		},
+	});
+	assert.match(compact, /Page: Example — https:\/\/example\.test\//);
+	assert.match(compact, /Checks run: load:domcontentloaded, text×1, network, console, errors \(8 batch steps\)/);
+	assert.match(compact, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 });
 

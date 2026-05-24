@@ -277,23 +277,87 @@ test("agentBrowserExtension compiles lightweight QA presets and fails diagnostic
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
 let stdin = "";
 let mode = "clean";
 let staleNetwork = true;
 let staleConsole = true;
 let staleErrors = true;
+const statePath = path.join(${JSON.stringify(tempDir)}, "fake-session-state.json");
+const valueFlags = new Set(["--session", "--profile", "--state", "--session-name", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
+function getSessionKey() {
+  const index = args.indexOf("--session");
+  return index >= 0 ? args[index + 1] : "default";
+}
+function readSessionState() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    return parsed[getSessionKey()] ?? { title: "QA Page", url: "https://example.test/" };
+  } catch {
+    return { title: "QA Page", url: "https://example.test/" };
+  }
+}
+function writeSessionState(nextState) {
+  let parsed = {};
+  try { parsed = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {}
+  parsed[getSessionKey()] = nextState;
+  fs.writeFileSync(statePath, JSON.stringify(parsed));
+}
+function findCommandStartIndex(argv) {
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === "--json") continue;
+    if (valueFlags.has(token)) { i += 1; continue; }
+    if (token.startsWith("--")) continue;
+    return i;
+  }
+  return -1;
+}
+function writeStandaloneResult(data) {
+  process.stdout.write(JSON.stringify({ success: true, data }));
+}
+function handleStandaloneCommand() {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  const commandIndex = findCommandStartIndex(args);
+  const command = args[commandIndex];
+  const subcommand = args[commandIndex + 1];
+  const sessionState = readSessionState();
+  if (command === "get" && subcommand === "url") {
+    if (process.env.QA_ATTACHED_GET_URL_FAIL === "1") {
+      process.stderr.write("get url failed");
+      process.exit(1);
+    }
+    writeStandaloneResult({ result: sessionState.url, url: sessionState.url });
+    return true;
+  }
+  if (command === "get" && subcommand === "title") {
+    writeStandaloneResult({ result: sessionState.title, title: sessionState.title });
+    return true;
+  }
+  if (command === "open") {
+    const url = String(subcommand || "about:blank");
+    const title = url.includes("blank") ? "Blank Page" : "QA Page";
+    writeSessionState({ title, url });
+    writeStandaloneResult({ title, url });
+    return true;
+  }
+  return false;
+}
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
+  if (handleStandaloneCommand()) return;
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
   const steps = JSON.parse(stdin);
   const results = steps.map((command) => {
     const name = command[0];
     if (name === "open") {
       const url = String(command[1] || "");
+      const title = url.includes("blank") ? "Blank Page" : "QA Page";
+      writeSessionState({ title, url });
       mode = url.includes("fail") ? "fail" : url.includes("favicon") ? "favicon" : "clean";
-      return { command, success: true, result: { title: "QA Page", url } };
+      return { command, success: true, result: { title, url } };
     }
     if (name === "network") {
       if (command.includes("--clear")) { staleNetwork = false; return { command, success: true, result: { requests: [] } }; }
@@ -335,6 +399,11 @@ process.stdin.on("end", () => {
 			});
 			assert.equal(cleanResult.isError, false);
 			assert.deepEqual((cleanResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, []);
+			assert.match((cleanResult.content[0] as { text: string }).text, /QA preset passed\./);
+			assert.match((cleanResult.content[0] as { text: string }).text, /Checks run:/);
+			assert.match((cleanResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
+			assert.doesNotMatch((cleanResult.content[0] as { text: string }).text, /Step 1 —/);
+			assert.ok(Array.isArray(cleanResult.details?.batchSteps) && (cleanResult.details?.batchSteps as unknown[]).length > 0);
 
 			const benignNetworkResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {
@@ -346,8 +415,9 @@ process.stdin.on("end", () => {
 			assert.deepEqual((benignNetworkResult.details?.qaPreset as { failedChecks?: string[]; warnings?: string[] } | undefined)?.failedChecks, []);
 			assert.deepEqual((benignNetworkResult.details?.qaPreset as { warnings?: string[] } | undefined)?.warnings, ["1 benign network request failure(s) ignored"]);
 			assert.match((benignNetworkResult.content[0] as { text: string }).text, /QA preset passed with warnings: 1 benign network request failure\(s\) ignored\./);
-			assert.match((benignNetworkResult.content[0] as { text: string }).text, /Network failure summary: 0 actionable, 1 benign low-impact \(1 total\)\./);
-			assert.match((benignNetworkResult.content[0] as { text: string }).text, /404 GET https:\/\/example.test\/favicon.ico \(image\/x-icon\).*\[benign: low-impact browser icon asset\]/);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
+			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Network failure summary:/);
+			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Step 1 —/);
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {
@@ -404,6 +474,7 @@ process.stdin.on("end", () => {
 			assert.equal(managedSessionOutcome?.status, "replaced");
 			assert.equal(managedSessionOutcome?.succeeded, false);
 			assert.match((result.content[0] as { text: string }).text, /Managed session outcome: Managed session .* was replaced by .*/);
+			assert.match((result.content[0] as { text: string }).text, /Step 1 —/);
 			assert.deepEqual((result.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
 				"1 actionable failed network request(s)",
 				"1 console error message(s)",
@@ -436,7 +507,10 @@ process.stdin.on("end", () => {
 				},
 			});
 			assert.equal(attachedResult.isError, false);
-			assert.match((attachedResult.content[0] as { text: string }).text, /QA attached target: .* — QA Page — https:\/\/fail\.example\.test\//);
+			assert.match((attachedResult.content[0] as { text: string }).text, /QA preset passed\./);
+			assert.match((attachedResult.content[0] as { text: string }).text, /Page: .* — https:\/\/fail\.example\.test\//);
+			assert.doesNotMatch((attachedResult.content[0] as { text: string }).text, /QA attached target:/);
+			assert.doesNotMatch((attachedResult.content[0] as { text: string }).text, /Step 1 —/);
 			assert.equal((attachedResult.details?.qaAttachedTarget as { title?: string; url?: string } | undefined)?.title, "QA Page");
 			assert.equal((attachedResult.details?.qaAttachedTarget as { title?: string; url?: string } | undefined)?.url, "https://fail.example.test/");
 			const attachedCompiledQaPreset = attachedResult.details?.compiledQaPreset as { checks?: { attached?: boolean; url?: string }; steps?: Array<{ args: string[] }> } | undefined;
@@ -472,6 +546,99 @@ process.stdin.on("end", () => {
 			assert.equal(attachedWithUrl.isError, true);
 			assert.match(attachedWithUrl.content[0]?.text ?? "", /qa\.url must be omitted when qa\.attached is true/);
 			assert.equal(attachedWithUrl.details?.failureCategory, "validation-error");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rejects qa.attached when attached URL is not http(s)", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-attached-precondition-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+let stdin = "";
+const statePath = path.join(${JSON.stringify(tempDir)}, "fake-session-state.json");
+const valueFlags = new Set(["--session", "--profile", "--state", "--session-name", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
+function getSessionKey() {
+  const index = args.indexOf("--session");
+  return index >= 0 ? args[index + 1] : "default";
+}
+function readSessionState() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    return parsed[getSessionKey()] ?? { title: "Blank Page", url: "about:blank" };
+  } catch {
+    return { title: "Blank Page", url: "about:blank" };
+  }
+}
+function findCommandStartIndex(argv) {
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === "--json") continue;
+    if (valueFlags.has(token)) { i += 1; continue; }
+    if (token.startsWith("--")) continue;
+    return i;
+  }
+  return -1;
+}
+function writeStandaloneResult(data) {
+  process.stdout.write(JSON.stringify({ success: true, data }));
+}
+function handleStandaloneCommand() {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  const commandIndex = findCommandStartIndex(args);
+  const command = args[commandIndex];
+  const subcommand = args[commandIndex + 1];
+  const sessionState = readSessionState();
+  if (command === "get" && subcommand === "url") {
+    writeStandaloneResult({ result: sessionState.url, url: sessionState.url });
+    return true;
+  }
+  if (command === "get" && subcommand === "title") {
+    writeStandaloneResult({ result: sessionState.title, title: sessionState.title });
+    return true;
+  }
+  if (command === "open") {
+    const url = String(subcommand || "about:blank");
+    writeStandaloneResult({ title: "Blank Page", url });
+    return true;
+  }
+  if (command === "connect") {
+    writeStandaloneResult({ connected: true, endpoint: subcommand });
+    return true;
+  }
+  return false;
+}
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  if (handleStandaloneCommand()) return;
+  process.stdout.write(JSON.stringify([]));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
+			const attachedBlankResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: { attached: true, expectedText: "Welcome" },
+			});
+			assert.equal(attachedBlankResult.isError, true);
+			assert.match(attachedBlankResult.content[0]?.text ?? "", /qa\.attached requires an http\(s\) page URL/);
+			assert.equal(attachedBlankResult.details?.failureCategory, "validation-error");
+			assert.deepEqual((attachedBlankResult.details?.nextActions as Array<{ id: string }> | undefined)?.map((action) => action.id), [
+				"list-tabs-before-qa-attached",
+				"snapshot-before-qa-attached",
+			]);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.at(-1) === "batch"), false);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

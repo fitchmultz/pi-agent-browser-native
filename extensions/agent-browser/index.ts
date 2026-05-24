@@ -717,6 +717,7 @@ interface ElectronBroadGetTextScopeDiagnostic {
 }
 
 interface QaAttachedTarget {
+	error?: string;
 	sessionName: string;
 	title?: string;
 	url?: string;

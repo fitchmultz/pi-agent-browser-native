@@ -27,7 +27,7 @@ import {
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
-import { collectScrollPositionSnapshot } from "./diagnostics.js";
+import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
 import type {
 	BrowserRunInputFields,
 	BrowserRunOptions,
@@ -553,6 +553,31 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			},
 			isError: true,
 		} };
+	}
+
+	if (compiledQaPreset?.checks.attached) {
+		const qaAttachedPrecondition = await validateQaAttachedPrecondition({
+			cwd,
+			sessionName: executionPlan.sessionName,
+			signal,
+		});
+		if (qaAttachedPrecondition) {
+			return { kind: "early-result", statePatch, result: {
+				content: [{ type: "text", text: qaAttachedPrecondition.error }],
+				details: {
+					args: redactedArgs,
+					compiledQaPreset: redactedCompiledQaPreset,
+					compatibilityWorkaround,
+					effectiveArgs: redactedEffectiveArgs,
+					nextActions: qaAttachedPrecondition.nextActions,
+					sessionMode,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: qaAttachedPrecondition.error, succeeded: false, validationError: qaAttachedPrecondition.error }),
+					validationError: qaAttachedPrecondition.error,
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+				},
+				isError: true,
+			} };
+		}
 	}
 
 	let pinnedBatchUnwrapMode: PreparedBrowserRun["pinnedBatchUnwrapMode"];
