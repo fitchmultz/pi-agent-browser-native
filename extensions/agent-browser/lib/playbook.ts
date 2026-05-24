@@ -97,7 +97,7 @@ export function buildSharedBrowserPlaybookGuidelines(options: { includeBraveSear
 /** Tier A: always-on tool promptGuidelines (keep small; Tier B lives in SHARED_BROWSER_PLAYBOOK_GUIDELINES and docs). */
 export const RUNTIME_PROMPT_GUIDELINES = [
 	"Use exactly one input mode per call: args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron. Use stdin only for batch, eval --stdin, auth save --password-stdin, or wrapper-generated batch modes.",
-	"Default flow: open → snapshot -i → interact with current @refs or semanticAction → re-snapshot -i after navigation, scroll, rerender, or other major DOM changes; page-scoped @refs are invalid across pages.",
+	"Default flow: open → snapshot -i → interact with current @refs or semanticAction → re-snapshot -i after navigation, scroll, rerender, or other major DOM changes; page-scoped @refs are invalid across pages; if the user says stop before order/post/purchase/submit, do not click the final action.",
 	"Use sessionMode=fresh when launch-scoped flags (--profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, iOS --device) must apply on an already-active implicit session; otherwise keep implicit continuity.",
 	"When details.nextActions is present, prefer those exact agent_browser payloads over prose or guessed selectors.",
 	"For three or more reads of known refs/selectors on the same page, prefer batch JSON-array stdin (for example [[\"get\",\"text\",\"@e1\"],[\"get\",\"title\"]]) instead of serial get calls.",

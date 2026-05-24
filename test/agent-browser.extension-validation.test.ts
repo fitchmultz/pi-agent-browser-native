@@ -97,6 +97,11 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			);
 		}
 		assert.match(guidelineText, /Default flow: open/);
+		assert.match(guidelineText, /stop before order\/post\/purchase\/submit/);
+		assert.equal(
+			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("stop before order/post/purchase/submit")),
+			true,
+		);
 		assert.match(guidelineText, /sessionMode=fresh/);
 		assert.match(guidelineText, /When details\.nextActions is present/);
 		assert.match(guidelineText, /three or more reads/);
