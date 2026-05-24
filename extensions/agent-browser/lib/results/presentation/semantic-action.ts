@@ -30,10 +30,6 @@ function getPageSummary(data: Record<string, unknown>): string | undefined {
 	return title ?? url;
 }
 
-function isLocatedSelectorToken(value: string): boolean {
-	return value.includes("data-agent-browser-located");
-}
-
 function formatSemanticActionTarget(compiled: CompiledAgentBrowserSemanticAction): string {
 	if (compiled.action === "select") {
 		const selector = compiled.selector ?? "selector";
@@ -111,16 +107,6 @@ export function formatSemanticActionPresentationText(
 
 	const pageSummary = getPageSummary(data);
 	if (pageSummary) return `${actionLine}\n\nCurrent page:\n${redactModelFacingText(pageSummary)}`;
-
-	const clicked = data.clicked;
-	if (
-		typeof clicked === "string" &&
-		isLocatedSelectorToken(clicked) &&
-		!navigationSummary &&
-		!pageSummary
-	) {
-		return actionLine;
-	}
 
 	return actionLine;
 }
