@@ -33,11 +33,38 @@ The native command reference in `docs/COMMAND_REFERENCE.md` is driven by the sam
 
 Agent-facing efficiency claims are measured with `npm run benchmark:agent-browser` or `npm run verify -- benchmark`. The benchmark is deterministic and does not launch a browser; it tracks representative workflow success, tool calls, model-visible output size, stale-ref failures and recoveries, artifact success, failure-category coverage, and elapsed-time estimates so future abstractions can prove they reduce agent work before replacing raw tool use.
 
+## Input mode chooser
+
+Use exactly one top-level input per call:
+
+| When you need | Use | Notes |
+| --- | --- | --- |
+| Routine browse, click, fill, screenshots, upstream commands | `args` | Default path: `open` → `snapshot -i` → `click`/`fill` `@eN` → `snapshot -i` after navigation or DOM changes. Do not pass `--json`; the wrapper injects it (see [Wrapper `--json`](#wrapper-json)). |
+| Stable visible role/text/label/placeholder targets | `semanticAction` | Compiles to upstream `find` or `select`; optional `session` for a named upstream browser. |
+| Short multi-step smoke or evidence flows | `job` or `qa` | Both compile to `batch`; `qa` may reclassify diagnostics as failure. |
+| Desktop Electron apps (list/launch/probe/cleanup) | `electron` | Wrapper-owned lifecycle; not for ordinary websites. |
+| Local UI source hints (experimental) | `sourceLookup` | **Candidates only** with confidence/evidence; not guaranteed DOM-to-file mappings. |
+| Failed fetch/API source hints (experimental) | `networkSourceLookup` | **Candidates only** from initiator metadata and bounded workspace URL literals; not definitive blame. |
+
+For link and button text, use the **exact** visible label from the latest `snapshot -i` (or `semanticAction` locators), not guessed copy. The `https://example.com/` smoke page uses heading `Example Domain` and link `Learn more`; do not assume older example.com strings such as `More information...`.
+
+## Snapshot and getter batching
+
+- **`snapshot -i`**: default for interaction—interactive `@eN` refs, main-content-first trimming, and the usual click/fill workflow.
+- **`snapshot --compact`**: denser same-page tree when you still need refs but want less output than full interactive snapshot.
+- **Full `snapshot`** (no `-i`): use only when you need the complete accessibility tree; expect larger output and possible spill files.
+- Re-run `snapshot -i` after navigation, scrolling, rerendering, or other major DOM changes; refs are page-scoped.
+- When you need **three or more** `get title` / `get url` / `get text` / similar reads for known refs or selectors on the same page, prefer one `batch` stdin array (for example `[["get","text","@e1"],["get","text","@e2"]]`) instead of serial tool calls.
+
+## Wrapper `--json`
+
+The extension always plans normal browser commands with `--json` prepended in `effectiveArgs` so upstream returns structured JSON for presentation and `details`. **Do not** include `--json` in caller `args`; it is unnecessary and can confuse planning or transcript hooks that treat caller-requested JSON differently. Plain-text inspection (`--help`, `--version`) and read-only `skills list` / `skills get` / `skills path` keep their own output shapes and skip implicit session injection as documented under `sessionMode`.
+
 <!-- agent-browser-playbook:start shared-guidelines -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 - Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs are page-scoped; the wrapper fails mutation-prone stale/recycled refs before upstream can silently target a different current-page element.
 - For ordinary forms from one snapshot, batch multiple fill @refs before the submit/click step to avoid serial tool calls; if a fill may autosubmit, navigate, or rerender later fields, split the flow and refresh refs first.
-- When snapshot -i compacts because the tree is oversized, scan visible output for Omitted high-value controls and optional details.data.highValueControlRefIds before opening the spill file: those list bounded searchboxes, textboxes, comboboxes, buttons, tabs, checkboxes, radios, options, and menuitems that did not fit the key/other ref previews.
+- Snapshot choice: prefer snapshot -i for routine clicks/fills (interactive @refs, main-content-first). Use snapshot --compact when you need a denser same-page tree without full spill; use full snapshot (no -i) only when you need the complete accessibility tree. Re-snapshot after navigation or major DOM changes. When snapshot -i compacts because the tree is oversized, scan visible output for Omitted high-value controls and optional details.data.highValueControlRefIds before opening the spill file: those list bounded searchboxes, textboxes, comboboxes, buttons, tabs, checkboxes, radios, options, and menuitems that did not fit the key/other ref previews.
 - When a visible text or accessible-name target should survive ref churn, prefer find locators such as role, text, label, placeholder, alt, title, or testid with the intended action instead of guessing a CSS selector.
 - For desktop or host-controlled rich inputs, if semanticAction fill misses, refresh refs and prefer a current editable @ref from details.richInputRecovery or the latest snapshot; focus or click that ref, then use keyboard inserttext or keyboard type with the intended text. Do not auto-submit with Enter or a submit button unless the user flow explicitly calls for it.
 - Do not assume Playwright selector dialects such as text=Close or button:has-text('Close') are supported wrapper syntax unless current upstream agent-browser behavior has been verified.
@@ -93,6 +120,8 @@ Illustrative shapes (each real call uses exactly one of `args`, `semanticAction`
 - exact CLI args passed after `agent-browser`
 - no shell operators
 - do not include the binary name
+- do not include `--json`; the wrapper injects it (see [Wrapper `--json`](#wrapper-json))
+- first-call recipe: `open` → `snapshot -i` → `click` / `fill` with current `@eN` refs from that snapshot → `snapshot -i` again after navigation or DOM changes
 
 Examples:
 
@@ -381,7 +410,7 @@ For an app you launched manually with remote debugging enabled, skip `electron.c
 
 - type: object with at least one of `selector`, `reactFiberId`, or `componentName`
 - optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `networkSourceLookup`, and `electron`
-- experimental opt-in helper for local app debugging; it reports candidate source locations with confidence and evidence instead of claiming a guaranteed DOM-to-file mapping
+- **EXPERIMENTAL — candidates only:** opt-in helper for local app debugging; it reports candidate source locations with confidence and evidence instead of claiming a guaranteed DOM-to-file mapping. Do not treat output as authoritative file ownership or edit targets without verification.
 - compiles to existing upstream `batch` commands only:
   - `selector` adds `is visible <selector>` and, unless `includeDomHints: false`, adds `get html <selector>` for source-like DOM attributes (`data-source-file`, `data-file`, `data-component-file`, `data-source`, plus optional `data-source-line` / `data-line` and `data-source-column` / `data-column`) and for `.ts`/`.tsx`/`.js`/`.jsx` paths embedded in HTML text
   - `reactFiberId` runs `react inspect <id>`; this requires the page to have been launched with `--enable react-devtools` before first navigation and for the app build to expose source information
@@ -406,7 +435,7 @@ Use raw `args` for direct upstream React inspection when you already know the ex
 
 - type: object with at least one of `requestId`, `filter`, or `url`, plus optional `maxWorkspaceFiles`
 - optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, and `electron`
-- experimental failed-request source-hint helper; it reports failed network requests and candidate source hints with evidence instead of assigning blame
+- **EXPERIMENTAL — candidates only:** failed-request source-hint helper; it reports failed network requests and candidate source hints with evidence instead of assigning blame or proving root cause
 - compiles to existing upstream `batch` commands only: `network request <requestId>` when provided plus `network requests` with `--filter <filter-or-url>` when a filter or URL is provided (if both are set, `filter` wins; when only `url` is set, it becomes the `--filter` argument); optional `session` prepends `--session <name>` before that generated `batch`
 - detects failed requests from `status >= 400`, `failed: true`, or an `error` field
 - candidate sources come from source-like initiator/stack metadata in upstream network results and bounded local workspace search for URL/path literals under the Pi session cwd
@@ -464,6 +493,8 @@ Recommended use:
 - when a fresh launch fails or times out before becoming current, check `details.managedSessionOutcome`: it states whether the prior managed session was preserved or whether the attempted fresh session was abandoned because no prior managed session existed; when `sessionMode` is `"fresh"` and the tool ultimately fails, the model-visible result also appends `Managed session outcome: …` (see `#details` below). Failures under `sessionMode: "auto"` still expose the struct on `details` when the extension injects a managed `--session`, but they do not add that extra prose line.
 
 ## Wrapper behavior
+
+Caller `args` should omit `--json`; the wrapper prepends it for normal execution so `details` and presentation stay structured. See [Wrapper `--json`](#wrapper-json).
 
 The extension should:
 - inject `--json`

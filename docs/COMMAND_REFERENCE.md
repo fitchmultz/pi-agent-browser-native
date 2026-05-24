@@ -27,6 +27,8 @@ Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before an
 
 ## Core mental model
 
+Input mode chooser (one per call): **`args`** for the default open → snapshot -i → click/fill `@refs` flow; **`semanticAction`** for stable role/text/label targets; **`job`** / **`qa`** for multi-step checks; **`electron`** for desktop apps only; **`sourceLookup`** / **`networkSourceLookup`** are **experimental candidates-only** helpers (not authoritative mappings). Do not pass `--json` in `args`—the wrapper injects it. Match link and button text to the latest snapshot (on `https://example.com/` the main link is `Learn more`, not legacy `More information...` copy). See [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#input-mode-chooser) for snapshot variants (`-i` vs `--compact` vs full) and batching three or more getters.
+
 Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron`):
 
 ```json
@@ -63,8 +65,8 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 - `semanticAction`: optional shorthand for common `find` flows and native dropdown `select`; compiles to upstream argv and is rejected together with `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` on the same call.
 - `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin and reports the compiled plan in `details.compiledJob`.
 - `qa`: optional lightweight QA preset; compiles to the same batch path and reports `details.compiledQaPreset` plus `details.qaPreset` pass/fail evidence.
-- `sourceLookup`: optional experimental helper for local UI-to-source *candidates*; compiles to the same `batch` path, reports `details.compiledSourceLookup` and `details.sourceLookup`, and never reclassifies a fully successful upstream batch as failed the way `qa` can (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#sourcelookup) and the longer notes below).
-- `networkSourceLookup`: optional experimental helper for failed request-to-source *candidates*; compiles to generated `batch`, reports `details.compiledNetworkSourceLookup` and `details.networkSourceLookup`, and never assigns blame or edits files.
+- `sourceLookup`: **EXPERIMENTAL — candidates only** for local UI-to-source hints; compiles to the same `batch` path, reports `details.compiledSourceLookup` and `details.sourceLookup`, and never reclassifies a fully successful upstream batch as failed the way `qa` can (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#sourcelookup) and the longer notes below).
+- `networkSourceLookup`: **EXPERIMENTAL — candidates only** for failed request-to-source hints; compiles to generated `batch`, reports `details.compiledNetworkSourceLookup` and `details.networkSourceLookup`, and never assigns blame or edits files.
 - `electron`: optional Electron desktop-app shorthand. `list`, `status`, `cleanup`, and `probe` are wrapper-owned host/session helpers; `launch` starts a wrapper-owned isolated Electron profile and attaches through upstream `connect`.
 - `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron` generate or manage their own input.
 - `sessionMode`:
@@ -105,7 +107,7 @@ React introspection requires the React DevTools init hook to be installed before
 Use `vitals [url]` for Core Web Vitals plus React hydration timing when available, and `pushstate <url>` for client-side SPA navigation without a full reload:
 
 ```json
-{ "args": ["vitals", "https://example.com", "--json"] }
+{ "args": ["vitals", "https://example.com"] }
 { "args": ["pushstate", "/dashboard?tab=settings"] }
 ```
 
