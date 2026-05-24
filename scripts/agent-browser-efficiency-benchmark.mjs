@@ -3,11 +3,12 @@
  * Purpose: Provide a deterministic benchmark for agent-facing browser workflow efficiency.
  * Responsibilities: Model representative agent_browser workflows, compute comparable efficiency metrics, and optionally compare a future candidate run against this baseline.
  * Scope: Local benchmark accounting only; it does not launch a browser or mutate profiles/sessions.
- * Usage: Run `node scripts/agent-browser-efficiency-benchmark.mjs`, `--json`, or `--compare <path>`.
+ * Usage: Run `node scripts/agent-browser-efficiency-benchmark.mjs`, `--json`, `--compare <path>`, or `--sample-jsonl <path>`.
  * Invariants/Assumptions: Scenarios represent high-value workflow shapes agents perform today; future browser UX tasks should update or compare against this benchmark when claiming call-count, output-size, stale-ref, artifact, or success-rate improvements.
  */
 
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 
 const CURRENT_BENCHMARK_VERSION = 2;
 
@@ -314,19 +315,225 @@ function usage() {
   return `agent-browser-efficiency-benchmark.mjs
 
 Usage:
-  node scripts/agent-browser-efficiency-benchmark.mjs [--json|--markdown] [--compare <path>]
+  node scripts/agent-browser-efficiency-benchmark.mjs [--json|--markdown] [--compare <path>] [--sample-jsonl <path>]
 
 Options:
-  --json            Print machine-readable benchmark metrics.
-  --markdown        Print a readable benchmark report (default).
-  --compare <path>  Compare against a prior JSON benchmark report.
-  -h, --help        Show this help.
+  --json                Print machine-readable benchmark metrics.
+  --markdown            Print a readable benchmark report (default).
+  --compare <path>      Compare against a prior JSON benchmark report.
+  --sample-jsonl <path> Opt-in: measure UTF-8 bytes of model-visible agent_browser tool-result text from a Pi session JSONL transcript. Does not change deterministic scenario metrics.
+  -h, --help            Show this help.
 
 Exit codes:
   0  Benchmark rendered or comparison completed.
-  1  Benchmark comparison found a regression or input could not be read.
+  1  Benchmark comparison found a regression, JSONL sample input could not be read, or the sample file is missing.
   2  Usage error.
+
+Notes:
+  --compare ignores optional jsonlSample blocks; only deterministic scenario metrics drive regressions.
 `;
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+
+export function parseJsonl(text) {
+  const entries = [];
+  for (const [index, line] of text.split("\n").entries()) {
+    if (line.trim().length === 0) continue;
+    try {
+      entries.push(JSON.parse(line));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid JSONL at line ${index + 1}: ${message}`);
+    }
+  }
+  return entries;
+}
+
+export function agentBrowserToolResults(entries) {
+  return entries
+    .filter((entry) => entry?.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === "agent_browser")
+    .map((entry) => entry.message);
+}
+
+// Keep in sync with extensions/agent-browser/lib/runtime.ts (findCommandStartIndex).
+const INFER_COMMAND_VALUE_FLAGS = new Set([
+  "--session",
+  "--cdp",
+  "--config",
+  "--profile",
+  "--session-name",
+  "--proxy",
+  "--proxy-bypass",
+  "--headers",
+  "--executable-path",
+  "--extension",
+  "--init-script",
+  "--enable",
+  "--provider",
+  "-p",
+  "--engine",
+  "--state",
+  "--download-path",
+  "--screenshot-dir",
+  "--screenshot-format",
+  "--screenshot-quality",
+  "--color-scheme",
+  "--device",
+  "--port",
+  "--args",
+  "--user-agent",
+  "--allowed-domains",
+  "--action-policy",
+  "--confirm-actions",
+  "--max-output",
+  "--model",
+  "--baseline",
+  "--body",
+  "--categories",
+  "--curl",
+  "--depth",
+  "-d",
+  "--domain",
+  "--expires",
+  "--filter",
+  "--fn",
+  "--label",
+  "--load",
+  "--name",
+  "--path",
+  "--resource-type",
+  "--sameSite",
+  "--selector",
+  "-s",
+  "--text",
+  "--timeout",
+  "--url",
+  "--username",
+  "--password",
+]);
+
+const INFER_COMMAND_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES = new Set([
+  "--allow-file-access",
+  "--annotate",
+  "--auto-connect",
+  "--confirm-interactive",
+  "--content-boundaries",
+  "--debug",
+  "--headed",
+  "--ignore-https-errors",
+  "--json",
+  "--no-auto-dialog",
+  "--quiet",
+  "-q",
+  "--verbose",
+  "-v",
+]);
+
+function isInferCommandBooleanLiteral(token) {
+  const normalized = typeof token === "string" ? token.trim().toLowerCase() : undefined;
+  return normalized === "true" || normalized === "false";
+}
+
+function inferCommandFromEffectiveArgs(effectiveArgs) {
+  if (!Array.isArray(effectiveArgs)) return undefined;
+  for (let index = 0; index < effectiveArgs.length; index += 1) {
+    const token = effectiveArgs[index];
+    if (typeof token !== "string") return token;
+    if (token.startsWith("--session=")) continue;
+    if (token.startsWith("-")) {
+      const normalizedToken = token.split("=", 1)[0] ?? token;
+      if (INFER_COMMAND_VALUE_FLAGS.has(normalizedToken) && !token.includes("=")) {
+        index += 1;
+      } else if (
+        INFER_COMMAND_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken) &&
+        !token.includes("=") &&
+        isInferCommandBooleanLiteral(effectiveArgs[index + 1])
+      ) {
+        index += 1;
+      }
+      continue;
+    }
+    return token;
+  }
+  return undefined;
+}
+
+export function inferJsonlWorkflowId(message) {
+  const details = isRecord(message?.details) ? message.details : undefined;
+  if (!details) return "unspecified";
+  if (details.compiledQaPreset) return "native-qa";
+  if (details.compiledNetworkSourceLookup) return "native-network-source-lookup-experiment";
+  if (details.compiledSourceLookup) return "native-source-lookup-experiment";
+  if (details.compiledElectron) return "native-electron";
+  if (details.compiledJob) return "native-job";
+  if (details.compiledSemanticAction) return "native-semantic-action";
+  const command = typeof details.command === "string" ? details.command : inferCommandFromEffectiveArgs(details.effectiveArgs);
+  if (command === "batch") return "current-batch";
+  if (command) return "current-raw";
+  return "unspecified";
+}
+
+export function measureToolResultModelVisibleBytes(message) {
+  const content = message?.content;
+  if (!Array.isArray(content)) return 0;
+  let total = 0;
+  for (const part of content) {
+    if (part?.type === "text" && typeof part.text === "string") {
+      total += Buffer.byteLength(part.text, "utf8");
+    }
+  }
+  return total;
+}
+
+export function percentile95(values) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.ceil(0.95 * sorted.length) - 1;
+  return sorted[Math.max(0, index)];
+}
+
+export function buildJsonlSampleReport({ path, results }) {
+  const perResult = results.map((message) => ({
+    workflowId: inferJsonlWorkflowId(message),
+    modelVisibleBytes: measureToolResultModelVisibleBytes(message),
+    isError: message?.isError === true,
+  }));
+  const bytesByWorkflow = new Map();
+  for (const row of perResult) {
+    const bucket = bytesByWorkflow.get(row.workflowId) ?? [];
+    bucket.push(row.modelVisibleBytes);
+    bytesByWorkflow.set(row.workflowId, bucket);
+  }
+  const allBytes = perResult.map((row) => row.modelVisibleBytes);
+  const byWorkflow = [...bytesByWorkflow.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([workflowId, byteValues]) =>
+      Object.freeze({
+        workflowId,
+        toolResultCount: byteValues.length,
+        totalModelVisibleBytes: byteValues.reduce((sum, value) => sum + value, 0),
+        p95ModelVisibleBytes: percentile95(byteValues),
+      }),
+    );
+
+  return Object.freeze({
+    path,
+    toolResultCount: perResult.length,
+    totalModelVisibleBytes: allBytes.reduce((sum, value) => sum + value, 0),
+    p95ModelVisibleBytes: percentile95(allBytes),
+    byWorkflow: Object.freeze(byWorkflow),
+    errorResultCount: perResult.filter((row) => row.isError).length,
+  });
+}
+
+export async function sampleAgentBrowserJsonl(path) {
+  await access(path, fsConstants.R_OK);
+  const entries = parseJsonl(await readFile(path, "utf8"));
+  const results = agentBrowserToolResults(entries);
+  return buildJsonlSampleReport({ path, results });
 }
 
 export function summarizeScenario(scenario) {
@@ -346,7 +553,7 @@ export function summarizeScenario(scenario) {
   });
 }
 
-export function buildBenchmarkReport({ scenarios = BENCHMARK_SCENARIOS, label = "current-raw-baseline" } = {}) {
+export function buildBenchmarkReport({ scenarios = BENCHMARK_SCENARIOS, label = "current-raw-baseline", jsonlSample = null } = {}) {
   const scenarioSummaries = scenarios.map(summarizeScenario);
   const totals = scenarioSummaries.reduce(
     (accumulator, scenario) => {
@@ -385,6 +592,7 @@ export function buildBenchmarkReport({ scenarios = BENCHMARK_SCENARIOS, label = 
     generatedAt: "deterministic",
     metrics: Object.freeze(totals),
     scenarios: Object.freeze(scenarioSummaries),
+    ...(jsonlSample ? { jsonlSample: Object.freeze(jsonlSample) } : {}),
   });
 }
 
@@ -480,6 +688,25 @@ function markdownReport(report, comparison) {
         `| ${scenario.id} | ${scenario.workflow} | ${scenario.toolCalls} | ${scenario.modelVisibleBytes} | ${scenario.staleRefFailures} | ${scenario.staleRefRecoveries} | ${scenario.artifactSuccesses} | ${scenario.failureCategories.join(", ")} |`,
     ),
   ];
+  if (report.jsonlSample) {
+    const sample = report.jsonlSample;
+    lines.push(
+      "",
+      "## JSONL sample (opt-in)",
+      "",
+      `Path: ${sample.path}`,
+      `- agent_browser tool results: ${sample.toolResultCount}`,
+      `- Total model-visible bytes: ${sample.totalModelVisibleBytes}`,
+      `- Overall p95 model-visible bytes: ${sample.p95ModelVisibleBytes}`,
+      `- Error-marked tool results: ${sample.errorResultCount}`,
+      "",
+      "| Workflow | Results | Total bytes | p95 bytes |",
+      "| --- | ---: | ---: | ---: |",
+      ...sample.byWorkflow.map(
+        (row) => `| ${row.workflowId} | ${row.toolResultCount} | ${row.totalModelVisibleBytes} | ${row.p95ModelVisibleBytes} |`,
+      ),
+    );
+  }
   if (comparison) {
     lines.push("", "## Comparison", "", comparison.passed ? "No regressions detected." : "Regressions detected:");
     for (const regression of comparison.regressions) lines.push(`- ${regression}`);
@@ -493,7 +720,7 @@ async function readComparison(path) {
 }
 
 function parseArgs(argv) {
-  const options = { format: "markdown", comparePath: null, help: false };
+  const options = { format: "markdown", comparePath: null, sampleJsonlPath: null, help: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "-h" || arg === "--help") {
@@ -512,6 +739,13 @@ function parseArgs(argv) {
       const value = argv[index + 1];
       if (!value) throw new Error("--compare requires a path.");
       options.comparePath = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--sample-jsonl") {
+      const value = argv[index + 1];
+      if (!value) throw new Error("--sample-jsonl requires a path.");
+      options.sampleJsonlPath = value;
       index += 1;
       continue;
     }
@@ -534,7 +768,17 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  const report = buildBenchmarkReport();
+  let jsonlSample = null;
+  if (options.sampleJsonlPath) {
+    try {
+      jsonlSample = await sampleAgentBrowserJsonl(options.sampleJsonlPath);
+    } catch (error) {
+      console.error(`Failed to sample JSONL transcript: ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
+  }
+
+  const report = buildBenchmarkReport({ jsonlSample });
   let comparison = null;
   if (options.comparePath) {
     try {

@@ -7,6 +7,9 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 // @ts-expect-error The benchmark is a local ESM maintainer script without a declaration file.
@@ -14,15 +17,31 @@ import * as benchmarkModule from "../scripts/agent-browser-efficiency-benchmark.
 
 const {
   BENCHMARK_SCENARIOS,
+  agentBrowserToolResults,
   buildBenchmarkReport,
+  buildJsonlSampleReport,
   compareBenchmarkReports,
+  inferJsonlWorkflowId,
+  measureToolResultModelVisibleBytes,
+  parseJsonl,
+  percentile95,
+  sampleAgentBrowserJsonl,
   summarizeScenario,
 }: {
   BENCHMARK_SCENARIOS: Array<{ id: string }>;
-  buildBenchmarkReport: () => any;
+  agentBrowserToolResults: (entries: unknown[]) => unknown[];
+  buildBenchmarkReport: (options?: { jsonlSample?: unknown }) => any;
+  buildJsonlSampleReport: (options: { path: string; results: unknown[] }) => any;
   compareBenchmarkReports: (current: any, candidate: any) => { passed: boolean; regressions: string[] };
+  inferJsonlWorkflowId: (message: unknown) => string;
+  measureToolResultModelVisibleBytes: (message: unknown) => number;
+  parseJsonl: (text: string) => unknown[];
+  percentile95: (values: number[]) => number;
+  sampleAgentBrowserJsonl: (path: string) => Promise<any>;
   summarizeScenario: (scenario: any) => any;
 } = benchmarkModule;
+
+const sampleFixturePath = join(import.meta.dirname, "fixtures", "agent-browser-efficiency-sample.jsonl");
 
 const requiredScenarioIds = new Set([
   "open-snapshot",
@@ -146,4 +165,130 @@ test("benchmark comparison accepts equal or improved candidate metrics", () => {
 
   assert.equal(comparison.passed, true);
   assert.deepEqual(comparison.regressions, []);
+});
+
+test("percentile95 uses the 95th rank for sorted byte samples", () => {
+  assert.equal(percentile95([10, 20, 30, 40, 100]), 100);
+  assert.equal(percentile95([5]), 5);
+  assert.equal(percentile95([]), 0);
+});
+
+test("measureToolResultModelVisibleBytes counts text content only", () => {
+  const bytes = measureToolResultModelVisibleBytes({
+    content: [{ type: "text", text: "hello" }, { type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+    details: { command: "open", effectiveArgs: ["open", "https://secret.example/?token=abc"] },
+  });
+  assert.equal(bytes, Buffer.byteLength("hello", "utf8"));
+});
+
+test("inferJsonlWorkflowId maps wrapper details to pragmatic workflow ids", () => {
+  assert.equal(inferJsonlWorkflowId({ details: { compiledQaPreset: { checks: {} } } }), "native-qa");
+  assert.equal(inferJsonlWorkflowId({ details: { compiledJob: { steps: [] } } }), "native-job");
+  assert.equal(inferJsonlWorkflowId({ details: { command: "batch" } }), "current-batch");
+  assert.equal(inferJsonlWorkflowId({ details: { command: "snapshot" } }), "current-raw");
+  assert.equal(inferJsonlWorkflowId({}), "unspecified");
+});
+
+test("inferJsonlWorkflowId infers commands from effectiveArgs without treating --json as a value flag", () => {
+  assert.equal(
+    inferJsonlWorkflowId({ details: { effectiveArgs: ["--json", "open", "https://example.test"] } }),
+    "current-raw",
+  );
+  assert.equal(
+    inferJsonlWorkflowId({ details: { effectiveArgs: ["--json", "--session", "s1", "batch"] } }),
+    "current-batch",
+  );
+  assert.equal(
+    inferJsonlWorkflowId({
+      details: { effectiveArgs: ["--json", "--profile", "Default", "open", "https://example.test"] },
+    }),
+    "current-raw",
+  );
+});
+
+test("parseJsonl and agentBrowserToolResults read agent_browser tool results", () => {
+  const entries = parseJsonl([
+    JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "agent_browser", content: [{ type: "text", text: "abc" }] } }),
+    JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "bash", content: [{ type: "text", text: "skip" }] } }),
+    "",
+  ].join("\n"));
+  const results = agentBrowserToolResults(entries);
+  assert.equal(results.length, 1);
+  assert.equal(measureToolResultModelVisibleBytes(results[0]), Buffer.byteLength("abc", "utf8"));
+});
+
+test("parseJsonl reports malformed transcript lines", () => {
+  assert.throws(() => parseJsonl('{"ok":true}\nnot-json'), /Invalid JSONL at line 2/);
+});
+
+test("buildJsonlSampleReport groups bytes and p95 by workflow", () => {
+  const report = buildJsonlSampleReport({
+    path: "/tmp/sample.jsonl",
+    results: [
+      { content: [{ type: "text", text: "a" }], details: { command: "open" } },
+      { content: [{ type: "text", text: "bb" }], details: { command: "snapshot" } },
+      { content: [{ type: "text", text: "ccc" }], details: { compiledQaPreset: { checks: {} } } },
+    ],
+  });
+  assert.equal(report.toolResultCount, 3);
+  assert.equal(report.totalModelVisibleBytes, Buffer.byteLength("a", "utf8") + Buffer.byteLength("bb", "utf8") + Buffer.byteLength("ccc", "utf8"));
+  const raw = report.byWorkflow.find((row: { workflowId: string }) => row.workflowId === "current-raw");
+  const qa = report.byWorkflow.find((row: { workflowId: string }) => row.workflowId === "native-qa");
+  assert.ok(raw);
+  assert.equal(raw.toolResultCount, 2);
+  assert.equal(raw.p95ModelVisibleBytes, Buffer.byteLength("bb", "utf8"));
+  assert.ok(qa);
+  assert.equal(qa.p95ModelVisibleBytes, Buffer.byteLength("ccc", "utf8"));
+});
+
+test("sampleAgentBrowserJsonl reads fixture transcripts", async () => {
+  const report = await sampleAgentBrowserJsonl(sampleFixturePath);
+  assert.equal(report.toolResultCount, 4);
+  assert.ok(report.totalModelVisibleBytes > 0);
+  assert.ok(report.byWorkflow.some((row: { workflowId: string }) => row.workflowId === "current-raw"));
+  assert.ok(report.byWorkflow.some((row: { workflowId: string }) => row.workflowId === "native-job"));
+  assert.ok(report.byWorkflow.some((row: { workflowId: string }) => row.workflowId === "native-qa"));
+});
+
+test("sampleAgentBrowserJsonl rejects missing files", async () => {
+  await assert.rejects(() => sampleAgentBrowserJsonl(join(tmpdir(), `missing-${Date.now()}.jsonl`)), /ENOENT|Failed|sample/i);
+});
+
+test("default benchmark report omits jsonlSample unless provided", () => {
+  const withoutSample = buildBenchmarkReport();
+  assert.equal("jsonlSample" in withoutSample, false);
+
+  const withSample = buildBenchmarkReport({
+    jsonlSample: buildJsonlSampleReport({
+      path: "/tmp/x.jsonl",
+      results: [{ content: [{ type: "text", text: "x" }], details: { command: "open" } }],
+    }),
+  });
+  assert.ok(withSample.jsonlSample);
+  assert.equal(withSample.jsonlSample.toolResultCount, 1);
+});
+
+test("benchmark comparison ignores optional jsonlSample blocks", () => {
+  const current = buildBenchmarkReport();
+  const candidate = {
+    ...current,
+    jsonlSample: {
+      path: "/tmp/other.jsonl",
+      toolResultCount: 99,
+      totalModelVisibleBytes: 999_999,
+      p95ModelVisibleBytes: 999_999,
+      byWorkflow: [],
+      errorResultCount: 0,
+    },
+  };
+  const comparison = compareBenchmarkReports(current, candidate);
+  assert.equal(comparison.passed, true);
+});
+
+test("main rejects invalid JSONL sample paths", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "pi-benchmark-jsonl-"));
+  const invalidPath = join(tempDir, "invalid.jsonl");
+  await writeFile(invalidPath, '{"ok":true}\nnot-json\n', "utf8");
+  const exitCode = await benchmarkModule.main(["--sample-jsonl", invalidPath, "--json"]);
+  assert.equal(exitCode, 1);
 });
