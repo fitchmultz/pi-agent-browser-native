@@ -331,8 +331,6 @@ if (args.includes("get") && args.includes("url")) {
 		await writeFile(join(tempDir, "dogfood/secret-token/filled.png"), "fake image");
 		await mkdir(join(tempDir, "dogfood"), { recursive: true });
 		await writeFile(join(tempDir, "dogfood/option-full-page.png"), "fake image");
-		// Keep the watchdog short enough to exercise timeout progress, but not so short that
-		// immediate helper probes (`get url` / `get title`) flake under full release-suite load.
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "2000" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
@@ -352,8 +350,14 @@ if (args.includes("get") && args.includes("url")) {
 			assert.equal(result.details?.failureCategory, "timeout");
 			assert.equal(result.details?.timedOut, true);
 			const timeoutProgress = result.details?.timeoutPartialProgress as { artifacts?: Array<{ exists?: boolean; path?: string; sizeBytes?: number; stepIndex?: number }>; currentPage?: { title?: string; url?: string }; steps?: Array<{ args?: string[]; index?: number }> } | undefined;
-			assert.equal(timeoutProgress?.currentPage?.url, "https://example.test/secret-token/results?token=%5BREDACTED%5D");
-			assert.equal(timeoutProgress?.currentPage?.title, "Results page export secret-token Authorization: Bearer [REDACTED]");
+			assert.ok(
+				timeoutProgress?.currentPage?.url === "https://example.test/secret-token/results?token=%5BREDACTED%5D" ||
+					timeoutProgress?.currentPage?.url === "https://example.test/",
+				`unexpected timeout current page URL: ${timeoutProgress?.currentPage?.url}`,
+			);
+			if (timeoutProgress?.currentPage?.title) {
+				assert.equal(timeoutProgress.currentPage.title, "Results page export secret-token Authorization: Bearer [REDACTED]");
+			}
 			assert.deepEqual(timeoutProgress?.artifacts?.map((artifact) => ({ exists: artifact.exists, path: artifact.path, stepIndex: artifact.stepIndex })), [
 				{ exists: true, path: "dogfood/secret-token/filled.png", stepIndex: 2 },
 				{ exists: false, path: "dogfood/export.csv", stepIndex: 3 },
@@ -361,7 +365,11 @@ if (args.includes("get") && args.includes("url")) {
 			assert.deepEqual(timeoutProgress?.steps?.map((step) => step.args?.[0]), ["open", "screenshot", "wait", "wait"]);
 			const text = (result.content[0] as { text: string }).text;
 			assert.match(text, /Timeout partial progress:/);
-			assert.match(text, /Current page: \[REDACTED\] — https:\/\/example.test\/\[REDACTED\]\/results\?token=%5BREDACTED%5D/);
+			if (timeoutProgress?.currentPage?.title) {
+				assert.match(text, /Current page: \[REDACTED\] — https:\/\/example.test\/\[REDACTED\]\/results\?token=%5BREDACTED%5D/);
+			} else {
+				assert.match(text, /Current page: https:\/\/example.test\//);
+			}
 			assert.match(text, /Artifact from step 2: dogfood\/\[REDACTED\]\/filled\.png \(exists, 10 bytes\)/);
 			assert.doesNotMatch(text, /url-secret|title-secret|secret-token/);
 			assert.match(text, /Artifact from step 3: dogfood\/export\.csv \(missing\)/);
@@ -384,6 +392,52 @@ if (args.includes("get") && args.includes("url")) {
 			assert.equal(waitNoPathResult.isError, true);
 			const waitNoPathProgress = waitNoPathResult.details?.timeoutPartialProgress as { artifacts?: Array<{ path?: string }> } | undefined;
 			assert.deepEqual(waitNoPathProgress?.artifacts, []);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("collectTimeoutPartialProgress recovers live page state when session probes succeed", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.test/secret-token/results?token=url-secret" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Results page export secret-token Authorization: Bearer title-secret" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await mkdir(join(tempDir, "dogfood/secret-token"), { recursive: true });
+		await writeFile(join(tempDir, "dogfood/secret-token/filled.png"), "fake image");
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const progress = await collectTimeoutPartialProgress({
+				command: "batch",
+				cwd: tempDir,
+				sessionName: "named",
+				stdin: JSON.stringify([
+					["open", "https://example.test"],
+					["screenshot", "dogfood/secret-token/filled.png"],
+					["wait", "--download", "dogfood/export.csv"],
+				]),
+			});
+
+			assert.ok(progress);
+			assert.equal(progress.currentPage?.url, "https://example.test/secret-token/results?token=url-secret");
+			assert.equal(progress.currentPage?.title, "Results page export secret-token Authorization: Bearer title-secret");
+			assert.deepEqual(progress.artifacts.map((artifact) => ({ exists: artifact.exists, path: artifact.path, stepIndex: artifact.stepIndex })), [
+				{ exists: true, path: "dogfood/secret-token/filled.png", stepIndex: 2 },
+				{ exists: false, path: "dogfood/export.csv", stepIndex: 3 },
+			]);
+			const text = formatTimeoutPartialProgressText(progress);
+			assert.match(text, /Current page: \[REDACTED\] — https:\/\/example.test\/\[REDACTED\]\/results\?token=%5BREDACTED%5D/);
+			assert.doesNotMatch(text, /url-secret|title-secret|secret-token/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
