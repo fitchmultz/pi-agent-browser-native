@@ -1,0 +1,6 @@
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Open example.com"}]}}
+{"type":"message","message":{"role":"toolResult","toolName":"agent_browser","content":[{"type":"text","text":"Opened https://example.com\nTitle: Example Domain"}],"details":{"command":"open","effectiveArgs":["--json","--session","pi-demo","open","https://example.com"]}}}
+{"type":"message","message":{"role":"toolResult","toolName":"agent_browser","content":[{"type":"text","text":"@e1 [link] \"More information...\""}],"details":{"command":"snapshot","effectiveArgs":["--json","--session","pi-demo","snapshot","-i"]}}}
+{"type":"message","message":{"role":"toolResult","toolName":"agent_browser","content":[{"type":"text","text":"Batch results:\n1. Opened https://example.com\n2. Page: Example Domain"}],"details":{"command":"batch","compiledJob":{"steps":[{"action":"open"}]}}}}
+{"type":"message","message":{"role":"toolResult","toolName":"agent_browser","content":[{"type":"text","text":"QA preset passed."}],"details":{"compiledQaPreset":{"checks":{"attached":false}}}}}
+{"type":"message","message":{"role":"toolResult","toolName":"bash","content":[{"type":"text","text":"ignored"}]}}
