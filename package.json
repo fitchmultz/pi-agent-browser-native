@@ -71,6 +71,7 @@
     "docs": "node ./scripts/project.mjs docs",
     "doctor": "node ./scripts/doctor.mjs",
     "benchmark:agent-browser": "node ./scripts/agent-browser-efficiency-benchmark.mjs",
+    "typecheck": "node ./scripts/project.mjs verify typecheck",
     "test": "tsx --test test/**/*.test.ts",
     "verify": "node ./scripts/project.mjs verify",
     "prepublishOnly": "npm run verify -- release && npm pack --dry-run"

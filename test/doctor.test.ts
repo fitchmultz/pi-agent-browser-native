@@ -2,7 +2,7 @@
  * Purpose: Verify the package-level first-run doctor for pi-agent-browser-native.
  * Responsibilities: Assert CLI parsing, PATH/version diagnostics, duplicate-source remediation text, and read-only injected I/O behavior.
  * Scope: Focused unit coverage for `scripts/doctor.mjs`; real upstream and Pi smoke validation remain in verifier scripts and manual release workflow.
- * Usage: Run with `npm test -- test/doctor.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/doctor.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: The doctor is read-only, distinct from upstream `agent-browser doctor`, and compares upstream version to the canonical capability baseline.
  */
 

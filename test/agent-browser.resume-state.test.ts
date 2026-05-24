@@ -2,7 +2,7 @@
  * Purpose: Verify extension resume-state reconstruction and persisted session/tab planning behavior.
  * Responsibilities: Assert managed-session restoration, cwd isolation, fresh-session rotation, explicit-session tab pinning, malformed resumed stdin rejection, stale state protection, and launch-scoped flag blocking after resume.
  * Scope: Integration-style Node test-runner coverage for session resume and stateful command planning.
- * Usage: Run with `npm test -- test/agent-browser.resume-state.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.resume-state.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests preserve serial execution where global env or persisted state is patched.
  */
 

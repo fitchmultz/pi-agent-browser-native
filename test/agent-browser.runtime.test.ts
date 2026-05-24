@@ -2,7 +2,7 @@
  * Purpose: Verify pure runtime planning and policy helpers for the pi-agent-browser extension.
  * Responsibilities: Assert session naming, managed-session restoration, execution-plan argument injection, prompt policy detection, redaction, and secure temp lifecycle edge cases owned by runtime/temp helpers.
  * Scope: Unit-style Node test-runner coverage for stable helper behavior; extension entrypoint lifecycle tests live in focused integration suites.
- * Usage: Run with `npm test -- test/agent-browser.runtime.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.runtime.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests preserve existing assertions and isolate filesystem/env side effects with temp directories and explicit cleanup.
  */
 

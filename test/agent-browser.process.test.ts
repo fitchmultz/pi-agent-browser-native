@@ -2,7 +2,7 @@
  * Purpose: Verify the agent-browser subprocess wrapper and curated process environment behavior.
  * Responsibilities: Assert stdout spill handling, temp-budget failure behavior, full-payload parsing, and environment forwarding constraints.
  * Scope: Node test-runner coverage for process wrapper helpers using local child-process fixtures.
- * Usage: Run with `npm test -- test/agent-browser.process.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.process.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests use fake binaries and explicit child-process cleanup to avoid leaks.
  */
 

@@ -18,6 +18,7 @@ import { execPath as nodeExecPath, platform as processPlatform } from "node:proc
 import type {
 	AgentToolResult,
 	Theme,
+	ToolDefinition,
 	ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
@@ -281,7 +282,7 @@ export type RegisteredTool = {
 	parameters: TSchema;
 	execute: (
 		toolCallId: string,
-		params: AgentBrowserToolParams,
+		params: unknown,
 		signal: AbortSignal | undefined,
 		onUpdate: ((update: unknown) => void) | undefined,
 		ctx: unknown,
@@ -297,6 +298,43 @@ export type RegisteredTool = {
 		context: AgentBrowserToolRenderContext,
 	) => Component;
 };
+
+function adaptRegisteredTool<TParams extends TSchema, TDetails, TState>(
+	tool: ToolDefinition<TParams, TDetails, TState>,
+): RegisteredTool {
+	const sourceRenderCall = tool.renderCall;
+	const sourceRenderResult = tool.renderResult;
+
+	return {
+		description: tool.description,
+		execute: (toolCallId, params, signal, onUpdate, ctx) => {
+			type ExecuteArgs = Parameters<typeof tool.execute>;
+			return tool.execute(
+				toolCallId,
+				params as ExecuteArgs[1],
+				signal,
+				onUpdate as ExecuteArgs[3],
+				ctx as ExecuteArgs[4],
+			);
+		},
+		name: tool.name,
+		parameters: tool.parameters,
+		promptGuidelines: tool.promptGuidelines ?? [],
+		promptSnippet: tool.promptSnippet ?? "",
+		renderCall: sourceRenderCall === undefined
+			? undefined
+			: (args, theme, context) => {
+				type RenderCallArgs = Parameters<typeof sourceRenderCall>;
+				return sourceRenderCall(args as RenderCallArgs[0], theme, context as RenderCallArgs[2]);
+			},
+		renderResult: sourceRenderResult === undefined
+			? undefined
+			: (result, options, theme, context) => {
+				type RenderResultArgs = Parameters<typeof sourceRenderResult>;
+				return sourceRenderResult(result as RenderResultArgs[0], options, theme, context as RenderResultArgs[3]);
+			},
+	};
+}
 
 export function createExtensionHarness(options: {
 	branch?: unknown[];
@@ -315,7 +353,7 @@ export function createExtensionHarness(options: {
 			handlers.set(event, existingHandlers);
 		},
 		registerTool(tool) {
-			registeredTool = tool as unknown as RegisteredTool;
+			registeredTool = adaptRegisteredTool(tool);
 		},
 	} as Parameters<typeof agentBrowserExtension>[0]);
 
@@ -364,7 +402,7 @@ export async function runExtensionEventResults<T>(
 export async function executeRegisteredTool(
 	tool: NonNullable<ReturnType<typeof createExtensionHarness>["tool"]>,
 	ctx: ReturnType<typeof createExtensionHarness>["ctx"],
-	params: AgentBrowserToolParams,
+	params: unknown,
 ) {
 	return (await tool.execute("test-tool-call", params, new AbortController().signal, undefined, ctx)) as {
 		content: Array<{ type: string; text?: string }>;

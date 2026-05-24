@@ -9,22 +9,33 @@
 export { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "./results/envelope.js";
 export { buildToolPresentation } from "./results/presentation.js";
 export {
-	buildAgentBrowserNextActions,
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
-	compareRefIds,
-} from "./results/shared.js";
+} from "./results/categories.js";
+export { buildAgentBrowserNextActions } from "./results/action-recommendations.js";
+export { compareRefIds } from "./results/text.js";
+export {
+	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
+	AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS,
+	getAgentBrowserRichInputRecoveryNextActionId,
+	getAgentBrowserRichInputRecoveryNextActionIds,
+} from "./results/recovery-actions.js";
 export type {
 	AgentBrowserBatchResult,
 	AgentBrowserEnvelope,
 	AgentBrowserFailureCategory,
-	AgentBrowserResultCategory,
 	AgentBrowserNextAction,
 	AgentBrowserPageChangeSummary,
+	AgentBrowserResultCategory,
 	AgentBrowserResultCategoryDetails,
 	AgentBrowserSuccessCategory,
 	FileArtifactKind,
 	FileArtifactMetadata,
 	ToolPresentation,
-} from "./results/shared.js";
+} from "./results/contracts.js";
+export type {
+	AgentBrowserRecoveryContext,
+	AgentBrowserRecoveryKind,
+	AgentBrowserRichInputRecoveryNextActionKind,
+} from "./results/recovery-actions.js";

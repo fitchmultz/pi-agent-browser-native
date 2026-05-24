@@ -2,7 +2,7 @@
  * Purpose: Verify command parsing, envelope parsing, tab-correction selection, and error-text rendering helpers.
  * Responsibilities: Assert stable result facade behavior for valid envelopes, malformed output, fallback failures, command extraction, and tab list presentation.
  * Scope: Unit-style Node test-runner coverage for result/runtime helpers; richer presentation formatting lives in `agent-browser.presentation.test.ts`.
- * Usage: Run with `npm test -- test/agent-browser.results.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.results.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests avoid real subprocesses and use deterministic fixture payloads.
  */
 
@@ -10,13 +10,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
+	AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS,
 	buildAgentBrowserNextActions,
 	buildToolPresentation,
 	classifyAgentBrowserFailureCategory,
 	classifyAgentBrowserSuccessCategory,
 	getAgentBrowserErrorText,
+	getAgentBrowserRichInputRecoveryNextActionId,
+	getAgentBrowserRichInputRecoveryNextActionIds,
 	parseAgentBrowserEnvelope,
 } from "../extensions/agent-browser/lib/results.js";
+import {
+	AgentBrowserNextActionCollector,
+	alignPageChangeSummaryNextActionIds,
+	isStandaloneSnapshotNextAction,
+	type AgentBrowserNextAction,
+} from "../extensions/agent-browser/lib/results/next-actions.js";
 import {
 	chooseOpenResultTabCorrection,
 	extractCommandTokens,
@@ -25,6 +35,73 @@ import {
 
 const MISSING_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: missing boolean success field.";
 const NON_BOOLEAN_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: success field must be boolean.";
+
+test("AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS locks documented recovery action ids", () => {
+	assert.deepEqual(AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, {
+		aboutBlankListTabs: "list-tabs-for-about-blank-recovery",
+		connectedSessionListTabs: "list-connected-session-tabs",
+		genericTabDriftListTabs: "list-tabs-for-recovery",
+		noActivePageListTabs: "list-tabs-after-no-active-page",
+		selectIntendedTabAfterDrift: "select-intended-tab-after-drift",
+		snapshotAfterTabRecovery: "snapshot-after-tab-recovery",
+		tabDriftListTabs: "list-tabs-for-tab-drift-recovery",
+	});
+});
+
+test("rich input recovery nextAction id helpers lock exact ids", () => {
+	assert.deepEqual(AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS, {
+		click: "click-current-editable-ref",
+		focus: "focus-current-editable-ref",
+	});
+	assert.equal(getAgentBrowserRichInputRecoveryNextActionId("focus", 0, 1), "focus-current-editable-ref");
+	assert.equal(getAgentBrowserRichInputRecoveryNextActionId("click", 0, 1), "click-current-editable-ref");
+	assert.deepEqual(getAgentBrowserRichInputRecoveryNextActionIds(3), [
+		"focus-current-editable-ref-1",
+		"click-current-editable-ref-1",
+		"focus-current-editable-ref-2",
+		"click-current-editable-ref-2",
+		"focus-current-editable-ref-3",
+		"click-current-editable-ref-3",
+	]);
+});
+
+test("AgentBrowserNextActionCollector preserves order, first-id wins, replacement, and snapshot removal", () => {
+	const action = (id: string, args?: string[], stdin?: string): AgentBrowserNextAction => ({
+		id,
+		params: args ? { args, ...(stdin ? { stdin } : {}) } : undefined,
+		reason: id,
+		tool: "agent_browser",
+	});
+	const collector = new AgentBrowserNextActionCollector([action("a")]);
+	collector.appendUnique([action("b"), action("a", ["ignored"])]);
+	collector.append([action("a", ["kept-when-not-unique"])]);
+	assert.deepEqual(collector.toArray()?.map((item) => [item.id, item.params?.args?.[0]]), [
+		["a", undefined],
+		["b", undefined],
+		["a", "kept-when-not-unique"],
+	]);
+
+	collector.replace([action("snapshot", ["snapshot", "-i"]), action("session-snapshot", ["--session", "s1", "snapshot", "-i"]), action("batched-snapshot", ["batch"], JSON.stringify([["snapshot", "-i"]]))]);
+	collector.removeWhere(isStandaloneSnapshotNextAction);
+	assert.deepEqual(collector.toArray()?.map((item) => item.id), ["batched-snapshot"]);
+});
+
+test("alignPageChangeSummaryNextActionIds keeps only emitted action ids", () => {
+	assert.deepEqual(
+		alignPageChangeSummaryNextActionIds(
+			{ changeType: "mutation" as const, nextActionIds: ["keep", "drop"], summary: "changed" },
+			[{ id: "keep", reason: "keep", tool: "agent_browser" }],
+		),
+		{ changeType: "mutation", nextActionIds: ["keep"], summary: "changed" },
+	);
+	assert.deepEqual(
+		alignPageChangeSummaryNextActionIds(
+			{ changeType: "mutation" as const, nextActionIds: ["drop"], summary: "changed" },
+			[{ id: "keep", reason: "keep", tool: "agent_browser" }],
+		),
+		{ changeType: "mutation", nextActionIds: undefined, summary: "changed" },
+	);
+});
 
 test("classifyAgentBrowserFailureCategory locks common machine-readable failure categories", () => {
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Unknown ref: e4", args: ["click", "@e4"] }), "stale-ref");
@@ -61,7 +138,62 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	]);
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.deepEqual(buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "confirmation-required", confirmationId: "c_demo" })?.map((action) => action.params?.args), [["confirm", "c_demo"], ["deny", "c_demo"]]);
-	assert.deepEqual(buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "tab-drift" })?.map((action) => action.params?.args), [["tab", "list"], ["snapshot", "-i"]]);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "tab-drift" })?.map((action) => ({ id: action.id, args: action.params?.args })),
+		[{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.genericTabDriftListTabs, args: ["tab", "list"] }],
+	);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({ recovery: { kind: "connected-session", sessionName: "named" }, resultCategory: "success", successCategory: "completed" })?.map((action) => ({ id: action.id, args: action.params?.args })),
+		[
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.connectedSessionListTabs, args: ["--session", "named", "tab", "list"] },
+		],
+	);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({ recovery: { kind: "no-active-page", sessionName: "named" }, resultCategory: "failure" })?.map((action) => ({ id: action.id, args: action.params?.args })),
+		[
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.noActivePageListTabs, args: ["--session", "named", "tab", "list"] },
+		],
+	);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({ recovery: { kind: "no-active-page", selectedTab: "t2", sessionName: "named" }, resultCategory: "failure" })?.map((action) => ({ id: action.id, args: action.params?.args, stdin: action.params?.stdin })),
+		[
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.noActivePageListTabs, args: ["--session", "named", "tab", "list"], stdin: undefined },
+		],
+	);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({
+			failureCategory: "tab-drift",
+			recovery: { kind: "about-blank", selectedTab: "t2", sessionName: "named", targetTitle: "Canvas", targetUrl: "app://canvas" },
+			resultCategory: "failure",
+		})?.map((action) => ({ id: action.id, args: action.params?.args, stdin: action.params?.stdin })),
+		[
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.aboutBlankListTabs, args: ["--session", "named", "tab", "list"], stdin: undefined },
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.selectIntendedTabAfterDrift, args: ["--session", "named", "tab", "t2"], stdin: undefined },
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.snapshotAfterTabRecovery, args: ["--session", "named", "batch"], stdin: '[["tab","t2"],["snapshot","-i"]]' },
+		],
+	);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({
+			failureCategory: "tab-drift",
+			recovery: { kind: "about-blank", recoveryApplied: true, selectedTab: "t2", sessionName: "named", targetTitle: "Canvas", targetUrl: "app://canvas" },
+			resultCategory: "failure",
+		})?.map((action) => ({ id: action.id, args: action.params?.args, stdin: action.params?.stdin })),
+		[
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.aboutBlankListTabs, args: ["--session", "named", "tab", "list"], stdin: undefined },
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.selectIntendedTabAfterDrift, args: ["--session", "named", "tab", "t2"], stdin: undefined },
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.snapshotAfterTabRecovery, args: ["--session", "named", "snapshot", "-i"], stdin: undefined },
+		],
+	);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({
+			failureCategory: "tab-drift",
+			recovery: { kind: "tab-drift", selectedTab: "target", sessionName: "named", targetTitle: "Canvas", targetUrl: "app://canvas" },
+			resultCategory: "failure",
+		})?.map((action) => ({ id: action.id, args: action.params?.args })),
+		[
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabDriftListTabs, args: ["--session", "named", "tab", "list"] },
+		],
+	);
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--download", "/tmp/export.csv"], resultCategory: "failure", failureCategory: "download-not-verified" })?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["download", "@e1", "/tmp/export.csv"], resultCategory: "failure", failureCategory: "download-not-verified" })?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
 	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/page.png", kind: "image", path: "/tmp/page.png" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.artifactPath, "/tmp/page.png");
