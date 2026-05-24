@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.34 - 2026-05-24
+
 ### Added
 
 - Deterministic maintainer dogfood mode: `npm run verify -- dogfood` runs a model-free live-browser smoke through the native wrapper against public `example.com`, covering top-level `qa`, `semanticAction`, `qa.attached`, constrained `job`, screenshot artifact verification, and session close.
