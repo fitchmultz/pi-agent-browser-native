@@ -189,6 +189,23 @@ test("inferJsonlWorkflowId maps wrapper details to pragmatic workflow ids", () =
   assert.equal(inferJsonlWorkflowId({}), "unspecified");
 });
 
+test("inferJsonlWorkflowId infers commands from effectiveArgs without treating --json as a value flag", () => {
+  assert.equal(
+    inferJsonlWorkflowId({ details: { effectiveArgs: ["--json", "open", "https://example.test"] } }),
+    "current-raw",
+  );
+  assert.equal(
+    inferJsonlWorkflowId({ details: { effectiveArgs: ["--json", "--session", "s1", "batch"] } }),
+    "current-batch",
+  );
+  assert.equal(
+    inferJsonlWorkflowId({
+      details: { effectiveArgs: ["--json", "--profile", "Default", "open", "https://example.test"] },
+    }),
+    "current-raw",
+  );
+});
+
 test("parseJsonl and agentBrowserToolResults read agent_browser tool results", () => {
   const entries = parseJsonl([
     JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "agent_browser", content: [{ type: "text", text: "abc" }] } }),

@@ -358,17 +358,105 @@ export function agentBrowserToolResults(entries) {
     .map((entry) => entry.message);
 }
 
+// Keep in sync with extensions/agent-browser/lib/runtime.ts (findCommandStartIndex).
+const INFER_COMMAND_VALUE_FLAGS = new Set([
+  "--session",
+  "--cdp",
+  "--config",
+  "--profile",
+  "--session-name",
+  "--proxy",
+  "--proxy-bypass",
+  "--headers",
+  "--executable-path",
+  "--extension",
+  "--init-script",
+  "--enable",
+  "--provider",
+  "-p",
+  "--engine",
+  "--state",
+  "--download-path",
+  "--screenshot-dir",
+  "--screenshot-format",
+  "--screenshot-quality",
+  "--color-scheme",
+  "--device",
+  "--port",
+  "--args",
+  "--user-agent",
+  "--allowed-domains",
+  "--action-policy",
+  "--confirm-actions",
+  "--max-output",
+  "--model",
+  "--baseline",
+  "--body",
+  "--categories",
+  "--curl",
+  "--depth",
+  "-d",
+  "--domain",
+  "--expires",
+  "--filter",
+  "--fn",
+  "--label",
+  "--load",
+  "--name",
+  "--path",
+  "--resource-type",
+  "--sameSite",
+  "--selector",
+  "-s",
+  "--text",
+  "--timeout",
+  "--url",
+  "--username",
+  "--password",
+]);
+
+const INFER_COMMAND_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES = new Set([
+  "--allow-file-access",
+  "--annotate",
+  "--auto-connect",
+  "--confirm-interactive",
+  "--content-boundaries",
+  "--debug",
+  "--headed",
+  "--ignore-https-errors",
+  "--json",
+  "--no-auto-dialog",
+  "--quiet",
+  "-q",
+  "--verbose",
+  "-v",
+]);
+
+function isInferCommandBooleanLiteral(token) {
+  const normalized = typeof token === "string" ? token.trim().toLowerCase() : undefined;
+  return normalized === "true" || normalized === "false";
+}
+
 function inferCommandFromEffectiveArgs(effectiveArgs) {
   if (!Array.isArray(effectiveArgs)) return undefined;
-  let index = 0;
-  while (index < effectiveArgs.length) {
+  for (let index = 0; index < effectiveArgs.length; index += 1) {
     const token = effectiveArgs[index];
-    if (token === "--session" || token === "--json") {
-      index += 2;
+    if (typeof token !== "string") return token;
+    if (token.startsWith("--session=")) continue;
+    if (token.startsWith("-")) {
+      const normalizedToken = token.split("=", 1)[0] ?? token;
+      if (INFER_COMMAND_VALUE_FLAGS.has(normalizedToken) && !token.includes("=")) {
+        index += 1;
+      } else if (
+        INFER_COMMAND_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken) &&
+        !token.includes("=") &&
+        isInferCommandBooleanLiteral(effectiveArgs[index + 1])
+      ) {
+        index += 1;
+      }
       continue;
     }
-    if (typeof token === "string" && !token.startsWith("-")) return token;
-    index += 1;
+    return token;
   }
   return undefined;
 }
