@@ -20,6 +20,7 @@ import {
 	mergeSessionArtifactManifest,
 } from "../../results/artifact-manifest.js";
 import type { SessionArtifactManifest } from "../../results/contracts.js";
+import { shouldCaptureSemanticActionNavigationSummary } from "../../results/presentation/semantic-action.js";
 import {
 	commandExplicitlyTargetsAboutBlank,
 	deriveSessionTabTarget,
@@ -205,7 +206,12 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
 		updateTraceOwnerState({ command: prepared.executionPlan.commandInfo.command, sessionName: prepared.executionPlan.sessionName, subcommand: prepared.executionPlan.commandInfo.subcommand, succeeded, traceOwners });
 
-		if (succeeded && !navigationSummary && shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data)) {
+		if (
+			succeeded &&
+			!navigationSummary &&
+			(shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data) ||
+				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data))
+		) {
 			navigationSummary = await collectNavigationSummary({ cwd, sessionName: prepared.executionPlan.sessionName, signal });
 		}
 		if (navigationSummary && presentationEnvelope) presentationEnvelope = { ...presentationEnvelope, data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary) };
@@ -341,7 +347,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 
 		const errorText = getAgentBrowserErrorText({ aborted: processResult.aborted, command: prepared.executionPlan.commandInfo.command, effectiveArgs: prepared.redactedProcessArgs, envelope: presentationEnvelope, exitCode: processResult.exitCode, parseError, plainTextInspection, staleRefArgs: getStaleRefArgs(prepared.commandTokens, prepared.runtimeToolStdin), spawnError: processResult.spawnError, stderr: processResult.stderr, timedOut: processResult.timedOut, timeoutMs: processResult.timeoutMs, wrapperRecoveryHint: buildWrapperRecoveryHint({ pinnedBatchUnwrapMode: prepared.pinnedBatchUnwrapMode, sessionTabCorrection }) });
-		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, cwd, envelope: presentationEnvelope, errorText, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
+		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
 		if (parseFailureOutput.artifactManifest) { presentation.artifactManifest = parseFailureOutput.artifactManifest; presentation.artifactRetentionSummary = parseFailureOutput.artifactRetentionSummary; }
 		if (parseFailureOutput.fullOutputPath || parseFailureOutput.fullOutputUnavailable) {
 			const existingText = presentation.content[0]?.type === "text" ? presentation.content[0].text : "";

@@ -4,6 +4,7 @@
  * Scope: Presentation shaping only; upstream stdout parsing and snapshot compaction internals live in separate modules.
  */
 
+import type { CompiledAgentBrowserSemanticAction } from "../input-modes/types.js";
 import { isRecord } from "../parsing.js";
 import type { CommandInfo } from "../runtime.js";
 import type { PersistentSessionArtifactStore } from "../temp.js";
@@ -43,6 +44,7 @@ import { buildErrorPresentation } from "./presentation/errors.js";
 import { compactLargePresentationOutput } from "./presentation/large-output.js";
 import { buildPageChangeSummary } from "./presentation/navigation.js";
 import { formatPresentationContentText, formatPresentationSummary } from "./presentation/registry.js";
+import { resolvePresentationCommandInfo } from "./presentation/semantic-action.js";
 
 function sanitizeModelFacingPresentation(presentation: ToolPresentation): ToolPresentation {
 	presentation.content = presentation.content.map((item) => {
@@ -65,6 +67,7 @@ export async function buildToolPresentation(options: {
 	artifactRequest?: ArtifactRequestContext;
 	batchArtifactRequests?: Array<ArtifactRequestContext | undefined>;
 	commandInfo: CommandInfo;
+	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
 	errorText?: string;
@@ -76,12 +79,14 @@ export async function buildToolPresentation(options: {
 		artifactManifest,
 		artifactRequest,
 		commandInfo,
+		compiledSemanticAction,
 		cwd,
 		envelope,
 		errorText,
 		persistentArtifactStore,
 		sessionName,
 	} = options;
+	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfo, compiledSemanticAction);
 
 	if (errorText) {
 		return buildErrorPresentation({ args, commandInfo, errorText, sessionName });
@@ -89,10 +94,10 @@ export async function buildToolPresentation(options: {
 
 	const data = enrichStreamStatusData(commandInfo, envelope?.data);
 	const presentationData = redactPresentationData(commandInfo, data);
-	const artifacts = await extractFileArtifacts({ artifactRequest, commandInfo, cwd, data, sessionName });
+	const artifacts = await extractFileArtifacts({ artifactRequest, commandInfo: presentationCommandInfo, cwd, data, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);
-	const summary = artifactSummary ?? formatPresentationSummary(commandInfo, data);
+	const summary = artifactSummary ?? formatPresentationSummary(commandInfo, data, compiledSemanticAction);
 	const artifactText = artifacts.length > 0 ? formatArtifactMetadataLines(artifacts).join("\n") : undefined;
 
 	let presentation: ToolPresentation;
@@ -113,7 +118,7 @@ export async function buildToolPresentation(options: {
 		presentation = {
 			artifactVerification,
 			artifacts: artifacts.length > 0 ? artifacts : undefined,
-			content: [{ type: "text", text: artifactText ?? formatPresentationContentText(commandInfo, data) }],
+			content: [{ type: "text", text: artifactText ?? formatPresentationContentText(commandInfo, data, compiledSemanticAction) }],
 			data: presentationData,
 			summary,
 		};
@@ -159,7 +164,7 @@ export async function buildToolPresentation(options: {
 	if (!presentationWithManifest.resultCategory) {
 		const categoryDetails = buildAgentBrowserResultCategoryDetails({
 			artifacts: presentationWithManifest.artifacts,
-			command: commandInfo.command,
+			command: presentationCommandInfo.command,
 			confirmationRequired: confirmationRequired !== undefined,
 			errorText: envelope?.success === false ? presentationWithManifest.summary : undefined,
 			savedFile: presentationWithManifest.savedFile,
@@ -186,7 +191,7 @@ export async function buildToolPresentation(options: {
 	const genericNextActions = presentationWithManifest.nextActions ? undefined : buildAgentBrowserNextActions({
 		artifacts: presentationWithManifest.artifacts,
 		args,
-		command: commandInfo.command,
+		command: presentationCommandInfo.command,
 		confirmationId: confirmationRequired?.id,
 		failureCategory: presentationWithManifest.failureCategory,
 		resultCategory: presentationWithManifest.resultCategory ?? "success",
@@ -203,7 +208,7 @@ export async function buildToolPresentation(options: {
 	);
 	presentationWithManifest.pageChangeSummary = presentationWithManifest.pageChangeSummary ?? buildPageChangeSummary({
 		artifacts: presentationWithManifest.artifacts,
-		commandInfo,
+		commandInfo: presentationCommandInfo,
 		data,
 		nextActions: presentationWithManifest.nextActions,
 		savedFilePath: presentationWithManifest.savedFilePath,

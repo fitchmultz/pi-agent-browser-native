@@ -1,3 +1,4 @@
+import type { CompiledAgentBrowserSemanticAction } from "../../input-modes/types.js";
 import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import { detectConfirmationRequired, type ConfirmationRequiredPresentation } from "../confirmation.js";
@@ -14,6 +15,11 @@ import {
 	getNavigationSummary,
 	isNavigationObservableCommand,
 } from "./navigation.js";
+import {
+	formatSemanticActionPresentationSummary,
+	formatSemanticActionPresentationText,
+	resolvePresentationCommandInfo,
+} from "./semantic-action.js";
 
 function getPageSummary(data: Record<string, unknown>): string | undefined {
 	const title = typeof data.title === "string" ? data.title : undefined;
@@ -91,9 +97,15 @@ function formatBatchSummary(data: unknown): string | undefined {
 		: `Batch failed: ${successCount}/${data.length} succeeded`;
 }
 
-export function formatPresentationSummary(commandInfo: CommandInfo, data: unknown): string {
+export function formatPresentationSummary(
+	commandInfo: CommandInfo,
+	data: unknown,
+	compiledSemanticAction?: CompiledAgentBrowserSemanticAction,
+): string {
 	const confirmationRequired = detectConfirmationRequired(data);
 	if (confirmationRequired) return formatConfirmationRequiredSummary(confirmationRequired);
+
+	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfo, compiledSemanticAction);
 
 	if (commandInfo.command === "batch") {
 		const batchSummary = formatBatchSummary(data);
@@ -101,10 +113,16 @@ export function formatPresentationSummary(commandInfo: CommandInfo, data: unknow
 	}
 
 	if (isRecord(data)) {
+		if (compiledSemanticAction) {
+			const semanticSummary = formatSemanticActionPresentationSummary(compiledSemanticAction, data);
+			if (semanticSummary) return semanticSummary;
+		}
 		const navigationSummary = getNavigationSummary(data);
-		if (navigationSummary && isNavigationObservableCommand(commandInfo.command)) {
+		if (navigationSummary && isNavigationObservableCommand(presentationCommandInfo.command)) {
 			const navigationText = formatNavigationSummary(navigationSummary);
-			if (navigationText) return `${commandInfo.command ?? "navigation"} → ${navigationText.split("\n", 1)[0] ?? navigationText}`;
+			if (navigationText) {
+				return `${presentationCommandInfo.command ?? "navigation"} → ${navigationText.split("\n", 1)[0] ?? navigationText}`;
+			}
 		}
 	}
 
@@ -121,10 +139,14 @@ export function formatPresentationSummary(commandInfo: CommandInfo, data: unknow
 	}
 
 	if (typeof data === "string" && data.length > 0) return data.split("\n", 1)[0] ?? data;
-	return `${commandInfo.command ?? "agent-browser"} completed`;
+	return `${presentationCommandInfo.command ?? commandInfo.command ?? "agent-browser"} completed`;
 }
 
-export function formatPresentationContentText(commandInfo: CommandInfo, data: unknown): string {
+export function formatPresentationContentText(
+	commandInfo: CommandInfo,
+	data: unknown,
+	compiledSemanticAction?: CompiledAgentBrowserSemanticAction,
+): string {
 	const confirmationRequired = detectConfirmationRequired(data);
 	if (confirmationRequired) return formatConfirmationRequiredText(confirmationRequired);
 
@@ -135,8 +157,14 @@ export function formatPresentationContentText(commandInfo: CommandInfo, data: un
 	if (typeof data === "number" || typeof data === "boolean") return String(data);
 	if (!isRecord(data)) return stringifyModelFacing(data);
 
+	if (compiledSemanticAction) {
+		const semanticText = formatSemanticActionPresentationText(compiledSemanticAction, data);
+		if (semanticText) return semanticText;
+	}
+
+	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfo, compiledSemanticAction);
 	const navigationSummary = getNavigationSummary(data);
-	if (navigationSummary && isNavigationObservableCommand(commandInfo.command)) {
+	if (navigationSummary && isNavigationObservableCommand(presentationCommandInfo.command)) {
 		const navigationText = formatNavigationSummary(navigationSummary);
 		if (navigationText) {
 			const actionText = formatNavigationActionResult(data);
