@@ -650,17 +650,49 @@ test("buildExecutionPlan keeps inspection commands stateless", () => {
 	}
 });
 
-test("buildExecutionPlan keeps skills inspection commands stateless while preserving JSON output", () => {
-	for (const args of [["skills", "list"], ["skills", "get", "core", "--full"], ["skills", "path", "core"]] as const) {
-		const plan = buildExecutionPlan([...args], {
+test("buildExecutionPlan keeps sessionless commands free of implicit managed sessions while preserving JSON output", () => {
+	for (const args of [
+		["skills", "list"],
+		["skills", "get", "core", "--full"],
+		["skills", "path", "core"],
+		["profiles"],
+		["auth", "save", "demo", "--url", "https://example.test", "--username", "user"],
+		["auth", "list"],
+		["auth", "list", "--json"],
+		["auth", "show", "demo"],
+		["auth", "delete", "demo"],
+		["dashboard"],
+		["dashboard", "start", "--port", "4848"],
+		["device", "list"],
+		["dashboard", "stop"],
+		["dashboard", "stop", "--json"],
+		["doctor", "--offline", "--quick"],
+		["install", "--with-deps"],
+		["install", "-d"],
+		["upgrade"],
+		["profiles", "--json"],
+		["session", "list"],
+		["session", "list", "--json"],
+		["state", "list"],
+		["state", "list", "--json"],
+		["state", "show", "auth.json"],
+		["state", "clear", "--all"],
+		["state", "clear", "piab-demo-123"],
+		["state", "clean", "--older-than", "7"],
+		["state", "rename", "old", "new"],
+	] as const) {
+		const callerArgs = [...args];
+		const plan = buildExecutionPlan(callerArgs, {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: true,
 			managedSessionName: "piab-demo-123",
 			sessionMode: "auto",
 		});
 
+		const expectedEffectiveArgs = callerArgs.includes("--json") ? callerArgs : ["--json", ...callerArgs];
+
 		assert.equal(plan.plainTextInspection, false);
-		assert.deepEqual(plan.effectiveArgs, ["--json", ...args]);
+		assert.deepEqual(plan.effectiveArgs, expectedEffectiveArgs);
 		assert.equal(plan.managedSessionName, undefined);
 		assert.equal(plan.sessionName, undefined);
 		assert.equal(plan.usedImplicitSession, false);
@@ -668,20 +700,49 @@ test("buildExecutionPlan keeps skills inspection commands stateless while preser
 	}
 });
 
-test("buildExecutionPlan limits stateless skills inspection to documented subcommands", () => {
-	const plan = buildExecutionPlan(["skills", "future-mutating-subcommand"], {
-		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
-		managedSessionActive: true,
-		managedSessionName: "piab-demo-123",
-		sessionMode: "auto",
-	});
+test("buildExecutionPlan still injects managed sessions for browser-backed state and auth commands", () => {
+	for (const args of [["state", "save", "./auth.json"], ["state", "load", "./auth.json"], ["auth", "login", "demo"]] as const) {
+		const plan = buildExecutionPlan([...args], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
 
-	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "piab-demo-123", "skills", "future-mutating-subcommand"]);
-	assert.equal(plan.usedImplicitSession, true);
+		assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "piab-demo-123", ...args]);
+		assert.equal(plan.usedImplicitSession, true);
+		assert.equal(plan.managedSessionName, "piab-demo-123");
+	}
 });
 
-test("buildExecutionPlan rejects missing values for value-taking flags before parsing commands", () => {
-	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["find", "role", "button", "click", "--name"], ["network", "route", "**/*.js", "--resource-type"], ["cookies", "set", "--curl"], ["wait", "--load"], ["wait", "--fn"], ["wait", "--text"], ["dashboard", "start", "--port"], ["tab", "new", "--label"], ["diff", "screenshot", "--baseline"], ["auth", "save", "demo", "--password"], ["profiler", "start", "--categories"], ["snapshot", "--depth"], ["snapshot", "-d"], ["snapshot", "--selector"], ["snapshot", "-s"]] as const) {
+test("buildExecutionPlan limits sessionless allowlists to documented subcommands", () => {
+	for (const args of [
+		["skills", "future-mutating-subcommand"],
+		["auth", "future", "demo"],
+		["dashboard", "future"],
+		["device", "future"],
+		["doctor", "future"],
+		["install", "future"],
+		["profiles", "future"],
+		["session"],
+		["state", "clear"],
+		["state", "future"],
+		["upgrade", "future"],
+	] as const) {
+		const plan = buildExecutionPlan([...args], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+
+		assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "piab-demo-123", ...args], args.join(" "));
+		assert.equal(plan.usedImplicitSession, true, args.join(" "));
+	}
+});
+
+test("buildExecutionPlan rejects missing values for global value-taking flags before launching upstream", () => {
+	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -696,6 +757,28 @@ test("buildExecutionPlan rejects missing values for value-taking flags before pa
 		assert.deepEqual(plan.commandInfo, {});
 		assert.equal(plan.sessionName, undefined);
 		assert.equal(plan.usedImplicitSession, false);
+	}
+});
+
+test("buildExecutionPlan leaves command-scoped flags and literal text to upstream parsing", () => {
+	for (const args of [
+		["find", "role", "button", "click", "--name"],
+		["network", "route", "**/*.js", "--resource-type"],
+		["cookies", "set", "--curl"],
+		["wait", "--load"],
+		["dashboard", "start", "--port"],
+		["auth", "save", "demo", "--password"],
+		["fill", "#password", "--password"],
+		["keyboard", "type", "--text"],
+	] as const) {
+		const plan = buildExecutionPlan([...args], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: false,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+
+		assert.equal(plan.validationError, undefined, args.join(" "));
 	}
 });
 

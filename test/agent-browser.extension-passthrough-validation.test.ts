@@ -64,6 +64,13 @@ import {
 	writeFakeMacElectronApp,
 } from "./helpers/extension-validation-fixtures.js";
 
+const stripWrapperPrefix = (args: string[]) => {
+	const stripped = [...args];
+	if (stripped[0] === "--json") stripped.shift();
+	if (stripped[0] === "--session") stripped.splice(0, 2);
+	return stripped;
+};
+
 test("agentBrowserExtension keeps successful plain-text inspection stateless and machine-readable", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -241,10 +248,12 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 
 				const invocations = await readInvocationLog(logPath);
 				const providerInvocations = invocations.filter((entry) => {
-					const userArgs = entry.args.slice(3);
+					const userArgs = stripWrapperPrefix(entry.args);
 					return entry.args[1] === "--session" && userArgs.length > 0 && userArgs[0] !== "close";
 				});
-				assert.deepEqual(providerInvocations.map((entry) => entry.args.slice(3)), providerCommands.map((args) => [...args]));
+				const sessionfulProviderCommands = providerCommands.filter((args) => !(args[0] === "-p" && args[1] === "ios" && args[2] === "device"));
+				assert.deepEqual(providerInvocations.map((entry) => stripWrapperPrefix(entry.args)), sessionfulProviderCommands.map((args) => [...args]));
+				assert.deepEqual(invocations.find((entry) => entry.args.includes("device") && entry.args.includes("list"))?.args, ["--json", "-p", "ios", "device", "list"]);
 				assert.ok(providerInvocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));
 				assert.ok(providerInvocations.some((entry) => entry.iosDevice === "iPhone 15 Pro"));
 				assert.ok(providerInvocations.some((entry) => entry.agentcoreApiKey === "agentcore-key"));
@@ -297,7 +306,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(
-				invocations.map((entry) => entry.args.slice(3)),
+				invocations.map((entry) => stripWrapperPrefix(entry.args)),
 				commands.map((args) => [...args]),
 			);
 			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));
@@ -378,11 +387,17 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			const invocations = await readInvocationLog(logPath);
 			const userInvocations = invocations
-				.map((entry) => entry.args.slice(3))
+				.map((entry) => stripWrapperPrefix(entry.args))
 				.filter((args) => !(args[0] === "tab" && args[1] === "list"))
-				.filter((args) => !(args[0] === "cookies" && args[1] === "set" && args[3] === "json-cookie-secret"));
+				.filter((args) => !(args.includes("cookies") && args.includes("set") && args.includes("json-cookie-secret")));
 			assert.deepEqual(userInvocations, commands.map((args) => [...args]));
-			assert.ok(invocations.every((entry) => entry.args.includes("--json") && entry.args.includes("--session")));
+			assert.ok(invocations.every((entry) => entry.args.includes("--json")));
+			assert.ok(invocations.every((entry) => {
+				const userArgs = stripWrapperPrefix(entry.args);
+				const isSessionlessAuth = userArgs[0] === "auth" && ["save", "list", "show", "delete"].includes(userArgs[1] ?? "");
+				const isSessionlessState = userArgs[0] === "state" && userArgs[1] === "list";
+				return isSessionlessAuth || isSessionlessState ? !entry.args.includes("--session") : entry.args.includes("--session");
+			}));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -490,9 +505,18 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.deepEqual(networkNextActions?.[1]?.params?.args?.slice(-4), ["network", "requests", "--filter", "/app.js"]);
 
 			const invocations = await readInvocationLog(logPath);
-			const userInvocations = invocations.map((entry) => entry.args.slice(3));
+			const userInvocations = invocations.map((entry) => stripWrapperPrefix(entry.args));
 			assert.deepEqual(userInvocations, commands.map((args) => [...args]));
-			assert.ok(invocations.every((entry) => entry.args.includes("--json") && entry.args.includes("--session")));
+			assert.ok(invocations.every((entry) => entry.args.includes("--json")));
+			assert.ok(invocations.every((entry) => {
+				const userArgs = stripWrapperPrefix(entry.args);
+				const commandIndex = userArgs.findIndex((arg, index) => {
+					if (arg.startsWith("--")) return false;
+					return userArgs[index - 1] !== "--model" && userArgs[index - 1] !== "--port";
+				});
+				const command = userArgs[commandIndex];
+				return command === "dashboard" ? !entry.args.includes("--session") : entry.args.includes("--session");
+			}));
 			assert.ok(invocations.some((entry) => entry.args.includes("chat") && entry.args.includes("--model") && entry.model === "anthropic/env-model"));
 			assert.ok(invocations.some((entry) => entry.args.includes("dashboard") && entry.apiKey === "ai-gateway-key"));
 		});

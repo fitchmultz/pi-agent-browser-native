@@ -138,7 +138,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { saved: true, echoed
 
 			assert.equal(result.isError, false);
 			const [invocation] = await readInvocationLog(logPath);
-			assert.deepEqual(invocation?.args, ["--json", "--session", result.details?.sessionName, "auth", "save", "demo", "--password-stdin"]);
+			assert.deepEqual(invocation?.args, ["--json", "auth", "save", "demo", "--password-stdin"]);
+			assert.equal(result.details?.sessionName, undefined);
+			assert.equal(result.details?.usedImplicitSession, undefined);
 			assert.equal(invocation?.stdin, "pin");
 			assert.equal(JSON.stringify(updates).includes("pin"), false);
 			assert.equal(JSON.stringify(result.details).includes("pin"), false);

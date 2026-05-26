@@ -104,6 +104,17 @@ const BROWSER_PROMPT_PATTERNS = [
 	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
 ];
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
+const SESSIONLESS_AUTH_SUBCOMMANDS = new Set(["save", "list", "show", "delete"]);
+const EMPTY_BOOLEAN_FLAGS = new Set<string>();
+const JSON_BOOLEAN_FLAGS = new Set(["--json"]);
+const AUTH_SAVE_BOOLEAN_FLAGS = new Set(["--json", "--password-stdin"]);
+const AUTH_SAVE_VALUE_FLAGS = new Set(["--password", "--password-selector", "--submit-selector", "--url", "--username", "--username-selector"]);
+const DASHBOARD_SUBCOMMANDS = new Set(["start", "stop"]);
+const DASHBOARD_START_VALUE_FLAGS = new Set(["--port"]);
+const DOCTOR_BOOLEAN_FLAGS = new Set(["--fix", "--json", "--offline", "--quick"]);
+const INSTALL_BOOLEAN_FLAGS = new Set(["--with-deps", "-d"]);
+const STATE_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "clear", "clean", "rename"]);
+const STATE_CLEAN_VALUE_FLAGS = new Set(["--older-than"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
 const GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE = new Set(["--args"]);
 const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES = new Set([
@@ -127,7 +138,7 @@ const SENSITIVE_QUERY_PARAM_PATTERN =
 const SENSITIVE_FIELD_NAME_PATTERN =
 	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|sentry(?:_|-)?key|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|write(?:_|-)?key|x(?:_|-)?api(?:_|-)?key)$/i;
 
-const VALUE_FLAGS = new Set([
+const GLOBAL_VALUE_FLAGS = [
 	"--session",
 	"--cdp",
 	"--config",
@@ -150,7 +161,6 @@ const VALUE_FLAGS = new Set([
 	"--screenshot-quality",
 	"--color-scheme",
 	"--device",
-	"--port",
 	"--args",
 	"--user-agent",
 	"--allowed-domains",
@@ -158,6 +168,9 @@ const VALUE_FLAGS = new Set([
 	"--confirm-actions",
 	"--max-output",
 	"--model",
+	"--idle-timeout",
+] as const;
+const COMMAND_VALUE_FLAGS = [
 	"--baseline",
 	"--body",
 	"--categories",
@@ -170,18 +183,29 @@ const VALUE_FLAGS = new Set([
 	"--fn",
 	"--label",
 	"--load",
+	"--method",
 	"--name",
+	"--older-than",
+	"--output",
 	"--path",
+	"--port",
 	"--resource-type",
+	"--resource-types",
 	"--sameSite",
 	"--selector",
 	"-s",
+	"--status",
 	"--text",
+	"--threshold",
 	"--timeout",
+	"--type",
 	"--url",
 	"--username",
 	"--password",
-]);
+	"--wait-until",
+] as const;
+const VALUE_FLAGS: Set<string> = new Set([...GLOBAL_VALUE_FLAGS, ...COMMAND_VALUE_FLAGS]);
+const PREVALIDATED_VALUE_FLAGS: Set<string> = new Set(GLOBAL_VALUE_FLAGS);
 const DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM: Partial<Record<NodeJS.Platform, string>> = {
 	darwin: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 	linux: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -516,8 +540,84 @@ export function isPlainTextInspectionArgs(args: string[]): boolean {
 	return args.some((token) => INSPECTION_FLAGS.has(token));
 }
 
-function isStatelessInspectionCommand(commandInfo: CommandInfo): boolean {
-	return commandInfo.command === "skills" && ["list", "get", "path"].includes(commandInfo.subcommand ?? "");
+function getFlagName(token: string): string {
+	return token.split("=", 1)[0] ?? token;
+}
+
+function isNonFlagToken(token: string | undefined): token is string {
+	return typeof token === "string" && !token.startsWith("-");
+}
+
+function hasOnlyBooleanFlags(tokens: string[], allowedFlags: Set<string>): boolean {
+	return tokens.every((token) => token.startsWith("-") && allowedFlags.has(getFlagName(token)));
+}
+
+function hasOnlyOptionFlags(tokens: string[], allowedBooleanFlags: Set<string>, allowedValueFlags: Set<string>): boolean {
+	for (let index = 0; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (!token.startsWith("-")) return false;
+		const flagName = getFlagName(token);
+		if (allowedBooleanFlags.has(flagName)) continue;
+		if (!allowedValueFlags.has(flagName)) return false;
+		if (token.includes("=")) continue;
+		const value = tokens[index + 1];
+		if (!isNonFlagToken(value)) return false;
+		index += 1;
+	}
+	return true;
+}
+
+function isSessionlessAuthCommand(commandTokens: string[]): boolean {
+	const [, subcommand, target, ...rest] = commandTokens;
+	if (!SESSIONLESS_AUTH_SUBCOMMANDS.has(subcommand ?? "")) return false;
+	if (subcommand === "list") return target === undefined;
+	if (!isNonFlagToken(target)) return false;
+	if (subcommand === "save") return hasOnlyOptionFlags(rest, AUTH_SAVE_BOOLEAN_FLAGS, AUTH_SAVE_VALUE_FLAGS);
+	return rest.length === 0;
+}
+
+function isSessionlessDashboardCommand(commandTokens: string[]): boolean {
+	const [, subcommand, ...rest] = commandTokens;
+	if (subcommand === undefined) return true;
+	if (!DASHBOARD_SUBCOMMANDS.has(subcommand)) return false;
+	return subcommand === "start" ? hasOnlyOptionFlags(rest, JSON_BOOLEAN_FLAGS, DASHBOARD_START_VALUE_FLAGS) : rest.length === 0;
+}
+
+function isSessionlessStateCommand(commandTokens: string[]): boolean {
+	const [, subcommand, firstArg, secondArg, ...rest] = commandTokens;
+	if (!STATE_SESSIONLESS_SUBCOMMANDS.has(subcommand ?? "")) return false;
+	if (subcommand === "list") return firstArg === undefined;
+	if (subcommand === "show") return isNonFlagToken(firstArg) && secondArg === undefined;
+	if (subcommand === "rename") return isNonFlagToken(firstArg) && isNonFlagToken(secondArg) && rest.length === 0;
+	if (subcommand === "clean") {
+		const optionTokens = commandTokens.slice(2);
+		return optionTokens.length > 0 && hasOnlyOptionFlags(optionTokens, EMPTY_BOOLEAN_FLAGS, STATE_CLEAN_VALUE_FLAGS);
+	}
+	if (subcommand !== "clear") return false;
+	if (firstArg === "--all" && secondArg === undefined) return true;
+	if (!isNonFlagToken(firstArg)) return false;
+	return secondArg === undefined || (secondArg === "--all" && rest.length === 0);
+}
+
+function stripSessionlessShapeGlobalFlags(commandTokens: string[]): string[] {
+	return commandTokens.filter((token) => token !== "--json");
+}
+
+function isSessionlessCommand(args: string[], commandInfo: CommandInfo): boolean {
+	const commandTokens = stripSessionlessShapeGlobalFlags(extractCommandTokens(args));
+	const subcommand = commandTokens[1];
+	if (commandInfo.command === "skills") {
+		return ["list", "get", "path"].includes(subcommand ?? "");
+	}
+	if (commandInfo.command === "auth") return isSessionlessAuthCommand(commandTokens);
+	if (commandInfo.command === "dashboard") return isSessionlessDashboardCommand(commandTokens);
+	if (commandInfo.command === "device") return commandTokens.length === 2 && subcommand === "list";
+	if (commandInfo.command === "doctor") return hasOnlyBooleanFlags(commandTokens.slice(1), DOCTOR_BOOLEAN_FLAGS);
+	if (commandInfo.command === "install") return hasOnlyBooleanFlags(commandTokens.slice(1), INSTALL_BOOLEAN_FLAGS);
+	if (commandInfo.command === "profiles" || commandInfo.command === "upgrade") return commandTokens.length === 1;
+	if (commandInfo.command === "session") return commandTokens.length === 2 && subcommand === "list";
+	if (commandInfo.command === "state") return isSessionlessStateCommand(commandTokens);
+	return false;
 }
 
 export function hasUsableBraveApiKey(apiKey: string | null | undefined = process.env[BRAVE_API_KEY_ENV]): boolean {
@@ -751,7 +851,7 @@ function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | u
 			continue;
 		}
 		const normalizedToken = token.split("=", 1)[0] ?? token;
-		if (!VALUE_FLAGS.has(normalizedToken)) {
+		if (!PREVALIDATED_VALUE_FLAGS.has(normalizedToken)) {
 			continue;
 		}
 		if (token.includes("=")) {
@@ -994,7 +1094,7 @@ export function buildExecutionPlan(
 	const startupScopedFlags = getStartupScopedFlags(args);
 	const plainTextInspection = isPlainTextInspectionArgs(args);
 	const commandInfo = parseCommandInfo(args);
-	const statelessInspection = plainTextInspection || isStatelessInspectionCommand(commandInfo);
+	const sessionlessCommand = plainTextInspection || isSessionlessCommand(args, commandInfo);
 	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
 	if (invalidValueFlag) {
 		return {
@@ -1028,7 +1128,7 @@ export function buildExecutionPlan(
 	let usedImplicitSession = false;
 	let validationError: string | undefined;
 
-	if (!explicitSessionName && options.sessionMode === "auto" && !statelessInspection) {
+	if (!explicitSessionName && options.sessionMode === "auto" && !sessionlessCommand) {
 		if (options.managedSessionActive && startupScopedFlags.length > 0) {
 			recoveryHint = {
 				exampleArgs: args,
@@ -1047,7 +1147,7 @@ export function buildExecutionPlan(
 			sessionName = options.managedSessionName;
 			usedImplicitSession = true;
 		}
-	} else if (shouldCreateFreshManagedSession && !statelessInspection) {
+	} else if (shouldCreateFreshManagedSession && !sessionlessCommand) {
 		effectiveArgs.push("--session", options.freshSessionName);
 		managedSessionName = options.freshSessionName;
 		sessionName = options.freshSessionName;

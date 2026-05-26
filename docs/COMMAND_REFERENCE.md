@@ -438,18 +438,26 @@ Session note: `skills list`, `skills get …`, and `skills path …` are **state
 | `skills get core` | Print the core usage guide. |
 | `skills get core --full` | Print the full version-matched core command reference and templates. |
 | `skills get <name>` | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, and `skills get agentcore`. |
+| `skills get <name> --full` | Include a skill's supplementary references/templates when present. |
+| `skills get --all` | Print all visible bundled skills for broad audit/debug work. |
 | `skills path [name]` | Print a skill directory path. |
+
+Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an override for bundled skill discovery. Normal agents should not need it, but it is useful when validating package layout or upstream skill packaging.
 
 ### Core page and element commands
 
 | Command | Purpose |
 | --- | --- |
-| `open <url>` | Navigate to a URL. |
+| `open [url]` | Launch the browser and optionally navigate. URL-less `open` stays on `about:blank` so agents can stage routes, cookies, or init scripts before first navigation. |
+| `open <url>` | Navigate to a URL; `goto <url>` and `navigate <url>` are equivalent navigation aliases when a URL is present. |
 | `click <sel>` | Click an element or `@ref`. |
+| `click <sel> --new-tab` | Click a link/control while requesting a new tab. |
 | `dblclick <sel>` | Double-click an element. |
 | `type <sel> <text>` | Type into an element. |
 | `fill <sel> <text>` | Clear and fill an element. |
-| `press <key>` | Press a key such as `Enter`, `Tab`, or `Control+a`. Related key-hold aliases include `keydown Shift` and `keyup Shift`. |
+| `press <key>` | Press a key such as `Enter`, `Tab`, or `Control+a`. |
+| `keydown <key>` | Hold a key down without releasing it, useful for modifiers. |
+| `keyup <key>` | Release a key previously held by `keydown <key>`. Common modifier examples are `keydown Shift` and `keyup Shift`. |
 | `keyboard type <text>` | Type text with real keystrokes and no selector. |
 | `keyboard inserttext <text>` | Insert text without key events. |
 | `hover <sel>` | Hover an element. |
@@ -461,14 +469,18 @@ Session note: `skills list`, `skills get …`, and `skills path …` are **state
 | `upload <sel> <files...>` | Upload one or more files. |
 | `download <sel> <path>` | Download a file by clicking an element. |
 | `scroll <dir> [px]` | Scroll `up`, `down`, `left`, or `right`. |
+| `scroll <dir> [px] --selector <sel>` | Scroll a specific scrollable element/container instead of the page. |
 | `scrollintoview <sel>` | Scroll an element into view. |
 | `wait <sel|ms>` | Wait for an element or a duration. |
-| `screenshot [path]` | Take a screenshot. |
+| `screenshot [selector] [path]` | Take a full-page or element-scoped screenshot; a single selector-like argument scopes, while a path-like argument saves to that path. |
+| `screenshot [path]` | Take a screenshot and optionally save it to a path. |
 | `pdf <path>` | Save the page as a PDF. |
-| `snapshot` | Print an accessibility tree with refs for AI interaction. |
+| `snapshot` | Print an accessibility tree with refs for AI interaction. `snapshot --cursor` / `snapshot -C` includes cursor/focus context when upstream returns it. |
 | `eval <js>` | Run JavaScript. Use `eval --stdin` through this wrapper for larger snippets. |
 | `connect <port|url>` | Connect to a browser through CDP. |
 | `close [--all]` | Close the current browser or all sessions. |
+| `tap <selector>` | Touch-oriented tap alias for iOS/provider workflows. |
+| `swipe <direction> [distance]` | Touch-oriented swipe for iOS/provider workflows. |
 
 On dashboards and other apps with nested scroll containers, `scroll <dir> [px]` may report a successful wheel action while the viewport appears unchanged because the page-level scroller was not the one containing the content. For top-level `scroll` calls without startup-scoped launch flags, the wrapper samples viewport and prominent scroll-container positions before and after the command; when nothing changes it appends `Scroll diagnostic: no observed scroll movement`, exposes `details.scrollNoop`, and adds exact `details.nextActions` for a fresh `snapshot -i` and screenshot. Use those before repeating page scrolls; when you need a specific panel, prefer `scrollintoview <@ref>` or a scoped interaction with the actual scrollable region.
 
@@ -490,6 +502,11 @@ Comboboxes vary by app. For native `<select>` controls, prefer raw `select <sele
 | `session list` | List active sessions. |
 | `state save <path>` | Save cookies, local storage, and session storage to a state file. |
 | `state load <path>` | Load cookies and storage from a state file. |
+| `state list` | List saved state files. |
+| `state show <filename>` | Show saved-state metadata without dumping secrets. |
+| `state rename <old-name> <new-name>` | Rename a saved state file. |
+| `state clear [session-name] [--all]` | Clear saved states for one name or all names. |
+| `state clean --older-than <days>` | Delete expired saved-state files. |
 | `frame <selector|main>` | Switch iframe context by selector/ref/name/URL, or return to the main frame. |
 | `dialog accept [text]` | Accept an alert, confirm, or prompt dialog, optionally supplying prompt text. |
 | `dialog dismiss` | Dismiss or cancel the current dialog. |
@@ -517,7 +534,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, `testid`, `first`, `last`, and `nth`. |
 | `mouse <action> [args]` | `move <x> <y>`, `down [btn]`, `up [btn]`, `wheel <dy> [dx]`. |
 | `set <setting> [value]` | `viewport <w> <h>`, `device <name>`, `geo <lat> <lng>`, `offline [on|off]`, `headers <json>`, `credentials <user> <pass>`, `media [dark|light] [reduced-motion]`. |
-| `network <action>` | `route <url> [--abort|--body <json>] [--resource-type <csv>]`, `unroute [url]`, `requests [--clear] [--filter <pattern>]`, `request <requestId>`, `har <start|stop> [path]`. `--resource-type` filters intercepted requests by CDP resource type, such as `script`, `image`, `font`, `xhr`, or `fetch`. |
+| `network <action>` | `route <url> [--abort|--body <json>] [--resource-type <csv>]`, `unroute [url]`, `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`, `request <requestId>`, `har <start|stop> [path]`. `--resource-type` filters intercepted requests by CDP resource type, such as `script`, `image`, `font`, `xhr`, or `fetch`; request listing filters accept resource types (`xhr,fetch`), methods (`POST`), and statuses (`2xx`, `400-499`). |
 | `cookies [get|set|clear]` | Manage cookies. `set` supports `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, `--expires`, and `--curl <file>` for JSON, cURL, or bare Cookie-header bulk imports. |
 | `storage <local|session>` | Manage web storage. |
 
@@ -544,6 +561,7 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `snapshot -i` / `snapshot --interactive` | Include only interactive elements. |
 | `snapshot -i --urls` | Include only interactive elements and link hrefs. |
 | `snapshot -u` / `snapshot --urls` | Include href URLs for link elements. |
+| `snapshot -C` / `snapshot --cursor` | Include cursor/focus context when upstream provides it. |
 | `snapshot -c` / `snapshot --compact` | Remove empty structural elements. |
 | `snapshot -d <n>` / `snapshot --depth <n>` | Limit tree depth. |
 | `snapshot -s <sel>` / `snapshot --selector <sel>` | Scope to a CSS selector. |
@@ -562,16 +580,16 @@ When a snapshot is too large for inline output, the Pi wrapper renders a compact
 | `wait --text <text>` | Wait for text to appear on the page; failures may include `inspect-after-text-assertion-failure` with a session-scoped `snapshot -i` payload. |
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. In the native Pi wrapper, use `25000` ms or less per call to stay under the upstream CLI IPC budget. |
-| `wait <selector> --state hidden` | Wait for an element to become hidden. |
-| `wait <selector> --state detached` | Wait for an element to detach. |
+
+Current v0.27.0 source does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
 
 ### Diff, debug, and streaming
 
 | Command | Purpose |
 | --- | --- |
-| `diff snapshot` | Compare current versus last snapshot. |
-| `diff screenshot --baseline` | Compare current screenshot versus a baseline image. |
-| `diff url <u1> <u2>` | Compare two pages. |
+| `diff snapshot` | Compare current versus last snapshot. Use `diff snapshot --baseline <file> --selector <sel> --compact --depth <n>` when you need a saved baseline, scoped subtree, compact output, or depth bound. |
+| `diff screenshot --baseline` | Compare current screenshot versus a baseline image. Use `diff screenshot --baseline <file> --output <file> --threshold <0-1> --selector <sel> --full` when you need a saved diff image, threshold tuning, element scope, or full-page capture. |
+| `diff url <u1> <u2>` | Compare two pages. Use `diff url <u1> <u2> --screenshot --wait-until <strategy> --selector <sel> --compact --depth <n>` when you need screenshot comparison, navigation wait control, or scoped/compact snapshot comparison. |
 | `trace start|stop [path]` | Record a Chrome DevTools trace. |
 | `profiler start|stop [path]` | Record a Chrome DevTools profile. |
 | `record start <path> [url]` | Start WebM video recording; output is written on `record stop`. Requires `ffmpeg` on `PATH` for the final encode. |
@@ -600,7 +618,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 
 `trace` and `profiler` share upstream Chrome tracing machinery. Do not run them at the same time. The wrapper tracks owner state it observes in the current Pi session and blocks conflicting starts/stops with "wrapper believes ..." wording because direct upstream CLI use or browser restarts can desynchronize wrapper-local state.
 
-### Batch, auth, confirmations, sessions, chat, dashboard, and setup
+### Batch, auth, confirmations, sessions, chat, dashboard, devices, and setup
 
 | Command | Purpose |
 | --- | --- |
@@ -619,13 +637,14 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `dashboard [start]` | Start the dashboard server on the default port `4848`. |
 | `dashboard start --port <n>` | Start the dashboard on a specific port. |
 | `dashboard stop` | Stop the dashboard server. |
+| `device list` | List available iOS simulators. Use with `-p ios` when exercising iOS provider flows. |
 | `install` | Install browser binaries. |
 | `install --with-deps` | Install browser binaries plus Linux system dependencies. |
 | `upgrade` | Upgrade `agent-browser` to the latest version. |
 | `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. Use `doctor --offline --quick` for a fast local-only check and `doctor --json` for structured output. |
 | `profiles` | List available Chrome profiles. |
 
-When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; command echoes also redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, cookie/storage values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
+When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. Local inspection/setup calls (`auth save/list/show/delete`, `dashboard start/stop`, `device list`, `doctor`, `install`, `upgrade`, `profiles`, `session list`, `state list/show/clean/rename`, `state clear --all`, and `state clear <session-name>`) are sessionless unless you explicitly pass `--session`; context-dependent calls such as root `session`, untargeted `state clear`, `auth login`, `chat`, and `state save/load` keep normal session behavior. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; command echoes also redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, cookie/storage values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
 
 ## Important global flags, config, and environment
 
@@ -722,6 +741,15 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills help: `agent-browser skills --help`
 - skills list: `agent-browser skills list`
 - core skill full: `agent-browser skills get core --full`
+- open help: `agent-browser open --help`
+- click help: `agent-browser click --help`
+- scroll help: `agent-browser scroll --help`
+- keydown help: `agent-browser keydown --help`
+- keyup help: `agent-browser keyup --help`
+- get help: `agent-browser get --help`
+- is help: `agent-browser is --help`
+- mouse help: `agent-browser mouse --help`
+- set help: `agent-browser set --help`
 - tab help: `agent-browser tab --help`
 - snapshot help: `agent-browser snapshot --help`
 - wait help: `agent-browser wait --help`
@@ -731,6 +759,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - cookies help: `agent-browser cookies --help`
 - storage help: `agent-browser storage --help`
 - state help: `agent-browser state --help`
+- session help: `agent-browser session --help`
 - frame help: `agent-browser frame --help`
 - dialog help: `agent-browser dialog --help`
 - window help: `agent-browser window --help`
@@ -745,13 +774,19 @@ This generated block is review data for maintainers. The human-authored referenc
 - trace help: `agent-browser trace --help`
 - profiler help: `agent-browser profiler --help`
 - record help: `agent-browser record --help`
+- tap help: `agent-browser tap --help`
+- swipe help: `agent-browser swipe --help`
+- device help: `agent-browser device --help`
+- install help: `agent-browser install --help`
+- upgrade help: `agent-browser upgrade --help`
+- profiles help: `agent-browser profiles --help`
 
 #### Inventory sections
-- Built-in skills: 10 human-doc token(s), 11 upstream token(s)
-- Core page, element, navigation, and extraction commands: 38 human-doc token(s), 40 upstream token(s)
-- Sessions, state, tabs, frames, dialogs, and windows: 12 human-doc token(s), 8 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 29 human-doc token(s), 33 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, and AI commands: 19 human-doc token(s), 17 upstream token(s)
+- Built-in skills: 13 human-doc token(s), 13 upstream token(s)
+- Core page, element, navigation, and extraction commands: 49 human-doc token(s), 49 upstream token(s)
+- Sessions, state, tabs, frames, dialogs, and windows: 17 human-doc token(s), 13 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 33 human-doc token(s), 42 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 20 human-doc token(s), 18 upstream token(s)
 - Global flags, config, providers, policy, and environment: 95 human-doc token(s), 90 upstream token(s)
 
 #### Human-authored doc tokens required
@@ -760,20 +795,29 @@ This generated block is review data for maintainers. The human-authored referenc
 - `skills get core`
 - `skills get core --full`
 - `skills get <name>`
+- `skills get <name> --full`
+- `skills get --all`
 - `skills get electron`
 - `skills get slack`
 - `skills get dogfood`
 - `skills get vercel-sandbox`
 - `skills get agentcore`
 - `skills path [name]`
+- `AGENT_BROWSER_SKILLS_DIR`
 
 ##### Core page, element, navigation, and extraction commands
+- `open [url]`
 - `open <url>`
+- `goto <url>`
+- `navigate <url>`
 - `click <sel>`
+- `click <sel> --new-tab`
 - `dblclick <sel>`
 - `type <sel> <text>`
 - `fill <sel> <text>`
 - `press <key>`
+- `keydown <key>`
+- `keyup <key>`
 - `keyboard type <text>`
 - `keyboard inserttext <text>`
 - `keydown Shift`
@@ -787,13 +831,16 @@ This generated block is review data for maintainers. The human-authored referenc
 - `upload <sel> <files...>`
 - `download <sel> <path>`
 - `scroll <dir> [px]`
+- `scroll <dir> [px] --selector <sel>`
 - `scrollintoview <sel>`
 - `wait <sel|ms>`
+- `screenshot [selector] [path]`
 - `screenshot [path]`
 - `screenshot --full`
 - `screenshot --annotate`
 - `pdf <path>`
 - `snapshot`
+- `snapshot --cursor`
 - `eval <js>`
 - `connect <port|url>`
 - `close [--all]`
@@ -806,12 +853,19 @@ This generated block is review data for maintainers. The human-authored referenc
 - `find <locator> <value> <action>`
 - `mouse <action> [args]`
 - `set <setting> [value]`
+- `tap <selector>`
+- `swipe <direction> [distance]`
 
 ##### Sessions, state, tabs, frames, dialogs, and windows
 - `session`
 - `session list`
 - `state save <path>`
 - `state load <path>`
+- `state list`
+- `state show <filename>`
+- `state rename <old-name> <new-name>`
+- `state clear [session-name] [--all]`
+- `state clean --older-than <days>`
 - `tab list`
 - `tab new --label <name> [url]`
 - `tab <t<N>|label>`
@@ -824,13 +878,17 @@ This generated block is review data for maintainers. The human-authored referenc
 ##### Network, storage, artifacts, diagnostics, and performance
 - `network <action>`
 - `network route <url> [--abort|--body <json>] [--resource-type <csv>]`
+- `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`
 - `network request <requestId>`
 - `cookies [get|set|clear]`
 - `cookies set --curl <file>`
 - `storage <local|session>`
 - `diff snapshot`
+- `diff snapshot --baseline <file> --selector <sel> --compact --depth <n>`
 - `diff screenshot --baseline`
+- `diff screenshot --baseline <file> --output <file> --threshold <0-1> --selector <sel> --full`
 - `diff url <u1> <u2>`
+- `diff url <u1> <u2> --screenshot --wait-until <strategy> --selector <sel> --compact --depth <n>`
 - `trace start|stop [path]`
 - `profiler start|stop [path]`
 - `record start <path> [url]`
@@ -852,7 +910,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `vitals [url] [--json]`
 - `removeinitscript <id>`
 
-##### Batch, auth, confirmations, setup, dashboard, and AI commands
+##### Batch, auth, confirmations, setup, dashboard, devices, and AI commands
 - `batch [--bail]`
 - `auth save <name>`
 - `auth save <name> --password-stdin`
@@ -865,6 +923,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `chat <message>`
 - `dashboard start --port <n>`
 - `dashboard stop`
+- `device list`
 - `install`
 - `install --with-deps`
 - `upgrade`
@@ -974,6 +1033,8 @@ This generated block is review data for maintainers. The human-authored referenc
 ##### Built-in skills
 - root help: `skills get core --full`
 - skills help: `get <name> --full`
+- skills help: `get --all`
+- skills help: `AGENT_BROWSER_SKILLS_DIR`
 - skills list: `core`
 - skills list: `electron`
 - skills list: `slack`
@@ -985,12 +1046,17 @@ This generated block is review data for maintainers. The human-authored referenc
 - core skill full: `agent-browser state save ./auth.json`
 
 ##### Core page, element, navigation, and extraction commands
+- open help: `open [url]`
+- open help: `aliases still require a URL.`
 - root help: `open <url>`
 - root help: `click <sel>`
+- click help: `--new-tab`
 - root help: `dblclick <sel>`
 - root help: `type <sel> <text>`
 - root help: `fill <sel> <text>`
 - root help: `press <key>`
+- keydown help: `keydown <key>`
+- keyup help: `keyup <key>`
 - root help: `keyboard type <text>`
 - root help: `keyboard inserttext <text>`
 - root help: `hover <sel>`
@@ -1002,9 +1068,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `upload <sel> <files...>`
 - root help: `download <sel> <path>`
 - root help: `scroll <dir> [px]`
+- scroll help: `--selector <sel>`
 - root help: `scrollintoview <sel>`
 - root help: `wait <sel|ms>`
 - root help: `screenshot [path]`
+- screenshot help: `screenshot [selector] [path]`
 - root help: `pdf <path>`
 - root help: `snapshot`
 - root help: `eval <js>`
@@ -1025,11 +1093,18 @@ This generated block is review data for maintainers. The human-authored referenc
 - screenshot help: `--annotate`
 - find help: `role <role>`
 - find help: `testid <id>`
+- tap help: `tap <selector>`
+- swipe help: `swipe <direction> [distance]`
 
 ##### Sessions, state, tabs, frames, dialogs, and windows
 - root help: `session list`
 - state help: `save <path>`
 - state help: `load <path>`
+- state help: `list`
+- state help: `show <filename>`
+- state help: `rename <old-name> <new-name>`
+- state help: `clear [session-name] [--all]`
+- state help: `clean --older-than <days>`
 - tab help: `new --label <name> [url]`
 - tab help: `Stable tab ids`
 - frame help: `frame <selector|main>`
@@ -1063,15 +1138,24 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `react suspense [--only-dynamic] [--json]`
 - root help: `vitals [url] [--json]`
 - root help: `removeinitscript <id>`
+- network help: `requests [options]`
+- network help: `--type <types>`
+- network help: `--method <method>`
+- network help: `--status <code>`
 - network help: `request <requestId>`
 - network help: `har <start|stop>`
 - storage help: `set <key> <value>`
+- diff help: `diff snapshot [options]`
+- diff help: `--baseline <f>`
+- diff help: `--output <file>`
+- diff help: `--threshold <0-1>`
+- diff help: `--wait-until <strategy>`
 - diff help: `diff screenshot --baseline <f>`
 - trace help: `trace <operation> [path]`
 - profiler help: `--categories <list>`
 - record help: `record restart <path.webm> [url]`
 
-##### Batch, auth, confirmations, setup, dashboard, and AI commands
+##### Batch, auth, confirmations, setup, dashboard, devices, and AI commands
 - root help: `batch [--bail]`
 - root help: `auth save <name>`
 - root help: `auth login <name>`
@@ -1079,6 +1163,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `deny <id>`
 - root help: `chat <message>`
 - root help: `dashboard start --port <n>`
+- device help: `device list`
 - root help: `install --with-deps`
 - root help: `upgrade`
 - root help: `doctor [--fix]`
