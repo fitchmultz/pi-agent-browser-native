@@ -14,6 +14,15 @@ import {
 	type SessionRefSnapshotInvalidation,
 	type SessionTabTarget,
 } from "../../session-page-state.js";
+import {
+	isCloseCommand,
+	isElectronPostCommandHealthCommand,
+	isNavigationObservableCommandName,
+	isRefGuardedCommand,
+	isRefInvalidatingBatchCommand,
+	isSessionTabPinningExcludedCommand,
+	isSessionTabPostCommandCorrectionExcludedCommand,
+} from "../../command-taxonomy.js";
 import { chooseOpenResultTabCorrection, redactInvocationArgs, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import type {
@@ -35,64 +44,7 @@ import type {
 	TraceOwner,
 } from "./types.js";
 
-export const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
 export const NAVIGATION_SUMMARY_EVAL = `({ title: document.title, url: location.href })`;
-
-const SESSION_TAB_PINNING_EXCLUDED_COMMANDS = new Set(["close", "goto", "navigate", "open", "session", "tab"]);
-const SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS = new Set(["batch", "close", "session", "tab"]);
-const REF_INVALIDATING_BATCH_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"drag",
-	"forward",
-	"goto",
-	"keyboard",
-	"mouse",
-	"navigate",
-	"open",
-	"press",
-	"reload",
-	"select",
-	"type",
-	"uncheck",
-	"upload",
-]);
-const REF_GUARDED_COMMANDS = new Set([
-	"check",
-	"click",
-	"dblclick",
-	"download",
-	"drag",
-	"fill",
-	"focus",
-	"hover",
-	"keyboard",
-	"mouse",
-	"press",
-	"scrollintoview",
-	"select",
-	"type",
-	"uncheck",
-	"upload",
-]);
-const ELECTRON_POST_COMMAND_HEALTH_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"fill",
-	"find",
-	"forward",
-	"keyboard",
-	"mouse",
-	"press",
-	"reload",
-	"select",
-	"type",
-	"uncheck",
-]);
 
 export function applyBrowserRunStatePatch(state: BrowserRunState, patch: BrowserRunStatePatch | undefined): void {
 	if (!patch) return;
@@ -126,7 +78,7 @@ export function buildManagedSessionOutcome(options: {
 	if (!attemptedSessionName) return undefined;
 	let status: ManagedSessionOutcome["status"];
 	let summary: string;
-	if (command === "close") {
+	if (isCloseCommand(command)) {
 		status = succeeded ? "closed" : activeBefore ? "preserved" : "abandoned";
 		summary = succeeded
 			? `Managed session ${attemptedSessionName} was closed.`
@@ -238,8 +190,7 @@ export function extractNavigationSummaryFromData(data: unknown): NavigationSumma
 
 export function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {
 	return (
-		command !== undefined &&
-		NAVIGATION_SUMMARY_COMMANDS.has(command) &&
+		isNavigationObservableCommandName(command) &&
 		(!isRecord(data) || (typeof data.title !== "string" && typeof data.url !== "string"))
 	);
 }
@@ -331,7 +282,7 @@ function collectRefsFromTokens(tokens: string[]): string[] {
 }
 
 export function getGuardedRefUsage(commandTokens: string[], stdin?: string, options: { includeRefsAfterBatchSnapshot?: boolean } = {}): string[] {
-	const collectFromStep = (step: string[]) => REF_GUARDED_COMMANDS.has(step[0] ?? "") ? collectRefsFromTokens(step) : [];
+	const collectFromStep = (step: string[]) => isRefGuardedCommand(step[0]) ? collectRefsFromTokens(step) : [];
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return collectFromStep(commandTokens);
 	}
@@ -357,10 +308,10 @@ function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string)
 			priorStepInvalidatesRefs = false;
 		}
 		const refIds = collectRefsFromTokens(step);
-		if (refIds.length > 0 && REF_GUARDED_COMMANDS.has(step[0] ?? "") && priorStepInvalidatesRefs) {
+		if (refIds.length > 0 && isRefGuardedCommand(step[0]) && priorStepInvalidatesRefs) {
 			return `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`;
 		}
-		if (REF_INVALIDATING_BATCH_COMMANDS.has(step[0] ?? "")) {
+		if (isRefInvalidatingBatchCommand(step[0])) {
 			priorStepInvalidatesRefs = true;
 		}
 	}
@@ -438,7 +389,7 @@ export function shouldPinSessionTabForCommand(options: {
 		options.pinningRequired === true &&
 		options.sessionName !== undefined &&
 		options.command !== undefined &&
-		!SESSION_TAB_PINNING_EXCLUDED_COMMANDS.has(options.command) &&
+		!isSessionTabPinningExcludedCommand(options.command) &&
 		supportsPinnedStdinCommand(options)
 	);
 }
@@ -464,7 +415,7 @@ export function buildPinnedBatchPlan(options: {
 	if (options.commandTokens.length === 0) {
 		return undefined;
 	}
-	const includeNavigationSummary = options.command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(options.command);
+	const includeNavigationSummary = isNavigationObservableCommandName(options.command);
 	const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
 	const commandStep = options.commandTokens as BatchCommandStep;
 	const navigationSummarySteps: BatchCommandStep[] = includeNavigationSummary ? [["eval", NAVIGATION_SUMMARY_EVAL]] : [];
@@ -480,7 +431,7 @@ export function shouldCorrectSessionTabAfterCommand(options: { command?: string;
 		options.pinningRequired === true &&
 		options.sessionName !== undefined &&
 		options.command !== undefined &&
-		!SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS.has(options.command)
+		!isSessionTabPostCommandCorrectionExcludedCommand(options.command)
 	);
 }
 
@@ -747,7 +698,7 @@ export function formatElectronSessionMismatchText(mismatch: ElectronSessionMisma
 }
 
 export function shouldInspectElectronPostCommandHealth(command: string | undefined): boolean {
-	return command !== undefined && ELECTRON_POST_COMMAND_HEALTH_COMMANDS.has(command);
+	return isElectronPostCommandHealthCommand(command);
 }
 
 export function buildElectronLifecycleNextActions(record: ElectronLaunchRecord): AgentBrowserNextAction[] {

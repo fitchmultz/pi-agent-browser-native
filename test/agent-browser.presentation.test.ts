@@ -90,6 +90,24 @@ test("buildToolPresentation enriches open results with a compact page-change sum
 	assert.deepEqual(presentation.pageChangeSummary?.nextActionIds, ["inspect-opened-page"]);
 });
 
+test("buildToolPresentation treats upstream aliases as page-changing commands", async () => {
+	for (const command of ["key", "keydown", "keyboard", "keyup", "scrollinto", "tap"] as const) {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command },
+			cwd: process.cwd(),
+			envelope: { success: true, data: { ok: true } },
+		});
+
+		assert.equal(presentation.nextActions?.[0]?.id, "inspect-after-mutation", command);
+		assert.deepEqual(presentation.pageChangeSummary, {
+			changeType: "mutation",
+			command,
+			nextActionIds: ["inspect-after-mutation"],
+			summary: `${command} → mutation`,
+		}, command);
+	}
+});
+
 test("buildToolPresentation enriches click results with a current-page navigation summary", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "click" },

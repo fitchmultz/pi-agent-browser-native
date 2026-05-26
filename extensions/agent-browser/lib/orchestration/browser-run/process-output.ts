@@ -1,5 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
 
+import { isCloseCommand } from "../../command-taxonomy.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import {
@@ -287,7 +288,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let currentRefSnapshotInvalidation: SessionRefSnapshotInvalidation | undefined;
 		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data) : undefined;
 		if (prepared.executionPlan.sessionName) {
-			if (prepared.executionPlan.commandInfo.command === "close" && succeeded) sessionPageState.clearSession(prepared.executionPlan.sessionName);
+			if (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) sessionPageState.clearSession(prepared.executionPlan.sessionName);
 			else if (currentSessionTabTarget) {
 				const tabUpdate = sessionPageState.applyTabTarget({ sessionName: prepared.executionPlan.sessionName, target: currentSessionTabTarget, update: sessionPageStateUpdate });
 				if (!tabUpdate.applied && succeeded) sessionPageState.markPinning(prepared.executionPlan.sessionName, "drift");

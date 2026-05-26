@@ -6,6 +6,7 @@
  * Invariants/Assumptions: Action ids are public machine-readable contracts; preserve first-observed order.
  */
 
+import { isPageMutationCommand } from "../command-taxonomy.js";
 import { isPendingRecordingArtifact } from "./artifact-state.js";
 import type {
 	AgentBrowserFailureCategory,
@@ -55,27 +56,6 @@ function buildElectronToolAction(options: {
 		tool: "agent_browser",
 	};
 }
-
-const MUTATING_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"dialog",
-	"fill",
-	"forward",
-	"hover",
-	"press",
-	"pushstate",
-	"reload",
-	"scroll",
-	"scrollintoview",
-	"select",
-	"swipe",
-	"tap",
-	"type",
-	"uncheck",
-]);
 
 function getDownloadRetryPath(args: string[] | undefined, fallback: string | undefined): string | undefined {
 	if (fallback) return fallback;
@@ -176,7 +156,7 @@ export function buildAgentBrowserNextActions(options: {
 				id: "inspect-opened-page",
 				reason: "Inspect the opened page before choosing interactive refs.",
 			}));
-		} else if (options.command && MUTATING_COMMANDS.has(options.command)) {
+		} else if (isPageMutationCommand(options.command)) {
 			actions.push(buildNextToolAction({
 				args: ["snapshot", "-i"],
 				id: "inspect-after-mutation",

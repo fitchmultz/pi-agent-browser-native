@@ -285,13 +285,70 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
 	const commands = [
+		["open", "https://example.test"],
+		["goto", "https://example.test/next"],
+		["navigate", "https://example.test/again"],
+		["back"],
+		["forward"],
+		["reload"],
+		["click", "#button", "--new-tab"],
+		["dblclick", "#button"],
+		["fill", "#name", "Ada"],
+		["type", "#name", " Lovelace"],
+		["press", "Enter"],
+		["key", "Escape"],
+		["keydown", "Shift"],
+		["keyup", "Shift"],
+		["keyboard", "type", "hello"],
+		["keyboard", "inserttext", "raw text"],
+		["hover", "#button"],
+		["focus", "#name"],
+		["check", "#agree"],
+		["uncheck", "#agree"],
+		["select", "#flavor", "vanilla"],
+		["drag", "#source", "#target"],
+		["upload", "#file", join(tempDir, "upload.txt")],
+		["scroll", "down", "250", "--selector", "#panel"],
+		["scrollintoview", "#target"],
+		["scrollinto", "#target"],
+		["wait", "#ready"],
+		["wait", "--url", "**/ready"],
+		["wait", "--load", "networkidle"],
+		["wait", "--fn", "window.ready === true"],
+		["wait", "--text", "Ready"],
+		["wait", "--download", downloadPath],
+		["screenshot", join(tempDir, "screen.png")],
+		["pdf", join(tempDir, "page.pdf")],
+		["snapshot", "--compact", "--depth", "3", "--urls"],
+		["snapshot", "--interactive", "--selector", "main", "--cursor"],
+		["eval", "document.title"],
+		["eval", "-b", "ZG9jdW1lbnQudGl0bGU="],
 		["connect", "9222"],
-		["download", "#direct-download", downloadPath],
 		["get", "url"],
-		["snapshot", "--compact"],
+		["get", "cdp-url"],
+		["get", "box", "#button"],
+		["get", "styles", "#button"],
+		["is", "visible", "#button"],
+		["find", "role", "button", "click", "--name", "Submit"],
+		["find", "first", ".item", "click"],
+		["find", "last", ".item", "hover"],
+		["find", "nth", "2", ".card", "click", "--exact"],
+		["mouse", "move", "10", "20"],
+		["mouse", "wheel", "100"],
+		["set", "media", "dark", "reduced-motion"],
+		["tap", "#button"],
+		["swipe", "up", "200"],
+		["pushstate", "/spa/route"],
+		["removeinitscript", "init-1"],
+		["download", "#direct-download", downloadPath],
 		["tab", "new"],
 		["tab", "0"],
 		["tab", "close"],
+		["close"],
+		["open", "https://example.test/reopened"],
+		["quit"],
+		["open", "https://example.test/reopened-again"],
+		["exit"],
 	] as const;
 
 	try {
@@ -306,7 +363,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(
-				invocations.map((entry) => stripWrapperPrefix(entry.args)),
+				invocations
+					.map((entry) => stripWrapperPrefix(entry.args))
+					.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin")),
 				commands.map((args) => [...args]),
 			);
 			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));
@@ -349,9 +408,11 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["auth", "list"],
 		["auth", "show", "demo"],
 		["auth", "delete", "demo"],
+		["auth", "remove", "demo"],
 		["state", "save", statePath],
 		["state", "load", statePath],
 		["state", "list"],
+		["state", "clear", "-a"],
 		["cookies", "get"],
 		["cookies", "set", "sid", "cookie-secret", "--url", "https://example.test"],
 		["cookies", "clear"],
@@ -394,8 +455,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.ok(invocations.every((entry) => entry.args.includes("--json")));
 			assert.ok(invocations.every((entry) => {
 				const userArgs = stripWrapperPrefix(entry.args);
-				const isSessionlessAuth = userArgs[0] === "auth" && ["save", "list", "show", "delete"].includes(userArgs[1] ?? "");
-				const isSessionlessState = userArgs[0] === "state" && userArgs[1] === "list";
+				const isSessionlessAuth = userArgs[0] === "auth" && ["save", "list", "show", "delete", "remove"].includes(userArgs[1] ?? "");
+				const isSessionlessState = userArgs[0] === "state" && (userArgs[1] === "list" || (userArgs[1] === "clear" && userArgs[2] === "-a"));
 				return isSessionlessAuth || isSessionlessState ? !entry.args.includes("--session") : entry.args.includes("--session");
 			}));
 		});
@@ -434,7 +495,9 @@ const subcommand = args[commandIndex + 1];
 function ensureFile(file, content) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content); }
 let data = { ok: true, command, subcommand };
 if (command === "network" && subcommand === "route") data = { routed: args[commandIndex + 2] };
+if (command === "network" && subcommand === "unroute") data = { unrouted: args[commandIndex + 2] || "all" };
 if (command === "network" && subcommand === "requests") data = { requests: [{ method: "GET", requestId: "n1", status: 200, url: "https://example.test/app.js" }] };
+if (command === "network" && subcommand === "request") data = { requestId: args[commandIndex + 2], status: 200, url: "https://example.test/app.js", responseBody: "ok" };
 if (command === "network" && subcommand === "har") {
   const action = args[commandIndex + 2];
   data = action === "stop" ? { path: args[commandIndex + 3] || ${JSON.stringify(harPath)}, requestCount: 1, state: "stopped" } : { state: "started" };
@@ -452,6 +515,8 @@ if (command === "highlight") data = { highlighted: subcommand };
 if (command === "inspect") data = { opened: true };
 if (command === "clipboard") data = { text: subcommand === "read" ? "clipboard text" : "written" };
 if (command === "stream") data = { connected: subcommand === "enable" || subcommand === "status", enabled: subcommand !== "disable", port: 7777, screencasting: subcommand !== "disable" };
+if (command === "react") data = { ok: true, subcommand, components: [] };
+if (command === "vitals" || command === "web-vitals") data = { lcp: 123, cls: 0, command };
 if (command === "dashboard") data = subcommand === "stop" ? { stopped: true } : { pid: 123, port: 4848 };
 if (command === "chat") data = { response: "chat done", model: args[args.indexOf("--model") + 1] || process.env.AI_GATEWAY_MODEL || "default" };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
@@ -459,7 +524,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 	const commands = [
 		["network", "route", "**/api", "--body", '{"token":"route-secret"}', "--resource-type", "fetch"],
+		["network", "unroute", "**/api"],
 		["network", "requests", "--filter", "example"],
+		["network", "request", "n1"],
 		["network", "har", "start"],
 		["network", "har", "stop", harPath],
 		["diff", "snapshot"],
@@ -472,14 +539,25 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["record", "start", recordingPath],
 		["record", "stop"],
 		["console"],
+		["console", "--clear"],
 		["errors"],
+		["errors", "--clear"],
 		["highlight", "#target"],
 		["inspect"],
 		["clipboard", "write", "Authorization: Bearer clipboard-secret"],
 		["clipboard", "read"],
+		["clipboard", "copy"],
+		["clipboard", "paste"],
 		["stream", "enable", "--port", "7777"],
 		["stream", "status"],
 		["stream", "disable"],
+		["react", "tree"],
+		["react", "inspect", "fiber-1"],
+		["react", "renders", "start"],
+		["react", "renders", "stop", "--json"],
+		["react", "suspense", "--only-dynamic", "--json"],
+		["vitals", "https://example.test", "--json"],
+		["web-vitals", "https://example.test", "--json"],
 		["--model", "anthropic/model-flag", "dashboard", "start", "--port", "4848"],
 		["dashboard", "stop"],
 		["chat", "Summarize Authorization: Bearer chat-secret", "--model", "anthropic/chat-flag"],

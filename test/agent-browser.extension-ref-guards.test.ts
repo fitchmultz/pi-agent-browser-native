@@ -410,6 +410,46 @@ if (args.includes("snapshot")) {
 			assert.equal(staleBatch.details?.failureCategory, "stale-ref");
 			assert.match((staleBatch.content[0] as { text: string }).text, /after an earlier batch step can navigate or mutate/);
 
+			const staleScrollAliasBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["open", "https://second.example/"], ["scrollinto", "@e1"]]),
+			});
+			assert.equal(staleScrollAliasBatch.isError, true);
+			assert.equal(staleScrollAliasBatch.details?.failureCategory, "stale-ref");
+			assert.match((staleScrollAliasBatch.content[0] as { text: string }).text, /Batch step scrollinto uses page-scoped ref @e1/);
+
+			const staleTapBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["open", "https://second.example/"], ["tap", "@e1"]]),
+			});
+			assert.equal(staleTapBatch.isError, true);
+			assert.equal(staleTapBatch.details?.failureCategory, "stale-ref");
+			assert.match((staleTapBatch.content[0] as { text: string }).text, /Batch step tap uses page-scoped ref @e1/);
+
+			const staleKeydownBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["keydown", "Enter"], ["click", "@e1"]]),
+			});
+			assert.equal(staleKeydownBatch.isError, true);
+			assert.equal(staleKeydownBatch.details?.failureCategory, "stale-ref");
+			assert.match((staleKeydownBatch.content[0] as { text: string }).text, /Batch step click uses page-scoped ref @e1/);
+
+			const staleScrollThenClickBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["scroll", "down"], ["click", "@e1"]]),
+			});
+			assert.equal(staleScrollThenClickBatch.isError, true);
+			assert.equal(staleScrollThenClickBatch.details?.failureCategory, "stale-ref");
+			assert.match((staleScrollThenClickBatch.content[0] as { text: string }).text, /Batch step click uses page-scoped ref @e1/);
+
+			const staleScrollIntoThenClickBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["scrollintoview", "@e1"], ["click", "@e2"]]),
+			});
+			assert.equal(staleScrollIntoThenClickBatch.isError, true);
+			assert.equal(staleScrollIntoThenClickBatch.details?.failureCategory, "stale-ref");
+			assert.match((staleScrollIntoThenClickBatch.content[0] as { text: string }).text, /Batch step click uses page-scoped ref @e2/);
+
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
 		});

@@ -2,6 +2,7 @@ import { constants as fsConstants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 
+import { isCloseCommand } from "../../command-taxonomy.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import type { AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserJob, CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
 import { isHttpOrHttpsUrl } from "../../input-modes/job.js";
@@ -466,7 +467,7 @@ export function formatEvalStdinHintText(hint: ReturnType<typeof getEvalStdinHint
 }
 
 export async function getArtifactCleanupGuidance(options: { command?: string; cwd: string; manifest?: SessionArtifactManifest; succeeded: boolean }): Promise<ArtifactCleanupGuidance | undefined> {
-	if (!options.succeeded || options.command !== "close" || !options.manifest || options.manifest.entries.length === 0) return undefined;
+	if (!options.succeeded || !isCloseCommand(options.command) || !options.manifest || options.manifest.entries.length === 0) return undefined;
 	const explicitEntries = options.manifest.entries.filter((entry) => entry.storageScope === "explicit-path");
 	const explicitArtifactPaths: string[] = [];
 	const seenPaths = new Set<string>();

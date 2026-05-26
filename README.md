@@ -70,7 +70,7 @@ The result is optimized for agent work:
 | Recording workflows fail late when `ffmpeg` is missing | After successful `record start` / `record restart`, warns when `ffmpeg` is not on `PATH` so agents can install or fix PATH before `record stop` | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#diff-debug-and-streaming), `test/agent-browser.extension-validation.test.ts` |
 | Direct binary help may be blocked in agent sessions | Publishes a repo-readable command reference and verifies it against the target upstream version | `npm run verify` |
 | Desktop Electron apps need discovery, CDP attach, and safe teardown | Top-level `electron` runs host `list` / isolated `launch` (temp profile, OS-chosen debug port) / `status` / `probe` / `cleanup`, merges `launchId` plus managed `sessionName`, supports `handoff` `snapshot` / `tabs` / `connect`, and surfaces mismatch and post-command health guidance; wrapper cleanup applies only to launches it created | `extensions/agent-browser/lib/electron/discovery.ts`, `launch.ts`, `cleanup.ts`, [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#electron), [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#electron-desktop-apps) |
-| Agents need bundled `skills` text and local setup/status commands without touching the live session | Treats `skills list`, `skills get …`, `skills path …`, local auth profile management (`auth save/list/show/delete`), `profiles`, `dashboard`, `device list`, `doctor`, `install`, `upgrade`, `session list`, and targeted/all saved-state maintenance as sessionless reads/actions: no implicit managed `--session` under default `sessionMode: "auto"` (same session-ownership goal as plain-text `--help` / `--version`), while provider and browser-backed workflows stay thin passthroughs that require upstream setup and credentials | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#built-in-skills), `extensions/agent-browser/lib/runtime.ts` |
+| Agents need bundled `skills` text and local setup/status commands without touching the live session | Treats `skills list`, `skills get …`, `skills path …`, local auth profile management (`auth save/list/show/delete/remove`), `profiles`, `dashboard`, `device list`, `doctor`, `install`, `upgrade`, `session list`, and targeted/all saved-state maintenance (`state clear --all`, `state clear -a`, or a named clear) as sessionless reads/actions: no implicit managed `--session` under default `sessionMode: "auto"` (same session-ownership goal as plain-text `--help` / `--version`), while provider and browser-backed workflows stay thin passthroughs that require upstream setup and credentials | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md#built-in-skills), `extensions/agent-browser/lib/runtime.ts` |
 
 ## Fastest way to try it
 
@@ -88,7 +88,7 @@ Optional external tools unlock the full command surface:
 
 Keep both binaries on `PATH`. `record start` can begin without a file on disk, but `record stop` needs `ffmpeg` to encode the WebM.
 
-The native tool also gives agents absolute installed-package doc paths in its compact runtime guidance. Agents should read `README.md` for setup/dependencies, `docs/COMMAND_REFERENCE.md` for targeted command workflows, and `docs/TOOL_CONTRACT.md` for result/detail contracts only when deeper guidance is needed.
+The native tool also gives agents absolute installed-package doc paths in its compact runtime guidance. Raw `args` are the 1:1 upstream CLI coverage path for the targeted `agent-browser` release; typed modes such as `semanticAction`, `job`, `qa`, source lookups, and Electron lifecycle helpers are reliability shorthands layered on top. Agents should read `README.md` for setup/dependencies, `docs/COMMAND_REFERENCE.md` for targeted command workflows, and `docs/TOOL_CONTRACT.md` for result/detail contracts only when deeper guidance is needed.
 
 Then install this Pi package:
 
@@ -290,7 +290,7 @@ For an app you launched yourself with remote debugging enabled, use raw upstream
 { "args": ["snapshot", "-i"] }
 ```
 
-`connect` success means the debug endpoint accepted the session, not that an active page is ready. If a snapshot says `No active page`, the wrapper clears prior refs for that session; choose a stable `t<N>` tab and retry a condition wait or fresh `snapshot -i` before using `@e…` refs. `close` only closes the browser/CDP session; manually launched apps, their profiles, and explicit screenshots/downloads/HARs/traces/recordings remain host-owned.
+`connect` success means the debug endpoint accepted the session, not that an active page is ready. If a snapshot says `No active page`, the wrapper clears prior refs for that session; choose a stable `t<N>` tab and retry a condition wait or fresh `snapshot -i` before using `@e…` refs. Close commands (`close`, `quit`, or `exit`) only close the browser/CDP session; manually launched apps, their profiles, and explicit screenshots/downloads/HARs/traces/recordings remain host-owned.
 
 After either path, use `qa: { "attached": true, ... }` for a current-session smoke check without opening a URL. Prefer condition waits (`wait --text`, `wait --url`, `wait --fn`, `wait --load <state>`, `wait --download`), `qa.attached`, `electron.probe` / `electron.status`, `tab list` → `tab t<N>`, fresh snapshots, or screenshots over blind sleeps. Keep fixed waits below the wrapper IPC budget: `wait 30000` is intentionally blocked, and a result like `"waited":"timeout"` only proves elapsed time.
 
@@ -337,7 +337,7 @@ When a user gives exact artifact paths for screenshots, recordings, downloads, P
 
 For evidence-only screenshots or QA captures, branch on `details.artifactVerification` and `details.artifacts` before reporting PASS/FAIL; inline image attachments are optional when size limits allow—do not require vision review unless the user asked for visual inspection.
 
-Artifact cleanup is host-owned, not a browser command. `close` shuts down the browser session but does **not** delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings saved to paths you chose. When the session’s non-empty `details.artifactManifest` is in scope, a successful `close` appends an `Artifact lifecycle` note and sets `details.artifactCleanup` with the same retention summary as `details.artifactRetentionSummary`, a fixed `note` about host-owned cleanup, and `explicitArtifactPaths`: up to ten distinct paths from manifest rows whose `storageScope` is `explicit-path` (this list can be empty if the recent window only holds spills or other non-explicit inventory). Remove any listed paths with normal file tools after inspection.
+Artifact cleanup is host-owned, not a browser command. Close commands (`close`, `quit`, or `exit`) shut down the browser session but do **not** delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings saved to paths you chose. When the session’s non-empty `details.artifactManifest` is in scope, a successful close command appends an `Artifact lifecycle` note and sets `details.artifactCleanup` with the same retention summary as `details.artifactRetentionSummary`, a fixed `note` about host-owned cleanup, and `explicitArtifactPaths`: up to ten distinct paths from manifest rows whose `storageScope` is `explicit-path` (this list can be empty if the recent window only holds spills or other non-explicit inventory). Remove any listed paths with normal file tools after inspection.
 
 Start a fresh profiled browser after the implicit public-browsing session already exists:
 
@@ -356,7 +356,7 @@ Use these rules:
 - Use public/temp profiles for tests and examples.
 - Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
 - Use `--session` when you want to manage a live upstream session name yourself.
-- Do not treat `--session` as persisted auth or tab restore after `close`; use `--profile`, `--session-name`, or `--state` for persistence.
+- Do not treat `--session` as persisted auth or tab restore after `close`, `quit`, or `exit`; use `--profile`, `--session-name`, or `--state` for persistence.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.
 - Prefer `auth save --password-stdin` over putting passwords in `args`; the wrapper only accepts caller `stdin` for `batch`, `eval --stdin`, and `auth save --password-stdin` (top-level `job` and `qa` compile to `batch` and supply their own stdin).
 - Use `state save <path>` / `state load <path>` for portable test state. `state save` is reported as a file artifact with verification metadata; `state load` may mention a path but is not treated as a newly saved artifact.

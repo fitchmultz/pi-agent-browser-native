@@ -141,6 +141,9 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 		},
 	]);
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
+	for (const command of ["key", "keydown", "keyboard", "keyup", "scrollinto", "tap"] as const) {
+		assert.equal(buildAgentBrowserNextActions({ command, resultCategory: "success", successCategory: "completed" })?.[0]?.id, "inspect-after-mutation", command);
+	}
 	assert.deepEqual(buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "confirmation-required", confirmationId: "c_demo" })?.map((action) => action.params?.args), [["confirm", "c_demo"], ["deny", "c_demo"]]);
 	assert.deepEqual(
 		buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "tab-drift" })?.map((action) => ({ id: action.id, args: action.params?.args })),

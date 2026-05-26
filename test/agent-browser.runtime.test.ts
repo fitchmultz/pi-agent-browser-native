@@ -376,6 +376,39 @@ test("restoreManagedSessionStateFromBranch ignores stale close entries for super
 	assert.equal(restored.freshSessionOrdinal, 1);
 });
 
+test("restoreManagedSessionStateFromBranch treats upstream close aliases as managed-session closes", () => {
+	for (const command of ["quit", "exit"] as const) {
+		const restored = restoreManagedSessionStateFromBranch(
+			[
+				createToolBranchEntry({
+					details: {
+						args: ["open", "https://example.com/base"],
+						command: "open",
+						exitCode: 0,
+						sessionMode: "auto",
+						sessionName: "piab-demo-123",
+						usedImplicitSession: true,
+					},
+				}),
+				createToolBranchEntry({
+					details: {
+						args: [command],
+						command,
+						exitCode: 0,
+						sessionMode: "auto",
+						sessionName: "piab-demo-123",
+						usedImplicitSession: true,
+					},
+				}),
+			],
+			"piab-demo-123",
+		);
+
+		assert.equal(restored.active, false, command);
+		assert.equal(restored.sessionName, "piab-demo-123", command);
+	}
+});
+
 test("restoreManagedSessionStateFromBranch does not resurrect superseded sessions after latest session closes", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[
@@ -538,7 +571,7 @@ test("stale temp pruning removes roots whose marker PID was reused", { concurren
 	}
 });
 
-test("stale temp pruning does not remove a live root owned by another process", { concurrency: false }, async () => {
+test("stale temp pruning does not remove a live root when owner identity is unavailable", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1_000);
 	const childScript = `
@@ -559,6 +592,7 @@ test("stale temp pruning does not remove a live root owned by another process", 
 		liveRoot = (await readChildStdoutJsonLine<{ root: string }>(childA)).root;
 		const markerPath = join(liveRoot, ".pi-agent-browser-owner.json");
 		const marker = JSON.parse(await readFile(markerPath, "utf8")) as Record<string, unknown>;
+		delete marker.ownerProcessStartIdentity;
 		await writeFile(
 			markerPath,
 			JSON.stringify({ ...marker, createdAtMs: staleTime.getTime(), leaseUpdatedAtMs: staleTime.getTime() }, null, 2),
@@ -618,6 +652,22 @@ test("buildExecutionPlan injects --json and the implicit session when needed", (
 	assert.equal(plan.validationError, undefined);
 });
 
+test("buildExecutionPlan treats upstream close aliases as managed-session closes", () => {
+	for (const command of ["close", "quit", "exit"] as const) {
+		const plan = buildExecutionPlan([command], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+
+		assert.deepEqual(plan.effectiveArgs, ["--json", "--session", "piab-demo-123", command], command);
+		assert.equal(plan.managedSessionName, "piab-demo-123", command);
+		assert.equal(plan.sessionName, "piab-demo-123", command);
+		assert.equal(plan.usedImplicitSession, true, command);
+	}
+});
+
 test("buildExecutionPlan respects explicit upstream sessions", () => {
 	const plan = buildExecutionPlan(["--session", "custom", "snapshot", "-i"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -661,6 +711,7 @@ test("buildExecutionPlan keeps sessionless commands free of implicit managed ses
 		["auth", "list", "--json"],
 		["auth", "show", "demo"],
 		["auth", "delete", "demo"],
+		["auth", "remove", "demo"],
 		["dashboard"],
 		["dashboard", "start", "--port", "4848"],
 		["device", "list"],
@@ -677,6 +728,7 @@ test("buildExecutionPlan keeps sessionless commands free of implicit managed ses
 		["state", "list", "--json"],
 		["state", "show", "auth.json"],
 		["state", "clear", "--all"],
+		["state", "clear", "-a"],
 		["state", "clear", "piab-demo-123"],
 		["state", "clean", "--older-than", "7"],
 		["state", "rename", "old", "new"],

@@ -198,7 +198,7 @@ Closes the tracked managed session, stops only the wrapper-tracked process, veri
 - arbitrary Electron processes the wrapper did not start
 - explicit screenshots, downloads, PDFs, traces, HAR files, or recordings saved to caller-chosen paths
 
-For manual launches, `close` only closes the browser/CDP session. Close the app yourself and clean its profile/temp files with normal host tools.
+For manual launches, close commands (`close`, `quit`, or `exit`) only close the browser/CDP session. Close the app yourself and clean its profile/temp files with normal host tools.
 
 On Pi session shutdown, active wrapper-owned Electron launches are best-effort cleaned. Stale restored records (PID gone, port dead) are **reported** instead of guessed at or killed.
 

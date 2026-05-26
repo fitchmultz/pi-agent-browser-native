@@ -4,40 +4,12 @@
  * Scope: Navigation and get/eval extraction formatting only.
  */
 
+import { isNavigationObservableCommandName, isPageChangeSummaryCommand } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import { detectConfirmationRequired } from "../confirmation.js";
 import type { AgentBrowserPageChangeSummary, FileArtifactMetadata } from "../contracts.js";
 import { redactModelFacingText, stringifyModelFacing } from "./common.js";
-
-const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
-
-const PAGE_CHANGE_SUMMARY_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"dialog",
-	"download",
-	"fill",
-	"forward",
-	"goto",
-	"hover",
-	"navigate",
-	"open",
-	"pdf",
-	"press",
-	"pushstate",
-	"reload",
-	"screenshot",
-	"scroll",
-	"scrollintoview",
-	"select",
-	"swipe",
-	"tap",
-	"type",
-	"uncheck",
-]);
 
 const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
 
@@ -108,7 +80,7 @@ export function formatExtractionText(commandInfo: CommandInfo, data: Record<stri
 }
 
 export function isNavigationObservableCommand(command: string | undefined): boolean {
-	return command !== undefined && NAVIGATION_SUMMARY_COMMANDS.has(command);
+	return isNavigationObservableCommandName(command);
 }
 
 function isNavigationSummary(value: unknown): value is NavigationSummary {
@@ -140,10 +112,6 @@ export function formatNavigationSummary(summary: NavigationSummary): string | un
 	if (!normalized) return undefined;
 	if (normalized.title && normalized.url) return `${normalized.title}\n${normalized.url}`;
 	return normalized.title ?? normalized.url;
-}
-
-function isPageChangeSummaryCommand(command: string | undefined): boolean {
-	return command !== undefined && PAGE_CHANGE_SUMMARY_COMMANDS.has(command);
 }
 
 export function buildPageChangeSummary(options: {

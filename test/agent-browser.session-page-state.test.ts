@@ -56,6 +56,27 @@ test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidat
 	});
 });
 
+test("SessionPageState.fromBranch clears restored page state on upstream close aliases", () => {
+	for (const command of ["close", "quit", "exit"] as const) {
+		const state = SessionPageState.fromBranch([
+			toolEntry({
+				command: "snapshot",
+				refSnapshot: { refIds: ["e1"], target: { title: "Example", url: "https://example.com/" } },
+				sessionName: "s1",
+				sessionTabTarget: { title: "Example", url: "https://example.com/" },
+			}),
+			toolEntry({ command, sessionName: "s1" }),
+		]);
+
+		assert.deepEqual(state.get("s1"), {
+			pinningReason: undefined,
+			refSnapshot: undefined,
+			refSnapshotInvalidation: undefined,
+			tabTarget: undefined,
+		}, command);
+	}
+});
+
 test("SessionPageState clears tab targets, refs, invalidations, and pinning together", () => {
 	const state = new SessionPageState();
 	const update = state.beginUpdate();

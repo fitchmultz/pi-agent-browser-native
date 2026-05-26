@@ -18,7 +18,7 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.27.0` command/help surface. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.27.0` command/help surface, audited against vercel-labs/agent-browser@4ad284890cb59564af603e6de403dd75dd19e832. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
@@ -265,7 +265,7 @@ Typical lifecycle:
 
 After launch, prefer the exact `details.nextActions` payloads when present: `status-electron-launch` checks liveness, `probe-electron-launch` runs compact diagnostics for a tracked launch, `snapshot-electron-session` refreshes current refs, `list-electron-tabs` inspects targets, and `cleanup-electron-launch` removes the wrapper-owned process/profile when the run is done. If launch times out, inspect `details.electron.failure.diagnostics` for PID, wrapper profile, `DevToolsActivePort`, and timing evidence before retrying. If status/probe detects a session or target mismatch, follow `reattach-electron-launch` or a fresh snapshot action before using old refs. If a click/fill/type looks successful but the Electron PID or debug port dies, the wrapper now fails the result with `details.electronPostCommandHealth` and same-launch status/probe/cleanup next actions instead of leaving the agent on `about:blank`. If cleanup is partial (`failureCategory: "cleanup-failed"`), inspect `details.electron.cleanup.results` and use `retry-electron-cleanup` only for the same `launchId`.
 
-Manual path for externally launched apps: if you started the Electron app yourself with a debug port or DevTools URL, skip the wrapper lifecycle and attach directly with upstream `connect`. In this path you own app shutdown and profile cleanup; do not use `electron.cleanup`. `close` only closes the browser/CDP session and does not quit the manually launched app or remove explicit artifacts.
+Manual path for externally launched apps: if you started the Electron app yourself with a debug port or DevTools URL, skip the wrapper lifecycle and attach directly with upstream `connect`. In this path you own app shutdown and profile cleanup; do not use `electron.cleanup`. close commands (`close`, `quit`, or `exit`) only close the browser/CDP session and do not quit the manually launched app or remove explicit artifacts.
 
 ```json
 { "args": ["connect", "9222"], "sessionMode": "fresh" }
@@ -355,7 +355,7 @@ The wrapper keeps a bounded, metadata-only `details.artifactManifest` of recent 
 
 This manifest cap controls what appears in `details.artifactManifest` and in summaries such as `Session artifacts: 42 live, 0 evicted (42/100 recent)`. It does not delete explicit files that upstream saved to paths you chose, such as screenshots, PDFs, downloads, traces, HAR files, or WebM recordings.
 
-Browser `close` is also not file cleanup. If `details.artifactManifest` is present with a non-empty `entries` list, a successful `close` appends an `Artifact lifecycle` note and reports `details.artifactCleanup` with the current retention summary and the same host-owned cleanup `note` as the contract (`extensions/agent-browser/index.ts`, `getArtifactCleanupGuidance`). Up to ten distinct user-chosen paths that still exist on disk appear in `explicitArtifactPaths` when matching `explicit-path` manifest rows exist in the recent window; deleted/stale paths are skipped. Otherwise that array is empty and visible text may omit the “Explicit artifact paths” line even though the lifecycle block still reminds you that close does not delete saved files. Delete any paths you care about with host file tools after inspection; the native browser tool intentionally does not remove arbitrary user-chosen filesystem paths.
+Browser close commands (`close`, `quit`, or `exit`) are also not file cleanup. If `details.artifactManifest` is present with a non-empty `entries` list, a successful close command appends an `Artifact lifecycle` note and reports `details.artifactCleanup` with the current retention summary and the same host-owned cleanup `note` as the contract (`extensions/agent-browser/lib/orchestration/browser-run/diagnostics.ts`, `getArtifactCleanupGuidance`). Up to ten distinct user-chosen paths that still exist on disk appear in `explicitArtifactPaths` when matching `explicit-path` manifest rows exist in the recent window; deleted/stale paths are skipped. Otherwise that array is empty and visible text may omit the “Explicit artifact paths” line even though the lifecycle block still reminds you that close commands do not delete saved files. Delete any paths you care about with host file tools after inspection; the native browser tool intentionally does not remove arbitrary user-chosen filesystem paths.
 
 Oversized snapshots and oversized generic outputs are different: when a persisted pi session is available, their wrapper-managed spill files are stored under the private session artifact directory and are governed by the byte budget `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` (default 32 MiB). Raise that byte budget as well for long QA sessions that need many full raw snapshots or large text spills to survive reload/resume.
 
@@ -455,7 +455,8 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 | `dblclick <sel>` | Double-click an element. |
 | `type <sel> <text>` | Type into an element. |
 | `fill <sel> <text>` | Clear and fill an element. |
-| `press <key>` | Press a key such as `Enter`, `Tab`, or `Control+a`. |
+| `press <key>` | Press a key such as `Enter`, `Tab`, or `Control+a`. `key <key>` is the upstream alias. |
+| `key <key>` | Alias for `press <key>`. |
 | `keydown <key>` | Hold a key down without releasing it, useful for modifiers. |
 | `keyup <key>` | Release a key previously held by `keydown <key>`. Common modifier examples are `keydown Shift` and `keyup Shift`. |
 | `keyboard type <text>` | Type text with real keystrokes and no selector. |
@@ -470,15 +471,16 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 | `download <sel> <path>` | Download a file by clicking an element. |
 | `scroll <dir> [px]` | Scroll `up`, `down`, `left`, or `right`. |
 | `scroll <dir> [px] --selector <sel>` | Scroll a specific scrollable element/container instead of the page. |
-| `scrollintoview <sel>` | Scroll an element into view. |
+| `scrollintoview <sel>` | Scroll an element into view; `scrollinto <sel>` is the upstream alias. |
+| `scrollinto <sel>` | Alias for `scrollintoview <sel>`. |
 | `wait <sel|ms>` | Wait for an element or a duration. |
 | `screenshot [selector] [path]` | Take a full-page or element-scoped screenshot; a single selector-like argument scopes, while a path-like argument saves to that path. |
 | `screenshot [path]` | Take a screenshot and optionally save it to a path. |
 | `pdf <path>` | Save the page as a PDF. |
-| `snapshot` | Print an accessibility tree with refs for AI interaction. `snapshot --cursor` / `snapshot -C` includes cursor/focus context when upstream returns it. |
-| `eval <js>` | Run JavaScript. Use `eval --stdin` through this wrapper for larger snippets. |
+| `snapshot` | Print an accessibility tree with refs for AI interaction. Common options include `snapshot --interactive`, `snapshot --urls`, `snapshot --compact`, `snapshot --depth <n>`, `snapshot --selector <sel>`, and `snapshot --cursor` / `snapshot -C` for cursor/focus context when upstream returns it. |
+| `eval <js>` | Run JavaScript. Use `eval --stdin` through this wrapper for larger snippets, or `eval -b <base64>` for shell-escaping-safe one-liners. |
 | `connect <port|url>` | Connect to a browser through CDP. |
-| `close [--all]` | Close the current browser or all sessions. |
+| `close [--all]` | Close the current browser or all sessions; `quit` and `exit` are upstream close aliases. |
 | `tap <selector>` | Touch-oriented tap alias for iOS/provider workflows. |
 | `swipe <direction> [distance]` | Touch-oriented swipe for iOS/provider workflows. |
 
@@ -505,7 +507,7 @@ Comboboxes vary by app. For native `<select>` controls, prefer raw `select <sele
 | `state list` | List saved state files. |
 | `state show <filename>` | Show saved-state metadata without dumping secrets. |
 | `state rename <old-name> <new-name>` | Rename a saved state file. |
-| `state clear [session-name] [--all]` | Clear saved states for one name or all names. |
+| `state clear [session-name] [--all]` | Clear saved states for one name or all names; `state clear -a` is the upstream short alias for clearing all names. |
 | `state clean --older-than <days>` | Delete expired saved-state files. |
 | `frame <selector|main>` | Switch iframe context by selector/ref/name/URL, or return to the main frame. |
 | `dialog accept [text]` | Accept an alert, confirm, or prompt dialog, optionally supplying prompt text. |
@@ -529,13 +531,13 @@ These calls return plain text and stay stateless: the extension does not inject 
 
 | Family | Surface |
 | --- | --- |
-| `get <what> [selector]` | `text`, `html`, `value`, `attr <name>`, `title`, `url`, `count`, `box`, `styles`, `cdp-url`. |
+| `get <what> [selector]` | `text`, `html`, `value`, `attr <name>`, `title`, `url`, `count`, `get box <selector>`, `get styles <selector>`, and `get cdp-url`. |
 | `is <what> <selector>` | Check `visible`, `enabled`, or `checked`. |
-| `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, `testid`, `first`, `last`, and `nth`. |
+| `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, and `testid`; selector helpers include `find first <sel>`, `find last <sel>`, and `find nth <n> <sel>`. Role/text filters include `find role <role> --name <name>` and `find ... --exact`. |
 | `mouse <action> [args]` | `move <x> <y>`, `down [btn]`, `up [btn]`, `wheel <dy> [dx]`. |
-| `set <setting> [value]` | `viewport <w> <h>`, `device <name>`, `geo <lat> <lng>`, `offline [on|off]`, `headers <json>`, `credentials <user> <pass>`, `media [dark|light] [reduced-motion]`. |
-| `network <action>` | `route <url> [--abort|--body <json>] [--resource-type <csv>]`, `unroute [url]`, `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`, `request <requestId>`, `har <start|stop> [path]`. `--resource-type` filters intercepted requests by CDP resource type, such as `script`, `image`, `font`, `xhr`, or `fetch`; request listing filters accept resource types (`xhr,fetch`), methods (`POST`), and statuses (`2xx`, `400-499`). |
-| `cookies [get|set|clear]` | Manage cookies. `set` supports `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, `--expires`, and `--curl <file>` for JSON, cURL, or bare Cookie-header bulk imports. |
+| `set <setting> [value]` | `viewport <w> <h>`, `device <name>`, `geo <lat> <lng>`, `offline [on|off]`, `headers <json>`, `credentials <user> <pass>`, and `set media <features>` (`dark`, `light`, and/or `reduced-motion`). |
+| `network <action>` | `network route <url> [--abort|--body <json>] [--resource-type <csv>]`, `network unroute [url]`, `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`, `network request <requestId>`, `network har start`, and `network har stop [path]`. `--resource-type` filters intercepted requests by CDP resource type, such as `script`, `image`, `font`, `xhr`, or `fetch`; request listing filters accept resource types (`xhr,fetch`), methods (`POST`), and statuses (`2xx`, `400-499`). |
+| `cookies [get|set|clear]` | Manage cookies. Full set form: `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>`; also supports `cookies set --curl <file>` for JSON, cURL, or bare Cookie-header bulk imports. |
 | `storage <local|session>` | Manage web storage. |
 
 Privacy note: `cookies get` can expose real profile cookies. Do not run it against `--profile Default` or other authenticated profiles unless the user explicitly needs cookie inspection; prefer task-specific page actions and storage checks.
@@ -551,7 +553,7 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `tab new [url]` | Open a new tab. |
 | `tab new --label <name> [url]` | Open a new tab with a user label. |
 | `tab <t<N>|label>` | Switch to a tab by id or label. |
-| `tab close [t<N>|label]` | Close the current tab or a referenced tab. |
+| `tab close [t<N>|label]` | Close the current tab or a referenced tab. Generic references in workflows may say `tab close [target]`; use a stable `t<N>` id or label when you have one. |
 
 ### Snapshot
 
@@ -599,7 +601,7 @@ Current v0.27.0 source does not parse `wait <selector> --state hidden` / `wait <
 | `errors [--clear]` | View or clear page errors. |
 | `highlight <sel>` | Highlight an element. |
 | `inspect` | Open Chrome DevTools for the active page. |
-| `clipboard <op> [text]` | Read/write clipboard: `read`, `write`, `copy`, `paste`. |
+| `clipboard <op> [text]` | Read/write clipboard: `clipboard read`, `clipboard write <text>`, `clipboard copy`, and `clipboard paste`. |
 | `stream enable [--port <n>]` | Start runtime WebSocket streaming for this session. |
 | `stream disable` | Stop runtime WebSocket streaming. |
 | `stream status` | Show streaming status and active port. |
@@ -608,7 +610,7 @@ Current v0.27.0 source does not parse `wait <selector> --state hidden` / `wait <
 | `react renders start` | Start recording React render activity. |
 | `react renders stop [--json]` | Stop render recording and print mount/re-render counts and changed details. |
 | `react suspense [--only-dynamic] [--json]` | Classify Suspense boundaries with grouped root-cause recommendations. |
-| `vitals [url] [--json]` | Report Core Web Vitals: LCP, CLS, TTFB, FCP, INP, plus React hydration timing when available. |
+| `vitals [url] [--json]` | Report Core Web Vitals: LCP, CLS, TTFB, FCP, INP, plus React hydration timing when available. `web-vitals [url] [--json]` is the upstream alias. |
 | `pushstate <url>` | Perform SPA client-side navigation; detects Next.js router pushes and falls back to history navigation events. |
 | `removeinitscript <id>` | Remove an init script registered through upstream init-script mechanisms. |
 
@@ -623,11 +625,11 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | Command | Purpose |
 | --- | --- |
 | `batch [--bail] ["cmd" ...]` | Execute multiple commands sequentially from args or stdin. |
-| `auth save <name> [opts]` | Save an auth profile with options such as `--url`, `--username`, `--password`, or `--password-stdin`. Prefer `auth save <name> --password-stdin` with the tool `stdin` field; avoid putting passwords in `args`. |
+| `auth save <name> [opts]` | Save an auth profile. Full credential form: `auth save <name> --url <url> --username <user> --password <pass>`; selector override form: `auth save <name> --username-selector <s> --password-selector <s> --submit-selector <s>`. Prefer `auth save <name> --password-stdin` with the tool `stdin` field; avoid putting passwords in `args`. |
 | `auth login <name>` | Login using saved credentials. |
 | `auth list` | List saved auth profiles. |
 | `auth show <name>` | Show auth profile metadata. |
-| `auth delete <name>` | Delete an auth profile. |
+| `auth delete <name>` | Delete an auth profile; `auth remove <name>` is the upstream alias. |
 | `confirm <id>` | Approve a pending action. |
 | `deny <id>` | Deny a pending action. |
 | `session` | Show current session name. |
@@ -644,7 +646,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. Use `doctor --offline --quick` for a fast local-only check and `doctor --json` for structured output. |
 | `profiles` | List available Chrome profiles. |
 
-When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. Local inspection/setup calls (`auth save/list/show/delete`, `dashboard start/stop`, `device list`, `doctor`, `install`, `upgrade`, `profiles`, `session list`, `state list/show/clean/rename`, `state clear --all`, and `state clear <session-name>`) are sessionless unless you explicitly pass `--session`; context-dependent calls such as root `session`, untargeted `state clear`, `auth login`, `chat`, and `state save/load` keep normal session behavior. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; command echoes also redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, cookie/storage values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
+When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. Local inspection/setup calls (`auth save/list/show/delete/remove`, `dashboard start/stop`, `device list`, `doctor`, `install`, `upgrade`, `profiles`, `session list`, `state list/show/clean/rename`, `state clear --all`, `state clear -a`, and `state clear <session-name>`) are sessionless unless you explicitly pass `--session`; context-dependent calls such as root `session`, untargeted `state clear`, `auth login`, `chat`, and `state save/load` keep normal session behavior. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; command echoes also redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, cookie/storage values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
 
 ## Important global flags, config, and environment
 
@@ -675,6 +677,7 @@ When these commands are invoked through the native `agent_browser` tool, structu
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
 - `--engine <name>`: browser engine, `chrome` by default or `lightpanda`. Environment: `AGENT_BROWSER_ENGINE`.
 - `--no-auto-dialog`: disable automatic dismissal of alert/beforeunload dialogs. Environment: `AGENT_BROWSER_NO_AUTO_DIALOG`.
+- `--idle-timeout <ms>`: close idle sessions after the requested idle window when upstream owns that session lifecycle. The wrapper also sets `AGENT_BROWSER_IDLE_TIMEOUT_MS` for its managed-session backstop.
 
 ### Output, provider, policy, and AI flags
 
@@ -691,7 +694,7 @@ When these commands are invoked through the native `agent_browser` tool, structu
 - `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
 - `-p, --provider <name>`: provider such as `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.
 - `--device <name>`: iOS device name. Environment: `AGENT_BROWSER_IOS_DEVICE`.
-- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash. iOS requires external Xcode/Appium setup, and cloud providers (`browserbase`, `kernel`, `browseruse`, `browserless`, `agentcore`) require their upstream accounts, credentials, and provider-specific environment variables. The wrapper forwards provider flags/env and stays thin; it does not emulate provider setup or cloud browser behavior.
+- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash. iOS requires external Xcode/Appium setup, and cloud providers (`browserbase`, `kernel`, `browseruse`, `browserless`, `agentcore`) require their upstream accounts, credentials, and provider-specific environment variables. Common forwarded provider variables include `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSERLESS_API_KEY`, `BROWSERLESS_API_URL`, `BROWSERLESS_BROWSER_TYPE`, `BROWSERLESS_STEALTH`, `BROWSERLESS_TTL`, `BROWSER_USE_API_KEY`, `KERNEL_API_KEY`, `KERNEL_HEADLESS`, `KERNEL_STEALTH`, `KERNEL_TIMEOUT_SECONDS`, `KERNEL_PROFILE_NAME`, `AGENTCORE_API_KEY`, `AGENTCORE_REGION`, `AGENTCORE_BROWSER_ID`, `AGENTCORE_PROFILE_ID`, `AGENTCORE_SESSION_TIMEOUT`, plus AWS names used by AgentCore such as `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. The wrapper forwards provider flags/env and stays thin; it does not emulate provider setup or cloud browser behavior.
 - `--model <name>`: AI model for `chat`. Environment: `AI_GATEWAY_MODEL`.
 - `-v, --verbose`: show tool commands and raw output.
 - `-q, --quiet`: show only AI text responses.
@@ -709,7 +712,7 @@ When these commands are invoked through the native `agent_browser` tool, structu
 
 Use `--config <path>` to load a specific config file. Boolean flags accept optional `true` or `false` values, such as `--headed false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
 
-Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, and `AI_GATEWAY_API_KEY`. The upstream child also receives every parent variable whose name starts with `AGENT_BROWSER_`, `AGENTCORE_`, `AI_GATEWAY_`, `BROWSERBASE_`, `BROWSERLESS_`, `BROWSER_USE_`, `KERNEL_`, or `XDG_`, plus the explicit inherited-name allowlist in `buildAgentBrowserProcessEnv` (`extensions/agent-browser/lib/process.ts`).
+Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, `AI_GATEWAY_API_KEY`, the provider credential names listed above, and AWS credential names when using AgentCore. The upstream child also receives every parent variable whose name starts with `AGENT_BROWSER_`, `AGENTCORE_`, `AI_GATEWAY_`, `BROWSERBASE_`, `BROWSERLESS_`, `BROWSER_USE_`, `KERNEL_`, or `XDG_`, plus the explicit inherited-name allowlist in `buildAgentBrowserProcessEnv` (`extensions/agent-browser/lib/process.ts`).
 
 ## Wrapper-specific behavior worth knowing
 
@@ -736,6 +739,19 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
+#### Source evidence
+- repository: `vercel-labs/agent-browser`
+- upstream HEAD: `4ad284890cb59564af603e6de403dd75dd19e832`
+- upstream package version: `0.27.0`
+- inspected: `agent-browser --version`
+- inspected: `agent-browser --help`
+- inspected: `selected agent-browser <command> --help output`
+- inspected: `README.md`
+- inspected: `CHANGELOG.md`
+- inspected: `agent-browser.schema.json`
+- inspected: `cli/src/commands.rs`
+- inspected: `cli/src/flags.rs`
+
 #### Upstream help commands sampled
 - root help: `agent-browser --help`
 - skills help: `agent-browser skills --help`
@@ -743,7 +759,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - core skill full: `agent-browser skills get core --full`
 - open help: `agent-browser open --help`
 - click help: `agent-browser click --help`
+- key help: `agent-browser key --help`
 - scroll help: `agent-browser scroll --help`
+- scrollinto help: `agent-browser scrollinto --help`
 - keydown help: `agent-browser keydown --help`
 - keyup help: `agent-browser keyup --help`
 - get help: `agent-browser get --help`
@@ -752,8 +770,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - set help: `agent-browser set --help`
 - tab help: `agent-browser tab --help`
 - snapshot help: `agent-browser snapshot --help`
+- eval help: `agent-browser eval --help`
 - wait help: `agent-browser wait --help`
 - screenshot help: `agent-browser screenshot --help`
+- pdf help: `agent-browser pdf --help`
+- close help: `agent-browser close --help`
 - find help: `agent-browser find --help`
 - network help: `agent-browser network --help`
 - cookies help: `agent-browser cookies --help`
@@ -774,6 +795,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - trace help: `agent-browser trace --help`
 - profiler help: `agent-browser profiler --help`
 - record help: `agent-browser record --help`
+- console help: `agent-browser console --help`
+- errors help: `agent-browser errors --help`
+- clipboard help: `agent-browser clipboard --help`
 - tap help: `agent-browser tap --help`
 - swipe help: `agent-browser swipe --help`
 - device help: `agent-browser device --help`
@@ -783,11 +807,11 @@ This generated block is review data for maintainers. The human-authored referenc
 
 #### Inventory sections
 - Built-in skills: 13 human-doc token(s), 13 upstream token(s)
-- Core page, element, navigation, and extraction commands: 49 human-doc token(s), 49 upstream token(s)
-- Sessions, state, tabs, frames, dialogs, and windows: 17 human-doc token(s), 13 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 33 human-doc token(s), 42 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 20 human-doc token(s), 18 upstream token(s)
-- Global flags, config, providers, policy, and environment: 95 human-doc token(s), 90 upstream token(s)
+- Core page, element, navigation, and extraction commands: 74 human-doc token(s), 74 upstream token(s)
+- Sessions, state, tabs, frames, dialogs, and windows: 20 human-doc token(s), 16 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 42 human-doc token(s), 51 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 24 human-doc token(s), 24 upstream token(s)
+- Global flags, config, providers, policy, and environment: 117 human-doc token(s), 90 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -816,6 +840,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `type <sel> <text>`
 - `fill <sel> <text>`
 - `press <key>`
+- `key <key>`
 - `keydown <key>`
 - `keyup <key>`
 - `keyboard type <text>`
@@ -833,7 +858,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - `scroll <dir> [px]`
 - `scroll <dir> [px] --selector <sel>`
 - `scrollintoview <sel>`
+- `scrollinto <sel>`
 - `wait <sel|ms>`
+- `wait --url <pattern>`
+- `wait --load <state>`
+- `wait --fn <expression>`
+- `wait --text <text>`
+- `wait --download [path]`
 - `screenshot [selector] [path]`
 - `screenshot [path]`
 - `screenshot --full`
@@ -841,18 +872,36 @@ This generated block is review data for maintainers. The human-authored referenc
 - `pdf <path>`
 - `snapshot`
 - `snapshot --cursor`
+- `snapshot --interactive`
+- `snapshot --urls`
+- `snapshot --compact`
+- `snapshot --depth <n>`
+- `snapshot --selector <sel>`
 - `eval <js>`
+- `eval --stdin`
+- `eval -b <base64>`
 - `connect <port|url>`
 - `close [--all]`
+- `quit`
+- `exit`
 - `back`
 - `forward`
 - `reload`
 - `pushstate <url>`
 - `get <what> [selector]`
+- `get cdp-url`
+- `get box <selector>`
+- `get styles <selector>`
 - `is <what> <selector>`
 - `find <locator> <value> <action>`
+- `find first <sel>`
+- `find last <sel>`
+- `find nth <n> <sel>`
+- `find role <role> --name <name>`
+- `find ... --exact`
 - `mouse <action> [args]`
 - `set <setting> [value]`
+- `set media <features>`
 - `tap <selector>`
 - `swipe <direction> [distance]`
 
@@ -865,9 +914,12 @@ This generated block is review data for maintainers. The human-authored referenc
 - `state show <filename>`
 - `state rename <old-name> <new-name>`
 - `state clear [session-name] [--all]`
+- `state clear -a`
 - `state clean --older-than <days>`
 - `tab list`
+- `tab new [url]`
 - `tab new --label <name> [url]`
+- `tab close [target]`
 - `tab <t<N>|label>`
 - `frame <selector|main>`
 - `dialog accept [text]`
@@ -878,9 +930,13 @@ This generated block is review data for maintainers. The human-authored referenc
 ##### Network, storage, artifacts, diagnostics, and performance
 - `network <action>`
 - `network route <url> [--abort|--body <json>] [--resource-type <csv>]`
+- `network unroute [url]`
 - `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`
 - `network request <requestId>`
+- `network har start`
+- `network har stop [path]`
 - `cookies [get|set|clear]`
+- `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>`
 - `cookies set --curl <file>`
 - `storage <local|session>`
 - `diff snapshot`
@@ -899,6 +955,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - `highlight <sel>`
 - `inspect`
 - `clipboard <op> [text]`
+- `clipboard read`
+- `clipboard write <text>`
+- `clipboard copy`
+- `clipboard paste`
 - `stream enable [--port <n>]`
 - `stream disable`
 - `stream status`
@@ -908,19 +968,24 @@ This generated block is review data for maintainers. The human-authored referenc
 - `react renders stop [--json]`
 - `react suspense [--only-dynamic] [--json]`
 - `vitals [url] [--json]`
+- `web-vitals [url] [--json]`
 - `removeinitscript <id>`
 
 ##### Batch, auth, confirmations, setup, dashboard, devices, and AI commands
 - `batch [--bail]`
 - `auth save <name>`
+- `auth save <name> --url <url> --username <user> --password <pass>`
+- `auth save <name> --username-selector <s> --password-selector <s> --submit-selector <s>`
 - `auth save <name> --password-stdin`
 - `auth login <name>`
 - `auth list`
 - `auth show <name>`
 - `auth delete <name>`
+- `auth remove <name>`
 - `confirm <id>`
 - `deny <id>`
 - `chat <message>`
+- `dashboard [start]`
 - `dashboard start --port <n>`
 - `dashboard stop`
 - `device list`
@@ -1021,6 +1086,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_DEBUG`
 - `AGENT_BROWSER_CONFIG`
 - `AGENT_BROWSER_DEFAULT_TIMEOUT`
+- `--idle-timeout <ms>`
 - `AGENT_BROWSER_STREAM_PORT`
 - `AGENT_BROWSER_IDLE_TIMEOUT_MS`
 - `AGENT_BROWSER_ENCRYPTION_KEY`
@@ -1028,6 +1094,27 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_IOS_UDID`
 - `AI_GATEWAY_URL`
 - `AI_GATEWAY_API_KEY`
+- `BROWSERBASE_API_KEY`
+- `BROWSERBASE_PROJECT_ID`
+- `BROWSERLESS_API_KEY`
+- `BROWSERLESS_API_URL`
+- `BROWSERLESS_BROWSER_TYPE`
+- `BROWSERLESS_STEALTH`
+- `BROWSERLESS_TTL`
+- `BROWSER_USE_API_KEY`
+- `KERNEL_API_KEY`
+- `KERNEL_HEADLESS`
+- `KERNEL_STEALTH`
+- `KERNEL_TIMEOUT_SECONDS`
+- `KERNEL_PROFILE_NAME`
+- `AGENTCORE_API_KEY`
+- `AGENTCORE_REGION`
+- `AGENTCORE_BROWSER_ID`
+- `AGENTCORE_PROFILE_ID`
+- `AGENTCORE_SESSION_TIMEOUT`
+- `AWS_PROFILE`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
 
 #### Upstream help tokens expected
 ##### Built-in skills
@@ -1055,6 +1142,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `type <sel> <text>`
 - root help: `fill <sel> <text>`
 - root help: `press <key>`
+- key help: `Aliases: key`
 - keydown help: `keydown <key>`
 - keyup help: `keyup <key>`
 - root help: `keyboard type <text>`
@@ -1070,23 +1158,47 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `scroll <dir> [px]`
 - scroll help: `--selector <sel>`
 - root help: `scrollintoview <sel>`
+- scrollinto help: `Aliases: scrollinto`
 - root help: `wait <sel|ms>`
+- wait help: `--url <pattern>`
+- wait help: `--load <state>`
+- wait help: `--fn <expression>`
+- wait help: `--text <text>`
+- wait help: `--download [path]`
 - root help: `screenshot [path]`
 - screenshot help: `screenshot [selector] [path]`
 - root help: `pdf <path>`
+- pdf help: `Save page as PDF`
 - root help: `snapshot`
+- snapshot help: `--interactive`
+- snapshot help: `--urls`
+- snapshot help: `--compact`
+- snapshot help: `--depth <n>`
+- snapshot help: `--selector <sel>`
 - root help: `eval <js>`
+- eval help: `--stdin`
+- eval help: `-b, --base64`
 - root help: `connect <port|url>`
 - root help: `close [--all]`
+- close help: `Aliases: quit, exit`
 - root help: `back`
 - root help: `forward`
 - root help: `reload`
 - root help: `pushstate <url>`
 - root help: `Get Info:  agent-browser get <what> [selector]`
+- get help: `box <selector>`
+- get help: `styles <selector>`
+- get help: `cdp-url`
 - root help: `Check State:  agent-browser is <what> <selector>`
 - root help: `Find Elements:  agent-browser find <locator> <value> <action> [text]`
+- find help: `first <selector>`
+- find help: `last <selector>`
+- find help: `nth <index> <selector>`
+- find help: `--name <name>`
+- find help: `--exact`
 - root help: `Mouse:  agent-browser mouse <action> [args]`
 - root help: `Browser Settings:  agent-browser set <setting> [value]`
+- set help: `media [dark|light]`
 - keyboard help: `type <text>`
 - keyboard help: `inserttext <text>`
 - screenshot help: `--full, -f`
@@ -1104,8 +1216,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - state help: `show <filename>`
 - state help: `rename <old-name> <new-name>`
 - state help: `clear [session-name] [--all]`
+- state help: `agent-browser state clear --all`
 - state help: `clean --older-than <days>`
+- tab help: `new [url]`
 - tab help: `new --label <name> [url]`
+- tab help: `close [t<N>|label]`
 - tab help: `Stable tab ids`
 - frame help: `frame <selector|main>`
 - dialog help: `dialog <accept|dismiss|status> [text]`
@@ -1114,6 +1229,9 @@ This generated block is review data for maintainers. The human-authored referenc
 ##### Network, storage, artifacts, diagnostics, and performance
 - root help: `network <action>`
 - root help: `--resource-type <csv>`
+- network help: `unroute [url]`
+- network help: `network har start`
+- network help: `network har stop ./capture.har`
 - root help: `cookies [get|set|clear]`
 - root help: `cookies set --curl <file>`
 - root help: `storage <local|session>`
@@ -1128,6 +1246,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `highlight <sel>`
 - root help: `inspect`
 - root help: `clipboard <op> [text]`
+- clipboard help: `read`
+- clipboard help: `write <text>`
+- clipboard help: `copy`
+- clipboard help: `paste`
 - root help: `stream enable [--port <n>]`
 - root help: `stream disable`
 - root help: `stream status`
@@ -1154,6 +1276,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - trace help: `trace <operation> [path]`
 - profiler help: `--categories <list>`
 - record help: `record restart <path.webm> [url]`
+- console help: `--clear`
+- errors help: `--clear`
 
 ##### Batch, auth, confirmations, setup, dashboard, devices, and AI commands
 - root help: `batch [--bail]`
@@ -1169,7 +1293,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `doctor [--fix]`
 - root help: `profiles`
 - batch help: `--bail`
+- auth help: `--url <url>`
+- auth help: `--username <user>`
+- auth help: `--password <pass>`
 - auth help: `--password-stdin`
+- auth help: `--username-selector <s>`
+- auth help: `--password-selector <s>`
+- auth help: `--submit-selector <s>`
 - dashboard help: `dashboard [start|stop] [options]`
 - chat help: `chat <message>`
 - doctor help: `--offline`

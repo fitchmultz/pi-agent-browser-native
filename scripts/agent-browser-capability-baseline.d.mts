@@ -16,9 +16,25 @@ export interface UpstreamExpectation {
   help: string;
 }
 
+export interface SourceEvidence {
+  repository: string;
+  upstreamHead: string;
+  upstreamPackageVersion: string;
+  inspectedSources: readonly string[];
+}
+
+export interface InventorySection {
+  id: string;
+  title: string;
+  docTokens: readonly string[];
+  upstreamExpectations: readonly UpstreamExpectation[];
+}
+
 export interface CapabilityBaseline {
   targetVersion: string;
+  sourceEvidence: SourceEvidence;
   helpCommands: readonly HelpCommand[];
+  inventorySections: readonly InventorySection[];
   docRequiredTokens: readonly string[];
   upstreamExpectations: readonly UpstreamExpectation[];
 }

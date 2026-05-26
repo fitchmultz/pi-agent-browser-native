@@ -54,7 +54,7 @@ export function renderCommandReferenceBaselineBlock(id) {
   switch (id) {
     case "upstream-baseline":
       return [
-        `This reference is baselined to the locally installed \`agent-browser ${CAPABILITY_BASELINE.targetVersion}\` command/help surface. Upstream \`agent-browser\` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.`,
+        `This reference is baselined to the locally installed \`agent-browser ${CAPABILITY_BASELINE.targetVersion}\` command/help surface, audited against ${CAPABILITY_BASELINE.sourceEvidence.repository}@${CAPABILITY_BASELINE.sourceEvidence.upstreamHead}. Upstream \`agent-browser\` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.`,
         "",
         "The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.",
         "",
@@ -66,6 +66,14 @@ export function renderCommandReferenceBaselineBlock(id) {
         `<summary>Generated verifier capability baseline for agent-browser ${CAPABILITY_BASELINE.targetVersion}</summary>`,
         "",
         "This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.",
+        "",
+        "#### Source evidence",
+        bullets([
+          `repository: \`${CAPABILITY_BASELINE.sourceEvidence.repository}\``,
+          `upstream HEAD: \`${CAPABILITY_BASELINE.sourceEvidence.upstreamHead}\``,
+          `upstream package version: \`${CAPABILITY_BASELINE.sourceEvidence.upstreamPackageVersion}\``,
+          ...CAPABILITY_BASELINE.sourceEvidence.inspectedSources.map((source) => `inspected: \`${source}\``),
+        ]),
         "",
         "#### Upstream help commands sampled",
         bullets(CAPABILITY_BASELINE.helpCommands.map((command) => `${command.label}: \`agent-browser ${command.args.join(" ")}\``)),

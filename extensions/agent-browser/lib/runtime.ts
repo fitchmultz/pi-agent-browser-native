@@ -11,6 +11,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
+import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
+
 import { isRecord } from "./parsing.js";
 
 /**
@@ -81,7 +83,6 @@ const LAUNCH_SCOPED_FLAG_LABEL = LAUNCH_SCOPED_FLAG_DEFINITIONS.map((definition)
  * tab-correction (the `tab list` + re-select cycle).
  */
 const LAUNCH_SCOPED_TAB_CORRECTION_FLAGS = new Set(["--profile", "--session-name", "--state"] as const);
-const OPEN_COMMANDS = new Set(["goto", "navigate", "open"]);
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
 const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
@@ -104,7 +105,7 @@ const BROWSER_PROMPT_PATTERNS = [
 	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
 ];
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
-const SESSIONLESS_AUTH_SUBCOMMANDS = new Set(["save", "list", "show", "delete"]);
+const SESSIONLESS_AUTH_SUBCOMMANDS = new Set(["save", "list", "show", "delete", "remove"]);
 const EMPTY_BOOLEAN_FLAGS = new Set<string>();
 const JSON_BOOLEAN_FLAGS = new Set(["--json"]);
 const AUTH_SAVE_BOOLEAN_FLAGS = new Set(["--json", "--password-stdin"]);
@@ -594,7 +595,7 @@ function isSessionlessStateCommand(commandTokens: string[]): boolean {
 		return optionTokens.length > 0 && hasOnlyOptionFlags(optionTokens, EMPTY_BOOLEAN_FLAGS, STATE_CLEAN_VALUE_FLAGS);
 	}
 	if (subcommand !== "clear") return false;
-	if (firstArg === "--all" && secondArg === undefined) return true;
+	if ((firstArg === "--all" || firstArg === "-a") && secondArg === undefined) return true;
 	if (!isNonFlagToken(firstArg)) return false;
 	return secondArg === undefined || (secondArg === "--all" && rest.length === 0);
 }
@@ -656,7 +657,7 @@ export function resolveManagedSessionState(options: {
 	if (!managedSessionName) {
 		return { active: priorActive, sessionName: priorSessionName };
 	}
-	if (command === "close" && managedSessionName === priorSessionName) {
+	if (isCloseCommand(command) && managedSessionName === priorSessionName) {
 		return { active: succeeded ? false : priorActive, sessionName: priorSessionName };
 	}
 	if (!succeeded) {
@@ -759,11 +760,12 @@ export function restoreManagedSessionStateFromBranch(
 		if ((succeeded || outcomeRepresentsActiveCurrentSession) && sessionMode === "fresh") {
 			freshSessionOrdinal += 1;
 		}
-		const staleCompletion = succeeded && command !== "close" && restoreRank < activeRestoreRank;
+		const commandClosesSession = isCloseCommand(command);
+		const staleCompletion = succeeded && !commandClosesSession && restoreRank < activeRestoreRank;
 		if (staleCompletion) {
 			continue;
 		}
-		const staleClose = command === "close" && restoredState.active && managedSessionName !== restoredState.sessionName;
+		const staleClose = commandClosesSession && restoredState.active && managedSessionName !== restoredState.sessionName;
 		if (staleClose) {
 			continue;
 		}
@@ -775,7 +777,7 @@ export function restoreManagedSessionStateFromBranch(
 			priorSessionName: restoredState.sessionName,
 			succeeded,
 		});
-		if (succeeded && command !== "close" && restoredState.active) {
+		if (succeeded && !commandClosesSession && restoredState.active) {
 			activeRestoreRank = restoreRank;
 		}
 	}
@@ -976,7 +978,7 @@ function getDefaultHeadlessCompatUserAgent(platform: NodeJS.Platform = process.p
 }
 
 function getCompatibilityWorkaround(args: string[], commandInfo: CommandInfo): CompatibilityWorkaround | undefined {
-	if (!commandInfo.command || !OPEN_COMMANDS.has(commandInfo.command) || !commandInfo.subcommand) {
+	if (!commandInfo.command || !isOpenNavigationCommand(commandInfo.command) || !commandInfo.subcommand) {
 		return undefined;
 	}
 	if (hasFlagToken(args, "--user-agent")) {
@@ -1120,7 +1122,7 @@ export function buildExecutionPlan(
 
 	const explicitSessionName = extractExplicitSessionName(args);
 	const shouldCreateFreshManagedSession =
-		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && commandInfo.command !== "close";
+		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && !isCloseCommand(commandInfo.command);
 	const compatibilityWorkaround = getCompatibilityWorkaround(args, commandInfo);
 	let managedSessionName: string | undefined;
 	let recoveryHint: SessionRecoveryHint | undefined;
@@ -1240,7 +1242,7 @@ export function parseCommandInfo(args: string[]): CommandInfo {
 	const command = commandTokens[0];
 	return {
 		command,
-		subcommand: command && OPEN_COMMANDS.has(command) ? getOpenCommandTarget(commandTokens) : commandTokens[1],
+		subcommand: isOpenNavigationCommand(command) ? getOpenCommandTarget(commandTokens) : commandTokens[1],
 	};
 }
 

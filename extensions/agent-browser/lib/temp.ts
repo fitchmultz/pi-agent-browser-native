@@ -210,14 +210,10 @@ async function getMarkerOwnerLiveness(ownershipMarker: TempRootOwnershipRecord):
 	}
 
 	const currentProcessStartIdentity = await getProcessStartIdentity(pid);
-	if (
-		ownershipMarker.ownerProcessStartIdentity !== undefined &&
-		currentProcessStartIdentity !== undefined &&
-		ownershipMarker.ownerProcessStartIdentity === currentProcessStartIdentity
-	) {
-		return "alive";
+	if (ownershipMarker.ownerProcessStartIdentity === undefined || currentProcessStartIdentity === undefined) {
+		return "unknown";
 	}
-	return "dead";
+	return ownershipMarker.ownerProcessStartIdentity === currentProcessStartIdentity ? "alive" : "dead";
 }
 
 async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise<void> {
@@ -243,7 +239,8 @@ async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise
 				}
 				const staleTimestampMs = ownershipMarker.leaseUpdatedAtMs ?? ownershipMarker.createdAtMs;
 				if (staleTimestampMs >= cutoffTime) return;
-				if ((await getMarkerOwnerLiveness(ownershipMarker)) === "alive") return;
+				// Preserve roots when owner liveness cannot be proven; safe cleanup beats deleting another live process's files.
+				if ((await getMarkerOwnerLiveness(ownershipMarker)) !== "dead") return;
 
 				const stats = await stat(path).catch(() => undefined);
 				if (!stats?.isDirectory()) return;

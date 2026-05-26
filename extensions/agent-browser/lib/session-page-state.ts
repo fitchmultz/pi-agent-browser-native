@@ -6,6 +6,7 @@
  * Invariants/Assumptions: One tool-call update token must govern all page-state observations from that invocation; stale overlapping updates must not overwrite newer state.
  */
 
+import { isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 
 export interface SessionTabTarget {
@@ -132,12 +133,6 @@ function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 	return Array.isArray(item.command) ? item.command.filter((token): token is string => typeof token === "string") : [];
 }
 
-const READ_ONLY_DIAGNOSTIC_SESSION_TARGET_COMMANDS = new Set(["console", "cookies", "errors", "network", "storage"]);
-
-function isReadOnlyDiagnosticSessionTargetCommand(command: string | undefined, _subcommand: string | undefined): boolean {
-	return command !== undefined && READ_ONLY_DIAGNOSTIC_SESSION_TARGET_COMMANDS.has(command);
-}
-
 export function extractSessionTabTargetFromCommandData(commandTokens: string[], data: unknown): SessionTabTarget | undefined {
 	const [command, subcommand] = commandTokens;
 	return isReadOnlyDiagnosticSessionTargetCommand(command, subcommand) ? undefined : extractSessionTabTargetFromData(data);
@@ -186,7 +181,7 @@ export function deriveSessionTabTarget(options: {
 	previousTarget?: SessionTabTarget;
 	subcommand?: string;
 }): SessionTabTarget | undefined {
-	if (options.command === "close") {
+	if (isCloseCommand(options.command)) {
 		return undefined;
 	}
 	const commandDataTarget = isReadOnlyDiagnosticSessionTargetCommand(options.command, options.subcommand)
@@ -367,7 +362,7 @@ export class SessionPageState {
 			if (!sessionName) continue;
 			const command = typeof details.command === "string" ? details.command : undefined;
 			const subcommand = typeof details.subcommand === "string" ? details.subcommand : undefined;
-			if (command === "close" && message.isError !== true) {
+			if (isCloseCommand(command) && message.isError !== true) {
 				restoredOrder += 1;
 				state.clearSession(sessionName);
 				continue;

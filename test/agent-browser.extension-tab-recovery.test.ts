@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -531,6 +531,7 @@ if (args.includes("tab") && args.includes("list")) {
 test("agentBrowserExtension keeps newer explicit-session tab target after overlapping opens", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
+	const releaseSlowOpenPath = join(tempDir, "release-slow-open");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -540,8 +541,12 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 const slow = { title: "Slow First", url: "https://example.com/slow-first" };
 const fast = { title: "Fast Second", url: "https://example.com/fast-second" };
+const releaseSlowOpenPath = ${JSON.stringify(releaseSlowOpenPath)};
 if (args.includes("https://example.com/slow-first")) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750);
+  const deadline = Date.now() + 5000;
+  while (!fs.existsSync(releaseSlowOpenPath) && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
   process.stdout.write(JSON.stringify({ success: true, data: slow }));
 } else if (args.includes("https://example.com/fast-second")) {
   process.stdout.write(JSON.stringify({ success: true, data: fast }));
@@ -584,9 +589,11 @@ if (args.includes("https://example.com/slow-first")) {
 				args: ["--session", "named", "open", "https://example.com/fast-second"],
 			});
 
-			const [slowOpen, fastOpen] = await Promise.all([slowOpenPromise, fastOpenPromise]);
-			assert.equal(slowOpen.isError, false, JSON.stringify(slowOpen));
+			const fastOpen = await fastOpenPromise;
 			assert.equal(fastOpen.isError, false, JSON.stringify(fastOpen));
+			await writeFile(releaseSlowOpenPath, "1", "utf8");
+			const slowOpen = await slowOpenPromise;
+			assert.equal(slowOpen.isError, false, JSON.stringify(slowOpen));
 
 			const clickedSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "named", "click", "@e9"],

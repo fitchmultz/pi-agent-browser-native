@@ -73,7 +73,6 @@ import {
 	normalizeSessionTabTarget,
 	targetsMatch,
 	type SessionRefSnapshot,
-	type SessionRefSnapshotInvalidation,
 	type SessionTabTarget,
 } from "./lib/session-page-state.js";
 import {
@@ -672,12 +671,6 @@ async function isDirectAgentBrowserBashAllowed(cwd: string): Promise<boolean> {
 	return isTruthyEnvValue(process.env[DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV]) || await isPackageDevelopmentCwd(cwd);
 }
 
-const NAVIGATION_SUMMARY_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
-const NAVIGATION_SUMMARY_EVAL = `({ title: document.title, url: location.href })`;
-// These commands can expose URLs for inspected resources (request URLs, cookie/storage scope, or log sources),
-// but they do not navigate the active tab and must not poison page-scoped ref guards.
-const READ_ONLY_DIAGNOSTIC_SESSION_TARGET_COMMANDS = new Set(["console", "cookies", "errors", "network", "storage"]);
-
 interface NavigationSummary {
 	title?: string;
 	url?: string;
@@ -1035,37 +1028,7 @@ function extractNavigationSummaryFromData(data: unknown): NavigationSummary | un
 	return title || url ? { title, url } : undefined;
 }
 
-const SESSION_TAB_PINNING_EXCLUDED_COMMANDS = new Set(["close", "goto", "navigate", "open", "session", "tab"]);
-const SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS = new Set(["batch", "close", "session", "tab"]);
-
-type PinnedBatchUnwrapMode = "single-command" | "user-batch";
-
 type AgentBrowserToolResult = AgentToolResult<unknown> & { isError?: boolean };
-
-type BatchCommandStep = [string, ...string[]];
-
-interface PinnedBatchPlan {
-	includeNavigationSummary: boolean;
-	steps: BatchCommandStep[];
-	unwrapMode: PinnedBatchUnwrapMode;
-}
-
-interface StaleRefPreflight {
-	message: string;
-	refIds: string[];
-	snapshot?: SessionRefSnapshot;
-	snapshotInvalidation?: SessionRefSnapshotInvalidation;
-}
-
-interface AboutBlankSessionMismatch {
-	activeUrl: "about:blank";
-	recoveryApplied: boolean;
-	recoveryHint: string;
-	targetTitle?: string;
-	targetUrl: string;
-}
-
-
 
 function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 	return Array.isArray(item.command) ? item.command.filter((token): token is string => typeof token === "string") : [];
@@ -1458,27 +1421,6 @@ async function collectElectronManagedSessionTarget(options: {
 
 function formatElectronSessionMismatchText(mismatch: ElectronSessionMismatch): string {
 	return `${mismatch.summary}\nNext: run electron.status/electron.probe with launchId ${mismatch.launchId}, reattach with the reattach-electron-launch nextAction if needed, or cleanup when finished.`;
-}
-
-const ELECTRON_POST_COMMAND_HEALTH_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"fill",
-	"find",
-	"forward",
-	"keyboard",
-	"mouse",
-	"press",
-	"reload",
-	"select",
-	"type",
-	"uncheck",
-]);
-
-function shouldInspectElectronPostCommandHealth(command: string | undefined): boolean {
-	return command !== undefined && ELECTRON_POST_COMMAND_HEALTH_COMMANDS.has(command);
 }
 
 function buildElectronLifecycleNextActions(record: ElectronLaunchRecord): AgentBrowserNextAction[] {
@@ -2033,141 +1975,6 @@ function supportsPinnedStdinCommand(options: { command?: string; commandTokens: 
 	}
 	return false;
 }
-
-
-function validateUserBatchStep(
-	step: unknown,
-	index: number,
-):
-	| { ok: true; step: BatchCommandStep }
-	| { ok: false; error: string } {
-	if (!Array.isArray(step)) {
-		return {
-			ok: false,
-			error: `agent_browser batch stdin step ${index} must be a non-empty array of string command tokens.`,
-		};
-	}
-	if (step.length === 0) {
-		return {
-			ok: false,
-			error: `agent_browser batch stdin step ${index} must not be empty.`,
-		};
-	}
-	const invalidTokenIndex = step.findIndex((token) => typeof token !== "string");
-	if (invalidTokenIndex !== -1) {
-		return {
-			ok: false,
-			error: `agent_browser batch stdin step ${index} token ${invalidTokenIndex} must be a string.`,
-		};
-	}
-	return { ok: true, step: step as BatchCommandStep };
-}
-
-function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps?: BatchCommandStep[] } {
-	if (stdin === undefined) {
-		return { steps: [] };
-	}
-	try {
-		const parsed = JSON.parse(stdin) as unknown;
-		if (!Array.isArray(parsed)) {
-			return { error: "agent_browser batch stdin must be a JSON array of command steps." };
-		}
-		const steps: BatchCommandStep[] = [];
-		for (const [index, rawStep] of parsed.entries()) {
-			const validated = validateUserBatchStep(rawStep, index);
-			if (!validated.ok) {
-				return { error: validated.error };
-			}
-			steps.push(validated.step);
-		}
-		return { steps };
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { error: `agent_browser batch stdin could not be parsed as JSON: ${message}` };
-	}
-}
-
-const REF_INVALIDATING_BATCH_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"drag",
-	"forward",
-	"goto",
-	"keyboard",
-	"mouse",
-	"navigate",
-	"open",
-	"press",
-	"reload",
-	"select",
-	"type",
-	"uncheck",
-	"upload",
-]);
-
-const REF_GUARDED_COMMANDS = new Set([
-	"check",
-	"click",
-	"dblclick",
-	"download",
-	"drag",
-	"fill",
-	"focus",
-	"hover",
-	"keyboard",
-	"mouse",
-	"press",
-	"scrollintoview",
-	"select",
-	"type",
-	"uncheck",
-	"upload",
-]);
-
-
-function collectRefsFromTokens(tokens: string[]): string[] {
-	return tokens.filter((token) => /^@e\d+\b/.test(token)).map((token) => token.slice(1));
-}
-
-function getGuardedRefUsage(commandTokens: string[], stdin?: string, options: { includeRefsAfterBatchSnapshot?: boolean } = {}): string[] {
-	const collectFromStep = (step: string[]) => REF_GUARDED_COMMANDS.has(step[0] ?? "") ? collectRefsFromTokens(step) : [];
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
-		return collectFromStep(commandTokens);
-	}
-	const parsed = parseUserBatchStdin(stdin);
-	if (parsed.error || parsed.steps === undefined) {
-		return collectFromStep(commandTokens);
-	}
-	const refsBeforeInBatchSnapshot: string[] = [];
-	for (const step of parsed.steps) {
-		if (!options.includeRefsAfterBatchSnapshot && (step[0] ?? "") === "snapshot") break;
-		refsBeforeInBatchSnapshot.push(...collectFromStep(step));
-	}
-	return refsBeforeInBatchSnapshot;
-}
-
-function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string): string | undefined {
-	if (commandTokens[0] !== "batch" || stdin === undefined) return undefined;
-	const parsed = parseUserBatchStdin(stdin);
-	if (parsed.error || parsed.steps === undefined) return undefined;
-	let priorStepInvalidatesRefs = false;
-	for (const step of parsed.steps) {
-		if ((step[0] ?? "") === "snapshot") {
-			priorStepInvalidatesRefs = false;
-		}
-		const refIds = collectRefsFromTokens(step);
-		if (refIds.length > 0 && REF_GUARDED_COMMANDS.has(step[0] ?? "") && priorStepInvalidatesRefs) {
-			return `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`;
-		}
-		if (REF_INVALIDATING_BATCH_COMMANDS.has(step[0] ?? "")) {
-			priorStepInvalidatesRefs = true;
-		}
-	}
-	return undefined;
-}
-
 
 
 
