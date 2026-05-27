@@ -20,6 +20,14 @@ export interface PromptPolicy {
 	stopBoundary?: PromptStopBoundary;
 }
 
+const BROWSER_PROMPT_PATTERNS = [
+	/\b(?:agent[_ -]?browser|browser automation|eval\s+--stdin|screenshot|snapshot|tab\s+list)\b/i,
+	/\b(?:react\s+(?:tree|inspect|renders|suspense)|web\s+vitals|core\s+web\s+vitals|pushstate)\b/i,
+	/\b(?:live\s+docs?|online\s+research|research\s+(?:online|the\s+web)|search\s+(?:online|the\s+web)|web\s+research)\b/i,
+	/\bbrowser\b.*\b(?:automation|click|fill|navigate|open|page|screenshot|site|snapshot|tab|url|visit|web(?:site| page)?)\b/i,
+	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
+];
+
 const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\b(?:bash-oriented workflow|bash workflow)\b/i,
 	/\b(?:use|via|through|with)\s+bash\b/i,
@@ -88,6 +96,14 @@ function getMessageText(content: unknown): string {
 		})
 		.filter((text) => text.length > 0)
 		.join("\n");
+}
+
+export function shouldAppendBrowserSystemPrompt(prompt: string): boolean {
+	const normalizedPrompt = prompt.trim();
+	if (normalizedPrompt.length === 0) {
+		return false;
+	}
+	return BROWSER_PROMPT_PATTERNS.some((pattern) => pattern.test(normalizedPrompt));
 }
 
 export function getLatestUserPrompt(branch: unknown[]): string {

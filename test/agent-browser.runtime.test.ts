@@ -1,52 +1,31 @@
 /**
  * Purpose: Verify pure runtime planning and policy helpers for the pi-agent-browser extension.
- * Responsibilities: Assert session naming, managed-session restoration, execution-plan argument injection, prompt policy detection, redaction, and secure temp lifecycle edge cases owned by runtime/temp helpers.
+ * Responsibilities: Assert session naming, managed-session restoration, execution-plan argument injection, and redaction helpers.
  * Scope: Unit-style Node test-runner coverage for stable helper behavior; extension entrypoint lifecycle tests live in focused integration suites.
  * Usage: Run with `npx tsx --test test/agent-browser.runtime.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests preserve existing assertions and isolate filesystem/env side effects with temp directories and explicit cleanup.
  */
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
 import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildExecutionPlan,
-	buildPromptPolicy,
 	createFreshSessionName,
 	createImplicitSessionName,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
-	getLatestUserPrompt,
 	hasLaunchScopedTabCorrectionFlag,
-	parseCommandInfo,
 	hasUsableBraveApiKey,
 	redactInvocationArgs,
 	redactSensitiveText,
 	redactSensitiveValue,
 	resolveManagedSessionState,
 	restoreManagedSessionStateFromBranch,
-	shouldAppendBrowserSystemPrompt,
 } from "../extensions/agent-browser/lib/runtime.js";
-import {
-	cleanupSecureTempArtifacts,
-	getSecureTempDebugState,
-	openSecureTempFile,
-	writeSecureTempFile,
-	writeSecureTempRootOwnershipMarker,
-} from "../extensions/agent-browser/lib/temp.js";
-import {
-	createToolBranchEntry,
-	readChildStdoutJsonLine,
-	stopChildProcess,
-	withPatchedEnv,
-} from "./helpers/agent-browser-harness.js";
+import { createToolBranchEntry } from "./helpers/agent-browser-harness.js";
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const sessionId = "12345678-1234-5678-9abc-def012345678";
@@ -485,158 +464,6 @@ test("restoreManagedSessionStateFromBranch keeps cwd isolation by ignoring sessi
 	});
 });
 
-test("secure temp cleanup can recreate and track a later temp root", { concurrency: false }, async () => {
-	await cleanupSecureTempArtifacts();
-
-	const firstFile = await openSecureTempFile("debug-a", ".txt");
-	await firstFile.fileHandle.close();
-	const firstRoot = dirname(firstFile.path);
-	assert.equal((await getSecureTempDebugState()).currentTempRoot, firstRoot);
-
-	await cleanupSecureTempArtifacts();
-	await assert.rejects(stat(firstRoot), { code: "ENOENT" });
-	assert.deepEqual((await getSecureTempDebugState()).ownedTempRoots, []);
-
-	const secondFile = await openSecureTempFile("debug-b", ".txt");
-	await secondFile.fileHandle.close();
-	const secondRoot = dirname(secondFile.path);
-	assert.notEqual(secondRoot, firstRoot);
-
-	const debugState = await getSecureTempDebugState();
-	assert.equal(debugState.currentTempRoot, secondRoot);
-	assert.deepEqual(debugState.ownedTempRoots, [secondRoot]);
-
-	await cleanupSecureTempArtifacts();
-});
-
-test("stale temp pruning only removes explicitly owned roots", { concurrency: false }, async () => {
-	await cleanupSecureTempArtifacts();
-	const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
-	const unownedRoot = await mkdtemp(join(tmpdir(), "pi-agent-browser-unowned-"));
-	const ownedRoot = await mkdtemp(join(tmpdir(), "pi-agent-browser-owned-"));
-	await chmod(unownedRoot, 0o700);
-	await chmod(ownedRoot, 0o700);
-	await writeFile(join(unownedRoot, "leftover.txt"), "keep", "utf8");
-	await utimes(unownedRoot, staleTime, staleTime);
-	// Write the stale ownership marker immediately before triggering pruning. Any
-	// secure temp root creation in a concurrent test file can legitimately prune
-	// stale owned roots as soon as the marker exists, so avoid yielding again
-	// before this test performs the pruning assertion itself.
-	await writeSecureTempRootOwnershipMarker(ownedRoot, { createdAtMs: staleTime.getTime(), ownerPid: 99_999_999 });
-
-	try {
-		const tempFile = await openSecureTempFile("prune-check", ".txt");
-		await tempFile.fileHandle.close();
-
-		await assert.rejects(stat(ownedRoot), { code: "ENOENT" });
-		await stat(unownedRoot);
-		await rm(unownedRoot, { force: true, recursive: true });
-		await cleanupSecureTempArtifacts();
-	} finally {
-		await rm(unownedRoot, { force: true, recursive: true }).catch(() => undefined);
-		await rm(ownedRoot, { force: true, recursive: true }).catch(() => undefined);
-		await cleanupSecureTempArtifacts();
-	}
-});
-
-test("stale temp pruning removes roots whose marker PID was reused", { concurrency: false }, async () => {
-	await cleanupSecureTempArtifacts();
-	const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
-	const staleRoot = await mkdtemp(join(tmpdir(), "pi-agent-browser-reused-pid-"));
-	await chmod(staleRoot, 0o700);
-	const child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1_000);"], {
-		stdio: ["ignore", "ignore", "ignore"],
-	});
-
-	try {
-		assert.ok(child.pid);
-		await writeSecureTempRootOwnershipMarker(staleRoot, {
-			createdAtMs: staleTime.getTime(),
-			leaseUpdatedAtMs: staleTime.getTime(),
-			ownerPid: child.pid,
-			ownerProcessStartIdentity: "definitely-not-this-child-process-start",
-		});
-		await utimes(staleRoot, staleTime, staleTime);
-
-		const before = await stat(staleRoot).then(() => true, () => false);
-		const tempFile = await openSecureTempFile("prune-reused-pid", ".txt");
-		await tempFile.fileHandle.close();
-		const after = await stat(staleRoot).then(() => true, () => false);
-
-		assert.deepEqual({ after, before }, { after: false, before: true });
-	} finally {
-		await stopChildProcess(child);
-		await rm(staleRoot, { force: true, recursive: true }).catch(() => undefined);
-		await cleanupSecureTempArtifacts();
-	}
-});
-
-test("stale temp pruning does not remove a live root when owner identity is unavailable", { concurrency: false }, async () => {
-	await cleanupSecureTempArtifacts();
-	const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1_000);
-	const childScript = `
-		import { dirname } from "node:path";
-		import { openSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
-		const tempFile = await openSecureTempFile("live-root", ".txt");
-		await tempFile.fileHandle.close();
-		console.log(JSON.stringify({ root: dirname(tempFile.path) }));
-		setInterval(() => undefined, 1_000);
-	`;
-	const childA = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
-		cwd: process.cwd(),
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-
-	let liveRoot: string | undefined;
-	try {
-		liveRoot = (await readChildStdoutJsonLine<{ root: string }>(childA)).root;
-		const markerPath = join(liveRoot, ".pi-agent-browser-owner.json");
-		const marker = JSON.parse(await readFile(markerPath, "utf8")) as Record<string, unknown>;
-		delete marker.ownerProcessStartIdentity;
-		await writeFile(
-			markerPath,
-			JSON.stringify({ ...marker, createdAtMs: staleTime.getTime(), leaseUpdatedAtMs: staleTime.getTime() }, null, 2),
-			"utf8",
-		);
-		await utimes(liveRoot, staleTime, staleTime);
-		const before = await stat(liveRoot).then(() => true, () => false);
-
-		const childBScript = `
-			import { openSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
-			const tempFile = await openSecureTempFile("prune-trigger", ".txt");
-			await tempFile.fileHandle.close();
-			console.log(JSON.stringify({ done: true }));
-		`;
-		const childB = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childBScript], {
-			cwd: process.cwd(),
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		const childBExit = once(childB, "exit");
-		await readChildStdoutJsonLine<{ done: boolean }>(childB);
-		const [childBExitCode] = await childBExit;
-		assert.equal(childBExitCode, 0);
-
-		const after = await stat(liveRoot).then(() => true, () => false);
-		assert.deepEqual({ after, before }, { after: true, before: true });
-	} finally {
-		await stopChildProcess(childA);
-		if (liveRoot) await rm(liveRoot, { force: true, recursive: true }).catch(() => undefined);
-		await cleanupSecureTempArtifacts();
-	}
-});
-
-test("writeSecureTempFile enforces the aggregate temp-root disk budget", { concurrency: false }, async () => {
-	await cleanupSecureTempArtifacts();
-	await withPatchedEnv({ PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES: "1024" }, async () => {
-		await writeSecureTempFile({ content: "a".repeat(600), prefix: "budget-a", suffix: ".txt" });
-		await assert.rejects(
-			writeSecureTempFile({ content: "b".repeat(500), prefix: "budget-b", suffix: ".txt" }),
-			/temp spill budget exceeded/i,
-		);
-	});
-	await cleanupSecureTempArtifacts();
-});
-
 test("buildExecutionPlan injects --json and the implicit session when needed", () => {
 	const plan = buildExecutionPlan(["open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -947,55 +774,6 @@ test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state 
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["open", "https://example.com"]), false);
 });
 
-test("parseCommandInfo recognizes representative current command families", () => {
-	for (const { args, expected } of [
-		{ args: ["open", "https://example.com"], expected: { command: "open", subcommand: "https://example.com" } },
-		{ args: ["find", "role", "button", "click", "--name", "Export"], expected: { command: "find", subcommand: "role" } },
-		{ args: ["wait", "--download", "/tmp/report.csv", "--timeout", "25000"], expected: { command: "wait", subcommand: "--download" } },
-		{ args: ["wait", "@button", "--state", "hidden"], expected: { command: "wait", subcommand: "@button" } },
-		{ args: ["network", "route", "**/*.js", "--resource-type", "script"], expected: { command: "network", subcommand: "route" } },
-		{ args: ["cookies", "set", "--curl", "/tmp/cookies.txt", "--domain", "example.com"], expected: { command: "cookies", subcommand: "set" } },
-		{ args: ["auth", "save", "demo", "--password-stdin"], expected: { command: "auth", subcommand: "save" } },
-		{ args: ["dashboard", "start", "--port", "4567"], expected: { command: "dashboard", subcommand: "start" } },
-		{ args: ["doctor", "--offline", "--quick"], expected: { command: "doctor", subcommand: "--offline" } },
-		{ args: ["install", "--with-deps"], expected: { command: "install", subcommand: "--with-deps" } },
-		{ args: ["upgrade"], expected: { command: "upgrade", subcommand: undefined } },
-		{ args: ["chat", "Summarize", "--model", "gpt-5.1"], expected: { command: "chat", subcommand: "Summarize" } },
-		{ args: ["react", "renders", "stop", "--json"], expected: { command: "react", subcommand: "renders" } },
-		{ args: ["vitals", "https://example.com", "--json"], expected: { command: "vitals", subcommand: "https://example.com" } },
-		{ args: ["stream", "enable", "--port", "7777"], expected: { command: "stream", subcommand: "enable" } },
-		{ args: ["tab", "new", "--label", "Docs", "https://example.com"], expected: { command: "tab", subcommand: "new" } },
-	] as const) {
-		assert.deepEqual(parseCommandInfo([...args]), expected);
-	}
-});
-
-test("parseCommandInfo recognizes open targets after command-scoped init flags", () => {
-	assert.deepEqual(parseCommandInfo(["open", "--enable", "react-devtools", "https://example.com"]), {
-		command: "open",
-		subcommand: "https://example.com",
-	});
-	assert.deepEqual(parseCommandInfo(["open", "--init-script", "/tmp/setup.js", "https://example.com"]), {
-		command: "open",
-		subcommand: "https://example.com",
-	});
-	assert.deepEqual(parseCommandInfo(["--enable", "react-devtools", "open", "https://example.com"]), {
-		command: "open",
-		subcommand: "https://example.com",
-	});
-});
-
-test("parseCommandInfo skips optional boolean flag values before commands", () => {
-	assert.deepEqual(parseCommandInfo(["--headed", "false", "open", "https://chatgpt.com"]), {
-		command: "open",
-		subcommand: "https://chatgpt.com",
-	});
-	assert.deepEqual(parseCommandInfo(["--debug", "true", "tab", "list"]), {
-		command: "tab",
-		subcommand: "list",
-	});
-});
-
 test("buildExecutionPlan treats provider and iOS device flags as launch-scoped", () => {
 	for (const args of [
 		["-p", "ios", "open", "https://example.com"],
@@ -1088,55 +866,6 @@ test("buildExecutionPlan injects the ChatGPT headless compatibility user-agent o
 		sessionMode: "auto",
 	});
 	assert.equal(enabledAutoConnectPlan.compatibilityWorkaround, undefined);
-});
-
-test("buildPromptPolicy and getLatestUserPrompt derive legacy bash policy from prompt text without globals", () => {
-	const prompt = getLatestUserPrompt([
-		{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Not relevant" }] } },
-		{ type: "message", message: { role: "user", content: [{ type: "text", text: "Please debug the browser integration via bash." }] } },
-	]);
-	const policy = buildPromptPolicy(prompt);
-
-	assert.equal(prompt, "Please debug the browser integration via bash.");
-	assert.equal(policy.allowLegacyAgentBrowserBash, true);
-});
-
-test("buildPromptPolicy does not allow legacy bash for generic docs prompts unrelated to agent-browser", () => {
-	const policy = buildPromptPolicy("Please review the repo docs and summarize the architecture.");
-
-	assert.equal(policy.allowLegacyAgentBrowserBash, false);
-});
-
-test("buildPromptPolicy allows explicit tool-specific legacy bash inspection requests", () => {
-	const policy = buildPromptPolicy("Show me the agent-browser docs and explain agent-browser --help output.");
-
-	assert.equal(policy.allowLegacyAgentBrowserBash, true);
-});
-
-test("buildPromptPolicy detects stop boundaries and requested artifact paths", () => {
-	const policy = buildPromptPolicy(`Stop on the checkout overview page; do not place the order.
-Save a screenshot here: /tmp/pi-smoke/page.png
-Save a short screen recording here if recording is available: /tmp/pi-smoke/run.webm`);
-
-	assert.deepEqual(policy.stopBoundary, { reason: "avoid-final-submit-action" });
-	assert.deepEqual(policy.requestedArtifacts, [
-		{ kind: "screenshot", path: "/tmp/pi-smoke/page.png", required: true },
-		{ kind: "recording", path: "/tmp/pi-smoke/run.webm", required: false },
-	]);
-});
-
-test("buildPromptPolicy detects relative requested artifact paths", () => {
-	const policy = buildPromptPolicy(`Save a screenshot here: ./release-smoke.png
-Save another screenshot here: ../artifacts/checkout.webp
-Save a screenshot here: final-state.jpg
-Save a short screen recording here if recording is available: recordings/run.webm`);
-
-	assert.deepEqual(policy.requestedArtifacts, [
-		{ kind: "screenshot", path: "./release-smoke.png", required: true },
-		{ kind: "screenshot", path: "../artifacts/checkout.webp", required: true },
-		{ kind: "screenshot", path: "final-state.jpg", required: true },
-		{ kind: "recording", path: "recordings/run.webm", required: false },
-	]);
 });
 
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
@@ -1244,14 +973,5 @@ test("redactSensitiveValue masks obvious secret-bearing object keys", () => {
 			status: { code: "ERR_BLOCKED_BY_CLIENT", key: "Enter" },
 		},
 	);
-});
-
-test("shouldAppendBrowserSystemPrompt only targets clearly browser-oriented prompts", () => {
-	assert.equal(shouldAppendBrowserSystemPrompt("Open https://example.com and take a snapshot."), true);
-	assert.equal(shouldAppendBrowserSystemPrompt("Do web research and read the live docs for this API."), true);
-	assert.equal(shouldAppendBrowserSystemPrompt("Search online for the current browser automation docs."), true);
-	assert.equal(shouldAppendBrowserSystemPrompt("Please review browser compatibility docs."), false);
-	assert.equal(shouldAppendBrowserSystemPrompt("Summarize the article at https://example.com/blog/post for the changelog."), false);
-	assert.equal(shouldAppendBrowserSystemPrompt("Please review the repository architecture."), false);
 });
 

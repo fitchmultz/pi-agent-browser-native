@@ -105,13 +105,6 @@ const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDL
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
 const DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
-const BROWSER_PROMPT_PATTERNS = [
-	/\b(?:agent[_ -]?browser|browser automation|eval\s+--stdin|screenshot|snapshot|tab\s+list)\b/i,
-	/\b(?:react\s+(?:tree|inspect|renders|suspense)|web\s+vitals|core\s+web\s+vitals|pushstate)\b/i,
-	/\b(?:live\s+docs?|online\s+research|research\s+(?:online|the\s+web)|search\s+(?:online|the\s+web)|web\s+research)\b/i,
-	/\bbrowser\b.*\b(?:automation|click|fill|navigate|open|page|screenshot|site|snapshot|tab|url|visit|web(?:site| page)?)\b/i,
-	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
-];
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
 const SENSITIVE_QUERY_PARAM_PATTERN =
@@ -182,9 +175,6 @@ export interface ManagedSessionState {
 export interface RestoredManagedSessionState extends ManagedSessionState {
 	freshSessionOrdinal: number;
 }
-
-export type { PromptPolicy, PromptRequestedArtifact, PromptStopBoundary } from "./prompt-policy.js";
-export { buildPromptPolicy, getLatestUserPrompt } from "./prompt-policy.js";
 
 function isStringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -435,14 +425,6 @@ export function redactInvocationArgs(args: string[]): string[] {
 	return redacted;
 }
 
-export function shouldAppendBrowserSystemPrompt(prompt: string): boolean {
-	const normalizedPrompt = prompt.trim();
-	if (normalizedPrompt.length === 0) {
-		return false;
-	}
-	return BROWSER_PROMPT_PATTERNS.some((pattern) => pattern.test(normalizedPrompt));
-}
-
 export function isPlainTextInspectionArgs(args: string[]): boolean {
 	return args.some((token) => INSPECTION_FLAGS.has(token));
 }
@@ -665,11 +647,6 @@ export function validateToolArgs(args: string[]): string | undefined {
 	}
 
 	return undefined;
-}
-
-function isBooleanLiteral(token: string | undefined): boolean {
-	const normalized = token?.trim().toLowerCase();
-	return normalized === "true" || normalized === "false";
 }
 
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {

@@ -5,6 +5,7 @@ import { runSessionCommandData } from "./session-state.js";
 import type { ClickDispatchDiagnostic, ClickDispatchProbe, ClickDispatchProbeTarget } from "./types.js";
 
 const CLICK_DISPATCH_MARKER_PREFIX = "__piAgentBrowserClickDispatchProbe_";
+const CLICK_DISPATCH_CLEANUP_TIMEOUT_MS = 2_000;
 
 function parseClickRefId(selector: string): string | undefined {
 	const trimmed = selector.trim();
@@ -56,15 +57,20 @@ function buildClickDispatchProbeCheckScript(probe: ClickDispatchProbe): string {
 	return `(() => {
 const marker = ${JSON.stringify(probe.marker)};
 const state = window[marker];
-const finish = (payload) => {
-  if (state && typeof state.cleanup === "function") state.cleanup();
-  try { delete window[marker]; } catch {}
-  return payload;
-};
-if (!state || !Array.isArray(state.events)) return finish({ status: "probe-missing", nativeEventCount: 0 });
+if (!state || !Array.isArray(state.events)) return { status: "probe-missing", nativeEventCount: 0 };
 const nativeEventCount = state.events.filter((event) => event && event.isTrusted === true && event.targetMatched === true).length;
-if (nativeEventCount > 0) return finish({ status: "native-event-observed", nativeEventCount, target: state.target });
-return finish({ status: "no-native-event-observed", nativeEventCount, target: state.target });
+if (nativeEventCount > 0) return { status: "native-event-observed", nativeEventCount, target: state.target };
+return { status: "no-native-event-observed", nativeEventCount, target: state.target };
+})()`;
+}
+
+function buildClickDispatchProbeCleanupScript(probe: ClickDispatchProbe): string {
+	return `(() => {
+const marker = ${JSON.stringify(probe.marker)};
+const state = window[marker];
+if (state && typeof state.cleanup === "function") state.cleanup();
+try { delete window[marker]; } catch {}
+return { status: "cleaned-up" };
 })()`;
 }
 
@@ -124,4 +130,15 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; pro
 		summary,
 		target: redactClickDispatchTarget(options.probe.target),
 	};
+}
+
+export async function cleanupClickDispatchProbe(options: { cwd: string; probe?: ClickDispatchProbe; sessionName?: string }): Promise<void> {
+	if (!options.probe || !options.sessionName) return;
+	await runSessionCommandData({
+		args: ["eval", "--stdin"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		stdin: buildClickDispatchProbeCleanupScript(options.probe),
+		timeoutMs: CLICK_DISPATCH_CLEANUP_TIMEOUT_MS,
+	}).catch(() => undefined);
 }

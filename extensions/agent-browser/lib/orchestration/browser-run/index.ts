@@ -1,4 +1,5 @@
 import { runAgentBrowserProcess } from "../../process.js";
+import { cleanupClickDispatchProbe } from "./click-dispatch.js";
 import { applyBrowserRunStatePatch } from "./session-state.js";
 import { buildMissingBinaryFailureResult } from "./final-result.js";
 import { prepareBrowserRun } from "./prepare.js";
@@ -15,32 +16,36 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 	}
 
 	const { prepared } = preparedResult;
-	const processResult = await runAgentBrowserProcess({
-		args: prepared.processArgs,
-		cwd: options.cwd,
-		env: prepared.executionPlan.managedSessionName ? { AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs } : undefined,
-		signal: options.signal,
-		stdin: prepared.processStdin,
-	});
+	try {
+		const processResult = await runAgentBrowserProcess({
+			args: prepared.processArgs,
+			cwd: options.cwd,
+			env: prepared.executionPlan.managedSessionName ? { AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs } : undefined,
+			signal: options.signal,
+			stdin: prepared.processStdin,
+		});
 
-	const missingBinaryResult = await buildMissingBinaryFailureResult({
-		compatibilityWorkaround: prepared.compatibilityWorkaround,
-		electronLaunch: prepared.electronLaunch,
-		executionPlan: prepared.executionPlan,
-		implicitSessionCloseTimeoutMs: options.implicitSessionCloseTimeoutMs,
-		managedSessionActive: options.state.managedSessionActive,
-		managedSessionName: options.state.managedSessionName,
-		processResult,
-		redactedArgs: prepared.redactedArgs,
-		redactedProcessArgs: prepared.redactedProcessArgs,
-		sessionMode: prepared.sessionMode,
-		sessionTabCorrection: prepared.sessionTabCorrection,
-	});
-	if (missingBinaryResult) {
-		return missingBinaryResult;
+		const missingBinaryResult = await buildMissingBinaryFailureResult({
+			compatibilityWorkaround: prepared.compatibilityWorkaround,
+			electronLaunch: prepared.electronLaunch,
+			executionPlan: prepared.executionPlan,
+			implicitSessionCloseTimeoutMs: options.implicitSessionCloseTimeoutMs,
+			managedSessionActive: options.state.managedSessionActive,
+			managedSessionName: options.state.managedSessionName,
+			processResult,
+			redactedArgs: prepared.redactedArgs,
+			redactedProcessArgs: prepared.redactedProcessArgs,
+			sessionMode: prepared.sessionMode,
+			sessionTabCorrection: prepared.sessionTabCorrection,
+		});
+		if (missingBinaryResult) {
+			return missingBinaryResult;
+		}
+
+		const output = await processBrowserOutput({ ...options, prepared, processResult });
+		applyBrowserRunStatePatch(options.state, output.statePatch);
+		return output.result;
+	} finally {
+		await cleanupClickDispatchProbe({ cwd: options.cwd, probe: prepared.clickDispatchProbe, sessionName: prepared.executionPlan.sessionName });
 	}
-
-	const output = await processBrowserOutput({ ...options, prepared, processResult });
-	applyBrowserRunStatePatch(options.state, output.statePatch);
-	return output.result;
 }

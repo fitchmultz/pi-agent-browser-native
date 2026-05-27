@@ -5,7 +5,7 @@
  */
 
 import type { SessionRefSnapshot } from "../../session-page-state.js";
-import type { BatchCommandStep } from "./types.js";
+import { parseValidBatchStepEntries } from "../batch-stdin.js";
 
 const FINAL_ACTION_PATTERN = /\b(?:finish|place\s+(?:the\s+)?order|submit\s+(?:the\s+)?order|complete\s+(?:the\s+)?order|confirm\s+(?:the\s+)?order|purchase|buy\s+now|pay\s+now|finali[sz]e|submit\s+payment|checkout\s+complete)\b/i;
 
@@ -123,17 +123,6 @@ function collectActionsFromCommand(command: string[], refSnapshot: SessionRefSna
 	return actions;
 }
 
-function parseBatchSteps(stdin: string | undefined): BatchCommandStep[] {
-	if (stdin === undefined) return [];
-	try {
-		const parsed = JSON.parse(stdin) as unknown;
-		if (!Array.isArray(parsed)) return [];
-		return parsed.filter((step): step is BatchCommandStep => Array.isArray(step) && step.length > 0 && step.every((token) => typeof token === "string"));
-	} catch {
-		return [];
-	}
-}
-
 export function collectBrowserFinalizingActions(options: {
 	commandTokens: string[];
 	refSnapshot?: SessionRefSnapshot;
@@ -141,7 +130,7 @@ export function collectBrowserFinalizingActions(options: {
 }): BrowserFinalizingAction[] {
 	const actions = collectActionsFromCommand(options.commandTokens, options.refSnapshot);
 	if (options.commandTokens[0] !== "batch") return actions;
-	for (const [index, step] of parseBatchSteps(options.stdin).entries()) {
+	for (const { index, step } of parseValidBatchStepEntries(options.stdin)) {
 		actions.push(...collectActionsFromCommand(step, options.refSnapshot, index));
 	}
 	return actions;
