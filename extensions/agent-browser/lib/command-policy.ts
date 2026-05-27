@@ -4,6 +4,9 @@
  * Scope: Pure argv-token policy; command discovery, subprocess execution, and presentation live in focused modules.
  */
 
+import type { ArgvDescriptor } from "./argv-descriptor.js";
+import { hasOnlyBooleanFlags, hasOnlyOptionFlags, isNonFlagToken, stripSessionlessShapeGlobalFlags } from "./argv-grammar.js";
+
 const SESSIONLESS_AUTH_SUBCOMMANDS = new Set(["save", "list", "show", "delete", "remove"]);
 const EMPTY_BOOLEAN_FLAGS = new Set<string>();
 const JSON_BOOLEAN_FLAGS = new Set(["--json"]);
@@ -15,37 +18,6 @@ const DOCTOR_BOOLEAN_FLAGS = new Set(["--fix", "--json", "--offline", "--quick"]
 const INSTALL_BOOLEAN_FLAGS = new Set(["--with-deps", "-d"]);
 const STATE_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "clear", "clean", "rename"]);
 const STATE_CLEAN_VALUE_FLAGS = new Set(["--older-than"]);
-
-function getFlagName(token: string): string {
-	return token.split("=", 1)[0] ?? token;
-}
-
-function isNonFlagToken(token: string | undefined): token is string {
-	return typeof token === "string" && !token.startsWith("-");
-}
-
-function hasOnlyBooleanFlags(tokens: readonly string[], allowedFlags: ReadonlySet<string>): boolean {
-	return tokens.every((token) => token.startsWith("-") && allowedFlags.has(getFlagName(token)));
-}
-
-function hasOnlyOptionFlags(
-	tokens: readonly string[],
-	allowedBooleanFlags: ReadonlySet<string>,
-	allowedValueFlags: ReadonlySet<string>,
-): boolean {
-	for (let index = 0; index < tokens.length; index += 1) {
-		const token = tokens[index];
-		if (!token.startsWith("-")) return false;
-		const flagName = getFlagName(token);
-		if (allowedBooleanFlags.has(flagName)) continue;
-		if (!allowedValueFlags.has(flagName)) return false;
-		if (token.includes("=")) continue;
-		const value = tokens[index + 1];
-		if (!isNonFlagToken(value)) return false;
-		index += 1;
-	}
-	return true;
-}
 
 function isSessionlessAuthCommand(commandTokens: readonly string[]): boolean {
 	const [, subcommand, target, ...rest] = commandTokens;
@@ -79,10 +51,6 @@ function isSessionlessStateCommand(commandTokens: readonly string[]): boolean {
 	return secondArg === undefined || (secondArg === "--all" && rest.length === 0);
 }
 
-function stripSessionlessShapeGlobalFlags(commandTokens: readonly string[]): string[] {
-	return commandTokens.filter((token) => token !== "--json");
-}
-
 function isSessionlessCommand(commandTokens: readonly string[]): boolean {
 	const normalizedTokens = stripSessionlessShapeGlobalFlags(commandTokens);
 	const [command, subcommand] = normalizedTokens;
@@ -98,6 +66,6 @@ function isSessionlessCommand(commandTokens: readonly string[]): boolean {
 	return false;
 }
 
-export function needsManagedSession(commandTokens: readonly string[]): boolean {
-	return !isSessionlessCommand(commandTokens);
+export function needsManagedSession(descriptor: ArgvDescriptor): boolean {
+	return !isSessionlessCommand(descriptor.commandTokens);
 }

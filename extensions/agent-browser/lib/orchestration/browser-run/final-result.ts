@@ -43,7 +43,7 @@ import {
 } from "../../session-page-state.js";
 import { extractExplicitSessionName, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
-import { formatClickDispatchDiagnosticText } from "./click-dispatch.js";
+import { buildClickDispatchNextActions, formatClickDispatchDiagnosticText } from "./click-dispatch.js";
 import {
 	buildComboboxFocusNextActions,
 	buildElectronBroadGetTextScopeNextActions,
@@ -320,6 +320,7 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	if (options.selectorTextVisibilityDiagnostics.length > 0) nextActionCollector.append(buildSelectorTextVisibilityNextActions({ diagnostics: options.selectorTextVisibilityDiagnostics, sessionName: options.executionPlan.sessionName }));
 	if (options.electronBroadGetTextScopeDiagnostics.length > 0) nextActionCollector.append(buildElectronBroadGetTextScopeNextActions({ diagnostics: options.electronBroadGetTextScopeDiagnostics, sessionName: options.executionPlan.sessionName }));
 	if (options.sourceLookup?.electronContext) nextActionCollector.appendUnique(buildSourceLookupElectronNextActions(options.sourceLookup));
+	if (options.clickDispatchDiagnostic) nextActionCollector.append(buildClickDispatchNextActions({ commandTokens: options.commandTokens, sessionName: options.executionPlan.sessionName }));
 	if (options.scrollNoopDiagnostic) nextActionCollector.append(buildScrollNoopNextActions(options.executionPlan.sessionName));
 	if (options.comboboxFocusDiagnostic) nextActionCollector.append(buildComboboxFocusNextActions(options.executionPlan.sessionName));
 	if (options.categoryDetails.failureCategory === "stale-ref" && options.redactedCompiledSemanticAction && isCompiledSemanticActionFindCommand(options.compiledSemanticAction)) nextActionCollector.append([{ id: "retry-semantic-action-after-stale-ref", params: { args: options.redactedCompiledSemanticAction.args }, reason: "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.", safety: "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.", tool: "agent_browser" as const }]);

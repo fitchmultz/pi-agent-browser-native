@@ -1,6 +1,6 @@
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveText } from "../../runtime.js";
-import type { SessionRefSnapshot } from "../../session-page-state.js";
+import { withOptionalSessionArgs, type AgentBrowserNextAction } from "../../results/next-actions.js";
 import { runSessionCommandData } from "./session-state.js";
 import type { ClickDispatchDiagnostic, ClickDispatchProbe, ClickDispatchProbeTarget } from "./types.js";
 
@@ -10,25 +10,6 @@ function parseClickRefId(selector: string): string | undefined {
 	const trimmed = selector.trim();
 	const candidate = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed.startsWith("ref=") ? trimmed.slice(4) : trimmed;
 	return /^e\d+$/.test(candidate) ? candidate : undefined;
-}
-
-function getSortedClickRefs(refs: Record<string, { name: string; role: string }> | undefined): Array<[string, { name: string; role: string }]> {
-	if (!refs) return [];
-	return Object.entries(refs).sort(([left], [right]) => Number(left.slice(1)) - Number(right.slice(1)));
-}
-
-function getClickDispatchRefTarget(refSnapshot: SessionRefSnapshot | undefined, refId: string): ClickDispatchProbeTarget | undefined {
-	const refs = getSortedClickRefs(refSnapshot?.refs);
-	const targetEntry = refs.find(([ref]) => ref === refId)?.[1];
-	if (!targetEntry) return undefined;
-	const nth = refs.filter(([, entry]) => entry.role === targetEntry.role && entry.name === targetEntry.name).findIndex(([ref]) => ref === refId);
-	return {
-		kind: "ref",
-		name: targetEntry.name,
-		nth: Math.max(0, nth),
-		ref: `@${refId}`,
-		role: targetEntry.role,
-	};
 }
 
 function getClickDispatchSelectorTarget(commandTokens: string[]): ClickDispatchProbeTarget | undefined {
@@ -44,55 +25,16 @@ function getEvalResultRecord(data: unknown): Record<string, unknown> | undefined
 	return isRecord(data) && isRecord(data.result) ? data.result : undefined;
 }
 
-function buildClickDispatchResolverScript(target: ClickDispatchProbeTarget): string {
-	return `
-const target = ${JSON.stringify(target)};
-const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
-const getImplicitRole = (element) => {
-  const explicitRole = normalize(element.getAttribute("role")).split(/\\s+/, 1)[0];
-  if (explicitRole) return explicitRole.toLowerCase();
-  const tagName = element.tagName.toLowerCase();
-  if (tagName === "button") return "button";
-  if (tagName === "a" && element.hasAttribute("href")) return "link";
-  if (tagName === "select") return "combobox";
-  if (tagName === "textarea") return "textbox";
-  if (tagName === "summary") return "button";
-  if (tagName === "input") {
-    const type = (element.getAttribute("type") || "text").toLowerCase();
-    if (["button", "submit", "reset", "image"].includes(type)) return "button";
-    if (type === "checkbox") return "checkbox";
-    if (type === "radio") return "radio";
-    if (type === "range") return "slider";
-    if (type === "number") return "spinbutton";
-    return "textbox";
-  }
-  return "";
-};
-const getLabelledByName = (element) => normalize((element.getAttribute("aria-labelledby") || "").split(/\\s+/).map((id) => document.getElementById(id)?.textContent || "").join(" "));
-const getAccessibleName = (element) => normalize(element.getAttribute("aria-label") || getLabelledByName(element) || element.getAttribute("alt") || element.getAttribute("title") || (element.tagName.toLowerCase() === "input" ? element.getAttribute("value") || element.value || element.getAttribute("placeholder") : "") || element.textContent || "");
-const describeElement = (element) => ({ role: getImplicitRole(element) || undefined, name: getAccessibleName(element) || undefined, tagName: element.tagName.toLowerCase() });
-const resolveTarget = () => {
-  if (target.kind === "selector") {
-    try { return document.querySelector(target.selector); } catch { return null; }
-  }
-  if (target.kind === "xpath") {
-    try { return document.evaluate(target.selector, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; } catch { return null; }
-  }
-  const role = normalize(target.role).toLowerCase();
-  const name = normalize(target.name);
-  const nth = Number.isInteger(target.nth) ? target.nth : 0;
-  const candidates = Array.from(document.querySelectorAll("button, a[href], input, select, textarea, summary, [role], [onclick], [tabindex]")).filter((element) => getImplicitRole(element) === role && getAccessibleName(element) === name);
-  return candidates[nth] || null;
-};`;
-}
-
 function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string {
+	const target = probe.target;
+	const resolveTarget = target.kind === "selector"
+		? `(() => { try { return document.querySelector(${JSON.stringify(target.selector)}); } catch { return null; } })()`
+		: `(() => { try { return document.evaluate(${JSON.stringify(target.selector)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; } catch { return null; } })()`;
 	return `(() => {
-${buildClickDispatchResolverScript(probe.target)}
 const marker = ${JSON.stringify(probe.marker)};
-const element = resolveTarget();
+const element = ${resolveTarget};
 if (!element) return { status: "target-not-found", marker };
-const state = { events: [], target: describeElement(element) };
+const state = { events: [], target: { tagName: element.tagName.toLowerCase() } };
 const eventTypes = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
 const listeners = eventTypes.map((type) => {
   const listener = (event) => {
@@ -111,52 +53,54 @@ return { status: "installed", marker, target: state.target };
 }
 
 function buildClickDispatchProbeCheckScript(probe: ClickDispatchProbe): string {
-	return `(() => new Promise((resolve) => {
-${buildClickDispatchResolverScript(probe.target)}
+	return `(() => {
 const marker = ${JSON.stringify(probe.marker)};
 const state = window[marker];
 const finish = (payload) => {
   if (state && typeof state.cleanup === "function") state.cleanup();
   try { delete window[marker]; } catch {}
-  resolve(payload);
+  return payload;
 };
 if (!state || !Array.isArray(state.events)) return finish({ status: "probe-missing", nativeEventCount: 0 });
 const nativeEventCount = state.events.filter((event) => event && event.isTrusted === true && event.targetMatched === true).length;
-if (nativeEventCount > 0) return finish({ status: "native-event-observed", nativeEventCount });
-const element = resolveTarget();
-if (!element) return finish({ status: "target-missing-after-native", nativeEventCount });
-const beforeFallbackEventCount = state.events.length;
-try {
-  element.click();
-} catch (error) {
-  return finish({ status: "fallback-failed", nativeEventCount, error: error instanceof Error ? error.message : String(error), target: describeElement(element) });
-}
-setTimeout(() => {
-  const fallbackEventCount = state.events.slice(beforeFallbackEventCount).filter((event) => event && event.targetMatched === true).length;
-  finish({ status: "fallback-applied", nativeEventCount, fallbackEventCount, target: describeElement(element) });
-}, 50);
-}))()`;
+if (nativeEventCount > 0) return finish({ status: "native-event-observed", nativeEventCount, target: state.target });
+return finish({ status: "no-native-event-observed", nativeEventCount, target: state.target });
+})()`;
 }
 
 function redactClickDispatchTarget(target: ClickDispatchProbeTarget): ClickDispatchProbeTarget {
-	return {
-		...target,
-		...(target.name ? { name: redactSensitiveText(target.name) } : {}),
-		...(target.role ? { role: redactSensitiveText(target.role) } : {}),
-		...(target.selector ? { selector: redactSensitiveText(target.selector) } : {}),
-	};
+	return target.kind === "selector" || target.kind === "xpath"
+		? { ...target, selector: redactSensitiveText(target.selector) }
+		: target;
 }
 
 export function formatClickDispatchDiagnosticText(diagnostic: ClickDispatchDiagnostic): string {
-	return `Click dispatch fallback: ${diagnostic.summary}`;
+	return `Click dispatch diagnostic: ${diagnostic.summary}`;
 }
 
-export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchProbe | undefined> {
+export function buildClickDispatchNextActions(options: { commandTokens: string[]; sessionName?: string }): AgentBrowserNextAction[] {
+	const retryArgs = options.commandTokens[0] === "click" ? options.commandTokens : ["click", ...options.commandTokens];
+	return [
+		{
+			id: "inspect-click-dispatch-miss",
+			params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) },
+			reason: "Refresh interactive refs and verify the intended click target before retrying upstream click.",
+			safety: "Read-only snapshot; the wrapper does not replay clicks in-page when upstream reports success without DOM events.",
+			tool: "agent_browser",
+		},
+		{
+			id: "retry-click-after-dispatch-miss",
+			params: { args: withOptionalSessionArgs(options.sessionName, retryArgs) },
+			reason: "Retry the same upstream click after confirming the target is visible; do not assume the prior success mutated the page.",
+			safety: "Only retry when the target is still intended; use page-change evidence or a fresh snapshot before continuing the workflow.",
+			tool: "agent_browser",
+		},
+	];
+}
+
+export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchProbe | undefined> {
 	if (!options.sessionName || options.commandTokens[0] !== "click" || options.commandTokens.includes("--new-tab")) return undefined;
-	const selector = options.commandTokens[1];
-	if (!selector || selector.startsWith("-")) return undefined;
-	const refId = parseClickRefId(selector);
-	const target = refId ? getClickDispatchRefTarget(options.refSnapshot, refId) : getClickDispatchSelectorTarget(options.commandTokens);
+	const target = getClickDispatchSelectorTarget(options.commandTokens);
 	if (!target) return undefined;
 	const probe: ClickDispatchProbe = { marker: `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`, target };
 	const installData = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeInstallScript(probe) });
@@ -170,16 +114,10 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; pro
 	const result = getEvalResultRecord(data);
 	if (!result) return undefined;
 	const status = typeof result.status === "string" ? result.status : undefined;
-	if (status !== "fallback-applied" && status !== "fallback-failed") return undefined;
+	if (status !== "no-native-event-observed") return undefined;
 	const nativeEventCount = typeof result.nativeEventCount === "number" ? result.nativeEventCount : 0;
-	const fallbackEventCount = typeof result.fallbackEventCount === "number" ? result.fallbackEventCount : undefined;
-	const error = typeof result.error === "string" ? redactSensitiveText(result.error) : undefined;
-	const summary = status === "fallback-applied"
-		? "Native click reported success but no DOM event reached the selected element; the wrapper replayed the same element activation in-page."
-		: `Native click reported success but no DOM event reached the selected element, and the wrapper could not replay the activation${error ? `: ${error}` : "."}`;
+	const summary = "Upstream click reported success but no trusted DOM event reached the selected element. Gather evidence with snapshot or page-change checks, then retry upstream click or report the workflow issue; the wrapper does not replay clicks in-page.";
 	return {
-		error,
-		fallbackEventCount,
 		nativeEventCount,
 		reason: "native-click-produced-no-target-dom-event",
 		status,

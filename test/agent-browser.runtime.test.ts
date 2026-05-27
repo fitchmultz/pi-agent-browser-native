@@ -1125,6 +1125,20 @@ Save a short screen recording here if recording is available: /tmp/pi-smoke/run.
 	]);
 });
 
+test("buildPromptPolicy detects relative requested artifact paths", () => {
+	const policy = buildPromptPolicy(`Save a screenshot here: ./release-smoke.png
+Save another screenshot here: ../artifacts/checkout.webp
+Save a screenshot here: final-state.jpg
+Save a short screen recording here if recording is available: recordings/run.webm`);
+
+	assert.deepEqual(policy.requestedArtifacts, [
+		{ kind: "screenshot", path: "./release-smoke.png", required: true },
+		{ kind: "screenshot", path: "../artifacts/checkout.webp", required: true },
+		{ kind: "screenshot", path: "final-state.jpg", required: true },
+		{ kind: "recording", path: "recordings/run.webm", required: false },
+	]);
+});
+
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	assert.deepEqual(redactInvocationArgs(["--headers", '{"Authorization":"Bearer demo"}', "open", "https://user:pass@example.com/path?token=abc&ok=1#access_token=xyz"]), [
 		"--headers",

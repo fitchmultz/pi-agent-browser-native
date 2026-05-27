@@ -4,13 +4,12 @@ import { delimiter, isAbsolute, join, resolve } from "node:path";
 
 import { isCloseCommand } from "../../command-taxonomy.js";
 import type { SessionArtifactManifest } from "../../results/contracts.js";
-import type { PromptPolicy, PromptRequestedArtifact } from "../../runtime.js";
+import type { PromptPolicy, PromptRequestedArtifact } from "../../prompt-policy.js";
 import type { SessionRefSnapshot } from "../../session-page-state.js";
-import type { BatchCommandStep } from "./types.js";
-
-const FINAL_ACTION_PATTERN = /\b(?:finish|place\s+(?:the\s+)?order|submit\s+(?:the\s+)?order|complete\s+(?:the\s+)?order|confirm\s+(?:the\s+)?order|purchase|buy\s+now|pay\s+now|finali[sz]e|submit\s+payment|checkout\s+complete)\b/i;
+import { findBlockedFinalizingAction, STOP_BOUNDARY_GUARD_SCOPE, type BrowserFinalizingAction } from "./browser-action-model.js";
 
 export interface StopBoundaryViolation {
+	action: BrowserFinalizingAction;
 	command: string[];
 	message: string;
 	reason: "explicit-user-stop-boundary";
@@ -24,94 +23,39 @@ export interface RequestedArtifactCloseViolation {
 	reason: "requested-artifacts-missing-before-close";
 }
 
-function normalizeTargetText(value: string): string {
-	return value
-		.replace(/[_-]+/g, " ")
-		.replace(/[\[\]{}()#.'\"=:/]+/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
-}
-
-function matchesFinalActionTarget(value: string | undefined): boolean {
-	return value !== undefined && FINAL_ACTION_PATTERN.test(normalizeTargetText(value));
-}
-
-function parseRefId(value: string | undefined): string | undefined {
-	if (!value) return undefined;
-	const trimmed = value.trim();
-	const candidate = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed.startsWith("ref=") ? trimmed.slice(4) : trimmed;
-	return /^e\d+$/.test(candidate) ? candidate : undefined;
-}
-
-function getRefTargetText(refSnapshot: SessionRefSnapshot | undefined, refId: string | undefined): string | undefined {
-	if (!refId) return undefined;
-	const ref = refSnapshot?.refs?.[refId];
-	return ref ? [ref.role, ref.name].filter(Boolean).join(" ") : undefined;
-}
-
-function getFlagValue(tokens: string[], flag: string): string | undefined {
-	for (const [index, token] of tokens.entries()) {
-		if (token === flag) return tokens[index + 1];
-		if (token.startsWith(`${flag}=`)) return token.slice(flag.length + 1);
-	}
-	return undefined;
-}
-
-function getDirectClickTargetText(command: string[], refSnapshot: SessionRefSnapshot | undefined): string | undefined {
-	const target = command[1];
-	return getRefTargetText(refSnapshot, parseRefId(target)) ?? target;
-}
-
-function getFindClickTargetText(command: string[]): string | undefined {
-	if (command[0] !== "find") return undefined;
-	const actionIndex = command.findIndex((token, index) => index >= 3 && ["click", "dblclick", "tap"].includes(token));
-	if (actionIndex === -1) return undefined;
-	return getFlagValue(command, "--name") ?? command[2];
-}
-
-function getBlockedFinalActionTarget(command: string[], refSnapshot: SessionRefSnapshot | undefined): string | undefined {
-	const directClickCommands = new Set(["click", "dblclick", "tap"]);
-	const target = directClickCommands.has(command[0])
-		? getDirectClickTargetText(command, refSnapshot)
-		: getFindClickTargetText(command);
-	return matchesFinalActionTarget(target) ? target : undefined;
-}
-
-function parseBatchSteps(stdin: string | undefined): BatchCommandStep[] {
-	if (stdin === undefined) return [];
-	try {
-		const parsed = JSON.parse(stdin) as unknown;
-		if (!Array.isArray(parsed)) return [];
-		return parsed.filter((step): step is BatchCommandStep => Array.isArray(step) && step.length > 0 && step.every((token) => typeof token === "string"));
-	} catch {
-		return [];
-	}
+function formatStopBoundaryActionPhrase(action: BrowserFinalizingAction): string {
+	if (action.kind === "keyboard-submit") return "keyboard submit (Enter/Return)";
+	return "click-like action";
 }
 
 export function findStopBoundaryViolation(options: { commandTokens: string[]; promptPolicy: PromptPolicy; refSnapshot?: SessionRefSnapshot; stdin?: string }): StopBoundaryViolation | undefined {
 	if (!options.promptPolicy.stopBoundary) return undefined;
-	const target = getBlockedFinalActionTarget(options.commandTokens, options.refSnapshot);
-	if (target) {
+	const blocked = findBlockedFinalizingAction({
+		commandTokens: options.commandTokens,
+		refSnapshot: options.refSnapshot,
+		stdin: options.stdin,
+	});
+	if (!blocked) return undefined;
+	const target = blocked.targetLabel;
+	const actionPhrase = formatStopBoundaryActionPhrase(blocked);
+	const scopeNote = `Best-effort guard scope covers ${STOP_BOUNDARY_GUARD_SCOPE.covered.join(", ")}; it does not block ${STOP_BOUNDARY_GUARD_SCOPE.excluded.join(", ")}.`;
+	if (blocked.stepIndex === undefined) {
 		return {
-			command: options.commandTokens,
-			message: `Blocked likely final submit/order action (${target}) because the latest user prompt set an explicit stop boundary. Gather evidence on the current page instead of clicking the final action.`,
+			action: blocked,
+			command: blocked.command,
+			message: `Blocked likely final submit/order ${actionPhrase} (${target}) because the latest user prompt set an explicit stop boundary. Gather evidence on the current page instead of activating the final action. ${scopeNote}`,
 			reason: "explicit-user-stop-boundary",
 			target,
 		};
 	}
-	if (options.commandTokens[0] !== "batch") return undefined;
-	for (const [index, step] of parseBatchSteps(options.stdin).entries()) {
-		const stepTarget = getBlockedFinalActionTarget(step, options.refSnapshot);
-		if (!stepTarget) continue;
-		return {
-			command: step,
-			message: `Blocked likely final submit/order action in batch step ${index + 1} (${stepTarget}) because the latest user prompt set an explicit stop boundary. Gather evidence on the current page instead of clicking the final action.`,
-			reason: "explicit-user-stop-boundary",
-			stepIndex: index,
-			target: stepTarget,
-		};
-	}
-	return undefined;
+	return {
+		action: blocked,
+		command: blocked.command,
+		message: `Blocked likely final submit/order ${actionPhrase} in batch step ${blocked.stepIndex + 1} (${target}) because the latest user prompt set an explicit stop boundary. Gather evidence on the current page instead of activating the final action. ${scopeNote}`,
+		reason: "explicit-user-stop-boundary",
+		stepIndex: blocked.stepIndex,
+		target,
+	};
 }
 
 function resolveArtifactPath(cwd: string, path: string): string {

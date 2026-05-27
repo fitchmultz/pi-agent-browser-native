@@ -11,8 +11,22 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
+import {
+	extractCommandTokens,
+	findCommandStartIndex,
+	parseArgvDescriptor,
+	parseCommandInfo,
+	type CommandInfo,
+} from "./argv-descriptor.js";
+import {
+	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
+	PREVALIDATED_VALUE_FLAGS,
+} from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
+
+export type { CommandInfo } from "./argv-descriptor.js";
+export { extractCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo } from "./argv-descriptor.js";
 
 import { isRecord } from "./parsing.js";
 
@@ -91,13 +105,6 @@ const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDL
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
 const DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
-const LEGACY_BASH_ALLOW_PATTERNS = [
-	/\b(?:bash-oriented workflow|bash workflow)\b/i,
-	/\b(?:use|via|through|with)\s+bash\b/i,
-	/\bnpx\s+agent-browser\b/i,
-	/\bagent-browser\s+--(?:help|version)\b/i,
-	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
-];
 const BROWSER_PROMPT_PATTERNS = [
 	/\b(?:agent[_ -]?browser|browser automation|eval\s+--stdin|screenshot|snapshot|tab\s+list)\b/i,
 	/\b(?:react\s+(?:tree|inspect|renders|suspense)|web\s+vitals|core\s+web\s+vitals|pushstate)\b/i,
@@ -107,96 +114,11 @@ const BROWSER_PROMPT_PATTERNS = [
 ];
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
-const GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE = new Set(["--args"]);
-const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES = new Set([
-	"--allow-file-access",
-	"--annotate",
-	"--auto-connect",
-	"--confirm-interactive",
-	"--content-boundaries",
-	"--debug",
-	"--headed",
-	"--ignore-https-errors",
-	"--json",
-	"--no-auto-dialog",
-	"--quiet",
-	"-q",
-	"--verbose",
-	"-v",
-]);
 const SENSITIVE_QUERY_PARAM_PATTERN =
 	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth|authorization|bearer|client(?:_|-)?secret|code|cookie|id(?:_|-)?token|key|pass(?:word)?|refresh(?:_|-)?token|secret|sentry(?:_|-)?key|session(?:_|-)?id|sig(?:nature)?|token|write(?:_|-)?key)$/i;
 const SENSITIVE_FIELD_NAME_PATTERN =
 	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|sentry(?:_|-)?key|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|write(?:_|-)?key|x(?:_|-)?api(?:_|-)?key)$/i;
 
-const GLOBAL_VALUE_FLAGS = [
-	"--session",
-	"--cdp",
-	"--config",
-	"--profile",
-	"--session-name",
-	"--proxy",
-	"--proxy-bypass",
-	"--headers",
-	"--executable-path",
-	"--extension",
-	"--init-script",
-	"--enable",
-	"--provider",
-	"-p",
-	"--engine",
-	"--state",
-	"--download-path",
-	"--screenshot-dir",
-	"--screenshot-format",
-	"--screenshot-quality",
-	"--color-scheme",
-	"--device",
-	"--args",
-	"--user-agent",
-	"--allowed-domains",
-	"--action-policy",
-	"--confirm-actions",
-	"--max-output",
-	"--model",
-	"--idle-timeout",
-] as const;
-const COMMAND_VALUE_FLAGS = [
-	"--baseline",
-	"--body",
-	"--categories",
-	"--curl",
-	"--depth",
-	"-d",
-	"--domain",
-	"--expires",
-	"--filter",
-	"--fn",
-	"--label",
-	"--load",
-	"--method",
-	"--name",
-	"--older-than",
-	"--output",
-	"--path",
-	"--port",
-	"--resource-type",
-	"--resource-types",
-	"--sameSite",
-	"--selector",
-	"-s",
-	"--status",
-	"--text",
-	"--threshold",
-	"--timeout",
-	"--type",
-	"--url",
-	"--username",
-	"--password",
-	"--wait-until",
-] as const;
-const VALUE_FLAGS: Set<string> = new Set([...GLOBAL_VALUE_FLAGS, ...COMMAND_VALUE_FLAGS]);
-const PREVALIDATED_VALUE_FLAGS: Set<string> = new Set(GLOBAL_VALUE_FLAGS);
 const DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM: Partial<Record<NodeJS.Platform, string>> = {
 	darwin: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 	linux: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -208,11 +130,6 @@ const SHELL_OPERATOR_TOKENS = new Set(["&&", "||", "|", ";", ">", ">>", "<"]);
 const MAX_PROJECT_SLUG_LENGTH = 24;
 const SESSION_NAME_CWD_HASH_LENGTH = 8;
 const SESSION_NAME_SESSION_ID_LENGTH = 12;
-
-export interface CommandInfo {
-	command?: string;
-	subcommand?: string;
-}
 
 export type SessionMode = "auto" | "fresh";
 
@@ -266,21 +183,8 @@ export interface RestoredManagedSessionState extends ManagedSessionState {
 	freshSessionOrdinal: number;
 }
 
-export interface PromptRequestedArtifact {
-	kind: "recording" | "screenshot";
-	path: string;
-	required: boolean;
-}
-
-export interface PromptStopBoundary {
-	reason: "avoid-final-submit-action";
-}
-
-export interface PromptPolicy {
-	allowLegacyAgentBrowserBash: boolean;
-	requestedArtifacts: PromptRequestedArtifact[];
-	stopBoundary?: PromptStopBoundary;
-}
+export type { PromptPolicy, PromptRequestedArtifact, PromptStopBoundary } from "./prompt-policy.js";
+export { buildPromptPolicy, getLatestUserPrompt } from "./prompt-policy.js";
 
 function isStringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -971,83 +875,6 @@ export function hasLaunchScopedTabCorrectionFlag(args: string[]): boolean {
 	});
 }
 
-const STOP_BOUNDARY_PATTERNS = [
-	/\b(?:do\s+not|don't|dont|never)\s+(?:place|submit|complete|finish|finali[sz]e|confirm)\s+(?:the\s+)?(?:order|purchase|checkout|payment)\b/i,
-	/\b(?:do\s+not|don't|dont|never)\s+click\s+(?:the\s+)?(?:finish|submit|place\s+order|complete\s+order|confirm\s+order|buy\s+now|pay\s+now)\b/i,
-	/\bstop\s+(?:on|at|before)\b[^.\n]*(?:checkout\s+overview|finish|place\s+(?:the\s+)?order|submit\s+(?:the\s+)?order|complete\s+(?:the\s+)?order|purchase|payment)\b/i,
-	/\bwithout\s+(?:placing|submitting|completing|finishing|confirming)\s+(?:the\s+)?(?:order|purchase|payment)\b/i,
-];
-
-const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|\s)((?:\/[\w .@%+=:,~/-]+|[A-Za-z]:[\\/][\w .@%+=:,~\\/-]+?)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?:[\s.,;)]|$)/gi;
-
-function buildPromptStopBoundary(prompt: string): PromptStopBoundary | undefined {
-	return STOP_BOUNDARY_PATTERNS.some((pattern) => pattern.test(prompt)) ? { reason: "avoid-final-submit-action" } : undefined;
-}
-
-function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifact[] {
-	const artifacts: PromptRequestedArtifact[] = [];
-	const seen = new Set<string>();
-	for (const line of prompt.split(/\r?\n/)) {
-		const lowerLine = line.toLowerCase();
-		const kind = lowerLine.includes("screenshot")
-			? "screenshot"
-			: /\b(?:screen\s+recording|recording|webm|video)\b/.test(lowerLine)
-				? "recording"
-				: undefined;
-		if (!kind) continue;
-		PROMPT_ARTIFACT_PATH_PATTERN.lastIndex = 0;
-		for (const match of line.matchAll(PROMPT_ARTIFACT_PATH_PATTERN)) {
-			const path = match[1]?.trim();
-			if (!path) continue;
-			const key = `${kind}:${path}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			artifacts.push({
-				kind,
-				path,
-				required: kind === "screenshot" || !/\b(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available\b/i.test(line),
-			});
-		}
-	}
-	return artifacts;
-}
-
-export function buildPromptPolicy(prompt: string): PromptPolicy {
-	return {
-		allowLegacyAgentBrowserBash: LEGACY_BASH_ALLOW_PATTERNS.some((pattern) => pattern.test(prompt)),
-		requestedArtifacts: extractPromptRequestedArtifacts(prompt),
-		stopBoundary: buildPromptStopBoundary(prompt),
-	};
-}
-
-function getMessageText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-
-	return content
-		.map((item) => {
-			if (typeof item !== "object" || item === null) return "";
-			return item.type === "text" && typeof item.text === "string" ? item.text : "";
-		})
-		.filter((text) => text.length > 0)
-		.join("\n");
-}
-
-export function getLatestUserPrompt(branch: unknown[]): string {
-	for (let index = branch.length - 1; index >= 0; index -= 1) {
-		const entry = branch[index];
-		if (typeof entry !== "object" || entry === null || !("type" in entry) || entry.type !== "message") {
-			continue;
-		}
-		const message = "message" in entry ? entry.message : undefined;
-		if (typeof message !== "object" || message === null || !("role" in message) || message.role !== "user") {
-			continue;
-		}
-		return getMessageText("content" in message ? message.content : undefined);
-	}
-	return "";
-}
-
 export function buildExecutionPlan(
 	args: string[],
 	options: {
@@ -1060,9 +887,10 @@ export function buildExecutionPlan(
 	const invalidValueFlag = getInvalidValueFlagDetails(args);
 	const startupScopedFlags = getStartupScopedFlags(args);
 	const plainTextInspection = isPlainTextInspectionArgs(args);
-	const commandTokens = extractCommandTokens(args);
-	const commandInfo = parseCommandInfo(args);
-	const commandNeedsManagedSession = !plainTextInspection && needsManagedSession(commandTokens);
+	const argvDescriptor = parseArgvDescriptor(args);
+	const commandTokens = argvDescriptor.commandTokens;
+	const commandInfo = argvDescriptor.commandInfo;
+	const commandNeedsManagedSession = !plainTextInspection && needsManagedSession(argvDescriptor);
 	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
 	if (invalidValueFlag) {
 		return {
@@ -1183,60 +1011,4 @@ export function chooseOpenResultTabCorrection(options: {
 			targetUrl: normalizedTargetUrl,
 		}
 		: undefined;
-}
-
-function getOpenCommandTarget(commandTokens: string[]): string | undefined {
-	for (let index = 1; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
-		if (token === "--init-script" || token === "--enable") {
-			index += 1;
-			continue;
-		}
-		if (token.startsWith("--init-script=") || token.startsWith("--enable=")) {
-			continue;
-		}
-		if (token.startsWith("-")) {
-			continue;
-		}
-		return token;
-	}
-	return undefined;
-}
-
-export function parseCommandInfo(args: string[]): CommandInfo {
-	const commandTokens = extractCommandTokens(args);
-	const command = commandTokens[0];
-	return {
-		command,
-		subcommand: isOpenNavigationCommand(command) ? getOpenCommandTarget(commandTokens) : commandTokens[1],
-	};
-}
-
-function findCommandStartIndex(args: string[]): number | undefined {
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
-		if (token.startsWith("--session=")) {
-			continue;
-		}
-		if (token.startsWith("-")) {
-			const normalizedToken = token.split("=", 1)[0] ?? token;
-			if (VALUE_FLAGS.has(normalizedToken) && !token.includes("=")) {
-				index += 1;
-			} else if (
-				GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken) &&
-				!token.includes("=") &&
-				isBooleanLiteral(args[index + 1])
-			) {
-				index += 1;
-			}
-			continue;
-		}
-		return index;
-	}
-	return undefined;
-}
-
-export function extractCommandTokens(args: string[]): string[] {
-	const commandStartIndex = findCommandStartIndex(args);
-	return commandStartIndex === undefined ? [] : args.slice(commandStartIndex);
 }

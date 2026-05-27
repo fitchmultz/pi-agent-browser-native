@@ -122,12 +122,8 @@ export interface OverlayBlockerDiagnostic {
 }
 
 export interface ClickDispatchProbeTarget {
-	kind: "ref" | "selector" | "xpath";
-	name?: string;
-	nth?: number;
-	ref?: string;
-	role?: string;
-	selector?: string;
+	kind: "selector" | "xpath";
+	selector: string;
 }
 
 export interface ClickDispatchProbe {
@@ -136,11 +132,9 @@ export interface ClickDispatchProbe {
 }
 
 export interface ClickDispatchDiagnostic {
-	error?: string;
-	fallbackEventCount?: number;
 	nativeEventCount: number;
 	reason: "native-click-produced-no-target-dom-event";
-	status: "fallback-applied" | "fallback-failed";
+	status: "no-native-event-observed";
 	summary: string;
 	target: ClickDispatchProbeTarget;
 }
@@ -444,6 +438,7 @@ export interface FinalResultInput {
 	artifactCleanup?: ArtifactCleanupGuidance;
 	categoryDetails: AgentBrowserResultCategoryDetails;
 	clickDispatchDiagnostic?: ClickDispatchDiagnostic;
+	commandTokens: string[];
 	comboboxFocusDiagnostic?: ComboboxFocusDiagnostic;
 	compiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
 	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
