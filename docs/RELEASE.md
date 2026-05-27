@@ -49,7 +49,7 @@ Every release also requires interactive `tmux`-driven Pi dogfood with the native
 
 When reviewing saved session JSONL after a failed smoke or a `qa` preset that reclassified an upstream-successful batch, expect `agent_browser` tool rows to carry `isError: true` whenever `details.resultCategory` is `failure`. For normal prose output, model-visible text should end with a `Pi tool isError: true` category line; for caller-requested `--json` output, the hook preserves parseable JSON and only patches `isError`. The extension applies that patch on the `tool_result` path so Pi’s transcript matches the wrapper contract ([`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)). Preserve a normal Pi session directory for those checks; avoiding `--no-session` keeps this evidence intact ([`AGENTS.md`](../AGENTS.md) preferred validation workflow).
 
-The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload`, full relaunch with the same exact Pi 0.76 `--session-id`, and branch-backed state rehydration:
+The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload`, full relaunch with the same exact Pi 0.76 `--session-id`, managed-session continuity, persisted artifacts, and Pi failure-patch behavior. Branch-backed `session_tree` rehydration and cleanup ownership are validated by focused extension harness tests:
 
 ```bash
 npm run verify -- lifecycle

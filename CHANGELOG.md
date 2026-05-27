@@ -6,17 +6,18 @@
 
 - Cut the local Pi development baseline to `@earendil-works/*` `0.76.0` and refreshed the npm lockfile with npm 11.14.0.
 - Updated the configured-source lifecycle harness for Pi 0.76 exact session IDs: launches and relaunches now use `--session-id piab-lifecycle-<pid>` instead of driving `/resume`, assert the JSONL session header id, and include real Pi `tool_result` failure-patch evidence for QA reclassification.
-- Rehydrate branch-backed browser state on Pi `session_tree` events as well as `session_start`, so branch switches restore the current managed session, page-scoped refs, artifact manifest, and Electron launch records from the active transcript branch.
+- Rehydrate branch-visible browser state on Pi `session_tree` events as well as `session_start`, while keeping runtime-owned managed-session and Electron cleanup registries separate so branch switches do not orphan resources owned by the current Pi process.
 - Tightened the public TypeBox schema to reject unsupported top-level fields and unsupported fields inside `semanticAction`, `sourceLookup`, `networkSourceLookup`, and constrained `job` steps.
 
 ### Added
 
-- Model-free real Pi pipeline coverage for `buildAgentBrowserToolResultPatch`, proving prose QA failures become `isError: true` in persisted tool results and caller-requested `--json` failures keep parseable JSON while still patching `isError`.
-- Regression tests for `session_tree` branch rehydration of page-scoped refs, managed browser sessions, and artifact manifests.
+- Model-free real Pi pipeline coverage for `buildAgentBrowserToolResultPatch`, proving prose QA failures become `isError: true` in persisted JSONL tool results and caller-requested `--json` failures keep parseable JSON while still patching `isError`.
+- Model-free real Pi pipeline coverage for strict public-schema rejection before upstream spawn.
+- Regression tests for `session_tree` branch rehydration of page-scoped refs, managed browser sessions, artifact manifests, Electron cleanup ownership, multi-branch managed-session cleanup, and monotonic fresh-session allocation.
 
 ### Fixed
 
-- Stabilized env-patched fake-upstream tests by serializing process environment patches and removing a wall-clock assertion from the inherited-stdio subprocess regression.
+- Stabilized env-patched fake-upstream tests by serializing process environment patches and tightening the inherited-stdio subprocess regression to assert quick post-exit fallback behavior without waiting for the process timeout.
 
 ## 0.2.34 - 2026-05-24
 

@@ -78,14 +78,14 @@ The published package should load from the `pi` manifest in `package.json`.
 Local checkout validation has two intentional modes:
 
 - **Quick isolated mode:** use explicit CLI loading such as `pi --no-extensions -e .` from the repository root. This bypasses Pi settings and extension discovery, avoids duplicate `agent_browser` registrations when another source is installed globally, and is the right mode for checkout smoke tests.
-- **Configured-source lifecycle mode:** configure exactly one active checkout or package source in Pi settings and launch plain `pi`. This is the right mode for validating `/reload`, exact-session relaunch, and branch-backed session rehydration because those lifecycle checks exercise discovered/configured resources. Before shipping, maintainers also run `npm run verify -- lifecycle` (same semantics under automation, using Pi 0.76 `--session-id` to reopen the exact JSONL session) plus the live-site checks in [`RELEASE.md`](RELEASE.md#pre-release-checks); `npm publish` enforces `npm run verify -- release` via `prepublishOnly` unless scripts are skipped.
+- **Configured-source lifecycle mode:** configure exactly one active checkout or package source in Pi settings and launch plain `pi`. This is the right mode for validating `/reload` and exact-session relaunch because those lifecycle checks exercise discovered/configured resources. Focused extension harness tests validate branch-backed `session_tree` rehydration and cleanup ownership. Before shipping, maintainers also run `npm run verify -- lifecycle` (same semantics under automation, using Pi 0.76 `--session-id` to reopen the exact JSONL session) plus the live-site checks in [`RELEASE.md`](RELEASE.md#pre-release-checks); `npm publish` enforces `npm run verify -- release` via `prepublishOnly` unless scripts are skipped.
 
 The repo should not add a repo-local `.pi/extensions/` autoload shim as the documented checkout path.
 
 Why:
 - avoids duplicate `agent_browser` registrations when the package is also installed globally
 - keeps the product contract centered on the package manifest instead of repo-local autoload wiring
-- keeps reload, exact-session relaunch, and session-tree state validation tied to Pi's configured-source lifecycle instead of an isolated quick-test path
+- keeps reload and exact-session relaunch validation tied to Pi's configured-source lifecycle instead of an isolated quick-test path, while `session_tree` state changes stay covered by focused extension harness tests
 - keeps the published tarball focused on the package manifest, extension code, canonical docs, and license
 
 The published package should exclude agent-only and superseded repo materials such as `AGENTS.md`, `docs/v1-tool-contract.md`, `docs/native-integration-design.md`, and other internal planning notes.
@@ -121,7 +121,8 @@ Practical policy:
 - set an idle timeout on extension-managed sessions as a backstop for abnormal exits or cleanup failures
 - clean up process-private temp spill artifacts on shutdown, but keep persisted-session snapshot spill files in a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` stays usable after reload/resume without unbounded growth
 - keep explicit screenshots, downloads, PDFs, traces, HAR captures, and recordings written to caller-chosen paths on disk after a successful upstream close command (`close`, `quit`, or `exit`); when the bounded `details.artifactManifest` has entries, successful close commands also surface `details.artifactCleanup` and an `Artifact lifecycle` note (including up to ten distinct `explicit-path` manifest paths when present) so operators remove files with normal host tools—the native tool does not delete arbitrary user paths (`extensions/agent-browser/lib/orchestration/browser-run/diagnostics.ts`, `getArtifactCleanupGuidance`); contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details), checklist `RQ-0079` in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
-- reconstruct the current extension-managed session, page-scoped refs, artifact manifest, and Electron launch records from the active transcript branch on `session_start` and `session_tree` so later default calls keep following the active managed browser after resume/reload or branch switching
+- reconstruct the current branch-visible extension-managed session, page-scoped refs, artifact manifest, and Electron launch records from the active transcript branch on `session_start` and `session_tree` so later default calls keep following the active managed browser after resume/reload or branch switching
+- keep process-owned cleanup registries for extension-managed sessions and wrapper-launched Electron records separate from the current branch-visible view; `session_tree` can replace the visible branch state, but it must not drop resources the current Pi process still owns and must keep fresh-session allocation monotonic
 - if an unnamed fresh launch replaces an active extension-managed session, best-effort close the old managed session after the switch succeeds
 - leave explicit caller-provided `--session` choices alone unless the caller closes them explicitly
 - after profiled `open` / `goto` / `navigate` calls, verify the active tab still matches the returned page URL and best-effort switch back when restored profile tabs steal focus

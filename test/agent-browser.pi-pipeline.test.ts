@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -28,6 +28,7 @@ import {
 
 import agentBrowserExtension from "../extensions/agent-browser/index.js";
 import {
+	readInvocationLog,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
@@ -36,6 +37,13 @@ const PIPELINE_PROVIDER = "piab-pipeline";
 const PIPELINE_MODEL_ID = "tool-pipeline";
 
 type PipelineToolResult = ToolResultMessage<unknown> & { toolName: "agent_browser" };
+
+type PipelinePromptResult = {
+	inMemoryResult: PipelineToolResult;
+	invocations: Array<{ args: string[] }>;
+	persistedResult: PipelineToolResult;
+	sessionFile: string;
+};
 
 function isAgentBrowserToolResult(message: unknown): message is PipelineToolResult {
 	return typeof message === "object" && message !== null &&
@@ -110,6 +118,36 @@ function createToolCallingStream(toolArguments: Record<string, unknown>) {
 	};
 }
 
+function isSessionMessageEntry(value: unknown): value is { message?: unknown; type?: string } {
+	return typeof value === "object" && value !== null && (value as { type?: unknown }).type === "message";
+}
+
+async function listFilesRecursive(directory: string): Promise<string[]> {
+	const entries = await readdir(directory, { withFileTypes: true });
+	const files: string[] = [];
+	for (const entry of entries) {
+		const path = join(directory, entry.name);
+		if (entry.isDirectory()) files.push(...await listFilesRecursive(path));
+		else files.push(path);
+	}
+	return files;
+}
+
+async function readPersistedAgentBrowserResult(sessionDir: string): Promise<{ result: PipelineToolResult; sessionFile: string }> {
+	const sessionFiles = (await listFilesRecursive(sessionDir)).filter((path) => path.endsWith(".jsonl"));
+	assert.equal(sessionFiles.length, 1, `expected one persisted session file, got ${sessionFiles.join(", ")}`);
+	const sessionFile = sessionFiles[0];
+	const lines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
+	const results = lines
+		.map((line) => JSON.parse(line) as unknown)
+		.filter(isSessionMessageEntry)
+		.map((entry) => entry.message)
+		.filter(isAgentBrowserToolResult);
+	const result = results.at(-1);
+	assert.ok(result, "persisted session JSONL should include an agent_browser tool result");
+	return { result, sessionFile };
+}
+
 function registerPipelineProvider(modelRegistry: ModelRegistry, toolArguments: Record<string, unknown>): Model<any> {
 	modelRegistry.registerProvider(PIPELINE_PROVIDER, {
 		api: "openai-completions",
@@ -131,13 +169,18 @@ function registerPipelineProvider(modelRegistry: ModelRegistry, toolArguments: R
 	return model;
 }
 
-async function runPipelinePrompt(options: { fakeScript: string; toolArguments: Record<string, unknown> }): Promise<PipelineToolResult> {
+async function runPipelinePrompt(options: { fakeScript: string; toolArguments: Record<string, unknown> }): Promise<PipelinePromptResult> {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-pipeline-"));
+	const sessionDir = join(tempDir, "sessions");
+	const invocationLogPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(tempDir, options.fakeScript);
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`try { require("node:fs").appendFileSync(${JSON.stringify(invocationLogPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n"); } catch {}\n${options.fakeScript}`,
+	);
 
 	try {
-		return await withPatchedEnv<PipelineToolResult>({ PATH: `${tempDir}:${basePath}` }, async () => {
+		return await withPatchedEnv<PipelinePromptResult>({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const authStorage = AuthStorage.inMemory({ [PIPELINE_PROVIDER]: { key: "piab-pipeline-key", type: "api_key" } });
 			const modelRegistry = ModelRegistry.inMemory(authStorage);
 			const model = registerPipelineProvider(modelRegistry, options.toolArguments);
@@ -159,14 +202,20 @@ async function runPipelinePrompt(options: { fakeScript: string; toolArguments: R
 				modelRegistry,
 				noTools: "builtin",
 				resourceLoader,
-				sessionManager: SessionManager.inMemory(tempDir),
+				sessionManager: SessionManager.create(tempDir, sessionDir, { id: "piab-pipeline-session" }),
 				tools: ["agent_browser"],
 			});
 			try {
 				await session.prompt("Use agent_browser once.");
-				const result = session.messages.find(isAgentBrowserToolResult);
-				assert.ok(result, "agent_browser tool result should be recorded by Pi");
-				return result;
+				const inMemoryResult = session.messages.find(isAgentBrowserToolResult);
+				assert.ok(inMemoryResult, "agent_browser tool result should be recorded by Pi");
+				const persisted = await readPersistedAgentBrowserResult(sessionDir);
+				return {
+					inMemoryResult,
+					invocations: await readInvocationLog(invocationLogPath),
+					persistedResult: persisted.result,
+					sessionFile: persisted.sessionFile,
+				};
 			} finally {
 				session.dispose();
 			}
@@ -176,8 +225,8 @@ async function runPipelinePrompt(options: { fakeScript: string; toolArguments: R
 	}
 }
 
-test("Pi pipeline patches QA reclassification failures to isError with model-visible prose", async () => {
-	const result = await runPipelinePrompt({
+test("Pi pipeline patches persisted QA reclassification failures to isError with model-visible prose", async () => {
+	const pipeline = await runPipelinePrompt({
 		toolArguments: { qa: { expectedSelector: "main", expectedText: ["Welcome"], url: "https://fail.example.test/" } },
 		fakeScript: `const fs = require("node:fs");
 const stdin = fs.readFileSync(0, "utf8");
@@ -196,22 +245,41 @@ const results = steps.map((step) => {
 process.stdout.write(JSON.stringify(results));`,
 	});
 
-	assert.equal(result.isError, true);
-	assert.equal((result.details as { failureCategory?: string; resultCategory?: string } | undefined)?.resultCategory, "failure");
-	assert.equal((result.details as { failureCategory?: string } | undefined)?.failureCategory, "qa-failure");
-	const text = result.content.find((item) => item.type === "text")?.text ?? "";
-	assert.match(text, /Result category: failure; failureCategory: qa-failure; Pi tool isError: true\./);
+	for (const result of [pipeline.inMemoryResult, pipeline.persistedResult]) {
+		assert.equal(result.isError, true);
+		assert.equal((result.details as { failureCategory?: string; resultCategory?: string } | undefined)?.resultCategory, "failure");
+		assert.equal((result.details as { failureCategory?: string } | undefined)?.failureCategory, "qa-failure");
+		const text = result.content.find((item) => item.type === "text")?.text ?? "";
+		assert.match(text, /Result category: failure; failureCategory: qa-failure; Pi tool isError: true\./);
+	}
+	assert.match(pipeline.sessionFile, /\.jsonl$/);
 });
 
-test("Pi pipeline preserves parseable JSON content while patching isError", async () => {
-	const result = await runPipelinePrompt({
+test("Pi pipeline rejects unsupported public schema fields before spawning upstream", async () => {
+	const pipeline = await runPipelinePrompt({
+		toolArguments: { args: ["get", "url"], unsupportedRootField: true },
+		fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: "unexpected" }));`,
+	});
+
+	for (const result of [pipeline.inMemoryResult, pipeline.persistedResult]) {
+		assert.equal(result.isError, true);
+		const text = result.content.find((item) => item.type === "text")?.text ?? "";
+		assert.match(text, /unsupportedRootField|additional/i);
+	}
+	assert.deepEqual(pipeline.invocations, []);
+});
+
+test("Pi pipeline preserves persisted parseable JSON content while patching isError", async () => {
+	const pipeline = await runPipelinePrompt({
 		toolArguments: { args: ["--json", "get", "url"] },
 		fakeScript: `process.stdout.write(JSON.stringify({ success: false, error: "json boom", data: { code: "boom" } }));`,
 	});
 
-	assert.equal(result.isError, true);
-	assert.equal((result.details as { resultCategory?: string } | undefined)?.resultCategory, "failure");
-	const text = result.content.find((item) => item.type === "text")?.text ?? "";
-	assert.doesNotMatch(text, /Pi tool isError/);
-	assert.deepEqual(JSON.parse(text), { error: "json boom", success: false });
+	for (const result of [pipeline.inMemoryResult, pipeline.persistedResult]) {
+		assert.equal(result.isError, true);
+		assert.equal((result.details as { resultCategory?: string } | undefined)?.resultCategory, "failure");
+		const text = result.content.find((item) => item.type === "text")?.text ?? "";
+		assert.doesNotMatch(text, /Pi tool isError/);
+		assert.deepEqual(JSON.parse(text), { error: "json boom", success: false });
+	}
 });

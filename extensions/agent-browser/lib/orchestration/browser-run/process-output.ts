@@ -330,7 +330,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		if (replacedManagedSessionName) {
 			sessionPageState.clearSession(replacedManagedSessionName);
-			await closeManagedSession({ cwd: priorManagedSessionCwd, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
+			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
+			if (!replacedCloseError) state.closedManagedSessionNames.add(replacedManagedSessionName);
 		}
 
 		let electronLaunchRecord: ElectronLaunchRecord | undefined;

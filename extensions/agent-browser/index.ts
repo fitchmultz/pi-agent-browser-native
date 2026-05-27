@@ -84,6 +84,7 @@ import {
 	type CompiledAgentBrowserSourceLookup,
 } from "./lib/input-modes.js";
 import { closeManagedSession, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run.js";
+import { getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
 import {
 	ELECTRON_POST_COMMAND_STATUS_SETTLE_MS,
@@ -261,6 +262,10 @@ type AgentBrowserToolContentItem = AgentBrowserToolContent[number];
 type AgentBrowserToolResultPatch = {
 	content?: AgentBrowserToolContent;
 	isError?: boolean;
+};
+
+type OwnedManagedSession = {
+	cwd: string;
 };
 
 function agentBrowserToolResultRequestedJson(event: ToolResultEvent): boolean {
@@ -579,6 +584,62 @@ function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactMa
 	return restoredManifest;
 }
 
+function trackOwnedManagedSession(sessions: Map<string, OwnedManagedSession>, sessionName: string | undefined, cwd: string): void {
+	if (sessionName) sessions.set(sessionName, { cwd });
+}
+
+function untrackOwnedManagedSession(sessions: Map<string, OwnedManagedSession>, sessionName: string | undefined): void {
+	if (sessionName) sessions.delete(sessionName);
+}
+
+function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSession>, result: AgentToolResult<unknown>, cwd: string): void {
+	const details = isRecord(result.details) ? result.details : undefined;
+	const outcome = isRecord(details?.managedSessionOutcome) ? details.managedSessionOutcome : undefined;
+	if (!outcome) return;
+	const succeeded = outcome.succeeded === true;
+	const status = typeof outcome.status === "string" ? outcome.status : undefined;
+	const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
+	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
+	if (succeeded && outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
+		trackOwnedManagedSession(sessions, currentSessionName, cwd);
+	}
+	if (succeeded && status === "closed") {
+		untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName);
+	}
+}
+
+function mergeActiveElectronLaunchRecords(target: Map<string, ElectronLaunchRecord>, source: Map<string, ElectronLaunchRecord>): void {
+	for (const record of getActiveElectronRecords(source)) {
+		target.set(record.launchId, record);
+	}
+}
+
+function mergeElectronLaunchRecordMaps(...maps: Array<Map<string, ElectronLaunchRecord>>): Map<string, ElectronLaunchRecord> {
+	const merged = new Map<string, ElectronLaunchRecord>();
+	for (const map of maps) {
+		for (const [launchId, record] of map) merged.set(launchId, record);
+	}
+	return merged;
+}
+
+function replaceWithActiveElectronLaunchRecords(target: Map<string, ElectronLaunchRecord>, source: Map<string, ElectronLaunchRecord>): void {
+	target.clear();
+	mergeActiveElectronLaunchRecords(target, source);
+}
+
+function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSession>, cleanupResults: Awaited<ReturnType<typeof cleanupActiveElectronHostLaunches>>): void {
+	for (const result of cleanupResults) {
+		if (!result.partial) untrackOwnedManagedSession(sessions, result.record.sessionName);
+	}
+}
+
+async function closeOwnedManagedSessions(sessions: Map<string, OwnedManagedSession>, timeoutMs: number): Promise<void> {
+	for (const [sessionName, owner] of [...sessions]) {
+		const error = await closeManagedSession({ cwd: owner.cwd, sessionName, timeoutMs });
+		if (!error) sessions.delete(sessionName);
+	}
+}
+
 // Serializes managed-session read/modify/write work so overlapping tool calls cannot promote stale state or close an in-use session.
 class AsyncExecutionQueue {
 	private tail: Promise<void> = Promise.resolve();
@@ -627,46 +688,54 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
 	let electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
+	let ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 	let electronChildProcesses = new Map<string, ChildProcess>();
+	const ownedManagedSessions = new Map<string, OwnedManagedSession>();
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 
-	const restoreBranchBackedState = (ctx: ExtensionContext): void => {
+	const restoreBranchBackedState = (ctx: ExtensionContext, options: { resetRuntimeOwnership: boolean }): void => {
 		managedSessionBaseName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
 		const branch = ctx.sessionManager.getBranch();
 		const restoredState = restoreManagedSessionStateFromBranch(branch, managedSessionBaseName);
 		managedSessionActive = restoredState.active;
 		managedSessionName = restoredState.sessionName;
 		managedSessionCwd = ctx.cwd;
-		freshSessionOrdinal = restoredState.freshSessionOrdinal;
+		freshSessionOrdinal = options.resetRuntimeOwnership
+			? restoredState.freshSessionOrdinal
+			: Math.max(freshSessionOrdinal, restoredState.freshSessionOrdinal);
 		sessionPageState = SessionPageState.fromBranch(branch);
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = restoreArtifactManifestFromBranch(branch);
 		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(branch);
+		if (options.resetRuntimeOwnership) {
+			ownedManagedSessions.clear();
+			ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
+		}
+		if (restoredState.active) trackOwnedManagedSession(ownedManagedSessions, restoredState.sessionName, ctx.cwd);
+		mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords);
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
-		restoreBranchBackedState(ctx);
+		restoreBranchBackedState(ctx, { resetRuntimeOwnership: true });
 		electronChildProcesses = new Map<string, ChildProcess>();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
-		restoreBranchBackedState(ctx);
+		restoreBranchBackedState(ctx, { resetRuntimeOwnership: false });
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
 		await managedSessionExecutionQueue.run(async () => {
-			await cleanupActiveElectronHostLaunches({
-				cwd: ctx?.cwd ?? managedSessionCwd,
+			const shutdownCwd = ctx?.cwd ?? managedSessionCwd;
+			const electronCleanupResults = await cleanupActiveElectronHostLaunches({
+				cwd: shutdownCwd,
 				electronChildProcesses,
-				electronLaunchRecords,
+				electronLaunchRecords: ownedElectronLaunchRecords,
 				timeoutMs: implicitSessionCloseTimeoutMs,
 			});
-			if (event?.reason === "quit" && managedSessionActive) {
-				await closeManagedSession({
-					cwd: managedSessionCwd,
-					sessionName: managedSessionName,
-					timeoutMs: implicitSessionCloseTimeoutMs,
-				});
+			syncElectronCleanupManagedSessions(ownedManagedSessions, electronCleanupResults);
+			if (event?.reason === "quit") {
+				await closeOwnedManagedSessions(ownedManagedSessions, implicitSessionCloseTimeoutMs);
 			}
 		});
 		managedSessionActive = false;
@@ -674,7 +743,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
 		electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
+		ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 		electronChildProcesses = new Map<string, ChildProcess>();
+		ownedManagedSessions.clear();
 		await cleanupSecureTempArtifacts();
 	});
 
@@ -739,11 +810,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const { toolArgs } = resolvedInput;
 			const compiledElectron = resolvedInput.kind === "electron" ? resolvedInput.compiledElectron : undefined;
 			const redactedCompiledElectron = resolvedInput.kind === "electron" ? resolvedInput.redactedCompiledElectron : undefined;
+			const electronHostLaunchRecords = compiledElectron?.action === "cleanup"
+				? mergeElectronLaunchRecordMaps(electronLaunchRecords, ownedElectronLaunchRecords)
+				: electronLaunchRecords;
 			const electronHostResult = await handleElectronHostInput({
 				compiledElectron,
 				cwd: ctx.cwd,
 				electronChildProcesses,
-				electronLaunchRecords,
+				electronLaunchRecords: electronHostLaunchRecords,
 				implicitSessionCloseTimeoutMs,
 				managedSessionActive,
 				managedSessionExecutionQueue,
@@ -753,6 +827,22 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				signal,
 			});
 			if (electronHostResult) {
+				if (compiledElectron?.action === "cleanup") {
+					electronLaunchRecords = mergeElectronLaunchRecordMaps(electronLaunchRecords, electronHostLaunchRecords);
+					replaceWithActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronHostLaunchRecords);
+					const cleanupRecords = isRecord(electronHostResult.details)
+						&& isRecord(electronHostResult.details.electron)
+						&& isRecord(electronHostResult.details.electron.cleanup)
+						&& Array.isArray(electronHostResult.details.electron.cleanup.results)
+						? electronHostResult.details.electron.cleanup.results
+						: [];
+					for (const cleanupResult of cleanupRecords) {
+						if (isRecord(cleanupResult) && cleanupResult.partial === false && isRecord(cleanupResult.record)) {
+							const sessionName = typeof cleanupResult.record.sessionName === "string" ? cleanupResult.record.sessionName : undefined;
+							untrackOwnedManagedSession(ownedManagedSessions, sessionName);
+						}
+					}
+				}
 				return electronHostResult;
 			}
 
@@ -760,6 +850,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const runBrowserCommand = async () => {
 				const browserRunState: BrowserRunState = {
 					artifactManifest,
+					closedManagedSessionNames: new Set<string>(),
 					electronChildProcesses,
 					electronLaunchRecords,
 					ephemeralSessionSeed,
@@ -787,10 +878,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					state: browserRunState,
 				});
 				artifactManifest = browserRunState.artifactManifest;
-				freshSessionOrdinal = browserRunState.freshSessionOrdinal;
+				freshSessionOrdinal = Math.max(freshSessionOrdinal, browserRunState.freshSessionOrdinal);
 				managedSessionActive = browserRunState.managedSessionActive;
 				managedSessionCwd = browserRunState.managedSessionCwd;
 				managedSessionName = browserRunState.managedSessionName;
+				for (const closedSessionName of browserRunState.closedManagedSessionNames) {
+					untrackOwnedManagedSession(ownedManagedSessions, closedSessionName);
+				}
+				syncOwnedManagedSessionsFromResult(ownedManagedSessions, result, browserRunState.managedSessionCwd);
+				mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords);
 				return result;
 			};
 

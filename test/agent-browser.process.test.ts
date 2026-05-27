@@ -229,6 +229,7 @@ test("runAgentBrowserProcess resolves after exit when descendants keep stdio han
 	let lingerPid: number | undefined;
 
 	try {
+		const startedAt = Date.now();
 		const processResult = await runAgentBrowserProcess({
 			args: ["open", "https://example.com"],
 			cwd: tempDir,
@@ -240,6 +241,8 @@ test("runAgentBrowserProcess resolves after exit when descendants keep stdio han
 		});
 
 		lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
+		const elapsedMs = Date.now() - startedAt;
+		assert.ok(elapsedMs < 1_500, `inherited-stdio fallback should resolve near the 100 ms grace window, not after the process timeout; elapsed ${elapsedMs} ms`);
 		assert.equal(processResult.exitCode, 0);
 		assert.equal(processResult.timedOut, false);
 		assert.equal(processResult.spawnError, undefined);
