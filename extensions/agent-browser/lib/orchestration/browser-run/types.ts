@@ -19,8 +19,10 @@ import type { AgentBrowserEnvelope, AgentBrowserNextAction, buildAgentBrowserRes
 import type { SessionArtifactManifest } from "../../results/contracts.js";
 import type { RichInputRecoveryDiagnostic, VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import type { SessionPageState, SessionRefSnapshot, SessionRefSnapshotInvalidation, SessionTabTarget } from "../../session-page-state.js";
-import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection, PromptPolicy } from "../../runtime.js";
+import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection } from "../../runtime.js";
+import type { PromptPolicy } from "../../prompt-policy.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
+import type { BatchCommandStep } from "../batch-stdin.js";
 
 export type AgentBrowserToolResult = AgentToolResult<unknown> & { isError?: boolean };
 export type AgentBrowserProcessResult = Awaited<ReturnType<typeof runAgentBrowserProcess>>;
@@ -30,7 +32,7 @@ export type AgentBrowserResultCategoryDetails = ReturnType<typeof buildAgentBrow
 
 export type TraceOwner = "profiler" | "trace";
 export type PinnedBatchUnwrapMode = "single-command" | "user-batch";
-export type BatchCommandStep = [string, ...string[]];
+export type { BatchCommandStep } from "../batch-stdin.js";
 
 export interface BrowserRunContext {
 	cwd: string;

@@ -5,6 +5,7 @@ import { runSessionCommandData } from "./session-state.js";
 import type { ClickDispatchDiagnostic, ClickDispatchProbe, ClickDispatchProbeTarget } from "./types.js";
 
 const CLICK_DISPATCH_MARKER_PREFIX = "__piAgentBrowserClickDispatchProbe_";
+const CLICK_DISPATCH_CLEANUP_TIMEOUT_MS = 2_000;
 
 function parseClickRefId(selector: string): string | undefined {
 	const trimmed = selector.trim();
@@ -68,6 +69,16 @@ return finish({ status: "no-native-event-observed", nativeEventCount, target: st
 })()`;
 }
 
+function buildClickDispatchProbeCleanupScript(probe: ClickDispatchProbe): string {
+	return `(() => {
+const marker = ${JSON.stringify(probe.marker)};
+const state = window[marker];
+if (state && typeof state.cleanup === "function") state.cleanup();
+try { delete window[marker]; } catch {}
+return { status: "cleaned-up" };
+})()`;
+}
+
 function redactClickDispatchTarget(target: ClickDispatchProbeTarget): ClickDispatchProbeTarget {
 	return target.kind === "selector" || target.kind === "xpath"
 		? { ...target, selector: redactSensitiveText(target.selector) }
@@ -124,4 +135,15 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; pro
 		summary,
 		target: redactClickDispatchTarget(options.probe.target),
 	};
+}
+
+export async function cleanupClickDispatchProbe(options: { cwd: string; probe?: ClickDispatchProbe; sessionName?: string }): Promise<void> {
+	if (!options.probe || !options.sessionName) return;
+	await runSessionCommandData({
+		args: ["eval", "--stdin"],
+		cwd: options.cwd,
+		sessionName: options.sessionName,
+		stdin: buildClickDispatchProbeCleanupScript(options.probe),
+		timeoutMs: CLICK_DISPATCH_CLEANUP_TIMEOUT_MS,
+	}).catch(() => undefined);
 }

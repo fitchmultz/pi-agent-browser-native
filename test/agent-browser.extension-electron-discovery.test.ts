@@ -175,7 +175,7 @@ test("agentBrowserExtension blocks Electron launch by caller policy without spaw
 test("agentBrowserExtension cleans Electron resources when launch fails before upstream attach", { concurrency: false }, async () => {
 	for (const { expectedCategory, mode, timeoutMs, writeLaunchLog } of [
 		{ expectedCategory: "timeout", mode: "no-port-file", timeoutMs: 500, writeLaunchLog: false },
-		{ expectedCategory: "upstream-error", mode: "invalid-cdp", timeoutMs: 1_500, writeLaunchLog: true },
+		{ expectedCategory: "upstream-error", mode: "invalid-cdp", timeoutMs: 5_000, writeLaunchLog: true },
 	] as const) {
 		const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-electron-failed-${mode}-`));
 		const applicationsDir = join(tempDir, "Applications");

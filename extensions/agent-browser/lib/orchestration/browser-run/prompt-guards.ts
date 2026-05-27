@@ -1,8 +1,7 @@
-import { constants as fsConstants } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 import { isCloseCommand } from "../../command-taxonomy.js";
+import { executableExistsOnPath } from "../../executable-path.js";
 import type { SessionArtifactManifest } from "../../results/contracts.js";
 import type { PromptPolicy, PromptRequestedArtifact } from "../../prompt-policy.js";
 import type { SessionRefSnapshot } from "../../session-page-state.js";
@@ -70,22 +69,6 @@ function manifestContainsArtifact(manifest: SessionArtifactManifest | undefined,
 		const entryAbsolutePath = entry.absolutePath ?? resolveArtifactPath(cwd, entry.path);
 		return entry.storageScope === "explicit-path" && entry.kind === expectedKind && entryAbsolutePath === requestedAbsolutePath && entry.retentionState === "live" && entry.exists === true;
 	});
-}
-
-async function executableExistsOnPath(command: string): Promise<boolean> {
-	const extensions = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean) : [""];
-	for (const directory of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
-		for (const extension of extensions) {
-			try {
-				const candidate = join(directory, `${command}${extension}`);
-				await access(candidate, fsConstants.X_OK);
-				if ((await stat(candidate)).isFile()) return true;
-			} catch {
-				// Try the next PATH candidate.
-			}
-		}
-	}
-	return false;
 }
 
 async function isArtifactRequired(artifact: PromptRequestedArtifact): Promise<boolean> {

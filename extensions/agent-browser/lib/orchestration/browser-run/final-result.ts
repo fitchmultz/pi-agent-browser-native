@@ -213,7 +213,7 @@ export function buildElectronHostFailureResult(options: {
 	return { content: [{ type: "text", text: redactSensitiveText(text) }], details: redactToolDetails(details, []), isError: true };
 }
 
-function formatElectronTargetLines(targets: ElectronCdpTarget[], limit = 8): string[] {
+export function formatElectronTargetLines(targets: ElectronCdpTarget[], limit = 8): string[] {
 	const shownTargets = targets.slice(0, limit);
 	const lines = shownTargets.map((target) => {
 		const label = [target.type, target.title].filter(Boolean).join(" ") || target.id || "target";

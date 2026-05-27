@@ -25,6 +25,7 @@ import {
 } from "../../command-taxonomy.js";
 import { chooseOpenResultTabCorrection, redactInvocationArgs, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
+import { parseUserBatchStdin } from "../batch-stdin.js";
 import type {
 	AboutBlankSessionMismatch,
 	BatchCommandStep,
@@ -53,10 +54,6 @@ export function applyBrowserRunStatePatch(state: BrowserRunState, patch: Browser
 	if (patch.managedSessionActive !== undefined) state.managedSessionActive = patch.managedSessionActive;
 	if (patch.managedSessionCwd !== undefined) state.managedSessionCwd = patch.managedSessionCwd;
 	if (patch.managedSessionName !== undefined) state.managedSessionName = patch.managedSessionName;
-}
-
-export function mergeBrowserRunStatePatch(left: BrowserRunStatePatch | undefined, right: BrowserRunStatePatch | undefined): BrowserRunStatePatch {
-	return { ...(left ?? {}), ...(right ?? {}) };
 }
 
 export function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean): Record<string, unknown> {
@@ -212,58 +209,6 @@ export function buildAboutBlankWarning(mismatch: AboutBlankSessionMismatch): str
 
 function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 	return Array.isArray(item.command) ? item.command.filter((token): token is string => typeof token === "string") : [];
-}
-
-function validateUserBatchStep(
-	step: unknown,
-	index: number,
-):
-	| { ok: true; step: BatchCommandStep }
-	| { ok: false; error: string } {
-	if (!Array.isArray(step)) {
-		return {
-			ok: false,
-			error: `agent_browser batch stdin step ${index} must be a non-empty array of string command tokens.`,
-		};
-	}
-	if (step.length === 0) {
-		return {
-			ok: false,
-			error: `agent_browser batch stdin step ${index} must not be empty.`,
-		};
-	}
-	const invalidTokenIndex = step.findIndex((token) => typeof token !== "string");
-	if (invalidTokenIndex !== -1) {
-		return {
-			ok: false,
-			error: `agent_browser batch stdin step ${index} token ${invalidTokenIndex} must be a string.`,
-		};
-	}
-	return { ok: true, step: step as BatchCommandStep };
-}
-
-function parseUserBatchStdin(stdin: string | undefined): { error?: string; steps?: BatchCommandStep[] } {
-	if (stdin === undefined) {
-		return { steps: [] };
-	}
-	try {
-		const parsed = JSON.parse(stdin) as unknown;
-		if (!Array.isArray(parsed)) {
-			return { error: "agent_browser batch stdin must be a JSON array of command steps." };
-		}
-		const steps: BatchCommandStep[] = [];
-		for (const [index, rawStep] of parsed.entries()) {
-			const validated = validateUserBatchStep(rawStep, index);
-			if (!validated.ok) {
-				return { error: validated.error };
-			}
-			steps.push(validated.step);
-		}
-		return { steps };
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { error: `agent_browser batch stdin could not be parsed as JSON: ${message}` };
-	}
 }
 
 export function getStaleRefArgs(commandTokens: string[], stdin?: string): string[] {

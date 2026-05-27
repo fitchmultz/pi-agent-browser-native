@@ -26,6 +26,7 @@ import {
 	runSessionCommandData,
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
+import { parseBatchStdinJsonArray, parseValidBatchStepEntries } from "../batch-stdin.js";
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
 import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
@@ -143,19 +144,14 @@ async function prepareBatchScreenshotPaths(args: string[], stdin: string | undef
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return undefined;
 	}
-	let steps: unknown;
-	try {
-		steps = JSON.parse(stdin);
-	} catch {
-		return undefined;
-	}
-	if (!Array.isArray(steps)) {
+	const parsed = parseBatchStdinJsonArray(stdin);
+	if (parsed.error || parsed.steps === undefined) {
 		return undefined;
 	}
 
 	let changed = false;
 	const batchScreenshotPathRequests: Array<ScreenshotPathRequest | undefined> = [];
-	const preparedSteps = await Promise.all(steps.map(async (step, index) => {
+	const preparedSteps = await Promise.all(parsed.steps.map(async (step, index) => {
 		if (!Array.isArray(step) || !step.every((item) => typeof item === "string") || step[0] !== "screenshot") {
 			return step;
 		}
@@ -284,20 +280,7 @@ export function validateWaitIpcTimeoutContract(commandTokens: string[], stdin: s
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return undefined;
 	}
-	let steps: unknown;
-	try {
-		steps = JSON.parse(stdin);
-	} catch {
-		return undefined;
-	}
-	if (!Array.isArray(steps)) {
-		return undefined;
-	}
-	for (let index = 0; index < steps.length; index += 1) {
-		const step = steps[index];
-		if (!Array.isArray(step) || !step.every((item) => typeof item === "string")) {
-			continue;
-		}
+	for (const { index, step } of parseValidBatchStepEntries(stdin)) {
 		const waitTimeout = findWaitTimeoutMs(step);
 		if (waitTimeout && waitTimeout.timeoutMs > SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS) {
 			return buildIpcUnsafeWaitError(waitTimeout.source, waitTimeout.timeoutMs, index);

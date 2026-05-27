@@ -1,9 +1,9 @@
-import { constants as fsConstants } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { stat } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 
 import { isCloseCommand, isOpenNavigationCommand } from "../../command-taxonomy.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
+import { executableExistsOnPath } from "../../executable-path.js";
 import type { AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserJob, CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
 import { isHttpOrHttpsUrl } from "../../input-modes/job.js";
 import type { AgentBrowserNextAction } from "../../results.js";
@@ -21,12 +21,14 @@ import {
 	getGuardedRefUsage,
 	runSessionCommandData,
 } from "./session-state.js";
+import { parseValidBatchStepEntries } from "../batch-stdin.js";
 import { getScreenshotPathTokenIndex } from "./prepare.js";
 import type {
 	ArtifactCleanupGuidance,
 	ComboboxFocusDiagnostic,
 	ElectronBroadGetTextScopeDiagnostic,
 	ElectronHandoffSummary,
+	ElectronManagedSessionTarget,
 	FillVerificationDiagnostic,
 	NavigationSummary,
 	OverlayBlockerCandidate,
@@ -237,23 +239,6 @@ function getRecordStartLikeCommand(command: string | undefined, commandTokens: s
 	if (subcommand === "start") return "record start";
 	if (subcommand === "restart") return "record restart";
 	return undefined;
-}
-
-async function executableExistsOnPath(command: string): Promise<boolean> {
-	const pathValue = process.env.PATH ?? "";
-	const extensions = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean) : [""];
-	for (const directory of pathValue.split(delimiter).filter(Boolean)) {
-		for (const extension of extensions) {
-			try {
-				const candidate = join(directory, `${command}${extension}`);
-				await access(candidate, fsConstants.X_OK);
-				if ((await stat(candidate)).isFile()) return true;
-			} catch {
-				// Try the next candidate.
-			}
-		}
-	}
-	return false;
 }
 
 export async function collectRecordingDependencyWarning(options: { command: string | undefined; commandTokens: string[]; succeeded: boolean }): Promise<RecordingDependencyWarning | undefined> {
@@ -506,7 +491,7 @@ async function collectElectronManagedSessionUrl(options: { cwd: string; sessionN
 	return urlResult.error ? { error: urlResult.error } : { url };
 }
 
-async function collectElectronManagedSessionTarget(options: { cwd: string; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<QaAttachedTarget | undefined> {
+export async function collectElectronManagedSessionTarget(options: { cwd: string; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<ElectronManagedSessionTarget | undefined> {
 	if (!options.sessionName) return undefined;
 	const [titleResult, urlResult] = await Promise.all([
 		collectManagedSessionCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
@@ -648,11 +633,7 @@ export async function collectElectronHandoff(options: { cwd: string; handoff: "c
 function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, command: string | undefined, stdin: string | undefined): Array<{ args: string[]; index: number }> {
 	if (compiledJob) return compiledJob.steps.map((step, index) => ({ args: step.args, index: index + 1 }));
 	if (command !== "batch" || !stdin) return [];
-	try {
-		const parsed = JSON.parse(stdin) as unknown;
-		if (!Array.isArray(parsed)) return [];
-		return parsed.flatMap((step, index) => Array.isArray(step) && step.every((token) => typeof token === "string") ? [{ args: step as string[], index: index + 1 }] : []);
-	} catch { return []; }
+	return parseValidBatchStepEntries(stdin).map(({ index, step }) => ({ args: step, index: index + 1 }));
 }
 
 function getLastPositionalToken(args: string[], startIndex = 1): string | undefined {
