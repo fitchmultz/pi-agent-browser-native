@@ -77,6 +77,7 @@ import {
 	type AgentBrowserQaPresetAnalysis,
 	type AgentBrowserSourceLookupAnalysis,
 	type AgentBrowserSourceLookupElectronContext,
+	type CompiledAgentBrowserElectron,
 	type CompiledAgentBrowserJob,
 	type CompiledAgentBrowserNetworkSourceLookup,
 	type CompiledAgentBrowserQaPreset,
@@ -627,17 +628,53 @@ function replaceWithActiveElectronLaunchRecords(target: Map<string, ElectronLaun
 	mergeActiveElectronLaunchRecords(target, source);
 }
 
-function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSession>, cleanupResults: Awaited<ReturnType<typeof cleanupActiveElectronHostLaunches>>): void {
+function shouldSerializeElectronHostInput(compiledElectron: CompiledAgentBrowserElectron | undefined): boolean {
+	return compiledElectron?.action === "status" || compiledElectron?.action === "probe" || compiledElectron?.action === "cleanup";
+}
+
+function getElectronHostLaunchRecordsForInput(options: {
+	branchRecords: Map<string, ElectronLaunchRecord>;
+	compiledElectron: CompiledAgentBrowserElectron | undefined;
+	ownedRecords: Map<string, ElectronLaunchRecord>;
+}): Map<string, ElectronLaunchRecord> {
+	if (
+		options.compiledElectron?.action === "status" ||
+		options.compiledElectron?.action === "cleanup" ||
+		(options.compiledElectron?.action === "probe" && options.compiledElectron.launchId)
+	) {
+		return mergeElectronLaunchRecordMaps(options.branchRecords, options.ownedRecords);
+	}
+	return options.branchRecords;
+}
+
+function getCleanupResultClosedManagedSessionName(result: unknown): string | undefined {
+	if (!isRecord(result) || !Array.isArray(result.steps)) return undefined;
+	for (const step of result.steps) {
+		if (!isRecord(step) || step.resource !== "managed-session") continue;
+		if (step.state !== "removed" && step.state !== "already-gone") continue;
+		if (typeof step.sessionName === "string") return step.sessionName;
+		const record = isRecord(result.record) ? result.record : undefined;
+		return typeof record?.sessionName === "string" ? record.sessionName : undefined;
+	}
+	return undefined;
+}
+
+function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSession>, cleanupResults: unknown[]): void {
 	for (const result of cleanupResults) {
-		if (!result.partial) untrackOwnedManagedSession(sessions, result.record.sessionName);
+		untrackOwnedManagedSession(sessions, getCleanupResultClosedManagedSessionName(result));
+	}
+}
+
+async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManagedSession>, keepSessionName: string | undefined, timeoutMs: number): Promise<void> {
+	for (const [sessionName, owner] of [...sessions]) {
+		if (sessionName === keepSessionName) continue;
+		const error = await closeManagedSession({ cwd: owner.cwd, sessionName, timeoutMs });
+		if (!error) sessions.delete(sessionName);
 	}
 }
 
 async function closeOwnedManagedSessions(sessions: Map<string, OwnedManagedSession>, timeoutMs: number): Promise<void> {
-	for (const [sessionName, owner] of [...sessions]) {
-		const error = await closeManagedSession({ cwd: owner.cwd, sessionName, timeoutMs });
-		if (!error) sessions.delete(sessionName);
-	}
+	await closeOwnedManagedSessionsExcept(sessions, undefined, timeoutMs);
 }
 
 // Serializes managed-session read/modify/write work so overlapping tool calls cannot promote stale state or close an in-use session.
@@ -721,7 +758,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
-		restoreBranchBackedState(ctx, { resetRuntimeOwnership: false });
+		await managedSessionExecutionQueue.run(async () => {
+			restoreBranchBackedState(ctx, { resetRuntimeOwnership: false });
+		});
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
@@ -736,6 +775,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			syncElectronCleanupManagedSessions(ownedManagedSessions, electronCleanupResults);
 			if (event?.reason === "quit") {
 				await closeOwnedManagedSessions(ownedManagedSessions, implicitSessionCloseTimeoutMs);
+			} else {
+				await closeOwnedManagedSessionsExcept(
+					ownedManagedSessions,
+					managedSessionActive ? managedSessionName : undefined,
+					implicitSessionCloseTimeoutMs,
+				);
 			}
 		});
 		managedSessionActive = false;
@@ -810,24 +855,25 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const { toolArgs } = resolvedInput;
 			const compiledElectron = resolvedInput.kind === "electron" ? resolvedInput.compiledElectron : undefined;
 			const redactedCompiledElectron = resolvedInput.kind === "electron" ? resolvedInput.redactedCompiledElectron : undefined;
-			const electronHostLaunchRecords = compiledElectron?.action === "cleanup"
-				? mergeElectronLaunchRecordMaps(electronLaunchRecords, ownedElectronLaunchRecords)
-				: electronLaunchRecords;
-			const electronHostResult = await handleElectronHostInput({
-				compiledElectron,
-				cwd: ctx.cwd,
-				electronChildProcesses,
-				electronLaunchRecords: electronHostLaunchRecords,
-				implicitSessionCloseTimeoutMs,
-				managedSessionActive,
-				managedSessionExecutionQueue,
-				managedSessionName,
-				redactedCompiledElectron,
-				sessionPageState,
-				signal,
-			});
-			if (electronHostResult) {
-				if (compiledElectron?.action === "cleanup") {
+			const runElectronHostInput = async () => {
+				const electronHostLaunchRecords = getElectronHostLaunchRecordsForInput({
+					branchRecords: electronLaunchRecords,
+					compiledElectron,
+					ownedRecords: ownedElectronLaunchRecords,
+				});
+				const electronHostResult = await handleElectronHostInput({
+					compiledElectron,
+					cwd: ctx.cwd,
+					electronChildProcesses,
+					electronLaunchRecords: electronHostLaunchRecords,
+					implicitSessionCloseTimeoutMs,
+					managedSessionActive,
+					managedSessionName,
+					redactedCompiledElectron,
+					sessionPageState,
+					signal,
+				});
+				if (electronHostResult && compiledElectron?.action === "cleanup") {
 					electronLaunchRecords = mergeElectronLaunchRecordMaps(electronLaunchRecords, electronHostLaunchRecords);
 					replaceWithActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronHostLaunchRecords);
 					const cleanupRecords = isRecord(electronHostResult.details)
@@ -836,13 +882,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						&& Array.isArray(electronHostResult.details.electron.cleanup.results)
 						? electronHostResult.details.electron.cleanup.results
 						: [];
-					for (const cleanupResult of cleanupRecords) {
-						if (isRecord(cleanupResult) && cleanupResult.partial === false && isRecord(cleanupResult.record)) {
-							const sessionName = typeof cleanupResult.record.sessionName === "string" ? cleanupResult.record.sessionName : undefined;
-							untrackOwnedManagedSession(ownedManagedSessions, sessionName);
-						}
-					}
+					syncElectronCleanupManagedSessions(ownedManagedSessions, cleanupRecords);
 				}
+				return electronHostResult;
+			};
+			const electronHostResult = shouldSerializeElectronHostInput(compiledElectron)
+				? await managedSessionExecutionQueue.run(runElectronHostInput)
+				: await runElectronHostInput();
+			if (electronHostResult) {
 				return electronHostResult;
 			}
 

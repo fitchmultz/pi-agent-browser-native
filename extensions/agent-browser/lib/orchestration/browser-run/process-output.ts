@@ -298,8 +298,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let currentRefSnapshotInvalidation: SessionRefSnapshotInvalidation | undefined;
 		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data) : undefined;
 		if (prepared.executionPlan.sessionName) {
-			if (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) sessionPageState.clearSession(prepared.executionPlan.sessionName);
-			else if (currentSessionTabTarget) {
+			if (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) {
+				sessionPageState.clearSession(prepared.executionPlan.sessionName);
+				state.closedManagedSessionNames.add(prepared.executionPlan.sessionName);
+			} else if (currentSessionTabTarget) {
 				const tabUpdate = sessionPageState.applyTabTarget({ sessionName: prepared.executionPlan.sessionName, target: currentSessionTabTarget, update: sessionPageStateUpdate });
 				if (!tabUpdate.applied && succeeded) sessionPageState.markPinning(prepared.executionPlan.sessionName, "drift");
 			}
