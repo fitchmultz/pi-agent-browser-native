@@ -266,8 +266,20 @@ export interface RestoredManagedSessionState extends ManagedSessionState {
 	freshSessionOrdinal: number;
 }
 
+export interface PromptRequestedArtifact {
+	kind: "recording" | "screenshot";
+	path: string;
+	required: boolean;
+}
+
+export interface PromptStopBoundary {
+	reason: "avoid-final-submit-action";
+}
+
 export interface PromptPolicy {
 	allowLegacyAgentBrowserBash: boolean;
+	requestedArtifacts: PromptRequestedArtifact[];
+	stopBoundary?: PromptStopBoundary;
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -959,9 +971,52 @@ export function hasLaunchScopedTabCorrectionFlag(args: string[]): boolean {
 	});
 }
 
+const STOP_BOUNDARY_PATTERNS = [
+	/\b(?:do\s+not|don't|dont|never)\s+(?:place|submit|complete|finish|finali[sz]e|confirm)\s+(?:the\s+)?(?:order|purchase|checkout|payment)\b/i,
+	/\b(?:do\s+not|don't|dont|never)\s+click\s+(?:the\s+)?(?:finish|submit|place\s+order|complete\s+order|confirm\s+order|buy\s+now|pay\s+now)\b/i,
+	/\bstop\s+(?:on|at|before)\b[^.\n]*(?:checkout\s+overview|finish|place\s+(?:the\s+)?order|submit\s+(?:the\s+)?order|complete\s+(?:the\s+)?order|purchase|payment)\b/i,
+	/\bwithout\s+(?:placing|submitting|completing|finishing|confirming)\s+(?:the\s+)?(?:order|purchase|payment)\b/i,
+];
+
+const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|\s)((?:\/[\w .@%+=:,~/-]+|[A-Za-z]:[\\/][\w .@%+=:,~\\/-]+?)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?:[\s.,;)]|$)/gi;
+
+function buildPromptStopBoundary(prompt: string): PromptStopBoundary | undefined {
+	return STOP_BOUNDARY_PATTERNS.some((pattern) => pattern.test(prompt)) ? { reason: "avoid-final-submit-action" } : undefined;
+}
+
+function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifact[] {
+	const artifacts: PromptRequestedArtifact[] = [];
+	const seen = new Set<string>();
+	for (const line of prompt.split(/\r?\n/)) {
+		const lowerLine = line.toLowerCase();
+		const kind = lowerLine.includes("screenshot")
+			? "screenshot"
+			: /\b(?:screen\s+recording|recording|webm|video)\b/.test(lowerLine)
+				? "recording"
+				: undefined;
+		if (!kind) continue;
+		PROMPT_ARTIFACT_PATH_PATTERN.lastIndex = 0;
+		for (const match of line.matchAll(PROMPT_ARTIFACT_PATH_PATTERN)) {
+			const path = match[1]?.trim();
+			if (!path) continue;
+			const key = `${kind}:${path}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			artifacts.push({
+				kind,
+				path,
+				required: kind === "screenshot" || !/\b(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available\b/i.test(line),
+			});
+		}
+	}
+	return artifacts;
+}
+
 export function buildPromptPolicy(prompt: string): PromptPolicy {
 	return {
 		allowLegacyAgentBrowserBash: LEGACY_BASH_ALLOW_PATTERNS.some((pattern) => pattern.test(prompt)),
+		requestedArtifacts: extractPromptRequestedArtifacts(prompt),
+		stopBoundary: buildPromptStopBoundary(prompt),
 	};
 }
 

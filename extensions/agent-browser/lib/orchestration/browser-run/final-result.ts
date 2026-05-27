@@ -43,6 +43,7 @@ import {
 } from "../../session-page-state.js";
 import { extractExplicitSessionName, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
+import { formatClickDispatchDiagnosticText } from "./click-dispatch.js";
 import {
 	buildComboboxFocusNextActions,
 	buildElectronBroadGetTextScopeNextActions,
@@ -369,6 +370,7 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		imagePaths: options.presentation.imagePaths,
 		nextActions,
 		pageChangeSummary,
+		clickDispatch: options.clickDispatchDiagnostic,
 		overlayBlockers: options.overlayBlockerDiagnostic,
 		fillVerification: options.fillVerificationDiagnostic,
 		visibleRefFallback: publicVisibleRefFallbackDiagnostic,
@@ -411,6 +413,7 @@ export function buildFinalAgentBrowserToolResult(options: FinalResultInput): Age
 	const visibleRefFallbackText = formatVisibleRefFallbackText(options.visibleRefFallbackDiagnostic);
 	const richInputRecoveryText = formatRichInputRecoveryText(options.richInputRecoveryDiagnostic);
 	const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
+	const clickDispatchText = options.clickDispatchDiagnostic ? formatClickDispatchDiagnosticText(options.clickDispatchDiagnostic) : undefined;
 	const overlayBlockerText = options.overlayBlockerDiagnostic ? formatOverlayBlockerText(options.overlayBlockerDiagnostic) : undefined;
 	const fillVerificationText = formatFillVerificationText(options.fillVerificationDiagnostic);
 	const electronRefFreshnessText = formatElectronRefFreshnessText(options.electronRefFreshnessDiagnostic);
@@ -423,7 +426,7 @@ export function buildFinalAgentBrowserToolResult(options: FinalResultInput): Age
 	const artifactCleanupText = formatArtifactCleanupGuidanceText(options.artifactCleanup);
 	const timeoutPartialProgressText = options.timeoutPartialProgress ? formatTimeoutPartialProgressText(options.timeoutPartialProgress) : undefined;
 	const managedSessionOutcomeText = formatManagedSessionOutcomeText(options.managedSessionOutcome);
-	const rawAppendedDiagnosticText = [visibleRefFallbackText, richInputRecoveryText, semanticActionCandidateText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+	const rawAppendedDiagnosticText = [visibleRefFallbackText, richInputRecoveryText, semanticActionCandidateText, clickDispatchText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
 	const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, options.exactSensitiveValues));
 	const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!options.userRequestedJson || options.plainTextInspection);
 	let content = shouldAppendDiagnosticText && options.redactedContent[0]?.type === "text" ? [{ ...options.redactedContent[0], text: `${options.redactedContent[0].text}\n\n${appendedDiagnosticText}` }, ...options.redactedContent.slice(1)] : options.redactedContent;

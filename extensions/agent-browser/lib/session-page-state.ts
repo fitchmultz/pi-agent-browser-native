@@ -21,6 +21,7 @@ interface OrderedSessionTabTarget {
 
 export interface SessionRefSnapshot {
 	refIds: string[];
+	refs?: Record<string, { name: string; role: string }>;
 	target?: SessionTabTarget;
 }
 
@@ -229,10 +230,21 @@ function getRestoredSessionTabTarget(details: Record<string, unknown>, command: 
 	return storedTarget;
 }
 
+function extractRefSnapshotRefs(data: unknown): Record<string, { name: string; role: string }> | undefined {
+	if (!isRecord(data) || !isRecord(data.refs)) return undefined;
+	const refs = Object.fromEntries(Object.entries(data.refs).flatMap(([refId, entry]) => {
+		if (!/^e\d+$/.test(refId) || !isRecord(entry) || typeof entry.name !== "string" || typeof entry.role !== "string") return [];
+		return [[refId, { name: entry.name, role: entry.role }] as const];
+	}));
+	return Object.keys(refs).length > 0 ? refs : undefined;
+}
+
 export function extractRefSnapshotFromData(data: unknown): SessionRefSnapshot | undefined {
 	if (!isRecord(data)) return undefined;
+	const refs = extractRefSnapshotRefs(data);
 	return {
 		refIds: isRecord(data.refs) ? Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId)) : [],
+		...(refs ? { refs } : {}),
 		target: extractSessionTabTargetFromData(data),
 	};
 }
@@ -290,14 +302,24 @@ function getRestoredRefSnapshotInvalidation(details: Record<string, unknown>, co
 }
 
 function getRestoredRefSnapshot(details: Record<string, unknown>): SessionRefSnapshot | undefined {
-	if (!isRecord(details.refSnapshot) || !Array.isArray(details.refSnapshot.refIds)) return undefined;
-	const refIds = details.refSnapshot.refIds.filter((refId): refId is string => typeof refId === "string" && /^e\d+$/.test(refId));
+	const refSnapshot = isRecord(details.refSnapshot) ? details.refSnapshot : undefined;
+	if (!refSnapshot || !Array.isArray(refSnapshot.refIds)) return undefined;
+	const refIds = refSnapshot.refIds.filter((refId): refId is string => typeof refId === "string" && /^e\d+$/.test(refId));
+	const refRecord = isRecord(refSnapshot.refs) ? refSnapshot.refs : undefined;
+	const refEntries = refRecord
+		? Object.fromEntries(refIds.flatMap((refId) => {
+			const entry = refRecord[refId];
+			if (!isRecord(entry) || typeof entry.name !== "string" || typeof entry.role !== "string") return [];
+			return [[refId, { name: entry.name, role: entry.role }] as const];
+		}))
+		: undefined;
 	return {
 		refIds,
-		target: isRecord(details.refSnapshot.target)
+		...(refEntries && Object.keys(refEntries).length > 0 ? { refs: refEntries } : {}),
+		target: isRecord(refSnapshot.target)
 			? normalizeSessionTabTarget({
-				title: typeof details.refSnapshot.target.title === "string" ? details.refSnapshot.target.title : undefined,
-				url: typeof details.refSnapshot.target.url === "string" ? details.refSnapshot.target.url : undefined,
+				title: typeof refSnapshot.target.title === "string" ? refSnapshot.target.title : undefined,
+				url: typeof refSnapshot.target.url === "string" ? refSnapshot.target.url : undefined,
 			  })
 			: undefined,
 	};
@@ -335,7 +357,7 @@ function shouldApplyRefStateUpdate(options: {
 }
 
 function stripRefSnapshotOrder(snapshot: OrderedSessionRefSnapshot | SessionRefSnapshot | undefined): SessionRefSnapshot | undefined {
-	return snapshot ? { refIds: snapshot.refIds, target: snapshot.target } : undefined;
+	return snapshot ? { refIds: snapshot.refIds, ...(snapshot.refs ? { refs: snapshot.refs } : {}), target: snapshot.target } : undefined;
 }
 
 function stripRefSnapshotInvalidationOrder(invalidation: OrderedSessionRefSnapshotInvalidation | SessionRefSnapshotInvalidation | undefined): SessionRefSnapshotInvalidation | undefined {

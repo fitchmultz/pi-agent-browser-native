@@ -2757,6 +2757,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			return component;
 		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 			const resolvedInput = resolveAgentBrowserInput({
 				getBatchAnnotateValidationError,
 				managedSessionActive,
@@ -2810,6 +2811,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					input: resolvedInput,
 					onUpdate,
 					params,
+					promptPolicy,
 					sessionPageStateUpdate,
 					signal,
 					state: browserRunState,

@@ -1,6 +1,6 @@
 /**
  * Purpose: Verify extension entrypoint validation-error and diagnostic contracts.
- * Responsibilities: Assert malformed args/envelopes, timeout progress, managed-session, selector visibility, overlay, and tab-drift diagnostics.
+ * Responsibilities: Assert malformed args/envelopes, timeout progress, managed-session, selector visibility, overlay, prompt guards, and tab-drift diagnostics.
  * Scope: Integration-style Node test-runner coverage split out of the broad extension-validation suite.
  * Usage: Run with `npx tsx --test test/agent-browser.extension-errors-artifacts.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests use fake agent-browser binaries and isolated env/temp directories to avoid relying on upstream browser behavior.
@@ -710,6 +710,156 @@ if (args.includes("open")) {
 			const closeCandidate = await executeRegisteredTool(harness.tool, harness.ctx, { args: closeCandidateArgs });
 			assert.equal(closeCandidate.isError, false);
 			assert.notEqual(closeCandidate.details?.failureCategory, "stale-ref");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension blocks likely final order clicks when the user set a stop boundary", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stop-boundary-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://shop.example/checkout-step-two", refs: { e9: { role: "button", name: "Finish" } }, snapshot: '- button "Finish" [ref=e9]' } }));
+} else if (args.includes("click") || args.includes("batch")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Stop on the checkout overview page; do not place the order." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+
+			const refClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e9"] });
+			assert.equal(refClick.isError, true);
+			assert.match((refClick.content[0] as { text: string }).text, /Blocked likely final submit\/order action/);
+			assert.equal((refClick.details?.promptGuard as { reason?: string } | undefined)?.reason, "explicit-user-stop-boundary");
+
+			const batchClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch"], stdin: JSON.stringify([["click", "[data-test=finish]"]]) });
+			assert.equal(batchClick.isError, true);
+			assert.equal((batchClick.details?.promptGuard as { stepIndex?: number } | undefined)?.stepIndex, 0);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click") || entry.args.includes("batch")).length, 0);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension blocks close until required prompt screenshot artifacts are saved", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-required-artifact-"));
+	const logPath = join(tempDir, "invocations.log");
+	const screenshotPath = join(tempDir, "release-smoke.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("screenshot")) {
+  const path = args[args.length - 1];
+  fs.writeFileSync(path, "png");
+  process.stdout.write(JSON.stringify({ success: true, data: { path } }));
+} else if (args.includes("close")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: `Save a screenshot here: ${screenshotPath}` });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const blockedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(blockedClose.isError, true);
+			assert.match((blockedClose.content[0] as { text: string }).text, /requested artifact path is missing or unverified/);
+			assert.equal((blockedClose.details?.promptGuard as { missingArtifacts?: Array<{ path?: string }> } | undefined)?.missingArtifacts?.[0]?.path, screenshotPath);
+
+			const screenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", screenshotPath] });
+			assert.equal(screenshot.isError, false, JSON.stringify(screenshot));
+			assert.equal((await stat(screenshotPath)).isFile(), true);
+
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("close")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension replays a click when upstream reports success without dispatching DOM events", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://shop.example/inventory",
+    refs: {
+      e1: { role: "button", name: "Add to cart" },
+      e2: { role: "button", name: "Add to cart" }
+    },
+    snapshot: '- button "Add to cart" [ref=e1]\\n- button "Add to cart" [ref=e2]'
+  } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
+} else if (args.includes("eval")) {
+  if (stdin.includes("window[marker] = state")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
+  } else if (stdin.includes("fallback-applied")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "fallback-applied", nativeEventCount: 0, fallbackEventCount: 1 } } }));
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Shop", url: "https://shop.example/inventory" } } }));
+  }
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+			assert.deepEqual((snapshot.details?.refSnapshot as { refs?: Record<string, { name?: string; role?: string }> } | undefined)?.refs?.e1, { name: "Add to cart", role: "button" });
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(click.isError, false);
+			assert.match((click.content[0] as { text: string }).text, /Click dispatch fallback:/);
+			assert.equal((click.details?.clickDispatch as { status?: string } | undefined)?.status, "fallback-applied");
+			assert.equal((click.details?.clickDispatch as { target?: { ref?: string; nth?: number } } | undefined)?.target?.ref, "@e1");
+			assert.equal((click.details?.clickDispatch as { target?: { ref?: string; nth?: number } } | undefined)?.target?.nth, 0);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+			assert.ok(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("window[marker] = state")));
+			assert.ok(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("fallback-applied")));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

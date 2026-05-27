@@ -19,7 +19,7 @@ import type { AgentBrowserEnvelope, AgentBrowserNextAction, buildAgentBrowserRes
 import type { SessionArtifactManifest } from "../../results/contracts.js";
 import type { RichInputRecoveryDiagnostic, VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import type { SessionPageState, SessionRefSnapshot, SessionRefSnapshotInvalidation, SessionTabTarget } from "../../session-page-state.js";
-import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection } from "../../runtime.js";
+import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection, PromptPolicy } from "../../runtime.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
 
 export type AgentBrowserToolResult = AgentToolResult<unknown> & { isError?: boolean };
@@ -91,6 +91,7 @@ export interface BrowserRunOptions {
 	input: ResolvedAgentBrowserValidInput;
 	onUpdate?: (result: AgentToolResult<unknown>) => void;
 	params: AgentBrowserExecuteParams;
+	promptPolicy: PromptPolicy;
 	sessionPageStateUpdate: ReturnType<SessionPageState["beginUpdate"]>;
 	signal?: AbortSignal;
 	state: BrowserRunState;
@@ -118,6 +119,30 @@ export interface OverlayBlockerDiagnostic {
 	candidates: OverlayBlockerCandidate[];
 	snapshot: SessionRefSnapshot;
 	summary: string;
+}
+
+export interface ClickDispatchProbeTarget {
+	kind: "ref" | "selector" | "xpath";
+	name?: string;
+	nth?: number;
+	ref?: string;
+	role?: string;
+	selector?: string;
+}
+
+export interface ClickDispatchProbe {
+	marker: string;
+	target: ClickDispatchProbeTarget;
+}
+
+export interface ClickDispatchDiagnostic {
+	error?: string;
+	fallbackEventCount?: number;
+	nativeEventCount: number;
+	reason: "native-click-produced-no-target-dom-event";
+	status: "fallback-applied" | "fallback-failed";
+	summary: string;
+	target: ClickDispatchProbeTarget;
 }
 
 export interface SelectorTextVisibilityDiagnostic {
@@ -353,6 +378,7 @@ export interface PreparedBrowserRun {
 	exactSensitiveValues: string[];
 	executionPlan: AgentBrowserExecutionPlan;
 	includePinnedNavigationSummary: boolean;
+	clickDispatchProbe?: ClickDispatchProbe;
 	pinnedBatchUnwrapMode?: PinnedBatchUnwrapMode;
 	preparedArgs: PreparedAgentBrowserArgs;
 	priorRefSnapshotState?: SessionRefSnapshot;
@@ -417,6 +443,7 @@ export interface FinalResultInput {
 	aboutBlankSessionMismatch?: AboutBlankSessionMismatch;
 	artifactCleanup?: ArtifactCleanupGuidance;
 	categoryDetails: AgentBrowserResultCategoryDetails;
+	clickDispatchDiagnostic?: ClickDispatchDiagnostic;
 	comboboxFocusDiagnostic?: ComboboxFocusDiagnostic;
 	compiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
 	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;

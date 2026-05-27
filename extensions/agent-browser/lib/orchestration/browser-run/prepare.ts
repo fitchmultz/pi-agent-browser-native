@@ -27,7 +27,9 @@ import {
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
+import { prepareClickDispatchProbe } from "./click-dispatch.js";
 import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
+import { findRequestedArtifactCloseViolation, findStopBoundaryViolation } from "./prompt-guards.js";
 import type {
 	BrowserRunInputFields,
 	BrowserRunOptions,
@@ -528,6 +530,43 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
 		? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
 		: undefined;
+	const promptRefSnapshot = resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState;
+	const stopBoundaryViolation = findStopBoundaryViolation({ commandTokens, promptPolicy: options.promptPolicy, refSnapshot: promptRefSnapshot, stdin: runtimeToolStdin });
+	if (stopBoundaryViolation) {
+		return { kind: "early-result", statePatch, result: {
+			content: [{ type: "text", text: stopBoundaryViolation.message }],
+			details: {
+				args: redactedArgs,
+				command: executionPlan.commandInfo.command,
+				compatibilityWorkaround,
+				effectiveArgs: redactedEffectiveArgs,
+				promptGuard: stopBoundaryViolation,
+				sessionMode,
+				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: stopBoundaryViolation.message, failureCategory: "policy-blocked", succeeded: false, validationError: stopBoundaryViolation.message }),
+				validationError: stopBoundaryViolation.message,
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+			},
+			isError: true,
+		} };
+	}
+	const requestedArtifactCloseViolation = await findRequestedArtifactCloseViolation({ artifactManifest: state.artifactManifest, command: executionPlan.commandInfo.command, cwd, promptPolicy: options.promptPolicy });
+	if (requestedArtifactCloseViolation) {
+		return { kind: "early-result", statePatch, result: {
+			content: [{ type: "text", text: requestedArtifactCloseViolation.message }],
+			details: {
+				args: redactedArgs,
+				command: executionPlan.commandInfo.command,
+				compatibilityWorkaround,
+				effectiveArgs: redactedEffectiveArgs,
+				promptGuard: requestedArtifactCloseViolation,
+				sessionMode,
+				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: requestedArtifactCloseViolation.message, failureCategory: "policy-blocked", succeeded: false, validationError: requestedArtifactCloseViolation.message }),
+				validationError: requestedArtifactCloseViolation.message,
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+			},
+			isError: true,
+		} };
+	}
 	const staleRefPreflight = buildStaleRefPreflight({
 		commandTokens,
 		currentTarget: priorSessionTabTarget,
@@ -676,6 +715,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			}
 		}
 	}
+	const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
+		? await prepareClickDispatchProbe({ commandTokens, cwd, refSnapshot: resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState, sessionName: executionPlan.sessionName, signal })
+		: undefined;
 	const redactedProcessArgs = redactInvocationArgs(processArgs);
 	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0;
 	const scrollPositionBefore = shouldProbeScrollNoop
@@ -702,6 +744,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		compiledSemanticAction,
 		compiledSourceLookup,
 		compatibilityWorkaround,
+		clickDispatchProbe,
 		electronLaunch,
 		exactSensitiveValues,
 		executionPlan,
