@@ -6,6 +6,7 @@
  * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run. `writeFakeAgentBrowserBinary` installs a Unix shell-script launcher or a Windows `agent-browser.cmd` that runs the same Node script body; pass `platform: "win32"` to assert Windows launcher layout from non-Windows hosts (spawn/PATHEXT behavior still needs a real Windows runner).
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -359,7 +360,7 @@ export function createExtensionHarness(options: {
 
 	assert.ok(registeredTool, "expected the extension to register the agent_browser tool");
 
-	const branch = options.branch ?? buildUserBranch(options.prompt);
+	let branch = options.branch ?? buildUserBranch(options.prompt);
 	const sessionDir = options.sessionDir ?? (options.sessionFile ? dirname(options.sessionFile) : undefined);
 	const ctx = {
 		cwd: options.cwd,
@@ -371,7 +372,14 @@ export function createExtensionHarness(options: {
 		},
 	} as const;
 
-	return { ctx, handlers, tool: registeredTool };
+	return {
+		ctx,
+		handlers,
+		setBranch(nextBranch: unknown[]) {
+			branch = nextBranch;
+		},
+		tool: registeredTool,
+	};
 }
 
 export async function runExtensionEvent(
@@ -411,7 +419,10 @@ export async function executeRegisteredTool(
 	};
 }
 
-export async function withPatchedEnv<T>(patch: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
+const patchedEnvScope = new AsyncLocalStorage<boolean>();
+let patchedEnvQueue: Promise<void> = Promise.resolve();
+
+async function runWithPatchedEnv<T>(patch: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
 	const previousValues = new Map<string, string | undefined>();
 	for (const [name, value] of Object.entries(patch)) {
 		previousValues.set(name, process.env[name]);
@@ -433,6 +444,18 @@ export async function withPatchedEnv<T>(patch: Record<string, string | undefined
 			}
 		}
 	}
+}
+
+export async function withPatchedEnv<T>(patch: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
+	if (patchedEnvScope.getStore()) {
+		return await runWithPatchedEnv(patch, run);
+	}
+
+	const queuedRun = patchedEnvQueue
+		.catch(() => undefined)
+		.then(() => patchedEnvScope.run(true, () => runWithPatchedEnv(patch, run)));
+	patchedEnvQueue = queuedRun.then(() => undefined, () => undefined);
+	return await queuedRun;
 }
 
 /** Fake script body that spawns a detached descendant inheriting stdio (stdio-linger regressions). */

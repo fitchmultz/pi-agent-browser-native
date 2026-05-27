@@ -734,11 +734,11 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 - derive the base implicit session name from the official `pi` session id plus a cwd hash so same-named checkouts do not collide
 - respect explicit upstream `--session` with minimal interference
 - treat the extension-managed session as convenience state owned by the wrapper
-- preserve the current extension-managed session across `/reload` and resumable session transitions so persisted sessions can keep following the live browser on `/reload` or `/resume`
+- preserve the current extension-managed session across `/reload`, exact-session relaunch, `/resume`, and Pi `session_tree` branch transitions so persisted sessions can keep following the live browser after lifecycle changes
 - close the active extension-managed session when the originating `pi` process quits, while leaving explicit caller-provided sessions alone
 - set an idle timeout on extension-managed sessions as a backstop for abnormal exits or cleanup failures
 - clean up process-private temp spill artifacts on shutdown, while keeping persisted-session snapshot spill files in a private session-scoped artifact directory so `details.fullOutputPath` survives reload/restart and the oldest spill files are evicted if the per-session artifact budget is exceeded
-- reconstruct the current extension-managed session and latest `artifactManifest` from persisted tool details on resume/reload so later default calls keep following the active managed browser and can continue reporting artifact retention state
+- reconstruct the current extension-managed session, latest page-scoped refs, latest `artifactManifest`, and wrapper-tracked Electron launch records from the active transcript branch on `session_start` and Pi `session_tree` so later default calls keep following the active managed browser and can continue reporting artifact retention state
 - when an unnamed `sessionMode: "fresh"` launch succeeds, make it the new extension-managed session so later default calls keep using it
 - when an unnamed `sessionMode: "fresh"` launch fails or times out, preserve the previous managed session when one was active or report the attempted fresh session as abandoned when no managed session was active (`details.managedSessionOutcome`; visible `Managed session outcome: …` only when the final tool call used `sessionMode: "fresh"` and failed—see `#details`)
 - if that unnamed fresh launch replaced an already-active managed session, best-effort close the old managed session after the switch succeeds

@@ -17,6 +17,7 @@ import {
 	keyHint,
 	type AgentToolResult,
 	type ExtensionAPI,
+	type ExtensionContext,
 	type Theme,
 	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
@@ -629,19 +630,27 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let electronChildProcesses = new Map<string, ChildProcess>();
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 
-
-	pi.on("session_start", async (_event, ctx) => {
+	const restoreBranchBackedState = (ctx: ExtensionContext): void => {
 		managedSessionBaseName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
-		const restoredState = restoreManagedSessionStateFromBranch(ctx.sessionManager.getBranch(), managedSessionBaseName);
+		const branch = ctx.sessionManager.getBranch();
+		const restoredState = restoreManagedSessionStateFromBranch(branch, managedSessionBaseName);
 		managedSessionActive = restoredState.active;
 		managedSessionName = restoredState.sessionName;
 		managedSessionCwd = ctx.cwd;
 		freshSessionOrdinal = restoredState.freshSessionOrdinal;
-		const branch = ctx.sessionManager.getBranch();
 		sessionPageState = SessionPageState.fromBranch(branch);
+		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = restoreArtifactManifestFromBranch(branch);
-		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(ctx.sessionManager.getBranch());
+		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(branch);
+	};
+
+	pi.on("session_start", async (_event, ctx) => {
+		restoreBranchBackedState(ctx);
 		electronChildProcesses = new Map<string, ChildProcess>();
+	});
+
+	pi.on("session_tree", async (_event, ctx) => {
+		restoreBranchBackedState(ctx);
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {

@@ -1,9 +1,9 @@
 /**
  * Purpose: Exercise the configured-source pi-agent-browser lifecycle path through a real tmux-driven Pi process.
- * Responsibilities: Create isolated Pi settings and a temporary package source, inject a deterministic reload sentinel, drive `/reload` plus restart/`/resume`, assert managed browser-session continuity and persisted artifact survival, capture transcripts, and clean up side effects.
+ * Responsibilities: Create isolated Pi settings and a temporary package source, inject a deterministic reload sentinel, drive `/reload` plus restart with exact `--session-id`, assert managed browser-session continuity and persisted artifact survival, capture transcripts, and clean up side effects.
  * Scope: Maintainer regression harness invoked only through `npm run verify -- lifecycle` (not part of default `verify` or the `release` compose used by `prepublishOnly`); normal unit/package verification remains in the standard npm scripts.
  * Usage: Run with `node scripts/verify-lifecycle.mjs`, `npm run verify -- lifecycle`, or `node scripts/verify-lifecycle.mjs --keep-artifacts --verbose`.
- * Invariants/Assumptions: `pi` and `tmux` are available on PATH, the configured model (default `zai/glm-5.1`, overridable via `--model`) can follow explicit tool-use prompts, and the temporary configured package path is the only active Pi package source. `/reload` may fail if sent while the TUI still shows a working indicator even after JSONL records a final assistant message; see `docs/RELEASE.md` lifecycle triage.
+ * Invariants/Assumptions: `pi` and `tmux` are available on PATH, Pi supports `--session-id`, the configured model (default `zai/glm-5.1`, overridable via `--model`) can follow explicit tool-use prompts, and the temporary configured package path is the only active Pi package source. `/reload` may fail if sent while the TUI still shows a working indicator even after JSONL records a final assistant message; see `docs/RELEASE.md` lifecycle triage.
  * Related: `docs/SUPPORT_MATRIX.md` tracks configured-source lifecycle expectations, passthrough flags, and triage notes for this harness.
  */
 
@@ -55,6 +55,14 @@ Exit codes:
   1  Lifecycle verification failed.
   2  Usage error.
 `);
+}
+
+export function createLifecycleSessionId(pid = process.pid) {
+	return `piab-lifecycle-${pid}`;
+}
+
+export function buildPiLaunchArgs({ model, sessionId }) {
+	return ["--model", model, "--session-id", sessionId];
 }
 
 export function parseCliArgs(argv = process.argv.slice(2)) {
@@ -167,6 +175,11 @@ export function sentinelTokens(entries) {
 		.filter((entry) => entry?.type === "custom" && entry.customType === SENTINEL_CUSTOM_TYPE)
 		.map((entry) => entry.data?.token)
 		.filter((token) => typeof token === "string");
+}
+
+export function sessionHeaderId(entries) {
+	const header = entries.find((entry) => entry?.type === "session");
+	return typeof header?.id === "string" ? header.id : undefined;
 }
 
 export function collectFullOutputPaths(results) {
@@ -288,15 +301,42 @@ function execute(tokens) {
   if (command === "close") return { result: { closed: true, sessionName } };
   return { result: { ok: true, command, args: rest, stdin, state } };
 }
+function executeBatch(steps) {
+  let mode = "clean";
+  let staleNetwork = true;
+  let staleConsole = true;
+  let staleErrors = true;
+  return steps.map((step) => {
+    const name = step[0];
+    if (name === "open") {
+      const url = String(step[1] || "about:blank");
+      const title = url.includes("react.dev") ? "React" : "Lifecycle QA Page";
+      save({ title, url, activeTab: "t1" });
+      mode = url.includes("fail") ? "fail" : "clean";
+      return { command: step, success: true, result: { title, url } };
+    }
+    if (name === "network") {
+      if (step.includes("--clear")) { staleNetwork = false; return { command: step, success: true, result: { requests: [] } }; }
+      if (staleNetwork || mode === "fail") return { command: step, success: true, result: { requests: [{ method: "GET", resourceType: "fetch", status: 500, url: "https://fail.example.test/api" }] } };
+      return { command: step, success: true, result: { requests: [] } };
+    }
+    if (name === "console") {
+      if (step.includes("--clear")) { staleConsole = false; return { command: step, success: true, result: { messages: [] } }; }
+      return { command: step, success: true, result: staleConsole || mode === "fail" ? { messages: [{ type: "error", text: "lifecycle console boom" }] } : { messages: [] } };
+    }
+    if (name === "errors") {
+      if (step.includes("--clear")) { staleErrors = false; return { command: step, success: true, result: { errors: [] } }; }
+      return { command: step, success: true, result: staleErrors || mode === "fail" ? { errors: [{ text: "lifecycle page boom" }] } : { errors: [] } };
+    }
+    return { command: step, success: true, result: { ok: true } };
+  });
+}
 const tokens = commandTokens();
 let data;
 if (tokens[0] === "batch") {
   let steps;
   try { steps = JSON.parse(stdin || "[]"); } catch (error) { throw new Error("Invalid batch stdin: " + error.message); }
-  data = steps.map((step) => {
-    const { result } = execute(step);
-    return { command: step, success: true, result };
-  });
+  data = executeBatch(steps);
 } else {
   data = execute(tokens).result;
 }
@@ -321,6 +361,10 @@ async function capturePaneText(tmuxSession) {
 	return stdout;
 }
 
+export function paneLooksReady(pane) {
+	return /\d+(?:\.\d+)?%\/\d+k/.test(pane) && !/Working[.…]*/i.test(pane);
+}
+
 async function capturePane(tmuxSession, artifactPath) {
 	try {
 		const stdout = await capturePaneText(tmuxSession);
@@ -337,8 +381,12 @@ async function killTmuxSession(tmuxSession) {
 	await run("tmux", ["kill-session", "-t", tmuxSession]).catch(() => undefined);
 }
 
+function shellQuote(value) {
+	return `'${String(value).replaceAll("'", `'\\''`)}'`;
+}
+
 async function launchPiInTmux(options) {
-	const { agentDir, cwd, fakeBinDir, fakeStateDir, model, tmuxSession } = options;
+	const { agentDir, cwd, fakeBinDir, fakeStateDir, model, paneLogPath, sessionId, tmuxSession } = options;
 	await killTmuxSession(tmuxSession);
 	await run("tmux", [
 		"new-session",
@@ -352,9 +400,12 @@ async function launchPiInTmux(options) {
 		`AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_STATE_DIR=${fakeStateDir}`,
 		`PATH=${fakeBinDir}${delimiter}${process.env.PATH ?? ""}`,
 		"pi",
-		"--model",
-		model,
+		...buildPiLaunchArgs({ model, sessionId }),
 	]);
+	if (paneLogPath) {
+		await mkdir(dirname(paneLogPath), { recursive: true });
+		await run("tmux", ["pipe-pane", "-o", "-t", tmuxActiveTarget(tmuxSession), `cat >> ${shellQuote(paneLogPath)}`]);
+	}
 }
 
 async function sendLine(tmuxSession, text) {
@@ -496,8 +547,12 @@ async function runPromptAndWaitForResult({ describe, prompt, sessionFile, timeou
 	return report;
 }
 
+function buildToolInputPrompt(params, extra = "") {
+	return `Use exactly one agent_browser tool call with input ${JSON.stringify(params)}${extra} Do not use bash. After the tool result, briefly report the result.`;
+}
+
 function buildPrompt(args, extra = "") {
-	return `Use exactly one agent_browser tool call with args ${JSON.stringify(args)}${extra} Do not use bash. After the tool result, briefly report the result.`;
+	return buildToolInputPrompt({ args }, extra);
 }
 
 async function verifyLifecycle(options = {}) {
@@ -513,7 +568,8 @@ async function verifyLifecycle(options = {}) {
 	const packageDir = join(tempRoot, "package-under-test");
 	const fakeBinDir = join(tempRoot, "fake-bin");
 	const fakeStateDir = join(tempRoot, "fake-browser-state");
-	const tmuxSession = `piab-lifecycle-${process.pid}`;
+	const piSessionId = createLifecycleSessionId(process.pid);
+	const tmuxSession = piSessionId;
 	let sessionFile;
 	let firstFullOutputPath;
 	let failure;
@@ -533,14 +589,14 @@ async function verifyLifecycle(options = {}) {
 		assert(settings.extensions.length === 0 && settings.skills.length === 0 && settings.prompts.length === 0 && settings.themes.length === 0, "Isolated settings must clear local resource arrays.");
 
 		log(`Temp root: ${tempRoot}`);
-		log(`Launching Pi in tmux with model ${model}...`);
-		await launchPiInTmux({ agentDir, cwd: repoRoot, fakeBinDir, fakeStateDir, model, tmuxSession });
+		log(`Launching Pi in tmux with model ${model} and session id ${piSessionId}...`);
+		await launchPiInTmux({ agentDir, cwd: repoRoot, fakeBinDir, fakeStateDir, model, paneLogPath: join(artifactsDir, "initial-pane-stream.txt"), sessionId: piSessionId, tmuxSession });
 		await waitFor({
 			describe: "Pi prompt readiness",
 			timeoutMs,
 			predicate: async () => {
 				const pane = await capturePaneText(tmuxSession);
-				return pane.includes("0.0%/") ? pane : undefined;
+				return paneLooksReady(pane) ? pane : undefined;
 			},
 		});
 		await sleep(1000);
@@ -562,6 +618,7 @@ async function verifyLifecycle(options = {}) {
 			},
 		});
 		assert(sessionFile, "Pi did not create a session file.");
+		assert(sessionHeaderId(openReport.entries) === piSessionId, `Pi session header id ${JSON.stringify(sessionHeaderId(openReport.entries))} did not match requested lifecycle session id ${JSON.stringify(piSessionId)}.`);
 		await waitForAssistantFinal({ describe: "initial managed open", sessionFile, sinceEntryCount: 0, timeoutMs });
 		const firstSessionName = openReport.result.details?.sessionName;
 		assert(typeof firstSessionName === "string" && firstSessionName.length > 0, "Initial open did not report details.sessionName.");
@@ -602,22 +659,19 @@ async function verifyLifecycle(options = {}) {
 
 		await capturePane(tmuxSession, join(artifactsDir, "before-restart-pane.txt"));
 		await killTmuxSession(tmuxSession);
-		log("Relaunching Pi and resuming prior session...");
-		await launchPiInTmux({ agentDir, cwd: repoRoot, fakeBinDir, fakeStateDir, model, tmuxSession });
+		log("Relaunching Pi with exact prior session id...");
+		await launchPiInTmux({ agentDir, cwd: repoRoot, fakeBinDir, fakeStateDir, model, paneLogPath: join(artifactsDir, "relaunch-pane-stream.txt"), sessionId: piSessionId, tmuxSession });
 		await waitFor({
 			describe: "relaunched Pi prompt readiness",
 			timeoutMs,
 			predicate: async () => {
 				const pane = await capturePaneText(tmuxSession);
-				return pane.includes("0.0%/") ? pane : undefined;
+				return paneLooksReady(pane) ? pane : undefined;
 			},
 		});
-		await sendLine(tmuxSession, "/resume");
-		await sleep(1000);
-		await run("tmux", ["send-keys", "-t", tmuxActiveTarget(tmuxSession), "Enter"]);
 
 		const resumeSnapshot = await runPromptAndWaitForResult({
-			describe: "post-resume same-page snapshot",
+			describe: "post-relaunch exact-session snapshot",
 			prompt: buildPrompt(["snapshot", "-i"]),
 			sessionFile,
 			timeoutMs,
@@ -625,14 +679,26 @@ async function verifyLifecycle(options = {}) {
 			verbose,
 			predicate: (result) => normalizeComparableUrl(resultUrl(result)) === EXPECTED_URL || resultText(result).includes(EXPECTED_URL),
 		});
-		assert(resumeSnapshot.result.details?.sessionName === firstSessionName, "Post-resume snapshot used a different managed session name.");
-		await assertFileExists(firstFullOutputPath, "Previously persisted fullOutputPath after resume");
+		assert(resumeSnapshot.result.details?.sessionName === firstSessionName, "Post-relaunch snapshot used a different managed session name.");
+		await assertFileExists(firstFullOutputPath, "Previously persisted fullOutputPath after relaunch");
+
+		const qaFailureReport = await runPromptAndWaitForResult({
+			describe: "qa reclassification failure patch",
+			prompt: buildToolInputPrompt({ qa: { url: "https://fail.example.test/", expectedText: ["Welcome"], expectedSelector: "main" } }),
+			sessionFile,
+			timeoutMs,
+			tmuxSession,
+			verbose,
+			predicate: (result) => result?.details?.failureCategory === "qa-failure" && result?.details?.resultCategory === "failure" && result?.isError === true,
+		});
+		assert(resultText(qaFailureReport.result).includes("Result category: failure; failureCategory: qa-failure; Pi tool isError: true."), "QA failure transcript row did not include the model-visible Pi isError patch notice.");
 
 		await capturePane(tmuxSession, join(artifactsDir, "success-pane.txt"));
 		return {
 			artifactsDir,
 			fullOutputPath: firstFullOutputPath,
 			sessionFile,
+			sessionId: piSessionId,
 			sessionName: firstSessionName,
 			tempRoot,
 		};
@@ -665,6 +731,7 @@ export async function main(argv = process.argv.slice(2)) {
 		const report = await verifyLifecycle(options);
 		console.log("Lifecycle verification passed.");
 		console.log(`Session: ${report.sessionFile}`);
+		console.log(`Session id: ${report.sessionId}`);
 		console.log(`Managed browser session: ${report.sessionName}`);
 		console.log(`Persisted full output verified before cleanup: ${report.fullOutputPath}`);
 		return 0;
