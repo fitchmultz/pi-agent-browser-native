@@ -57,10 +57,15 @@ function buildClickDispatchProbeCheckScript(probe: ClickDispatchProbe): string {
 	return `(() => {
 const marker = ${JSON.stringify(probe.marker)};
 const state = window[marker];
-if (!state || !Array.isArray(state.events)) return { status: "probe-missing", nativeEventCount: 0 };
+const finish = (payload) => {
+  if (state && typeof state.cleanup === "function") state.cleanup();
+  try { delete window[marker]; } catch {}
+  return payload;
+};
+if (!state || !Array.isArray(state.events)) return finish({ status: "probe-missing", nativeEventCount: 0 });
 const nativeEventCount = state.events.filter((event) => event && event.isTrusted === true && event.targetMatched === true).length;
-if (nativeEventCount > 0) return { status: "native-event-observed", nativeEventCount, target: state.target };
-return { status: "no-native-event-observed", nativeEventCount, target: state.target };
+if (nativeEventCount > 0) return finish({ status: "native-event-observed", nativeEventCount, target: state.target });
+return finish({ status: "no-native-event-observed", nativeEventCount, target: state.target });
 })()`;
 }
 

@@ -6,7 +6,8 @@ import { prepareBrowserRun } from "./prepare.js";
 import { processBrowserOutput } from "./process-output.js";
 import type { AgentBrowserToolResult, BrowserRunOptions } from "./types.js";
 
-export type { BrowserRunOptions, BrowserRunState } from "./types.js";
+export { closeManagedSession } from "./session-state.js";
+export type { AgentBrowserToolResult, BrowserRunOptions, BrowserRunState, TraceOwner } from "./types.js";
 
 export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
 	const preparedResult = await prepareBrowserRun(options);

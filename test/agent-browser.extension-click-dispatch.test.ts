@@ -66,6 +66,53 @@ if (args.includes("eval")) {
 	}
 });
 
+test("agentBrowserExtension cleans up click dispatch probes during successful dispatch checks", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-success-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("eval")) {
+  if (stdin.includes("window[marker] = state")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
+  } else if (stdin.includes("native-event-observed")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "native-event-observed", nativeEventCount: 1 } } }));
+  } else if (stdin.includes("cleaned-up")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "cleaned-up" } } }));
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "unexpected" } } }));
+  }
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "[data-test=save]"] });
+			assert.equal(click.isError, false);
+			assert.equal(click.details?.clickDispatch, undefined);
+
+			const invocations = await readInvocationLog(logPath);
+			const checkInvocation = invocations.find((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("native-event-observed"));
+			assert.ok(checkInvocation, "expected a click dispatch check eval");
+			assert.ok((checkInvocation.stdin ?? "").includes("state.cleanup"));
+			assert.ok((checkInvocation.stdin ?? "").includes("delete window[marker]"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports click dispatch diagnostic when upstream reports success without dispatching DOM events", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -116,7 +163,10 @@ if (args.includes("snapshot")) {
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
 			assert.ok(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("window[marker] = state")));
-			assert.ok(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("no-native-event-observed")));
+			const checkInvocation = invocations.find((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("no-native-event-observed"));
+			assert.ok(checkInvocation, "expected a click dispatch check eval");
+			assert.ok((checkInvocation.stdin ?? "").includes("state.cleanup"));
+			assert.ok((checkInvocation.stdin ?? "").includes("delete window[marker]"));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
