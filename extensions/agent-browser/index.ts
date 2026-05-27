@@ -716,24 +716,6 @@ interface QaAttachedTarget {
 	url?: string;
 }
 
-interface TimeoutArtifactEvidence {
-	absolutePath: string;
-	exists: boolean;
-	path: string;
-	sizeBytes?: number;
-	stepIndex: number;
-}
-
-interface TimeoutPartialProgress {
-	artifacts: TimeoutArtifactEvidence[];
-	currentPage?: {
-		title?: string;
-		url?: string;
-	};
-	steps?: Array<{ args: string[]; index: number }>;
-	summary: string;
-}
-
 interface EvalStdinHint {
 	reason: string;
 	suggestion: string;
@@ -2403,11 +2385,6 @@ function getElectronTextScopeContext(options: {
 	return undefined;
 }
 
-
-
-
-
-
 function looksLikeFunctionEvalStdin(stdin: string | undefined): boolean {
 	const trimmed = stdin?.trim();
 	if (!trimmed) return false;
@@ -2419,114 +2396,6 @@ function isPlainEmptyObject(value: unknown): boolean {
 	const prototype = Object.getPrototypeOf(value);
 	return (prototype === Object.prototype || prototype === null) && Object.keys(value).length === 0;
 }
-
-
-
-
-
-
-
-
-function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, command: string | undefined, stdin: string | undefined): Array<{ args: string[]; index: number }> {
-	if (compiledJob) return compiledJob.steps.map((step, index) => ({ args: step.args, index: index + 1 }));
-	if (command !== "batch" || !stdin) return [];
-	try {
-		const parsed = JSON.parse(stdin) as unknown;
-		if (!Array.isArray(parsed)) return [];
-		return parsed.flatMap((step, index) => Array.isArray(step) && step.every((token) => typeof token === "string") ? [{ args: step as string[], index: index + 1 }] : []);
-	} catch {
-		return [];
-	}
-}
-
-function getLastPositionalToken(args: string[], startIndex = 1): string | undefined {
-	for (let index = args.length - 1; index >= startIndex; index -= 1) {
-		const token = args[index];
-		if (token && !token.startsWith("-")) return token;
-	}
-	return undefined;
-}
-
-function getTimeoutStepArtifactPath(args: string[]): string | undefined {
-	const [command] = args;
-	if (command === "screenshot") {
-		const index = getScreenshotPathTokenIndex(args);
-		return index === undefined ? undefined : args[index];
-	}
-	if (command === "pdf") return getLastPositionalToken(args);
-	if (command === "download") return getLastPositionalToken(args, 2);
-	if (command === "wait") {
-		const inlineDownload = args.find((token) => token.startsWith("--download="));
-		if (inlineDownload) return inlineDownload.slice("--download=".length) || undefined;
-		const downloadIndex = args.indexOf("--download");
-		const downloadPath = downloadIndex >= 0 ? args[downloadIndex + 1] : undefined;
-		if (downloadPath && !downloadPath.startsWith("-")) return downloadPath;
-	}
-	return undefined;
-}
-
-async function collectTimeoutArtifactEvidence(cwd: string, steps: Array<{ args: string[]; index: number }>): Promise<TimeoutArtifactEvidence[]> {
-	const evidence: TimeoutArtifactEvidence[] = [];
-	for (const step of steps) {
-		const path = getTimeoutStepArtifactPath(step.args);
-		if (!path) continue;
-		const absolutePath = isAbsolute(path) ? path : resolve(cwd, path);
-		try {
-			const stats = await stat(absolutePath);
-			evidence.push({ absolutePath, exists: true, path, sizeBytes: stats.size, stepIndex: step.index });
-		} catch {
-			evidence.push({ absolutePath, exists: false, path, stepIndex: step.index });
-		}
-	}
-	return evidence;
-}
-
-function getPlannedCurrentPageUrl(steps: Array<{ args: string[]; index: number }>): string | undefined {
-	for (let index = steps.length - 1; index >= 0; index -= 1) {
-		const args = steps[index]?.args ?? [];
-		if (args[0] === "open" || args[0] === "navigate" || args[0] === "pushstate") {
-			return getLastPositionalToken(args);
-		}
-	}
-	return undefined;
-}
-
-
-function redactSensitivePathSegmentsForDiagnostic(path: string): string {
-	return path.split(/([/\\]+)/).map((segment) => {
-		if (segment === "/" || segment === "\\" || /^[/\\]+$/.test(segment)) return segment;
-		return redactSensitiveText(segment) !== segment || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(segment) ? "[REDACTED]" : segment;
-	}).join("");
-}
-
-function sanitizeCurrentPageUrlForTimeoutDiagnostic(url: string): string {
-	try {
-		const parsedUrl = new URL(url);
-		parsedUrl.pathname = parsedUrl.pathname.split("/").map((segment) => redactSensitivePathSegmentsForDiagnostic(segment)).join("/");
-		for (const [key, value] of parsedUrl.searchParams.entries()) {
-			if (redactSensitiveText(key) !== key || redactSensitiveText(value) !== value || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(`${key} ${value}`)) {
-				parsedUrl.searchParams.set(key, "[REDACTED]");
-			}
-		}
-		if (parsedUrl.hash) {
-			parsedUrl.hash = redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(parsedUrl.hash));
-		}
-		return redactSensitiveText(parsedUrl.toString());
-	} catch {
-		return redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(url));
-	}
-}
-
-
-
-
-
-
-
-
-
-
-
 
 // Serializes managed-session read/modify/write work so overlapping tool calls cannot promote stale state or close an in-use session.
 class AsyncExecutionQueue {

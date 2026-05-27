@@ -6,7 +6,7 @@
  * Invariants/Assumptions: Action ids are public machine-readable contracts; preserve first-observed order.
  */
 
-import { isPageMutationCommand } from "../command-taxonomy.js";
+import { isOpenNavigationCommand, isPageMutationCommand } from "../command-taxonomy.js";
 import { isPendingRecordingArtifact } from "./artifact-state.js";
 import type {
 	AgentBrowserFailureCategory,
@@ -150,7 +150,7 @@ export function buildAgentBrowserNextActions(options: {
 		}
 	}
 	if (options.resultCategory === "success") {
-		if (options.command === "open") {
+		if (isOpenNavigationCommand(options.command)) {
 			actions.push(buildNextToolAction({
 				args: ["snapshot", "-i"],
 				id: "inspect-opened-page",

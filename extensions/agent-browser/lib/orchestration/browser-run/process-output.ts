@@ -1,6 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
 
-import { isCloseCommand } from "../../command-taxonomy.js";
+import { isCloseCommand, isOpenNavigationCommand } from "../../command-taxonomy.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import {
@@ -221,7 +221,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let overlayBlockerDiagnostic: Awaited<ReturnType<typeof collectOverlayBlockerDiagnostic>>;
 
 		let openResultTabCorrection: Awaited<ReturnType<typeof collectOpenResultTabCorrection>>;
-		if (succeeded && prepared.executionPlan.sessionName && hasLaunchScopedTabCorrectionFlag(prepared.runtimeToolArgs) && ["goto", "navigate", "open"].includes(prepared.executionPlan.commandInfo.command ?? "")) {
+		if (succeeded && prepared.executionPlan.sessionName && hasLaunchScopedTabCorrectionFlag(prepared.runtimeToolArgs) && isOpenNavigationCommand(prepared.executionPlan.commandInfo.command)) {
 			const targetTitle = extractStringResultField(presentationEnvelope?.data, "title");
 			const targetUrl = extractStringResultField(presentationEnvelope?.data, "url");
 			const plannedTabCorrection = await collectOpenResultTabCorrection({ cwd, sessionName: prepared.executionPlan.sessionName, signal, targetTitle, targetUrl });

@@ -2,7 +2,7 @@ import { constants as fsConstants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 
-import { isCloseCommand } from "../../command-taxonomy.js";
+import { isCloseCommand, isOpenNavigationCommand } from "../../command-taxonomy.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import type { AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserJob, CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
 import { isHttpOrHttpsUrl } from "../../input-modes/job.js";
@@ -710,7 +710,7 @@ async function collectTimeoutArtifactEvidence(cwd: string, steps: Array<{ args: 
 function getPlannedCurrentPageUrl(steps: Array<{ args: string[]; index: number }>): string | undefined {
 	for (let index = steps.length - 1; index >= 0; index -= 1) {
 		const args = steps[index]?.args ?? [];
-		if (args[0] === "open" || args[0] === "navigate" || args[0] === "pushstate") return getLastPositionalToken(args);
+		if (isOpenNavigationCommand(args[0]) || args[0] === "pushstate") return getLastPositionalToken(args);
 	}
 	return undefined;
 }

@@ -132,14 +132,16 @@ test("classifyAgentBrowserSuccessCategory locks common machine-readable success 
 });
 
 test("buildAgentBrowserNextActions returns exact native-tool recommendations for common states", () => {
-	assert.deepEqual(buildAgentBrowserNextActions({ command: "open", resultCategory: "success", successCategory: "completed" }), [
-		{
-			id: "inspect-opened-page",
-			params: { args: ["snapshot", "-i"] },
-			reason: "Inspect the opened page before choosing interactive refs.",
-			tool: "agent_browser",
-		},
-	]);
+	for (const command of ["open", "goto", "navigate"] as const) {
+		assert.deepEqual(buildAgentBrowserNextActions({ command, resultCategory: "success", successCategory: "completed" }), [
+			{
+				id: "inspect-opened-page",
+				params: { args: ["snapshot", "-i"] },
+				reason: "Inspect the opened page before choosing interactive refs.",
+				tool: "agent_browser",
+			},
+		], command);
+	}
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
 	for (const command of ["key", "keydown", "keyboard", "keyup", "scrollinto", "tap"] as const) {
 		assert.equal(buildAgentBrowserNextActions({ command, resultCategory: "success", successCategory: "completed" })?.[0]?.id, "inspect-after-mutation", command);
