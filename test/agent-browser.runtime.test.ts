@@ -778,6 +778,7 @@ test("buildExecutionPlan limits sessionless allowlists to documented subcommands
 		["profiles", "future"],
 		["session"],
 		["state", "clear"],
+		["state", "clean"],
 		["state", "future"],
 		["upgrade", "future"],
 	] as const) {

@@ -1,148 +1,336 @@
 /**
- * Purpose: Centralize upstream agent-browser command groups that wrapper behavior depends on.
- * Responsibilities: Keep alias-aware command predicates in one neutral module so runtime planning,
- * session/ref guards, result recommendations, and presentation summaries do not drift.
- * Scope: Static command taxonomy only; parsing args, spawning processes, and formatting results live elsewhere.
+ * Purpose: Centralize upstream agent-browser command capabilities that wrapper behavior depends on.
+ * Responsibilities: Normalize command aliases once and expose capability predicates for runtime planning,
+ * session/ref guards, result recommendations, and presentation summaries without coupling unrelated behaviors.
+ * Scope: Static command capability taxonomy only; command-shape parsing, spawning, and formatting live elsewhere.
  */
 
-const CLOSE_COMMANDS = new Set(["close", "quit", "exit"]);
-const OPEN_NAVIGATION_COMMANDS = new Set(["goto", "navigate", "open"]);
-const READ_ONLY_DIAGNOSTIC_SESSION_TARGET_COMMANDS = new Set(["console", "cookies", "errors", "network", "storage"]);
-const SESSION_TAB_PINNING_EXCLUDED_COMMANDS = new Set(["close", "exit", "goto", "navigate", "open", "quit", "session", "tab"]);
-const SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS = new Set(["batch", "close", "exit", "quit", "session", "tab"]);
+type CommandCapabilityFlag =
+	| "closesSession"
+	| "openNavigation"
+	| "readOnlyDiagnosticSessionTarget"
+	| "excludedFromPinning"
+	| "excludedFromPostCommandCorrection"
+	| "guardsPageRefs"
+	| "invalidatesBatchRefs"
+	| "eligibleForElectronHealthProbe"
+	| "navigationObservable"
+	| "triggersPostMutationSnapshot"
+	| "eligibleForPageChangeSummary";
 
-const REF_GUARDED_COMMANDS = new Set([
-	"check",
-	"click",
-	"dblclick",
-	"download",
-	"drag",
-	"fill",
-	"focus",
-	"hover",
-	"key",
-	"keyboard",
-	"mouse",
-	"press",
-	"scrollinto",
-	"scrollintoview",
-	"select",
-	"tap",
-	"type",
-	"uncheck",
-	"upload",
-]);
+interface CommandCapabilityEntry extends Partial<Record<CommandCapabilityFlag, true>> {
+	aliases?: readonly string[];
+	command: string;
+}
 
-const ELECTRON_POST_COMMAND_HEALTH_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"fill",
-	"find",
-	"forward",
-	"key",
-	"keydown",
-	"keyboard",
-	"keyup",
-	"mouse",
-	"press",
-	"reload",
-	"select",
-	"tap",
-	"type",
-	"uncheck",
-]);
+const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
+	{
+		command: "back",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		navigationObservable: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "batch",
+		excludedFromPostCommandCorrection: true,
+	},
+	{
+		command: "check",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "click",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		navigationObservable: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		aliases: ["quit", "exit"],
+		closesSession: true,
+		command: "close",
+		excludedFromPinning: true,
+		excludedFromPostCommandCorrection: true,
+	},
+	{
+		command: "console",
+		readOnlyDiagnosticSessionTarget: true,
+	},
+	{
+		command: "cookies",
+		readOnlyDiagnosticSessionTarget: true,
+	},
+	{
+		command: "dblclick",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		navigationObservable: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "dialog",
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "download",
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+	},
+	{
+		command: "drag",
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+	},
+	{
+		command: "errors",
+		readOnlyDiagnosticSessionTarget: true,
+	},
+	{
+		command: "fill",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "find",
+		eligibleForElectronHealthProbe: true,
+	},
+	{
+		command: "focus",
+		guardsPageRefs: true,
+	},
+	{
+		command: "forward",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		navigationObservable: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "hover",
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "keydown",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "keyboard",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "keyup",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "mouse",
+		eligibleForElectronHealthProbe: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+	},
+	{
+		command: "network",
+		readOnlyDiagnosticSessionTarget: true,
+	},
+	{
+		aliases: ["goto", "navigate"],
+		command: "open",
+		eligibleForPageChangeSummary: true,
+		excludedFromPinning: true,
+		invalidatesBatchRefs: true,
+		openNavigation: true,
+	},
+	{
+		command: "pdf",
+		eligibleForPageChangeSummary: true,
+	},
+	{
+		aliases: ["key"],
+		command: "press",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "pushstate",
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "reload",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		navigationObservable: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "screenshot",
+		eligibleForPageChangeSummary: true,
+	},
+	{
+		command: "scroll",
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		aliases: ["scrollinto"],
+		command: "scrollintoview",
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "select",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "session",
+		excludedFromPinning: true,
+		excludedFromPostCommandCorrection: true,
+	},
+	{
+		command: "storage",
+		readOnlyDiagnosticSessionTarget: true,
+	},
+	{
+		command: "swipe",
+		eligibleForPageChangeSummary: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "tab",
+		excludedFromPinning: true,
+		excludedFromPostCommandCorrection: true,
+	},
+	{
+		command: "tap",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "type",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "uncheck",
+		eligibleForElectronHealthProbe: true,
+		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "upload",
+		guardsPageRefs: true,
+		invalidatesBatchRefs: true,
+	},
+];
 
-const NAVIGATION_OBSERVABLE_COMMANDS = new Set(["back", "click", "dblclick", "forward", "reload"]);
+const COMMAND_CAPABILITY_BY_NAME = new Map<string, CommandCapabilityEntry>();
+for (const entry of COMMAND_CAPABILITIES) {
+	COMMAND_CAPABILITY_BY_NAME.set(entry.command, entry);
+	for (const alias of entry.aliases ?? []) {
+		COMMAND_CAPABILITY_BY_NAME.set(alias, entry);
+	}
+}
 
-const PAGE_MUTATION_COMMANDS = new Set([
-	"back",
-	"check",
-	"click",
-	"dblclick",
-	"dialog",
-	"fill",
-	"forward",
-	"hover",
-	"key",
-	"keydown",
-	"keyboard",
-	"keyup",
-	"press",
-	"pushstate",
-	"reload",
-	"scroll",
-	"scrollinto",
-	"scrollintoview",
-	"select",
-	"swipe",
-	"tap",
-	"type",
-	"uncheck",
-]);
+function getCommandCapability(command: string | undefined): CommandCapabilityEntry | undefined {
+	return command === undefined ? undefined : COMMAND_CAPABILITY_BY_NAME.get(command);
+}
 
-const PAGE_CHANGE_SUMMARY_COMMANDS = new Set([
-	...PAGE_MUTATION_COMMANDS,
-	"download",
-	"goto",
-	"navigate",
-	"open",
-	"pdf",
-	"screenshot",
-]);
+function hasCommandCapability(command: string | undefined, capability: CommandCapabilityFlag): boolean {
+	return getCommandCapability(command)?.[capability] === true;
+}
 
-// `fill @ref` is guarded but does not invalidate later refs so same-snapshot form-fill batches can submit after filling.
-const PAGE_MUTATION_REF_INVALIDATION_EXCEPTIONS = new Set(["fill"]);
-const NON_MUTATION_REF_INVALIDATING_BATCH_COMMANDS = new Set(["drag", "goto", "mouse", "navigate", "open", "upload"]);
-
-function commandIn(command: string | undefined, commands: ReadonlySet<string>): boolean {
-	return command !== undefined && commands.has(command);
+export function normalizeCommandName(command: string | undefined): string | undefined {
+	return getCommandCapability(command)?.command ?? command;
 }
 
 export function isCloseCommand(command: string | undefined): boolean {
-	return commandIn(command, CLOSE_COMMANDS);
+	return hasCommandCapability(command, "closesSession");
 }
 
 export function isOpenNavigationCommand(command: string | undefined): boolean {
-	return commandIn(command, OPEN_NAVIGATION_COMMANDS);
+	return hasCommandCapability(command, "openNavigation");
 }
 
 export function isReadOnlyDiagnosticSessionTargetCommand(command: string | undefined, _subcommand?: string): boolean {
-	return commandIn(command, READ_ONLY_DIAGNOSTIC_SESSION_TARGET_COMMANDS);
+	return hasCommandCapability(command, "readOnlyDiagnosticSessionTarget");
 }
 
 export function isSessionTabPinningExcludedCommand(command: string | undefined): boolean {
-	return commandIn(command, SESSION_TAB_PINNING_EXCLUDED_COMMANDS);
+	return hasCommandCapability(command, "excludedFromPinning");
 }
 
 export function isSessionTabPostCommandCorrectionExcludedCommand(command: string | undefined): boolean {
-	return commandIn(command, SESSION_TAB_POST_COMMAND_CORRECTION_EXCLUDED_COMMANDS);
+	return hasCommandCapability(command, "excludedFromPostCommandCorrection");
 }
 
 export function isRefInvalidatingBatchCommand(command: string | undefined): boolean {
-	return (
-		(isPageMutationCommand(command) && !commandIn(command, PAGE_MUTATION_REF_INVALIDATION_EXCEPTIONS)) ||
-		commandIn(command, NON_MUTATION_REF_INVALIDATING_BATCH_COMMANDS)
-	);
+	return hasCommandCapability(command, "invalidatesBatchRefs");
 }
 
 export function isRefGuardedCommand(command: string | undefined): boolean {
-	return commandIn(command, REF_GUARDED_COMMANDS);
+	return hasCommandCapability(command, "guardsPageRefs");
 }
 
 export function isElectronPostCommandHealthCommand(command: string | undefined): boolean {
-	return commandIn(command, ELECTRON_POST_COMMAND_HEALTH_COMMANDS);
+	return hasCommandCapability(command, "eligibleForElectronHealthProbe");
 }
 
 export function isNavigationObservableCommandName(command: string | undefined): boolean {
-	return commandIn(command, NAVIGATION_OBSERVABLE_COMMANDS);
+	return hasCommandCapability(command, "navigationObservable");
 }
 
 export function isPageMutationCommand(command: string | undefined): boolean {
-	return commandIn(command, PAGE_MUTATION_COMMANDS);
+	return hasCommandCapability(command, "triggersPostMutationSnapshot");
 }
 
 export function isPageChangeSummaryCommand(command: string | undefined): boolean {
-	return commandIn(command, PAGE_CHANGE_SUMMARY_COMMANDS);
+	return hasCommandCapability(command, "eligibleForPageChangeSummary");
 }

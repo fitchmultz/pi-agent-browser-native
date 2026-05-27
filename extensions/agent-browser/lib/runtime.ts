@@ -11,6 +11,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
+import { needsManagedSession } from "./command-policy.js";
 import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
 
 import { isRecord } from "./parsing.js";
@@ -105,17 +106,6 @@ const BROWSER_PROMPT_PATTERNS = [
 	/\b(?:browse|click|fill|login|navigate|open|visit)\b.*\b(?:https?:\/\/\S+|page|site|tab|url|web(?:site| page)?)\b/i,
 ];
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
-const SESSIONLESS_AUTH_SUBCOMMANDS = new Set(["save", "list", "show", "delete", "remove"]);
-const EMPTY_BOOLEAN_FLAGS = new Set<string>();
-const JSON_BOOLEAN_FLAGS = new Set(["--json"]);
-const AUTH_SAVE_BOOLEAN_FLAGS = new Set(["--json", "--password-stdin"]);
-const AUTH_SAVE_VALUE_FLAGS = new Set(["--password", "--password-selector", "--submit-selector", "--url", "--username", "--username-selector"]);
-const DASHBOARD_SUBCOMMANDS = new Set(["start", "stop"]);
-const DASHBOARD_START_VALUE_FLAGS = new Set(["--port"]);
-const DOCTOR_BOOLEAN_FLAGS = new Set(["--fix", "--json", "--offline", "--quick"]);
-const INSTALL_BOOLEAN_FLAGS = new Set(["--with-deps", "-d"]);
-const STATE_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "clear", "clean", "rename"]);
-const STATE_CLEAN_VALUE_FLAGS = new Set(["--older-than"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
 const GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE = new Set(["--args"]);
 const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES = new Set([
@@ -539,86 +529,6 @@ export function shouldAppendBrowserSystemPrompt(prompt: string): boolean {
 
 export function isPlainTextInspectionArgs(args: string[]): boolean {
 	return args.some((token) => INSPECTION_FLAGS.has(token));
-}
-
-function getFlagName(token: string): string {
-	return token.split("=", 1)[0] ?? token;
-}
-
-function isNonFlagToken(token: string | undefined): token is string {
-	return typeof token === "string" && !token.startsWith("-");
-}
-
-function hasOnlyBooleanFlags(tokens: string[], allowedFlags: Set<string>): boolean {
-	return tokens.every((token) => token.startsWith("-") && allowedFlags.has(getFlagName(token)));
-}
-
-function hasOnlyOptionFlags(tokens: string[], allowedBooleanFlags: Set<string>, allowedValueFlags: Set<string>): boolean {
-	for (let index = 0; index < tokens.length; index += 1) {
-		const token = tokens[index];
-		if (!token.startsWith("-")) return false;
-		const flagName = getFlagName(token);
-		if (allowedBooleanFlags.has(flagName)) continue;
-		if (!allowedValueFlags.has(flagName)) return false;
-		if (token.includes("=")) continue;
-		const value = tokens[index + 1];
-		if (!isNonFlagToken(value)) return false;
-		index += 1;
-	}
-	return true;
-}
-
-function isSessionlessAuthCommand(commandTokens: string[]): boolean {
-	const [, subcommand, target, ...rest] = commandTokens;
-	if (!SESSIONLESS_AUTH_SUBCOMMANDS.has(subcommand ?? "")) return false;
-	if (subcommand === "list") return target === undefined;
-	if (!isNonFlagToken(target)) return false;
-	if (subcommand === "save") return hasOnlyOptionFlags(rest, AUTH_SAVE_BOOLEAN_FLAGS, AUTH_SAVE_VALUE_FLAGS);
-	return rest.length === 0;
-}
-
-function isSessionlessDashboardCommand(commandTokens: string[]): boolean {
-	const [, subcommand, ...rest] = commandTokens;
-	if (subcommand === undefined) return true;
-	if (!DASHBOARD_SUBCOMMANDS.has(subcommand)) return false;
-	return subcommand === "start" ? hasOnlyOptionFlags(rest, JSON_BOOLEAN_FLAGS, DASHBOARD_START_VALUE_FLAGS) : rest.length === 0;
-}
-
-function isSessionlessStateCommand(commandTokens: string[]): boolean {
-	const [, subcommand, firstArg, secondArg, ...rest] = commandTokens;
-	if (!STATE_SESSIONLESS_SUBCOMMANDS.has(subcommand ?? "")) return false;
-	if (subcommand === "list") return firstArg === undefined;
-	if (subcommand === "show") return isNonFlagToken(firstArg) && secondArg === undefined;
-	if (subcommand === "rename") return isNonFlagToken(firstArg) && isNonFlagToken(secondArg) && rest.length === 0;
-	if (subcommand === "clean") {
-		const optionTokens = commandTokens.slice(2);
-		return optionTokens.length > 0 && hasOnlyOptionFlags(optionTokens, EMPTY_BOOLEAN_FLAGS, STATE_CLEAN_VALUE_FLAGS);
-	}
-	if (subcommand !== "clear") return false;
-	if ((firstArg === "--all" || firstArg === "-a") && secondArg === undefined) return true;
-	if (!isNonFlagToken(firstArg)) return false;
-	return secondArg === undefined || (secondArg === "--all" && rest.length === 0);
-}
-
-function stripSessionlessShapeGlobalFlags(commandTokens: string[]): string[] {
-	return commandTokens.filter((token) => token !== "--json");
-}
-
-function isSessionlessCommand(args: string[], commandInfo: CommandInfo): boolean {
-	const commandTokens = stripSessionlessShapeGlobalFlags(extractCommandTokens(args));
-	const subcommand = commandTokens[1];
-	if (commandInfo.command === "skills") {
-		return ["list", "get", "path"].includes(subcommand ?? "");
-	}
-	if (commandInfo.command === "auth") return isSessionlessAuthCommand(commandTokens);
-	if (commandInfo.command === "dashboard") return isSessionlessDashboardCommand(commandTokens);
-	if (commandInfo.command === "device") return commandTokens.length === 2 && subcommand === "list";
-	if (commandInfo.command === "doctor") return hasOnlyBooleanFlags(commandTokens.slice(1), DOCTOR_BOOLEAN_FLAGS);
-	if (commandInfo.command === "install") return hasOnlyBooleanFlags(commandTokens.slice(1), INSTALL_BOOLEAN_FLAGS);
-	if (commandInfo.command === "profiles" || commandInfo.command === "upgrade") return commandTokens.length === 1;
-	if (commandInfo.command === "session") return commandTokens.length === 2 && subcommand === "list";
-	if (commandInfo.command === "state") return isSessionlessStateCommand(commandTokens);
-	return false;
 }
 
 export function hasUsableBraveApiKey(apiKey: string | null | undefined = process.env[BRAVE_API_KEY_ENV]): boolean {
@@ -1095,8 +1005,9 @@ export function buildExecutionPlan(
 	const invalidValueFlag = getInvalidValueFlagDetails(args);
 	const startupScopedFlags = getStartupScopedFlags(args);
 	const plainTextInspection = isPlainTextInspectionArgs(args);
+	const commandTokens = extractCommandTokens(args);
 	const commandInfo = parseCommandInfo(args);
-	const sessionlessCommand = plainTextInspection || isSessionlessCommand(args, commandInfo);
+	const commandNeedsManagedSession = !plainTextInspection && needsManagedSession(commandTokens);
 	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
 	if (invalidValueFlag) {
 		return {
@@ -1130,7 +1041,7 @@ export function buildExecutionPlan(
 	let usedImplicitSession = false;
 	let validationError: string | undefined;
 
-	if (!explicitSessionName && options.sessionMode === "auto" && !sessionlessCommand) {
+	if (!explicitSessionName && options.sessionMode === "auto" && commandNeedsManagedSession) {
 		if (options.managedSessionActive && startupScopedFlags.length > 0) {
 			recoveryHint = {
 				exampleArgs: args,
@@ -1149,7 +1060,7 @@ export function buildExecutionPlan(
 			sessionName = options.managedSessionName;
 			usedImplicitSession = true;
 		}
-	} else if (shouldCreateFreshManagedSession && !sessionlessCommand) {
+	} else if (shouldCreateFreshManagedSession && commandNeedsManagedSession) {
 		effectiveArgs.push("--session", options.freshSessionName);
 		managedSessionName = options.freshSessionName;
 		sessionName = options.freshSessionName;
