@@ -1,6 +1,6 @@
 /**
  * Purpose: Create private temporary and persisted spill files for the pi-agent-browser extension without leaking artifacts broadly on disk.
- * Responsibilities: Maintain a process-private temp root, stamp explicit ownership markers, enforce an aggregate temp-artifact disk budget, create securely permissioned temp files, create session-scoped persisted spill files for resumable sessions, prune explicitly owned stale temp roots from prior runs, and best-effort clean all owned roots on process exit.
+ * Responsibilities: Maintain a process-private temp root, stamp explicit ownership/protected-child markers, enforce an aggregate temp-artifact disk budget, create securely permissioned temp files, create session-scoped persisted spill files for resumable sessions, prune explicitly owned stale temp roots from prior runs without deleting protected children, and best-effort clean all owned roots on process exit.
  * Scope: Artifact lifecycle helpers only; callers decide what data to write and when to delete or retain long-lived references.
  * Usage: Imported by result/process helpers when they need secure spill files instead of world-readable shared tmp paths.
  * Invariants/Assumptions: Temp artifacts live under the OS temp directory, each active run uses a dedicated 0700 directory, files are created with exclusive 0600 permissions, session-scoped persisted artifacts stay under the pi session directory, and stale pruning only touches roots with an explicit pi-agent-browser ownership marker.
@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { isRecord, parsePositiveInteger } from "./parsing.js";
@@ -53,6 +53,7 @@ interface TempRootOwnershipRecord {
 	ownerPid?: number;
 	ownerProcessStartIdentity?: string;
 	ownerUid?: number;
+	protectedChildNames?: readonly string[];
 	version: number;
 }
 
@@ -79,6 +80,13 @@ function isPositiveFiniteNumber(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isProtectedTempChildName(value: unknown): value is string {
+	if (typeof value !== "string") return false;
+	if (value === "" || value === "." || value === ".." || value === TEMP_ROOT_MARKER_FILE_NAME) return false;
+	if (value.includes("/") || value.includes("\\")) return false;
+	return basename(value) === value;
+}
+
 function isTempRootOwnershipRecord(value: unknown): value is TempRootOwnershipRecord {
 	if (!isRecord(value)) return false;
 	if (value.kind !== TEMP_ROOT_MARKER_KIND || value.version !== TEMP_ROOT_MARKER_VERSION) return false;
@@ -92,6 +100,10 @@ function isTempRootOwnershipRecord(value: unknown): value is TempRootOwnershipRe
 	}
 	if (value.ownerUid !== undefined) {
 		if (typeof value.ownerUid !== "number" || !Number.isSafeInteger(value.ownerUid) || value.ownerUid < 0) return false;
+	}
+	if (value.protectedChildNames !== undefined) {
+		if (!Array.isArray(value.protectedChildNames)) return false;
+		if (!value.protectedChildNames.every(isProtectedTempChildName)) return false;
 	}
 	return true;
 }
@@ -138,6 +150,82 @@ async function readTempRootOwnershipMarker(tempRoot: string): Promise<TempRootOw
 	}
 }
 
+function getProtectedTempChildName(tempRoot: string, childPath: string): string | undefined {
+	const normalizedTempRoot = resolve(tempRoot);
+	const normalizedChildPath = resolve(childPath);
+	if (dirname(normalizedChildPath) !== normalizedTempRoot) return undefined;
+	const childName = basename(normalizedChildPath);
+	return isProtectedTempChildName(childName) ? childName : undefined;
+}
+
+function normalizeProtectedChildNames(names: Iterable<string>): string[] {
+	return [...new Set([...names].filter(isProtectedTempChildName))].sort();
+}
+
+function getPersistedProtectedChildPaths(tempRoot: string, ownershipMarker: TempRootOwnershipRecord | undefined): Set<string> {
+	const normalizedTempRoot = resolve(tempRoot);
+	return new Set((ownershipMarker?.protectedChildNames ?? []).map((childName) => resolve(join(normalizedTempRoot, childName))));
+}
+
+async function writeTempRootOwnershipMarkerRecord(
+	tempRoot: string,
+	markerRecord: TempRootOwnershipRecord,
+	options: { flag?: "wx" } = {},
+): Promise<string> {
+	const markerPath = join(tempRoot, TEMP_ROOT_MARKER_FILE_NAME);
+	await writeFile(markerPath, JSON.stringify(markerRecord, null, 2), {
+		encoding: "utf8",
+		flag: options.flag,
+		mode: 0o600,
+	});
+	await chmod(markerPath, 0o600).catch(() => undefined);
+	return markerPath;
+}
+
+async function persistProtectedTempChildren(tempRoot: string, protectedChildren: ReadonlySet<string>): Promise<void> {
+	if (protectedChildren.size === 0) return;
+	const ownershipMarker = await readTempRootOwnershipMarker(tempRoot);
+	if (!ownershipMarker) return;
+	const childNames = normalizeProtectedChildNames([
+		...(ownershipMarker.protectedChildNames ?? []),
+		...[...protectedChildren]
+			.map((path) => getProtectedTempChildName(tempRoot, path))
+			.filter((childName): childName is string => childName !== undefined),
+	]);
+	if (childNames.length === 0) return;
+	await writeTempRootOwnershipMarkerRecord(tempRoot, {
+		...ownershipMarker,
+		leaseUpdatedAtMs: Date.now(),
+		protectedChildNames: childNames,
+	});
+}
+
+async function getExistingProtectedChildren(
+	tempRoot: string,
+	protectedChildren: ReadonlySet<string>,
+): Promise<Set<string>> {
+	const normalizedTempRoot = resolve(tempRoot);
+	const existingChildren = new Set<string>();
+	for (const path of protectedChildren) {
+		const normalizedPath = resolve(path);
+		if (dirname(normalizedPath) !== normalizedTempRoot) continue;
+		if (await stat(normalizedPath).then((stats) => stats.isDirectory(), () => false)) {
+			existingChildren.add(normalizedPath);
+		}
+	}
+	return existingChildren;
+}
+
+async function removeTempRootChildrenExcept(tempRoot: string, protectedChildren: ReadonlySet<string>): Promise<void> {
+	const entries = await readdir(tempRoot, { withFileTypes: true }).catch(() => []);
+	await Promise.all(entries.map(async (entry) => {
+		if (entry.name === TEMP_ROOT_MARKER_FILE_NAME) return;
+		const entryPath = join(tempRoot, entry.name);
+		if (protectedChildren.has(resolve(entryPath))) return;
+		await rm(entryPath, { force: true, recursive: true }).catch(() => undefined);
+	}));
+}
+
 async function getProcessStartIdentity(pid: number | undefined): Promise<string | undefined> {
 	if (pid === undefined) return undefined;
 	if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
@@ -156,7 +244,6 @@ export async function writeSecureTempRootOwnershipMarker(
 	tempRoot: string,
 	options: TempRootOwnershipMarkerOptions = {},
 ): Promise<string> {
-	const markerPath = join(tempRoot, TEMP_ROOT_MARKER_FILE_NAME);
 	const createdAtMs = options.createdAtMs ?? Date.now();
 	const ownerPid = options.ownerPid ?? process.pid;
 	const markerRecord: TempRootOwnershipRecord = {
@@ -168,13 +255,10 @@ export async function writeSecureTempRootOwnershipMarker(
 		ownerUid: getCurrentProcessUid(),
 		version: TEMP_ROOT_MARKER_VERSION,
 	};
-	await writeFile(markerPath, JSON.stringify(markerRecord, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
-	await chmod(markerPath, 0o600).catch(() => undefined);
-	return markerPath;
+	return await writeTempRootOwnershipMarkerRecord(tempRoot, markerRecord, { flag: "wx" });
 }
 
 async function refreshSecureTempRootLease(tempRoot: string): Promise<void> {
-	const markerPath = join(tempRoot, TEMP_ROOT_MARKER_FILE_NAME);
 	const ownershipMarker = await readTempRootOwnershipMarker(tempRoot);
 	if (!ownershipMarker) return;
 	if (ownershipMarker.ownerPid !== process.pid) return;
@@ -195,8 +279,7 @@ async function refreshSecureTempRootLease(tempRoot: string): Promise<void> {
 		ownerProcessStartIdentity: currentProcessStartIdentity ?? ownershipMarker.ownerProcessStartIdentity,
 		ownerUid: currentUid,
 	};
-	await writeFile(markerPath, JSON.stringify(refreshedMarker, null, 2), { encoding: "utf8", mode: 0o600 });
-	await chmod(markerPath, 0o600).catch(() => undefined);
+	await writeTempRootOwnershipMarkerRecord(tempRoot, refreshedMarker);
 }
 
 async function getMarkerOwnerLiveness(ownershipMarker: TempRootOwnershipRecord): Promise<ProcessLiveness> {
@@ -245,6 +328,14 @@ async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise
 
 				const stats = await stat(path).catch(() => undefined);
 				if (!stats?.isDirectory()) return;
+				const protectedChildren = await getExistingProtectedChildren(
+					path,
+					getPersistedProtectedChildPaths(path, ownershipMarker),
+				);
+				if (protectedChildren.size > 0) {
+					await removeTempRootChildrenExcept(path, protectedChildren);
+					return;
+				}
 				await rm(path, { force: true, recursive: true }).catch(() => undefined);
 			}),
 	);
@@ -309,17 +400,12 @@ export async function cleanupSecureTempArtifacts(options: { preservePaths?: read
 		if (!tempRoot) return;
 		const normalizedTempRoot = resolve(tempRoot);
 		for (const path of options.preservePaths ?? []) {
-			const normalizedPath = resolve(path);
-			if (dirname(normalizedPath) === normalizedTempRoot) protectedTempChildren.add(normalizedPath);
+			const childName = getProtectedTempChildName(normalizedTempRoot, path);
+			if (childName) protectedTempChildren.add(resolve(join(normalizedTempRoot, childName)));
 		}
-		const preservedChildren = new Set<string>();
+		const preservedChildren = await getExistingProtectedChildren(normalizedTempRoot, protectedTempChildren);
 		for (const path of protectedTempChildren) {
-			if (dirname(path) !== normalizedTempRoot) continue;
-			if (await stat(path).then((stats) => stats.isDirectory(), () => false)) {
-				preservedChildren.add(path);
-			} else {
-				protectedTempChildren.delete(path);
-			}
+			if (dirname(path) === normalizedTempRoot && !preservedChildren.has(path)) protectedTempChildren.delete(path);
 		}
 		if (preservedChildren.size === 0) {
 			sessionTempRootPromise = undefined;
@@ -327,13 +413,8 @@ export async function cleanupSecureTempArtifacts(options: { preservePaths?: read
 			await rm(tempRoot, { force: true, recursive: true }).catch(() => undefined);
 			return;
 		}
-		const entries = await readdir(tempRoot, { withFileTypes: true }).catch(() => []);
-		await Promise.all(entries.map(async (entry) => {
-			if (entry.name === TEMP_ROOT_MARKER_FILE_NAME) return;
-			const entryPath = join(tempRoot, entry.name);
-			if (preservedChildren.has(resolve(entryPath))) return;
-			await rm(entryPath, { force: true, recursive: true }).catch(() => undefined);
-		}));
+		await persistProtectedTempChildren(tempRoot, preservedChildren);
+		await removeTempRootChildrenExcept(tempRoot, preservedChildren);
 		await refreshSecureTempRootLease(tempRoot).catch(() => undefined);
 	});
 }
