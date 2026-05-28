@@ -161,6 +161,38 @@ test("stale temp pruning does not remove a live root when owner identity is unav
 	}
 });
 
+test("secure temp process-exit cleanup preserves protected child directories", { concurrency: false }, async () => {
+	const childScript = `
+		import { dirname, join } from "node:path";
+		import { writeFile } from "node:fs/promises";
+		import { cleanupSecureTempArtifacts, createSecureTempDirectory, writeSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+		const profile = await createSecureTempDirectory("electron-profile-");
+		await writeFile(join(profile, "profile-state.txt"), "keep", "utf8");
+		const spill = await writeSecureTempFile({ content: "delete", prefix: "spill", suffix: ".txt" });
+		const root = dirname(profile);
+		await cleanupSecureTempArtifacts({ preservePaths: [profile] });
+		console.log(JSON.stringify({ profile, root, spill }));
+	`;
+	const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
+		cwd: process.cwd(),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let root: string | undefined;
+	try {
+		const childExit = once(child, "exit");
+		const result = await readChildStdoutJsonLine<{ profile: string; root: string; spill: string }>(child);
+		root = result.root;
+		const [exitCode] = await childExit;
+		assert.equal(exitCode, 0);
+		await stat(result.profile);
+		await assert.rejects(stat(result.spill), { code: "ENOENT" });
+	} finally {
+		await stopChildProcess(child);
+		if (root) await rm(root, { force: true, recursive: true }).catch(() => undefined);
+		await cleanupSecureTempArtifacts();
+	}
+});
+
 test("writeSecureTempFile enforces the aggregate temp-root disk budget", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	await withPatchedEnv({ PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES: "1024" }, async () => {

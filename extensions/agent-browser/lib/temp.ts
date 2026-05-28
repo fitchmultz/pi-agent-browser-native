@@ -8,7 +8,7 @@
 
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -69,6 +69,7 @@ let sessionTempRootPromise: Promise<string> | undefined;
 let exitCleanupRegistered = false;
 let tempMutationQueue = Promise.resolve();
 const ownedTempRoots = new Set<string>();
+const protectedTempChildren = new Set<string>();
 
 function getCurrentProcessUid(): number | undefined {
 	return typeof process.getuid === "function" ? process.getuid() : undefined;
@@ -249,13 +250,34 @@ async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise
 	);
 }
 
+function getProtectedChildrenForRoot(tempRoot: string): Set<string> {
+	const normalizedTempRoot = resolve(tempRoot);
+	return new Set(
+		[...protectedTempChildren].filter((path) => dirname(path) === normalizedTempRoot && existsSync(path)),
+	);
+}
+
+function removeTempRootChildrenExceptSync(tempRoot: string, protectedChildren: ReadonlySet<string>): void {
+	for (const entry of readdirSync(tempRoot, { withFileTypes: true })) {
+		if (entry.name === TEMP_ROOT_MARKER_FILE_NAME) continue;
+		const entryPath = join(tempRoot, entry.name);
+		if (protectedChildren.has(resolve(entryPath))) continue;
+		rmSync(entryPath, { force: true, recursive: true });
+	}
+}
+
 function registerExitCleanup(): void {
 	if (exitCleanupRegistered) return;
 	exitCleanupRegistered = true;
 	process.once("exit", () => {
 		for (const tempRoot of ownedTempRoots) {
 			try {
-				rmSync(tempRoot, { force: true, recursive: true });
+				const protectedChildren = getProtectedChildrenForRoot(tempRoot);
+				if (protectedChildren.size === 0) {
+					rmSync(tempRoot, { force: true, recursive: true });
+				} else {
+					removeTempRootChildrenExceptSync(tempRoot, protectedChildren);
+				}
 			} catch {
 				// Best-effort cleanup only.
 			}
@@ -286,11 +308,19 @@ export async function cleanupSecureTempArtifacts(options: { preservePaths?: read
 		const tempRoot = await sessionTempRootPromise?.catch(() => undefined);
 		if (!tempRoot) return;
 		const normalizedTempRoot = resolve(tempRoot);
-		const preservedChildren = new Set(
-			(options.preservePaths ?? [])
-				.map((path) => resolve(path))
-				.filter((path) => dirname(path) === normalizedTempRoot),
-		);
+		for (const path of options.preservePaths ?? []) {
+			const normalizedPath = resolve(path);
+			if (dirname(normalizedPath) === normalizedTempRoot) protectedTempChildren.add(normalizedPath);
+		}
+		const preservedChildren = new Set<string>();
+		for (const path of protectedTempChildren) {
+			if (dirname(path) !== normalizedTempRoot) continue;
+			if (await stat(path).then((stats) => stats.isDirectory(), () => false)) {
+				preservedChildren.add(path);
+			} else {
+				protectedTempChildren.delete(path);
+			}
+		}
 		if (preservedChildren.size === 0) {
 			sessionTempRootPromise = undefined;
 			ownedTempRoots.delete(tempRoot);

@@ -852,12 +852,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				electronLaunchRecords: electronRecordsToCleanup,
 				timeoutMs: implicitSessionCloseTimeoutMs,
 			});
-			if (!quitting) {
-				preservedElectronProfileDirs = [...new Set([
-					...preservedElectronProfileDirs,
-					...getCleanupResultsPreservedUserDataDirs(electronCleanupResults),
-				])];
-			}
+			preservedElectronProfileDirs = [...new Set([
+				...preservedElectronProfileDirs,
+				...getCleanupResultsPreservedUserDataDirs(electronCleanupResults),
+			])];
 			syncElectronCleanupManagedSessions(ownedManagedSessions, electronCleanupResults);
 			if (quitting) {
 				await closeOwnedManagedSessions(ownedManagedSessions, implicitSessionCloseTimeoutMs);
