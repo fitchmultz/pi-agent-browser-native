@@ -6,17 +6,19 @@
 
 - Cut the local Pi development baseline to `@earendil-works/*` `0.76.0` and refreshed the npm lockfile with npm 11.14.0.
 - Updated the configured-source lifecycle harness for Pi 0.76 exact session IDs: launches and relaunches now use `--session-id piab-lifecycle-<pid>` instead of driving `/resume`, assert the JSONL session header id, and include real Pi `tool_result` failure-patch evidence for QA reclassification.
-- Rehydrate branch-visible browser state on Pi `session_tree` events as well as `session_start`, while keeping runtime-owned managed-session and Electron cleanup registries separate so branch switches do not orphan resources owned by the current Pi process; `session_tree`, Electron status/probe/cleanup, and managed-session browser work now share the same serialization boundary where they can touch managed state.
+- Rehydrate branch-visible browser state on Pi `session_tree` events as well as `session_start`, while keeping runtime-owned managed-session and Electron cleanup registries separate so branch switches do not orphan resources owned by the current Pi process; `session_tree`, Electron status/probe/cleanup, and wrapper-owned browser commands now share the same serialization boundary where they can touch managed state, while independent caller-owned explicit-session completions are guarded from overwriting newer branch restores.
 - Tightened the public TypeBox schema to reject unsupported top-level fields and unsupported fields inside `semanticAction`, `sourceLookup`, `networkSourceLookup`, and constrained `job` steps.
 
 ### Added
 
 - Model-free real Pi pipeline coverage for `buildAgentBrowserToolResultPatch`, proving prose QA failures become `isError: true` in persisted JSONL tool results and caller-requested `--json` failures keep parseable JSON while still patching `isError`.
 - Model-free real Pi pipeline coverage for strict public-schema rejection before upstream spawn.
-- Regression tests for `session_tree` branch rehydration of page-scoped refs, managed browser sessions, artifact manifests, Electron cleanup/status/probe ownership, explicit cleanup serialization, reload cleanup of off-branch sessions, partial Electron cleanup session untracking, explicit close untracking, multi-branch managed-session cleanup, and monotonic fresh-session allocation.
+- Regression tests for `session_tree` branch rehydration of page-scoped refs, managed browser sessions, artifact manifests, Electron cleanup/status/probe ownership, explicit cleanup serialization, active-Electron reload preservation, reload cleanup of off-branch sessions/Electron launches, partial Electron cleanup session untracking, explicit close live/restore state retirement, explicit-session command branch-generation guarding, multi-branch managed-session cleanup, and monotonic fresh-session allocation.
 
 ### Fixed
 
+- Successful explicit `--session <current-wrapper-managed-session> close` and `electron.cleanup` managed-session close steps now clear live managed-session/page state, untrack cleanup ownership, rotate the next default auto call away from the closed name, and stay honored after reload/resume branch restore.
+- `/reload` now preserves the current branch-visible active Electron launch for continuity while cleaning off-branch owned Electron launches, avoiding stale restored Electron state after shutdown cleanup.
 - Stabilized env-patched fake-upstream tests by serializing process environment patches and tightening the inherited-stdio subprocess regression to assert quick post-exit fallback behavior without waiting for the process timeout.
 
 ## 0.2.34 - 2026-05-24

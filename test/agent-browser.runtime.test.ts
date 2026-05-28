@@ -385,7 +385,109 @@ test("restoreManagedSessionStateFromBranch treats upstream close aliases as mana
 
 		assert.equal(restored.active, false, command);
 		assert.equal(restored.sessionName, "piab-demo-123", command);
+		assert.equal(restored.closedSessionName, "piab-demo-123", command);
 	}
+});
+
+test("restoreManagedSessionStateFromBranch honors explicit close rows for restorable sessions", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--session", "piab-demo-123", "close"],
+					command: "close",
+					exitCode: 0,
+					managedSessionOutcome: {
+						activeAfter: false,
+						activeBefore: true,
+						attemptedSessionName: "piab-demo-123",
+						currentSessionName: "piab-demo-123-fresh-next",
+						previousSessionName: "piab-demo-123",
+						sessionMode: "auto",
+						status: "closed",
+						succeeded: true,
+						summary: "Managed session piab-demo-123 was closed.",
+					},
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: false,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.sessionName, "piab-demo-123");
+	assert.equal(restored.closedSessionName, "piab-demo-123");
+});
+
+test("restoreManagedSessionStateFromBranch honors Electron cleanup managed-session steps", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["connect", "9222"],
+					command: "connect",
+					exitCode: 0,
+					managedSessionOutcome: {
+						activeAfter: true,
+						activeBefore: false,
+						attemptedSessionName: "piab-demo-123-fresh-electron",
+						currentSessionName: "piab-demo-123-fresh-electron",
+						previousSessionName: "piab-demo-123",
+						sessionMode: "fresh",
+						status: "created",
+						succeeded: true,
+						summary: "Managed session piab-demo-123-fresh-electron is now current.",
+					},
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-electron",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: [],
+					electron: {
+						action: "cleanup",
+						cleanup: {
+							partial: true,
+							results: [{
+								launchId: "electron-demo",
+								partial: true,
+								record: { cleanupState: "partial", launchId: "electron-demo", port: 9222, version: 1 },
+								remainingResources: ["process"],
+								steps: [
+									{ resource: "managed-session", sessionName: "piab-demo-123-fresh-electron", state: "removed" },
+									{ resource: "process", state: "failed" },
+								],
+								summary: "Electron cleanup was partial.",
+							}],
+						},
+					},
+					resultCategory: "failure",
+				},
+				isError: true,
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.sessionName, "piab-demo-123-fresh-electron");
+	assert.equal(restored.closedSessionName, "piab-demo-123-fresh-electron");
+	assert.equal(restored.freshSessionOrdinal, 1);
 });
 
 test("restoreManagedSessionStateFromBranch does not resurrect superseded sessions after latest session closes", () => {

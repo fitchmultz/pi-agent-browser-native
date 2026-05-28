@@ -39,7 +39,7 @@ import {
 import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore } from "../../temp.js";
 import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../../temp.js";
 import { isRecord } from "../../parsing.js";
-import { hasLaunchScopedTabCorrectionFlag, resolveManagedSessionState } from "../../runtime.js";
+import { createFreshSessionName, hasLaunchScopedTabCorrectionFlag, resolveManagedSessionState } from "../../runtime.js";
 import {
 	applyOpenResultTabCorrection,
 	buildAboutBlankRecoveryHint,
@@ -320,11 +320,18 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const priorManagedSessionActive = managedSessionActive;
 		const priorManagedSessionCwd = managedSessionCwd;
 		const priorManagedSessionName = managedSessionName;
-		const managedSessionState = resolveManagedSessionState({ command: prepared.executionPlan.commandInfo.command, managedSessionName: prepared.executionPlan.managedSessionName, priorActive: priorManagedSessionActive, priorSessionName: priorManagedSessionName, succeeded });
+		const commandClosesSession = isCloseCommand(prepared.executionPlan.commandInfo.command);
+		const managedCloseSessionName = commandClosesSession && succeeded && prepared.executionPlan.sessionName === priorManagedSessionName
+			? prepared.executionPlan.sessionName
+			: prepared.executionPlan.managedSessionName;
+		const managedSessionState = resolveManagedSessionState({ command: prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, priorActive: priorManagedSessionActive, priorSessionName: priorManagedSessionName, succeeded });
 		const replacedManagedSessionName = managedSessionState.replacedSessionName;
 		managedSessionActive = managedSessionState.active;
 		managedSessionName = managedSessionState.sessionName;
-		let managedSessionOutcome = buildManagedSessionOutcome({ activeAfter: managedSessionActive, activeBefore: priorManagedSessionActive, attemptedSessionName: prepared.executionPlan.managedSessionName, command: prepared.executionPlan.commandInfo.command, currentSessionName: managedSessionName, previousSessionName: priorManagedSessionName, replacedSessionName: replacedManagedSessionName, sessionMode: prepared.sessionMode, succeeded });
+		if (commandClosesSession && succeeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
+			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, state.freshSessionOrdinal + 1);
+		}
+		let managedSessionOutcome = buildManagedSessionOutcome({ activeAfter: managedSessionActive, activeBefore: priorManagedSessionActive, attemptedSessionName: managedCloseSessionName, command: prepared.executionPlan.commandInfo.command, currentSessionName: managedSessionName, previousSessionName: priorManagedSessionName, replacedSessionName: replacedManagedSessionName, sessionMode: prepared.sessionMode, succeeded });
 		if (prepared.executionPlan.managedSessionName && succeeded) managedSessionCwd = cwd;
 		if (prepared.executionPlan.sessionName && succeeded) {
 			if (openResultTabCorrection || sessionTabCorrection || aboutBlankSessionMismatch?.recoveryApplied) sessionPageState.markPinning(prepared.executionPlan.sessionName, "drift");

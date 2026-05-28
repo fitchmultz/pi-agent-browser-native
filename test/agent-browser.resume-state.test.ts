@@ -294,6 +294,101 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	}
 });
 
+test("agentBrowserExtension rotates away from the current managed session after explicit close", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-close-current-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+const data = args.includes("close")
+  ? { closed: true }
+  : { title: "Example Domain", url: "https://example.com/", sessionName };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/first"] });
+			assert.equal(open.isError, false, JSON.stringify(open));
+			const firstSessionName = String(open.details?.sessionName);
+
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", firstSessionName, "close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+			assert.equal((close.details?.managedSessionOutcome as { status?: string } | undefined)?.status, "closed");
+
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.notEqual(followUp.details?.sessionName, firstSessionName);
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", firstSessionName, "close"]);
+			assert.notEqual(invocations[2]?.sessionName, firstSessionName);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not restore a managed session after an explicit close row", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-close-restore-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: "https://example.com/", sessionName } }));`,
+	);
+	const ownedName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+	const branch = [
+		createToolBranchEntry({ details: ownedSessionDetails(ownedName), isError: false }),
+		createToolBranchEntry({
+			details: {
+				args: ["--session", ownedName, "close"],
+				command: "close",
+				exitCode: 0,
+				managedSessionOutcome: {
+					activeAfter: false,
+					activeBefore: true,
+					attemptedSessionName: ownedName,
+					currentSessionName: ownedName,
+					previousSessionName: ownedName,
+					sessionMode: "auto",
+					status: "closed",
+					succeeded: true,
+					summary: `Managed session ${ownedName} was closed.`,
+				},
+				resultCategory: "success",
+				sessionMode: "auto",
+				sessionName: ownedName,
+				usedImplicitSession: false,
+			},
+			isError: false,
+		}),
+	];
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.notEqual(followUp.details?.sessionName, ownedName);
+			const invocations = await readInvocationLog(logPath);
+			assert.notEqual(invocations[0]?.sessionName, ownedName);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension preserves branch-restored managed state after session_tree waits for in-flight commands", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-race-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -349,6 +444,108 @@ if (args.includes("snapshot")) {
 			assert.equal(nextFresh.isError, false, JSON.stringify(nextFresh));
 			assert.notEqual(nextFresh.details?.sessionName, branchFreshOne);
 			assert.notEqual(nextFresh.details?.sessionName, branchFreshTwo);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps session_tree authoritative after a slow explicit-session command", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-tree-race-"));
+	const logPath = join(tempDir, "invocations.log");
+	const releasePath = join(tempDir, "release-explicit-snapshot");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args[args.indexOf("--session") + 1];
+function log(event) { fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event, sessionName }) + "\\n"); }
+if (args.includes("snapshot") && sessionName === "named-user-session") {
+  log("explicit-snapshot-start");
+  while (!fs.existsSync(${JSON.stringify(releasePath)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  log("explicit-snapshot-done");
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://named.example/", refs: {}, snapshot: "" } }));
+} else {
+  log("command");
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "ok", url: "https://branch.example/" } }));
+}`,
+	);
+	const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+	const branchASession = `${baseSessionName}-fresh-a`;
+	const branchBSession = `${baseSessionName}-fresh-b`;
+	const branchA = [createToolBranchEntry({ details: ownedSessionDetails(branchASession, "fresh"), isError: false })];
+	const branchB = [createToolBranchEntry({ details: ownedSessionDetails(branchBSession, "fresh"), isError: false })];
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const explicitSnapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named-user-session", "snapshot", "-i"] });
+			while (!(await readInvocationLog(logPath)).some((entry) => entry.event === "explicit-snapshot-start")) await delay(10);
+
+			harness.setBranch(branchB);
+			const treePromise = runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-b", oldLeafId: "branch-a" }, harness.ctx);
+			await delay(50);
+			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.event === "explicit-snapshot-done"), false);
+			await writeFile(releasePath, "go");
+			await withConcurrencyTestTimeout(Promise.all([explicitSnapshotPromise, treePromise]), "explicit command and session_tree branch switch did not settle");
+
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.equal(followUp.details?.sessionName, branchBSession);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not resurrect a managed session when explicit close follows a slow implicit command", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-close-race-"));
+	const logPath = join(tempDir, "invocations.log");
+	const releasePath = join(tempDir, "release-implicit-snapshot");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args[args.indexOf("--session") + 1];
+function log(event) { fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event, sessionName }) + "\\n"); }
+if (args.includes("snapshot")) {
+  log("snapshot-start");
+  while (!fs.existsSync(${JSON.stringify(releasePath)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  log("snapshot-done");
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://current.example/", refs: {}, snapshot: "" } }));
+} else if (args.includes("close")) {
+  log("close");
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+} else {
+  log("command");
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "ok", url: "https://next.example/" } }));
+}`,
+	);
+	const currentSession = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ branch: [createToolBranchEntry({ details: ownedSessionDetails(currentSession), isError: false })], cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			while (!(await readInvocationLog(logPath)).some((entry) => entry.event === "snapshot-start")) await delay(10);
+
+			const closePromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", currentSession, "close"] });
+			await delay(50);
+			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.event === "close"), false);
+			await writeFile(releasePath, "go");
+			const [snapshot, close] = await withConcurrencyTestTimeout(Promise.all([snapshotPromise, closePromise]), "explicit close did not wait behind in-flight managed command");
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.equal(close.isError, false, JSON.stringify(close));
+
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.notEqual(followUp.details?.sessionName, currentSession);
+			const events = (await readInvocationLog(logPath)).map((entry) => entry.event);
+			assert.ok(events.indexOf("close") > events.indexOf("snapshot-done"));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -200,7 +200,7 @@ Closes the tracked managed session, stops only the wrapper-tracked process, veri
 
 For manual launches, close commands (`close`, `quit`, or `exit`) only close the browser/CDP session. Close the app yourself and clean its profile/temp files with normal host tools.
 
-On Pi session shutdown, active wrapper-owned Electron launches are best-effort cleaned. Stale restored records (PID gone, port dead) are **reported** instead of guessed at or killed.
+On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On `/reload`, the current branch-visible active Electron launch is preserved for continuity while off-branch owned Electron launches are cleaned before process-local ownership is cleared. If `electron.cleanup` closes the attached managed session but host process/profile cleanup is partial, later default browser calls still rotate away from that closed wrapper-managed session. Stale restored records (PID gone, port dead) are **reported** instead of guessed at or killed.
 
 ### `timeoutMs` by action (quick reference)
 
