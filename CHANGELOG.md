@@ -2,24 +2,32 @@
 
 ## Unreleased
 
+## 0.2.35 - 2026-05-28
+
 ### Changed
 
-- Cut the local Pi development baseline to `@earendil-works/*` `0.76.0` and refreshed the npm lockfile with npm 11.14.0.
+- Cut the local Pi development baseline to `@earendil-works/*` `0.76.0` and refreshed the npm lockfile with npm 11.14.0. Pi **≥ 0.76** is recommended for branch/session continuity (`session_tree` rehydration and generation-aware guards).
 - Updated the configured-source lifecycle harness for Pi 0.76 exact session IDs: launches and relaunches now use `--session-id piab-lifecycle-<pid>` instead of driving `/resume`, assert the JSONL session header id, and include real Pi `tool_result` failure-patch evidence for QA reclassification.
 - Rehydrate branch-visible browser state on Pi `session_tree` events as well as `session_start`, while keeping runtime-owned managed-session and Electron cleanup registries separate so branch switches do not orphan resources owned by the current Pi process; `session_tree`, Electron status/probe/cleanup, and wrapper-owned browser commands now share the same serialization boundary where they can touch managed state, while independent caller-owned explicit-session completions are guarded from overwriting newer branch restores.
 - Tightened the public TypeBox schema to reject unsupported top-level fields and unsupported fields inside `semanticAction`, `sourceLookup`, `networkSourceLookup`, and constrained `job` steps.
+- Centralized upstream command capabilities in `command-taxonomy.ts` (navigation, ref guards, batch invalidation, session close, Electron health probes, page-change summaries, pinning exclusions) and sessionless managed-session policy in `command-policy.ts` with shared argv discovery in `argv-descriptor.ts` / `argv-grammar.ts`.
+- Normalized `open` / `goto` / `navigate` navigation handling through the shared taxonomy so page-change summaries and ref invalidation stay consistent across aliases.
+- Refactored the extension entrypoint and browser-run orchestration: Electron host actions moved to `orchestration/electron-host/`, click-dispatch and prompt-guard preflight live under `orchestration/browser-run/`, and duplicate browser-run helper ownership was removed (#57).
+- Expanded the upstream capability baseline and command reference for agent-browser **0.27.0** (additional help sampling, inventory tokens, and maintainer rebaseline metadata).
 
 ### Added
 
+- Prompt-policy preflight guards: block likely final submit/order clicks (including batch steps and Enter/Return keyboard submits) when the latest user message sets an explicit stop boundary, and block `close`/`quit`/`exit` until requested screenshot/recording paths from the prompt are verified in the artifact manifest.
 - Model-free real Pi pipeline coverage for `buildAgentBrowserToolResultPatch`, proving prose QA failures become `isError: true` in persisted JSONL tool results and caller-requested `--json` failures keep parseable JSON while still patching `isError`.
 - Model-free real Pi pipeline coverage for strict public-schema rejection before upstream spawn.
-- Regression tests for `session_tree` branch rehydration of page-scoped refs, managed browser sessions, artifact manifests, Electron cleanup/status/probe ownership, explicit cleanup serialization, active-Electron reload profile preservation, targeted cleanup without unrelated branch promotion, reload cleanup of off-branch sessions/Electron launches, durable partial off-branch reload/quit profile preservation, protected temp-root process-exit and stale-prune cleanup, partial Electron cleanup session untracking, explicit close live/restore state retirement, explicit close generated-fresh ordinal reservation, explicit-session command branch-generation guarding, multi-branch managed-session cleanup, and monotonic fresh-session allocation.
+- Regression tests for prompt guards, click-dispatch diagnostics, command taxonomy/policy, argv descriptor edge cases, temp-root cleanup, and `session_tree` branch rehydration of page-scoped refs, managed browser sessions, artifact manifests, Electron cleanup/status/probe ownership, explicit cleanup serialization, active-Electron reload profile preservation, targeted cleanup without unrelated branch promotion, reload cleanup of off-branch sessions/Electron launches, durable partial off-branch reload/quit profile preservation, protected temp-root process-exit and stale-prune cleanup, partial Electron cleanup session untracking, explicit close live/restore state retirement, explicit close generated-fresh ordinal reservation, explicit-session command branch-generation guarding, multi-branch managed-session cleanup, and monotonic fresh-session allocation.
 
 ### Fixed
 
 - Successful explicit `--session <current-wrapper-managed-session> close` and `electron.cleanup` managed-session close steps now clear live managed-session/page state, untrack cleanup ownership, reserve the next generated fresh-session ordinal so repeated closes cannot reuse a just-closed generated name, rotate the next default auto call away from the closed name, and stay honored after reload/resume branch restore.
 - `/reload` now preserves the current branch-visible active Electron launch and its isolated temp `userDataDir` for continuity while cleaning off-branch owned Electron launches, preserves off-branch profile dirs across reload, quit, repeated temp cleanup, process-exit cleanup, and stale temp-root pruning after restart when partial cleanup intentionally skips or fails `user-data-dir` removal, and targeted `electron.cleanup` no longer promotes unrelated off-branch launches into the current branch-visible state.
 - Stabilized env-patched fake-upstream tests by serializing process environment patches and tightening the inherited-stdio subprocess regression to assert quick post-exit fallback behavior without waiting for the process timeout.
+- Hardened maintainer dogfood/smoke safety around release prompts (stop-before-order and required artifact paths) so automated and interactive smokes exercise the new guards without placing orders or closing early.
 
 ## 0.2.34 - 2026-05-24
 
