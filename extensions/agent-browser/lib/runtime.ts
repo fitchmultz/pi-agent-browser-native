@@ -173,6 +173,7 @@ export interface ManagedSessionState {
 }
 
 export interface RestoredManagedSessionState extends ManagedSessionState {
+	closedSessionName?: string;
 	freshSessionOrdinal: number;
 }
 
@@ -503,6 +504,29 @@ function getManagedSessionRestoreRank(options: {
 	return nextRank;
 }
 
+function getRestorableManagedSessionName(value: unknown, fallbackSessionName: string): string | undefined {
+	return typeof value === "string" && isRestorableManagedSessionName(value, fallbackSessionName) ? value : undefined;
+}
+
+function getElectronCleanupClosedManagedSessionNames(details: Record<string, unknown>, fallbackSessionName: string): string[] {
+	const electron = isRecord(details.electron) ? details.electron : undefined;
+	const cleanup = isRecord(electron?.cleanup) ? electron.cleanup : undefined;
+	const results = Array.isArray(cleanup?.results) ? cleanup.results : [];
+	const closedSessionNames = new Set<string>();
+	for (const result of results) {
+		if (!isRecord(result) || !Array.isArray(result.steps)) continue;
+		const record = isRecord(result.record) ? result.record : undefined;
+		for (const step of result.steps) {
+			if (!isRecord(step) || step.resource !== "managed-session") continue;
+			if (step.state !== "removed" && step.state !== "already-gone") continue;
+			const sessionName = getRestorableManagedSessionName(step.sessionName, fallbackSessionName)
+				?? getRestorableManagedSessionName(record?.sessionName, fallbackSessionName);
+			if (sessionName) closedSessionNames.add(sessionName);
+		}
+	}
+	return [...closedSessionNames];
+}
+
 export function restoreManagedSessionStateFromBranch(
 	branch: unknown[],
 	fallbackSessionName: string,
@@ -512,8 +536,20 @@ export function restoreManagedSessionStateFromBranch(
 		sessionName: fallbackSessionName,
 	};
 	let activeRestoreRank = 0;
+	let closedSessionName: string | undefined;
 	let freshSessionOrdinal = 0;
 	const freshSessionRanks = new Map<string, number>();
+
+	const applyManagedClose = (sessionName: string): void => {
+		const restoreRank = getManagedSessionRestoreRank({
+			fallbackSessionName,
+			freshSessionRanks,
+			sessionName,
+		});
+		if (restoreRank === undefined || sessionName !== restoredState.sessionName) return;
+		restoredState = { active: false, sessionName: restoredState.sessionName };
+		closedSessionName = sessionName;
+	};
 
 	for (const entry of branch) {
 		if (!isRecord(entry) || entry.type !== "message") {
@@ -532,17 +568,35 @@ export function restoreManagedSessionStateFromBranch(
 			continue;
 		}
 
+		for (const sessionName of getElectronCleanupClosedManagedSessionNames(details, fallbackSessionName)) {
+			applyManagedClose(sessionName);
+		}
+
 		const explicitSessionName = extractExplicitSessionName(args);
 		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
 		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
 		const usedImplicitSession = details.usedImplicitSession === true;
+		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
+		const commandClosesSession = isCloseCommand(command);
+		const outcome = typeof details.managedSessionOutcome === "object" && details.managedSessionOutcome !== null ? details.managedSessionOutcome as Record<string, unknown> : undefined;
+		const outcomeStatus = typeof outcome?.status === "string" ? outcome.status : undefined;
+		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
+		const outcomeAttemptedSessionName = getRestorableManagedSessionName(outcome?.attemptedSessionName, fallbackSessionName);
+		const outcomeClosedSessionName = outcomeStatus === "closed" && outcome?.succeeded === true
+			? outcomeAttemptedSessionName ?? getRestorableManagedSessionName(outcomeCurrentSessionName, fallbackSessionName) ?? getRestorableManagedSessionName(sessionName, fallbackSessionName)
+			: undefined;
+		const restorableDetailSessionName = getRestorableManagedSessionName(sessionName, fallbackSessionName);
+		const explicitCloseSessionName = commandClosesSession && explicitSessionName && restorableDetailSessionName === explicitSessionName
+			? restorableDetailSessionName
+			: undefined;
 		const managedSessionName =
 			!explicitSessionName &&
-			sessionName &&
-			isRestorableManagedSessionName(sessionName, fallbackSessionName) &&
+			restorableDetailSessionName &&
 			(usedImplicitSession || sessionMode === "fresh")
-				? sessionName
-				: undefined;
+				? restorableDetailSessionName
+				: commandClosesSession
+					? outcomeClosedSessionName ?? explicitCloseSessionName
+					: undefined;
 		if (!managedSessionName) {
 			continue;
 		}
@@ -555,26 +609,19 @@ export function restoreManagedSessionStateFromBranch(
 		if (restoreRank === undefined) {
 			continue;
 		}
+		freshSessionOrdinal = Math.max(freshSessionOrdinal, restoreRank);
 
 		const messageIsError = typeof message.isError === "boolean" ? message.isError : undefined;
 		const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
-		const outcome = typeof details.managedSessionOutcome === "object" && details.managedSessionOutcome !== null ? details.managedSessionOutcome as Record<string, unknown> : undefined;
-		const outcomeStatus = typeof outcome?.status === "string" ? outcome.status : undefined;
-		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
 		const outcomeActiveAfter = outcome?.activeAfter === true;
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
-		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
-		if ((succeeded || outcomeRepresentsActiveCurrentSession) && sessionMode === "fresh") {
-			freshSessionOrdinal += 1;
-		}
-		const commandClosesSession = isCloseCommand(command);
-		const staleCompletion = succeeded && !commandClosesSession && restoreRank < activeRestoreRank;
-		if (staleCompletion) {
+		if (commandClosesSession) {
+			if (succeeded) applyManagedClose(managedSessionName);
 			continue;
 		}
-		const staleClose = commandClosesSession && restoredState.active && managedSessionName !== restoredState.sessionName;
-		if (staleClose) {
+		const staleCompletion = succeeded && restoreRank < activeRestoreRank;
+		if (staleCompletion) {
 			continue;
 		}
 
@@ -585,13 +632,15 @@ export function restoreManagedSessionStateFromBranch(
 			priorSessionName: restoredState.sessionName,
 			succeeded,
 		});
-		if (succeeded && !commandClosesSession && restoredState.active) {
+		if (succeeded && restoredState.active) {
 			activeRestoreRank = restoreRank;
+			closedSessionName = undefined;
 		}
 	}
 
 	return {
 		...restoredState,
+		...(closedSessionName ? { closedSessionName } : {}),
 		freshSessionOrdinal,
 	};
 }

@@ -68,7 +68,7 @@ import {
 test("agentBrowserExtension keeps concise browser guidance plus installed doc pointers in tool metadata", async () => {
 	await withPatchedEnv({ BRAVE_API_KEY: "demo-key" }, async () => {
 		const harness = createExtensionHarness({ cwd: process.cwd() });
-		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "tool_call", "tool_result"]);
+		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "session_tree", "tool_call", "tool_result"]);
 		assert.equal(harness.tool.name, "agent_browser");
 		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
@@ -149,6 +149,24 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.equal(browserTurn?.systemPrompt.includes("Quick start:"), false);
 		assert.equal(browserTurn?.systemPrompt.includes("Browser operating playbook:"), false);
 	});
+});
+
+test("agentBrowserExtension rejects unsupported public schema fields", () => {
+	const harness = createExtensionHarness({ cwd: process.cwd() });
+	const schema = harness.tool.parameters;
+
+	assert.equal(Check(schema, { args: ["open", "https://example.test/"], unknown: true }), false);
+	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "role", role: "button", name: "Open", unknown: true } }), false);
+	assert.equal(Check(schema, { sourceLookup: { selector: "main", unknown: true } }), false);
+	assert.equal(Check(schema, { networkSourceLookup: { url: "https://example.test/api", unknown: true } }), false);
+	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }], unknown: true } }), false);
+	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/", unknown: true }] } }), false);
+
+	assert.equal(Check(schema, { args: ["open", "https://example.test/"] }), true);
+	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "role", role: "button", name: "Open" } }), true);
+	assert.equal(Check(schema, { sourceLookup: { selector: "main" } }), true);
+	assert.equal(Check(schema, { networkSourceLookup: { url: "https://example.test/api" } }), true);
+	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }] } }), true);
 });
 
 test("agentBrowserExtension reports no-op scroll diagnostics with recovery next actions", { concurrency: false }, async () => {

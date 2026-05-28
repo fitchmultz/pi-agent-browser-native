@@ -49,7 +49,7 @@ Every release also requires interactive `tmux`-driven Pi dogfood with the native
 
 When reviewing saved session JSONL after a failed smoke or a `qa` preset that reclassified an upstream-successful batch, expect `agent_browser` tool rows to carry `isError: true` whenever `details.resultCategory` is `failure`. For normal prose output, model-visible text should end with a `Pi tool isError: true` category line; for caller-requested `--json` output, the hook preserves parseable JSON and only patches `isError`. The extension applies that patch on the `tool_result` path so Pi’s transcript matches the wrapper contract ([`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)). Preserve a normal Pi session directory for those checks; avoiding `--no-session` keeps this evidence intact ([`AGENTS.md`](../AGENTS.md) preferred validation workflow).
 
-The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload` plus restart/`/resume` behavior:
+The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` and validates `/reload`, full relaunch with the same exact Pi 0.76 `--session-id`, managed-session continuity, persisted artifacts, and Pi failure-patch behavior. Branch-backed `session_tree` rehydration and cleanup ownership are validated by focused extension harness tests:
 
 ```bash
 npm run verify -- lifecycle
@@ -180,7 +180,7 @@ Before publishing, validate both local-checkout modes without mixing their assum
 
 For expanded-surface validation, the smoke prompt should cover native tool invocation rather than shelling out to `agent-browser`: `--version`, `--help`, `skills list`, `skills get core --full`, `open` with `sessionMode: "fresh"`, `snapshot -i`, `click`, top-level `semanticAction` (locator shorthand compiled to upstream `find` and native dropdown selection compiled to upstream `select`, optionally with `semanticAction.session` when you need the same named upstream session as a prior explicit `--session` call), `eval --stdin`, `batch` via stdin, top-level `job`, `qa`, or experimental `sourceLookup` / `networkSourceLookup` (compiled batch smoke), `screenshot <path>`, explicit `--session … open` plus `--session … close`, `network requests`, `console` / `errors`, `diff snapshot`, `stream status` plus `stream disable`, `dashboard start` plus `dashboard stop`, and `chat <message>` (credential failure is acceptable evidence of wrapper pass-through when `AI_GATEWAY_API_KEY` is intentionally unset). Clean up any opened browser session with `close`, remove temporary files, and kill the tmux session before ending validation.
 
-This checklist assumes a real `agent-browser` on `PATH`. It complements, but does not overlap, `npm run verify -- lifecycle`: that harness swaps in a fake upstream binary and focuses on `/reload`, full restart, `/resume`, managed-session continuity, and spill-path persistence (`scripts/verify-lifecycle.mjs`), not the full command matrix above.
+This checklist assumes a real `agent-browser` on `PATH`. It complements, but does not overlap, `npm run verify -- lifecycle`: that harness swaps in a fake upstream binary and focuses on `/reload`, exact `--session-id` relaunch, managed-session continuity, spill-path persistence, and Pi `tool_result` failure-patch semantics (`scripts/verify-lifecycle.mjs`), not the full command matrix above.
 
 When a smoke or dogfood run fails after `sessionMode: "fresh"` (missing binary, timeout, upstream error, or **`qa`** preset reclassification), read `details.managedSessionOutcome` before assuming which managed session the next default `sessionMode: "auto"` call will follow; the same struct can appear without the extra `Managed session outcome: …` prose line on `"auto"` failures. Field-level semantics and append ordering relative to other diagnostic tails are documented in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details) and the session-mode notes in [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md).
 
@@ -192,7 +192,7 @@ Run the automated harness for deterministic configured-source lifecycle regressi
 npm run verify -- lifecycle
 ```
 
-The harness creates an isolated `PI_CODING_AGENT_DIR`, writes settings with exactly one temporary configured package source, runs plain `pi` in `tmux` with default model **`zai/glm-5.1`**, puts a deterministic fake `agent-browser` first on `PATH`, and drives `/reload`, full restart, and `/resume`. Per-step tmux waits default to **180000 ms** (three minutes) in [`scripts/verify-lifecycle.mjs`](../scripts/verify-lifecycle.mjs) (`DEFAULT_TIMEOUT_MS`); override with `--timeout-ms <ms>` when slower models or cold starts need more headroom. Override the model when needed:
+The harness creates an isolated `PI_CODING_AGENT_DIR`, writes settings with exactly one temporary configured package source, runs `pi` in `tmux` with default model **`zai/glm-5.1`** and a deterministic `--session-id`, puts a deterministic fake `agent-browser` first on `PATH`, drives `/reload`, closes Pi, and relaunches with the same exact session id instead of typing `/resume`. It also asserts the JSONL session header id, same-page managed-session continuity, persisted spill reachability, and real Pi `tool_result` failure-patch semantics for a QA reclassification. Per-step tmux waits default to **180000 ms** (three minutes) in [`scripts/verify-lifecycle.mjs`](../scripts/verify-lifecycle.mjs) (`DEFAULT_TIMEOUT_MS`); override with `--timeout-ms <ms>` when slower models or cold starts need more headroom. Override the model when needed:
 
 ```bash
 npm run verify -- lifecycle --model openai-codex/gpt-5.5:minimal
@@ -204,7 +204,7 @@ Combine flags in one invocation when both apply (order after `lifecycle` is flex
 npm run verify -- lifecycle --model openai-codex/gpt-5.5:minimal --timeout-ms 600000
 ```
 
-It asserts same-page managed-session continuity, persisted `details.fullOutputPath` reachability after resume, and updated extension-code pickup through a temporary sentinel command. On failure it retains transcripts/session artifacts; on success it performs best-effort cleanup. It does not replace occasional real-browser manual smoke testing.
+On failure it retains transcripts/session artifacts; on success it performs best-effort cleanup. It does not replace occasional real-browser manual smoke testing.
 
 **Lifecycle triage:** a timeout on sentinel `v2` after `/reload` often means Pi rejected reload while the TUI still showed `Working…` (`Wait for the current response to finish before reloading`), even when the session JSONL already has a final assistant message. Re-run with `--keep-artifacts --verbose`, inspect the retained pane capture, and confirm the configured model follows tool prompts reliably. Slower models may need a higher `--timeout-ms` than the **180000 ms** default.
 
@@ -225,7 +225,7 @@ Manual validation remains useful for release confidence and installed-package ch
 
 1. Configure exactly one active source for this extension in Pi settings: this checkout path before publishing, or the installed package after publishing.
 2. Launch plain `pi` so extension discovery is active.
-3. Validate managed-session continuity with `/reload` and a full restart + `/resume`.
+3. Validate managed-session continuity with `/reload` and a full restart plus exact `--session-id` relaunch or `/resume`.
 4. Re-check local extension-side docs (`README.md`, `docs/COMMAND_REFERENCE.md`, `docs/TOOL_CONTRACT.md`, including the [`semanticAction`](TOOL_CONTRACT.md#semanticaction) rules when that shorthand or upstream `find` / `select` behavior changes) and regenerated prompt fragments from `extensions/agent-browser/lib/playbook.ts` via `npm run docs -- playbook check` or `npm run docs`. When the upstream `agent-browser` version or help surface changed, run `npm run verify -- command-reference`.
 
 ### Real upstream contract validation
@@ -272,8 +272,8 @@ Recommended configured-source lifecycle follow-up:
 
 1. Open a page with the implicit managed session and confirm the title.
 2. Run `/reload`, then ask for `snapshot -i` and confirm the same page is still active.
-3. Exit `pi`, relaunch it against the same session file or use `/resume`, then ask for `snapshot -i` again and confirm the same page is still active.
-4. Open a large page that compacts its snapshot output and confirm `details.fullOutputPath` still exists after the restart/resume flow.
+3. Exit `pi`, relaunch it against the same exact session id/path or use `/resume`, then ask for `snapshot -i` again and confirm the same page is still active.
+4. Open a large page that compacts its snapshot output and confirm `details.fullOutputPath` still exists after the restart/resume/exact-session flow.
 5. Trigger an oversized non-snapshot output (for example a deliberately large `eval --stdin` result) and confirm the tool prints the actual spill file path directly in content instead of only referencing a details key.
 6. Validate at least one direct file-download flow with `download <selector> <path>`.
 7. Validate at least one asynchronous export flow with `click` followed by `wait --download <path>`, confirming the wait result reports `savedFilePath`/`savedFile` and checking `details.artifacts[].exists` before relying on the requested path being present on disk.
@@ -294,7 +294,7 @@ Then run the real-browser smoke prompt:
 Use the agent_browser tool to open https://react.dev and then take an interactive snapshot.
 ```
 
-Only use plain `pi` for installed-package validation after temporarily disabling or removing the checkout source or any other active source for this extension from Pi settings. Then confirm `pi` exposes the native `agent_browser` tool, that a basic `open` + `snapshot -i` flow works, and that `/reload` plus restart/`/resume` keep following the same implicit managed browser session.
+Only use plain `pi` for installed-package validation after temporarily disabling or removing the checkout source or any other active source for this extension from Pi settings. Then confirm `pi` exposes the native `agent_browser` tool, that a basic `open` + `snapshot -i` flow works, and that `/reload` plus restart with exact `--session-id` relaunch or `/resume` keep following the same implicit managed browser session.
 
 ## Release notes checklist
 
@@ -310,7 +310,7 @@ Before publishing:
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing for general checkout loading (add `--no-skills` for extension-focused bounded smokes) and configured-source lifecycle validation
 - complete interactive `tmux` live-site extension smoke with `pi --no-extensions --no-skills -e .` and the native `agent_browser` tool (at least one simple static site and one real documentation/product site; include `qa` or `job`/`batch` when those surfaces changed; use the [public Grafana stress checklist](#public-grafana-stress-checklist) when dashboard/diagnostic/artifact behavior changed; close sessions and remove screenshots/temp artifacts; record evidence). Run separate skill-enabled dogfood only when validating skill routing/report-generation behavior—see [Pre-release checks](#pre-release-checks); automated gates are not a substitute
 - rerun `npm run verify -- release`
-- run `npm run verify -- lifecycle` for configured-source `/reload` plus restart/`/resume` regression coverage (required before publish; see [Pre-release checks](#pre-release-checks))
+- run `npm run verify -- lifecycle` for configured-source `/reload`, exact `--session-id` relaunch, managed-session continuity, persisted-spill, and Pi failure-patch regression coverage (required before publish; see [Pre-release checks](#pre-release-checks))
 - confirm [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) still maps every current baseline inventory section to docs, runtime handling, tests, and validation status
-- manually exercise real-browser `/reload` and full restart + `/resume` continuity when release risk warrants browser-level confidence beyond the fake upstream harness
+- manually exercise real-browser `/reload` and full restart plus exact `--session-id` relaunch or `/resume` continuity when release risk warrants browser-level confidence beyond the fake upstream harness
 - publish only after the tarball contents and isolated packaged-extension smoke check match expectations

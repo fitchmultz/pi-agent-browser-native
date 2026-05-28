@@ -63,6 +63,7 @@ export interface BrowserRunInputFields {
 
 export interface BrowserRunState {
 	artifactManifest?: SessionArtifactManifest;
+	closedManagedSessionNames: Set<string>;
 	electronChildProcesses: Map<string, ChildProcess>;
 	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
 	ephemeralSessionSeed: string;

@@ -7,12 +7,18 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
+import { createImplicitSessionName } from "../extensions/agent-browser/lib/runtime.js";
+
 import {
+	TEST_SESSION_ID,
 	createExtensionHarness,
 	createToolBranchEntry,
 	executeRegisteredTool,
@@ -21,6 +27,99 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+function assertIsString(value: unknown): asserts value is string {
+	assert.equal(typeof value, "string");
+}
+
+function pidIsAlive(pid: number | undefined): boolean {
+	if (!pid) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+	return (await stat(path).catch(() => undefined))?.isDirectory() === true;
+}
+
+function spawnElectronFixtureProcess(userDataDir: string): ChildProcess {
+	const child = spawn("/bin/sh", ["-c", "while true; do sleep 1; done", "pi-agent-browser-electron-fixture", `--user-data-dir=${userDataDir}`], { detached: true, stdio: "ignore" });
+	child.unref();
+	return child;
+}
+
+async function listenOnLoopback(server: Server): Promise<number> {
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			server.off("error", reject);
+			resolve();
+		});
+	});
+	const address = server.address();
+	assert.ok(address && typeof address === "object");
+	return address.port;
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function electronManagedSessionDetails(sessionName: string, electronRecord: Record<string, unknown>) {
+	return {
+		args: ["connect", String(electronRecord.port ?? "9")],
+		command: "connect",
+		electron: { action: "launch", launch: electronRecord, status: "attached" },
+		exitCode: 0,
+		managedSessionOutcome: {
+			activeAfter: true,
+			activeBefore: false,
+			attemptedSessionName: sessionName,
+			currentSessionName: sessionName,
+			previousSessionName: sessionName,
+			sessionMode: "fresh",
+			status: "created",
+			succeeded: true,
+			summary: `Managed session ${sessionName} is now current.`,
+		},
+		resultCategory: "success",
+		sessionMode: "fresh",
+		sessionName,
+		usedImplicitSession: false,
+	};
+}
+
+function electronCleanupDetails(sessionName: string, electronRecord: Record<string, unknown>) {
+	return {
+		args: [],
+		electron: {
+			action: "cleanup",
+			cleanup: {
+				partial: false,
+				records: [{ ...electronRecord, cleanupState: "cleaned", sessionName: undefined }],
+				results: [{
+					launchId: electronRecord.launchId,
+					partial: false,
+					record: { ...electronRecord, cleanupState: "cleaned", sessionName: undefined },
+					remainingResources: [],
+					steps: [
+						{ resource: "managed-session", sessionName, state: "removed" },
+						{ resource: "process", state: "removed" },
+						{ resource: "debug-port", state: "already-gone" },
+						{ resource: "user-data-dir", state: "removed" },
+					],
+					summary: `Electron cleanup for ${String(electronRecord.launchId)} completed.`,
+				}],
+			},
+			status: "succeeded",
+		},
+		resultCategory: "success",
+	};
+}
 
 test("agentBrowserExtension blocks page-scoped ref reuse after navigation before upstream can recycle it", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-generation-"));
@@ -71,6 +170,1233 @@ if (args.includes("snapshot")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rehydrates page-scoped refs from the current tree branch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-refs-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const firstTarget = { title: "First", url: "https://first.example/" };
+			const secondTarget = { title: "Second", url: "https://second.example/" };
+			const branchA = [
+				createToolBranchEntry({
+					details: {
+						args: ["--session", "named", "snapshot", "-i"],
+						command: "snapshot",
+						refSnapshot: { refIds: ["e1"], refs: { e1: { name: "Old", role: "button" } }, target: firstTarget },
+						sessionName: "named",
+						sessionTabTarget: firstTarget,
+					},
+					isError: false,
+				}),
+			];
+			const branchB = [
+				createToolBranchEntry({
+					details: {
+						args: ["--session", "named", "snapshot", "-i"],
+						command: "snapshot",
+						refSnapshot: { refIds: ["e2"], refs: { e2: { name: "New", role: "button" } }, target: secondTarget },
+						sessionName: "named",
+						sessionTabTarget: secondTarget,
+					},
+					isError: false,
+				}),
+			];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			harness.setBranch(branchB);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-b", oldLeafId: "branch-a" }, harness.ctx);
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "click", "@e1"] });
+			assert.equal(staleClick.isError, true);
+			assert.equal(staleClick.details?.failureCategory, "stale-ref");
+			assert.match(staleClick.content[0]?.text ?? "", /@e1/);
+			assert.equal((await readInvocationLog(logPath)).length, 0);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rehydrates managed browser session state from the current tree branch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-managed-session-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("open")) {
+  const url = args[args.length - 1];
+  process.stdout.write(JSON.stringify({ success: true, data: { title: url.includes("second") ? "Second" : "First", url } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://snapshot.example/", refs: {}, snapshot: "" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://first.example/"], sessionMode: "fresh" });
+			const firstSessionName = firstOpen.details?.sessionName as string;
+			const branchA = [createToolBranchEntry({ details: firstOpen.details ?? {}, isError: false })];
+			const secondOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://second.example/"], sessionMode: "fresh" });
+			const secondSessionName = secondOpen.details?.sessionName as string;
+			const branchB = [createToolBranchEntry({ details: secondOpen.details ?? {}, isError: false })];
+			assert.notEqual(firstSessionName, secondSessionName);
+
+			harness.setBranch(branchA);
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch(branchB);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-b", oldLeafId: "branch-a" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.equal(snapshot.details?.sessionName, secondSessionName);
+			const lastInvocation = (await readInvocationLog(logPath)).at(-1);
+			assert.deepEqual(lastInvocation?.args.slice(0, 3), ["--json", "--session", secondSessionName]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rehydrates artifact manifest state from the current tree branch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-artifacts-"));
+	const logPath = join(tempDir, "invocations.log");
+	const firstArtifact = join(tempDir, "first.png");
+	const secondArtifact = join(tempDir, "second.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFile(firstArtifact, "first", "utf8");
+	await writeFile(secondArtifact, "second", "utf8");
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`,
+	);
+
+	const buildManifest = (artifactPath: string) => ({
+		entries: [{
+			absolutePath: artifactPath,
+			command: "screenshot",
+			createdAtMs: 1,
+			cwd: tempDir,
+			kind: "screenshot",
+			path: artifactPath,
+			retentionState: "live",
+			storageScope: "explicit-path",
+		}],
+		evictedCount: 0,
+		liveCount: 1,
+		maxEntries: 100,
+		updatedAtMs: 1,
+		version: 1,
+	});
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const branchA = [createToolBranchEntry({ details: { artifactManifest: buildManifest(firstArtifact), args: ["screenshot", firstArtifact], command: "screenshot", sessionName: "named" }, isError: false })];
+			const branchB = [createToolBranchEntry({ details: { artifactManifest: buildManifest(secondArtifact), args: ["screenshot", secondArtifact], command: "screenshot", sessionName: "named" }, isError: false })];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			harness.setBranch(branchB);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-b", oldLeafId: "branch-a" }, harness.ctx);
+
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+			assert.deepEqual((close.details?.artifactCleanup as { explicitArtifactPaths?: string[] } | undefined)?.explicitArtifactPaths, [secondArtifact]);
+			assert.doesNotMatch(close.content[0]?.text ?? "", new RegExp(firstArtifact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps Electron cleanup ownership after session_tree switches away from the launch branch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-electron-cleanup-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			assert.ok(pidIsAlive(child.pid));
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron`;
+			const electronRecord = {
+				appName: "Test Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-branch-a",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const branchA = [createToolBranchEntry({
+				details: {
+					args: ["connect", "9"],
+					command: "connect",
+					electron: { action: "launch", launch: electronRecord, status: "attached" },
+					exitCode: 0,
+					managedSessionOutcome: {
+						activeAfter: true,
+						activeBefore: false,
+						attemptedSessionName: electronSessionName,
+						currentSessionName: electronSessionName,
+						previousSessionName: electronSessionName,
+						sessionMode: "fresh",
+						status: "created",
+						succeeded: true,
+						summary: `Managed session ${electronSessionName} is now current.`,
+					},
+					resultCategory: "success",
+					sessionMode: "fresh",
+					sessionName: electronSessionName,
+					usedImplicitSession: false,
+				},
+				isError: false,
+			})];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: null, oldLeafId: "branch-a" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", electronSessionName, "close"].join("\0")));
+			assert.equal(pidIsAlive(child?.pid), false);
+		});
+	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not double-clean a branch-restored Electron cleanup during shutdown", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-electron-cleaned-shutdown-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = join(tempDir, "electron-profile-cleaned-shutdown");
+			child = spawnElectronFixtureProcess(userDataDir);
+			assert.ok(pidIsAlive(child.pid));
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-cleaned-shutdown`;
+			const electronRecord = {
+				appName: "Cleaned Shutdown Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-cleaned-shutdown",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const launchDetails = electronManagedSessionDetails(electronSessionName, electronRecord);
+			const sourceBranch = [
+				...Array.from({ length: 8 }, (_value, index) => createToolBranchEntry({
+					details: { args: ["get", "title"], command: "get", exitCode: 0, resultCategory: "success", title: `noise-${index}` },
+					isError: false,
+				})),
+				createToolBranchEntry({ details: launchDetails, isError: false }),
+			];
+			const cleanedBranch = [
+				createToolBranchEntry({ details: launchDetails, isError: false }),
+				createToolBranchEntry({ details: electronCleanupDetails(electronSessionName, electronRecord), isError: false }),
+			];
+			const harness = createExtensionHarness({
+				branch: sourceBranch,
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch(cleanedBranch);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-cleaned", oldLeafId: "branch-open" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+
+			const closeArgs = (await readInvocationLog(logPath)).map((entry) => entry.args).filter((args) => args.includes("close"));
+			assert.deepEqual(closeArgs, []);
+			assert.equal(pidIsAlive(child?.pid), true);
+		});
+	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps same-process re-owned Electron resources despite stale branch cleanup evidence", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-electron-cleanup-stale-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+const data = args.includes("close")
+  ? { closed: true }
+  : { title: "Electron", url: "app://stale-cleanup", sessionName };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			assert.ok(pidIsAlive(child.pid));
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-stale-cleanup`;
+			const electronRecord = {
+				appName: "Stale Cleanup Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-stale-cleanup",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const launchDetails = electronManagedSessionDetails(electronSessionName, electronRecord);
+			const branchOpen = [createToolBranchEntry({ details: launchDetails, isError: false })];
+			const branchCleaned = [
+				createToolBranchEntry({ details: launchDetails, isError: false }),
+				createToolBranchEntry({ details: electronCleanupDetails(electronSessionName, electronRecord), isError: false }),
+			];
+			const harness = createExtensionHarness({ branch: branchOpen, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch(branchCleaned);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-cleaned", oldLeafId: "branch-open" }, harness.ctx);
+			harness.setBranch(branchOpen);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-open", oldLeafId: "branch-cleaned" }, harness.ctx);
+
+			const reactivation = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(reactivation.isError, false, JSON.stringify(reactivation));
+			assert.equal(reactivation.details?.sessionName, electronSessionName);
+
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: null, oldLeafId: "branch-open-reactivated" }, harness.ctx);
+			harness.setBranch(branchOpen);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-open", oldLeafId: null }, harness.ctx);
+
+			harness.setBranch(branchCleaned);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-cleaned", oldLeafId: "branch-open" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+
+			const closeArgs = (await readInvocationLog(logPath)).map((entry) => entry.args).filter((args) => args.includes("close"));
+			assert.deepEqual(closeArgs, [["--session", electronSessionName, "close"]]);
+			assert.equal(pidIsAlive(child?.pid), false);
+		});
+	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves branch ownership of untouched Electron launch after targeted cleanup", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-untouched-cleanup-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let childA: ChildProcess | undefined;
+	let childB: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+const data = args.includes("close")
+  ? { closed: true }
+  : { title: "Electron", url: "app://untouched", sessionName };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDirA = await createSecureTempDirectory("electron-profile-a-");
+			const userDataDirB = await createSecureTempDirectory("electron-profile-b-");
+			childA = spawnElectronFixtureProcess(userDataDirA);
+			childB = spawnElectronFixtureProcess(userDataDirB);
+			assert.ok(pidIsAlive(childA.pid));
+			assert.ok(pidIsAlive(childB.pid));
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const sessionNameA = `${baseSessionName}-fresh-electron-a`;
+			const sessionNameB = `${baseSessionName}-fresh-electron-b`;
+			const recordA = {
+				appName: "Electron A",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-a",
+				launchedByWrapper: true,
+				pid: childA.pid,
+				port: 9,
+				processGroupId: childA.pid,
+				sessionName: sessionNameA,
+				userDataDir: userDataDirA,
+				version: 1,
+			};
+			const recordB = {
+				appName: "Electron B",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-b",
+				launchedByWrapper: true,
+				pid: childB.pid,
+				port: 10,
+				processGroupId: childB.pid,
+				sessionName: sessionNameB,
+				userDataDir: userDataDirB,
+				version: 1,
+			};
+			const launchDetailsA = electronManagedSessionDetails(sessionNameA, recordA);
+			const launchDetailsB = electronManagedSessionDetails(sessionNameB, recordB);
+			const branchBoth = [
+				createToolBranchEntry({ details: launchDetailsA, isError: false }),
+				createToolBranchEntry({ details: launchDetailsB, isError: false }),
+			];
+			const branchBCleaned = [
+				createToolBranchEntry({ details: launchDetailsA, isError: false }),
+				createToolBranchEntry({ details: launchDetailsB, isError: false }),
+				createToolBranchEntry({ details: electronCleanupDetails(sessionNameB, recordB), isError: false }),
+			];
+			const harness = createExtensionHarness({ branch: branchBoth, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const cleanupA = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "cleanup", launchId: "electron-a" },
+			});
+			assert.equal(cleanupA.isError, false, JSON.stringify(cleanupA));
+			assert.equal(pidIsAlive(childA?.pid), false);
+			assert.equal(pidIsAlive(childB?.pid), true);
+
+			harness.setBranch(branchBCleaned);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "b-cleaned", oldLeafId: "both-active" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+
+			const invocations = await readInvocationLog(logPath);
+			const closeArgs = invocations.map((entry) => entry.args).filter((args) => args.includes("close"));
+			const closedSessions = closeArgs.map((args) => {
+				const idx = args.indexOf("--session");
+				return idx >= 0 ? args[idx + 1] : undefined;
+			}).filter((s): s is string => typeof s === "string");
+			assert.ok(!closedSessions.includes(sessionNameB), `B should not be closed again after branch cleanup evidence, but got: ${JSON.stringify(closedSessions)}`);
+			assert.equal(pidIsAlive(childB?.pid), true);
+		});
+	} finally {
+		if (pidIsAlive(childA?.pid)) childA?.kill("SIGKILL");
+		if (pidIsAlive(childB?.pid)) childB?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves branch ownership of Electron launch after failing explicit-session command", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-failed-cmd-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+if (args.includes("close")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+} else if (sessionName) {
+  process.stderr.write("upstream error");
+  process.exit(1);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Electron", url: "app://failed-cmd", sessionName } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-failed-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			assert.ok(pidIsAlive(child.pid));
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-failed`;
+			const electronRecord = {
+				appName: "Failed Cmd Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-failed",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const launchDetails = electronManagedSessionDetails(electronSessionName, electronRecord);
+			const branchOpen = [createToolBranchEntry({ details: launchDetails, isError: false })];
+			const branchCleaned = [
+				createToolBranchEntry({ details: launchDetails, isError: false }),
+				createToolBranchEntry({ details: electronCleanupDetails(electronSessionName, electronRecord), isError: false }),
+			];
+			const harness = createExtensionHarness({ branch: branchOpen, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const failedCmd = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", electronSessionName, "get", "url"],
+			});
+			assert.equal(failedCmd.isError, true, "Command should have failed");
+
+			harness.setBranch(branchCleaned);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "cleaned", oldLeafId: "open" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+
+			const closeArgs = (await readInvocationLog(logPath)).map((entry) => entry.args).filter((args) => args.includes("close"));
+			assert.deepEqual(closeArgs, [], `Should not have closed the session after branch cleanup evidence, but got: ${JSON.stringify(closeArgs)}`);
+			assert.equal(pidIsAlive(child?.pid), true);
+		});
+	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension exposes off-branch owned Electron records to status, probe, and cleanup by launchId", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-electron-status-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("title")) process.stdout.write(JSON.stringify({ success: true, data: { result: "Off Branch App" } }));
+else if (args.includes("url")) process.stdout.write(JSON.stringify({ success: true, data: { result: "app://off-branch" } }));
+else if (args.includes("tab") && args.includes("list")) process.stdout.write(JSON.stringify({ success: true, data: [{ active: true, title: "Off Branch App", url: "app://off-branch" }] }));
+else if (args.includes("snapshot")) process.stdout.write(JSON.stringify({ success: true, data: { origin: "app://off-branch", refs: {}, snapshot: "" } }));
+else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-status`;
+			const electronRecord = {
+				appName: "Off Branch Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-off-branch-status",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const harness = createExtensionHarness({
+				branch: [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: null, oldLeafId: "branch-a" }, harness.ctx);
+
+			const status = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", launchId: electronRecord.launchId } });
+			assert.equal(status.isError, false, JSON.stringify(status));
+			assert.equal((status.details?.electron as { identifiers?: { launchId?: string } } | undefined)?.identifiers?.launchId, electronRecord.launchId);
+
+			const probe = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId: electronRecord.launchId } });
+			assert.equal(probe.isError, false, JSON.stringify(probe));
+			assert.equal((probe.details?.electron as { probeContext?: { launchId?: string } } | undefined)?.probeContext?.launchId, electronRecord.launchId);
+
+			const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });
+			assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
+			assert.equal(pidIsAlive(child?.pid), false);
+		});
+	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not reuse current Electron managed session after cleanup", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-current-cleanup-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close"), result: "ok", url: "app://current-cleanup" } }));`,
+	);
+	const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+	const electronSessionName = `${baseSessionName}-fresh-electron-current-cleanup`;
+	const electronRecord = {
+		appName: "Current Cleanup Electron",
+		cleanupState: "active",
+		createdAtMs: Date.now(),
+		executablePath: process.execPath,
+		launchId: "electron-current-cleanup",
+		launchedByWrapper: true,
+		port: 9,
+		sessionName: electronSessionName,
+		userDataDir: join(tempDir, "electron-profile-current-cleanup"),
+		version: 1,
+	};
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({
+				branch: [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });
+			assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
+
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			const followUpSessionName = followUp.details?.sessionName;
+			assertIsString(followUpSessionName);
+			assert.match(followUpSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(followUpSessionName, electronSessionName);
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args, ["--session", electronSessionName, "close"]);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [electronSessionName, followUpSessionName]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps Electron cleanup post-close reservation across same-process session_tree restore", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cleanup-tree-reserve-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close"), result: "ok", url: "app://tree-cleanup" } }));`,
+	);
+	const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+	const electronSessionName = `${baseSessionName}-fresh-electron-tree-cleanup`;
+	const electronRecord = {
+		appName: "Tree Cleanup Electron",
+		cleanupState: "active",
+		createdAtMs: Date.now(),
+		executablePath: process.execPath,
+		launchId: "electron-tree-cleanup",
+		launchedByWrapper: true,
+		port: 9,
+		sessionName: electronSessionName,
+		userDataDir: join(tempDir, "electron-profile-tree-cleanup"),
+		version: 1,
+	};
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const launchDetails = electronManagedSessionDetails(electronSessionName, electronRecord);
+			const harness = createExtensionHarness({
+				branch: [createToolBranchEntry({ details: launchDetails, isError: false })],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });
+			assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
+			const cleanupBranch = [
+				createToolBranchEntry({ details: launchDetails, isError: false }),
+				createToolBranchEntry({ details: cleanup.details ?? {}, isError: cleanup.isError }),
+			];
+
+			harness.setBranch(cleanupBranch);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "cleanup", oldLeafId: "live" }, harness.ctx);
+			const firstFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(firstFollowUp.isError, false, JSON.stringify(firstFollowUp));
+			const firstFollowUpSessionName = firstFollowUp.details?.sessionName;
+			assertIsString(firstFollowUpSessionName);
+			assert.match(firstFollowUpSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(firstFollowUpSessionName, electronSessionName);
+
+			const closeFirstFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", firstFollowUpSessionName, "close"] });
+			assert.equal(closeFirstFollowUp.isError, false, JSON.stringify(closeFirstFollowUp));
+			const reservedAfterClose = (closeFirstFollowUp.details?.managedSessionOutcome as { currentSessionName?: string } | undefined)?.currentSessionName;
+			assertIsString(reservedAfterClose);
+			assert.notEqual(reservedAfterClose, firstFollowUpSessionName);
+
+			harness.setBranch(cleanupBranch);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "cleanup", oldLeafId: "follow-up" }, harness.ctx);
+			const secondFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(secondFollowUp.isError, false, JSON.stringify(secondFollowUp));
+			assert.equal(secondFollowUp.details?.sessionName, reservedAfterClose);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [
+				electronSessionName,
+				firstFollowUpSessionName,
+				firstFollowUpSessionName,
+				reservedAfterClose,
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not restore Electron managed session after cleanup result", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cleanup-restore-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: "ok", url: "app://restore-cleanup" } }));`,
+	);
+	const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+	const electronSessionName = `${baseSessionName}-fresh-electron-restore-cleanup`;
+	const electronRecord = {
+		appName: "Restore Cleanup Electron",
+		cleanupState: "active",
+		createdAtMs: Date.now(),
+		executablePath: process.execPath,
+		launchId: "electron-restore-cleanup",
+		launchedByWrapper: true,
+		port: 9,
+		sessionName: electronSessionName,
+		userDataDir: join(tempDir, "electron-profile-restore-cleanup"),
+		version: 1,
+	};
+	const branch = [
+		createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false }),
+		createToolBranchEntry({ details: electronCleanupDetails(electronSessionName, electronRecord), isError: false }),
+	];
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			const restoredGeneratedSessionName = followUp.details?.sessionName;
+			assertIsString(restoredGeneratedSessionName);
+			assert.match(restoredGeneratedSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(restoredGeneratedSessionName, electronSessionName);
+
+			const closeRestoredGenerated = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", restoredGeneratedSessionName, "close"] });
+			assert.equal(closeRestoredGenerated.isError, false, JSON.stringify(closeRestoredGenerated));
+			const finalFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(finalFollowUp.isError, false, JSON.stringify(finalFollowUp));
+			const finalSessionName = finalFollowUp.details?.sessionName;
+			assertIsString(finalSessionName);
+			assert.match(finalSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(finalSessionName, electronSessionName);
+			assert.notEqual(finalSessionName, restoredGeneratedSessionName);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [restoredGeneratedSessionName, restoredGeneratedSessionName, finalSessionName]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves active branch Electron launch across reload", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-reload-active-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close"), result: "ok", url: "app://reload-active" } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-reload-active`;
+			const electronRecord = {
+				appName: "Reload Active Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-reload-active",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const branch = [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })];
+			const harness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+			assert.equal(pidIsAlive(child.pid), true);
+			assert.equal(await directoryExists(userDataDir), true);
+			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.args.includes("close")), false);
+
+			const reloadedHarness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(reloadedHarness.handlers, "session_start", { reason: "reload" }, reloadedHarness.ctx);
+			const followUp = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.equal(followUp.details?.sessionName, electronSessionName);
+			await runExtensionEvent(reloadedHarness.handlers, "session_shutdown", { reason: "quit" }, reloadedHarness.ctx);
+			assert.equal(pidIsAlive(child.pid), false);
+			assert.equal(await directoryExists(userDataDir), false);
+		});
+	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension cleans off-branch Electron launches during reload", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-reload-offbranch-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-reload-offbranch`;
+			const electronRecord = {
+				appName: "Reload Offbranch Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-reload-offbranch",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const branchA = [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: null, oldLeafId: "branch-a" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", electronSessionName, "close"].join("\0")));
+			assert.equal(pidIsAlive(child.pid), false);
+		});
+	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves off-branch Electron profile when reload cleanup is partial", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-reload-partial-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	let preservedUserDataDir: string | undefined;
+	let versionProbeCount = 0;
+	const server = createServer((request, response) => {
+		if (request.url === "/json/version") {
+			versionProbeCount += 1;
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(JSON.stringify({ Browser: "Electron/Test", webSocketDebuggerUrl: "ws://127.0.0.1/devtools/browser/test" }));
+			return;
+		}
+		response.writeHead(200, { "content-type": "application/json" });
+		response.end(JSON.stringify([]));
+	});
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+
+	try {
+		const port = await listenOnLoopback(server);
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			preservedUserDataDir = userDataDir;
+			child = spawnElectronFixtureProcess(userDataDir);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-reload-partial`;
+			const electronRecord = {
+				appName: "Reload Partial Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-reload-partial",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const branchA = [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-empty", oldLeafId: "branch-a" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", electronSessionName, "close"].join("\0")));
+			assert.ok(versionProbeCount > 0);
+			assert.equal(pidIsAlive(child.pid), false);
+			assert.equal(await directoryExists(userDataDir), true);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+			assert.equal(await directoryExists(userDataDir), true);
+		});
+	} finally {
+		await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		if (preservedUserDataDir) await rm(preservedUserDataDir, { force: true, recursive: true }).catch(() => undefined);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves off-branch Electron profile when quit cleanup is partial", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-quit-partial-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	let preservedUserDataDir: string | undefined;
+	let versionProbeCount = 0;
+	const server = createServer((request, response) => {
+		if (request.url === "/json/version") {
+			versionProbeCount += 1;
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(JSON.stringify({ Browser: "Electron/Test", webSocketDebuggerUrl: "ws://127.0.0.1/devtools/browser/test" }));
+			return;
+		}
+		response.writeHead(200, { "content-type": "application/json" });
+		response.end(JSON.stringify([]));
+	});
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+
+	try {
+		const port = await listenOnLoopback(server);
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			preservedUserDataDir = userDataDir;
+			child = spawnElectronFixtureProcess(userDataDir);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-quit-partial`;
+			const electronRecord = {
+				appName: "Quit Partial Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-quit-partial",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const branchA = [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-empty", oldLeafId: "branch-a" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", electronSessionName, "close"].join("\0")));
+			assert.ok(versionProbeCount > 0);
+			assert.equal(pidIsAlive(child.pid), false);
+			assert.equal(await directoryExists(userDataDir), true);
+		});
+	} finally {
+		await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		if (preservedUserDataDir) await rm(preservedUserDataDir, { force: true, recursive: true }).catch(() => undefined);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not promote unrelated off-branch Electron launches after targeted cleanup", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cleanup-promote-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let childA: ChildProcess | undefined;
+	let childB: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close"), result: "ok" } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDirA = await createSecureTempDirectory("electron-profile-");
+			const userDataDirB = await createSecureTempDirectory("electron-profile-");
+			childA = spawnElectronFixtureProcess(userDataDirA);
+			childB = spawnElectronFixtureProcess(userDataDirB);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const sessionA = `${baseSessionName}-fresh-electron-a`;
+			const sessionB = `${baseSessionName}-fresh-electron-b`;
+			const recordA = {
+				appName: "Target Cleanup Electron A",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-target-a",
+				launchedByWrapper: true,
+				pid: childA.pid,
+				port: 9,
+				processGroupId: childA.pid,
+				sessionName: sessionA,
+				userDataDir: userDataDirA,
+				version: 1,
+			};
+			const recordB = {
+				appName: "Unrelated Electron B",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-unrelated-b",
+				launchedByWrapper: true,
+				pid: childB.pid,
+				port: 9,
+				processGroupId: childB.pid,
+				sessionName: sessionB,
+				userDataDir: userDataDirB,
+				version: 1,
+			};
+			const branchA = [createToolBranchEntry({ details: electronManagedSessionDetails(sessionA, recordA), isError: false })];
+			const branchB = [createToolBranchEntry({ details: electronManagedSessionDetails(sessionB, recordB), isError: false })];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch(branchB);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-b", oldLeafId: "branch-a" }, harness.ctx);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-empty", oldLeafId: "branch-b" }, harness.ctx);
+
+			const cleanupA = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: "electron-target-a" } });
+			assert.equal(cleanupA.isError, false, JSON.stringify(cleanupA));
+			assert.equal(pidIsAlive(childA.pid), false);
+			assert.equal(await directoryExists(userDataDirA), false);
+			assert.equal(await directoryExists(userDataDirB), true);
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", sessionB, "close"].join("\0")));
+			assert.equal(pidIsAlive(childB.pid), false);
+			assert.equal(await directoryExists(userDataDirB), false);
+		});
+	} finally {
+		if (pidIsAlive(childA?.pid)) childA?.kill("SIGKILL");
+		if (pidIsAlive(childB?.pid)) childB?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension serializes explicit Electron cleanup behind in-flight managed commands", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cleanup-queue-"));
+	const logPath = join(tempDir, "invocations.log");
+	const releasePath = join(tempDir, "release-snapshot");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args[args.indexOf("--session") + 1];
+function log(event) { fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event, sessionName }) + "\\n"); }
+if (args.includes("snapshot")) {
+  log("snapshot-start");
+  while (!fs.existsSync(${JSON.stringify(releasePath)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  log("snapshot-done");
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "app://slow", refs: {}, snapshot: "" } }));
+} else if (args.includes("close")) {
+  log("close");
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+} else {
+  log("command");
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "ok" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-queue`;
+			const electronRecord = {
+				appName: "Queued Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-cleanup-queue",
+				launchedByWrapper: true,
+				port: 9,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const harness = createExtensionHarness({
+				branch: [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			while (!(await readInvocationLog(logPath)).some((entry) => entry.event === "snapshot-start")) await delay(10);
+
+			const cleanupPromise = executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });
+			await delay(50);
+			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.event === "close"), false);
+			await writeFile(releasePath, "go");
+			const [snapshot, cleanup] = await Promise.all([snapshotPromise, cleanupPromise]);
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
+			const events = (await readInvocationLog(logPath)).map((entry) => entry.event);
+			assert.ok(events.indexOf("snapshot-done") >= 0);
+			assert.ok(events.indexOf("close") > events.indexOf("snapshot-done"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension untracks managed sessions after partial Electron cleanup closes the session", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-partial-close-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+	const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+	const electronSessionName = `${baseSessionName}-fresh-electron-partial`;
+	const electronRecord = {
+		appName: "Partial Electron",
+		cleanupState: "active",
+		createdAtMs: Date.now(),
+		executablePath: process.execPath,
+		launchId: "electron-partial-close",
+		launchedByWrapper: true,
+		pid: process.pid,
+		port: 9,
+		sessionName: electronSessionName,
+		userDataDir: join(tempDir, "not-owned-electron-profile"),
+		version: 1,
+	};
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({
+				branch: [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });
+			assert.equal(cleanup.isError, true, JSON.stringify(cleanup));
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+
+			const closeArgs = (await readInvocationLog(logPath)).map((entry) => entry.args).filter((args) => args.includes("close"));
+			assert.deepEqual(closeArgs, [["--session", electronSessionName, "close"]]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

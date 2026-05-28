@@ -312,7 +312,7 @@ test("agentBrowserExtension restores Electron launch records and cleans them on 
 			assert.equal(statusResult.isError, false);
 			assert.match(statusResult.content[0]?.text ?? "", /debug port alive/);
 
-			await runExtensionEvent(restoredHarness.handlers, "session_shutdown", { reason: "reload" }, restoredHarness.ctx);
+			await runExtensionEvent(restoredHarness.handlers, "session_shutdown", { reason: "quit" }, restoredHarness.ctx);
 			await assert.rejects(stat(launch.userDataDir));
 			assert.equal(await waitForTestPidExit(launch.pid), true, "restored shutdown cleanup should terminate the wrapper-owned Electron process");
 		});

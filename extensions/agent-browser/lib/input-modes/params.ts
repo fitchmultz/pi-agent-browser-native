@@ -45,7 +45,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 			role: Type.Optional(Type.String({ description: "Role locator value for locator=role. May be used instead of value; when both are set they must match." })),
 			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
 			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the compiled command." })),
-		}),
+		}, { additionalProperties: false }),
 	),
 	qa: Type.Optional(
 		Type.Union([
@@ -79,7 +79,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 			componentName: Type.Optional(Type.String({ description: "Component name to correlate with react tree output and bounded local workspace search." })),
 			includeDomHints: Type.Optional(Type.Boolean({ description: "Whether selector lookups should inspect DOM HTML attributes for source-like metadata. Defaults to true." })),
 			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan when componentName is provided. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
-		}, { description: "EXPERIMENTAL: local UI-to-source candidates only (confidence/evidence, not guaranteed mappings). Compiles to batch; mutually exclusive with other input modes." }),
+		}, { additionalProperties: false, description: "EXPERIMENTAL: local UI-to-source candidates only (confidence/evidence, not guaranteed mappings). Compiles to batch; mutually exclusive with other input modes." }),
 	),
 	networkSourceLookup: Type.Optional(
 		Type.Object({
@@ -88,7 +88,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the generated batch." })),
 			url: Type.Optional(Type.String({ description: "Optional failed request URL or URL fragment to correlate with local source." })),
 			maxWorkspaceFiles: Type.Optional(Type.Number({ description: "Maximum local source files to scan for URL literals. Defaults to 2000 and cannot exceed 5000.", minimum: 1, maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES })),
-		}, { description: "EXPERIMENTAL: failed-request-to-source candidates only (initiator metadata and bounded workspace URL literals; not definitive blame). Compiles to batch; mutually exclusive with other input modes." }),
+		}, { additionalProperties: false, description: "EXPERIMENTAL: failed-request-to-source candidates only (initiator metadata and bounded workspace URL literals; not definitive blame). Compiles to batch; mutually exclusive with other input modes." }),
 	),
 	electron: Type.Optional(
 		Type.Union([
@@ -172,10 +172,10 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 					values: Type.Optional(Type.Array(Type.String({ description: "Option value for select steps." }), { description: "One or more option values for select steps.", minItems: 1 })),
 					path: Type.Optional(Type.String({ description: "Artifact/download path for waitForDownload or screenshot steps." })),
 					milliseconds: Type.Optional(Type.Number({ description: "Milliseconds for wait steps." })),
-				}),
+				}, { additionalProperties: false }),
 				{ minItems: 1 },
 			),
-		}),
+		}, { additionalProperties: false }),
 	),
 	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, auth save --password-stdin, and is generated internally by job, qa, sourceLookup, or networkSourceLookup mode. Do not use with electron mode." })),
 	sessionMode: Type.Optional(
@@ -185,4 +185,4 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 			default: DEFAULT_SESSION_MODE,
 		}),
 	),
-});
+}, { additionalProperties: false });

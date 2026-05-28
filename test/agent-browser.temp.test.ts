@@ -161,6 +161,99 @@ test("stale temp pruning does not remove a live root when owner identity is unav
 	}
 });
 
+test("secure temp process-exit cleanup preserves protected child directories", { concurrency: false }, async () => {
+	const childScript = `
+		import { dirname, join } from "node:path";
+		import { writeFile } from "node:fs/promises";
+		import { cleanupSecureTempArtifacts, createSecureTempDirectory, writeSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+		const profile = await createSecureTempDirectory("electron-profile-");
+		await writeFile(join(profile, "profile-state.txt"), "keep", "utf8");
+		const spill = await writeSecureTempFile({ content: "delete", prefix: "spill", suffix: ".txt" });
+		const root = dirname(profile);
+		await cleanupSecureTempArtifacts({ preservePaths: [profile] });
+		console.log(JSON.stringify({ profile, root, spill }));
+	`;
+	const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childScript], {
+		cwd: process.cwd(),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let root: string | undefined;
+	try {
+		const childExit = once(child, "exit");
+		const result = await readChildStdoutJsonLine<{ profile: string; root: string; spill: string }>(child);
+		root = result.root;
+		const [exitCode] = await childExit;
+		assert.equal(exitCode, 0);
+		await stat(result.profile);
+		await assert.rejects(stat(result.spill), { code: "ENOENT" });
+	} finally {
+		await stopChildProcess(child);
+		if (root) await rm(root, { force: true, recursive: true }).catch(() => undefined);
+		await cleanupSecureTempArtifacts();
+	}
+});
+
+test("stale temp pruning preserves profile children protected by prior process metadata", { concurrency: false }, async () => {
+	const childAScript = `
+		import { dirname, join } from "node:path";
+		import { writeFile } from "node:fs/promises";
+		import { cleanupSecureTempArtifacts, createSecureTempDirectory } from "./extensions/agent-browser/lib/temp.ts";
+		const profile = await createSecureTempDirectory("electron-profile-");
+		await writeFile(join(profile, "profile-state.txt"), "keep", "utf8");
+		const root = dirname(profile);
+		await cleanupSecureTempArtifacts({ preservePaths: [profile] });
+		console.log(JSON.stringify({ profile, root }));
+	`;
+	const childA = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childAScript], {
+		cwd: process.cwd(),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let root: string | undefined;
+	let childB: ReturnType<typeof spawn> | undefined;
+	try {
+		const childAExit = once(childA, "exit");
+		const result = await readChildStdoutJsonLine<{ profile: string; root: string }>(childA);
+		root = result.root;
+		const [childAExitCode] = await childAExit;
+		assert.equal(childAExitCode, 0);
+		await stat(result.profile);
+
+		const markerPath = join(result.root, ".pi-agent-browser-owner.json");
+		const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
+		const marker = JSON.parse(await readFile(markerPath, "utf8")) as Record<string, unknown>;
+		await writeFile(
+			markerPath,
+			JSON.stringify({ ...marker, createdAtMs: staleTime.getTime(), leaseUpdatedAtMs: staleTime.getTime() }, null, 2),
+			"utf8",
+		);
+		await writeFile(join(result.root, "unprotected-spill.txt"), "delete", "utf8");
+		await utimes(result.root, staleTime, staleTime);
+
+		const childBScript = `
+			import { openSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+			const tempFile = await openSecureTempFile("prune-trigger", ".txt");
+			await tempFile.fileHandle.close();
+			console.log(JSON.stringify({ done: true }));
+		`;
+		childB = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", childBScript], {
+			cwd: process.cwd(),
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		const childBExit = once(childB, "exit");
+		await readChildStdoutJsonLine<{ done: boolean }>(childB);
+		const [childBExitCode] = await childBExit;
+		assert.equal(childBExitCode, 0);
+
+		await stat(result.profile);
+		await assert.rejects(stat(join(result.root, "unprotected-spill.txt")), { code: "ENOENT" });
+	} finally {
+		await stopChildProcess(childA);
+		if (childB) await stopChildProcess(childB);
+		if (root) await rm(root, { force: true, recursive: true }).catch(() => undefined);
+		await cleanupSecureTempArtifacts();
+	}
+});
+
 test("writeSecureTempFile enforces the aggregate temp-root disk budget", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	await withPatchedEnv({ PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES: "1024" }, async () => {

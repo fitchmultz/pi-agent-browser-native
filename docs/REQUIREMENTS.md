@@ -53,7 +53,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - Keep the current local-checkout path documented as the practical pre-release and development flow.
 - Most users will install this extension globally rather than as a project-local extension.
 - Local checkout smoke testing should use explicit CLI loading such as `pi --no-extensions -e .` or `pi --no-extensions -e /absolute/path/to/pi-agent-browser-native`; Pi settings are bypassed in this mode and code edits require a process restart for validation.
-- Local checkout hot-reload and resume validation should use configured-source lifecycle mode: exactly one active checkout/package source in Pi settings, launched with plain `pi`, so `/reload` exercises discovered/configured resources.
+- Local checkout hot-reload and exact-session relaunch validation should use configured-source lifecycle mode: exactly one active checkout/package source in Pi settings, launched with plain `pi` (or the lifecycle harness' exact `--session-id` relaunch path), so `/reload` and relaunch events exercise discovered/configured resources. Focused extension harness tests validate Pi `session_tree` branch rehydration and cleanup ownership.
 - Do **not** rely on repo-local `.pi/extensions/` auto-discovery for this package, because it conflicts with the global installed-package path.
 
 ### Native-tool preference
@@ -85,10 +85,10 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - The primary confidence path is a real `pi` session driven in `tmux`.
 - For quick local checkout smoke validation, launch `pi --no-extensions -e .` from the repository root so only the checkout copy loads; do not rely on Pi settings or `/reload` semantics in this isolated mode.
 - For hot-reload validation, configure exactly one active source for this extension in Pi settings and launch plain `pi`; validate `/reload` there because it exercises auto-discovered/configured resources.
-- Maintain a tmux-driven configured-source lifecycle harness (`npm run verify -- lifecycle`; required before release per `docs/RELEASE.md`) that isolates Pi settings, uses exactly one configured source, exercises `/reload`, full restart, and `/resume`, and asserts managed-session continuity plus persisted artifact survival. It is its own `npm run verify` mode rather than part of the default `npm run verify` sequence, but operators still run it before every publish. The harness defaults Pi to model `zai/glm-5.1` (`scripts/verify-lifecycle.mjs`); pass `--model <id>` after `lifecycle` when a different model is required. Keep `docs/RELEASE.md` accurate about the harness behavior, cleanup, transcript retention, and limitations.
-- Validate a full `pi` restart with `/resume` when changes touch managed-session continuity, reload behavior, or persisted artifact paths.
+- Maintain a tmux-driven configured-source lifecycle harness (`npm run verify -- lifecycle`; required before release per `docs/RELEASE.md`) that isolates Pi settings, uses exactly one configured source, exercises `/reload`, full restart plus exact `--session-id` relaunch, and asserts managed-session continuity, persisted artifact survival, and real Pi `tool_result` failure-patch semantics. It is its own `npm run verify` mode rather than part of the default `npm run verify` sequence, but operators still run it before every publish. The harness defaults Pi to model `zai/glm-5.1` (`scripts/verify-lifecycle.mjs`); pass `--model <id>` after `lifecycle` when a different model is required. Keep `docs/RELEASE.md` accurate about the harness behavior, cleanup, transcript retention, and limitations.
+- Validate a full `pi` restart with exact `--session-id` relaunch or `/resume` when changes touch managed-session continuity, reload behavior, or persisted artifact paths. Validate branch-backed state changes with the focused `session_tree` harness tests.
 - Prefer full `pi` restart over `/reload` when validating extension changes beyond a quick reload smoke check.
-- Use `/resume` when needed after restart.
+- Use `/resume` or an explicit session id/path when needed after restart.
 - Keep testing broader than a single smoke site like `example.com`.
 - Bounded release smokes that validate this extension should disable auto-loaded skills with `--no-skills`; run skill-enabled dogfood separately only when validating external skill routing or report-generation behavior.
 - Maintain a concrete release/package verification workflow in `docs/RELEASE.md` and matching repository scripts.

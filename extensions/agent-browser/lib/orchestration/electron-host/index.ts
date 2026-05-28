@@ -186,11 +186,6 @@ interface ElectronProbeContext {
 	sessionName: string;
 }
 
-function findUnambiguousActiveElectronLaunchRecord(records: Map<string, ElectronLaunchRecord>): ElectronLaunchRecord | undefined {
-	const activeRecords = getActiveElectronRecords(records);
-	return activeRecords.length === 1 ? activeRecords[0] : undefined;
-}
-
 function formatElectronStatusVisibleText(statuses: ElectronLaunchStatus[], records: ElectronLaunchRecord[], mismatches: ElectronSessionMismatch[] = [], managedSessions: ElectronManagedSessionTarget[] = []): string {
 	if (statuses.length === 0) return "Electron status: no active wrapper-tracked launches.";
 	const recordsByLaunchId = new Map(records.map((record) => [record.launchId, record]));
@@ -664,21 +659,33 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 		const managedSessionCloseError = record.sessionName
 			? await closeManagedSession({ cwd: options.cwd, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
 			: undefined;
+		const managedSessionStep = record.sessionName
+			? managedSessionCloseError
+				? { error: managedSessionCloseError, resource: "managed-session" as const, sessionName: record.sessionName, state: "failed" as const }
+				: { resource: "managed-session" as const, sessionName: record.sessionName, state: "removed" as const }
+			: undefined;
 		const cleanupResult = await cleanupElectronLaunchResources({
 			child: options.electronChildProcesses.get(record.launchId),
 			record,
 			timeoutMs: options.timeoutMs,
 		});
+		const cleanupRecord = record.sessionName && !managedSessionCloseError
+			? { ...cleanupResult.record, sessionName: undefined }
+			: cleanupResult.record;
 		const result: ElectronCleanupResult = managedSessionCloseError
 			? {
 					...cleanupResult,
 					partial: true,
 					record: { ...cleanupResult.record, cleanupState: "partial" },
 					remainingResources: [...new Set(["managed-session", ...cleanupResult.remainingResources])],
-					steps: [{ error: managedSessionCloseError, resource: "managed-session", state: "failed" }, ...cleanupResult.steps],
+					steps: [managedSessionStep, ...cleanupResult.steps].filter((step): step is NonNullable<typeof step> => step !== undefined),
 					summary: `Electron cleanup for ${record.launchId} is partial; managed session close failed.`,
 			  }
-			: cleanupResult;
+			: {
+					...cleanupResult,
+					record: cleanupRecord,
+					steps: [managedSessionStep, ...cleanupResult.steps].filter((step): step is NonNullable<typeof step> => step !== undefined),
+			  };
 		results.push(result);
 		options.electronLaunchRecords.set(record.launchId, result.record);
 		if (!result.partial) options.electronChildProcesses.delete(record.launchId);
@@ -703,7 +710,6 @@ export async function handleElectronHostInput(options: {
 	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
 	implicitSessionCloseTimeoutMs: number;
 	managedSessionActive: boolean;
-	managedSessionExecutionQueue: { run<T>(task: () => Promise<T>): Promise<T> };
 	managedSessionName: string;
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
 	sessionPageState: SessionPageState;
@@ -716,7 +722,6 @@ export async function handleElectronHostInput(options: {
 		electronLaunchRecords,
 		implicitSessionCloseTimeoutMs,
 		managedSessionActive,
-		managedSessionExecutionQueue,
 		managedSessionName,
 		redactedCompiledElectron,
 		sessionPageState,
@@ -731,123 +736,119 @@ export async function handleElectronHostInput(options: {
 		}
 	}
 	if (compiledElectron?.action === "status") {
-		return managedSessionExecutionQueue.run(async () => {
-			const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);
-			if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
-			const records = selection.records ?? [];
-			const statuses = await Promise.all(records.map((record) => inspectElectronLaunchStatus(record)));
-			const managedSessions = (await Promise.all(records.map((record) => collectElectronManagedSessionTarget({
-				cwd,
-				sessionName: record.sessionName,
-				signal,
-				timeoutMs: compiledElectron.timeoutMs,
-			})))).filter((managedSession): managedSession is ElectronManagedSessionTarget => managedSession !== undefined);
-			const mismatches = managedSessions
-				.map((managedSession) => {
-					const record = records.find((candidate) => candidate.sessionName === managedSession.sessionName);
-					const status = record ? statuses.find((candidate) => candidate.launchId === record.launchId) : undefined;
-					return record && status ? buildElectronSessionMismatch({ managedSession, record, statusTargets: status.targets }) : undefined;
-				})
-				.filter((mismatch): mismatch is ElectronSessionMismatch => mismatch !== undefined);
-			return buildElectronStatusResult({
-				compiledElectron: redactedCompiledElectron ?? compiledElectron,
-				managedSessions,
-				mismatches,
-				records,
-				statuses,
-			});
+		const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);
+		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
+		const records = selection.records ?? [];
+		const statuses = await Promise.all(records.map((record) => inspectElectronLaunchStatus(record)));
+		const managedSessions = (await Promise.all(records.map((record) => collectElectronManagedSessionTarget({
+			cwd,
+			sessionName: record.sessionName,
+			signal,
+			timeoutMs: compiledElectron.timeoutMs,
+		})))).filter((managedSession): managedSession is ElectronManagedSessionTarget => managedSession !== undefined);
+		const mismatches = managedSessions
+			.map((managedSession) => {
+				const record = records.find((candidate) => candidate.sessionName === managedSession.sessionName);
+				const status = record ? statuses.find((candidate) => candidate.launchId === record.launchId) : undefined;
+				return record && status ? buildElectronSessionMismatch({ managedSession, record, statusTargets: status.targets }) : undefined;
+			})
+			.filter((mismatch): mismatch is ElectronSessionMismatch => mismatch !== undefined);
+		return buildElectronStatusResult({
+			compiledElectron: redactedCompiledElectron ?? compiledElectron,
+			managedSessions,
+			mismatches,
+			records,
+			statuses,
 		});
 	}
 	if (compiledElectron?.action === "probe") {
-		return managedSessionExecutionQueue.run(async () => {
-			const launchRecord = compiledElectron.launchId
-				? electronLaunchRecords.get(compiledElectron.launchId)
-				: findElectronLaunchRecordForSession(managedSessionName, electronLaunchRecords) ?? findUnambiguousActiveElectronLaunchRecord(electronLaunchRecords);
-			if (compiledElectron.launchId && !launchRecord) {
-				return buildElectronHostFailureResult({
-					compiledElectron: redactedCompiledElectron ?? compiledElectron,
-					errorText: `No wrapper-tracked Electron launch found for launchId ${compiledElectron.launchId}.`,
-					failureCategory: "validation-error",
-				});
-			}
-			if (compiledElectron.launchId && !launchRecord?.sessionName) {
-				return buildElectronHostFailureResult({
-					compiledElectron: redactedCompiledElectron ?? compiledElectron,
-					errorText: `electron.probe launchId ${compiledElectron.launchId} has no attached managed sessionName; reattach with connect or run electron.launch again.`,
-					failureCategory: "validation-error",
-				});
-			}
-			if (!compiledElectron.launchId && !managedSessionActive) {
-				return buildElectronHostFailureResult({
-					compiledElectron: redactedCompiledElectron ?? compiledElectron,
-					errorText: "electron.probe requires an active attached session. Run electron.launch or connect to an Electron debug port first.",
-					failureCategory: "validation-error",
-				});
-			}
-			const probeSessionName = compiledElectron.launchId ? launchRecord?.sessionName : managedSessionName;
-			if (!probeSessionName) {
-				return buildElectronHostFailureResult({
-					compiledElectron: redactedCompiledElectron ?? compiledElectron,
-					errorText: "electron.probe could not resolve a managed session to inspect.",
-					failureCategory: "validation-error",
-				});
-			}
-			try {
-				const status = launchRecord ? await inspectElectronLaunchStatus(launchRecord) : undefined;
-				const probe = await collectElectronProbe({ cwd, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs });
-				const managedSession: ElectronManagedSessionTarget = {
-					sessionName: probe.sessionName,
-					title: probe.title ?? probe.activeTab?.title,
-					url: probe.url ?? probe.activeTab?.url,
-				};
-				const sessionMismatch = launchRecord && status
-					? buildElectronSessionMismatch({ managedSession, record: launchRecord, statusTargets: status.targets })
+		const launchRecord = compiledElectron.launchId
+			? electronLaunchRecords.get(compiledElectron.launchId)
+			: findElectronLaunchRecordForSession(managedSessionName, electronLaunchRecords);
+		if (compiledElectron.launchId && !launchRecord) {
+			return buildElectronHostFailureResult({
+				compiledElectron: redactedCompiledElectron ?? compiledElectron,
+				errorText: `No wrapper-tracked Electron launch found for launchId ${compiledElectron.launchId}.`,
+				failureCategory: "validation-error",
+			});
+		}
+		if (compiledElectron.launchId && !launchRecord?.sessionName) {
+			return buildElectronHostFailureResult({
+				compiledElectron: redactedCompiledElectron ?? compiledElectron,
+				errorText: `electron.probe launchId ${compiledElectron.launchId} has no attached managed sessionName; reattach with connect or run electron.launch again.`,
+				failureCategory: "validation-error",
+			});
+		}
+		if (!compiledElectron.launchId && !managedSessionActive) {
+			return buildElectronHostFailureResult({
+				compiledElectron: redactedCompiledElectron ?? compiledElectron,
+				errorText: "electron.probe requires an active attached session. Run electron.launch or connect to an Electron debug port first.",
+				failureCategory: "validation-error",
+			});
+		}
+		const probeSessionName = compiledElectron.launchId ? launchRecord?.sessionName : managedSessionName;
+		if (!probeSessionName) {
+			return buildElectronHostFailureResult({
+				compiledElectron: redactedCompiledElectron ?? compiledElectron,
+				errorText: "electron.probe could not resolve a managed session to inspect.",
+				failureCategory: "validation-error",
+			});
+		}
+		try {
+			const status = launchRecord ? await inspectElectronLaunchStatus(launchRecord) : undefined;
+			const probe = await collectElectronProbe({ cwd, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs });
+			const managedSession: ElectronManagedSessionTarget = {
+				sessionName: probe.sessionName,
+				title: probe.title ?? probe.activeTab?.title,
+				url: probe.url ?? probe.activeTab?.url,
+			};
+			const sessionMismatch = launchRecord && status
+				? buildElectronSessionMismatch({ managedSession, record: launchRecord, statusTargets: status.targets })
+				: undefined;
+			const probeContextNote = !launchRecord
+				? "No wrapper-tracked Electron launch matched this current managed session."
+				: !compiledElectron.launchId && launchRecord.sessionName && launchRecord.sessionName !== probe.sessionName
+					? `single active Electron launch ${launchRecord.launchId} uses wrapper session ${launchRecord.sessionName}; pass electron.probe.launchId to inspect that launch session directly.`
 					: undefined;
-				const probeContextNote = !launchRecord
-					? "No wrapper-tracked Electron launch matched this current managed session."
-					: !compiledElectron.launchId && launchRecord.sessionName && launchRecord.sessionName !== probe.sessionName
-						? `single active Electron launch ${launchRecord.launchId} uses wrapper session ${launchRecord.sessionName}; pass electron.probe.launchId to inspect that launch session directly.`
-						: undefined;
-				const probeContext: ElectronProbeContext = {
-					launchId: launchRecord?.launchId,
-					mode: compiledElectron.launchId ? "launchId" : "current-managed-session",
-					note: probeContextNote,
+			const probeContext: ElectronProbeContext = {
+				launchId: launchRecord?.launchId,
+				mode: compiledElectron.launchId ? "launchId" : "current-managed-session",
+				note: probeContextNote,
+				sessionName: probe.sessionName,
+			};
+			const sessionTabTarget = normalizeSessionTabTarget({
+				title: probe.title ?? probe.activeTab?.title ?? probe.refSnapshot?.target?.title,
+				url: probe.url ?? probe.activeTab?.url ?? probe.refSnapshot?.target?.url,
+			});
+			const pageStateUpdate = sessionPageState.beginUpdate();
+			if (sessionTabTarget) {
+				sessionPageState.applyTabTarget({ sessionName: probe.sessionName, target: sessionTabTarget, update: pageStateUpdate });
+			}
+			if (probe.refSnapshot) {
+				sessionPageState.applyRefSnapshot({
+					fallbackTarget: sessionTabTarget,
 					sessionName: probe.sessionName,
-				};
-				const sessionTabTarget = normalizeSessionTabTarget({
-					title: probe.title ?? probe.activeTab?.title ?? probe.refSnapshot?.target?.title,
-					url: probe.url ?? probe.activeTab?.url ?? probe.refSnapshot?.target?.url,
-				});
-				const pageStateUpdate = sessionPageState.beginUpdate();
-				if (sessionTabTarget) {
-					sessionPageState.applyTabTarget({ sessionName: probe.sessionName, target: sessionTabTarget, update: pageStateUpdate });
-				}
-				if (probe.refSnapshot) {
-					sessionPageState.applyRefSnapshot({
-						fallbackTarget: sessionTabTarget,
-						sessionName: probe.sessionName,
-						snapshot: probe.refSnapshot,
-						update: pageStateUpdate,
-					});
-				}
-				return buildElectronProbeResult({
-					compiledElectron: redactedCompiledElectron ?? compiledElectron,
-					mismatch: sessionMismatch,
-					probe,
-					probeContext,
-					record: launchRecord,
-					sessionTabTarget,
-					status,
-				});
-			} catch (error) {
-				const errorText = error instanceof Error ? error.message : String(error);
-				return buildElectronHostFailureResult({
-					compiledElectron: redactedCompiledElectron ?? compiledElectron,
-					errorText: `Electron probe failed: ${errorText}`,
-					failureCategory: "upstream-error",
+					snapshot: probe.refSnapshot,
+					update: pageStateUpdate,
 				});
 			}
-		});
+			return buildElectronProbeResult({
+				compiledElectron: redactedCompiledElectron ?? compiledElectron,
+				mismatch: sessionMismatch,
+				probe,
+				probeContext,
+				record: launchRecord,
+				sessionTabTarget,
+				status,
+			});
+		} catch (error) {
+			const errorText = error instanceof Error ? error.message : String(error);
+			return buildElectronHostFailureResult({
+				compiledElectron: redactedCompiledElectron ?? compiledElectron,
+				errorText: `Electron probe failed: ${errorText}`,
+				failureCategory: "upstream-error",
+			});
+		}
 	}
 	if (compiledElectron?.action === "cleanup") {
 		const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);

@@ -33,6 +33,7 @@ export interface ElectronLaunchStatus {
 export interface ElectronCleanupStep {
 	error?: string;
 	resource: "debug-port" | "managed-session" | "process" | "user-data-dir";
+	sessionName?: string;
 	state: "already-gone" | "failed" | "removed" | "skipped";
 }
 
