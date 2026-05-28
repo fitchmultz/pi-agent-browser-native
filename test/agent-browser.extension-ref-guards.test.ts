@@ -28,6 +28,10 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
+function assertIsString(value: unknown): asserts value is string {
+	assert.equal(typeof value, "string");
+}
+
 function pidIsAlive(pid: number | undefined): boolean {
 	if (!pid) return false;
 	try {
@@ -507,10 +511,13 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 
 			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
 			assert.equal(followUp.isError, false, JSON.stringify(followUp));
-			assert.notEqual(followUp.details?.sessionName, electronSessionName);
+			const followUpSessionName = followUp.details?.sessionName;
+			assertIsString(followUpSessionName);
+			assert.match(followUpSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(followUpSessionName, electronSessionName);
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args, ["--session", electronSessionName, "close"]);
-			assert.notEqual(invocations.at(-1)?.sessionName, electronSessionName);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [electronSessionName, followUpSessionName]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -554,9 +561,23 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "ok", url: 
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
 			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
 			assert.equal(followUp.isError, false, JSON.stringify(followUp));
-			assert.notEqual(followUp.details?.sessionName, electronSessionName);
+			const restoredGeneratedSessionName = followUp.details?.sessionName;
+			assertIsString(restoredGeneratedSessionName);
+			assert.match(restoredGeneratedSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(restoredGeneratedSessionName, electronSessionName);
+
+			const closeRestoredGenerated = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", restoredGeneratedSessionName, "close"] });
+			assert.equal(closeRestoredGenerated.isError, false, JSON.stringify(closeRestoredGenerated));
+			const finalFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(finalFollowUp.isError, false, JSON.stringify(finalFollowUp));
+			const finalSessionName = finalFollowUp.details?.sessionName;
+			assertIsString(finalSessionName);
+			assert.match(finalSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(finalSessionName, electronSessionName);
+			assert.notEqual(finalSessionName, restoredGeneratedSessionName);
+
 			const invocations = await readInvocationLog(logPath);
-			assert.notEqual(invocations[0]?.sessionName, electronSessionName);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [restoredGeneratedSessionName, restoredGeneratedSessionName, finalSessionName]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

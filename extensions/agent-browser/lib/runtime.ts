@@ -609,15 +609,13 @@ export function restoreManagedSessionStateFromBranch(
 		if (restoreRank === undefined) {
 			continue;
 		}
+		freshSessionOrdinal = Math.max(freshSessionOrdinal, restoreRank);
 
 		const messageIsError = typeof message.isError === "boolean" ? message.isError : undefined;
 		const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
 		const outcomeActiveAfter = outcome?.activeAfter === true;
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
-		if ((succeeded || outcomeRepresentsActiveCurrentSession) && sessionMode === "fresh") {
-			freshSessionOrdinal += 1;
-		}
 		if (commandClosesSession) {
 			if (succeeded) applyManagedClose(managedSessionName);
 			continue;

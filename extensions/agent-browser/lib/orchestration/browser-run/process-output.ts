@@ -179,6 +179,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 	const { prepared, processResult } = input;
 	const { electronChildProcesses, electronLaunchRecords, sessionPageState, traceOwners } = state;
 	let artifactManifest = state.artifactManifest;
+	let freshSessionOrdinal = state.freshSessionOrdinal;
 	let managedSessionActive = state.managedSessionActive;
 	let managedSessionCwd = state.managedSessionCwd;
 	let managedSessionName = state.managedSessionName;
@@ -329,7 +330,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		managedSessionActive = managedSessionState.active;
 		managedSessionName = managedSessionState.sessionName;
 		if (commandClosesSession && succeeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
-			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, state.freshSessionOrdinal + 1);
+			freshSessionOrdinal += 1;
+			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, freshSessionOrdinal);
 		}
 		let managedSessionOutcome = buildManagedSessionOutcome({ activeAfter: managedSessionActive, activeBefore: priorManagedSessionActive, attemptedSessionName: managedCloseSessionName, command: prepared.executionPlan.commandInfo.command, currentSessionName: managedSessionName, previousSessionName: priorManagedSessionName, replacedSessionName: replacedManagedSessionName, sessionMode: prepared.sessionMode, succeeded });
 		if (prepared.executionPlan.managedSessionName && succeeded) managedSessionCwd = cwd;
@@ -426,7 +428,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		currentRefSnapshot = finalRecoveryState.currentRefSnapshot;
 		currentRefSnapshotInvalidation = finalRecoveryState.currentRefSnapshotInvalidation;
 		const result = buildFinalAgentBrowserToolResult({ aboutBlankSessionMismatch, artifactCleanup, categoryDetails: finalRecoveryState.categoryDetails, clickDispatchDiagnostic, commandTokens: prepared.commandTokens, comboboxFocusDiagnostic, compiledNetworkSourceLookup: prepared.compiledNetworkSourceLookup, compiledSemanticAction: prepared.compiledSemanticAction, compatibilityWorkaround: prepared.compatibilityWorkaround, currentRefSnapshot, currentRefSnapshotInvalidation, currentSessionTabTarget, electronBroadGetTextScopeDiagnostics, electronFailedConnectCleanup, electronHandoff, electronLaunch: prepared.electronLaunch, electronLaunchRecord, electronLaunchRecords, electronPostCommandHealth, electronProfileIsolationDetails: input.electronProfileIsolationDetails, electronRefFreshnessDiagnostic, electronSessionMismatch, errorText, evalStdinHint, exactSensitiveValues: prepared.exactSensitiveValues, executionPlan: prepared.executionPlan, fillVerificationDiagnostic, inspectionText, managedSessionOutcome, navigationSummary, networkSourceLookup, noActivePageSnapshotFailure: finalRecoveryState.noActivePageSnapshotFailure, openResultTabCorrection, overlayBlockerDiagnostic, parseError, parseFailureOutput, parseSucceeded, plainTextInspection, presentation, presentationEnvelope, priorSessionTabTarget: prepared.priorSessionTabTarget, processResult, qaAttachedTarget, qaPreset, recordingDependencyWarning, redactedArgs: prepared.redactedArgs, redactedCompiledElectron: prepared.redactedCompiledElectron, redactedCompiledJob: prepared.redactedCompiledJob, redactedCompiledNetworkSourceLookup: prepared.redactedCompiledNetworkSourceLookup, redactedCompiledQaPreset: prepared.redactedCompiledQaPreset, redactedCompiledSemanticAction: prepared.redactedCompiledSemanticAction, redactedCompiledSourceLookup: prepared.redactedCompiledSourceLookup, redactedContent, redactedProcessArgs: prepared.redactedProcessArgs, redactedRecoveryHint: prepared.redactedRecoveryHint, resultArtifactManifest, richInputRecoveryDiagnostic: finalRecoveryState.richInputRecoveryDiagnostic, scrollNoopDiagnostic, selectorTextVisibilityDiagnostics, sessionMode: prepared.sessionMode, sessionTabCorrection, sourceLookup, succeeded, timeoutPartialProgress, userRequestedJson: prepared.userRequestedJson, visibleRefFallbackDiagnostic: finalRecoveryState.visibleRefFallbackDiagnostic, visibleRefFallbackSessionName: finalRecoveryState.visibleRefFallbackSessionName });
-		const statePatch: BrowserRunStatePatch = { artifactManifest, managedSessionActive, managedSessionCwd, managedSessionName };
+		const statePatch: BrowserRunStatePatch = { artifactManifest, freshSessionOrdinal, managedSessionActive, managedSessionCwd, managedSessionName };
 		return { result, statePatch };
 	} finally {
 		if (processResult.stdoutSpillPath) await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);

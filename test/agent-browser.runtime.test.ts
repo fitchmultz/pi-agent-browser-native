@@ -432,6 +432,84 @@ test("restoreManagedSessionStateFromBranch honors explicit close rows for restor
 	assert.equal(restored.closedSessionName, "piab-demo-123");
 });
 
+test("restoreManagedSessionStateFromBranch reserves auto-used generated fresh names after explicit closes", () => {
+	const baseSessionName = "piab-demo-123";
+	const firstFreshSessionName = createFreshSessionName(baseSessionName, "seed", 1);
+	const secondFreshSessionName = createFreshSessionName(baseSessionName, "seed", 2);
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: baseSessionName,
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--session", baseSessionName, "close"],
+					command: "close",
+					exitCode: 0,
+					managedSessionOutcome: {
+						activeAfter: false,
+						activeBefore: true,
+						attemptedSessionName: baseSessionName,
+						currentSessionName: firstFreshSessionName,
+						previousSessionName: baseSessionName,
+						sessionMode: "auto",
+						status: "closed",
+						succeeded: true,
+						summary: `Managed session ${baseSessionName} was closed.`,
+					},
+					sessionMode: "auto",
+					sessionName: baseSessionName,
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["get", "url"],
+					command: "get",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: firstFreshSessionName,
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--session", firstFreshSessionName, "close"],
+					command: "close",
+					exitCode: 0,
+					managedSessionOutcome: {
+						activeAfter: false,
+						activeBefore: true,
+						attemptedSessionName: firstFreshSessionName,
+						currentSessionName: secondFreshSessionName,
+						previousSessionName: firstFreshSessionName,
+						sessionMode: "auto",
+						status: "closed",
+						succeeded: true,
+						summary: `Managed session ${firstFreshSessionName} was closed.`,
+					},
+					sessionMode: "auto",
+					sessionName: firstFreshSessionName,
+					usedImplicitSession: false,
+				},
+			}),
+		],
+		baseSessionName,
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.sessionName, firstFreshSessionName);
+	assert.equal(restored.closedSessionName, firstFreshSessionName);
+	assert.equal(restored.freshSessionOrdinal, 1);
+});
+
 test("restoreManagedSessionStateFromBranch honors Electron cleanup managed-session steps", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[

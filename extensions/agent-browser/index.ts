@@ -807,11 +807,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		const restoredFreshSessionOrdinal = options.resetRuntimeOwnership
 			? restoredState.freshSessionOrdinal
 			: Math.max(freshSessionOrdinal, restoredState.freshSessionOrdinal);
-		managedSessionName = !restoredState.active && restoredState.closedSessionName === restoredState.sessionName
-			? createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, restoredFreshSessionOrdinal + 1)
+		const shouldReservePostCloseSession = !restoredState.active && restoredState.closedSessionName === restoredState.sessionName;
+		const nextFreshSessionOrdinal = shouldReservePostCloseSession
+			? restoredFreshSessionOrdinal + 1
+			: restoredFreshSessionOrdinal;
+		managedSessionName = shouldReservePostCloseSession
+			? createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, nextFreshSessionOrdinal)
 			: restoredState.sessionName;
 		managedSessionCwd = ctx.cwd;
-		freshSessionOrdinal = restoredFreshSessionOrdinal;
+		freshSessionOrdinal = nextFreshSessionOrdinal;
 		sessionPageState = SessionPageState.fromBranch(branch);
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = restoreArtifactManifestFromBranch(branch);
@@ -973,7 +977,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						sessionPageState.clearSession(closedSessionName);
 						if (closedSessionName === managedSessionName) {
 							managedSessionActive = false;
-							managedSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
+							freshSessionOrdinal += 1;
+							managedSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal);
 						}
 					}
 				}

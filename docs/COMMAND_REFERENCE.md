@@ -72,7 +72,7 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags like `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device` apply.
-  - If a fresh launch fails or times out, read `details.managedSessionOutcome` for `preserved` vs `abandoned` (and related fields). A model-visible `Managed session outcome: …` line is appended only for failing calls that used `sessionMode: "fresh"`; `"auto"` failures can still populate the struct without that extra line. If you explicitly close the current wrapper-managed session with `--session <name> close`, later default auto calls rotate to a new wrapper-generated session instead of reusing the closed name.
+  - If a fresh launch fails or times out, read `details.managedSessionOutcome` for `preserved` vs `abandoned` (and related fields). A model-visible `Managed session outcome: …` line is appended only for failing calls that used `sessionMode: "fresh"`; `"auto"` failures can still populate the struct without that extra line. If you explicitly close the current wrapper-managed session with `--session <name> close`, later default auto calls rotate to a new wrapper-generated session instead of reusing the closed name; repeated closes and branch restores keep those generated names monotonic.
 
 ### Debug, diff, stream, dashboard, and chat families
 

@@ -29,6 +29,10 @@ import {
 // not a scheduler-load race. The gated calls normally finish sub-second when run in isolation.
 const CONCURRENCY_TEST_TIMEOUT_MS = 15_000;
 
+function assertIsString(value: unknown): asserts value is string {
+	assert.equal(typeof value, "string");
+}
+
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -316,7 +320,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/first"] });
 			assert.equal(open.isError, false, JSON.stringify(open));
-			const firstSessionName = String(open.details?.sessionName);
+			const firstSessionName = open.details?.sessionName;
+			assertIsString(firstSessionName);
 
 			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", firstSessionName, "close"] });
 			assert.equal(close.isError, false, JSON.stringify(close));
@@ -324,10 +329,74 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
 			assert.equal(followUp.isError, false, JSON.stringify(followUp));
-			assert.notEqual(followUp.details?.sessionName, firstSessionName);
+			const firstFreshSessionName = followUp.details?.sessionName;
+			assertIsString(firstFreshSessionName);
+			assert.match(firstFreshSessionName, new RegExp(`^${firstSessionName}-fresh-[a-f0-9]{10}$`));
+
+			const closeFresh = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", firstFreshSessionName, "close"] });
+			assert.equal(closeFresh.isError, false, JSON.stringify(closeFresh));
+
+			const finalFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(finalFollowUp.isError, false, JSON.stringify(finalFollowUp));
+			const finalFreshSessionName = finalFollowUp.details?.sessionName;
+			assertIsString(finalFreshSessionName);
+			assert.match(finalFreshSessionName, new RegExp(`^${firstSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(finalFreshSessionName, firstFreshSessionName);
+
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[1]?.args, ["--json", "--session", firstSessionName, "close"]);
-			assert.notEqual(invocations[2]?.sessionName, firstSessionName);
+			assert.equal(invocations[2]?.sessionName, firstFreshSessionName);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", firstFreshSessionName, "close"]);
+			assert.equal(invocations[4]?.sessionName, finalFreshSessionName);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reserves the rotated generated session after an explicit close before reuse", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-close-reserve-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+const data = args.includes("close")
+  ? { closed: true }
+  : { title: "Example Domain", url: "https://example.com/", sessionName };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"] });
+			assert.equal(open.isError, false, JSON.stringify(open));
+			const baseSessionName = open.details?.sessionName;
+			assertIsString(baseSessionName);
+
+			const closeBase = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", baseSessionName, "close"] });
+			assert.equal(closeBase.isError, false, JSON.stringify(closeBase));
+			const rotatedSessionName = (closeBase.details?.managedSessionOutcome as { currentSessionName?: string } | undefined)?.currentSessionName;
+			assertIsString(rotatedSessionName);
+			assert.notEqual(rotatedSessionName, baseSessionName);
+
+			const closeRotated = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", rotatedSessionName, "close"] });
+			assert.equal(closeRotated.isError, false, JSON.stringify(closeRotated));
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			const followUpSessionName = followUp.details?.sessionName;
+			assertIsString(followUpSessionName);
+			assert.match(rotatedSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.match(followUpSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(followUpSessionName, rotatedSessionName);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [baseSessionName, baseSessionName, rotatedSessionName, followUpSessionName]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -383,6 +452,82 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Dom
 			assert.notEqual(followUp.details?.sessionName, ownedName);
 			const invocations = await readInvocationLog(logPath);
 			assert.notEqual(invocations[0]?.sessionName, ownedName);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension restores explicit-close generated fresh ordinal before default auto calls", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-close-restore-ordinal-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+const data = args.includes("close")
+  ? { closed: true }
+  : { title: "Example Domain", url: "https://example.com/", sessionName };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const baseOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"] });
+			assert.equal(baseOpen.isError, false, JSON.stringify(baseOpen));
+			const baseSessionName = baseOpen.details?.sessionName;
+			assertIsString(baseSessionName);
+			const closeBase = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", baseSessionName, "close"] });
+			assert.equal(closeBase.isError, false, JSON.stringify(closeBase));
+			const freshUse = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(freshUse.isError, false, JSON.stringify(freshUse));
+			const firstFreshSessionName = freshUse.details?.sessionName;
+			assertIsString(firstFreshSessionName);
+			assert.match(firstFreshSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			const closeFresh = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", firstFreshSessionName, "close"] });
+			assert.equal(closeFresh.isError, false, JSON.stringify(closeFresh));
+
+			harness.setBranch([
+				createToolBranchEntry({ details: baseOpen.details ?? {}, isError: baseOpen.isError }),
+				createToolBranchEntry({ details: closeBase.details ?? {}, isError: closeBase.isError }),
+				createToolBranchEntry({ details: freshUse.details ?? {}, isError: freshUse.isError }),
+				createToolBranchEntry({ details: closeFresh.details ?? {}, isError: closeFresh.isError }),
+			]);
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const restoredFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(restoredFollowUp.isError, false, JSON.stringify(restoredFollowUp));
+			const restoredGeneratedSessionName = restoredFollowUp.details?.sessionName;
+			assertIsString(restoredGeneratedSessionName);
+			assert.match(restoredGeneratedSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(restoredGeneratedSessionName, firstFreshSessionName);
+
+			const closeRestoredGenerated = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", restoredGeneratedSessionName, "close"] });
+			assert.equal(closeRestoredGenerated.isError, false, JSON.stringify(closeRestoredGenerated));
+			const finalFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(finalFollowUp.isError, false, JSON.stringify(finalFollowUp));
+			const finalSessionName = finalFollowUp.details?.sessionName;
+			assertIsString(finalSessionName);
+			assert.match(finalSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.notEqual(finalSessionName, firstFreshSessionName);
+			assert.notEqual(finalSessionName, restoredGeneratedSessionName);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [
+				baseSessionName,
+				baseSessionName,
+				firstFreshSessionName,
+				firstFreshSessionName,
+				restoredGeneratedSessionName,
+				restoredGeneratedSessionName,
+				finalSessionName,
+			]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
