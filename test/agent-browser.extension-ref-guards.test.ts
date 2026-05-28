@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -35,6 +35,16 @@ function pidIsAlive(pid: number | undefined): boolean {
 	} catch {
 		return false;
 	}
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+	return (await stat(path).catch(() => undefined))?.isDirectory() === true;
+}
+
+function spawnElectronFixtureProcess(userDataDir: string): ChildProcess {
+	const child = spawn("/bin/sh", ["-c", "while true; do sleep 1; done", "pi-agent-browser-electron-fixture", `--user-data-dir=${userDataDir}`], { detached: true, stdio: "ignore" });
+	child.unref();
+	return child;
 }
 
 function delay(ms: number): Promise<void> {
@@ -323,11 +333,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const userDataDir = await createSecureTempDirectory("electron-profile-");
-			child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)", `--user-data-dir=${userDataDir}`], {
-				detached: true,
-				stdio: "ignore",
-			});
-			child.unref();
+			child = spawnElectronFixtureProcess(userDataDir);
 			assert.ok(pidIsAlive(child.pid));
 			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
 			const electronSessionName = `${baseSessionName}-fresh-electron`;
@@ -340,6 +346,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 				launchedByWrapper: true,
 				pid: child.pid,
 				port: 9,
+				processGroupId: child.pid,
 				sessionName: electronSessionName,
 				userDataDir,
 				version: 1,
@@ -404,8 +411,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const userDataDir = await createSecureTempDirectory("electron-profile-");
-			child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)", `--user-data-dir=${userDataDir}`], { detached: true, stdio: "ignore" });
-			child.unref();
+			child = spawnElectronFixtureProcess(userDataDir);
 			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
 			const electronSessionName = `${baseSessionName}-fresh-electron-status`;
 			const electronRecord = {
@@ -417,6 +423,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 				launchedByWrapper: true,
 				pid: child.pid,
 				port: 9,
+				processGroupId: child.pid,
 				sessionName: electronSessionName,
 				userDataDir,
 				version: 1,
@@ -559,8 +566,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const userDataDir = await createSecureTempDirectory("electron-profile-");
-			child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)", `--user-data-dir=${userDataDir}`], { detached: true, stdio: "ignore" });
-			child.unref();
+			child = spawnElectronFixtureProcess(userDataDir);
 			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
 			const electronSessionName = `${baseSessionName}-fresh-electron-reload-active`;
 			const electronRecord = {
@@ -582,6 +588,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
 			assert.equal(pidIsAlive(child.pid), true);
+			assert.equal(await directoryExists(userDataDir), true);
 			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.args.includes("close")), false);
 
 			const reloadedHarness = createExtensionHarness({ branch, cwd: tempDir });
@@ -591,6 +598,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 			assert.equal(followUp.details?.sessionName, electronSessionName);
 			await runExtensionEvent(reloadedHarness.handlers, "session_shutdown", { reason: "quit" }, reloadedHarness.ctx);
 			assert.equal(pidIsAlive(child.pid), false);
+			assert.equal(await directoryExists(userDataDir), false);
 		});
 	} finally {
 		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
@@ -614,8 +622,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const userDataDir = await createSecureTempDirectory("electron-profile-");
-			child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)", `--user-data-dir=${userDataDir}`], { detached: true, stdio: "ignore" });
-			child.unref();
+			child = spawnElectronFixtureProcess(userDataDir);
 			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
 			const electronSessionName = `${baseSessionName}-fresh-electron-reload-offbranch`;
 			const electronRecord = {
@@ -645,6 +652,85 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 		});
 	} finally {
 		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not promote unrelated off-branch Electron launches after targeted cleanup", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cleanup-promote-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let childA: ChildProcess | undefined;
+	let childB: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close"), result: "ok" } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDirA = await createSecureTempDirectory("electron-profile-");
+			const userDataDirB = await createSecureTempDirectory("electron-profile-");
+			childA = spawnElectronFixtureProcess(userDataDirA);
+			childB = spawnElectronFixtureProcess(userDataDirB);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const sessionA = `${baseSessionName}-fresh-electron-a`;
+			const sessionB = `${baseSessionName}-fresh-electron-b`;
+			const recordA = {
+				appName: "Target Cleanup Electron A",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-target-a",
+				launchedByWrapper: true,
+				pid: childA.pid,
+				port: 9,
+				processGroupId: childA.pid,
+				sessionName: sessionA,
+				userDataDir: userDataDirA,
+				version: 1,
+			};
+			const recordB = {
+				appName: "Unrelated Electron B",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-unrelated-b",
+				launchedByWrapper: true,
+				pid: childB.pid,
+				port: 9,
+				processGroupId: childB.pid,
+				sessionName: sessionB,
+				userDataDir: userDataDirB,
+				version: 1,
+			};
+			const branchA = [createToolBranchEntry({ details: electronManagedSessionDetails(sessionA, recordA), isError: false })];
+			const branchB = [createToolBranchEntry({ details: electronManagedSessionDetails(sessionB, recordB), isError: false })];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch(branchB);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-b", oldLeafId: "branch-a" }, harness.ctx);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-empty", oldLeafId: "branch-b" }, harness.ctx);
+
+			const cleanupA = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: "electron-target-a" } });
+			assert.equal(cleanupA.isError, false, JSON.stringify(cleanupA));
+			assert.equal(pidIsAlive(childA.pid), false);
+			assert.equal(await directoryExists(userDataDirA), false);
+			assert.equal(await directoryExists(userDataDirB), true);
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", sessionB, "close"].join("\0")));
+			assert.equal(pidIsAlive(childB.pid), false);
+			assert.equal(await directoryExists(userDataDirB), false);
+		});
+	} finally {
+		if (pidIsAlive(childA?.pid)) childA?.kill("SIGKILL");
+		if (pidIsAlive(childB?.pid)) childB?.kill("SIGKILL");
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });

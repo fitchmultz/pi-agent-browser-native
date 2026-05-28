@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import { rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { isRecord, parsePositiveInteger } from "./parsing.js";
@@ -281,13 +281,30 @@ async function assertSecureTempRootBudget(tempRoot: string, additionalBytes: num
 	}
 }
 
-export async function cleanupSecureTempArtifacts(): Promise<void> {
+export async function cleanupSecureTempArtifacts(options: { preservePaths?: readonly string[] } = {}): Promise<void> {
 	await enqueueTempMutation(async () => {
 		const tempRoot = await sessionTempRootPromise?.catch(() => undefined);
-		sessionTempRootPromise = undefined;
 		if (!tempRoot) return;
-		ownedTempRoots.delete(tempRoot);
-		await rm(tempRoot, { force: true, recursive: true }).catch(() => undefined);
+		const normalizedTempRoot = resolve(tempRoot);
+		const preservedChildren = new Set(
+			(options.preservePaths ?? [])
+				.map((path) => resolve(path))
+				.filter((path) => dirname(path) === normalizedTempRoot),
+		);
+		if (preservedChildren.size === 0) {
+			sessionTempRootPromise = undefined;
+			ownedTempRoots.delete(tempRoot);
+			await rm(tempRoot, { force: true, recursive: true }).catch(() => undefined);
+			return;
+		}
+		const entries = await readdir(tempRoot, { withFileTypes: true }).catch(() => []);
+		await Promise.all(entries.map(async (entry) => {
+			if (entry.name === TEMP_ROOT_MARKER_FILE_NAME) return;
+			const entryPath = join(tempRoot, entry.name);
+			if (preservedChildren.has(resolve(entryPath))) return;
+			await rm(entryPath, { force: true, recursive: true }).catch(() => undefined);
+		}));
+		await refreshSecureTempRootLease(tempRoot).catch(() => undefined);
 	});
 }
 

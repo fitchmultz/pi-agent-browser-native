@@ -670,6 +670,30 @@ function getCleanupResultsClosedManagedSessionNames(cleanupResults: unknown[]): 
 	return [...closedSessionNames];
 }
 
+function isElectronLaunchRecord(value: unknown): value is ElectronLaunchRecord {
+	if (!isRecord(value)) return false;
+	return value.version === 1
+		&& value.launchedByWrapper === true
+		&& typeof value.launchId === "string"
+		&& typeof value.appName === "string"
+		&& typeof value.executablePath === "string"
+		&& typeof value.userDataDir === "string"
+		&& typeof value.port === "number"
+		&& typeof value.createdAtMs === "number";
+}
+
+function getCleanupResultsElectronRecords(cleanupResults: unknown[]): ElectronLaunchRecord[] {
+	return cleanupResults
+		.map((result) => isRecord(result) ? result.record : undefined)
+		.filter(isElectronLaunchRecord);
+}
+
+function mergeElectronCleanupRecords(target: Map<string, ElectronLaunchRecord>, cleanupResults: unknown[]): void {
+	for (const record of getCleanupResultsElectronRecords(cleanupResults)) {
+		target.set(record.launchId, record);
+	}
+}
+
 function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSession>, cleanupResults: unknown[]): void {
 	for (const sessionName of getCleanupResultsClosedManagedSessionNames(cleanupResults)) {
 		untrackOwnedManagedSession(sessions, sessionName);
@@ -801,9 +825,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		let preservedElectronProfileDirs: string[] = [];
 		await managedSessionExecutionQueue.run(async () => {
 			const shutdownCwd = ctx?.cwd ?? managedSessionCwd;
 			const quitting = event?.reason === "quit";
+			preservedElectronProfileDirs = quitting
+				? []
+				: getActiveElectronRecords(electronLaunchRecords).map((record) => record.userDataDir);
 			const electronRecordsToCleanup = quitting
 				? ownedElectronLaunchRecords
 				: getOffBranchOwnedElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords);
@@ -832,7 +860,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 		electronChildProcesses = new Map<string, ChildProcess>();
 		ownedManagedSessions.clear();
-		await cleanupSecureTempArtifacts();
+		await cleanupSecureTempArtifacts({ preservePaths: preservedElectronProfileDirs });
 	});
 
 	pi.on("before_agent_start", async (event) => {
@@ -916,7 +944,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				});
 				if (electronHostResult && compiledElectron?.action === "cleanup") {
 					branchStateGeneration += 1;
-					electronLaunchRecords = mergeElectronLaunchRecordMaps(electronLaunchRecords, electronHostLaunchRecords);
 					replaceWithActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronHostLaunchRecords);
 					const cleanupRecords = isRecord(electronHostResult.details)
 						&& isRecord(electronHostResult.details.electron)
@@ -924,6 +951,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						&& Array.isArray(electronHostResult.details.electron.cleanup.results)
 						? electronHostResult.details.electron.cleanup.results
 						: [];
+					mergeElectronCleanupRecords(electronLaunchRecords, cleanupRecords);
 					const closedSessionNames = getCleanupResultsClosedManagedSessionNames(cleanupRecords);
 					syncElectronCleanupManagedSessions(ownedManagedSessions, cleanupRecords);
 					for (const closedSessionName of closedSessionNames) {
