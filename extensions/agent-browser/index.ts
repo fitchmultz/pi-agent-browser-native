@@ -694,6 +694,17 @@ function mergeElectronCleanupRecords(target: Map<string, ElectronLaunchRecord>, 
 	}
 }
 
+function getCleanupResultsPreservedUserDataDirs(cleanupResults: unknown[]): string[] {
+	const userDataDirs = new Set<string>();
+	for (const result of cleanupResults) {
+		if (!isRecord(result) || !Array.isArray(result.steps) || !isElectronLaunchRecord(result.record)) continue;
+		const userDataDirStep = result.steps.find((step) => isRecord(step) && step.resource === "user-data-dir");
+		if (!isRecord(userDataDirStep)) continue;
+		if (userDataDirStep.state === "skipped" || userDataDirStep.state === "failed") userDataDirs.add(result.record.userDataDir);
+	}
+	return [...userDataDirs];
+}
+
 function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSession>, cleanupResults: unknown[]): void {
 	for (const sessionName of getCleanupResultsClosedManagedSessionNames(cleanupResults)) {
 		untrackOwnedManagedSession(sessions, sessionName);
@@ -841,6 +852,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				electronLaunchRecords: electronRecordsToCleanup,
 				timeoutMs: implicitSessionCloseTimeoutMs,
 			});
+			if (!quitting) {
+				preservedElectronProfileDirs = [...new Set([
+					...preservedElectronProfileDirs,
+					...getCleanupResultsPreservedUserDataDirs(electronCleanupResults),
+				])];
+			}
 			syncElectronCleanupManagedSessions(ownedManagedSessions, electronCleanupResults);
 			if (quitting) {
 				await closeOwnedManagedSessions(ownedManagedSessions, implicitSessionCloseTimeoutMs);

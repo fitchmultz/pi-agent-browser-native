@@ -13,12 +13,12 @@
 
 - Model-free real Pi pipeline coverage for `buildAgentBrowserToolResultPatch`, proving prose QA failures become `isError: true` in persisted JSONL tool results and caller-requested `--json` failures keep parseable JSON while still patching `isError`.
 - Model-free real Pi pipeline coverage for strict public-schema rejection before upstream spawn.
-- Regression tests for `session_tree` branch rehydration of page-scoped refs, managed browser sessions, artifact manifests, Electron cleanup/status/probe ownership, explicit cleanup serialization, active-Electron reload profile preservation, targeted cleanup without unrelated branch promotion, reload cleanup of off-branch sessions/Electron launches, partial Electron cleanup session untracking, explicit close live/restore state retirement, explicit-session command branch-generation guarding, multi-branch managed-session cleanup, and monotonic fresh-session allocation.
+- Regression tests for `session_tree` branch rehydration of page-scoped refs, managed browser sessions, artifact manifests, Electron cleanup/status/probe ownership, explicit cleanup serialization, active-Electron reload profile preservation, targeted cleanup without unrelated branch promotion, reload cleanup of off-branch sessions/Electron launches, partial off-branch reload profile preservation, partial Electron cleanup session untracking, explicit close live/restore state retirement, explicit-session command branch-generation guarding, multi-branch managed-session cleanup, and monotonic fresh-session allocation.
 
 ### Fixed
 
 - Successful explicit `--session <current-wrapper-managed-session> close` and `electron.cleanup` managed-session close steps now clear live managed-session/page state, untrack cleanup ownership, rotate the next default auto call away from the closed name, and stay honored after reload/resume branch restore.
-- `/reload` now preserves the current branch-visible active Electron launch and its isolated temp `userDataDir` for continuity while cleaning off-branch owned Electron launches, and targeted `electron.cleanup` no longer promotes unrelated off-branch launches into the current branch-visible state.
+- `/reload` now preserves the current branch-visible active Electron launch and its isolated temp `userDataDir` for continuity while cleaning off-branch owned Electron launches, preserves off-branch profile dirs when partial cleanup intentionally skips or fails `user-data-dir` removal, and targeted `electron.cleanup` no longer promotes unrelated off-branch launches into the current branch-visible state.
 - Stabilized env-patched fake-upstream tests by serializing process environment patches and tightening the inherited-stdio subprocess regression to assert quick post-exit fallback behavior without waiting for the process timeout.
 
 ## 0.2.34 - 2026-05-24

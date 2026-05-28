@@ -8,6 +8,7 @@
 
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer, type Server } from "node:http";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +46,19 @@ function spawnElectronFixtureProcess(userDataDir: string): ChildProcess {
 	const child = spawn("/bin/sh", ["-c", "while true; do sleep 1; done", "pi-agent-browser-electron-fixture", `--user-data-dir=${userDataDir}`], { detached: true, stdio: "ignore" });
 	child.unref();
 	return child;
+}
+
+async function listenOnLoopback(server: Server): Promise<number> {
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			server.off("error", reject);
+			resolve();
+		});
+	});
+	const address = server.address();
+	assert.ok(address && typeof address === "object");
+	return address.port;
 }
 
 function delay(ms: number): Promise<void> {
@@ -651,6 +665,71 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 			assert.equal(pidIsAlive(child.pid), false);
 		});
 	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves off-branch Electron profile when reload cleanup is partial", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-reload-partial-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	let versionProbeCount = 0;
+	const server = createServer((request, response) => {
+		if (request.url === "/json/version") {
+			versionProbeCount += 1;
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(JSON.stringify({ Browser: "Electron/Test", webSocketDebuggerUrl: "ws://127.0.0.1/devtools/browser/test" }));
+			return;
+		}
+		response.writeHead(200, { "content-type": "application/json" });
+		response.end(JSON.stringify([]));
+	});
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+
+	try {
+		const port = await listenOnLoopback(server);
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-reload-partial`;
+			const electronRecord = {
+				appName: "Reload Partial Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-reload-partial",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const branchA = [createToolBranchEntry({ details: electronManagedSessionDetails(electronSessionName, electronRecord), isError: false })];
+			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-empty", oldLeafId: "branch-a" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", electronSessionName, "close"].join("\0")));
+			assert.ok(versionProbeCount > 0);
+			assert.equal(pidIsAlive(child.pid), false);
+			assert.equal(await directoryExists(userDataDir), true);
+		});
+	} finally {
+		await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
 		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
 		await rm(tempDir, { force: true, recursive: true });
 	}
