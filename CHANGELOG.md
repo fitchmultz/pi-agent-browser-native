@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.2.36 - 2026-05-29
+
+### Added
+
+- Added `details.evalResultWarning` and visible `Eval result warning` guidance for successful `eval --stdin` calls that return `null` on `file://` pages with non-trivial stdin, so agents treat those DOM checks as inconclusive without failing the tool.
+- Enriched `get text <selector>` visibility diagnostics with bounded `visibleCandidates` entries (`querySelectorAll` index, tag, optional role, redacted text preview) so agents can resolve broad selector ambiguity without trusting hidden or first-match text.
+- Added support-matrix tracking for the 2026-05-29 agent UX/reliability feedback batch (`RQ-0110`–`RQ-0117`) covering headed mode, local loopback, `file://` eval, click verification, selector ambiguity, host-owned fixture servers, fresh-session failures, and headed visibility limits.
+
+### Changed
+
+- Made failed `sessionMode: "fresh"` managed-session recovery prose action-oriented: visible output now avoids generated session ids, distinguishes preserved/abandoned launch failures from post-launch `qa` reclassification failures, and points to safe next actions while keeping full transition details in `details.managedSessionOutcome`.
+- Expanded README, command reference, tool contract, and generated playbook guidance for headed demos, browser-host localhost semantics, `file://` fixture limits, post-click verification, and host-owned temporary server cleanup.
+
+### Fixed
+
+- Fresh-session failure next actions now verify or snapshot the current managed session for post-launch failures and avoid unconditional `doctor` guidance when the launch itself succeeded but a later diagnostic failed.
+
 ## 0.2.35 - 2026-05-28
 
 ### Changed
