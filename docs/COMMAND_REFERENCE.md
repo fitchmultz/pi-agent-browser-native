@@ -91,6 +91,21 @@ Keep routine browser work simple: open a page, inspect it with `snapshot -i`, in
 { "args": ["snapshot", "-i"] }
 ```
 
+### Headed demo and local-page checks
+
+Use upstream's global `--headed` flag on the first launch when the user needs to watch the browser. Because headed/headless state belongs to the browser launch, use `sessionMode: "fresh"` when a managed session may already exist or when changing from a previous headless run.
+
+```json
+{ "args": ["--headed", "open", "https://example.com"], "sessionMode": "fresh" }
+{ "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
+```
+
+Treat headed success as browser-context success, not proof that a window is visible on the user's display. Remote shells, containers, virtual framebuffers, or upstream/provider-owned browser hosts can still put the visible window somewhere the user cannot see. If a user reports no window, gather evidence with `screenshot`, `tab list`, `get url`, or `snapshot -i`; then relaunch with the right display/profile/provider setup rather than assuming the user missed it.
+
+For local fixtures, remember that `localhost` and `127.0.0.1` are resolved from the browser host, which may differ from the shell that started a temporary HTTP server. `net::ERR_EMPTY_RESPONSE` on `http://localhost:<port>` usually means the browser could not reach that server, not that the page itself rendered blank. Prefer a host-reachable address when your environment provides one; otherwise use `file://` only for static fixtures and note its limits. `file://` does not provide HTTP headers and may change MIME/CORS/storage/debugger behavior. If `eval --stdin` on a `file://` page returns `null` for even simple DOM expressions, treat the result as inconclusive and verify with `snapshot -i`, `get text` on current refs, or screenshots until the fixture can run over reachable HTTP.
+
+Temporary HTTP servers and their port/process lifecycle stay outside the native tool. Extension maintainers running real-upstream contract tests can reuse `startAgentBrowserContractFixtureServer()` in [`test/helpers/agent-browser-harness.ts`](../test/helpers/agent-browser-harness.ts) instead of ad-hoc `python3 -m http.server` processes.
+
 ### React, SPA, and Web Vitals flows
 
 React introspection requires the React DevTools init hook to be installed before the page's first JavaScript runs. Launch or relaunch that browser session with `--enable react-devtools`; if the implicit session is already active, use `sessionMode: "fresh"`.
@@ -176,7 +191,7 @@ Prefer `get` and scoped `eval --stdin` for read-only extraction. Getter names ar
 
 Return the intended JavaScript value from `eval --stdin` instead of relying on `console.log`. For object-shaped extraction, pass a plain expression such as `({ title: document.title, url: location.href })`; if you send a function-shaped snippet, invoke it explicitly, for example `(() => ({ title: document.title }))()`. When upstream serializes a function result to `{}`, the wrapper can append `Eval stdin hint` and `details.evalStdinHint`.
 
-On tabbed or hidden-DOM pages, `get text <selector>` reads the upstream-selected match, which may be hidden even when a later match is visible. For non-`@ref` CSS selectors with multiple matches, including successful `batch` steps, the wrapper may add `Selector text visibility warning`, `details.selectorTextVisibility` (and `details.selectorTextVisibilityAll` for multiple batched warnings), and `inspect-visible-text-candidates` next actions. The warning names the matching `details.nextActions` id so agents know to use a fresher `snapshot -i`, a visible `@ref`, or a more specific selector instead of trusting hidden tab content.
+On tabbed or hidden-DOM pages, `get text <selector>` reads the upstream-selected match, which may be hidden even when a later match is visible. For non-`@ref` CSS selectors with multiple matches, including successful `batch` steps, the wrapper may add `Selector text visibility warning`, `details.selectorTextVisibility` (and `details.selectorTextVisibilityAll` for multiple batched warnings), and `inspect-visible-text-candidates` next actions. The warning names the matching `details.nextActions` id so agents know to use a fresher `snapshot -i`, a visible `@ref`, or a more specific selector instead of trusting hidden tab content. If the probe still leaves multiple visible candidates, do not keep reading the broad selector; switch to a current visible `@ref`, add a narrower selector such as a known panel/container id, or use a targeted `eval --stdin` expression that filters for visible elements and returns the intended index/text.
 
 ### Run a multi-step flow in one browser invocation
 
@@ -671,7 +686,7 @@ When these commands are invoked through the native `agent_browser` tool, structu
 - `--proxy-bypass <hosts>`: proxy bypass hosts. Environments: `AGENT_BROWSER_PROXY_BYPASS`, `NO_PROXY`.
 - `--ignore-https-errors`: ignore HTTPS certificate errors. Environment: `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`.
 - `--allow-file-access`: allow `file://` URLs to access local files. Environment: `AGENT_BROWSER_ALLOW_FILE_ACCESS`.
-- `--headed`: show the browser window. Environment: `AGENT_BROWSER_HEADED`.
+- `--headed`: ask upstream to show the browser window. Environment: `AGENT_BROWSER_HEADED`. Use it on the first launch, normally with `sessionMode: "fresh"` when changing an existing managed session; verify visibility with screenshot/tab evidence because the wrapper cannot yet prove the OS window is visible to the user.
 - `--cdp <port>`: connect through Chrome DevTools Protocol.
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.

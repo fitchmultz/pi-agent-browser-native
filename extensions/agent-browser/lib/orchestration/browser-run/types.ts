@@ -142,12 +142,20 @@ export interface ClickDispatchDiagnostic {
 	target: ClickDispatchProbeTarget;
 }
 
+export interface SelectorTextVisibilityCandidate {
+	index: number;
+	role?: string;
+	tagName: string;
+	textPreview?: string;
+}
+
 export interface SelectorTextVisibilityDiagnostic {
 	firstMatchVisible?: boolean;
 	firstVisibleTextPreview?: string;
 	matchCount: number;
 	selector: string;
 	summary: string;
+	visibleCandidates?: SelectorTextVisibilityCandidate[];
 	visibleCount: number;
 }
 
@@ -192,6 +200,11 @@ export interface TimeoutPartialProgress {
 }
 
 export interface EvalStdinHint {
+	reason: string;
+	suggestion: string;
+}
+
+export interface EvalResultWarning {
 	reason: string;
 	suggestion: string;
 }
@@ -461,6 +474,7 @@ export interface FinalResultInput {
 	electronSessionMismatch?: ElectronSessionMismatch;
 	errorText?: string;
 	evalStdinHint?: EvalStdinHint;
+	evalResultWarning?: EvalResultWarning;
 	exactSensitiveValues: string[];
 	executionPlan: AgentBrowserExecutionPlan;
 	fillVerificationDiagnostic?: FillVerificationDiagnostic;

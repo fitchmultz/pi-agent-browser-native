@@ -225,6 +225,60 @@ if (trimmed === "(() => [])()") {
 	}
 });
 
+test("agentBrowserExtension warns when eval --stdin returns null on file pages", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-file-null-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "fixture", url: args.at(-1) || "about:blank" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "file:///tmp/fixture.html" } }));
+} else if (args.includes("eval")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: null } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const openResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "file:///tmp/fixture.html"] });
+			assert.equal(openResult.isError, false);
+			assert.equal((openResult.details?.sessionTabTarget as { url?: string } | undefined)?.url, "file:///tmp/fixture.html");
+
+			const nullEvalResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "document.getElementById('missing')?.textContent",
+			});
+			assert.equal(nullEvalResult.isError, false);
+			assert.match((nullEvalResult.content[0] as { text: string }).text, /Eval result warning:/);
+			assert.match((nullEvalResult.content[0] as { text: string }).text, /file:\/\/ page/);
+			assert.deepEqual(nullEvalResult.details?.evalResultWarning, {
+				reason: "eval --stdin returned null on a file:// page; upstream may not expose full DOM semantics for local fixtures.",
+				suggestion: "Treat this as inconclusive verification. Use snapshot -i, get text on current @refs, screenshot evidence, or a reachable http(s) fixture before concluding DOM state.",
+			});
+
+			const literalNullResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin"],
+				stdin: "null",
+			});
+			assert.equal(literalNullResult.isError, false);
+			assert.equal(literalNullResult.details?.evalResultWarning, undefined);
+			assert.doesNotMatch((literalNullResult.content[0] as { text: string }).text, /Eval result warning:/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
 	const basePath = process.env.PATH ?? "";
@@ -260,7 +314,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			assert.equal(preservedOutcome?.sessionMode, "fresh");
 			assert.match(preservedOutcome?.attemptedSessionName ?? "", /-fresh-/);
 			assert.equal(preservedOutcome?.succeeded, false);
-			assert.match((failedFreshResult.content[0] as { text: string }).text, /Managed session outcome: Fresh managed session .* failed before becoming current; previous managed session .* was preserved\./);
+			assert.match((failedFreshResult.content[0] as { text: string }).text, /Managed session outcome: Fresh launch failed; your previous browser session is still active\./);
+			assert.match((failedFreshResult.content[0] as { text: string }).text, /Recovery:/);
+			assert.match((failedFreshResult.content[0] as { text: string }).text, /details\.managedSessionOutcome/);
+			const preservedNextActions = failedFreshResult.details?.nextActions as Array<{ id?: string }> | undefined;
+			assert.ok(preservedNextActions?.some((action) => action.id === "run-agent-browser-doctor"));
+			assert.ok(preservedNextActions?.some((action) => action.id === "verify-current-managed-session"));
 
 			await withPatchedEnv({ PATH: missingBinaryDir }, async () => {
 				const missingBinaryResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://missing-binary.test"], sessionMode: "fresh" });
@@ -273,7 +332,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 				assert.equal(missingBinaryOutcome?.currentSessionName, previousSessionName);
 				assert.equal(missingBinaryOutcome?.previousSessionName, previousSessionName);
 				assert.equal(missingBinaryOutcome?.sessionMode, "fresh");
-				assert.match((missingBinaryResult.content[0] as { text: string }).text, /Managed session outcome: Fresh managed session .* failed before becoming current; previous managed session .* was preserved\./);
+				assert.match((missingBinaryResult.content[0] as { text: string }).text, /Managed session outcome: Fresh launch failed; your previous browser session is still active\./);
+				const missingBinaryNextActions = missingBinaryResult.details?.nextActions as Array<{ id?: string }> | undefined;
+				assert.ok(missingBinaryNextActions?.some((action) => action.id === "run-agent-browser-doctor"));
 			});
 
 			const followupResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
@@ -288,7 +349,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			assert.equal(abandonedOutcome?.status, "abandoned");
 			assert.equal(abandonedOutcome?.activeBefore, false);
 			assert.equal(abandonedOutcome?.activeAfter, false);
-			assert.match((abandonedResult.content[0] as { text: string }).text, /no previous managed session was active/);
+			assert.match((abandonedResult.content[0] as { text: string }).text, /no managed browser session is current/);
+			const abandonedNextActions = abandonedResult.details?.nextActions as Array<{ id?: string }> | undefined;
+			assert.ok(abandonedNextActions?.some((action) => action.id === "retry-fresh-managed-session"));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -590,8 +653,8 @@ if (args.includes("get") && args.includes("text")) {
 } else if (args.includes("eval")) {
   const isAmbiguous = stdin.includes('.ambiguous-language-bash');
   process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.stringify(isAmbiguous
-    ? { selector: '.ambiguous-language-bash', matchCount: 2, visibleCount: 2, firstMatchVisible: true, firstTextPreview: "first visible", firstVisibleTextPreview: "first visible" }
-    : { selector: '[href*="token=page-secret"]', matchCount: 2, visibleCount: 1, firstMatchVisible: false, firstTextPreview: "npm init playwright@latest", firstVisibleTextPreview: "yarn create playwright Authorization: Bearer visible-secret" }) } }));
+    ? { selector: '.ambiguous-language-bash', matchCount: 2, visibleCount: 2, firstMatchVisible: true, firstTextPreview: "first visible", firstVisibleTextPreview: "first visible", visibleCandidates: [{ index: 0, tagName: "code", role: "tab", textPreview: "first visible" }, { index: 1, tagName: "code", textPreview: "second visible" }] }
+    : { selector: '[href*="token=page-secret"]', matchCount: 2, visibleCount: 1, firstMatchVisible: false, firstTextPreview: "npm init playwright@latest", firstVisibleTextPreview: "yarn create playwright Authorization: Bearer visible-secret", visibleCandidates: [{ index: 1, tagName: "code", textPreview: "yarn create playwright Authorization: Bearer visible-secret" }] }) } }));
 } else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify({ success: true, data: [{ command: ["get", "text", ".ambiguous-language-bash"], success: true, result: { result: "first visible" } }, { command: ["get", "text", ".language-bash"], success: true, result: { result: "npm init playwright@latest" } }] }));
 } else {
@@ -617,8 +680,11 @@ if (args.includes("get") && args.includes("text")) {
 				matchCount: 2,
 				selector: ".language-bash",
 				summary: 'Selector ".language-bash" matched 2 elements; the first match is hidden while 1 visible match exists.',
+				visibleCandidates: [{ index: 1, tagName: "code", textPreview: "yarn create playwright Authorization: Bearer [REDACTED]" }],
 				visibleCount: 1,
 			});
+			assert.match((result.content[0] as { text: string }).text, /Visible candidates \(1 shown, querySelectorAll index\):/);
+			assert.match((result.content[0] as { text: string }).text, /\[1\] code: "yarn create playwright Authorization: Bearer \[REDACTED\]"/);
 			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; stdin?: string } }> | undefined;
 			assert.equal(nextActions?.at(-1)?.id, "inspect-visible-text-candidates");
 			assert.deepEqual(nextActions?.at(-1)?.params?.args, ["--session", result.details?.sessionName as string, "eval", "--stdin"]);

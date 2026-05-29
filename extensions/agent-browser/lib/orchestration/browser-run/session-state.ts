@@ -4,6 +4,7 @@ import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { runAgentBrowserProcess } from "../../process.js";
 import { buildAgentBrowserNextActions, getAgentBrowserErrorText, parseAgentBrowserEnvelope, type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results.js";
+import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import {
 	extractRefSnapshotFromData,
 	isAboutBlankUrl,
@@ -118,8 +119,85 @@ export function buildManagedSessionOutcome(options: {
 	};
 }
 
+function isFreshPostLaunchFailure(outcome: ManagedSessionOutcome): boolean {
+	return !outcome.succeeded && outcome.sessionMode === "fresh" && outcome.activeAfter && !!outcome.currentSessionName && (outcome.status === "created" || outcome.status === "replaced" || outcome.status === "unchanged");
+}
+
+function formatManagedSessionOutcomeHeadline(outcome: ManagedSessionOutcome): string {
+	if (outcome.status === "preserved") {
+		return "Managed session outcome: Fresh launch failed; your previous browser session is still active.";
+	}
+	if (outcome.status === "abandoned") {
+		return "Managed session outcome: Fresh launch failed; no managed browser session is current.";
+	}
+	if (isFreshPostLaunchFailure(outcome)) {
+		return "Managed session outcome: Fresh launch became current, but this tool call failed after launch.";
+	}
+	return `Managed session outcome: ${outcome.summary}`;
+}
+
+function formatManagedSessionOutcomeRecoveryGuidance(outcome: ManagedSessionOutcome): string {
+	const lines = ["Recovery:"];
+	if (outcome.status === "preserved") {
+		lines.push('- Continue with sessionMode "auto" on the current session, or retry the intended launch with sessionMode "fresh".');
+		lines.push("- Run doctor to verify agent-browser install and environment when failures persist.");
+	} else if (outcome.status === "abandoned") {
+		lines.push('- Retry with sessionMode "fresh" (for example args: ["open", "<url>"]) after verifying agent-browser is on PATH.');
+		lines.push("- Run doctor when install or environment issues are suspected.");
+	} else if (isFreshPostLaunchFailure(outcome)) {
+		lines.push('- Continue with sessionMode "auto" on the current session, or inspect failureCategory / qaPreset to fix the post-launch failure.');
+		lines.push("- Run doctor only if later browser commands also fail.");
+	} else {
+		lines.push('- Retry with sessionMode "fresh" when launch-scoped flags must apply, or run doctor to verify the environment.');
+	}
+	lines.push("- Full session names and transition details remain in details.managedSessionOutcome.");
+	return lines.join("\n");
+}
+
 export function formatManagedSessionOutcomeText(outcome: ManagedSessionOutcome | undefined): string | undefined {
-	return outcome && !outcome.succeeded && outcome.sessionMode === "fresh" ? `Managed session outcome: ${outcome.summary}` : undefined;
+	if (!outcome || outcome.succeeded || outcome.sessionMode !== "fresh") return undefined;
+	return [formatManagedSessionOutcomeHeadline(outcome), formatManagedSessionOutcomeRecoveryGuidance(outcome)].join("\n");
+}
+
+export function buildManagedSessionFreshFailureNextActions(outcome: ManagedSessionOutcome | undefined): AgentBrowserNextAction[] {
+	if (!outcome || outcome.succeeded || outcome.sessionMode !== "fresh") return [];
+	const actions: AgentBrowserNextAction[] = [];
+	if (!isFreshPostLaunchFailure(outcome)) {
+		actions.push(buildNextToolAction({
+			args: ["doctor"],
+			id: "run-agent-browser-doctor",
+			reason: "Verify agent-browser install, PATH, and environment after a failed fresh launch.",
+			safety: "Read-only local diagnostics; does not mutate browser state.",
+		}));
+	}
+	if ((outcome.status === "preserved" || isFreshPostLaunchFailure(outcome)) && outcome.activeAfter && outcome.currentSessionName) {
+		const sessionLabel = isFreshPostLaunchFailure(outcome) ? "current managed session" : "preserved managed session";
+		actions.push(
+			buildNextToolAction({
+				args: withOptionalSessionArgs(outcome.currentSessionName, ["get", "url"]),
+				id: "verify-current-managed-session",
+				reason: `Confirm the ${sessionLabel} before continuing with sessionMode auto.`,
+				safety: `Read-only URL check on the ${sessionLabel}.`,
+			}),
+			buildNextToolAction({
+				args: withOptionalSessionArgs(outcome.currentSessionName, ["snapshot", "-i"]),
+				id: "snapshot-current-managed-session",
+				reason: `Refresh interactive refs on the ${sessionLabel} before retrying the workflow.`,
+				safety: "Read-only snapshot; no navigation.",
+			}),
+		);
+	} else {
+		actions.push(
+			buildNextToolAction({
+				args: ["open", "about:blank"],
+				id: "retry-fresh-managed-session",
+				reason: "Start a new managed browser session after the failed fresh launch.",
+				safety: "Replace about:blank with the intended URL from your workflow.",
+				sessionMode: "fresh",
+			}),
+		);
+	}
+	return actions;
 }
 
 function getTraceOwner(command: string | undefined): TraceOwner | undefined {

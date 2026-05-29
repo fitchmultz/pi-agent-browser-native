@@ -502,7 +502,11 @@ process.stdin.on("end", () => {
 			assert.equal(managedSessionOutcome?.sessionMode, "fresh");
 			assert.equal(managedSessionOutcome?.status, "replaced");
 			assert.equal(managedSessionOutcome?.succeeded, false);
-			assert.match((result.content[0] as { text: string }).text, /Managed session outcome: Managed session .* was replaced by .*/);
+			assert.match((result.content[0] as { text: string }).text, /Managed session outcome: Fresh launch became current, but this tool call failed after launch\./);
+			assert.match((result.content[0] as { text: string }).text, /failureCategory \/ qaPreset/);
+			const qaFailureNextActions = result.details?.nextActions as Array<{ id?: string; reason?: string }> | undefined;
+			assert.equal(qaFailureNextActions?.some((action) => action.id === "run-agent-browser-doctor"), false);
+			assert.ok(qaFailureNextActions?.some((action) => action.id === "verify-current-managed-session" && /current managed session/.test(action.reason ?? "")));
 			assert.match((result.content[0] as { text: string }).text, /Step 1 —/);
 			assert.deepEqual((result.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
 				"1 actionable failed network request(s)",
@@ -527,6 +531,24 @@ process.stdin.on("end", () => {
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
 			assert.deepEqual(invocations[1]?.args.slice(-1), ["batch"]);
 			assert.deepEqual(invocations[2]?.args.slice(-1), ["batch"]);
+
+			const firstRunFailureHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(firstRunFailureHarness.handlers, "session_start", { reason: "new" }, firstRunFailureHarness.ctx);
+			const firstRunFailure = await executeRegisteredTool(firstRunFailureHarness.tool, firstRunFailureHarness.ctx, {
+				qa: {
+					url: "https://fail.example.test/",
+					expectedText: "Welcome",
+				},
+				sessionMode: "fresh",
+			});
+			assert.equal(firstRunFailure.isError, true);
+			const firstRunOutcome = firstRunFailure.details?.managedSessionOutcome as { status?: string; succeeded?: boolean } | undefined;
+			assert.equal(firstRunOutcome?.status, "created");
+			assert.equal(firstRunOutcome?.succeeded, false);
+			assert.match((firstRunFailure.content[0] as { text: string }).text, /Managed session outcome: Fresh launch became current, but this tool call failed after launch\./);
+			const firstRunNextActions = firstRunFailure.details?.nextActions as Array<{ id?: string; reason?: string }> | undefined;
+			assert.equal(firstRunNextActions?.some((action) => action.id === "run-agent-browser-doctor"), false);
+			assert.ok(firstRunNextActions?.some((action) => action.id === "verify-current-managed-session" && /current managed session/.test(action.reason ?? "")));
 
 			const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {
