@@ -300,8 +300,21 @@ export async function collectOverlayBlockerDiagnostic(options: { command?: strin
 	return { candidates, snapshot, summary: `Click completed but the page stayed on ${currentUrl}; a fresh snapshot contains likely overlay close/dismiss controls.` };
 }
 
+const SELECTOR_TEXT_VISIBILITY_CANDIDATE_LIMIT = 8;
+
 function buildVisibleTextProbeScript(selector: string): string {
-	return `(() => {\n  const selector = ${JSON.stringify(selector)};\n  const isVisible = (element) => {\n    const style = window.getComputedStyle(element);\n    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;\n    return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);\n  };\n  let matches = [];\n  try {\n    matches = Array.from(document.querySelectorAll(selector));\n  } catch (error) {\n    return JSON.stringify({ selector, error: error instanceof Error ? error.message : String(error) });\n  }\n  const visible = matches.filter(isVisible);\n  const trim = (value) => typeof value === 'string' ? value.trim().replace(/\\s+/g, ' ').slice(0, 200) : undefined;\n  return JSON.stringify({ selector, matchCount: matches.length, visibleCount: visible.length, firstMatchVisible: matches[0] ? isVisible(matches[0]) : undefined, firstTextPreview: trim(matches[0]?.textContent), firstVisibleTextPreview: trim(visible[0]?.textContent) });\n})()`;
+	return `(() => {\n  const selector = ${JSON.stringify(selector)};\n  const isVisible = (element) => {\n    const style = window.getComputedStyle(element);\n    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;\n    return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);\n  };\n  let matches = [];\n  try {\n    matches = Array.from(document.querySelectorAll(selector));\n  } catch (error) {\n    return JSON.stringify({ selector, error: error instanceof Error ? error.message : String(error) });\n  }\n  const visible = matches.filter(isVisible);\n  const trim = (value) => typeof value === 'string' ? value.trim().replace(/\\s+/g, ' ').slice(0, 200) : undefined;\n  const describeCandidate = (element) => {\n    const index = matches.indexOf(element);\n    const role = element.getAttribute('role');\n    const candidate = { index, tagName: element.tagName.toLowerCase(), textPreview: trim(element.textContent) };\n    if (role) candidate.role = role;\n    return candidate;\n  };\n  const visibleCandidates = visible.slice(0, ${SELECTOR_TEXT_VISIBILITY_CANDIDATE_LIMIT}).map(describeCandidate);\n  return JSON.stringify({ selector, matchCount: matches.length, visibleCount: visible.length, firstMatchVisible: matches[0] ? isVisible(matches[0]) : undefined, firstTextPreview: trim(matches[0]?.textContent), firstVisibleTextPreview: trim(visible[0]?.textContent), visibleCandidates });\n})()`;
+}
+
+function parseSelectorTextVisibilityCandidates(value: unknown): SelectorTextVisibilityDiagnostic["visibleCandidates"] {
+	if (!Array.isArray(value)) return undefined;
+	const candidates = value.flatMap((entry): NonNullable<SelectorTextVisibilityDiagnostic["visibleCandidates"]> => {
+		if (!isRecord(entry) || typeof entry.index !== "number" || typeof entry.tagName !== "string") return [];
+		const role = typeof entry.role === "string" && entry.role.length > 0 ? entry.role : undefined;
+		const textPreview = typeof entry.textPreview === "string" && entry.textPreview.length > 0 ? redactSensitiveText(entry.textPreview) : undefined;
+		return [{ index: entry.index, tagName: entry.tagName, ...(role ? { role } : {}), ...(textPreview ? { textPreview } : {}) }];
+	});
+	return candidates.length > 0 ? candidates : undefined;
 }
 
 function parseSelectorTextVisibilityProbe(data: unknown, selector: string): Omit<SelectorTextVisibilityDiagnostic, "summary"> | undefined {
@@ -313,7 +326,14 @@ function parseSelectorTextVisibilityProbe(data: unknown, selector: string): Omit
 	const matchCount = typeof parsed.matchCount === "number" ? parsed.matchCount : undefined;
 	const visibleCount = typeof parsed.visibleCount === "number" ? parsed.visibleCount : undefined;
 	if (matchCount === undefined || visibleCount === undefined) return undefined;
-	return { firstMatchVisible: typeof parsed.firstMatchVisible === "boolean" ? parsed.firstMatchVisible : undefined, firstVisibleTextPreview: typeof parsed.firstVisibleTextPreview === "string" && parsed.firstVisibleTextPreview.length > 0 ? redactSensitiveText(parsed.firstVisibleTextPreview) : undefined, matchCount, selector, visibleCount };
+	return {
+		firstMatchVisible: typeof parsed.firstMatchVisible === "boolean" ? parsed.firstMatchVisible : undefined,
+		firstVisibleTextPreview: typeof parsed.firstVisibleTextPreview === "string" && parsed.firstVisibleTextPreview.length > 0 ? redactSensitiveText(parsed.firstVisibleTextPreview) : undefined,
+		matchCount,
+		selector,
+		visibleCandidates: parseSelectorTextVisibilityCandidates(parsed.visibleCandidates),
+		visibleCount,
+	};
 }
 
 function selectorMayExposeSensitiveLiteral(selector: string): boolean {
@@ -366,6 +386,14 @@ export function formatSelectorTextVisibilityText(diagnostics: SelectorTextVisibi
 		const actionId = index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`;
 		const lines = [`Selector text visibility warning: ${diagnostic.summary}`];
 		if (diagnostic.firstVisibleTextPreview) lines.push(`First visible text preview: ${JSON.stringify(diagnostic.firstVisibleTextPreview)}`);
+		if (diagnostic.visibleCandidates && diagnostic.visibleCandidates.length > 0) {
+			lines.push(`Visible candidates (${diagnostic.visibleCandidates.length} shown, querySelectorAll index):`);
+			for (const candidate of diagnostic.visibleCandidates) {
+				const rolePart = candidate.role ? ` role=${candidate.role}` : "";
+				const previewPart = candidate.textPreview ? `: ${JSON.stringify(candidate.textPreview)}` : "";
+				lines.push(`- [${candidate.index}] ${candidate.tagName}${rolePart}${previewPart}`);
+			}
+		}
 		lines.push(`Next action: use details.nextActions ${actionId} before trusting this selector text.`);
 		return lines;
 	}).join("\n");
@@ -449,6 +477,22 @@ export function getEvalStdinHint(options: { command?: string; data: unknown; std
 
 export function formatEvalStdinHintText(hint: ReturnType<typeof getEvalStdinHint>): string | undefined {
 	return hint ? `Eval stdin hint: ${hint.reason} ${hint.suggestion}` : undefined;
+}
+
+export function getEvalResultWarning(options: { command?: string; data: unknown; navigationSummary?: { url?: string }; pageUrl?: string; stdin?: string }) {
+	if (options.command !== "eval" || !options.stdin?.trim() || !isRecord(options.data) || options.data.result !== null) return undefined;
+	const pageUrl = options.pageUrl?.trim() ?? options.navigationSummary?.url?.trim() ?? extractNavigationSummaryFromData(options.data)?.url;
+	if (!pageUrl || !/^file:/i.test(pageUrl)) return undefined;
+	const trimmed = options.stdin.trim();
+	if (/^(?:null|undefined)$/i.test(trimmed)) return undefined;
+	return {
+		reason: "eval --stdin returned null on a file:// page; upstream may not expose full DOM semantics for local fixtures.",
+		suggestion: "Treat this as inconclusive verification. Use snapshot -i, get text on current @refs, screenshot evidence, or a reachable http(s) fixture before concluding DOM state.",
+	};
+}
+
+export function formatEvalResultWarningText(warning: ReturnType<typeof getEvalResultWarning>): string | undefined {
+	return warning ? `Eval result warning: ${warning.reason} ${warning.suggestion}` : undefined;
 }
 
 export async function getArtifactCleanupGuidance(options: { command?: string; cwd: string; manifest?: SessionArtifactManifest; succeeded: boolean }): Promise<ArtifactCleanupGuidance | undefined> {

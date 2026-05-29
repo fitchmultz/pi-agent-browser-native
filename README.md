@@ -157,6 +157,13 @@ Open a page and inspect it (first-call recipe: open → snapshot -i → interact
 { "args": ["snapshot", "-i"] }
 ```
 
+Watch a browser window during a demo or QA run by adding upstream's global `--headed` flag on the first launch. Use `sessionMode: "fresh"` if a managed session may already exist, because headed/headless state is launch-scoped. A successful tool call means upstream opened a browser context; it does **not** prove the OS window is visible on the user's display, especially under remote, container, or virtual-display setups.
+
+```json
+{ "args": ["--headed", "open", "https://example.com"], "sessionMode": "fresh" }
+{ "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
+```
+
 On `https://example.com/`, the main link label is **Learn more**—use exact visible text from your snapshot, not guessed copy such as `More information...`.
 
 Click a visible ref, then refresh refs after navigation or a DOM update:
@@ -495,7 +502,10 @@ The upstream browser engine remains [`agent-browser`](https://agent-browser.dev/
 - Published pre-1.0 package.
 - Targets the current locally installed upstream `agent-browser` version only.
 - Does not bundle `agent-browser`; users install it separately.
-- Does not provide a human browser UI inside Pi; the primary UX is agent-invoked tool calls.
+- Does not provide a human browser UI inside Pi; the primary UX is agent-invoked tool calls. `--headed` asks upstream to show a browser window, but the wrapper cannot yet prove that the window is visible on the user's desktop.
+- Localhost means the browser host's loopback, not necessarily the shell/Pi host. If `http://localhost:<port>` or `http://127.0.0.1:<port>` fails with errors such as `ERR_EMPTY_RESPONSE`, use a host-reachable address when available or a `file://` URL for static fixtures, then verify with `snapshot -i` or an explicit screenshot.
+- `file://` pages are useful as a static fallback, but they can behave differently from HTTP pages for MIME types, CORS, storage, and script/debugger behavior. If `eval --stdin` returns `null` or otherwise cannot verify a `file://` page, treat that as inconclusive and use screenshot/snapshot evidence or move the fixture to reachable HTTP.
+- A successful upstream `click` is not proof that the app handled the event. For state-changing flows, verify with a fresh snapshot, text/URL assertion, screenshot, or `pageChangeSummary` before reporting success.
 - Real authenticated profile use is powerful but sensitive. Treat profile and cookie access as user-approved, task-specific behavior.
 - Wrapper tab/session recovery is best effort around observed upstream behavior, not a replacement for explicit profile/session design.
 
