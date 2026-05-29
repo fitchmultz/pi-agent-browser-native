@@ -294,6 +294,21 @@ test("buildToolPresentation suggests grouped getter commands for common unknown 
 	assert.equal(textFailure.nextActions, undefined);
 });
 
+test("buildToolPresentation explains localhost navigation failures as browser-host reachability", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "open", subcommand: "http://127.0.0.1:8766/page.html" },
+		cwd: process.cwd(),
+		errorText: "Navigation failed: net::ERR_EMPTY_RESPONSE",
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /^Navigation failed: net::ERR_EMPTY_RESPONSE/);
+	assert.match(text, /browser process could not read a loopback URL/);
+	assert.match(text, /curl works from the shell but browser navigation fails/);
+	assert.match(text, /Use file:\/\/ only for static fallback fixtures/);
+});
+
 test("buildToolPresentation returns exact next actions for selector failures and tab drift", async () => {
 	const selectorFailure = await buildToolPresentation({
 		commandInfo: { command: "click", subcommand: "text=Close" },

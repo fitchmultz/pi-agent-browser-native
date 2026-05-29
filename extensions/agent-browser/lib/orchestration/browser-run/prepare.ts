@@ -699,7 +699,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		}
 	}
 	const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
-		? await prepareClickDispatchProbe({ commandTokens, cwd, sessionName: executionPlan.sessionName, signal })
+		? await prepareClickDispatchProbe({ commandTokens, cwd, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
 		: undefined;
 	const redactedProcessArgs = redactInvocationArgs(processArgs);
 	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0;

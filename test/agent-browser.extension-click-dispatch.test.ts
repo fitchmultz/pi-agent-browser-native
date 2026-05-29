@@ -113,6 +113,63 @@ if (args.includes("eval")) {
 	}
 });
 
+test("agentBrowserExtension probes ref clicks with current snapshot accessibility metadata", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-ref-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "file:///tmp/fixture.html",
+    refs: { e4: { role: "button", name: "RPS (3)" } },
+    snapshot: '- button "RPS (3)" [ref=e4]'
+  } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
+} else if (args.includes("eval")) {
+  if (stdin.includes("expectedRole") && stdin.includes("RPS (3)") && stdin.includes("window[marker] = state")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
+  } else if (stdin.includes("no-native-event-observed")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Fixture", url: "file:///tmp/fixture.html" } } }));
+  }
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e4"] });
+			assert.equal(click.isError, true);
+			assert.match((click.content[0] as { text: string }).text, /Click dispatch diagnostic:/);
+			assert.deepEqual((click.details?.clickDispatch as { target?: unknown } | undefined)?.target, {
+				kind: "accessible",
+				name: "RPS (3)",
+				refId: "e4",
+				role: "button",
+			});
+
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("expectedRole") && (entry.stdin ?? "").includes("RPS (3)")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports click dispatch diagnostic when upstream reports success without dispatching DOM events", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-"));
 	const logPath = join(tempDir, "invocations.log");

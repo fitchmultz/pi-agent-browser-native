@@ -1,3 +1,4 @@
+import { isOpenNavigationCommand } from "../../command-taxonomy.js";
 import type { CommandInfo } from "../../runtime.js";
 import { redactModelFacingText } from "./common.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
@@ -81,6 +82,26 @@ function buildUnknownCommandSuggestionActions(suggestions: CommandSuggestion[], 
 	return actions.length > 0 ? actions : undefined;
 }
 
+function getLocalhostNavigationHint(commandInfo: CommandInfo, errorText: string): string | undefined {
+	if (!commandInfo.command || !isOpenNavigationCommand(commandInfo.command) || !commandInfo.subcommand) return undefined;
+	if (!/\bnet::ERR_(?:EMPTY_RESPONSE|CONNECTION_REFUSED|ADDRESS_UNREACHABLE|TIMED_OUT|CONNECTION_RESET)\b/i.test(errorText)) return undefined;
+
+	let targetUrl: URL;
+	try {
+		targetUrl = new URL(commandInfo.subcommand);
+	} catch {
+		return undefined;
+	}
+
+	if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(targetUrl.hostname.toLowerCase())) return undefined;
+
+	return [
+		"Agent-browser local fixture hint: the browser process could not read a loopback URL from its own network namespace or browser host.",
+		"Verify the server is still running and bound to an address the browser host can reach; if curl works from the shell but browser navigation fails, try the other loopback alias, add a proxy bypass for localhost/127.0.0.1 if a proxy is configured, or use a browser-host-reachable URL.",
+		"Use file:// only for static fallback fixtures and clean up any temporary server process outside agent_browser when the check is done.",
+	].join(" ");
+}
+
 export function appendSelectorRecoveryHint(errorText: string): string {
 	const hint = getSelectorRecoveryHint(errorText);
 	if (!hint || errorText.includes("Agent-browser hint:")) return errorText;
@@ -98,9 +119,13 @@ export function buildErrorPresentation(options: {
 	const selectorHintedErrorText = appendSelectorRecoveryHint(safeErrorText);
 	const unknownCommandSuggestions = getUnknownCommandSuggestions(commandInfo.command, safeErrorText);
 	const unknownCommandSuggestionText = formatUnknownCommandSuggestionText(unknownCommandSuggestions);
-	const hintedErrorText = unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:")
-		? `${selectorHintedErrorText}\n\n${unknownCommandSuggestionText}`
-		: selectorHintedErrorText;
+	const localhostNavigationHint = getLocalhostNavigationHint(commandInfo, safeErrorText);
+	const hintedErrorParts = [
+		selectorHintedErrorText,
+		unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:") ? unknownCommandSuggestionText : undefined,
+		localhostNavigationHint,
+	].filter((part): part is string => Boolean(part));
+	const hintedErrorText = hintedErrorParts.join("\n\n");
 	const categoryDetails = buildAgentBrowserResultCategoryDetails({
 		args: [commandInfo.command, commandInfo.subcommand].filter((item): item is string => item !== undefined),
 		command: commandInfo.command,

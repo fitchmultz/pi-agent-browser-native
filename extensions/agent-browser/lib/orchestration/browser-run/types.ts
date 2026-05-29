@@ -124,10 +124,21 @@ export interface OverlayBlockerDiagnostic {
 	summary: string;
 }
 
-export interface ClickDispatchProbeTarget {
-	kind: "selector" | "xpath";
-	selector: string;
-}
+export type ClickDispatchProbeTarget =
+	| {
+		kind: "selector";
+		selector: string;
+	}
+	| {
+		kind: "xpath";
+		selector: string;
+	}
+	| {
+		kind: "accessible";
+		name: string;
+		refId: string;
+		role: string;
+	};
 
 export interface ClickDispatchProbe {
 	marker: string;
