@@ -225,6 +225,39 @@ if (trimmed === "(() => [])()") {
 	}
 });
 
+test("agentBrowserExtension normalizes eval --stdin scripts misplaced in args", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-stdin-args-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: stdin.trim() === "document.title" ? "Fixture Title" : null, origin: "file:///tmp/fixture.html" } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["eval", "--stdin", "document.title"],
+			});
+
+			assert.equal(result.isError, false);
+			assert.equal((result.content[0] as { text: string }).text.split("\n")[0], "Fixture Title");
+			const [invocation] = await readInvocationLog(logPath);
+			assert.deepEqual(invocation?.args.slice(-2), ["eval", "--stdin"]);
+			assert.equal(invocation?.stdin, "document.title");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension warns when eval --stdin returns null on file pages", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-file-null-"));
 	const logPath = join(tempDir, "invocations.log");

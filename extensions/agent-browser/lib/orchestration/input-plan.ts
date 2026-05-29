@@ -1,3 +1,4 @@
+import { parseArgvDescriptor } from "../argv-descriptor.js";
 import { validateToolArgs, redactInvocationArgs, redactSensitiveText } from "../runtime.js";
 import { buildAgentBrowserResultCategoryDetails } from "../results/categories.js";
 import {
@@ -150,6 +151,29 @@ function redactCompiledNetworkSourceLookup(compiled: CompiledAgentBrowserNetwork
 		: undefined;
 }
 
+function normalizeExplicitEvalStdinArgs(args: string[], stdin: string | undefined): { args: string[]; stdin?: string } {
+	if (stdin !== undefined) {
+		return { args, stdin };
+	}
+
+	const descriptor = parseArgvDescriptor(args);
+	if (descriptor.commandInfo.command !== "eval") {
+		return { args, stdin };
+	}
+
+	const stdinIndex = descriptor.commandTokens.indexOf("--stdin");
+	if (stdinIndex < 0 || stdinIndex >= descriptor.commandTokens.length - 1) {
+		return { args, stdin };
+	}
+
+	const commandStartIndex = args.length - descriptor.commandTokens.length;
+	const stdinValue = descriptor.commandTokens.slice(stdinIndex + 1).join(" ");
+	return {
+		args: [...args.slice(0, commandStartIndex), ...descriptor.commandTokens.slice(0, stdinIndex + 1)],
+		stdin: stdinValue,
+	};
+}
+
 export function resolveAgentBrowserInput(options: {
 	getBatchAnnotateValidationError: (args: string[], stdin: string | undefined) => string | undefined;
 	managedSessionActive: boolean;
@@ -184,8 +208,9 @@ export function resolveAgentBrowserInput(options: {
 	const compiledElectron = electronResult.compiled;
 	const compiledJob = jobResult.compiled ?? compiledQaPreset;
 	const compiledGeneratedBatch = compiledNetworkSourceLookup ?? compiledSourceLookup ?? compiledJob;
-	const toolArgs = compiledElectron ? [] : compiledSemanticAction?.args ?? compiledGeneratedBatch?.args ?? params.args ?? [];
-	const toolStdin = compiledGeneratedBatch?.stdin ?? params.stdin;
+	const normalizedExplicitArgs = normalizeExplicitEvalStdinArgs(params.args ?? [], params.stdin);
+	const toolArgs = compiledElectron ? [] : compiledSemanticAction?.args ?? compiledGeneratedBatch?.args ?? normalizedExplicitArgs.args;
+	const toolStdin = compiledGeneratedBatch?.stdin ?? normalizedExplicitArgs.stdin;
 	const redactedArgs = redactInvocationArgs(toolArgs);
 	const generatedStdinError = params.stdin !== undefined
 		? compiledGeneratedBatch
