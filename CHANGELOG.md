@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.2.37 - 2026-05-29
+
+### Added
+
+- Added loopback navigation failure guidance for `localhost` / `127.0.0.1` errors such as `net::ERR_EMPTY_RESPONSE`, making clear that the browser host may not be able to reach the shell host's temporary server and pointing agents to host-reachable addresses or `file://` static-fixture fallbacks.
+- Extended click-dispatch diagnostics to eligible `@e…` ref clicks using the latest snapshot role/name metadata, so ref and semanticAction-resolved clicks that report upstream success without a trusted DOM event now fail loudly with `details.clickDispatch` and inspect/retry next actions.
+
+### Changed
+
+- Documented programmatic `eval --stdin` `.click()` as a static-fixture/debugging workaround only: it can exercise app handlers when user-like click dispatch fails, but it emits an untrusted scripted event and must not be treated as proof of real click behavior or used to bypass explicit stop boundaries.
+- Updated README, command reference, tool contract, playbook guidance, and support matrix for second through fifth-round `agent_browser` UX feedback, including localhost, click dispatch, and port-lifecycle ownership boundaries.
+
+### Fixed
+
+- Normalized malformed native-tool calls like `args: ["eval", "--stdin", "document.title"]` by moving trailing script tokens into stdin before spawning upstream, matching the canonical `eval --stdin` contract.
+
 ## 0.2.36 - 2026-05-29
 
 ### Added
