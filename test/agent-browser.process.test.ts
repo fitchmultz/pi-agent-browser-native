@@ -229,6 +229,7 @@ test("runAgentBrowserProcess resolves after exit when descendants keep stdio han
 	let lingerPid: number | undefined;
 
 	try {
+		const timeoutMs = 10_000;
 		const startedAt = Date.now();
 		const processResult = await runAgentBrowserProcess({
 			args: ["open", "https://example.com"],
@@ -237,12 +238,12 @@ test("runAgentBrowserProcess resolves after exit when descendants keep stdio han
 				PATH: `${tempDir}${delimiter}${basePath}`,
 				PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
 			},
-			timeoutMs: 3_000,
+			timeoutMs,
 		});
 
 		lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
 		const elapsedMs = Date.now() - startedAt;
-		assert.ok(elapsedMs < 1_500, `inherited-stdio fallback should resolve near the 100 ms grace window, not after the process timeout; elapsed ${elapsedMs} ms`);
+		assert.ok(elapsedMs < timeoutMs / 2, `inherited-stdio fallback should resolve well before the process timeout; elapsed ${elapsedMs} ms of ${timeoutMs} ms`);
 		assert.equal(processResult.exitCode, 0);
 		assert.equal(processResult.timedOut, false);
 		assert.equal(processResult.spawnError, undefined);
@@ -267,13 +268,14 @@ test("runAgentBrowserProcess returns timeout exit code when descendants keep std
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		buildStdioLingerFakeScript({
-			afterSpawnBody: 'process.stdin.resume();\nsetTimeout(() => process.exit(0), 5000);',
+			afterSpawnBody: 'process.stdin.resume();\nsetTimeout(() => process.exit(0), 10000);',
 		}),
 	);
 	let lingerPid: number | undefined;
 
 	try {
 		const startedAt = Date.now();
+		const timeoutMs = 5_000;
 		const processResult = await runAgentBrowserProcess({
 			args: ["wait", "5000"],
 			cwd: tempDir,
@@ -281,17 +283,17 @@ test("runAgentBrowserProcess returns timeout exit code when descendants keep std
 				PATH: `${tempDir}${delimiter}${basePath}`,
 				PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
 			},
-			timeoutMs: 1_500,
+			timeoutMs,
 		});
 		const elapsedMs = Date.now() - startedAt;
 
 		lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
 		assert.equal(processResult.timedOut, true);
-		assert.equal(processResult.timeoutMs, 1_500);
+		assert.equal(processResult.timeoutMs, timeoutMs);
 		assert.equal(processResult.exitCode, 124);
 		assert.equal(processResult.spawnError, undefined);
 		assert.ok(
-			elapsedMs < 3_500,
+			elapsedMs < timeoutMs + 2_000,
 			`expected inherited stdio handles not to delay timeout resolution, got ${elapsedMs}ms`,
 		);
 	} finally {

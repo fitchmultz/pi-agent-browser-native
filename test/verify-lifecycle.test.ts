@@ -90,7 +90,7 @@ test("parseCliArgs rejects invalid lifecycle options", () => {
 	assert.throws(() => parseCliArgs(["--timeout-ms", "1.5"]), /positive integer/);
 });
 
-test("createLifecycleSessionId returns a Pi 0.76 exact-session-safe id", () => {
+test("createLifecycleSessionId returns a Pi 0.78 exact-session-safe id", () => {
 	const id = createLifecycleSessionId(4242);
 	assert.equal(id, "piab-lifecycle-4242");
 	assert.match(id, /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/);

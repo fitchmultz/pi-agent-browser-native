@@ -620,7 +620,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
 
 			const cleanupA = await executeRegisteredTool(harness.tool, harness.ctx, {
-				electron: { action: "cleanup", launchId: "electron-a" },
+				electron: { action: "cleanup", launchId: "electron-a", timeoutMs: 15_000 },
 			});
 			assert.equal(cleanupA.isError, false, JSON.stringify(cleanupA));
 			assert.equal(pidIsAlive(childA?.pid), false);

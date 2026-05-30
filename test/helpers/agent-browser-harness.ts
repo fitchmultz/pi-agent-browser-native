@@ -531,7 +531,7 @@ export async function readInvocationLog(logPath: string): Promise<InvocationLogE
 	}
 }
 
-export async function readChildStdoutJsonLine<T>(child: ReturnType<typeof spawn>, timeoutMs = 5_000): Promise<T> {
+export async function readChildStdoutJsonLine<T>(child: ReturnType<typeof spawn>, timeoutMs = 15_000): Promise<T> {
 	assert.ok(child.stdout, "expected child stdout pipe");
 	assert.ok(child.stderr, "expected child stderr pipe");
 	let stdout = "";

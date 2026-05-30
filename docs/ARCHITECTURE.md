@@ -78,7 +78,7 @@ The published package should load from the `pi` manifest in `package.json`.
 Local checkout validation has two intentional modes:
 
 - **Quick isolated mode:** use explicit CLI loading such as `pi --no-extensions -e .` from the repository root. This bypasses Pi settings and extension discovery, avoids duplicate `agent_browser` registrations when another source is installed globally, and is the right mode for checkout smoke tests.
-- **Configured-source lifecycle mode:** configure exactly one active checkout or package source in Pi settings and launch plain `pi`. This is the right mode for validating `/reload` and exact-session relaunch because those lifecycle checks exercise discovered/configured resources. Focused extension harness tests validate branch-backed `session_tree` rehydration and cleanup ownership. Before shipping, maintainers also run `npm run verify -- lifecycle` (same semantics under automation, using Pi 0.76 `--session-id` to reopen the exact JSONL session) plus the live-site checks in [`RELEASE.md`](RELEASE.md#pre-release-checks); `npm publish` enforces `npm run verify -- release` via `prepublishOnly` unless scripts are skipped.
+- **Configured-source lifecycle mode:** configure exactly one active checkout or package source in Pi settings and launch plain `pi`. This is the right mode for validating `/reload` and exact-session relaunch because those lifecycle checks exercise discovered/configured resources. Focused extension harness tests validate branch-backed `session_tree` rehydration and cleanup ownership. Before shipping, maintainers also run `npm run verify -- lifecycle` (same semantics under automation, using Pi 0.78 `--session-id` to reopen the exact JSONL session) plus the live-site checks in [`RELEASE.md`](RELEASE.md#pre-release-checks); `npm publish` enforces `npm run verify -- release` via `prepublishOnly` unless scripts are skipped.
 
 The repo should not add a repo-local `.pi/extensions/` autoload shim as the documented checkout path.
 
@@ -116,7 +116,7 @@ V1 ownership rule:
 - extension-managed sessions should be reusable during an active `pi` session and across `/reload`, exact-session relaunch, `/resume`, and Pi branch-tree transitions, while still being cleaned up predictably
 
 Practical policy:
-- preserve the current branch-visible extension-managed session across `/reload`, exact-session relaunch, `/resume`, and Pi 0.76 `session_tree` branch transitions so persisted sessions can keep following the live browser after lifecycle changes
+- preserve the current branch-visible extension-managed session across `/reload`, exact-session relaunch, `/resume`, and Pi 0.78 `session_tree` branch transitions so persisted sessions can keep following the live browser after lifecycle changes
 - close the active extension-managed session when the originating `pi` process quits, while leaving explicit caller-provided sessions alone
 - set an idle timeout on extension-managed sessions as a backstop for abnormal exits or cleanup failures
 - clean up process-private temp spill artifacts on shutdown, but keep persisted-session snapshot spill files in a private session-scoped artifact directory with a bounded per-session budget so `details.fullOutputPath` stays usable after reload/resume without unbounded growth

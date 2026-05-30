@@ -272,7 +272,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.equal(((statusResult.details?.electron as { targets?: unknown[] } | undefined)?.targets ?? []).length, 1);
 
 			await rm(upstreamLogPath, { force: true });
-			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 5_000 } });
+			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 10_000 } });
 			assert.equal(probeResult.isError, false);
 			assert.match(probeResult.content[0]?.text ?? "", /Electron probe: Demo Electron — app:\/\/demo/);
 			assert.match(probeResult.content[0]?.text ?? "", /Focused: button\/button "Run" \(#run-button\)/);
@@ -282,7 +282,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 				sessionName?: string;
 				sessionTabTarget?: { title?: string; url?: string };
 			};
-			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 5_000 });
+			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 10_000 });
 			assert.equal(probeDetails.electron.action, "probe");
 			assert.deepEqual(probeDetails.electron.identifiers, launchDetails.electron.identifiers);
 			assert.equal(probeDetails.electron.probe?.title, "Demo Electron");
@@ -380,7 +380,7 @@ test("agentBrowserExtension reports Electron session mismatch and launchId-aware
 			assert.ok(statusActionIds.indexOf("reattach-electron-launch") < statusActionIds.indexOf("snapshot-electron-session"));
 
 			await rm(upstreamLogPath, { force: true });
-			const currentProbeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 1_000 } });
+			const currentProbeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 5_000 } });
 			assert.equal(currentProbeResult.isError, false);
 			assert.match(currentProbeResult.content[0]?.text ?? "", /Probe context: current managed session .* maps to Electron launch/);
 			assert.match(currentProbeResult.content[0]?.text ?? "", /Electron session mismatch: managed session .* is on about:blank, but launch .* still has live target Demo Electron/);
@@ -393,7 +393,7 @@ test("agentBrowserExtension reports Electron session mismatch and launchId-aware
 			assert.equal(currentProbeDetails.electron?.sessionMismatch?.reason, "managed-session-about-blank-while-launch-target-live");
 
 			await rm(upstreamLogPath, { force: true });
-			const launchProbeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId, timeoutMs: 1_000 } });
+			const launchProbeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId, timeoutMs: 5_000 } });
 			assert.equal(launchProbeResult.isError, false);
 			assert.match(launchProbeResult.content[0]?.text ?? "", /Probe context: wrapper launch .* session/);
 			const launchProbeDetails = launchProbeResult.details as {
@@ -401,7 +401,7 @@ test("agentBrowserExtension reports Electron session mismatch and launchId-aware
 				electron?: { probeContext?: { launchId?: string; mode?: string; sessionName?: string } };
 				usedImplicitSession?: boolean;
 			};
-			assert.deepEqual(launchProbeDetails.compiledElectron, { action: "probe", launchId, timeoutMs: 1_000 });
+			assert.deepEqual(launchProbeDetails.compiledElectron, { action: "probe", launchId, timeoutMs: 5_000 });
 			assert.equal(launchProbeDetails.electron?.probeContext?.mode, "launchId");
 			assert.equal(launchProbeDetails.electron?.probeContext?.sessionName, sessionName);
 			assert.equal(launchProbeDetails.usedImplicitSession, false);

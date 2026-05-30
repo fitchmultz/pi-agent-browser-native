@@ -28,7 +28,7 @@ test("verify facade default gate keeps docs, typecheck, unit/fake, and command-r
 	assert.deepEqual(stepLabels, [
 		"./scripts/check-playbook-drift.ts --check",
 		"--noEmit",
-		"--test test/**/*.test.ts",
+		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
 	]);
@@ -51,7 +51,7 @@ test("verify facade release gate composes default verification and packaged Pi s
 	assert.deepEqual(labels(release), [
 		"./scripts/check-playbook-drift.ts --check",
 		"--noEmit",
-		"--test test/**/*.test.ts",
+		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
 		"./scripts/verify-package.mjs --smoke-pi",

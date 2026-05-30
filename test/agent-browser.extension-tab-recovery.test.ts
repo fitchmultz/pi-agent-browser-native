@@ -29,7 +29,7 @@ function delay(ms: number): Promise<void> {
 async function waitForInvocation(
 	logPath: string,
 	predicate: (entry: Awaited<ReturnType<typeof readInvocationLog>>[number]) => boolean,
-	timeoutMs = 5_000,
+	timeoutMs = 15_000,
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {

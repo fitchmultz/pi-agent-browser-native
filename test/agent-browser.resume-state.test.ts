@@ -37,6 +37,17 @@ function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForCloseArgs(logPath: string, expectedCount: number, timeoutMs = 3_000): Promise<string[][]> {
+	const deadline = Date.now() + timeoutMs;
+	let closeArgs: string[][] = [];
+	while (Date.now() <= deadline) {
+		closeArgs = (await readInvocationLog(logPath)).map((entry) => entry.args).filter((args) => args.includes("close"));
+		if (closeArgs.length >= expectedCount) return closeArgs;
+		await delay(25);
+	}
+	return closeArgs;
+}
+
 async function withConcurrencyTestTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
 	let timeout: NodeJS.Timeout | undefined;
 	const timeoutPromise = new Promise<never>((_resolve, reject) => {
@@ -244,7 +255,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-b", oldLeafId: "branch-a" }, harness.ctx);
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 
-			const closeArgs = (await readInvocationLog(logPath)).map((entry) => entry.args).filter((args) => args.includes("close"));
+			const closeArgs = await waitForCloseArgs(logPath, 2);
 			const sortCloseArgs = (rows: string[][]) => [...rows].sort((left, right) => left[1].localeCompare(right[1]));
 			assert.deepEqual(sortCloseArgs(closeArgs), sortCloseArgs([
 				["--session", branchASessionName, "close"],
@@ -409,7 +420,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-closed", oldLeafId: "branch-open" }, harness.ctx);
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 
-			const closeArgs = (await readInvocationLog(logPath)).map((entry) => entry.args).filter((args) => args.includes("close"));
+			const closeArgs = await waitForCloseArgs(logPath, 1);
 			assert.deepEqual(closeArgs, [["--session", sessionName, "close"]]);
 		});
 	} finally {

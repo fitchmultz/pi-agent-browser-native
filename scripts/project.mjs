@@ -255,7 +255,7 @@ export function verifySteps(options) {
 			return [
 				...docsSteps({ mode: "check", target: "playbook" }),
 				localToolStep("tsc", ["--noEmit"]),
-				localToolStep("tsx", ["--test", "test/**/*.test.ts"]),
+				localToolStep("tsx", ["--test", "--test-concurrency=1", "test/**/*.test.ts"]),
 				...commandReferenceSteps(),
 			];
 		case "typecheck":

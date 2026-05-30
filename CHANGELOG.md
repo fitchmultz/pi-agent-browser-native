@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.38 - 2026-05-29
+
+### Changed
+
+- Updated the local Pi development baseline to `@earendil-works/*` `0.78.0` after reviewing the installed Pi changelog, keeping lifecycle docs and exact-session test expectations aligned with Pi 0.78.
+- Pinned the default maintainer unit/fake verification gate to Node test concurrency `1` to avoid process-contention flakes in full-suite release runs while preserving the full test inventory.
+
+### Fixed
+
+- Stabilized timing-sensitive fake-upstream, Electron probe/cleanup, temp-root, and session-close tests under release-suite load.
+
 ## 0.2.37 - 2026-05-29
 
 ### Added
