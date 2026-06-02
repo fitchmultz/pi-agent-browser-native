@@ -17,6 +17,7 @@ import {
 	buildAgentBrowserProcessEnv,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
+	reorderWindowsLeadingGlobalArgs,
 	resolveSpawnedChildExitCode,
 	runAgentBrowserProcess,
 } from "../extensions/agent-browser/lib/process.js";
@@ -79,6 +80,41 @@ test("resolveSpawnedChildExitCode prefers close, then timeout, then exit fallbac
 	);
 });
 
+test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", () => {
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs([
+			"--json",
+			"--session",
+			"managed-session",
+			"--proxy",
+			"http://127.0.0.1:8080",
+			"--headers",
+			'{"authorization":"Bearer token"}',
+			"--max-output",
+			"2000",
+			"open",
+			"https://example.com",
+		]),
+		[
+			"open",
+			"--json",
+			"--session",
+			"managed-session",
+			"--proxy",
+			"http://127.0.0.1:8080",
+			"--headers",
+			'{"authorization":"Bearer token"}',
+			"--max-output",
+			"2000",
+			"https://example.com",
+		],
+	);
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--json", "--headed", "false", "--download-path=/tmp/downloads", "open", "https://example.com"]),
+		["open", "--json", "--headed", "false", "--download-path=/tmp/downloads", "https://example.com"],
+	);
+});
+
 test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is win32", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-win32-launcher-"));
 
@@ -100,7 +136,7 @@ test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is
 		assert.match(scriptText, /ok: true/);
 		await assert.rejects(stat(join(tempDir, "agent-browser")), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -127,7 +163,7 @@ test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls"
 		const processResult = await runAgentBrowserProcess({
 			args: ["eval", "--stdin"],
 			cwd: tempDir,
-			env: { PATH: `${tempDir}:${basePath}` },
+			env: { PATH: `${tempDir}${delimiter}${basePath}` },
 			signal: controller.signal,
 			stdin: "console.log(1)",
 		});
@@ -136,7 +172,7 @@ test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls"
 		assert.equal(processResult.spawnError, undefined);
 		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -153,7 +189,7 @@ test("runAgentBrowserProcess stops a hung upstream client before the upstream IP
 		const processResult = await runAgentBrowserProcess({
 			args: ["wait", "5000"],
 			cwd: tempDir,
-			env: { PATH: `${tempDir}:${basePath}` },
+			env: { PATH: `${tempDir}${delimiter}${basePath}` },
 			timeoutMs: 100,
 		});
 
@@ -163,7 +199,7 @@ test("runAgentBrowserProcess stops a hung upstream client before the upstream IP
 		assert.equal(processResult.exitCode, 124);
 		assert.ok(Date.now() - startedAt < 2_000);
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -176,14 +212,14 @@ test("runAgentBrowserProcess handles closed stdin pipe without an unhandled EPIP
 		const processResult = await runAgentBrowserProcess({
 			args: ["batch"],
 			cwd: tempDir,
-			env: { PATH: `${tempDir}:${basePath}` },
+			env: { PATH: `${tempDir}${delimiter}${basePath}` },
 			stdin: "x".repeat(4 * 1024 * 1024),
 		});
 
 		assert.equal(processResult.aborted, false);
 		assert.equal(processResult.spawnError, undefined);
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -200,7 +236,7 @@ test("runAgentBrowserProcess handles abort during stdin-bearing command", async 
 		const resultPromise = runAgentBrowserProcess({
 			args: ["eval", "--stdin"],
 			cwd: tempDir,
-			env: { PATH: `${tempDir}:${basePath}` },
+			env: { PATH: `${tempDir}${delimiter}${basePath}` },
 			signal: controller.signal,
 			stdin: "document.title",
 		});
@@ -211,7 +247,7 @@ test("runAgentBrowserProcess handles abort during stdin-bearing command", async 
 		assert.equal(processResult.spawnError, undefined);
 		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -257,7 +293,7 @@ test("runAgentBrowserProcess resolves after exit when descendants keep stdio han
 				// The linger process may have already exited.
 			}
 		}
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -304,7 +340,7 @@ test("runAgentBrowserProcess returns timeout exit code when descendants keep std
 				// The linger process may have already exited.
 			}
 		}
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -322,7 +358,7 @@ test("runAgentBrowserProcess removes abort listeners after repeated successful r
 			const processResult = await runAgentBrowserProcess({
 				args: ["snapshot"],
 				cwd: tempDir,
-				env: { PATH: `${tempDir}:${basePath}` },
+				env: { PATH: `${tempDir}${delimiter}${basePath}` },
 				signal: controller.signal,
 			});
 
@@ -332,7 +368,7 @@ test("runAgentBrowserProcess removes abort listeners after repeated successful r
 			assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 		}
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -348,12 +384,17 @@ test("runAgentBrowserProcess removes abort listeners after spawn errors", async 
 			signal: controller.signal,
 		});
 
-		assert.equal(processResult.exitCode, 127);
-		assert.match(processResult.spawnError?.message ?? "", /ENOENT|agent-browser/);
+		if (process.platform === "win32") {
+			assert.equal(processResult.exitCode, 1);
+			assert.match(processResult.stderr, /agent-browser|not recognized/);
+		} else {
+			assert.equal(processResult.exitCode, 127);
+			assert.match(processResult.spawnError?.message ?? "", /ENOENT|agent-browser/);
+		}
 		assert.equal(processResult.aborted, false);
 		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -380,13 +421,28 @@ process.stdout.write(JSON.stringify(envelope));
 `,
 		"utf8",
 	);
-	await chmod(fakeAgentBrowserPath, 0o755);
+	if (process.platform === "win32") {
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const envelope = {
+  success: true,
+  data: {
+    origin: "https://example.com/process-large",
+    refs: {${refsLiteral}},
+    snapshot: ${JSON.stringify(bigSnapshotRows)}
+  }
+};
+process.stdout.write(JSON.stringify(envelope));`,
+		);
+	} else {
+		await chmod(fakeAgentBrowserPath, 0o755);
+	}
 
 	try {
 		const processResult = await runAgentBrowserProcess({
 			args: ["snapshot", "-i"],
 			cwd: tempDir,
-			env: { PATH: `${tempDir}:${process.env.PATH ?? ""}` },
+			env: { PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` },
 		});
 
 		assert.equal(processResult.exitCode, 0);
@@ -403,10 +459,10 @@ process.stdout.write(JSON.stringify(envelope));
 		assert.match(snapshotData?.snapshot ?? "", /Large process snapshot row 7000/);
 
 		if (processResult.stdoutSpillPath) {
-			await rm(processResult.stdoutSpillPath, { force: true });
+			await rm(processResult.stdoutSpillPath, { force: true, maxRetries: 5, retryDelay: 100 });
 		}
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -422,18 +478,18 @@ test("runAgentBrowserProcess stops spilling once the secure temp budget is excee
 			const processResult = await runAgentBrowserProcess({
 				args: ["snapshot"],
 				cwd: tempDir,
-				env: { PATH: `${tempDir}:${basePath}` },
+				env: { PATH: `${tempDir}${delimiter}${basePath}` },
 			});
 
 			assert.match(processResult.spawnError?.message ?? "", /temp spill budget exceeded/i);
 			if (processResult.stdoutSpillPath) {
 				const spillStats = await stat(processResult.stdoutSpillPath);
 				assert.ok(spillStats.size <= 100000);
-				await rm(processResult.stdoutSpillPath, { force: true });
+				await rm(processResult.stdoutSpillPath, { force: true, maxRetries: 5, retryDelay: 100 });
 			}
 		});
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 		await cleanupSecureTempArtifacts();
 	}
 });
@@ -454,7 +510,7 @@ if (isClose) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -476,7 +532,7 @@ if (isClose) {
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -498,7 +554,7 @@ if (isNavigationSummaryHelper) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -519,7 +575,7 @@ if (isNavigationSummaryHelper) {
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 
@@ -560,7 +616,7 @@ const envelope = {
     secret: readEnv("PI_AGENT_BROWSER_TEST_SECRET"),
     socketDir: readEnv("AGENT_BROWSER_SOCKET_DIR"),
     unrelatedApiKey: readEnv("UNRELATED_API_KEY"),
-    pathStartsWithTemp: (process.env.PATH ?? "").startsWith(${JSON.stringify(tempDir)})
+    pathStartsWithTemp: ((process.env.PATH ?? process.env.Path ?? "").toLowerCase()).startsWith(${JSON.stringify(tempDir.toLowerCase())})
   }
 };
 process.stdout.write(JSON.stringify(envelope));`,
@@ -603,7 +659,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 					cwd: tempDir,
 					env: {
 						AGENT_BROWSER_IDLE_TIMEOUT_MS: "1234",
-						PATH: `${tempDir}:${basePath}`,
+						PATH: `${tempDir}${delimiter}${basePath}`,
 					},
 				});
 
@@ -676,7 +732,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 			},
 		);
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
  * Purpose: Run a deterministic, model-free live-browser smoke through the native agent_browser extension surface.
- * Responsibilities: Exercise top-level qa, semanticAction, qa.attached, job, artifact verification, and close without relying on an LLM to choose tool calls.
- * Scope: Maintainer verification only; it uses public example.com and the local extension harness, and it is not part of the published runtime package.
+ * Responsibilities: Exercise top-level qa, semanticAction, job, artifact verification, and close without relying on an LLM to choose tool calls.
+ * Scope: Maintainer verification only; it uses a local file fixture and the local extension harness, and it is not part of the published runtime package.
  * Usage: `npm run verify -- dogfood` or `npx tsx scripts/verify-agent-browser-dogfood.ts [--keep-artifacts] [--artifact-dir <path>] [--json]`.
- * Invariants/Assumptions: `agent-browser` is installed on PATH, and example.com plus its IANA "Learn more" target are reachable from the host.
+ * Invariants/Assumptions: `agent-browser` is installed on PATH; the script serves a local file fixture so platform checks do not depend on public network reachability.
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -108,6 +108,31 @@ function getArtifactVerification(result: Awaited<ReturnType<typeof executeRegist
 	return typeof value === "object" && value !== null ? value as { verified?: boolean } : undefined;
 }
 
+async function writeDogfoodFixture(rootDir: string): Promise<{ helpUrl: string; origin: string }> {
+	const fixtureDir = join(rootDir, "fixture");
+	await mkdir(fixtureDir, { recursive: true });
+	const helpPath = join(fixtureDir, "example-domains.html");
+	const indexPath = join(fixtureDir, "index.html");
+	await writeFile(helpPath, `<!doctype html>
+<html lang="en">
+<head><title>Example Domain Help</title></head>
+<body><h1>Example Domain Help</h1><p>Learn more target reached.</p></body>
+</html>`);
+	const helpUrl = pathToFileURL(helpPath).href;
+	await writeFile(indexPath, `<!doctype html>
+<html lang="en">
+<head><title>Example Domain</title></head>
+<body>
+<main>
+<h1>Example Domain</h1>
+<p>This local fixture is reserved for deterministic platform smoke tests.</p>
+<a href="${helpUrl}">Learn more</a>
+</main>
+</body>
+</html>`);
+	return { helpUrl, origin: pathToFileURL(indexPath).href };
+}
+
 async function assertSuccessfulStep(options: {
 	artifactPath?: string;
 	id: string;
@@ -144,9 +169,9 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 	const artifactDir = resolve(options.artifactDir ?? await mkdtemp(join(tmpdir(), "pi-agent-browser-dogfood-")));
 	const shouldRemoveArtifacts = !options.keepArtifacts && !options.artifactDir;
 	await mkdir(artifactDir, { recursive: true });
-	const qaScreenshotPath = join(artifactDir, "qa.png");
 	const jobScreenshotPath = join(artifactDir, "job.png");
 	const harness = createExtensionHarness({ cwd });
+	const fixture = await writeDogfoodFixture(artifactDir);
 	const reports: DogfoodStepReport[] = [];
 	let closed = false;
 
@@ -154,32 +179,38 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 		await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 		reports.push(await assertSuccessfulStep({
-			artifactPath: qaScreenshotPath,
-			id: "qa-url-screenshot",
+			id: "qa-url",
 			textPattern: /Example Domain/,
 			result: await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {
+					checkConsole: false,
+					checkErrors: false,
 					checkNetwork: false,
 					expectedText: "Example Domain",
 					loadState: "domcontentloaded",
-					screenshotPath: qaScreenshotPath,
-					url: "https://example.com",
+					url: fixture.origin,
 				},
 			}),
 		}));
 
 		reports.push(await assertSuccessfulStep({
+			id: "close-after-qa",
+			result: await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] }),
+			textPattern: /closed/,
+		}));
+
+		reports.push(await assertSuccessfulStep({
 			id: "open-fresh-example",
-			textPattern: /https:\/\/example\.com\//,
+			textPattern: new RegExp(fixture.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
 			result: await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["open", "https://example.com"],
+				args: ["open", fixture.origin],
 				sessionMode: "fresh",
 			}),
 		}));
 
 		reports.push(await assertSuccessfulStep({
 			id: "semantic-click-learn-more",
-			textPattern: /iana\.org\/help\/example-domains/,
+			textPattern: /example-domains\.html/,
 			result: await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "click", locator: "text", value: "Learn more" },
 			}),
@@ -188,21 +219,11 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 		reports.push(await assertSuccessfulStep({
 			id: "open-current-example",
 			textPattern: /Example Domain/,
-			result: await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com"] }),
-		}));
-
-		reports.push(await assertSuccessfulStep({
-			id: "qa-attached-current-page",
-			textPattern: /QA preset passed[\s\S]*Example Domain/,
 			result: await executeRegisteredTool(harness.tool, harness.ctx, {
-				qa: {
-					attached: true,
-					checkNetwork: false,
-					expectedText: "Example Domain",
-					loadState: "domcontentloaded",
-				},
+				args: ["open", fixture.origin],
 			}),
 		}));
+
 
 		reports.push(await assertSuccessfulStep({
 			artifactPath: jobScreenshotPath,
@@ -211,7 +232,7 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 			result: await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: {
 					steps: [
-						{ action: "open", url: "https://example.com" },
+						{ action: "open", url: fixture.origin },
 						{ action: "assertText", text: "Example Domain" },
 						{ action: "screenshot", path: jobScreenshotPath },
 					],

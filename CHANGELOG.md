@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.39 - 2026-06-02
+
+### Added
+
+- Added a Crabbox-backed platform smoke gate for release validation across macOS, prepared Ubuntu Linux, and native Windows, including packed-package installation and deterministic browser dogfood suites.
+
+### Changed
+
+- Updated the upstream capability baseline, command reference, platform smoke images, and live-contract metadata for `agent-browser` `0.27.1`.
+- Reduced per-target platform smoke cost by using a focused `verify -- platform-target` gate inside Crabbox targets instead of rerunning the full default verification suite on every OS.
+
 ## 0.2.38 - 2026-05-29
 
 ### Changed

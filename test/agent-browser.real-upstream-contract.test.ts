@@ -355,7 +355,10 @@ if (!REAL_UPSTREAM_ENABLED) {
 					const vitals = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["vitals", contractUrl, "--json"] });
 					const vitalsDetails = assertSuccessfulResult(vitals, shapes.commands.vitals, "vitals");
 					assert.equal(vitalsDetails.sessionName, managedSessionName);
-					assert.match((vitalsDetails.data as { report?: string }).report ?? "", /Core Web Vitals/);
+					const vitalsData = vitalsDetails.data as { fcp?: number; ttfb?: number; url?: string };
+					assert.match(vitalsData.url ?? "", /\/contract\/?$/);
+					assert.equal(typeof vitalsData.fcp, "number");
+					assert.equal(typeof vitalsData.ttfb, "number");
 
 					const networkRoute = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["network", "route", "**/*.js", "--abort", "--resource-type", "script"],
@@ -427,7 +430,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.match(waitedDownload.content[0]?.text ?? "", /Download completed/);
 
 					// Upstream tracking: https://github.com/vercel-labs/agent-browser/issues/1300.
-					// Current upstream agent-browser 0.27.0 reports the requested saveAs path but leaves the
+					// Current upstream agent-browser 0.27.1 reports the requested saveAs path but leaves the
 					// file in the browser's default download directory. Keep this explicit so release docs do
 					// not overstate savedFilePath as a verified on-disk artifact.
 					const artifacts = waitDownloadDetails.artifacts as Array<{ exists?: boolean; path?: string; sizeBytes?: number }> | undefined;
@@ -436,7 +439,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(
 						await readFileIfPresent(downloadPath),
 						undefined,
-						"agent-browser 0.27.0 reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
+						"agent-browser 0.27.1 reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
 					);
 				},
 			);

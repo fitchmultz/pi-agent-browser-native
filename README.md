@@ -340,7 +340,7 @@ For asynchronous exports, click first and then wait for the download:
 { "args": ["wait", "--download", "/tmp/report.csv"] }
 ```
 
-When a user gives exact artifact paths for screenshots, recordings, downloads, PDFs, traces, or HAR files, use those paths or explicitly report why the artifact was unavailable; do not silently substitute a different path in the final report. With upstream `agent-browser 0.27.0`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` before relying on the requested `wait --download <path>` file being present on disk.
+When a user gives exact artifact paths for screenshots, recordings, downloads, PDFs, traces, or HAR files, use those paths or explicitly report why the artifact was unavailable; do not silently substitute a different path in the final report. With upstream `agent-browser 0.27.1`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` before relying on the requested `wait --download <path>` file being present on disk.
 
 For evidence-only screenshots or QA captures, branch on `details.artifactVerification` and `details.artifacts` before reporting PASS/FAIL; inline image attachments are optional when size limits allow—do not require vision review unless the user asked for visual inspection. If the latest prompt names exact required artifact paths, browser close can be blocked with `details.promptGuard` until those artifacts are saved and verified.
 
@@ -446,7 +446,7 @@ The full `npm run verify` gate runs:
 - command-reference baseline checks
 - live command-reference verification against the targeted installed upstream `agent-browser`
 
-Step order and which subprocesses run live in [`scripts/project.mjs`](scripts/project.mjs); [`test/project-verify.test.ts`](test/project-verify.test.ts) locks default, `release`, `real-upstream`, `dogfood`, `package-pi`, and combined-docs orchestration so a gate cannot disappear accidentally. Run `npm run verify -- --help` for opt-in modes and supported passthrough flags.
+Step order and which subprocesses run live in [`scripts/project.mjs`](scripts/project.mjs); [`test/project-verify.test.ts`](test/project-verify.test.ts) locks default, `release`, `real-upstream`, `dogfood`, `platform-target`, `platform-smoke`, `package-pi`, and combined-docs orchestration so a gate cannot disappear accidentally. Run `npm run verify -- --help` for opt-in modes and supported passthrough flags.
 
 The deterministic agent-efficiency benchmark’s **standalone JSON/Markdown accounting run** is not part of default `npm run verify` (only `npm run verify -- benchmark` or `npm run benchmark:agent-browser` invokes the script). The full unit suite still exercises `test/agent-browser.efficiency-benchmark.test.ts`. Use the script before and after agent-facing abstractions to prove call-count, output-size, stale-ref, artifact, failure-category coverage, success-rate, and elapsed-time effects before changing the wrapper UX:
 
@@ -467,22 +467,34 @@ npm run verify -- real-upstream
 
 That mode sets `PI_AGENT_BROWSER_REAL_UPSTREAM=1` and runs `test/agent-browser.real-upstream-contract.test.ts` against the real `agent-browser` on `PATH` (version must match the capability baseline). It covers inspection, skills, a broad core interaction and navigation matrix on localhost fixtures (including `batch` stdin and `pushstate`), plus `vitals`, network route/requests/HAR, diff snapshot/screenshot/url, trace/profiler, console/errors/highlight, stream enable/status/disable, `cookies set --curl`, a `react tree` missing-renderer path, and `wait --download` with the on-disk caveat documented in release notes. The harness uses a throwaway temp `HOME` and dedicated socket/screenshot directories so the run does not touch your normal browser profile paths. Browser-opening or credential-dependent families such as `inspect`, `dashboard`, `chat`, provider clouds, and OS clipboard flows stay in fake-upstream or manual validation unless a safe deterministic fixture is added. For prerequisites, isolation details, and troubleshooting, see [`docs/RELEASE.md`](docs/RELEASE.md#real-upstream-contract-validation).
 
-A deterministic live-browser wrapper smoke is available without an LLM choosing tool calls:
+A deterministic host-only live-browser wrapper smoke is available without an LLM choosing tool calls:
 
 ```bash
 npm run verify -- dogfood
 ```
 
-That mode drives the native wrapper through top-level `qa`, `semanticAction`, `qa.attached`, constrained `job`, screenshot artifact verification, and session close against public `example.com`. It complements, but does not replace, the interactive Pi/tmux release dogfood in [`docs/RELEASE.md`](docs/RELEASE.md#pre-release-checks).
+That mode drives the native wrapper through top-level `qa`, `semanticAction`, constrained `job`, screenshot artifact verification, and session close against a deterministic local fixture. It complements, but does not replace, the interactive Pi/tmux release dogfood in [`docs/RELEASE.md`](docs/RELEASE.md#pre-release-checks).
+
+Cross-platform release coverage uses Crabbox to run macOS, Ubuntu Linux, and native Windows target suites:
+
+```bash
+npm run check:platform-smoke
+npm run smoke:platform:ubuntu-image
+npm run smoke:platform:all
+```
+
+The required matrix is documented in [`docs/platform-smoke.md`](docs/platform-smoke.md). It runs `platform-build` (fast target-local verify, pack, clean packed Pi install, `pi list`) and `browser-dogfood-smoke` (real `agent-browser`/browser wrapper smoke) on every target.
 
 For package release confidence, follow [`docs/RELEASE.md`](docs/RELEASE.md). The release gate is:
 
 ```bash
 npm run doctor
+npm run check:platform-smoke
+npm run smoke:platform:ubuntu-image
 npm run verify -- release
 ```
 
-`npm run verify -- release` includes the default verification gate plus packaged Pi smoke coverage. The package also has a `prepublishOnly` hook that runs the same release gate and `npm pack --dry-run` during `npm publish`.
+`npm run verify -- release` includes the default verification gate, packaged Pi smoke coverage, and the release-blocking Crabbox platform matrix. The package also has a `prepublishOnly` hook that runs the same release gate and `npm pack --dry-run` during `npm publish`.
 
 ## How it works
 
@@ -584,6 +596,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `docs/ARCHITECTURE.md` | Design decisions and implementation structure |
 | `docs/REQUIREMENTS.md` | Product requirements and constraints |
 | `docs/RELEASE.md` | Release, package, and lifecycle verification workflow |
+| `docs/platform-smoke.md` | Crabbox macOS, Ubuntu, and native Windows release gate |
 | `docs/SUPPORT_MATRIX.md` | Current upstream support audit and release-readiness matrix |
 | `test/` | Wrapper, runtime, presentation, lifecycle, and package tests |
 

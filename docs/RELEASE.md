@@ -6,6 +6,7 @@ Related docs:
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
 - [`ELECTRON.md`](ELECTRON.md)
+- [`platform-smoke.md`](platform-smoke.md)
 - [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
 - Bounded `agent_browser` outcome metadata on `details` (`resultCategory`, `successCategory`, `failureCategory`, optional `nextActions`, optional `pageChangeSummary` with per-step summaries on `batch`): contract in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details); maintainer checklists under “Tool result categories” and “Page-change summaries” in [`../AGENTS.md`](../AGENTS.md)
 - Post-success `get text` selector visibility (`RQ-0074`): optional `details.selectorTextVisibility` / `selectorTextVisibilityAll`, visible warnings, and `inspect-visible-text-candidates*` next actions after read-only visibility probes—[`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md), [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details), and [`../AGENTS.md`](../AGENTS.md) maintainer checklist
@@ -23,6 +24,8 @@ From the repository root:
 ```bash
 npm install
 npm run doctor
+npm run check:platform-smoke
+npm run smoke:platform:ubuntu-image
 npm run verify -- release
 ```
 
@@ -32,18 +35,27 @@ npm run verify -- release
 
 1. `npm run verify` for generated playbook drift, TypeScript, unit/fake coverage, command-reference generated-block drift, and live command-reference verification against the targeted upstream on `PATH`
 2. `npm run verify -- package-pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
+3. `npm run smoke:platform:doctor` and the full Crabbox matrix from [`platform-smoke.md`](platform-smoke.md): macOS SSH, Ubuntu local-container, and native Windows Parallels targets running fast target-local `platform-build` plus `browser-dogfood-smoke`
 
-`npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`) plus the packaged Pi smoke in `package-pi`. Using `npm publish --ignore-scripts` skips that contract intentionally.
+`npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`) plus the packaged Pi smoke in `package-pi` and the release-blocking Crabbox platform matrix. Using `npm publish --ignore-scripts` skips that contract intentionally.
 
-`prepublishOnly` intentionally does **not** run `npm run verify -- lifecycle`, `npm run verify -- real-upstream`, `npm run verify -- dogfood`, or `npm run verify -- benchmark`; those are separate `npm run verify` modes in [`scripts/project.mjs`](../scripts/project.mjs). Treat the bullets below as the full pre-publish contract even though only the `release` slice is automated at publish time.
+`prepublishOnly` intentionally does **not** run the standalone host-only `npm run verify -- lifecycle`, `npm run verify -- real-upstream`, `npm run verify -- dogfood`, or `npm run verify -- benchmark` modes; those remain separate `npm run verify` modes in [`scripts/project.mjs`](../scripts/project.mjs). The platform matrix includes its own fast target-local build/package gate and browser dogfood suite, and is automated through the `release` slice.
 
-For a deterministic real-browser wrapper smoke without model choice in the loop, run:
+For a deterministic host-only real-browser wrapper smoke without model choice in the loop, run:
 
 ```bash
 npm run verify -- dogfood
 ```
 
-This mode uses the extension harness and the real `agent-browser` on `PATH` against public `example.com`, then verifies top-level `qa`, `semanticAction`, `qa.attached`, constrained `job`, screenshot artifact verification, and session close. Use `npm run verify -- dogfood --keep-artifacts` or `--artifact-dir <path>` only while debugging, then delete retained screenshots. This smoke complements, but does not replace, human-readable interactive transcript evidence.
+For direct Crabbox diagnostics outside the full release compose, run:
+
+```bash
+npm run smoke:platform:doctor
+npm run smoke:platform:ubuntu-image
+npm run smoke:platform:all
+```
+
+This mode uses the extension harness and the real `agent-browser` on `PATH` against a deterministic local file fixture, then verifies top-level `qa`, `semanticAction`, constrained `job`, screenshot artifact verification, and session close. Use `npm run verify -- dogfood --keep-artifacts` or `--artifact-dir <path>` only while debugging, then delete retained screenshots. This smoke complements, but does not replace, human-readable interactive transcript evidence.
 
 Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. For extension-focused release smokes, use `pi --no-extensions --no-skills -e .` from the checkout before publish so auto-loaded dogfood/QA skills cannot replace the bounded smoke workflow; run separate skill-enabled dogfood only when validating skill routing or report-generation behavior. Drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost, fake-upstream, and deterministic dogfood gates do not replace this human-readable live-site transcript evidence. When `electron.*` surfaces, attached-session diagnostics, or `qa.attached` changed, add a local Electron pass: `electron.list` → `electron.launch` (expect isolated profile behavior) → `snapshot -i` or `electron.probe` / `qa.attached` → `electron.cleanup` with the returned `launchId`, verifying status/mismatch guidance if you simulate a dead renderer or stale refs. For dense-dashboard stress coverage, use the [public Grafana stress checklist](#public-grafana-stress-checklist) below; it is a maintainer workflow, not bundled product skill or recipe runtime.
 
@@ -260,7 +272,7 @@ The default unit suite also runs `agentBrowserExtension passes through core comm
 - **Missing or extra `details` / `data` keys:** Update `test/fixtures/agent-browser-real-output-shapes.json` in the same change as the wrapper or presentation code that shifts those keys.
 - **Timeouts:** A 120s bound covers the full matrix; repeated timeouts usually mean a hung browser, blocked loopback, or an environment preventing headful/headless launch—check upstream logs and local security tooling before loosening timeouts.
 
-The current upstream `agent-browser 0.27.0` `wait --download <path>` saveAs persistence limitation is tracked at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300); until it is fixed, release validation must treat `details.savedFilePath` as upstream-reported metadata and use `details.artifacts[].exists` as the filesystem truth (the contract asserts the requested path is absent on disk while upstream still reports success). If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
+The current upstream `agent-browser 0.27.1` `wait --download <path>` saveAs persistence limitation is tracked at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300); until it is fixed, release validation must treat `details.savedFilePath` as upstream-reported metadata and use `details.artifacts[].exists` as the filesystem truth (the contract asserts the requested path is absent on disk while upstream still reports success). If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
 
 Example smoke prompt:
 
@@ -280,7 +292,7 @@ Recommended configured-source lifecycle follow-up:
 
 ## Post-publish install validation
 
-After publishing a release, validate the package-first path in isolation. `npm run verify -- release` includes the deterministic fake-binary packaged execution gate, but it does not replace a real-browser installed-package smoke:
+After publishing a release, validate the package-first path in isolation. `npm run verify -- release` includes the deterministic fake-binary packaged execution gate and the pre-publish Crabbox platform matrix, but it does not replace a real-browser installed-package smoke against the published npm package:
 
 ```bash
 npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor
@@ -309,7 +321,7 @@ Before publishing:
 - run `npm run verify -- real-upstream` for upstream runtime, result-presentation, or managed-session changes
 - confirm both local-checkout modes still work for pre-release validation: isolated `pi --no-extensions -e .` smoke testing for general checkout loading (add `--no-skills` for extension-focused bounded smokes) and configured-source lifecycle validation
 - complete interactive `tmux` live-site extension smoke with `pi --no-extensions --no-skills -e .` and the native `agent_browser` tool (at least one simple static site and one real documentation/product site; include `qa` or `job`/`batch` when those surfaces changed; use the [public Grafana stress checklist](#public-grafana-stress-checklist) when dashboard/diagnostic/artifact behavior changed; close sessions and remove screenshots/temp artifacts; record evidence). Run separate skill-enabled dogfood only when validating skill routing/report-generation behavior—see [Pre-release checks](#pre-release-checks); automated gates are not a substitute
-- rerun `npm run verify -- release`
+- rerun `npm run verify -- release` and confirm the embedded Crabbox `platform-build` plus `browser-dogfood-smoke` matrix passed on `macos`, `ubuntu`, and `windows-native` with artifacts under `.artifacts/platform-smoke/`
 - run `npm run verify -- lifecycle` for configured-source `/reload`, exact `--session-id` relaunch, managed-session continuity, persisted-spill, and Pi failure-patch regression coverage (required before publish; see [Pre-release checks](#pre-release-checks))
 - confirm [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) still maps every current baseline inventory section to docs, runtime handling, tests, and validation status
 - manually exercise real-browser `/reload` and full restart plus exact `--session-id` relaunch or `/resume` continuity when release risk warrants browser-level confidence beyond the fake upstream harness

@@ -25,6 +25,7 @@ export { FORBIDDEN_PACKED_FILES, FORBIDDEN_REPO_FILES, REQUIRED_REPO_FILES, load
 
 const execFile = promisify(execFileCallback);
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmExecOptions = process.platform === "win32" ? { shell: true } : {};
 const tarCommand = process.platform === "win32" ? "tar.exe" : "tar";
 const SUPPORTED_ARGS = new Set(["--list-files", "--smoke-pi"]);
 const PACKAGED_AGENT_BROWSER_SMOKE_ARGS = ["--version"];
@@ -129,6 +130,7 @@ function parseSinglePackResult(stdout, stderr) {
 
 async function getDryRunPackResult(cwd = process.cwd()) {
 	const { stdout, stderr } = await execFile(npmCommand, ["pack", "--json", "--dry-run"], {
+		...npmExecOptions,
 		cwd,
 		maxBuffer: 5 * 1024 * 1024,
 	});
@@ -145,6 +147,7 @@ export async function packToTemporaryPackageDir(cwd = process.cwd()) {
 			npmCommand,
 			["pack", "--json", "--pack-destination", tempDir, "--dry-run=false"],
 			{
+				...npmExecOptions,
 				cwd,
 				maxBuffer: 5 * 1024 * 1024,
 			},
@@ -155,7 +158,7 @@ export async function packToTemporaryPackageDir(cwd = process.cwd()) {
 		}
 
 		tarballPath = resolve(tempDir, packResult.filename);
-		await execFile(tarCommand, ["xzf", tarballPath, "-C", tempDir], {
+		await execFile(tarCommand, [...(process.platform === "win32" ? ["--force-local"] : []), "-xzf", tarballPath, "-C", tempDir], {
 			maxBuffer: 5 * 1024 * 1024,
 		});
 
