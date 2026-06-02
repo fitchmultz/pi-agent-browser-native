@@ -1,9 +1,9 @@
 /**
  * Purpose: Lock the maintainer npm verification facade so queue/release gates do not silently drop required checks.
- * Responsibilities: Assert `npm run verify` orchestration keeps docs drift, typecheck, unit/fake tests, command-reference, real-upstream, and package Pi smoke steps wired to their focused scripts.
+ * Responsibilities: Assert `npm run verify` orchestration keeps docs drift, typecheck, unit/fake tests, command-reference, real-upstream, package Pi smoke, platform-target, and platform smoke steps wired to their focused scripts.
  * Scope: Unit coverage for scripts/project.mjs command planning only; the focused scripts own their own runtime behavior.
  * Usage: Runs under `npm test` via tsx's test runner.
- * Invariants/Assumptions: The default gate is local and deterministic except for live command-reference sampling; real-upstream and packaged Pi smoke stay explicit opt-in modes.
+ * Invariants/Assumptions: The default gate is local and deterministic except for live command-reference sampling; real-upstream and platform diagnostics stay explicit modes while release composes the required platform gate.
  */
 
 import assert from "node:assert/strict";
@@ -34,7 +34,7 @@ test("verify facade default gate keeps docs, typecheck, unit/fake, and command-r
 	]);
 });
 
-test("verify facade opt-in modes keep real-upstream, dogfood, and package-pi gates explicit", () => {
+test("verify facade opt-in modes keep real-upstream, dogfood, package-pi, platform-target, and platform smoke gates explicit", () => {
 	const realUpstream = verifySteps({ mode: "real-upstream", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(realUpstream), ["--test test/agent-browser.real-upstream-contract.test.ts"]);
 	assert.equal(realUpstream[0]?.env?.PI_AGENT_BROWSER_REAL_UPSTREAM, "1");
@@ -44,9 +44,20 @@ test("verify facade opt-in modes keep real-upstream, dogfood, and package-pi gat
 
 	const packagePi = verifySteps({ mode: "package-pi", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(packagePi), ["./scripts/verify-package.mjs --smoke-pi"]);
+
+	const platformTarget = verifySteps({ mode: "platform-target", passthrough: [], showHelp: false });
+	assert.deepEqual(labels(platformTarget), [
+		"./scripts/check-playbook-drift.ts --check",
+		"./scripts/check-command-reference-baseline.mjs --check",
+		"--noEmit",
+		"--test --test-concurrency=1 test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts",
+	]);
+
+	const platformSmoke = verifySteps({ mode: "platform-smoke", passthrough: ["run", "--target", "macos", "--suite", "platform-build"], showHelp: false });
+	assert.deepEqual(labels(platformSmoke), ["./scripts/platform-smoke.mjs run --target macos --suite platform-build"]);
 });
 
-test("verify facade release gate composes default verification and packaged Pi smoke", () => {
+test("verify facade release gate composes default verification, packaged Pi smoke, and platform smoke", () => {
 	const release = verifySteps({ mode: "release", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(release), [
 		"./scripts/check-playbook-drift.ts --check",
@@ -55,6 +66,8 @@ test("verify facade release gate composes default verification and packaged Pi s
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
 		"./scripts/verify-package.mjs --smoke-pi",
+		"./scripts/platform-smoke.mjs doctor",
+		"./scripts/platform-smoke.mjs run --target macos,ubuntu,windows-native",
 	]);
 });
 
@@ -73,6 +86,10 @@ test("verify facade rejects unsupported options before running a partial gate", 
 	assert.throws(
 		() => verifySteps({ mode: "dogfood", passthrough: ["--artifact-dir"], showHelp: false }),
 		/--artifact-dir requires a path/,
+	);
+	assert.throws(
+		() => verifySteps({ mode: "platform-smoke", passthrough: ["run", "--target"], showHelp: false }),
+		/--target requires a value/,
 	);
 	assert.deepEqual(parseVerifyArgs(["package", "--list-files"]), {
 		mode: "package",

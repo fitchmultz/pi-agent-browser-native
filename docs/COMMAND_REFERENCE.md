@@ -18,7 +18,7 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.27.0` command/help surface, audited against vercel-labs/agent-browser@4ad284890cb59564af603e6de403dd75dd19e832. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.27.1` command/help surface, audited against vercel-labs/agent-browser@90050f2913159875e2c3719e424746396ccb3cbf. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
@@ -126,7 +126,7 @@ Use `vitals [url]` for Core Web Vitals plus React hydration timing when availabl
 { "args": ["pushstate", "/dashboard?tab=settings"] }
 ```
 
-For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant v0.27.0 surfaces are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
+For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant v0.27.1 surfaces are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
 
 ```json
 { "args": ["open"], "sessionMode": "fresh" }
@@ -330,7 +330,7 @@ For one-call flows, put the click and wait in `batch`; the wait step keeps the s
 { "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
 ```
 
-A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.27.0`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
+A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.27.1`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
 
 ### Download, screenshot, and PDF files
 
@@ -598,7 +598,7 @@ When a snapshot is too large for inline output, the Pi wrapper renders a compact
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. In the native Pi wrapper, use `25000` ms or less per call to stay under the upstream CLI IPC budget. |
 
-Current v0.27.0 source does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
+Current v0.27.1 source does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
 
 ### Diff, debug, and streaming
 
@@ -607,7 +607,7 @@ Current v0.27.0 source does not parse `wait <selector> --state hidden` / `wait <
 | `diff snapshot` | Compare current versus last snapshot. Use `diff snapshot --baseline <file> --selector <sel> --compact --depth <n>` when you need a saved baseline, scoped subtree, compact output, or depth bound. |
 | `diff screenshot --baseline` | Compare current screenshot versus a baseline image. Use `diff screenshot --baseline <file> --output <file> --threshold <0-1> --selector <sel> --full` when you need a saved diff image, threshold tuning, element scope, or full-page capture. |
 | `diff url <u1> <u2>` | Compare two pages. Use `diff url <u1> <u2> --screenshot --wait-until <strategy> --selector <sel> --compact --depth <n>` when you need screenshot comparison, navigation wait control, or scoped/compact snapshot comparison. |
-| `trace start|stop [path]` | Record a Chrome DevTools trace. |
+| `trace start`, `trace stop [path]` | Record a Chrome DevTools trace. |
 | `profiler start|stop [path]` | Record a Chrome DevTools profile. |
 | `record start <path> [url]` | Start WebM video recording; output is written on `record stop`. Requires `ffmpeg` on `PATH` for the final encode. |
 | `record stop` | Stop and save video. If this fails with `ffmpeg not found`, install `ffmpeg` / `ffmpeg-full` and rerun the recording. |
@@ -750,14 +750,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.27.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.27.1</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `4ad284890cb59564af603e6de403dd75dd19e832`
-- upstream package version: `0.27.0`
+- upstream HEAD: `90050f2913159875e2c3719e424746396ccb3cbf`
+- upstream package version: `0.27.1`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -824,7 +824,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - Built-in skills: 13 human-doc token(s), 13 upstream token(s)
 - Core page, element, navigation, and extraction commands: 74 human-doc token(s), 74 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 20 human-doc token(s), 16 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 42 human-doc token(s), 51 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 43 human-doc token(s), 53 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 24 human-doc token(s), 24 upstream token(s)
 - Global flags, config, providers, policy, and environment: 117 human-doc token(s), 90 upstream token(s)
 
@@ -960,7 +960,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - `diff screenshot --baseline <file> --output <file> --threshold <0-1> --selector <sel> --full`
 - `diff url <u1> <u2>`
 - `diff url <u1> <u2> --screenshot --wait-until <strategy> --selector <sel> --compact --depth <n>`
-- `trace start|stop [path]`
+- `trace start`
+- `trace stop [path]`
 - `profiler start|stop [path]`
 - `record start <path> [url]`
 - `record restart <path> [url]`
@@ -1252,7 +1253,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `storage <local|session>`
 - root help: `diff snapshot`
 - root help: `diff screenshot --baseline`
-- root help: `trace start|stop [path]`
+- root help: `trace start`
+- root help: `trace stop [path]`
 - root help: `profiler start|stop [path]`
 - root help: `record start <path> [url]`
 - root help: `record stop`
@@ -1288,7 +1290,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - diff help: `--threshold <0-1>`
 - diff help: `--wait-until <strategy>`
 - diff help: `diff screenshot --baseline <f>`
-- trace help: `trace <operation> [path]`
+- trace help: `trace start`
+- trace help: `trace stop [path]`
 - profiler help: `--categories <list>`
 - record help: `record restart <path.webm> [url]`
 - console help: `--clear`

@@ -1,15 +1,16 @@
 /**
  * Purpose: Execute the upstream agent-browser binary for the pi-agent-browser extension.
- * Responsibilities: Spawn the agent-browser subprocess without a shell, forward a curated environment surface, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
+ * Responsibilities: Spawn the agent-browser subprocess, forward a curated environment surface, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
  * Scope: Process execution only; argument planning, output formatting, and pi tool registration live elsewhere.
  * Usage: Called by the extension tool after argument validation and session planning are complete.
- * Invariants/Assumptions: The binary name is always `agent-browser`, the wrapper never shells out, and callers handle semantic success/error interpretation.
+ * Invariants/Assumptions: The binary name is always `agent-browser`; Windows routes through PowerShell to invoke npm launchers with escaped argv; callers handle semantic success/error interpretation.
  */
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { chmod, mkdir } from "node:fs/promises";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
+import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
 const MAX_BUFFERED_STDOUT_BYTES = 512 * 1_024;
@@ -105,6 +106,52 @@ export interface ProcessRunResult {
 function appendTail(text: string, addition: string, maxChars: number): string {
 	const combined = text + addition;
 	return combined.length <= maxChars ? combined : combined.slice(combined.length - maxChars);
+}
+
+function quoteWindowsPowerShellArg(value: string): string {
+	return `'${value.replace(/'/g, "''")}'`;
+}
+
+const WINDOWS_LEADING_GLOBAL_VALUE_FLAGS = new Set<string>(GLOBAL_VALUE_FLAGS);
+
+/** Exported for unit tests that lock Windows launcher argv ordering. */
+export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
+	const leadingGlobals: string[] = [];
+	let index = 0;
+	while (index < args.length && args[index]?.startsWith("-")) {
+		const token = args[index];
+		const flagName = getFlagName(token);
+		leadingGlobals.push(token);
+		index += 1;
+		if (WINDOWS_LEADING_GLOBAL_VALUE_FLAGS.has(flagName) && !token.includes("=") && index < args.length) {
+			leadingGlobals.push(args[index]);
+			index += 1;
+			continue;
+		}
+		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(flagName) && ["true", "false"].includes(args[index] ?? "")) {
+			leadingGlobals.push(args[index]);
+			index += 1;
+		}
+	}
+	if (leadingGlobals.length === 0 || index >= args.length) return args;
+	return [args[index], ...leadingGlobals, ...args.slice(index + 1)];
+}
+
+function buildAgentBrowserSpawnCommand(args: string[]): { command: string; args: string[] } {
+	if (processPlatform !== "win32") {
+		return { command: "agent-browser", args };
+	}
+	const commandLine = ["&", "agent-browser", ...reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg)].join(" ");
+	return { command: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", commandLine] };
+}
+
+function terminateSpawnedChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+	if (processPlatform === "win32" && child.pid) {
+		const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+		killer.on("error", () => undefined);
+		killer.unref();
+	}
+	child.kill(signal);
 }
 
 /** Exported for unit tests that lock subprocess exit-code precedence. */
@@ -234,17 +281,27 @@ async function ensureAgentBrowserSocketDir(socketDir: string): Promise<boolean> 
 	}
 }
 
+function getChildEnvName(name: string): string | undefined {
+	if (processPlatform === "win32") {
+		const upperName = name.toUpperCase();
+		if (INHERITED_ENV_NAMES.has(upperName)) return upperName;
+		return INHERITED_ENV_PREFIXES.some((prefix) => upperName.startsWith(prefix)) ? upperName : undefined;
+	}
+	if (INHERITED_ENV_NAMES.has(name) || INHERITED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))) {
+		return name;
+	}
+	return undefined;
+}
+
 export function buildAgentBrowserProcessEnv(
 	baseEnv: NodeJS.ProcessEnv = processEnv,
 	overrides: NodeJS.ProcessEnv | undefined = undefined,
 ): NodeJS.ProcessEnv {
 	const childEnv: NodeJS.ProcessEnv = {};
 	for (const [name, value] of Object.entries(baseEnv)) {
-		if (
-			value !== undefined &&
-			(INHERITED_ENV_NAMES.has(name) || INHERITED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)))
-		) {
-			childEnv[name] = value;
+		const childName = getChildEnvName(name);
+		if (value !== undefined && childName) {
+			childEnv[childName] = value;
 		}
 	}
 
@@ -254,10 +311,11 @@ export function buildAgentBrowserProcessEnv(
 	}
 
 	for (const [name, value] of Object.entries(overrides)) {
+		const childName = getChildEnvName(name) ?? name;
 		if (value === undefined) {
-			delete childEnv[name];
+			delete childEnv[childName];
 		} else {
-			childEnv[name] = value;
+			childEnv[childName] = value;
 		}
 	}
 	clampUpstreamDefaultTimeout(childEnv);
@@ -371,7 +429,8 @@ export async function runAgentBrowserProcess(options: {
 			});
 		};
 
-		const child = spawn("agent-browser", args, {
+		const spawnCommand = buildAgentBrowserSpawnCommand(args);
+		const child = spawn(spawnCommand.command, spawnCommand.args, {
 			cwd,
 			env: buildAgentBrowserProcessEnv(processEnv, effectiveEnv),
 			stdio: ["pipe", "pipe", "pipe"],
@@ -384,15 +443,15 @@ export async function runAgentBrowserProcess(options: {
 			} else {
 				timedOut = true;
 			}
-			child.kill("SIGTERM");
+			terminateSpawnedChild(child, "SIGTERM");
 			killTimer = setTimeout(() => {
-				child.kill("SIGKILL");
+				terminateSpawnedChild(child, "SIGKILL");
 			}, 2_000);
 		};
 		const recordStdinError = (error: unknown) => {
 			const stdinError = error instanceof Error ? error : new Error(String(error));
 			const errorCode = (stdinError as NodeJS.ErrnoException).code;
-			if (errorCode === "EPIPE" || errorCode === "ERR_STREAM_DESTROYED") {
+			if (errorCode === "EPIPE" || errorCode === "EOF" || errorCode === "ERR_STREAM_DESTROYED") {
 				return;
 			}
 			if (!spawnError) {

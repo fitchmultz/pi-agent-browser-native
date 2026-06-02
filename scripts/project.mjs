@@ -78,7 +78,9 @@ Modes:
   package             Verify package contents.
   package-pi          Verify package contents plus isolated Pi package smoke.
   lifecycle           Run the tmux-driven configured-source lifecycle harness.
-  release             Run default verification plus package-pi.
+  platform-target     Fast platform-local gate used inside Crabbox smoke targets.
+  platform-smoke      Run the Crabbox macOS/Ubuntu/native-Windows platform smoke harness.
+  release             Run default verification, package-pi, and release-blocking platform smoke.
 
 Options:
   --artifact-dir <p>  With dogfood mode, write screenshots to this directory.
@@ -88,6 +90,10 @@ Options:
   --verbose           With lifecycle mode, print progress details.
   --timeout-ms <ms>   With lifecycle mode, override the per-step wait timeout (default 180000).
   --list-files        With package mode, print every packed file path.
+  doctor              With platform-smoke mode, run setup doctor.
+  run                 With platform-smoke mode, run target suites.
+  --target <names>    With platform-smoke mode, comma-separated target list.
+  --suite <name>      With platform-smoke mode, run one suite.
 
 Examples:
   npm run verify
@@ -97,10 +103,12 @@ Examples:
   npm run verify -- package --list-files
   npm run verify -- package-pi
   npm run verify -- lifecycle --keep-artifacts --verbose
+  npm run verify -- platform-smoke doctor
+  npm run verify -- platform-smoke run --target macos --suite platform-build
   npm run verify -- release
 
 Publisher note:
-  package.json prepublishOnly runs release (default + package-pi), then npm pack --dry-run during npm publish.
+  package.json prepublishOnly runs release (default + package-pi + platform smoke), then npm pack --dry-run during npm publish.
   It does not run lifecycle, real-upstream, dogfood, or benchmark; see docs/RELEASE.md#pre-release-checks.
 
 Exit codes:
@@ -113,12 +121,17 @@ function commandLabel(command, args) {
 	return [command, ...args].join(" ");
 }
 
+function shouldUseShell(command) {
+	return process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command);
+}
+
 function run(command, args, options = {}) {
 	return new Promise((resolve, reject) => {
 		console.log(`\n> ${commandLabel(command, args)}`);
 		const child = spawn(command, args, {
 			cwd: process.cwd(),
 			env: { ...process.env, ...options.env },
+			shell: shouldUseShell(command),
 			stdio: "inherit",
 		});
 		child.on("error", reject);
@@ -196,6 +209,8 @@ export function parseVerifyArgs(argv) {
 		"package",
 		"package-pi",
 		"lifecycle",
+		"platform-target",
+		"platform-smoke",
 		"release",
 	]);
 	if (!supportedModes.has(mode)) {
@@ -204,7 +219,31 @@ export function parseVerifyArgs(argv) {
 	return { mode, passthrough: rest, showHelp: false };
 }
 
+function validatePlatformSmokePassthrough(passthrough) {
+	const allowedCommands = new Set(["doctor", "run"]);
+	const allowedFlags = new Set(["--target", "--suite"]);
+	let commandCount = 0;
+	for (let index = 0; index < passthrough.length; index += 1) {
+		const arg = passthrough[index];
+		if (allowedCommands.has(arg)) {
+			commandCount += 1;
+			if (commandCount > 1) throw new UsageError("platform-smoke accepts one command: doctor or run.");
+			continue;
+		}
+		if (!allowedFlags.has(arg)) {
+			throw new UsageError(`Option ${arg} is not supported for verify mode platform-smoke.`);
+		}
+		const value = passthrough[index + 1];
+		if (!value || value.startsWith("-")) throw new UsageError(`${arg} requires a value.`);
+		index += 1;
+	}
+}
+
 function validatePassthrough(mode, passthrough) {
+	if (mode === "platform-smoke") {
+		validatePlatformSmokePassthrough(passthrough);
+		return;
+	}
 	const allowedByMode = {
 		default: new Set(),
 		typecheck: new Set(),
@@ -215,6 +254,8 @@ function validatePassthrough(mode, passthrough) {
 		package: new Set(["--list-files"]),
 		"package-pi": new Set(["--list-files"]),
 		lifecycle: new Set(["--keep-artifacts", "--model", "--verbose", "--timeout-ms"]),
+		"platform-target": new Set(),
+		"platform-smoke": new Set(),
 		release: new Set(),
 	};
 	const allowed = allowedByMode[mode];
@@ -277,10 +318,27 @@ export function verifySteps(options) {
 			return [scriptStep(["./scripts/verify-package.mjs", "--smoke-pi", ...options.passthrough])];
 		case "lifecycle":
 			return [scriptStep(["./scripts/verify-lifecycle.mjs", ...options.passthrough])];
+		case "platform-target":
+			return [
+				...docsSteps({ mode: "check", target: "all" }),
+				localToolStep("tsc", ["--noEmit"]),
+				localToolStep("tsx", [
+					"--test",
+					"--test-concurrency=1",
+					"test/project-verify.test.ts",
+					"test/platform-smoke.test.ts",
+					"test/verify-package.test.ts",
+					"test/agent-browser.runtime.test.ts",
+				]),
+			];
+		case "platform-smoke":
+			return [scriptStep(["./scripts/platform-smoke.mjs", ...options.passthrough])];
 		case "release":
 			return [
 				...verifySteps({ mode: "default", passthrough: [], showHelp: false }),
 				...verifySteps({ mode: "package-pi", passthrough: [], showHelp: false }),
+				scriptStep(["./scripts/platform-smoke.mjs", "doctor"]),
+				scriptStep(["./scripts/platform-smoke.mjs", "run", "--target", "macos,ubuntu,windows-native"]),
 			];
 	}
 }

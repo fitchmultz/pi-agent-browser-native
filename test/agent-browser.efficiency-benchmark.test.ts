@@ -15,6 +15,56 @@ import test from "node:test";
 // @ts-expect-error The benchmark is a local ESM maintainer script without a declaration file.
 import * as benchmarkModule from "../scripts/agent-browser-efficiency-benchmark.mjs";
 
+interface BenchmarkScenarioInput {
+  id: string;
+  [key: string]: unknown;
+}
+
+interface BenchmarkScenarioSummary {
+  artifactSuccesses: number;
+  failureCategories: string[];
+  id: string;
+  modelVisibleBytes: number;
+  staleRefFailures: number;
+  staleRefRecoveries: number;
+  success: boolean;
+  toolCalls: number;
+  workflow: string;
+}
+
+interface BenchmarkMetrics {
+  artifactSuccesses: number;
+  elapsedMsEstimate: number;
+  failureCategoriesCovered: string[];
+  failureCategoryCoverage: number;
+  modelVisibleBytes: number;
+  scenarios: number;
+  staleRefFailures: number;
+  staleRefRecoveries: number;
+  successes: number;
+  successRate: number;
+  toolCalls: number;
+}
+
+interface JsonlWorkflowSample {
+  p95ModelVisibleBytes: number;
+  toolResultCount: number;
+  workflowId: string;
+}
+
+interface JsonlSampleReport {
+  byWorkflow: JsonlWorkflowSample[];
+  toolResultCount: number;
+  totalModelVisibleBytes: number;
+}
+
+interface BenchmarkReport {
+  jsonlSample?: JsonlSampleReport;
+  metrics: BenchmarkMetrics;
+  scenarios: BenchmarkScenarioSummary[];
+  version: number;
+}
+
 const {
   BENCHMARK_SCENARIOS,
   agentBrowserToolResults,
@@ -28,17 +78,17 @@ const {
   sampleAgentBrowserJsonl,
   summarizeScenario,
 }: {
-  BENCHMARK_SCENARIOS: Array<{ id: string }>;
+  BENCHMARK_SCENARIOS: BenchmarkScenarioInput[];
   agentBrowserToolResults: (entries: unknown[]) => unknown[];
-  buildBenchmarkReport: (options?: { jsonlSample?: unknown }) => any;
-  buildJsonlSampleReport: (options: { path: string; results: unknown[] }) => any;
-  compareBenchmarkReports: (current: any, candidate: any) => { passed: boolean; regressions: string[] };
+  buildBenchmarkReport: (options?: { jsonlSample?: JsonlSampleReport }) => BenchmarkReport;
+  buildJsonlSampleReport: (options: { path: string; results: unknown[] }) => JsonlSampleReport;
+  compareBenchmarkReports: (current: BenchmarkReport, candidate: BenchmarkReport) => { passed: boolean; regressions: string[] };
   inferJsonlWorkflowId: (message: unknown) => string;
   measureToolResultModelVisibleBytes: (message: unknown) => number;
   parseJsonl: (text: string) => unknown[];
   percentile95: (values: number[]) => number;
-  sampleAgentBrowserJsonl: (path: string) => Promise<any>;
-  summarizeScenario: (scenario: any) => any;
+  sampleAgentBrowserJsonl: (path: string) => Promise<JsonlSampleReport>;
+  summarizeScenario: (scenario: BenchmarkScenarioInput) => BenchmarkScenarioSummary;
 } = benchmarkModule;
 
 const sampleFixturePath = join(import.meta.dirname, "fixtures", "agent-browser-efficiency-sample.jsonl");

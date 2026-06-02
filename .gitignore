@@ -3,5 +3,11 @@ node_modules/
 .pi/
 *.tgz
 
+# Local verification and platform-smoke state
+.artifacts/
+.crabbox/
+.debug/
+.platform-smoke-runs/
+
 # CueLoop local/runtime state (do not commit)
 .cueloop/

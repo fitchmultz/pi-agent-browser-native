@@ -428,6 +428,12 @@ async function runWithPatchedEnv<T>(patch: Record<string, string | undefined>, r
 		previousValues.set(name, process.env[name]);
 		if (value === undefined) {
 			delete process.env[name];
+		} else if (processPlatform === "win32" && name.toLowerCase() === "path" && previousValues.get(name)) {
+			const previousPath = previousValues.get(name) ?? "";
+			const posixStyleSuffix = `:${previousPath}`;
+			process.env[name] = value.endsWith(posixStyleSuffix)
+				? `${value.slice(0, -posixStyleSuffix.length)};${previousPath}`
+				: value;
 		} else {
 			process.env[name] = value;
 		}

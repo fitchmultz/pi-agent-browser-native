@@ -41,13 +41,15 @@ test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidat
 		}),
 	]);
 
-	assert.deepEqual(state.get("s1"), {
+	const restoredSession = state.get("s1");
+	assert.deepEqual(restoredSession, {
 		pinningReason: "restore",
 		refSnapshot: { refIds: ["e1"], target: { title: "Example", url: "https://example.com/page" } },
 		refSnapshotInvalidation: undefined,
 		tabTarget: { title: "Example", url: "https://example.com/page" },
 	});
-	assert.equal("order" in (state.get("s1").refSnapshot as unknown as Record<string, unknown>), false);
+	assert.ok(restoredSession.refSnapshot);
+	assert.equal("order" in restoredSession.refSnapshot, false);
 	assert.deepEqual(state.get("s2"), {
 		pinningReason: undefined,
 		refSnapshot: undefined,

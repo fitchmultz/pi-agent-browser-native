@@ -14,8 +14,8 @@ export const COMMAND_REFERENCE_BASELINE_BLOCK_IDS = Object.freeze(["upstream-bas
 
 const sourceEvidence = Object.freeze({
   repository: "vercel-labs/agent-browser",
-  upstreamHead: "4ad284890cb59564af603e6de403dd75dd19e832",
-  upstreamPackageVersion: "0.27.0",
+  upstreamHead: "90050f2913159875e2c3719e424746396ccb3cbf",
+  upstreamPackageVersion: "0.27.1",
   inspectedSources: Object.freeze([
     "agent-browser --version",
     "agent-browser --help",
@@ -349,7 +349,8 @@ const inventorySections = Object.freeze([
       "diff screenshot --baseline <file> --output <file> --threshold <0-1> --selector <sel> --full",
       "diff url <u1> <u2>",
       "diff url <u1> <u2> --screenshot --wait-until <strategy> --selector <sel> --compact --depth <n>",
-      "trace start|stop [path]",
+      "trace start",
+      "trace stop [path]",
       "profiler start|stop [path]",
       "record start <path> [url]",
       "record restart <path> [url]",
@@ -386,7 +387,8 @@ const inventorySections = Object.freeze([
       root("storage <local|session>"),
       root("diff snapshot"),
       root("diff screenshot --baseline"),
-      root("trace start|stop [path]"),
+      root("trace start"),
+      root("trace stop [path]"),
       root("profiler start|stop [path]"),
       root("record start <path> [url]"),
       root("record stop"),
@@ -422,7 +424,8 @@ const inventorySections = Object.freeze([
       ["diff help", "--threshold <0-1>"],
       ["diff help", "--wait-until <strategy>"],
       ["diff help", "diff screenshot --baseline <f>"],
-      ["trace help", "trace <operation> [path]"],
+      ["trace help", "trace start"],
+      ["trace help", "trace stop [path]"],
       ["profiler help", "--categories <list>"],
       ["record help", "record restart <path.webm> [url]"],
       ["console help", "--clear"],
@@ -703,7 +706,7 @@ const inventorySections = Object.freeze([
 ]);
 
 export const CAPABILITY_BASELINE = Object.freeze({
-  targetVersion: "0.27.0",
+  targetVersion: "0.27.1",
   sourceEvidence,
   helpCommands,
   inventorySections,

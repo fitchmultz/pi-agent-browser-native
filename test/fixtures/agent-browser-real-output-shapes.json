@@ -1,6 +1,6 @@
 {
   "purpose": "Stable real upstream agent-browser output-shape expectations for the opt-in contract suite.",
-  "targetVersion": "0.27.0",
+  "targetVersion": "0.27.1",
   "commands": {
     "version": {
       "detailKeys": ["args", "command", "effectiveArgs", "exitCode", "inspection", "sessionMode", "summary"]
@@ -49,7 +49,7 @@
     },
     "vitals": {
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "summary", "usedImplicitSession"],
-      "dataKeys": ["report"]
+      "dataKeys": ["cls", "fcp", "lcp", "ttfb", "url"]
     },
     "networkRoute": {
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "subcommand", "summary", "usedImplicitSession"],
