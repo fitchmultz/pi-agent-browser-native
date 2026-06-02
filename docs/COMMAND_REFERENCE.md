@@ -663,6 +663,48 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 
 When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. Local inspection/setup calls (`auth save/list/show/delete/remove`, `dashboard start/stop`, `device list`, `doctor`, `install`, `upgrade`, `profiles`, `session list`, `state list/show/rename`, `state clean --older-than <days>`, `state clear --all`, `state clear -a`, and `state clear <session-name>`) are sessionless unless you explicitly pass `--session`; context-dependent calls such as root `session`, untargeted `state clear`, `auth login`, `chat`, and `state save/load` keep normal session behavior. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; command echoes also redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, cookie/storage values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
 
+## Optional package config and companion web search
+
+`pi-agent-browser-native` has package-owned config under Pi-scoped paths. This is separate from upstream `agent-browser` config and from Pi package settings:
+
+- global: `~/.pi/config/pi-agent-browser-native/config.json`
+- project-local: `.pi/config/pi-agent-browser-native/config.json`
+- explicit override: `PI_AGENT_BROWSER_CONFIG=/path/to/config.json`
+
+Get a Brave Search API key from the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). Brave currently advertises free monthly credits for Search API usage, which is usually ample for light personal agent/dogfood use; confirm current pricing and limits on Brave's dashboard before relying on it for heavier workflows.
+
+Inspect and write config with the package helper:
+
+```bash
+pi-agent-browser-config paths
+pi-agent-browser-config show
+pi-agent-browser-config web-search set-env BRAVE_API_KEY --project
+pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --global
+printf '%s' "$BRAVE_API_KEY" | pi-agent-browser-config web-search set-key --stdin
+pi-agent-browser-config browser profile set Default --policy authenticated-only
+```
+
+The optional `agent_browser_web_search` tool is registered only when a Brave Search credential source is configured or resolvable. It is a separate custom tool, not an `agent_browser` input mode, and does not launch a browser. Use it when current/live external web information would help; use `agent_browser` for browser interaction, screenshots, authenticated/profile pages, and DOM inspection. Project-local plaintext, interpolation-literal, malformed, and command-backed Brave keys are refused; use exact `$ENV_VAR` or `${ENV_VAR}` sources there.
+
+Example config:
+
+```json
+{
+  "version": 1,
+  "webSearch": {
+    "braveApiKey": "$BRAVE_API_KEY"
+  },
+  "browser": {
+    "defaultProfile": {
+      "name": "Default",
+      "policy": "authenticated-only"
+    }
+  }
+}
+```
+
+Browser default profile config is conservative: it adds agent guidance for signed-in/account-specific tasks; current releases do not auto-inject `--profile` for every launch.
+
 ## Important global flags, config, and environment
 
 ### Authentication and session flags

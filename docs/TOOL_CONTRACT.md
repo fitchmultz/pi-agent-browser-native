@@ -10,9 +10,10 @@ Related docs:
 
 ## V1 tool
 
-V1 should expose one primary native tool:
+V1 exposes one primary native browser tool and one optional companion search tool:
 
 - `agent_browser`
+- `agent_browser_web_search` when a Brave Search credential source is configured or resolvable
 
 ## Why this tool shape
 
@@ -32,6 +33,49 @@ The tool also needs an operating playbook, not just a capability list. The model
 The native command reference in `docs/COMMAND_REFERENCE.md` is driven by the same pattern: canonical metadata lives in `scripts/agent-browser-capability-baseline.mjs`, selected regions are generated into the Markdown by `npm run docs -- command-reference write`, and `npm run docs` plus `npm run verify -- command-reference` catch drift (the latter also samples the installed `agent-browser` on `PATH`). Maintainer workflow details live in `AGENTS.md` under upstream capability baseline.
 
 Agent-facing efficiency claims are measured with `npm run benchmark:agent-browser` or `npm run verify -- benchmark`. The benchmark is deterministic and does not launch a browser; it tracks representative workflow success, tool calls, model-visible output size, stale-ref failures and recoveries, artifact success, failure-category coverage, and elapsed-time estimates so future abstractions can prove they reduce agent work before replacing raw tool use.
+
+## Optional companion web search
+
+`agent_browser_web_search` is a separate custom tool, not an `agent_browser` input mode. It is registered only when the extension can see a configured Brave Search credential source from `~/.pi/config/pi-agent-browser-native/config.json`, `.pi/config/pi-agent-browser-native/config.json`, `PI_AGENT_BROWSER_CONFIG`, or the `BRAVE_API_KEY` environment fallback. Command credential sources such as `"!op read 'op://Private/Brave Search/API Key'"` are allowed only from trusted global or explicit-override config; they make the tool available without running the command at startup, and the key is resolved when the tool executes. Project-local config may use inert exact `$ENV_VAR` / `${ENV_VAR}` references only; interpolation literals and malformed `$` values are rejected.
+
+Use it when live/current external web information would help answer a task, find current docs/news, or discover candidate URLs. Use `agent_browser` when the task needs browser interaction, screenshots, authenticated/profile content, page inspection, or DOM work. The search tool is Brave-only today, namespaced to avoid colliding with generic `web_search`, and must not expose the resolved API key in content, details, errors, status output, docs examples, logs, or PR artifacts.
+
+Schema:
+
+```json
+{
+  "query": "search text",
+  "count": 5,
+  "offset": 0,
+  "country": "US",
+  "searchLang": "en-US",
+  "safesearch": "moderate",
+  "freshness": "pw"
+}
+```
+
+Result details:
+
+```json
+{
+  "provider": "brave",
+  "query": "search text",
+  "returnedQuery": "search text",
+  "count": 5,
+  "offset": 0,
+  "fetchedAt": "2026-06-02T00:00:00.000Z",
+  "results": [
+    {
+      "title": "Result title",
+      "url": "https://example.com/",
+      "description": "Compact summary",
+      "source": "Example",
+      "age": "1 day ago",
+      "language": "en"
+    }
+  ]
+}
+```
 
 ## Input mode chooser
 

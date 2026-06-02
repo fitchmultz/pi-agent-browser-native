@@ -120,13 +120,17 @@ test("collectVerificationFailures reports each repo and packed invariant breach"
 	assert.match(failures[3] ?? "", /Forbidden packed file present/);
 });
 
-test("evaluatePiSmokeResult requires exactly one packaged agent_browser source", () => {
+test("evaluatePiSmokeResult requires exactly one packaged agent_browser source and allows optional companion tools", () => {
 	assert.deepEqual(
 		evaluatePiSmokeResult({
 			packageDir: "/tmp/pkg/package",
 			tools: [
 				{
 					name: "agent_browser",
+					sourceInfo: { path: "/tmp/pkg/package/extensions/agent-browser/index.ts" },
+				},
+				{
+					name: "agent_browser_web_search",
 					sourceInfo: { path: "/tmp/pkg/package/extensions/agent-browser/index.ts" },
 				},
 			],

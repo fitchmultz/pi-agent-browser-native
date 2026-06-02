@@ -146,6 +146,48 @@ The doctor checks:
 
 It does **not** edit Pi settings and does **not** run upstream `agent-browser doctor --fix`.
 
+## Optional package config and web search
+
+`pi-agent-browser-native` also reads package-owned config under Pi-scoped paths:
+
+- global user config: `~/.pi/config/pi-agent-browser-native/config.json`
+- project config: `.pi/config/pi-agent-browser-native/config.json`
+- explicit override: `PI_AGENT_BROWSER_CONFIG=/path/to/config.json`
+
+Use the setup helper to inspect or write config:
+
+```bash
+pi-agent-browser-config paths
+pi-agent-browser-config show
+```
+
+The optional `agent_browser_web_search` companion tool is Brave-only today and is registered only when a usable Brave Search credential source is configured or resolvable. It is not an `agent_browser` input mode and does not launch a browser; agents may use it whenever current/live external web information helps, then use `agent_browser` when they need page interaction, screenshots, authenticated/profile content, or DOM inspection.
+
+Get a Brave Search API key from the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). Brave currently advertises free monthly credits for Search API usage, which is usually ample for light personal agent/dogfood use; confirm current pricing and limits on Brave's dashboard before relying on it for heavier workflows.
+
+Supported setup examples:
+
+```bash
+# Store a plaintext key in global Pi-scoped user config; output stays redacted.
+printf '%s' "$BRAVE_API_KEY" | pi-agent-browser-config web-search set-key --stdin
+
+# Store an env-var reference, useful for project config.
+pi-agent-browser-config web-search set-env BRAVE_API_KEY --project
+
+# Store a global secret-manager command source.
+pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --global
+```
+
+Project-local plaintext, interpolation-literal, malformed, and command-backed Brave keys are refused; use an exact environment reference such as `$BRAVE_API_KEY` or `${BRAVE_API_KEY}` for `.pi/config/pi-agent-browser-native/config.json`. The tool content, details, status output, and docs examples must not expose the resolved key.
+
+The same config file can record conservative browser defaults such as a profile hint:
+
+```bash
+pi-agent-browser-config browser profile set Default --policy authenticated-only
+```
+
+This adds agent guidance for signed-in/account-specific tasks; current releases do not auto-inject `--profile` for every launch.
+
 ## Common agent calls
 
 You usually prompt the agent in natural language. These JSON snippets show the exact native tool shape the agent should use.

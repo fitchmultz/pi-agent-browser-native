@@ -15,17 +15,22 @@ The package install path is the primary product path. Local checkout development
 
 ## Chosen shape
 
-### One primary tool
+### One primary tool plus optional companion search
 
-V1 should expose one native tool:
+V1 exposes one native browser tool:
 
 - `agent_browser`
 
+It may also expose one optional companion tool:
+
+- `agent_browser_web_search`, registered only when a Brave Search credential source is configured or resolvable
+
 Why:
-- lowest maintenance cost
-- lowest drift risk as upstream changes
-- preserves full upstream power
-- avoids overengineering
+- keeps browser automation centered on `agent_browser`
+- avoids colliding with generic `web_search`
+- keeps live search separate from browser state, screenshots, refs, and session lifecycle
+- preserves full upstream power without adding a generic provider abstraction
+- keeps optional search invisible when it cannot run
 
 ### Direct subprocess execution
 
@@ -52,6 +57,20 @@ That means:
 - no command-heavy slash-command interface
 - no manual user orchestration as the main workflow
 - any future slash commands should be minimal and secondary
+
+### Package-owned config
+
+Pi docs use `settings.json` for package/resource loading and filtering, not arbitrary extension secrets. For user-tunable package behavior, this package owns Pi-scoped config files instead:
+
+- global: `~/.pi/config/pi-agent-browser-native/config.json`
+- project-local: `.pi/config/pi-agent-browser-native/config.json`
+- explicit override: `PI_AGENT_BROWSER_CONFIG=/path/to/config.json`
+
+Config layers merge in that order: global, project, override. The config reader accepts v1 fields for `webSearch.braveApiKey` and conservative browser defaults such as `browser.defaultProfile`. `webSearch.braveApiKey` follows Pi model/provider-style value resolution for trusted global/override config: literal values, `$ENV_VAR` / `${ENV_VAR}` interpolation, escapes (`$$`, `$!`), and leading `!command` resolved at request time. Project-local plaintext, interpolation-literal, malformed, and command-backed Brave keys are rejected because project config can be copied, committed, or supplied by a repository; project config should use inert exact `$ENV_VAR` or `${ENV_VAR}` sources only.
+
+`agent_browser_web_search` registration is conditional. Literal and env-backed sources must resolve at startup; command-backed sources are considered configured without running the command until tool execution, so secret managers do not slow startup or prompt unexpectedly. The tool resolves the key lazily, calls Brave Search, and returns compact result details without exposing the key.
+
+Browser default profile config is intentionally conservative. It can add prompt guidance for signed-in/account-specific tasks, but current releases do not auto-inject `--profile` into every launch. Automatic launch-default mutation would affect privacy and browser state, so it needs a separate explicit design and test pass.
 
 ### Prompt guidance budget
 

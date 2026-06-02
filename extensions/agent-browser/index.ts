@@ -41,7 +41,6 @@ import {
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	hasLaunchScopedTabCorrectionFlag,
-	hasUsableBraveApiKey,
 	extractExplicitSessionName,
 	redactInvocationArgs,
 	restoreManagedSessionStateFromBranch,
@@ -118,6 +117,8 @@ import {
 	type VisibleRefFallbackDiagnostic,
 } from "./lib/results/selector-recovery.js";
 import { withOptionalSessionArgs } from "./lib/results/next-actions.js";
+import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
+import { createAgentBrowserWebSearchTool } from "./lib/web-search.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
 const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
@@ -947,8 +948,13 @@ function getInstalledDocsPaths(): { readmePath: string; commandReferencePath: st
 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
-	const hasBraveApiKey = hasUsableBraveApiKey();
-	const toolPromptGuidelines = buildToolPromptGuidelines({ includeBraveSearch: hasBraveApiKey, docs: getInstalledDocsPaths() });
+	const agentBrowserConfig = loadAgentBrowserConfigSync({ cwd: process.cwd() });
+	const webSearchToolAvailable = canRegisterWebSearchTool(agentBrowserConfig);
+	const toolPromptGuidelines = buildToolPromptGuidelines({
+		browserDefaultProfile: agentBrowserConfig.browserDefaultProfile,
+		includeBraveSearch: webSearchToolAvailable,
+		docs: getInstalledDocsPaths(),
+	});
 	const implicitSessionIdleTimeoutMs = String(getImplicitSessionIdleTimeoutMs());
 	const implicitSessionCloseTimeoutMs = getImplicitSessionCloseTimeoutMs();
 	let managedSessionActive = false;
@@ -1267,4 +1273,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				: runBrowserCommand();
 		},
 	});
+
+	if (webSearchToolAvailable) {
+		pi.registerTool(createAgentBrowserWebSearchTool(agentBrowserConfig));
+	}
 }

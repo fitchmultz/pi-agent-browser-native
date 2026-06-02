@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.2.40 - 2026-06-02
+
+### Added
+
+- Added Pi-scoped `pi-agent-browser-native` package config at `~/.pi/config/pi-agent-browser-native/config.json`, `.pi/config/pi-agent-browser-native/config.json`, and the `PI_AGENT_BROWSER_CONFIG` override, including the `pi-agent-browser-config` helper for redacted setup/status and conservative browser profile hints.
+- Added the optional Brave-backed `agent_browser_web_search` companion tool, registered only when a usable Brave credential source is configured or resolvable, with compact normalized results for current/live web information.
+
+### Changed
+
+- Documented optional web-search setup, config precedence, credential safety, and browser profile guidance across the README, command reference, tool contract, architecture notes, and support matrix.
+
+### Fixed
+
+- Hardened Brave credential handling so project-local config only accepts exact inert `$ENV_VAR` or `${ENV_VAR}` references, rejects plaintext/malformed/interpolation-literal/command-backed secrets, and keeps raw or entity-encoded API keys out of tool output and errors.
+- Cleaned Brave result text by decoding common HTML entities while stripping decoded HTML tags safely and preserving placeholder text such as `<version>`.
+
 ## 0.2.39 - 2026-06-02
 
 ### Added
