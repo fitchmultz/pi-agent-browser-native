@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No changes yet.
+
+## 0.2.41 - 2026-06-03
+
 ### Added
 
 - Added Exa support to the optional `agent_browser_web_search` companion tool. When both Exa and Brave credentials are configured, `provider: "auto"` now prefers Exa by default; use `pi-agent-browser-config web-search prefer brave --global` or `webSearch.preferredProvider: "brave"` to keep Brave as the default provider.
