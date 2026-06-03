@@ -345,7 +345,7 @@ export function createExtensionHarness(options: {
 	sessionFile?: string;
 }) {
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
-	let registeredTool: RegisteredTool | undefined;
+	const registeredTools = new Map<string, RegisteredTool>();
 
 	agentBrowserExtension({
 		on(event, handler) {
@@ -354,10 +354,12 @@ export function createExtensionHarness(options: {
 			handlers.set(event, existingHandlers);
 		},
 		registerTool(tool) {
-			registeredTool = adaptRegisteredTool(tool);
+			const registeredTool = adaptRegisteredTool(tool);
+			registeredTools.set(registeredTool.name, registeredTool);
 		},
 	} as Parameters<typeof agentBrowserExtension>[0]);
 
+	const registeredTool = registeredTools.get("agent_browser");
 	assert.ok(registeredTool, "expected the extension to register the agent_browser tool");
 
 	let branch = options.branch ?? buildUserBranch(options.prompt);
@@ -374,7 +376,11 @@ export function createExtensionHarness(options: {
 
 	return {
 		ctx,
+		getTool(name: string) {
+			return registeredTools.get(name);
+		},
 		handlers,
+		tools: registeredTools,
 		setBranch(nextBranch: unknown[]) {
 			branch = nextBranch;
 		},

@@ -30,7 +30,7 @@ export const QUICK_START_GUIDELINES = [
 ] as const;
 
 export const BRAVE_SEARCH_PROMPT_GUIDELINE =
-	"With BRAVE_API_KEY set, use Brave Search via bash/curl to find exact destination URLs, then open the chosen URL with agent_browser; do not browse search results just to locate a target.";
+	"When agent_browser_web_search is available, use it for live web search when current or external web information would help; use agent_browser when the task needs browser interaction, page inspection, screenshots, authenticated/profile content, or DOM work.";
 
 export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs are page-scoped; the wrapper fails mutation-prone stale/recycled refs before upstream can silently target a different current-page element.",
@@ -105,11 +105,25 @@ export const RUNTIME_PROMPT_GUIDELINES = [
 	"For extraction, prefer get title/url/text/html/value/attr/count or eval --stdin with plain expression, not console.log. Batch three or more known refs/selectors (e.g. [[\"get\",\"text\",\"@e1\"],[\"get\",\"text\",\"@e2\"]]); selector visibility warnings → visible @refs/nextActions.",
 ] as const;
 
-export function buildToolPromptGuidelines(options: { includeBraveSearch: boolean; docs?: { readmePath: string; commandReferencePath: string; toolContractPath: string } }): string[] {
+export function buildBrowserDefaultProfileGuideline(profile: { name: string; policy: "explicit-only" | "authenticated-only" | "always" } | undefined): string | undefined {
+	if (!profile || profile.policy === "explicit-only") return undefined;
+	if (profile.policy === "always") {
+		return `Agent-browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)} with policy always; use --profile ${JSON.stringify(profile.name)} with sessionMode:fresh when a fresh browser launch should use the configured profile, and treat profile content as model-visible user data.`;
+	}
+	return `Agent-browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)}; for signed-in/account-specific browser tasks, start with --profile ${JSON.stringify(profile.name)} plus sessionMode:fresh unless the user asks for a different profile.`;
+}
+
+export function buildToolPromptGuidelines(options: {
+	browserDefaultProfile?: { name: string; policy: "explicit-only" | "authenticated-only" | "always" };
+	docs?: { readmePath: string; commandReferencePath: string; toolContractPath: string };
+	includeBraveSearch: boolean;
+}): string[] {
+	const browserDefaultProfileGuideline = buildBrowserDefaultProfileGuideline(options.browserDefaultProfile);
 	return [
 		...TOOL_PROMPT_GUIDELINES_PREFIX,
 		...(options.docs ? [buildInstalledDocsGuideline(options.docs)] : []),
 		...RUNTIME_PROMPT_GUIDELINES,
+		...(browserDefaultProfileGuideline ? [browserDefaultProfileGuideline] : []),
 		...(options.includeBraveSearch ? [BRAVE_SEARCH_PROMPT_GUIDELINE] : []),
 		TOOL_PROMPT_GUIDELINES_SUFFIX[0],
 		TOOL_PROMPT_GUIDELINES_SUFFIX[1],

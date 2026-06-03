@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.2.39",
+  "version": "0.2.40",
   "description": "pi extension that exposes agent-browser as a native tool for browser automation",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
@@ -27,11 +27,13 @@
     "node": ">=22.19.0"
   },
   "bin": {
+    "pi-agent-browser-config": "scripts/config.mjs",
     "pi-agent-browser-doctor": "scripts/doctor.mjs"
   },
   "files": [
     "extensions",
     "platform-smoke.config.mjs",
+    "scripts/config.mjs",
     "scripts/doctor.mjs",
     "scripts/agent-browser-capability-baseline.mjs",
     "scripts/platform-smoke.mjs",

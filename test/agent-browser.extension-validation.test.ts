@@ -66,7 +66,8 @@ import {
 } from "./helpers/extension-validation-fixtures.js";
 
 test("agentBrowserExtension keeps concise browser guidance plus installed doc pointers in tool metadata", async () => {
-	await withPatchedEnv({ BRAVE_API_KEY: "demo-key" }, async () => {
+	const isolatedHome = await mkdtemp(join(tmpdir(), "pi-agent-browser-guidance-test-"));
+	await withPatchedEnv({ BRAVE_API_KEY: "demo-key", HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: process.cwd() });
 		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "session_tree", "tool_call", "tool_result"]);
 		assert.equal(harness.tool.name, "agent_browser");
