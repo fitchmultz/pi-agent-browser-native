@@ -82,6 +82,36 @@ function buildUnknownCommandSuggestionActions(suggestions: CommandSuggestion[], 
 	return actions.length > 0 ? actions : undefined;
 }
 
+function getBrowserProfileConfigHint(errorText: string): string | undefined {
+	if (!/\b(?:No Chrome user data directory found|Cannot resolve profile name|Chrome user data directory|profile name)\b/i.test(errorText)) {
+		return undefined;
+	}
+	return [
+		"Agent-browser profile/config hint: this looks like a local browser profile or Chrome user-data-dir setup problem, not a page-specific failure.",
+		"Do not keep retrying the same open/profile call. Run `profiles` and/or `doctor` through agent_browser, then tell the user whether Chrome/Chromium is installed, which Chrome profile directory names are available, or whether they need to configure a full profile/user-data directory path, a non-default Chromium-compatible `--executable-path`, or remove the profile requirement for public-page browsing.",
+		"Use the top-level `sessionMode: \"fresh\"` field for launch-scoped profile/debug/provider flags; do not pass `--session-mode` inside args.",
+	].join(" ");
+}
+
+function buildBrowserProfileConfigActions(): AgentBrowserNextAction[] {
+	return [
+		{
+			id: "inspect-browser-profiles",
+			params: { args: ["profiles"] },
+			reason: "List browser profiles/user-data-dir candidates before retrying profile-based launch.",
+			safety: "Read-only local setup inspection; does not open a page or mutate browser state.",
+			tool: "agent_browser" as const,
+		},
+		{
+			id: "run-agent-browser-doctor",
+			params: { args: ["doctor"] },
+			reason: "Inspect local agent-browser browser installation/configuration before retrying.",
+			safety: "Read-only local diagnostics; report findings to the user before changing setup.",
+			tool: "agent_browser" as const,
+		},
+	];
+}
+
 function getLocalhostNavigationHint(commandInfo: CommandInfo, errorText: string): string | undefined {
 	if (!commandInfo.command || !isOpenNavigationCommand(commandInfo.command) || !commandInfo.subcommand) return undefined;
 	if (!/\bnet::ERR_(?:EMPTY_RESPONSE|CONNECTION_REFUSED|ADDRESS_UNREACHABLE|TIMED_OUT|CONNECTION_RESET)\b/i.test(errorText)) return undefined;
@@ -119,10 +149,12 @@ export function buildErrorPresentation(options: {
 	const selectorHintedErrorText = appendSelectorRecoveryHint(safeErrorText);
 	const unknownCommandSuggestions = getUnknownCommandSuggestions(commandInfo.command, safeErrorText);
 	const unknownCommandSuggestionText = formatUnknownCommandSuggestionText(unknownCommandSuggestions);
+	const browserProfileConfigHint = getBrowserProfileConfigHint(safeErrorText);
 	const localhostNavigationHint = getLocalhostNavigationHint(commandInfo, safeErrorText);
 	const hintedErrorParts = [
 		selectorHintedErrorText,
 		unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:") ? unknownCommandSuggestionText : undefined,
+		browserProfileConfigHint,
 		localhostNavigationHint,
 	].filter((part): part is string => Boolean(part));
 	const hintedErrorText = hintedErrorParts.join("\n\n");
@@ -134,6 +166,7 @@ export function buildErrorPresentation(options: {
 	});
 	const nextActions = [
 		...(buildUnknownCommandSuggestionActions(unknownCommandSuggestions, sessionName) ?? []),
+		...(browserProfileConfigHint ? buildBrowserProfileConfigActions() : []),
 		...(buildAgentBrowserNextActions({
 			args,
 			command: commandInfo.command,

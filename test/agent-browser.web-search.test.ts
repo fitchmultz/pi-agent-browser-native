@@ -1,5 +1,5 @@
 /**
- * Purpose: Verify optional Brave-backed agent_browser_web_search registration, request shaping, result normalization, and secret redaction.
+ * Purpose: Verify optional Exa/Brave-backed agent_browser_web_search registration, request shaping, result normalization, and secret redaction.
  */
 
 import assert from "node:assert/strict";
@@ -11,12 +11,19 @@ import { test } from "node:test";
 import {
 	AGENT_BROWSER_CONFIG_ENV,
 	BRAVE_API_KEY_ENV,
+	EXA_API_KEY_ENV,
 } from "../extensions/agent-browser/lib/config.js";
 import {
 	AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
+	BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS,
+	BraveSearchRequestGate,
 	buildBraveSearchUrl,
+	buildExaSearchRequestBody,
 	cleanSearchText,
 	decodeHtmlEntities,
+	fetchBraveSearchJson,
+	fetchExaSearchJson,
+	normalizeExaSearchResult,
 	normalizeSearchResult,
 } from "../extensions/agent-browser/lib/web-search.js";
 import { createExtensionHarness, executeRegisteredTool, withPatchedEnv } from "./helpers/agent-browser-harness.js";
@@ -51,19 +58,22 @@ async function createFixture() {
 
 test("does not register agent_browser_web_search without env or config credential", async () => {
 	const fixture = await createFixture();
-	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: undefined }, async () => {
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: undefined, [EXA_API_KEY_ENV]: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
 		assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
 		assert.ok(harness.getTool("agent_browser"));
 	});
 });
 
-test("registers agent_browser_web_search with env fallback", async () => {
+test("registers agent_browser_web_search with env fallback and rate-limit guidance", async () => {
 	const fixture = await createFixture();
-	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "test-secret" }, async () => {
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "test-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
-		assert.ok(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME));
+		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+		assert.ok(tool);
 		assert.ok(harness.getTool("agent_browser"));
+		assert.match(tool.promptGuidelines.join("\n"), /Do not issue parallel or repeated agent_browser_web_search calls/);
+		assert.match(tool.promptGuidelines.join("\n"), /HTTP 429/);
 	});
 });
 
@@ -73,7 +83,7 @@ test("registers command-sourced config without executing command until search ex
 		version: 1,
 		webSearch: { braveApiKey: `!${process.execPath} -e "process.stdout.write('runtime-secret')"` },
 	});
-	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: fixture.overrideConfigPath, [BRAVE_API_KEY_ENV]: undefined }, async () => {
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: fixture.overrideConfigPath, [BRAVE_API_KEY_ENV]: undefined, [EXA_API_KEY_ENV]: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
 		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 		assert.ok(tool);
@@ -91,6 +101,51 @@ test("registers command-sourced config without executing command until search ex
 			assert.doesNotMatch(JSON.stringify(result), /runtime-secret/);
 			assert.equal(result.details?.provider, "brave");
 		});
+	});
+});
+
+test("prefers Exa when both provider keys are available and normalizes highlights", async () => {
+	const fixture = await createFixture();
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "brave-secret", [EXA_API_KEY_ENV]: "exa-secret" }, async () => {
+		const harness = createExtensionHarness({ cwd: fixture.cwd });
+		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+		assert.ok(tool);
+		await withFakeFetch((input, init) => {
+			assert.equal(String(input), "https://api.exa.ai/search");
+			assert.equal(init?.method, "POST");
+			assert.equal(init?.headers && (init.headers as Record<string, string>)["x-api-key"], "exa-secret");
+			const body = JSON.parse(String(init?.body));
+			assert.equal(body.query, "pi browser docs");
+			assert.equal(body.type, "fast");
+			assert.equal(body.numResults, 2);
+			assert.deepEqual(body.contents, { highlights: true });
+			return new Response(JSON.stringify({
+				requestId: "req-123",
+				searchType: "fast",
+				results: [
+					{ title: "Skipped", url: "https://example.com/skipped", highlights: ["skip"] },
+					{ title: "Exa Pi", url: "https://example.com/exa", author: "Example", publishedDate: "2026-01-01", highlights: ["<b>Relevant</b> Exa highlight", "Second highlight"] },
+				],
+			}), { status: 200 });
+		}, async () => {
+			const result = await executeRegisteredTool(tool, harness.ctx, { query: "pi browser docs", count: 1, offset: 1, searchType: "fast" });
+			const text = result.content[0]?.text ?? "";
+			assert.match(text, /Exa web search results/);
+			assert.match(text, /Relevant Exa highlight/);
+			assert.doesNotMatch(JSON.stringify(result), /exa-secret|brave-secret/);
+			assert.equal(result.details?.provider, "exa");
+			assert.equal(result.details?.searchType, "fast");
+			assert.equal(result.details?.requestId, "req-123");
+		});
+	});
+});
+
+test("disabled web search config prevents registration despite environment keys", async () => {
+	const fixture = await createFixture();
+	await writeJson(fixture.overrideConfigPath, { version: 1, webSearch: { enabled: false } });
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: fixture.overrideConfigPath, [BRAVE_API_KEY_ENV]: "brave-secret", [EXA_API_KEY_ENV]: "exa-secret" }, async () => {
+		const harness = createExtensionHarness({ cwd: fixture.cwd });
+		assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
 	});
 });
 
@@ -113,6 +168,27 @@ test("builds Brave search URL parameters", () => {
 	assert.equal(url.searchParams.get("freshness"), "pw");
 });
 
+test("builds Exa search request body with highlights and provider-compatible options", () => {
+	const body = buildExaSearchRequestBody({
+		query: "agent browser",
+		count: 3,
+		offset: 2,
+		country: "us",
+		safesearch: "moderate",
+		freshness: "pd",
+		searchType: "deep-lite",
+	}, () => new Date("2026-06-02T00:00:00.000Z"));
+	assert.deepEqual(body, {
+		query: "agent browser",
+		type: "deep-lite",
+		numResults: 5,
+		contents: { highlights: true },
+		userLocation: "US",
+		moderation: true,
+		startPublishedDate: "2026-06-01T00:00:00.000Z",
+	});
+});
+
 test("normalizes Brave results and strips unsafe or noisy values", () => {
 	assert.equal(decodeHtmlEntities("Pi &amp; browser &#x27;native&#x27; &#40;docs&#41; &AMP; tools"), "Pi & browser 'native' (docs) & tools");
 	assert.equal(cleanSearchText("<b>Hello</b>   world"), "Hello world");
@@ -133,20 +209,70 @@ test("normalizes Brave results and strips unsafe or noisy values", () => {
 		age: undefined,
 		language: undefined,
 	});
+	assert.deepEqual(normalizeExaSearchResult({
+		title: "<b>Exa</b> result",
+		url: "https://example.com/exa",
+		author: "Example Author",
+		publishedDate: "2026-01-01",
+		highlights: ["One &amp; two", "<b>Three</b>"],
+	}), {
+		title: "Exa result",
+		url: "https://example.com/exa",
+		description: "One & two",
+		highlights: ["One & two", "Three"],
+		source: "Example Author",
+		age: "2026-01-01",
+	});
+});
+
+test("BraveSearchRequestGate serializes and spaces searches", async () => {
+	let now = 1_000;
+	const waits: number[] = [];
+	const starts: number[] = [];
+	const gate = new BraveSearchRequestGate(
+		() => now,
+		async (ms) => {
+			waits.push(ms);
+			now += ms;
+		},
+	);
+
+	const first = gate.run(undefined, async () => {
+		starts.push(now);
+		return "first";
+	});
+	const second = gate.run(undefined, async () => {
+		starts.push(now);
+		return "second";
+	});
+
+	assert.deepEqual(await Promise.all([first, second]), ["first", "second"]);
+	assert.deepEqual(starts, [1_000, 1_000 + BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS]);
+	assert.deepEqual(waits, [BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS]);
 });
 
 test("search execution reports API and JSON failures without leaking key", async () => {
 	const fixture = await createFixture();
-	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "secret-that-must-not-leak" }, async () => {
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "secret-that-must-not-leak", [EXA_API_KEY_ENV]: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
 		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 		assert.ok(tool);
 		for (const responseBody of ["upstream failed secret-that-must-not-leak", "upstream failed secret&#45;that&#45;must&#45;not&#45;leak"]) {
 			await withFakeFetch(() => new Response(responseBody, { status: 429, statusText: "Too Many Requests" }), async () => {
 				await assert.rejects(
-					() => executeRegisteredTool(tool, harness.ctx, { query: "rate limit" }),
+					() => fetchBraveSearchJson(buildBraveSearchUrl({ query: "rate limit", count: 1, offset: 0 }), "secret-that-must-not-leak"),
 					(error: Error) => {
-						assert.match(error.message, /HTTP 429/);
+						assert.match(error.message, /Brave search rate limit exceeded \(HTTP 429\)/);
+						assert.match(error.message, /Do not issue parallel or repeated agent_browser_web_search calls/);
+						assert.doesNotMatch(error.message, /secret-that-must-not-leak/);
+						return true;
+					},
+				);
+				await assert.rejects(
+					() => fetchExaSearchJson({ query: "rate limit", contents: { highlights: true } }, "secret-that-must-not-leak"),
+					(error: Error) => {
+						assert.match(error.message, /Exa search rate limit exceeded \(HTTP 429\)/);
+						assert.match(error.message, /Do not issue parallel or repeated agent_browser_web_search calls/);
 						assert.doesNotMatch(error.message, /secret-that-must-not-leak/);
 						return true;
 					},

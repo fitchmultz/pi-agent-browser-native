@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Manage pi-agent-browser-native package config under Pi-scoped config paths.
- * Responsibilities: Print config paths/status, write redacted web-search and browser profile settings, preserve safe permissions, and avoid echoing secrets.
+ * Responsibilities: Print config paths/status, write redacted web-search and conservative browser guidance settings, preserve safe permissions, and avoid echoing secrets.
  * Scope: Maintainer/user setup CLI only; extension runtime validation and tool execution live under extensions/agent-browser/lib/.
  */
 
@@ -11,6 +11,11 @@ import process from "node:process";
 
 const CONFIG_ENV = "PI_AGENT_BROWSER_CONFIG";
 const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
+const EXA_API_KEY_ENV = "EXA_API_KEY";
+const WEB_SEARCH_PROVIDERS = ["brave", "exa"];
+const WEB_SEARCH_KEY_FIELDS = { brave: "braveApiKey", exa: "exaApiKey" };
+const WEB_SEARCH_ENV_VARS = { brave: BRAVE_API_KEY_ENV, exa: EXA_API_KEY_ENV };
+const DEFAULT_WEB_SEARCH_PROVIDER = "exa";
 const RELATIVE_CONFIG = [".pi", "config", "pi-agent-browser-native", "config.json"];
 const DEFAULT_CONFIG = { version: 1 };
 
@@ -28,13 +33,19 @@ Usage:
   pi-agent-browser-config paths
   pi-agent-browser-config show
   pi-agent-browser-config web-search status
-  pi-agent-browser-config web-search set-key --stdin [--global]
-  pi-agent-browser-config web-search set-env <ENV_VAR> [--global|--project]
-  pi-agent-browser-config web-search set-command <command> [--global]
-  pi-agent-browser-config web-search clear [--global|--project]
+  pi-agent-browser-config web-search set-key --stdin [--provider brave|exa] [--global]
+  pi-agent-browser-config web-search set-env <ENV_VAR> [--provider brave|exa] [--global|--project]
+  pi-agent-browser-config web-search set-command <command> [--provider brave|exa] [--global]
+  pi-agent-browser-config web-search clear [--provider brave|exa|all] [--global|--project]
+  pi-agent-browser-config web-search prefer <exa|brave|auto> [--global|--project]
+  pi-agent-browser-config web-search enable [--global|--project]
+  pi-agent-browser-config web-search disable [--global|--project]
   pi-agent-browser-config browser profile status
-  pi-agent-browser-config browser profile set <name> [--policy explicit-only|authenticated-only|always] [--global|--project]
+  pi-agent-browser-config browser profile set <name|path> [--policy explicit-only|authenticated-only|always] [--global|--project]
   pi-agent-browser-config browser profile clear [--global|--project]
+  pi-agent-browser-config browser executable status
+  pi-agent-browser-config browser executable set <path> [--global|--project]
+  pi-agent-browser-config browser executable clear [--global|--project]
 
 Notes:
   Global config:  ~/.pi/config/pi-agent-browser-native/config.json
@@ -80,9 +91,9 @@ function parseArgs(argv) {
 			flags.set(arg, true);
 			continue;
 		}
-		if (arg === "--policy") {
+		if (arg === "--policy" || arg === "--provider") {
 			const value = argv[index + 1];
-			if (!value || value.startsWith("--")) throw new UsageError("--policy requires a value.");
+			if (!value || value.startsWith("--")) throw new UsageError(`${arg} requires a value.`);
 			flags.set(arg, value);
 			index += 1;
 			continue;
@@ -125,6 +136,35 @@ function classifyCredential(rawValue) {
 	return "configured as plaintext [redacted]";
 }
 
+function getProviderLabel(provider) {
+	return provider === "exa" ? "Exa" : "Brave Search";
+}
+
+function validateWebSearchProvider(provider, { allowAll = false } = {}) {
+	if (WEB_SEARCH_PROVIDERS.includes(provider) || (allowAll && provider === "all")) return provider;
+	throw new UsageError(`--provider must be one of ${allowAll ? "brave, exa, all" : "brave, exa"}.`);
+}
+
+function inferWebSearchProviderFromEnvName(envName) {
+	if (envName === EXA_API_KEY_ENV) return "exa";
+	if (envName === BRAVE_API_KEY_ENV) return "brave";
+	return undefined;
+}
+
+function getWebSearchProvider(flags, options = {}) {
+	const configured = flags.get("--provider");
+	if (configured) return validateWebSearchProvider(configured, options);
+	return options.envName ? inferWebSearchProviderFromEnvName(options.envName) ?? "brave" : "brave";
+}
+
+function setWebSearchCredential(config, provider, value) {
+	config.webSearch = { ...(config.webSearch ?? {}), [WEB_SEARCH_KEY_FIELDS[provider]]: value };
+}
+
+function clearWebSearchCredential(config, provider) {
+	if (config.webSearch) delete config.webSearch[WEB_SEARCH_KEY_FIELDS[provider]];
+}
+
 function mergeConfig() {
 	const paths = getPaths();
 	const layers = [];
@@ -158,10 +198,17 @@ function printStatus() {
 	}
 	console.log("");
 	console.log("Effective config:");
-	const source = merged.webSearch?.braveApiKey;
-	console.log(`  webSearch.braveApiKey: ${source ? classifyCredential(source) : process.env[BRAVE_API_KEY_ENV]?.trim() ? `configured via ${BRAVE_API_KEY_ENV} environment fallback` : "not configured"}`);
+	console.log(`  webSearch.enabled: ${merged.webSearch?.enabled === false ? "false" : "true"}`);
+	console.log(`  webSearch.preferredProvider: ${merged.webSearch?.preferredProvider ?? `auto (default ${DEFAULT_WEB_SEARCH_PROVIDER})`}`);
+	for (const provider of WEB_SEARCH_PROVIDERS) {
+		const field = WEB_SEARCH_KEY_FIELDS[provider];
+		const envName = WEB_SEARCH_ENV_VARS[provider];
+		const source = merged.webSearch?.[field];
+		console.log(`  webSearch.${field}: ${source ? classifyCredential(source) : process.env[envName]?.trim() ? `configured via ${envName} environment fallback` : "not configured"}`);
+	}
 	const profile = merged.browser?.defaultProfile;
 	console.log(`  browser.defaultProfile: ${profile?.name ? `${profile.name} (policy: ${profile.policy ?? "authenticated-only"})` : "not configured"}`);
+	console.log(`  browser.executablePath: ${merged.browser?.executablePath ? merged.browser.executablePath : "not configured"}`);
 	if (layers.length === 0) console.log("  layers: none");
 }
 
@@ -187,75 +234,131 @@ async function handleWebSearch(args, flags) {
 		return;
 	}
 	if (action === "set-key") {
-		if (flags.get("--project")) throw new UsageError("Plaintext Brave keys cannot be written to project-local config. Use set-env or set-command.");
+		const provider = getWebSearchProvider(flags);
+		if (flags.get("--project")) throw new UsageError(`Plaintext ${getProviderLabel(provider)} keys cannot be written to project-local config. Use set-env or set-command.`);
 		const key = await readSecretFromStdin(Boolean(flags.get("--stdin")));
 		const { path } = selectWritePath(flags);
 		mutateConfig(path, (config) => {
-			config.webSearch = { ...(config.webSearch ?? {}), braveApiKey: key };
+			setWebSearchCredential(config, provider, key);
 		});
-		console.log(`Saved Brave Search key to global config: ${path}`);
+		console.log(`Saved ${getProviderLabel(provider)} key to global config: ${path}`);
 		return;
 	}
 	if (action === "set-env") {
 		const envName = args[1];
 		if (!envName || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) throw new UsageError("set-env requires a valid environment variable name.");
+		const provider = getWebSearchProvider(flags, { envName });
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => {
-			config.webSearch = { ...(config.webSearch ?? {}), braveApiKey: `$${envName}` };
+			setWebSearchCredential(config, provider, `$${envName}`);
 		});
-		console.log(`Saved Brave Search ${scope} env reference to: ${path}`);
+		console.log(`Saved ${getProviderLabel(provider)} ${scope} env reference to: ${path}`);
 		return;
 	}
 	if (action === "set-command") {
-		if (flags.get("--project")) throw new UsageError("Command-backed Brave keys cannot be written to project-local config. Use set-env there.");
+		const provider = getWebSearchProvider(flags);
+		if (flags.get("--project")) throw new UsageError(`Command-backed ${getProviderLabel(provider)} keys cannot be written to project-local config. Use set-env there.`);
 		const command = args.slice(1).join(" ").trim();
 		if (!command) throw new UsageError("set-command requires a command string.");
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => {
-			config.webSearch = { ...(config.webSearch ?? {}), braveApiKey: `!${command}` };
+			setWebSearchCredential(config, provider, `!${command}`);
 		});
-		console.log(`Saved Brave Search ${scope} command source to: ${path}`);
+		console.log(`Saved ${getProviderLabel(provider)} ${scope} command source to: ${path}`);
 		return;
 	}
 	if (action === "clear") {
+		const provider = getWebSearchProvider(flags, { allowAll: true });
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => {
-			if (config.webSearch) delete config.webSearch.braveApiKey;
+			if (provider === "all") {
+				for (const entry of WEB_SEARCH_PROVIDERS) clearWebSearchCredential(config, entry);
+			} else {
+				clearWebSearchCredential(config, provider);
+			}
 		});
-		console.log(`Cleared Brave Search credential source in ${scope} config: ${path}`);
+		console.log(`Cleared ${provider === "all" ? "all web-search" : getProviderLabel(provider)} credential source in ${scope} config: ${path}`);
+		return;
+	}
+	if (action === "prefer") {
+		const provider = args[1];
+		if (!provider || (!WEB_SEARCH_PROVIDERS.includes(provider) && provider !== "auto")) throw new UsageError("prefer requires exa, brave, or auto.");
+		const { path, scope } = selectWritePath(flags);
+		mutateConfig(path, (config) => {
+			config.webSearch = { ...(config.webSearch ?? {}) };
+			if (provider === "auto") delete config.webSearch.preferredProvider;
+			else config.webSearch.preferredProvider = provider;
+		});
+		console.log(`${provider === "auto" ? "Cleared" : "Saved"} web-search preferred provider in ${scope} config: ${path}`);
+		return;
+	}
+	if (action === "enable" || action === "disable") {
+		const { path, scope } = selectWritePath(flags);
+		mutateConfig(path, (config) => {
+			config.webSearch = { ...(config.webSearch ?? {}), enabled: action === "enable" };
+		});
+		console.log(`${action === "enable" ? "Enabled" : "Disabled"} agent_browser_web_search in ${scope} config: ${path}`);
 		return;
 	}
 	throw new UsageError(`Unsupported web-search action: ${action ?? ""}`);
 }
 
 function handleBrowser(args, flags) {
-	if (args[0] !== "profile") throw new UsageError(`Unsupported browser action: ${args[0] ?? ""}`);
+	const target = args[0];
 	const action = args[1];
-	if (action === "status") {
-		printStatus();
-		return;
+	if (target === "profile") {
+		if (action === "status") {
+			printStatus();
+			return;
+		}
+		if (action === "set") {
+			const name = args.slice(2).join(" ").trim();
+			if (!name) throw new UsageError("browser profile set requires a profile name or profile directory path.");
+			const policy = flags.get("--policy") || "authenticated-only";
+			if (!["explicit-only", "authenticated-only", "always"].includes(policy)) throw new UsageError("Invalid --policy value.");
+			const { path, scope } = selectWritePath(flags);
+			mutateConfig(path, (config) => {
+				config.browser = { ...(config.browser ?? {}), defaultProfile: { name, policy } };
+			});
+			console.log(`Saved browser default profile in ${scope} config: ${path}`);
+			return;
+		}
+		if (action === "clear") {
+			const { path, scope } = selectWritePath(flags);
+			mutateConfig(path, (config) => {
+				if (config.browser) delete config.browser.defaultProfile;
+			});
+			console.log(`Cleared browser default profile in ${scope} config: ${path}`);
+			return;
+		}
+		throw new UsageError(`Unsupported browser profile action: ${action ?? ""}`);
 	}
-	if (action === "set") {
-		const name = args[2]?.trim();
-		if (!name) throw new UsageError("browser profile set requires a profile name.");
-		const policy = flags.get("--policy") || "authenticated-only";
-		if (!["explicit-only", "authenticated-only", "always"].includes(policy)) throw new UsageError("Invalid --policy value.");
-		const { path, scope } = selectWritePath(flags);
-		mutateConfig(path, (config) => {
-			config.browser = { ...(config.browser ?? {}), defaultProfile: { name, policy } };
-		});
-		console.log(`Saved browser default profile in ${scope} config: ${path}`);
-		return;
+	if (target === "executable") {
+		if (action === "status") {
+			printStatus();
+			return;
+		}
+		if (action === "set") {
+			const executablePath = args.slice(2).join(" ").trim();
+			if (!executablePath) throw new UsageError("browser executable set requires a browser executable path.");
+			const { path, scope } = selectWritePath(flags);
+			mutateConfig(path, (config) => {
+				config.browser = { ...(config.browser ?? {}), executablePath };
+			});
+			console.log(`Saved browser executable path in ${scope} config: ${path}`);
+			return;
+		}
+		if (action === "clear") {
+			const { path, scope } = selectWritePath(flags);
+			mutateConfig(path, (config) => {
+				if (config.browser) delete config.browser.executablePath;
+			});
+			console.log(`Cleared browser executable path in ${scope} config: ${path}`);
+			return;
+		}
+		throw new UsageError(`Unsupported browser executable action: ${action ?? ""}`);
 	}
-	if (action === "clear") {
-		const { path, scope } = selectWritePath(flags);
-		mutateConfig(path, (config) => {
-			if (config.browser) delete config.browser.defaultProfile;
-		});
-		console.log(`Cleared browser default profile in ${scope} config: ${path}`);
-		return;
-	}
-	throw new UsageError(`Unsupported browser profile action: ${action ?? ""}`);
+	throw new UsageError(`Unsupported browser action: ${target ?? ""}`);
 }
 
 export async function main(argv = process.argv.slice(2)) {

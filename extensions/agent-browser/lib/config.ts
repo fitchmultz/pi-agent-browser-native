@@ -17,6 +17,7 @@ const exec = promisify(execCallback);
 
 export const AGENT_BROWSER_CONFIG_ENV = "PI_AGENT_BROWSER_CONFIG";
 export const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
+export const EXA_API_KEY_ENV = "EXA_API_KEY";
 export const CONFIG_RELATIVE_PATH = [".pi", "config", "pi-agent-browser-native", "config.json"] as const;
 export const GLOBAL_CONFIG_RELATIVE_PATH = [".pi", "config", "pi-agent-browser-native", "config.json"] as const;
 export const SECRET_COMMAND_TIMEOUT_MS = 15_000;
@@ -24,6 +25,9 @@ export const SECRET_COMMAND_TIMEOUT_MS = 15_000;
 export type BrowserDefaultProfilePolicy = "explicit-only" | "authenticated-only" | "always";
 export type AgentBrowserConfigScope = "global" | "project" | "override" | "env-fallback";
 export type CredentialSourceKind = "literal" | "env" | "command";
+export const WEB_SEARCH_PROVIDERS = ["exa", "brave"] as const;
+export type WebSearchProvider = typeof WEB_SEARCH_PROVIDERS[number];
+export const DEFAULT_WEB_SEARCH_PROVIDER: WebSearchProvider = "exa";
 
 export interface BrowserDefaultProfileConfig {
 	name: string;
@@ -33,10 +37,14 @@ export interface BrowserDefaultProfileConfig {
 export interface AgentBrowserConfig {
 	version?: 1;
 	webSearch?: {
+		enabled?: boolean;
+		preferredProvider?: WebSearchProvider;
 		braveApiKey?: string;
+		exaApiKey?: string;
 	};
 	browser?: {
 		defaultProfile?: BrowserDefaultProfileConfig;
+		executablePath?: string;
 		defaultLaunchArgs?: string[];
 	};
 }
@@ -49,14 +57,19 @@ export interface ConfigLayer {
 
 export interface CredentialSource {
 	kind: CredentialSourceKind;
+	provider?: WebSearchProvider;
 	rawValue: string;
 	scope: AgentBrowserConfigScope;
 }
 
 export interface AgentBrowserConfigState {
 	browserDefaultProfile?: Required<BrowserDefaultProfileConfig>;
+	browserExecutablePath?: string;
 	config: AgentBrowserConfig;
 	credentialSource?: CredentialSource;
+	webSearchCredentialSources: Partial<Record<WebSearchProvider, CredentialSource>>;
+	webSearchEnabled: boolean;
+	webSearchPreferredProvider: WebSearchProvider;
 	errors: string[];
 	layers: ConfigLayer[];
 	paths: {
@@ -133,6 +146,26 @@ function validateStringArray(value: unknown, path: string, errors: string[]): st
 	return value;
 }
 
+function validateBoolean(value: unknown, path: string, errors: string[]): boolean | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "boolean") {
+		errors.push(`${path} must be a boolean.`);
+		return undefined;
+	}
+	return value;
+}
+
+function validateWebSearchProvider(value: unknown, path: string, errors: string[]): WebSearchProvider | undefined {
+	if (value === undefined) return undefined;
+	const provider = validateString(value, path, errors)?.trim();
+	if (provider === undefined) return undefined;
+	if (!(WEB_SEARCH_PROVIDERS as readonly string[]).includes(provider)) {
+		errors.push(`${path} must be one of ${WEB_SEARCH_PROVIDERS.join(", ")}.`);
+		return undefined;
+	}
+	return provider as WebSearchProvider;
+}
+
 function validateBrowserDefaultProfile(value: unknown, path: string, errors: string[]): BrowserDefaultProfileConfig | undefined {
 	if (value === undefined) return undefined;
 	if (!isRecord(value)) {
@@ -167,13 +200,26 @@ function validateConfig(value: unknown, path: string, scope: ConfigLayer["scope"
 		if (!isRecord(value.webSearch)) {
 			errors.push(`${path}.webSearch must be an object.`);
 		} else {
+			const webSearch: NonNullable<AgentBrowserConfig["webSearch"]> = {};
+			const enabled = validateBoolean(value.webSearch.enabled, `${path}.webSearch.enabled`, errors);
+			if (enabled !== undefined) webSearch.enabled = enabled;
+			const preferredProvider = validateWebSearchProvider(value.webSearch.preferredProvider, `${path}.webSearch.preferredProvider`, errors);
+			if (preferredProvider) webSearch.preferredProvider = preferredProvider;
 			const braveApiKey = validateString(value.webSearch.braveApiKey, `${path}.webSearch.braveApiKey`, errors);
 			if (braveApiKey !== undefined) {
-				config.webSearch = { braveApiKey };
+				webSearch.braveApiKey = braveApiKey;
 				if (scope === "project" && !isProjectSafeCredentialValue(braveApiKey)) {
 					errors.push(`${path}.webSearch.braveApiKey must be exactly $ENV_VAR or ${"${ENV_VAR}"} in project-local config; plaintext, interpolation literals, malformed env references, and command-backed project secrets are not allowed.`);
 				}
 			}
+			const exaApiKey = validateString(value.webSearch.exaApiKey, `${path}.webSearch.exaApiKey`, errors);
+			if (exaApiKey !== undefined) {
+				webSearch.exaApiKey = exaApiKey;
+				if (scope === "project" && !isProjectSafeCredentialValue(exaApiKey)) {
+					errors.push(`${path}.webSearch.exaApiKey must be exactly $ENV_VAR or ${"${ENV_VAR}"} in project-local config; plaintext, interpolation literals, malformed env references, and command-backed project secrets are not allowed.`);
+				}
+			}
+			if (Object.keys(webSearch).length > 0) config.webSearch = webSearch;
 		}
 	}
 
@@ -184,6 +230,8 @@ function validateConfig(value: unknown, path: string, scope: ConfigLayer["scope"
 			config.browser = {};
 			const defaultProfile = validateBrowserDefaultProfile(value.browser.defaultProfile, `${path}.browser.defaultProfile`, errors);
 			if (defaultProfile) config.browser.defaultProfile = defaultProfile;
+			const executablePath = validateString(value.browser.executablePath, `${path}.browser.executablePath`, errors)?.trim();
+			if (executablePath) config.browser.executablePath = executablePath;
 			const defaultLaunchArgs = validateStringArray(value.browser.defaultLaunchArgs, `${path}.browser.defaultLaunchArgs`, errors);
 			if (defaultLaunchArgs) {
 				config.browser.defaultLaunchArgs = defaultLaunchArgs;
@@ -250,18 +298,50 @@ export function isProjectSafeCredentialValue(rawValue: string): boolean {
 	return /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed) || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(trimmed);
 }
 
-export function classifyCredentialSource(rawValue: string, scope: AgentBrowserConfigScope): CredentialSource | undefined {
+export function classifyCredentialSource(rawValue: string, scope: AgentBrowserConfigScope, provider?: WebSearchProvider): CredentialSource | undefined {
 	const trimmed = rawValue.trim();
 	if (!trimmed) return undefined;
-	if (trimmed.startsWith("!")) return { kind: "command", rawValue: trimmed, scope };
-	if (trimmed.includes("$")) return { kind: "env", rawValue: trimmed, scope };
-	return { kind: "literal", rawValue: trimmed, scope };
+	if (trimmed.startsWith("!")) return { kind: "command", provider, rawValue: trimmed, scope };
+	if (trimmed.includes("$")) return { kind: "env", provider, rawValue: trimmed, scope };
+	return { kind: "literal", provider, rawValue: trimmed, scope };
 }
 
 function getBrowserDefaultProfile(config: AgentBrowserConfig): Required<BrowserDefaultProfileConfig> | undefined {
 	const profile = config.browser?.defaultProfile;
 	if (!profile?.name.trim()) return undefined;
 	return { name: profile.name.trim(), policy: profile.policy ?? "authenticated-only" };
+}
+
+function getBrowserExecutablePath(config: AgentBrowserConfig): string | undefined {
+	const executablePath = config.browser?.executablePath?.trim();
+	return executablePath || undefined;
+}
+
+function getWebSearchCredentialScope(layers: ConfigLayer[], key: "braveApiKey" | "exaApiKey"): AgentBrowserConfigScope {
+	for (let index = layers.length - 1; index >= 0; index -= 1) {
+		const layer = layers[index];
+		if (layer?.config.webSearch?.[key] !== undefined) return layer.scope;
+	}
+	return "global";
+}
+
+function buildWebSearchCredentialSources(options: { env: NodeJS.ProcessEnv; layers: ConfigLayer[]; mergedConfig: AgentBrowserConfig }): Partial<Record<WebSearchProvider, CredentialSource>> {
+	const sources: Partial<Record<WebSearchProvider, CredentialSource>> = {};
+	const braveApiKey = options.mergedConfig.webSearch?.braveApiKey;
+	if (braveApiKey !== undefined) {
+		sources.brave = classifyCredentialSource(braveApiKey, getWebSearchCredentialScope(options.layers, "braveApiKey"), "brave");
+	}
+	const exaApiKey = options.mergedConfig.webSearch?.exaApiKey;
+	if (exaApiKey !== undefined) {
+		sources.exa = classifyCredentialSource(exaApiKey, getWebSearchCredentialScope(options.layers, "exaApiKey"), "exa");
+	}
+	if (!sources.brave && options.env[BRAVE_API_KEY_ENV]?.trim()) {
+		sources.brave = { kind: "literal", provider: "brave", rawValue: options.env[BRAVE_API_KEY_ENV] ?? "", scope: "env-fallback" };
+	}
+	if (!sources.exa && options.env[EXA_API_KEY_ENV]?.trim()) {
+		sources.exa = { kind: "literal", provider: "exa", rawValue: options.env[EXA_API_KEY_ENV] ?? "", scope: "env-fallback" };
+	}
+	return sources;
 }
 
 function buildConfigState(options: {
@@ -272,24 +352,15 @@ function buildConfigState(options: {
 	errors: string[];
 	warnings: string[];
 }): AgentBrowserConfigState {
-	let credentialScope: AgentBrowserConfigScope = "global";
-	for (let index = options.layers.length - 1; index >= 0; index -= 1) {
-		const layer = options.layers[index];
-		if (layer?.config.webSearch?.braveApiKey !== undefined) {
-			credentialScope = layer.scope;
-			break;
-		}
-	}
-	let credentialSource = options.mergedConfig.webSearch?.braveApiKey === undefined
-		? undefined
-		: classifyCredentialSource(options.mergedConfig.webSearch.braveApiKey, credentialScope);
-	if (!credentialSource && options.env[BRAVE_API_KEY_ENV]?.trim()) {
-		credentialSource = { kind: "literal", rawValue: options.env[BRAVE_API_KEY_ENV] ?? "", scope: "env-fallback" };
-	}
+	const webSearchCredentialSources = buildWebSearchCredentialSources(options);
 	return {
 		browserDefaultProfile: getBrowserDefaultProfile(options.mergedConfig),
+		browserExecutablePath: getBrowserExecutablePath(options.mergedConfig),
 		config: options.mergedConfig,
-		credentialSource,
+		credentialSource: webSearchCredentialSources.brave,
+		webSearchCredentialSources,
+		webSearchEnabled: options.mergedConfig.webSearch?.enabled !== false,
+		webSearchPreferredProvider: options.mergedConfig.webSearch?.preferredProvider ?? DEFAULT_WEB_SEARCH_PROVIDER,
 		errors: options.errors,
 		layers: options.layers,
 		paths: options.paths,
@@ -414,33 +485,82 @@ export async function resolveCredentialSource(
 	return value ? { source, value } : undefined;
 }
 
+export function getWebSearchProviderOrder(state: AgentBrowserConfigState, requestedProvider?: WebSearchProvider | "auto"): WebSearchProvider[] {
+	if (requestedProvider && requestedProvider !== "auto") return [requestedProvider];
+	const preferred = state.webSearchPreferredProvider;
+	return [preferred, ...WEB_SEARCH_PROVIDERS.filter((provider) => provider !== preferred)];
+}
+
+export function getWebSearchCredentialSource(state: AgentBrowserConfigState, provider: WebSearchProvider): CredentialSource | undefined {
+	return state.webSearchCredentialSources[provider];
+}
+
+export async function resolveWebSearchCredential(
+	state: AgentBrowserConfigState,
+	provider: WebSearchProvider,
+	options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+): Promise<ResolvedCredential | undefined> {
+	return resolveCredentialSource(getWebSearchCredentialSource(state, provider), options);
+}
+
+export async function resolvePreferredWebSearchCredential(
+	state: AgentBrowserConfigState,
+	options: { env?: NodeJS.ProcessEnv; provider?: WebSearchProvider | "auto"; signal?: AbortSignal } = {},
+): Promise<{ provider: WebSearchProvider; credential: ResolvedCredential } | undefined> {
+	for (const provider of getWebSearchProviderOrder(state, options.provider)) {
+		const credential = await resolveWebSearchCredential(state, provider, options);
+		if (credential) return { provider, credential };
+	}
+	return undefined;
+}
+
 export async function resolveBraveApiKey(
 	state: AgentBrowserConfigState,
 	options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
 ): Promise<ResolvedCredential | undefined> {
-	return resolveCredentialSource(state.credentialSource, options);
+	return resolveWebSearchCredential(state, "brave", options);
+}
+
+export async function resolveExaApiKey(
+	state: AgentBrowserConfigState,
+	options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+): Promise<ResolvedCredential | undefined> {
+	return resolveWebSearchCredential(state, "exa", options);
+}
+
+function hasPotentialCredentialSource(source: CredentialSource | undefined, env: NodeJS.ProcessEnv): boolean {
+	if (!source) return false;
+	if (source.kind === "command") return true;
+	if (source.kind === "env") return Boolean(resolveEnvInterpolations(source.rawValue, env)?.trim());
+	return Boolean(source.rawValue.trim());
 }
 
 export function canRegisterWebSearchTool(state: AgentBrowserConfigState, env: NodeJS.ProcessEnv = process.env): boolean {
-	if (!state.credentialSource || state.errors.length > 0) return false;
-	if (state.credentialSource.kind === "command") return true;
-	if (state.credentialSource.kind === "env") return Boolean(resolveEnvInterpolations(state.credentialSource.rawValue, env)?.trim());
-	return Boolean(state.credentialSource.rawValue.trim());
+	if (!state.webSearchEnabled || state.errors.length > 0) return false;
+	return WEB_SEARCH_PROVIDERS.some((provider) => hasPotentialCredentialSource(state.webSearchCredentialSources[provider], env));
 }
 
 export async function hasResolvableCredentialSource(
 	state: AgentBrowserConfigState,
 	options: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<boolean> {
-	if (!state.credentialSource || state.errors.length > 0) return false;
-	if (state.credentialSource.kind === "command") return true;
-	return Boolean((await resolveCredentialSource(state.credentialSource, options))?.value);
+	if (!state.webSearchEnabled || state.errors.length > 0) return false;
+	for (const provider of WEB_SEARCH_PROVIDERS) {
+		const source = state.webSearchCredentialSources[provider];
+		if (!source) continue;
+		if (source.kind === "command") return true;
+		if ((await resolveCredentialSource(source, options))?.value) return true;
+	}
+	return false;
 }
 
-export function getCredentialSourceSummary(source: CredentialSource | undefined): string {
+export function getCredentialSourceSummary(source: CredentialSource | undefined, provider?: WebSearchProvider): string {
 	if (!source) return "not configured";
 	if (source.kind === "command") return `configured via command (${source.scope})`;
 	if (source.kind === "env") return `configured via environment interpolation (${source.scope})`;
-	if (source.scope === "env-fallback") return `configured via ${BRAVE_API_KEY_ENV} environment fallback`;
+	if (source.scope === "env-fallback") {
+		const envName = (provider ?? source.provider) === "exa" ? EXA_API_KEY_ENV : BRAVE_API_KEY_ENV;
+		return `configured via ${envName} environment fallback`;
+	}
 	return `configured as plaintext ${source.scope} value [redacted]`;
 }

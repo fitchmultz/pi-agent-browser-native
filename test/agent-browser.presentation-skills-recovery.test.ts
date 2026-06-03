@@ -294,6 +294,25 @@ test("buildToolPresentation suggests grouped getter commands for common unknown 
 	assert.equal(textFailure.nextActions, undefined);
 });
 
+test("buildToolPresentation explains browser profile config failures with diagnostics next actions", async () => {
+	const presentation = await buildToolPresentation({
+		args: ["--profile", "Default", "open", "https://example.com"],
+		commandInfo: { command: "open", subcommand: "https://example.com" },
+		cwd: process.cwd(),
+		errorText: "No Chrome user data directory found. Cannot resolve profile name.",
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /profile\/config hint/i);
+	assert.match(text, /Do not keep retrying the same open\/profile call/);
+	assert.match(text, /top-level `sessionMode: "fresh"` field/);
+	assert.deepEqual(presentation.nextActions?.map((action) => ({ id: action.id, args: action.params?.args })), [
+		{ id: "inspect-browser-profiles", args: ["profiles"] },
+		{ id: "run-agent-browser-doctor", args: ["doctor"] },
+	]);
+});
+
 test("buildToolPresentation explains localhost navigation failures as browser-host reachability", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "open", subcommand: "http://127.0.0.1:8766/page.html" },

@@ -181,7 +181,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:
-				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device apply and later auto calls follow the new browser.",
+				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --profile, --executable-path, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device apply and later auto calls follow the new browser.",
 			default: DEFAULT_SESSION_MODE,
 		}),
 	),

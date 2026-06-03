@@ -42,10 +42,10 @@ import { isRecord } from "./parsing.js";
  *   not a state-restore mechanism that typically leaves restored tabs stealing focus.
  * - `--cdp` connects to an arbitrary endpoint; similar reasoning to `--auto-connect`.
  *
- * Other flags like `--headed`, `--engine`, `--executable-path`, `--user-agent`, and
- * `--download-path` are first-launch-sensitive but not alternate session/auth attach
- * mechanisms and do not inject pre-page JavaScript, so they are intentionally excluded
- * from the full launch-scoped set.
+ * Other flags like `--headed`, `--engine`, `--user-agent`, and `--download-path`
+ * are first-launch-sensitive but not alternate session/auth attach mechanisms and do
+ * not inject pre-page JavaScript, so they are intentionally excluded from the full
+ * launch-scoped set.
  */
 const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 	{
@@ -59,6 +59,10 @@ const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 	{
 		flag: "--enable",
 		reason: "selects built-in page init scripts before the upstream browser session is launched",
+	},
+	{
+		flag: "--executable-path",
+		reason: "selects the browser executable used for the upstream launch",
 	},
 	{
 		flag: "--init-script",
@@ -693,6 +697,11 @@ export function validateToolArgs(args: string[]): string | undefined {
 	const shellOperator = args.find((token) => SHELL_OPERATOR_TOKENS.has(token));
 	if (shellOperator) {
 		return `Do not pass shell operators like \`${shellOperator}\`. Pass exact agent-browser CLI arguments only.`;
+	}
+
+	const sessionModeArg = args.find((token) => token === "--session-mode" || token.startsWith("--session-mode="));
+	if (sessionModeArg) {
+		return "Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: [\"--profile\", \"Default\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
 	}
 
 	return undefined;

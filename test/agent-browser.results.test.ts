@@ -30,7 +30,8 @@ import {
 import {
 	chooseOpenResultTabCorrection,
 	extractCommandTokens,
-	parseCommandInfo
+	parseCommandInfo,
+	validateToolArgs,
 } from "../extensions/agent-browser/lib/runtime.js";
 
 const MISSING_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: missing boolean success field.";
@@ -101,6 +102,12 @@ test("alignPageChangeSummaryNextActionIds keeps only emitted action ids", () => 
 		),
 		{ changeType: "mutation", nextActionIds: undefined, summary: "changed" },
 	);
+});
+
+test("validateToolArgs rejects wrapper fields passed as upstream argv", () => {
+	assert.equal(validateToolArgs(["open", "https://example.com"]), undefined);
+	assert.match(validateToolArgs(["open", "https://example.com", "--session-mode", "fresh"]) ?? "", /top-level agent_browser `sessionMode` field/);
+	assert.match(validateToolArgs(["open", "https://example.com", "--session-mode=fresh"]) ?? "", /Do not pass `--session-mode` in args/);
 });
 
 test("classifyAgentBrowserFailureCategory locks common machine-readable failure categories", () => {

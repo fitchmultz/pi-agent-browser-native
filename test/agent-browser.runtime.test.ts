@@ -802,7 +802,7 @@ test("buildExecutionPlan limits sessionless allowlists to documented subcommands
 });
 
 test("buildExecutionPlan rejects missing values for global value-taking flags before launching upstream", () => {
-	for (const args of [["--session"], ["--profile"], ["--session-name"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
+	for (const args of [["--session"], ["--profile"], ["--executable-path"], ["--session-name"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -887,6 +887,7 @@ test("buildExecutionPlan allows dash-starting --args values", () => {
 test("buildExecutionPlan blocks startup-scoped flags from silently reusing an active implicit session", () => {
 	for (const { args, flag } of [
 		{ args: ["--profile", "Default", "open", "https://example.com"], flag: "--profile" },
+		{ args: ["--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "open", "https://example.com"], flag: "--executable-path" },
 		{ args: ["--session-name", "saved-auth", "open", "https://example.com"], flag: "--session-name" },
 		{ args: ["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"], flag: "--cdp" },
 		{ args: ["--state", "/tmp/auth.json", "open", "https://example.com"], flag: "--state" },
@@ -940,13 +941,14 @@ test("buildExecutionPlan allows disabled auto-connect after an active implicit s
 	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
 });
 
-test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state but not cdp, provider, or auto-connect", () => {
+test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state but not executable, cdp, provider, or auto-connect", () => {
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile", "Default", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile=Default", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name", "saved", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name=saved", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state", "/tmp/auth.json", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state=/tmp/auth.json", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["-p", "ios", "open", "https://example.com"]), false);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--provider", "browserbase", "open", "https://example.com"]), false);

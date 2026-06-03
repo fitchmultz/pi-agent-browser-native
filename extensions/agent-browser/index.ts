@@ -952,7 +952,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const webSearchToolAvailable = canRegisterWebSearchTool(agentBrowserConfig);
 	const toolPromptGuidelines = buildToolPromptGuidelines({
 		browserDefaultProfile: agentBrowserConfig.browserDefaultProfile,
-		includeBraveSearch: webSearchToolAvailable,
+		browserExecutablePath: agentBrowserConfig.browserExecutablePath,
+		includeWebSearch: webSearchToolAvailable,
 		docs: getInstalledDocsPaths(),
 	});
 	const implicitSessionIdleTimeoutMs = String(getImplicitSessionIdleTimeoutMs());

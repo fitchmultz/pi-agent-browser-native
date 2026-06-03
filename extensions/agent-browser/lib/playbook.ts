@@ -29,8 +29,10 @@ export const QUICK_START_GUIDELINES = [
 	"When details.nextActions is present, prefer those exact native agent_browser follow-up payloads over prose guidance; they may include args, stdin, sessionMode, networkSourceLookup, safety notes, or artifactPath for saved files.",
 ] as const;
 
-export const BRAVE_SEARCH_PROMPT_GUIDELINE =
-	"When agent_browser_web_search is available, use it for live web search when current or external web information would help; use agent_browser when the task needs browser interaction, page inspection, screenshots, authenticated/profile content, or DOM work.";
+export const WEB_SEARCH_PROMPT_GUIDELINE =
+	"Use agent_browser_web_search for quick live search/URL discovery; it chooses Exa or Brave, preferring Exa unless configured otherwise. Use agent_browser for interaction/DOM/screenshots/auth. Do not run parallel searches: one good query, inspect results, then one follow-up max; on HTTP 429 stop and report provider limits.";
+
+export const BRAVE_SEARCH_PROMPT_GUIDELINE = WEB_SEARCH_PROMPT_GUIDELINE;
 
 export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs are page-scoped; the wrapper fails mutation-prone stale/recycled refs before upstream can silently target a different current-page element.",
@@ -39,10 +41,10 @@ export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"When a visible text or accessible-name target should survive ref churn, prefer find locators such as role, text, label, placeholder, alt, title, or testid with the intended action instead of guessing a CSS selector.",
 	"For desktop or host-controlled rich inputs, if semanticAction fill misses, refresh refs and prefer a current editable @ref from details.richInputRecovery or the latest snapshot; focus or click that ref, then use keyboard inserttext or keyboard type with the intended text. Do not auto-submit with Enter or a submit button unless the user flow explicitly calls for it.",
 	"Do not assume Playwright selector dialects such as text=Close or button:has-text('Close') are supported wrapper syntax unless current upstream agent-browser behavior has been verified.",
-	"For authenticated or user-specific content explicitly requested by the user, such as feeds, inboxes, account pages, or private dashboards, prefer --profile Default on the first browser call and let the implicit session carry continuity. Do not use a real profile for public pages just because they are dashboards. Treat visible page content from real profiles as model-visible transcript data; use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser.",
+	"For authenticated or user-specific content explicitly requested by the user, such as feeds, inboxes, account pages, or private dashboards, use a real profile only when the user/config asks for it or profiles have been inspected; do not assume --profile Default exists on every machine. Do not use a real profile for public pages just because they are dashboards. Treat visible page content from real profiles as model-visible transcript data; use --auto-connect only if profile-based reuse is unavailable or the task is specifically about attaching to a running debug-enabled browser. If profile/user-data-dir resolution fails, stop retrying opens, run profiles and/or doctor through agent_browser, then report what the user needs to configure.",
 	"Do not invent fixed explicit session names for routine tasks. Use the implicit session unless you truly need multiple isolated browser sessions in the same conversation.",
-	"When using --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
-	"If you already used the implicit session and now need launch-scoped flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device, retry with sessionMode set to fresh or pass an explicit --session for the new launch. After a successful unnamed fresh launch, later auto calls follow that new session.",
+	"When using --profile, --executable-path, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device, put them on the first command for that session. If you intentionally use an explicit --session, keep using that same explicit session for follow-ups.",
+	"If you already used the implicit session and now need launch-scoped flags like --profile, --executable-path, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device, retry with top-level sessionMode set to fresh or pass an explicit --session for the new launch; never pass --session-mode inside args. After a successful unnamed fresh launch, later auto calls follow that new session.",
 	"For React introspection, launch the page with --enable react-devtools before first navigation, then use react tree, react inspect <fiberId>, sourceLookup candidates for local UI source hints, react renders start/stop, or react suspense; sourceLookup is experimental and reports confidence/evidence instead of guaranteed DOM-to-file mappings. For failed fetches and APIs, networkSourceLookup (experimental) correlates failed network requests with initiator metadata and bounded workspace URL literals—candidates only, not definitive blame. Use vitals [url] for Core Web Vitals and hydration timing, and pushstate <url> for client-side SPA navigation.",
 	"For first-navigation setup, use open without a URL plus network route --resource-type <csv>, cookies set --curl <file>, or --init-script/--enable before navigate/opening the target page.",
 	"For stateful browser context work, prefer purpose-specific page actions before dumping browser data: use auth save --password-stdin with the tool stdin field for credentials, auth list/show/delete/remove for local auth-profile maintenance, auth login when you need the browser to fill a saved profile, state save/load for portable test state, state list/show/rename/clear/clear -a/clean for saved-state lifecycle cleanup, cookies get/set/clear and storage local|session only when the task needs those values, and expect cookie/storage/auth/state summaries to redact credential-like fields.",
@@ -67,12 +69,12 @@ export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 ] as const;
 
 export const TOOL_PROMPT_GUIDELINES_SUFFIX = [
-	"Prefer agent_browser over bash for opening sites, reading docs on the web, clicking, filling, screenshots, eval, and batch workflows.",
+	"Prefer agent_browser over bash for opening sites, docs, clicking, filling, screenshots, eval, and batch workflows.",
 	"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when agent_browser can do the job.",
 	"Pass exact agent-browser CLI arguments in args when you are not using semanticAction, job, or qa, excluding the binary name and --json (the wrapper injects --json automatically).",
 	"Use stdin only for eval --stdin, batch, auth save --password-stdin, or wrapper-generated job/qa batches instead of shell heredocs or password args; other command/stdin combinations are rejected before launch.",
 	"Let the extension-managed session handle the common path unless you explicitly need a fresh launch for upstream flags like --profile, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device.",
-	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/debug/init-script/provider launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
+	"Use sessionMode=fresh when switching from an existing implicit session to a new profile/browser executable/debug/init-script/provider launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
 ] as const;
 
 export const INSPECTION_TOOL_CALL_EXAMPLES = [
@@ -87,23 +89,28 @@ export const WRAPPER_TAB_RECOVERY_BEHAVIOR = [
 	"If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.",
 ] as const;
 
-export function buildSharedBrowserPlaybookGuidelines(options: { includeBraveSearch: boolean }): string[] {
+export function buildSharedBrowserPlaybookGuidelines(options: { includeWebSearch: boolean }): string[] {
 	return [
 		SHARED_BROWSER_PLAYBOOK_GUIDELINES[0],
-		...(options.includeBraveSearch ? [BRAVE_SEARCH_PROMPT_GUIDELINE] : []),
+		...(options.includeWebSearch ? [WEB_SEARCH_PROMPT_GUIDELINE] : []),
 		...SHARED_BROWSER_PLAYBOOK_GUIDELINES.slice(1),
 	];
 }
 
 /** Tier A: always-on tool promptGuidelines (keep small; Tier B lives in SHARED_BROWSER_PLAYBOOK_GUIDELINES and docs). */
 export const RUNTIME_PROMPT_GUIDELINES = [
-	"Use exactly one input mode: args (open→snapshot -i→@refs), semanticAction, job, qa, sourceLookup/networkSourceLookup (candidate hints), or electron. stdin only for batch/eval/auth or wrapper batch; electron rejects stdin. Do not pass --json in args; wrapper injects it.",
-	"Common flow: open, snapshot -i, use current @refs or semanticAction, then re-snapshot after navigation/scroll/rerender/DOM change. Batch same-snapshot fills unless they may submit/navigate/rerender. Respect explicit stop boundaries: if the user says stop before order/post/purchase/submit, do not click the final action.",
-	"Use sessionMode=fresh for launch-scoped flags on an active implicit session. For signed-in/account-specific content, start with --profile Default plus sessionMode=fresh unless asked otherwise; visible content is model-visible.",
-	"For artifacts, save the exact user path and check details.artifactVerification/details.artifacts before claiming success. If close is blocked by details.promptGuard, save the required artifact first. record stop needs ffmpeg on PATH; close does not delete saved files; \"waited\":\"timeout\" is not proof.",
+	"Use exactly one input mode: args, semanticAction, job, qa, sourceLookup/networkSourceLookup, or electron. stdin only for batch/eval/auth or wrapper batch; electron rejects stdin. Do not pass --json in args; wrapper injects it.",
+	"Common flow: open, snapshot -i, use current @refs or semanticAction, then re-snapshot after navigation/scroll/rerender/DOM change. Batch same-snapshot fills unless they may submit/navigate/rerender. Respect explicit stop boundaries: stop before order/post/purchase/submit.",
+	"Use top-level sessionMode=fresh for launch-scoped flags; never put --session-mode in args. For signed-in/account-specific content, use requested/configured profiles, never assume --profile Default; on profile failures, run profiles/doctor and tell the user what to configure. Use --executable-path for configured Chromium. Profile content is model-visible.",
+	"For artifacts, save the exact user path and verify details.artifactVerification/details.artifacts before claiming success. If close is blocked by details.promptGuard, save the required artifact first. record stop needs ffmpeg; close does not delete saved files; waited:timeout is not proof.",
 	"When details.nextActions is present, prefer exact payloads over prose/guessed selectors. For dense snapshots, check Omitted high-value controls/details.data.highValueControlRefIds. For dashboards, verify scroll with screenshot/snapshot; if nothing moved, target the real scroll region.",
 	"For extraction, prefer get title/url/text/html/value/attr/count or eval --stdin with plain expression, not console.log. Batch three or more known refs/selectors (e.g. [[\"get\",\"text\",\"@e1\"],[\"get\",\"text\",\"@e2\"]]); selector visibility warnings → visible @refs/nextActions.",
 ] as const;
+
+export function buildBrowserExecutablePathGuideline(executablePath: string | undefined): string | undefined {
+	if (!executablePath) return undefined;
+	return `Agent-browser config sets browser.executablePath to ${JSON.stringify(executablePath)}; for fresh browser launches that should use that Chromium-compatible executable, add --executable-path ${JSON.stringify(executablePath)} with sessionMode:fresh. The upstream profiles command still lists Chrome profiles only; for non-Chrome Chromium login state, ask the user for an explicit profile/user-data directory path or inspect local setup with profiles/doctor before recommending a profile value.`;
+}
 
 export function buildBrowserDefaultProfileGuideline(profile: { name: string; policy: "explicit-only" | "authenticated-only" | "always" } | undefined): string | undefined {
 	if (!profile || profile.policy === "explicit-only") return undefined;
@@ -115,16 +122,19 @@ export function buildBrowserDefaultProfileGuideline(profile: { name: string; pol
 
 export function buildToolPromptGuidelines(options: {
 	browserDefaultProfile?: { name: string; policy: "explicit-only" | "authenticated-only" | "always" };
+	browserExecutablePath?: string;
 	docs?: { readmePath: string; commandReferencePath: string; toolContractPath: string };
-	includeBraveSearch: boolean;
+	includeWebSearch: boolean;
 }): string[] {
 	const browserDefaultProfileGuideline = buildBrowserDefaultProfileGuideline(options.browserDefaultProfile);
+	const browserExecutablePathGuideline = buildBrowserExecutablePathGuideline(options.browserExecutablePath);
 	return [
 		...TOOL_PROMPT_GUIDELINES_PREFIX,
 		...(options.docs ? [buildInstalledDocsGuideline(options.docs)] : []),
 		...RUNTIME_PROMPT_GUIDELINES,
+		...(browserExecutablePathGuideline ? [browserExecutablePathGuideline] : []),
 		...(browserDefaultProfileGuideline ? [browserDefaultProfileGuideline] : []),
-		...(options.includeBraveSearch ? [BRAVE_SEARCH_PROMPT_GUIDELINE] : []),
+		...(options.includeWebSearch ? [WEB_SEARCH_PROMPT_GUIDELINE] : []),
 		TOOL_PROMPT_GUIDELINES_SUFFIX[0],
 		TOOL_PROMPT_GUIDELINES_SUFFIX[1],
 	];
