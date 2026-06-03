@@ -57,7 +57,8 @@ test("config CLI prints Pi-scoped paths and setup safety help", async () => {
 	const { stdout } = await runConfig(["paths"], { cwd: fixture.cwd, env: fixture.env });
 	assert.match(stdout, /\.pi\/config\/pi-agent-browser-native\/config\.json/);
 	const { stdout: help } = await runConfig(["--help"], { cwd: fixture.cwd, env: fixture.env });
-	assert.match(help, /Project-local plaintext, interpolation-literal, malformed, and command-backed web-search keys are refused/);
+	assert.match(help, /Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused/);
+	assert.match(help, /matching EXA_API_KEY or BRAVE_API_KEY set-env references/);
 });
 
 test("config CLI writes and redacts global plaintext Brave key", async () => {
@@ -153,6 +154,18 @@ test("config CLI writes project env source, explicit project profile, and global
 	assert.match(stdout, /webSearch\.enabled: false/);
 	assert.match(stdout, /webSearch\.exaApiKey: configured via environment interpolation/);
 	assert.match(stdout, /browser\.executablePath: \/Applications\/Brave Browser\.app\/Contents\/MacOS\/Brave Browser/);
+});
+
+test("config CLI refuses project-local custom web-search env aliases", async () => {
+	const fixture = await createFixture();
+	await assert.rejects(
+		() => runConfig(["web-search", "set-env", "AWS_SECRET_ACCESS_KEY", "--provider", "exa", "--project"], { cwd: fixture.cwd, env: fixture.env }),
+		(error: { code?: number; stderr?: string }) => {
+			assert.equal(error.code, 2);
+			assert.match(error.stderr ?? "", /Project-local Exa env references must use EXA_API_KEY exactly/);
+			return true;
+		},
+	);
 });
 
 test("config CLI refuses project-local browser settings that would steer host launch guidance", async () => {

@@ -54,7 +54,7 @@ test("uses project config over global config and rejects unsafe project-local Br
 	await writeJson(fixture.globalPath, { version: 1, webSearch: { braveApiKey: "$GLOBAL_BRAVE_KEY" } });
 	await writeJson(fixture.projectPath, { version: 1, webSearch: { braveApiKey: "plaintext-secret" } });
 	const plaintextState = await loadAgentBrowserConfig({ cwd: fixture.cwd, env: { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" } });
-	assert.match(plaintextState.errors.join("\n"), /plaintext, interpolation literals, malformed env references, and command-backed project secrets are not allowed/);
+	assert.match(plaintextState.errors.join("\n"), /plaintext, custom env aliases, interpolation literals, malformed env references, and command-backed project secrets are not allowed/);
 	assert.equal(canRegisterWebSearchTool(plaintextState, { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" }), false);
 
 	await writeJson(fixture.projectPath, { version: 1, webSearch: { braveApiKey: "!echo command-secret" } });
@@ -62,10 +62,10 @@ test("uses project config over global config and rejects unsafe project-local Br
 	assert.match(commandState.errors.join("\n"), /command-backed project secrets are not allowed/);
 	assert.equal(canRegisterWebSearchTool(commandState, { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" }), false);
 
-	for (const unsafeValue of ["$", "$-plaintext-secret", "${BRAVE_API_KEY}_suffix"]) {
+	for (const unsafeValue of ["$", "$-plaintext-secret", "${BRAVE_API_KEY}_suffix", "$AWS_SECRET_ACCESS_KEY", "${EXA_API_KEY}"]) {
 		await writeJson(fixture.projectPath, { version: 1, webSearch: { braveApiKey: unsafeValue } });
 		const malformedState = await loadAgentBrowserConfig({ cwd: fixture.cwd, env: { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" } });
-		assert.match(malformedState.errors.join("\n"), /must be exactly \$ENV_VAR or \$\{ENV_VAR\}/);
+		assert.match(malformedState.errors.join("\n"), /must be exactly \$BRAVE_API_KEY or \$\{BRAVE_API_KEY\}/);
 		assert.equal(canRegisterWebSearchTool(malformedState, { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" }), false);
 	}
 });
@@ -169,6 +169,6 @@ test("rejects unsafe project-local Exa key sources", async () => {
 	const fixture = await createConfigFixture();
 	await writeJson(fixture.projectPath, { version: 1, webSearch: { exaApiKey: "plaintext-secret" } });
 	const state = await loadAgentBrowserConfig({ cwd: fixture.cwd, env: fixture.env });
-	assert.match(state.errors.join("\n"), /webSearch\.exaApiKey must be exactly \$ENV_VAR or \$\{ENV_VAR\}/);
+	assert.match(state.errors.join("\n"), /webSearch\.exaApiKey must be exactly \$EXA_API_KEY or \$\{EXA_API_KEY\}/);
 	assert.equal(canRegisterWebSearchTool(state, fixture.env), false);
 });

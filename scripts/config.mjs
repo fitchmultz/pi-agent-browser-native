@@ -51,7 +51,7 @@ Notes:
   Global config:  ~/.pi/config/pi-agent-browser-native/config.json
   Project config: .pi/config/pi-agent-browser-native/config.json
   Override:       PI_AGENT_BROWSER_CONFIG=/path/to/config.json
-  Project-local plaintext, interpolation-literal, malformed, and command-backed web-search keys are refused; use exact set-env references there.
+  Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused; use matching EXA_API_KEY or BRAVE_API_KEY set-env references there.
   Use --provider for set-key, set-command, and clear; set-env infers exa/brave from EXA_API_KEY or BRAVE_API_KEY.
 `;
 }
@@ -150,6 +150,10 @@ function inferWebSearchProviderFromEnvName(envName) {
 	if (envName === EXA_API_KEY_ENV) return "exa";
 	if (envName === BRAVE_API_KEY_ENV) return "brave";
 	return undefined;
+}
+
+function getProviderEnvVar(provider) {
+	return WEB_SEARCH_ENV_VARS[provider];
 }
 
 function getWebSearchProvider(flags, options = {}) {
@@ -280,6 +284,9 @@ async function handleWebSearch(args, flags) {
 		const envName = args[1];
 		if (!envName || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) throw new UsageError("set-env requires a valid environment variable name.");
 		const provider = getWebSearchProvider(flags, { envName });
+		if (flags.get("--project") && envName !== getProviderEnvVar(provider)) {
+			throw new UsageError(`Project-local ${getProviderLabel(provider)} env references must use ${getProviderEnvVar(provider)} exactly; custom env aliases belong in global config or PI_AGENT_BROWSER_CONFIG.`);
+		}
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => {
 			setWebSearchCredential(config, provider, `$${envName}`);

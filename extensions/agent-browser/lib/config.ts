@@ -213,15 +213,15 @@ function validateConfig(value: unknown, path: string, scope: ConfigLayer["scope"
 			const braveApiKey = validateString(value.webSearch.braveApiKey, `${path}.webSearch.braveApiKey`, errors);
 			if (braveApiKey !== undefined) {
 				webSearch.braveApiKey = braveApiKey;
-				if (scope === "project" && !isProjectSafeCredentialValue(braveApiKey)) {
-					errors.push(`${path}.webSearch.braveApiKey must be exactly $ENV_VAR or ${"${ENV_VAR}"} in project-local config; plaintext, interpolation literals, malformed env references, and command-backed project secrets are not allowed.`);
+				if (scope === "project" && !isProjectSafeCredentialValueForProvider(braveApiKey, "brave")) {
+					errors.push(`${path}.webSearch.braveApiKey must be exactly $BRAVE_API_KEY or ${"${BRAVE_API_KEY}"} in project-local config; plaintext, custom env aliases, interpolation literals, malformed env references, and command-backed project secrets are not allowed.`);
 				}
 			}
 			const exaApiKey = validateString(value.webSearch.exaApiKey, `${path}.webSearch.exaApiKey`, errors);
 			if (exaApiKey !== undefined) {
 				webSearch.exaApiKey = exaApiKey;
-				if (scope === "project" && !isProjectSafeCredentialValue(exaApiKey)) {
-					errors.push(`${path}.webSearch.exaApiKey must be exactly $ENV_VAR or ${"${ENV_VAR}"} in project-local config; plaintext, interpolation literals, malformed env references, and command-backed project secrets are not allowed.`);
+				if (scope === "project" && !isProjectSafeCredentialValueForProvider(exaApiKey, "exa")) {
+					errors.push(`${path}.webSearch.exaApiKey must be exactly $EXA_API_KEY or ${"${EXA_API_KEY}"} in project-local config; plaintext, custom env aliases, interpolation literals, malformed env references, and command-backed project secrets are not allowed.`);
 				}
 			}
 			if (Object.keys(webSearch).length > 0) config.webSearch = webSearch;
@@ -308,9 +308,14 @@ export function isPlaintextCredentialValue(rawValue: string): boolean {
 	return Boolean(trimmed) && !trimmed.startsWith("!") && !trimmed.startsWith("$");
 }
 
-export function isProjectSafeCredentialValue(rawValue: string): boolean {
+function getProviderEnvVar(provider: WebSearchProvider): string {
+	return provider === "exa" ? EXA_API_KEY_ENV : BRAVE_API_KEY_ENV;
+}
+
+export function isProjectSafeCredentialValueForProvider(rawValue: string, provider: WebSearchProvider): boolean {
+	const envName = getProviderEnvVar(provider);
 	const trimmed = rawValue.trim();
-	return /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed) || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(trimmed);
+	return trimmed === `$${envName}` || trimmed === `\${${envName}}`;
 }
 
 export function classifyCredentialSource(rawValue: string, scope: AgentBrowserConfigScope, provider?: WebSearchProvider): CredentialSource | undefined {
@@ -603,7 +608,7 @@ export function getCredentialSourceSummary(source: CredentialSource | undefined,
 	if (source.kind === "command") return `configured via command (${source.scope})`;
 	if (source.kind === "env") return `configured via environment interpolation (${source.scope})`;
 	if (source.scope === "env-fallback") {
-		const envName = (provider ?? source.provider) === "exa" ? EXA_API_KEY_ENV : BRAVE_API_KEY_ENV;
+		const envName = getProviderEnvVar((provider ?? source.provider) === "exa" ? "exa" : "brave");
 		return `configured via ${envName} environment fallback`;
 	}
 	return `configured as plaintext ${source.scope} value [redacted]`;

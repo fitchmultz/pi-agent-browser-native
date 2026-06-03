@@ -207,7 +207,7 @@ printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native@la
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --provider brave --global
 ```
 
-Project-local plaintext, interpolation-literal, malformed, and command-backed web-search keys are refused; use exact environment references such as `$EXA_API_KEY`, `${EXA_API_KEY}`, `$BRAVE_API_KEY`, or `${BRAVE_API_KEY}` for `.pi/config/pi-agent-browser-native/config.json`. `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. The tool content, details, status output, and docs examples must not expose resolved keys.
+Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused; project config may only use the matching provider env refs (`$EXA_API_KEY` / `${EXA_API_KEY}` for Exa and `$BRAVE_API_KEY` / `${BRAVE_API_KEY}` for Brave). `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. The tool content, details, status output, and docs examples must not expose resolved keys.
 
 For Exa, the tool defaults to `searchType: "auto"` with `contents.highlights: true`. Agents may pass `searchType` (`fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`) only when the task needs that latency/depth tradeoff; structured output schemas are intentionally not exposed yet.
 
