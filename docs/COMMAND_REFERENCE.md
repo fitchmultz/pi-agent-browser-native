@@ -699,7 +699,7 @@ cat > ~/.pi/config/pi-agent-browser-native/config.json <<'JSON'
 JSON
 ```
 
-If you prefer the helper, run it through npm unless you know `pi-agent-browser-config` is already on your `PATH`:
+`pi install` does not add package helper binaries to your shell `PATH`. Use direct JSON config edits, or run the helper only through `npm exec`:
 
 ```bash
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config paths

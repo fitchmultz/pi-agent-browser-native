@@ -4,17 +4,23 @@
 
 No changes yet.
 
+## 0.2.42 - 2026-06-03
+
+### Fixed
+
+- Corrected package-config docs to show the package helper only through `npm exec` examples or direct JSON edits, because `pi install npm:pi-agent-browser-native` loads the Pi package but does not add package bins to the user's shell `PATH`.
+
 ## 0.2.41 - 2026-06-03
 
 ### Added
 
-- Added Exa support to the optional `agent_browser_web_search` companion tool. When both Exa and Brave credentials are configured, `provider: "auto"` now prefers Exa by default; use `pi-agent-browser-config web-search prefer brave --global` or `webSearch.preferredProvider: "brave"` to keep Brave as the default provider.
+- Added Exa support to the optional `agent_browser_web_search` companion tool. When both Exa and Brave credentials are configured, `provider: "auto"` now prefers Exa by default; set `webSearch.preferredProvider: "brave"` in config to keep Brave as the default provider.
 - Added `webSearch.enabled: false` to disable the companion search tool even when `EXA_API_KEY` or `BRAVE_API_KEY` is present.
 
 ### Changed
 
 - Tightened project-local web-search credential config: `.pi/config/pi-agent-browser-native/config.json` may only reference the matching provider env var (`$EXA_API_KEY` / `${EXA_API_KEY}` for Exa, `$BRAVE_API_KEY` / `${BRAVE_API_KEY}` for Brave). Project-local custom env aliases now fail config validation; move aliases to global config or `PI_AGENT_BROWSER_CONFIG`.
-- Updated `pi-agent-browser-config web-search set-key`, `set-command`, and `clear` to require `--provider`; `set-env` still infers the provider from `EXA_API_KEY` or `BRAVE_API_KEY`.
+- Updated package-config helper actions `web-search set-key`, `set-command`, and `clear` to require `--provider`; `set-env` still infers the provider from `EXA_API_KEY` or `BRAVE_API_KEY`.
 - Browser profile/executable prompt guidance now comes only from trusted global config or `PI_AGENT_BROWSER_CONFIG`; project-local browser config is status-only for host profile/executable launch guidance and cannot shadow trusted global guidance.
 - `--executable-path` is treated as launch-scoped, so using it after an active implicit browser session returns fresh-session recovery guidance instead of being quietly ignored by session reuse.
 
@@ -29,7 +35,7 @@ No changes yet.
 
 ### Added
 
-- Added Pi-scoped `pi-agent-browser-native` package config at `~/.pi/config/pi-agent-browser-native/config.json`, `.pi/config/pi-agent-browser-native/config.json`, and the `PI_AGENT_BROWSER_CONFIG` override, including the `pi-agent-browser-config` helper for redacted setup/status and conservative browser profile hints.
+- Added Pi-scoped `pi-agent-browser-native` package config at `~/.pi/config/pi-agent-browser-native/config.json`, `.pi/config/pi-agent-browser-native/config.json`, and the `PI_AGENT_BROWSER_CONFIG` override, including a package helper for redacted setup/status and conservative browser profile hints.
 - Added the optional Brave-backed `agent_browser_web_search` companion tool, registered only when a usable Brave credential source is configured or resolvable, with compact normalized results for current/live web information.
 
 ### Changed

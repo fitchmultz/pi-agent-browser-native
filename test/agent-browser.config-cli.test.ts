@@ -4,16 +4,19 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 const CONFIG_SCRIPT = join(process.cwd(), "scripts", "config.mjs");
+const DOCUMENTED_CONFIG_HELPER_PREFIX = "npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config";
+const LOCAL_PACKAGE_SPEC = process.cwd();
+const NPM_COMMAND = process.platform === "win32" ? "npm.cmd" : "npm";
 
-async function runConfig(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {}) {
+async function runProcess(command: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string; label?: string } = {}) {
 	return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-		const child = spawn(process.execPath, [CONFIG_SCRIPT, ...args], {
+		const child = spawn(command, args, {
 			cwd: options.cwd ?? process.cwd(),
 			env: options.env ?? process.env,
 			stdio: ["pipe", "pipe", "pipe"],
@@ -33,24 +36,98 @@ async function runConfig(args: string[], options: { cwd?: string; env?: NodeJS.P
 			if (code === 0) {
 				resolve({ stdout, stderr });
 			} else {
-				reject(Object.assign(new Error(`config CLI exited with ${code ?? "unknown"}`), { code, stdout, stderr }));
+				reject(Object.assign(new Error(`${options.label ?? command} exited with ${code ?? "unknown"}`), { code, stdout, stderr }));
 			}
 		});
 		child.stdin.end(options.input ?? "");
 	});
 }
 
+async function runConfig(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {}) {
+	return await runProcess(process.execPath, [CONFIG_SCRIPT, ...args], { ...options, label: "config CLI" });
+}
+
 async function createFixture() {
 	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-config-cli-test-"));
 	const cwd = join(root, "repo");
+	const home = join(root, "home");
 	await mkdir(cwd, { recursive: true });
 	return {
 		cwd,
-		env: { ...process.env, HOME: join(root, "home"), BRAVE_API_KEY: undefined, EXA_API_KEY: undefined, PI_AGENT_BROWSER_CONFIG: undefined },
-		globalPath: join(root, "home", ".pi", "config", "pi-agent-browser-native", "config.json"),
+		env: {
+			...process.env,
+			HOME: home,
+			USERPROFILE: home,
+			APPDATA: join(home, "AppData", "Roaming"),
+			NPM_CONFIG_CACHE: join(root, "npm-cache"),
+			BRAVE_API_KEY: undefined,
+			EXA_API_KEY: undefined,
+			PI_AGENT_BROWSER_CONFIG: undefined,
+		},
+		globalPath: join(home, ".pi", "config", "pi-agent-browser-native", "config.json"),
 		projectPath: join(cwd, ".pi", "config", "pi-agent-browser-native", "config.json"),
 		root,
 	};
+}
+
+async function collectMarkdownFiles(root: string): Promise<string[]> {
+	const entries = await readdir(root, { withFileTypes: true });
+	const files: string[] = [];
+	for (const entry of entries) {
+		const path = join(root, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...await collectMarkdownFiles(path));
+		} else if (entry.isFile() && entry.name.endsWith(".md")) {
+			files.push(path);
+		}
+	}
+	return files;
+}
+
+function tokenizeDocumentedCommand(command: string): string[] {
+	const tokens: string[] = [];
+	let current = "";
+	let quote: "'" | '"' | undefined;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (quote) {
+			if (char === quote) quote = undefined;
+			else current += char;
+			continue;
+		}
+		if (char === "'" || char === '"') {
+			quote = char;
+			continue;
+		}
+		if (/\s/.test(char)) {
+			if (current) {
+				tokens.push(current);
+				current = "";
+			}
+			continue;
+		}
+		current += char;
+	}
+	if (quote) throw new Error(`Unclosed quote in documented command: ${command}`);
+	if (current) tokens.push(current);
+	return tokens;
+}
+
+function documentedNpmExecArgs(command: string): { args: string[]; input?: string } {
+	let input: string | undefined;
+	let executable = command.trim();
+	const stdinPrefix = `printf '%s' "$EXA_API_KEY" | `;
+	if (executable.startsWith(stdinPrefix)) {
+		input = "doc-secret-exa-key";
+		executable = executable.slice(stdinPrefix.length);
+	}
+	const tokens = tokenizeDocumentedCommand(executable);
+	assert.equal(tokens[0], "npm", `documented command must start with npm exec: ${command}`);
+	const packageIndex = tokens.indexOf("--package");
+	assert.notEqual(packageIndex, -1, `documented command must use --package: ${command}`);
+	assert.equal(tokens[packageIndex + 1], "pi-agent-browser-native@latest", `documented command must use the published package spec: ${command}`);
+	tokens[packageIndex + 1] = LOCAL_PACKAGE_SPEC;
+	return { args: tokens.slice(1), input };
 }
 
 test("config CLI prints Pi-scoped paths and setup safety help", async () => {
@@ -60,6 +137,44 @@ test("config CLI prints Pi-scoped paths and setup safety help", async () => {
 	const { stdout: help } = await runConfig(["--help"], { cwd: fixture.cwd, env: fixture.env });
 	assert.match(help, /Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused/);
 	assert.match(help, /matching EXA_API_KEY or BRAVE_API_KEY set-env references/);
+	assert.doesNotMatch(help, /^  pi-agent-browser-config/m);
+});
+
+test("published package config docs only use npm-exec helper examples", async () => {
+	const markdownFiles = ["README.md", "CHANGELOG.md", ...await collectMarkdownFiles("docs")];
+	const violations: string[] = [];
+	for (const path of markdownFiles) {
+		const text = await readFile(path, "utf8");
+		for (const [lineIndex, line] of text.split("\n").entries()) {
+			if (line.includes("pi-agent-browser-config") && !line.includes(DOCUMENTED_CONFIG_HELPER_PREFIX)) {
+				violations.push(`${path}:${lineIndex + 1}: ${line.trim()}`);
+			}
+		}
+	}
+	assert.deepEqual(violations, []);
+});
+
+test("documented npm-exec package config examples execute against an isolated config", async () => {
+	const fixture = await createFixture();
+	const documentedCommands = new Map<string, string>();
+	for (const path of ["README.md", "docs/COMMAND_REFERENCE.md"]) {
+		const text = await readFile(path, "utf8");
+		for (const line of text.split("\n")) {
+			if (line.includes(DOCUMENTED_CONFIG_HELPER_PREFIX)) {
+				documentedCommands.set(line.trim(), path);
+			}
+		}
+	}
+	assert.notEqual(documentedCommands.size, 0);
+	for (const [command, path] of documentedCommands) {
+		const { args, input } = documentedNpmExecArgs(command);
+		await runProcess(NPM_COMMAND, args, {
+			cwd: fixture.cwd,
+			env: { ...fixture.env, EXA_API_KEY: "doc-secret-exa-key" },
+			input,
+			label: `${path} documented npm-exec config example`,
+		});
+	}
 });
 
 test("config CLI writes and redacts global plaintext Brave key", async () => {
