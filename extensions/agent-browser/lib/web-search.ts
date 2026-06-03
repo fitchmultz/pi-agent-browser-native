@@ -479,32 +479,61 @@ function formatSearchHttpError(provider: WebSearchProvider, status: number, stat
 	return `${providerLabel} search failed with HTTP ${status}: ${errorPreview ? redactSearchSecret(errorPreview, apiKey) : statusText}`;
 }
 
-export async function fetchBraveSearchJson(url: URL, apiKey: string, signal?: AbortSignal): Promise<BraveWebSearchResponse> {
+async function fetchSearchJson<T>(options: {
+	apiKey: string;
+	cancelMessage: string;
+	init?: RequestInit;
+	invalidJsonMessage: string;
+	provider: WebSearchProvider;
+	request: string | URL;
+	signal?: AbortSignal;
+	timeoutMessage: string;
+	timeoutMs: number;
+}): Promise<T> {
+	if (options.signal?.aborted) {
+		throw options.signal.reason ?? new Error(options.cancelMessage);
+	}
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(new Error("Brave search timed out")), SEARCH_REQUEST_TIMEOUT_MS);
-	const abort = () => controller.abort(signal?.reason ?? new Error("Brave search cancelled"));
-	signal?.addEventListener("abort", abort, { once: true });
+	const timeout = setTimeout(() => controller.abort(new Error(options.timeoutMessage)), options.timeoutMs);
+	const abort = () => controller.abort(options.signal?.reason ?? new Error(options.cancelMessage));
+	options.signal?.addEventListener("abort", abort, { once: true });
 	try {
-		const response = await fetch(url, {
-			headers: {
-				Accept: "application/json",
-				"X-Subscription-Token": apiKey,
-			},
+		const response = await fetch(options.request, {
+			...(options.init ?? {}),
 			signal: controller.signal,
 		});
 		const text = await response.text();
 		if (!response.ok) {
-			throw new Error(formatSearchHttpError("brave", response.status, response.statusText, text, apiKey));
+			throw new Error(formatSearchHttpError(options.provider, response.status, response.statusText, text, options.apiKey));
 		}
 		try {
-			return JSON.parse(text) as BraveWebSearchResponse;
+			return JSON.parse(text) as T;
 		} catch (error) {
-			throw new Error(`Brave search returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+			throw new Error(`${options.invalidJsonMessage}: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	} finally {
 		clearTimeout(timeout);
-		signal?.removeEventListener("abort", abort);
+		options.signal?.removeEventListener("abort", abort);
 	}
+}
+
+export async function fetchBraveSearchJson(url: URL, apiKey: string, signal?: AbortSignal): Promise<BraveWebSearchResponse> {
+	return fetchSearchJson<BraveWebSearchResponse>({
+		apiKey,
+		cancelMessage: "Brave search cancelled",
+		init: {
+			headers: {
+				Accept: "application/json",
+				"X-Subscription-Token": apiKey,
+			},
+		},
+		invalidJsonMessage: "Brave search returned invalid JSON",
+		provider: "brave",
+		request: url,
+		signal,
+		timeoutMessage: "Brave search timed out",
+		timeoutMs: SEARCH_REQUEST_TIMEOUT_MS,
+	});
 }
 
 function getExaRequestTimeoutMs(searchType: ExaSearchType | undefined): number {
@@ -512,12 +541,10 @@ function getExaRequestTimeoutMs(searchType: ExaSearchType | undefined): number {
 }
 
 export async function fetchExaSearchJson(body: Record<string, unknown>, apiKey: string, signal?: AbortSignal, timeoutMs = SEARCH_REQUEST_TIMEOUT_MS): Promise<ExaWebSearchResponse> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(new Error("Exa search timed out")), timeoutMs);
-	const abort = () => controller.abort(signal?.reason ?? new Error("Exa search cancelled"));
-	signal?.addEventListener("abort", abort, { once: true });
-	try {
-		const response = await fetch(EXA_SEARCH_ENDPOINT, {
+	return fetchSearchJson<ExaWebSearchResponse>({
+		apiKey,
+		cancelMessage: "Exa search cancelled",
+		init: {
 			body: JSON.stringify(body),
 			headers: {
 				Accept: "application/json",
@@ -525,21 +552,14 @@ export async function fetchExaSearchJson(body: Record<string, unknown>, apiKey: 
 				"x-api-key": apiKey,
 			},
 			method: "POST",
-			signal: controller.signal,
-		});
-		const text = await response.text();
-		if (!response.ok) {
-			throw new Error(formatSearchHttpError("exa", response.status, response.statusText, text, apiKey));
-		}
-		try {
-			return JSON.parse(text) as ExaWebSearchResponse;
-		} catch (error) {
-			throw new Error(`Exa search returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	} finally {
-		clearTimeout(timeout);
-		signal?.removeEventListener("abort", abort);
-	}
+		},
+		invalidJsonMessage: "Exa search returned invalid JSON",
+		provider: "exa",
+		request: EXA_SEARCH_ENDPOINT,
+		signal,
+		timeoutMessage: "Exa search timed out",
+		timeoutMs,
+	});
 }
 
 const BRAVE_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<URL, BraveWebSearchResponse> = {

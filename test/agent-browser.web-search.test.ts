@@ -298,6 +298,26 @@ test("WebSearchRequestGate serializes and spaces searches", async () => {
 	assert.deepEqual(waits, [WEB_SEARCH_MIN_REQUEST_INTERVAL_MS]);
 });
 
+test("provider fetch helpers do not call fetch when already aborted", async () => {
+	await withFakeFetch(() => {
+		throw new Error("fetch should not be called");
+	}, async () => {
+		const braveController = new AbortController();
+		braveController.abort(new Error("cancelled before brave"));
+		await assert.rejects(
+			() => fetchBraveSearchJson(new URL("https://api.search.brave.com/res/v1/web/search?q=test"), "brave-secret", braveController.signal),
+			/cancelled before brave/,
+		);
+
+		const exaController = new AbortController();
+		exaController.abort(new Error("cancelled before exa"));
+		await assert.rejects(
+			() => fetchExaSearchJson({ query: "test" }, "exa-secret", exaController.signal),
+			/cancelled before exa/,
+		);
+	});
+});
+
 test("search execution reports API and JSON failures without leaking key", async () => {
 	const fixture = await createFixture();
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "secret-that-must-not-leak", [EXA_API_KEY_ENV]: undefined }, async () => {
