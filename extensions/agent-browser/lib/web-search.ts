@@ -95,6 +95,30 @@ type WebSearchToolDetails = {
 	requestId?: string;
 };
 
+type WebSearchExecutionParams = {
+	country?: string;
+	count: number;
+	freshness?: SearchFreshness;
+	offset: number;
+	query: string;
+	safesearch?: "off" | "moderate" | "strict";
+	searchLang?: string;
+	searchType?: ExaSearchType;
+};
+
+type NormalizedProviderResponse = {
+	extraDetails?: Pick<WebSearchToolDetails, "requestId" | "searchType">;
+	results: NormalizedSearchResult[];
+	returnedQuery: string;
+};
+
+export interface WebSearchProviderAdapter<Request = unknown, Response = unknown> {
+	buildRequest(params: WebSearchExecutionParams): Request;
+	fetchJson(request: Request, apiKey: string, signal?: AbortSignal): Promise<Response>;
+	normalizeResponse(response: Response, params: WebSearchExecutionParams): NormalizedProviderResponse;
+	provider: WebSearchProvider;
+}
+
 export const AgentBrowserWebSearchParams = Type.Object(
 	{
 		query: Type.String({
@@ -518,6 +542,82 @@ export async function fetchExaSearchJson(body: Record<string, unknown>, apiKey: 
 	}
 }
 
+const BRAVE_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<URL, BraveWebSearchResponse> = {
+	provider: "brave",
+	buildRequest(params) {
+		return buildBraveSearchUrl({
+			query: params.query,
+			count: params.count,
+			offset: params.offset,
+			country: params.country,
+			searchLang: params.searchLang,
+			safesearch: params.safesearch,
+			freshness: params.freshness,
+		});
+	},
+	fetchJson(request, apiKey, signal) {
+		return fetchBraveSearchJson(request, apiKey, signal);
+	},
+	normalizeResponse(response, params) {
+		return {
+			results: (response.web?.results ?? [])
+				.map(normalizeBraveSearchResult)
+				.filter((result): result is NormalizedSearchResult => Boolean(result)),
+			returnedQuery: cleanSearchText(response.query?.altered, 300) ?? cleanSearchText(response.query?.original, 300) ?? params.query,
+		};
+	},
+};
+
+type ExaSearchRequest = {
+	body: Record<string, unknown>;
+	timeoutMs: number;
+};
+
+const EXA_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<ExaSearchRequest, ExaWebSearchResponse> = {
+	provider: "exa",
+	buildRequest(params) {
+		const searchType = params.searchType ?? "auto";
+		return {
+			body: buildExaSearchRequestBody({
+				query: params.query,
+				count: params.count,
+				offset: params.offset,
+				country: params.country,
+				safesearch: params.safesearch,
+				freshness: params.freshness,
+				searchType,
+			}),
+			timeoutMs: getExaRequestTimeoutMs(searchType),
+		};
+	},
+	fetchJson(request, apiKey, signal) {
+		return fetchExaSearchJson(request.body, apiKey, signal, request.timeoutMs);
+	},
+	normalizeResponse(response, params) {
+		const searchType = params.searchType ?? "auto";
+		return {
+			extraDetails: {
+				requestId: cleanSearchText(response.requestId, 120),
+				searchType: cleanSearchText(response.searchType, 80) ?? searchType,
+			},
+			results: (response.results ?? [])
+				.map(normalizeExaSearchResult)
+				.filter((result): result is NormalizedSearchResult => Boolean(result))
+				.slice(params.offset, params.offset + params.count),
+			returnedQuery: params.query,
+		};
+	},
+};
+
+export const WEB_SEARCH_PROVIDER_ADAPTERS: Readonly<Record<WebSearchProvider, WebSearchProviderAdapter>> = {
+	exa: EXA_WEB_SEARCH_ADAPTER,
+	brave: BRAVE_WEB_SEARCH_ADAPTER,
+};
+
+export function getWebSearchProviderAdapter(provider: WebSearchProvider): WebSearchProviderAdapter {
+	return WEB_SEARCH_PROVIDER_ADAPTERS[provider];
+}
+
 function buildMissingCredentialError(provider: WebSearchProviderParam): string {
 	if (provider === "brave") return "agent_browser_web_search provider brave was requested but no BRAVE_API_KEY/config credential resolved.";
 	if (provider === "exa") return "agent_browser_web_search provider exa was requested but no EXA_API_KEY/config credential resolved.";
@@ -550,65 +650,32 @@ export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigS
 			if (!query) throw new Error("query must not be blank");
 			const count = Math.min(Math.max(params.count ?? DEFAULT_SEARCH_RESULT_COUNT, 1), MAX_SEARCH_RESULT_COUNT);
 			const offset = Math.max(params.offset ?? 0, 0);
-			if (resolved.provider === "brave") {
-				const url = buildBraveSearchUrl({
-					query,
-					count,
-					offset,
-					country: params.country,
-					searchLang: params.searchLang,
-					safesearch: params.safesearch,
-					freshness: params.freshness,
-				});
-				const data = await requestGate.run(signal, () => fetchBraveSearchJson(url, resolved.credential.value, signal));
-				const results = (data.web?.results ?? [])
-					.map(normalizeBraveSearchResult)
-					.filter((result): result is NormalizedSearchResult => Boolean(result));
-				const returnedQuery = cleanSearchText(data.query?.altered, 300) ?? cleanSearchText(data.query?.original, 300) ?? query;
-				const details: WebSearchToolDetails = {
-					provider: "brave",
-					query,
-					returnedQuery,
-					count,
-					offset,
-					fetchedAt: new Date().toISOString(),
-					results,
-				};
-				return {
-					content: [{ type: "text", text: formatSearchResults("brave", returnedQuery, results) }],
-					details,
-				};
-			}
-			const searchType = params.searchType ?? "auto";
-			const body = buildExaSearchRequestBody({
-				query,
-				count,
-				offset,
+			const adapter = getWebSearchProviderAdapter(resolved.provider);
+			const executionParams: WebSearchExecutionParams = {
 				country: params.country,
-				safesearch: params.safesearch,
+				count,
 				freshness: params.freshness,
-				searchType,
-			});
-			const data = await requestGate.run(signal, () => fetchExaSearchJson(body, resolved.credential.value, signal, getExaRequestTimeoutMs(searchType)));
-			const results = (data.results ?? [])
-				.map(normalizeExaSearchResult)
-				.filter((result): result is NormalizedSearchResult => Boolean(result))
-				.slice(offset, offset + count);
-			const returnedQuery = query;
-			const responseSearchType = cleanSearchText(data.searchType, 80) ?? searchType;
-			const details: WebSearchToolDetails = {
-				provider: "exa",
+				offset,
 				query,
-				returnedQuery,
+				safesearch: params.safesearch,
+				searchLang: params.searchLang,
+				searchType: params.searchType ?? "auto",
+			};
+			const request = adapter.buildRequest(executionParams);
+			const data = await requestGate.run(signal, () => adapter.fetchJson(request, resolved.credential.value, signal));
+			const normalized = adapter.normalizeResponse(data, executionParams);
+			const details: WebSearchToolDetails = {
+				provider: adapter.provider,
+				query,
+				returnedQuery: normalized.returnedQuery,
 				count,
 				offset,
-				searchType: responseSearchType,
-				requestId: cleanSearchText(data.requestId, 120),
+				...normalized.extraDetails,
 				fetchedAt: new Date().toISOString(),
-				results,
+				results: normalized.results,
 			};
 			return {
-				content: [{ type: "text", text: formatSearchResults("exa", returnedQuery, results) }],
+				content: [{ type: "text", text: formatSearchResults(adapter.provider, normalized.returnedQuery, normalized.results) }],
 				details,
 			};
 		},

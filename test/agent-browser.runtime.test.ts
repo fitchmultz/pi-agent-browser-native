@@ -7,9 +7,12 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
+import { LAUNCH_SCOPED_FLAGS } from "../extensions/agent-browser/lib/launch-scoped-flags.js";
+import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT_GUIDELINES_SUFFIX } from "../extensions/agent-browser/lib/playbook.js";
 import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildExecutionPlan,
@@ -874,6 +877,19 @@ test("buildExecutionPlan allows dash-starting --args values", () => {
 	assert.equal(plan.validationError, undefined);
 	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
 	assert.deepEqual(plan.effectiveArgs.slice(-4), ["--args", "--disable-gpu,--lang=en-US", "open", "https://example.com"]);
+});
+
+test("launch-scoped flag metadata is reflected in playbook and command reference guidance", () => {
+	const playbookText = [
+		...QUICK_START_GUIDELINES,
+		...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
+		...TOOL_PROMPT_GUIDELINES_SUFFIX,
+	].join("\n");
+	const commandReference = readFileSync("docs/COMMAND_REFERENCE.md", "utf8");
+	for (const flag of LAUNCH_SCOPED_FLAGS) {
+		assert.match(playbookText, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `playbook missing ${flag}`);
+		assert.match(commandReference, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `command reference missing ${flag}`);
+	}
 });
 
 test("buildExecutionPlan blocks startup-scoped flags from silently reusing an active implicit session", () => {

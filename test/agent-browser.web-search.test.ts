@@ -23,6 +23,7 @@ import {
 	decodeHtmlEntities,
 	fetchBraveSearchJson,
 	fetchExaSearchJson,
+	getWebSearchProviderAdapter,
 	normalizeExaSearchResult,
 	normalizeBraveSearchResult,
 } from "../extensions/agent-browser/lib/web-search.js";
@@ -164,6 +165,26 @@ test("prefers Exa when both provider keys are available and normalizes highlight
 			assert.equal(result.details?.requestId, "req-123");
 		});
 	});
+});
+
+test("provider adapters expose provider-agnostic request and normalization contracts", () => {
+	const brave = getWebSearchProviderAdapter("brave");
+	const braveRequest = brave.buildRequest({ count: 1, offset: 2, query: "adapter brave" });
+	assert.ok(braveRequest instanceof URL);
+	assert.equal(braveRequest.searchParams.get("q"), "adapter brave");
+	const braveNormalized = brave.normalizeResponse({ query: { original: "adapter brave" }, web: { results: [{ title: "Brave", url: "https://example.com/brave" }] } }, { count: 1, offset: 2, query: "adapter brave" });
+	assert.equal(braveNormalized.returnedQuery, "adapter brave");
+	assert.deepEqual(braveNormalized.results.map((result) => result.title), ["Brave"]);
+
+	const exa = getWebSearchProviderAdapter("exa");
+	const exaRequest = exa.buildRequest({ count: 1, offset: 1, query: "adapter exa", searchType: "deep" }) as { body: Record<string, unknown>; timeoutMs: number };
+	assert.equal(exaRequest.body.query, "adapter exa");
+	assert.equal(exaRequest.body.type, "deep");
+	assert.ok(exaRequest.timeoutMs > 15_000);
+	const exaNormalized = exa.normalizeResponse({ requestId: "req", searchType: "deep", results: [{ title: "Skip", url: "https://example.com/skip" }, { title: "Exa", url: "https://example.com/exa" }] }, { count: 1, offset: 1, query: "adapter exa", searchType: "deep" });
+	assert.equal(exaNormalized.returnedQuery, "adapter exa");
+	assert.equal(exaNormalized.extraDetails?.requestId, "req");
+	assert.deepEqual(exaNormalized.results.map((result) => result.title), ["Exa"]);
 });
 
 test("disabled web search config prevents registration despite environment keys", async () => {

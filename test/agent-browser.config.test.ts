@@ -10,8 +10,13 @@ import { test } from "node:test";
 
 import {
 	BRAVE_API_KEY_ENV,
+	DEFAULT_WEB_SEARCH_PROVIDER,
 	EXA_API_KEY_ENV,
+	WEB_SEARCH_PROVIDER_DESCRIPTORS,
+	WEB_SEARCH_PROVIDERS,
 	canRegisterWebSearchTool,
+	getWebSearchProviderConfigKey,
+	getWebSearchProviderEnvVar,
 	getCredentialSourceSummary,
 	loadAgentBrowserConfig,
 	loadAgentBrowserConfigSync,
@@ -37,6 +42,17 @@ async function createConfigFixture() {
 		root,
 	};
 }
+
+test("shared config policy exposes canonical web-search provider descriptors", () => {
+	assert.deepEqual(WEB_SEARCH_PROVIDERS, ["exa", "brave"]);
+	assert.equal(DEFAULT_WEB_SEARCH_PROVIDER, "exa");
+	assert.equal(WEB_SEARCH_PROVIDER_DESCRIPTORS.exa.configKey, "exaApiKey");
+	assert.equal(WEB_SEARCH_PROVIDER_DESCRIPTORS.brave.configKey, "braveApiKey");
+	assert.equal(getWebSearchProviderConfigKey("exa"), "exaApiKey");
+	assert.equal(getWebSearchProviderConfigKey("brave"), "braveApiKey");
+	assert.equal(getWebSearchProviderEnvVar("exa"), EXA_API_KEY_ENV);
+	assert.equal(getWebSearchProviderEnvVar("brave"), BRAVE_API_KEY_ENV);
+});
 
 test("loads Pi-scoped global config and env fallback without leaking secret summaries", async () => {
 	const fixture = await createConfigFixture();

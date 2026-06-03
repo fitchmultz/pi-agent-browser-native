@@ -4,9 +4,9 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 const CONFIG_SCRIPT = join(process.cwd(), "scripts", "config.mjs");
@@ -48,6 +48,7 @@ async function createFixture() {
 		cwd,
 		env: { ...process.env, HOME: join(root, "home"), BRAVE_API_KEY: undefined, EXA_API_KEY: undefined, PI_AGENT_BROWSER_CONFIG: undefined },
 		globalPath: join(root, "home", ".pi", "config", "pi-agent-browser-native", "config.json"),
+		projectPath: join(cwd, ".pi", "config", "pi-agent-browser-native", "config.json"),
 		root,
 	};
 }
@@ -71,7 +72,7 @@ test("config CLI writes and redacts global plaintext Brave key", async () => {
 	const raw = await readFile(fixture.globalPath, "utf8");
 	assert.match(raw, /real-secret-value/);
 	const { stdout } = await runConfig(["show"], { cwd: fixture.cwd, env: fixture.env });
-	assert.match(stdout, /configured as plaintext \[redacted\]/);
+	assert.match(stdout, /configured as plaintext global value \[redacted\]/);
 	assert.doesNotMatch(stdout, /real-secret-value/);
 	if (process.platform !== "win32") {
 		const mode = (await stat(fixture.globalPath)).mode & 0o777;
@@ -154,6 +155,15 @@ test("config CLI writes project env source, explicit project profile, and global
 	assert.match(stdout, /webSearch\.enabled: false/);
 	assert.match(stdout, /webSearch\.exaApiKey: configured via environment interpolation/);
 	assert.match(stdout, /browser\.executablePath: \/Applications\/Brave Browser\.app\/Contents\/MacOS\/Brave Browser/);
+});
+
+test("config CLI status reports shared runtime validation errors", async () => {
+	const fixture = await createFixture();
+	await mkdir(dirname(fixture.projectPath), { recursive: true });
+	await writeFile(fixture.projectPath, JSON.stringify({ version: 1, webSearch: { braveApiKey: "$MY_BRAVE_ALIAS" } }, null, 2));
+	const { stdout } = await runConfig(["show"], { cwd: fixture.cwd, env: fixture.env });
+	assert.match(stdout, /Validation errors:/);
+	assert.match(stdout, /webSearch\.braveApiKey must be exactly \$BRAVE_API_KEY or \$\{BRAVE_API_KEY\}/);
 });
 
 test("config CLI refuses project-local custom web-search env aliases", async () => {
