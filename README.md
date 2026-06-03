@@ -154,28 +154,47 @@ It does **not** edit Pi settings and does **not** run upstream `agent-browser do
 - project config: `.pi/config/pi-agent-browser-native/config.json`
 - explicit override: `PI_AGENT_BROWSER_CONFIG=/path/to/config.json`
 
-Use the setup helper to inspect or write config:
+`pi install npm:pi-agent-browser-native` loads the extension, but it does **not** usually put the package helper on your shell `PATH`. You can configure web search by writing the config file directly, or run the helper through `npm exec` when you want a command to write it for you.
+
+Inspect paths/status with the helper when available on `PATH`, or through npm:
 
 ```bash
-pi-agent-browser-config paths
-pi-agent-browser-config show
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config paths
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config show
 ```
 
 The optional `agent_browser_web_search` companion tool is Brave-only today and is registered only when a usable Brave Search credential source is configured or resolvable. It is not an `agent_browser` input mode and does not launch a browser; agents may use it whenever current/live external web information helps, then use `agent_browser` when they need page interaction, screenshots, authenticated/profile content, or DOM inspection.
 
 Get a Brave Search API key from the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). Brave currently advertises free monthly credits for Search API usage, which is usually ample for light personal agent/dogfood use; confirm current pricing and limits on Brave's dashboard before relying on it for heavier workflows.
 
-Supported setup examples:
+Most users should store an env-var reference in the Pi-scoped config, then make `BRAVE_API_KEY` available in the environment that launches `pi`:
 
 ```bash
-# Store a plaintext key in global Pi-scoped user config; output stays redacted.
-printf '%s' "$BRAVE_API_KEY" | pi-agent-browser-config web-search set-key --stdin
+mkdir -p ~/.pi/config/pi-agent-browser-native
+cat > ~/.pi/config/pi-agent-browser-native/config.json <<'JSON'
+{
+  "version": 1,
+  "webSearch": {
+    "braveApiKey": "$BRAVE_API_KEY"
+  }
+}
+JSON
+```
 
-# Store an env-var reference, useful for project config.
-pi-agent-browser-config web-search set-env BRAVE_API_KEY --project
+If you prefer the helper, run it through npm unless you know `pi-agent-browser-config` is already on your `PATH`:
+
+```bash
+# Store an env-var reference in global config.
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env BRAVE_API_KEY --global
+
+# Store an env-var reference in project config.
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env BRAVE_API_KEY --project
+
+# Store a plaintext key in global Pi-scoped user config; output stays redacted.
+printf '%s' "$BRAVE_API_KEY" | npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --stdin
 
 # Store a global secret-manager command source.
-pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --global
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --global
 ```
 
 Project-local plaintext, interpolation-literal, malformed, and command-backed Brave keys are refused; use an exact environment reference such as `$BRAVE_API_KEY` or `${BRAVE_API_KEY}` for `.pi/config/pi-agent-browser-native/config.json`. The tool content, details, status output, and docs examples must not expose the resolved key.
@@ -183,7 +202,7 @@ Project-local plaintext, interpolation-literal, malformed, and command-backed Br
 The same config file can record conservative browser defaults such as a profile hint:
 
 ```bash
-pi-agent-browser-config browser profile set Default --policy authenticated-only
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile set Default --policy authenticated-only
 ```
 
 This adds agent guidance for signed-in/account-specific tasks; current releases do not auto-inject `--profile` for every launch.

@@ -673,15 +673,30 @@ When these commands are invoked through the native `agent_browser` tool, structu
 
 Get a Brave Search API key from the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). Brave currently advertises free monthly credits for Search API usage, which is usually ample for light personal agent/dogfood use; confirm current pricing and limits on Brave's dashboard before relying on it for heavier workflows.
 
-Inspect and write config with the package helper:
+`pi install npm:pi-agent-browser-native` loads the extension, but it does **not** usually put the package helper on your shell `PATH`. The clearest setup is to write the config file directly and keep the actual key in the environment that launches `pi`:
 
 ```bash
-pi-agent-browser-config paths
-pi-agent-browser-config show
-pi-agent-browser-config web-search set-env BRAVE_API_KEY --project
-pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --global
-printf '%s' "$BRAVE_API_KEY" | pi-agent-browser-config web-search set-key --stdin
-pi-agent-browser-config browser profile set Default --policy authenticated-only
+mkdir -p ~/.pi/config/pi-agent-browser-native
+cat > ~/.pi/config/pi-agent-browser-native/config.json <<'JSON'
+{
+  "version": 1,
+  "webSearch": {
+    "braveApiKey": "$BRAVE_API_KEY"
+  }
+}
+JSON
+```
+
+If you prefer the helper, run it through npm unless you know `pi-agent-browser-config` is already on your `PATH`:
+
+```bash
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config paths
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config show
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env BRAVE_API_KEY --global
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env BRAVE_API_KEY --project
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --global
+printf '%s' "$BRAVE_API_KEY" | npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --stdin
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile set Default --policy authenticated-only
 ```
 
 The optional `agent_browser_web_search` tool is registered only when a Brave Search credential source is configured or resolvable. It is a separate custom tool, not an `agent_browser` input mode, and does not launch a browser. Use it when current/live external web information would help; use `agent_browser` for browser interaction, screenshots, authenticated/profile pages, and DOM inspection. Project-local plaintext, interpolation-literal, malformed, and command-backed Brave keys are refused; use exact `$ENV_VAR` or `${ENV_VAR}` sources there.
