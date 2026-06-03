@@ -15,8 +15,8 @@ import {
 } from "../extensions/agent-browser/lib/config.js";
 import {
 	AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
-	BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS,
-	BraveSearchRequestGate,
+	WEB_SEARCH_MIN_REQUEST_INTERVAL_MS,
+	WebSearchRequestGate,
 	buildBraveSearchUrl,
 	buildExaSearchRequestBody,
 	cleanSearchText,
@@ -24,7 +24,7 @@ import {
 	fetchBraveSearchJson,
 	fetchExaSearchJson,
 	normalizeExaSearchResult,
-	normalizeSearchResult,
+	normalizeBraveSearchResult,
 } from "../extensions/agent-browser/lib/web-search.js";
 import { createExtensionHarness, executeRegisteredTool, withPatchedEnv } from "./helpers/agent-browser-harness.js";
 
@@ -195,8 +195,8 @@ test("normalizes Brave results and strips unsafe or noisy values", () => {
 	assert.equal(cleanSearchText("pi --no-extensions -e npm:pkg@&lt;version&gt;"), "pi --no-extensions -e npm:pkg@<version>");
 	assert.equal(cleanSearchText("&lt;b&gt;Docs&lt;/b&gt; result"), "Docs result");
 	assert.equal(cleanSearchText("Result &lt;script&gt;alert(1)&lt;/script&gt; &lt;img src=x onerror=alert(1)&gt; safe"), "Result safe");
-	assert.equal(normalizeSearchResult({ title: "Bad", url: "javascript:alert(1)" }), undefined);
-	assert.deepEqual(normalizeSearchResult({
+	assert.equal(normalizeBraveSearchResult({ title: "Bad", url: "javascript:alert(1)" }), undefined);
+	assert.deepEqual(normalizeBraveSearchResult({
 		title: "<b>Good</b> &amp; useful",
 		url: "https://example.com/path",
 		description: "One   two &#x27;quoted&#x27;",
@@ -225,11 +225,11 @@ test("normalizes Brave results and strips unsafe or noisy values", () => {
 	});
 });
 
-test("BraveSearchRequestGate serializes and spaces searches", async () => {
+test("WebSearchRequestGate serializes and spaces searches", async () => {
 	let now = 1_000;
 	const waits: number[] = [];
 	const starts: number[] = [];
-	const gate = new BraveSearchRequestGate(
+	const gate = new WebSearchRequestGate(
 		() => now,
 		async (ms) => {
 			waits.push(ms);
@@ -247,8 +247,8 @@ test("BraveSearchRequestGate serializes and spaces searches", async () => {
 	});
 
 	assert.deepEqual(await Promise.all([first, second]), ["first", "second"]);
-	assert.deepEqual(starts, [1_000, 1_000 + BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS]);
-	assert.deepEqual(waits, [BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS]);
+	assert.deepEqual(starts, [1_000, 1_000 + WEB_SEARCH_MIN_REQUEST_INTERVAL_MS]);
+	assert.deepEqual(waits, [WEB_SEARCH_MIN_REQUEST_INTERVAL_MS]);
 });
 
 test("search execution reports API and JSON failures without leaking key", async () => {

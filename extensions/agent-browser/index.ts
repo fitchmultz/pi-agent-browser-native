@@ -951,8 +951,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const agentBrowserConfig = loadAgentBrowserConfigSync({ cwd: process.cwd() });
 	const webSearchToolAvailable = canRegisterWebSearchTool(agentBrowserConfig);
 	const toolPromptGuidelines = buildToolPromptGuidelines({
-		browserDefaultProfile: agentBrowserConfig.browserDefaultProfile,
-		browserExecutablePath: agentBrowserConfig.browserExecutablePath,
+		browserDefaultProfile: agentBrowserConfig.trustedBrowserDefaultProfile,
+		browserExecutablePath: agentBrowserConfig.trustedBrowserExecutablePath,
 		includeWebSearch: webSearchToolAvailable,
 		docs: getInstalledDocsPaths(),
 	});

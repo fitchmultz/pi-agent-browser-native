@@ -62,7 +62,7 @@ test("config CLI prints Pi-scoped paths and setup safety help", async () => {
 
 test("config CLI writes and redacts global plaintext Brave key", async () => {
 	const fixture = await createFixture();
-	await runConfig(["web-search", "set-key", "--stdin"], {
+	await runConfig(["web-search", "set-key", "--provider", "brave", "--stdin"], {
 		cwd: fixture.cwd,
 		env: fixture.env,
 		input: "real-secret-value\n",
@@ -78,10 +78,34 @@ test("config CLI writes and redacts global plaintext Brave key", async () => {
 	}
 });
 
+test("config CLI requires providers for ambiguous credential writes", async () => {
+	const fixture = await createFixture();
+	await assert.rejects(
+		() => runConfig(["web-search", "set-key", "--stdin"], {
+			cwd: fixture.cwd,
+			env: fixture.env,
+			input: "real-secret-value\n",
+		}),
+		(error: { code?: number; stderr?: string }) => {
+			assert.equal(error.code, 2);
+			assert.match(error.stderr ?? "", /--provider is required and must be exa or brave/);
+			return true;
+		},
+	);
+	await assert.rejects(
+		() => runConfig(["web-search", "clear"], { cwd: fixture.cwd, env: fixture.env }),
+		(error: { code?: number; stderr?: string }) => {
+			assert.equal(error.code, 2);
+			assert.match(error.stderr ?? "", /--provider is required and must be exa, brave, or all/);
+			return true;
+		},
+	);
+});
+
 test("config CLI refuses unsafe project-local Brave key sources", async () => {
 	const fixture = await createFixture();
 	await assert.rejects(
-		() => runConfig(["web-search", "set-key", "--stdin", "--project"], {
+		() => runConfig(["web-search", "set-key", "--provider", "brave", "--stdin", "--project"], {
 			cwd: fixture.cwd,
 			env: fixture.env,
 			input: "real-secret-value\n",
@@ -93,7 +117,7 @@ test("config CLI refuses unsafe project-local Brave key sources", async () => {
 		},
 	);
 	await assert.rejects(
-		() => runConfig(["web-search", "set-command", "op read op://vault/item/key", "--project"], {
+		() => runConfig(["web-search", "set-command", "op read op://vault/item/key", "--provider", "brave", "--project"], {
 			cwd: fixture.cwd,
 			env: fixture.env,
 		}),
@@ -105,14 +129,14 @@ test("config CLI refuses unsafe project-local Brave key sources", async () => {
 	);
 });
 
-test("config CLI writes project env source, browser default profile, and executable path", async () => {
+test("config CLI writes project env source, explicit project profile, and global executable path", async () => {
 	const fixture = await createFixture();
 	await runConfig(["web-search", "set-env", "BRAVE_API_KEY", "--project"], { cwd: fixture.cwd, env: fixture.env });
 	await runConfig(["web-search", "set-env", "EXA_API_KEY", "--project"], { cwd: fixture.cwd, env: fixture.env });
 	await runConfig(["web-search", "prefer", "exa", "--project"], { cwd: fixture.cwd, env: fixture.env });
 	await runConfig(["web-search", "disable", "--project"], { cwd: fixture.cwd, env: fixture.env });
-	await runConfig(["browser", "profile", "set", "Profile 1", "--policy", "authenticated-only", "--project"], { cwd: fixture.cwd, env: fixture.env });
-	await runConfig(["browser", "executable", "set", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "--project"], { cwd: fixture.cwd, env: fixture.env });
+	await runConfig(["browser", "profile", "set", "Profile 1", "--policy", "explicit-only", "--project"], { cwd: fixture.cwd, env: fixture.env });
+	await runConfig(["browser", "executable", "set", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "--global"], { cwd: fixture.cwd, env: fixture.env });
 	const projectPath = join(fixture.cwd, ".pi", "config", "pi-agent-browser-native", "config.json");
 	const config = JSON.parse(await readFile(projectPath, "utf8")) as {
 		webSearch?: { braveApiKey?: string; enabled?: boolean; exaApiKey?: string; preferredProvider?: string };
@@ -122,10 +146,31 @@ test("config CLI writes project env source, browser default profile, and executa
 	assert.equal(config.webSearch?.exaApiKey, "$EXA_API_KEY");
 	assert.equal(config.webSearch?.preferredProvider, "exa");
 	assert.equal(config.webSearch?.enabled, false);
-	assert.deepEqual(config.browser?.defaultProfile, { name: "Profile 1", policy: "authenticated-only" });
-	assert.equal(config.browser?.executablePath, "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser");
+	assert.deepEqual(config.browser?.defaultProfile, { name: "Profile 1", policy: "explicit-only" });
+	const globalConfig = JSON.parse(await readFile(fixture.globalPath, "utf8")) as { browser?: { executablePath?: string } };
+	assert.equal(globalConfig.browser?.executablePath, "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser");
 	const { stdout } = await runConfig(["show"], { cwd: fixture.cwd, env: fixture.env });
 	assert.match(stdout, /webSearch\.enabled: false/);
 	assert.match(stdout, /webSearch\.exaApiKey: configured via environment interpolation/);
 	assert.match(stdout, /browser\.executablePath: \/Applications\/Brave Browser\.app\/Contents\/MacOS\/Brave Browser/);
+});
+
+test("config CLI refuses project-local browser settings that would steer host launch guidance", async () => {
+	const fixture = await createFixture();
+	await assert.rejects(
+		() => runConfig(["browser", "profile", "set", "Profile 1", "--policy", "authenticated-only", "--project"], { cwd: fixture.cwd, env: fixture.env }),
+		(error: { code?: number; stderr?: string }) => {
+			assert.equal(error.code, 2);
+			assert.match(error.stderr ?? "", /Project-local browser profile config may only use --policy explicit-only/);
+			return true;
+		},
+	);
+	await assert.rejects(
+		() => runConfig(["browser", "executable", "set", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "--project"], { cwd: fixture.cwd, env: fixture.env }),
+		(error: { code?: number; stderr?: string }) => {
+			assert.equal(error.code, 2);
+			assert.match(error.stderr ?? "", /Project-local browser executable config cannot steer host launch guidance/);
+			return true;
+		},
+	);
 });

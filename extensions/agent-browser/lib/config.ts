@@ -64,9 +64,14 @@ export interface CredentialSource {
 
 export interface AgentBrowserConfigState {
 	browserDefaultProfile?: Required<BrowserDefaultProfileConfig>;
+	browserDefaultProfileScope?: ConfigLayer["scope"];
 	browserExecutablePath?: string;
+	browserExecutablePathScope?: ConfigLayer["scope"];
+	trustedBrowserDefaultProfile?: Required<BrowserDefaultProfileConfig>;
+	trustedBrowserDefaultProfileScope?: Exclude<ConfigLayer["scope"], "project">;
+	trustedBrowserExecutablePath?: string;
+	trustedBrowserExecutablePathScope?: Exclude<ConfigLayer["scope"], "project">;
 	config: AgentBrowserConfig;
-	credentialSource?: CredentialSource;
 	webSearchCredentialSources: Partial<Record<WebSearchProvider, CredentialSource>>;
 	webSearchEnabled: boolean;
 	webSearchPreferredProvider: WebSearchProvider;
@@ -229,9 +234,19 @@ function validateConfig(value: unknown, path: string, scope: ConfigLayer["scope"
 		} else {
 			config.browser = {};
 			const defaultProfile = validateBrowserDefaultProfile(value.browser.defaultProfile, `${path}.browser.defaultProfile`, errors);
-			if (defaultProfile) config.browser.defaultProfile = defaultProfile;
+			if (defaultProfile) {
+				config.browser.defaultProfile = defaultProfile;
+				if (scope === "project" && defaultProfile.policy !== "explicit-only") {
+					warnings.push(`${path}.browser.defaultProfile is project-local; authenticated/always profile prompt guidance is emitted only from global or override config.`);
+				}
+			}
 			const executablePath = validateString(value.browser.executablePath, `${path}.browser.executablePath`, errors)?.trim();
-			if (executablePath) config.browser.executablePath = executablePath;
+			if (executablePath) {
+				config.browser.executablePath = executablePath;
+				if (scope === "project") {
+					warnings.push(`${path}.browser.executablePath is project-local; executable launch prompt guidance is emitted only from global or override config.`);
+				}
+			}
 			const defaultLaunchArgs = validateStringArray(value.browser.defaultLaunchArgs, `${path}.browser.defaultLaunchArgs`, errors);
 			if (defaultLaunchArgs) {
 				config.browser.defaultLaunchArgs = defaultLaunchArgs;
@@ -317,6 +332,42 @@ function getBrowserExecutablePath(config: AgentBrowserConfig): string | undefine
 	return executablePath || undefined;
 }
 
+function getBrowserDefaultProfileScope(layers: ConfigLayer[]): ConfigLayer["scope"] | undefined {
+	for (let index = layers.length - 1; index >= 0; index -= 1) {
+		const layer = layers[index];
+		if (layer?.config.browser?.defaultProfile !== undefined) return layer.scope;
+	}
+	return undefined;
+}
+
+function getBrowserExecutablePathScope(layers: ConfigLayer[]): ConfigLayer["scope"] | undefined {
+	for (let index = layers.length - 1; index >= 0; index -= 1) {
+		const layer = layers[index];
+		if (layer?.config.browser?.executablePath !== undefined) return layer.scope;
+	}
+	return undefined;
+}
+
+function getTrustedBrowserDefaultProfile(layers: ConfigLayer[]): { profile: Required<BrowserDefaultProfileConfig>; scope: Exclude<ConfigLayer["scope"], "project"> } | undefined {
+	for (let index = layers.length - 1; index >= 0; index -= 1) {
+		const layer = layers[index];
+		if (!layer || layer.scope === "project") continue;
+		const profile = getBrowserDefaultProfile(layer.config);
+		if (profile) return { profile, scope: layer.scope };
+	}
+	return undefined;
+}
+
+function getTrustedBrowserExecutablePath(layers: ConfigLayer[]): { executablePath: string; scope: Exclude<ConfigLayer["scope"], "project"> } | undefined {
+	for (let index = layers.length - 1; index >= 0; index -= 1) {
+		const layer = layers[index];
+		if (!layer || layer.scope === "project") continue;
+		const executablePath = getBrowserExecutablePath(layer.config);
+		if (executablePath) return { executablePath, scope: layer.scope };
+	}
+	return undefined;
+}
+
 function getWebSearchCredentialScope(layers: ConfigLayer[], key: "braveApiKey" | "exaApiKey"): AgentBrowserConfigScope {
 	for (let index = layers.length - 1; index >= 0; index -= 1) {
 		const layer = layers[index];
@@ -353,11 +404,18 @@ function buildConfigState(options: {
 	warnings: string[];
 }): AgentBrowserConfigState {
 	const webSearchCredentialSources = buildWebSearchCredentialSources(options);
+	const trustedBrowserDefaultProfile = getTrustedBrowserDefaultProfile(options.layers);
+	const trustedBrowserExecutablePath = getTrustedBrowserExecutablePath(options.layers);
 	return {
 		browserDefaultProfile: getBrowserDefaultProfile(options.mergedConfig),
+		browserDefaultProfileScope: getBrowserDefaultProfileScope(options.layers),
 		browserExecutablePath: getBrowserExecutablePath(options.mergedConfig),
+		browserExecutablePathScope: getBrowserExecutablePathScope(options.layers),
+		trustedBrowserDefaultProfile: trustedBrowserDefaultProfile?.profile,
+		trustedBrowserDefaultProfileScope: trustedBrowserDefaultProfile?.scope,
+		trustedBrowserExecutablePath: trustedBrowserExecutablePath?.executablePath,
+		trustedBrowserExecutablePathScope: trustedBrowserExecutablePath?.scope,
 		config: options.mergedConfig,
-		credentialSource: webSearchCredentialSources.brave,
 		webSearchCredentialSources,
 		webSearchEnabled: options.mergedConfig.webSearch?.enabled !== false,
 		webSearchPreferredProvider: options.mergedConfig.webSearch?.preferredProvider ?? DEFAULT_WEB_SEARCH_PROVIDER,
@@ -512,20 +570,6 @@ export async function resolvePreferredWebSearchCredential(
 		if (credential) return { provider, credential };
 	}
 	return undefined;
-}
-
-export async function resolveBraveApiKey(
-	state: AgentBrowserConfigState,
-	options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
-): Promise<ResolvedCredential | undefined> {
-	return resolveWebSearchCredential(state, "brave", options);
-}
-
-export async function resolveExaApiKey(
-	state: AgentBrowserConfigState,
-	options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
-): Promise<ResolvedCredential | undefined> {
-	return resolveWebSearchCredential(state, "exa", options);
 }
 
 function hasPotentialCredentialSource(source: CredentialSource | undefined, env: NodeJS.ProcessEnv): boolean {

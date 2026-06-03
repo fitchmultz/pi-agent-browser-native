@@ -32,7 +32,6 @@ export const QUICK_START_GUIDELINES = [
 export const WEB_SEARCH_PROMPT_GUIDELINE =
 	"Use agent_browser_web_search for quick live search/URL discovery; it chooses Exa or Brave, preferring Exa unless configured otherwise. Use agent_browser for interaction/DOM/screenshots/auth. Do not run parallel searches: one good query, inspect results, then one follow-up max; on HTTP 429 stop and report provider limits.";
 
-export const BRAVE_SEARCH_PROMPT_GUIDELINE = WEB_SEARCH_PROMPT_GUIDELINE;
 
 export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs are page-scoped; the wrapper fails mutation-prone stale/recycled refs before upstream can silently target a different current-page element.",

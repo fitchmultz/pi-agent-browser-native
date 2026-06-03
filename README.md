@@ -207,7 +207,7 @@ printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native@la
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --provider brave --global
 ```
 
-Project-local plaintext, interpolation-literal, malformed, and command-backed web-search keys are refused; use exact environment references such as `$EXA_API_KEY`, `${EXA_API_KEY}`, `$BRAVE_API_KEY`, or `${BRAVE_API_KEY}` for `.pi/config/pi-agent-browser-native/config.json`. The tool content, details, status output, and docs examples must not expose resolved keys.
+Project-local plaintext, interpolation-literal, malformed, and command-backed web-search keys are refused; use exact environment references such as `$EXA_API_KEY`, `${EXA_API_KEY}`, `$BRAVE_API_KEY`, or `${BRAVE_API_KEY}` for `.pi/config/pi-agent-browser-native/config.json`. `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. The tool content, details, status output, and docs examples must not expose resolved keys.
 
 For Exa, the tool defaults to `searchType: "auto"` with `contents.highlights: true`. Agents may pass `searchType` (`fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`) only when the task needs that latency/depth tradeoff; structured output schemas are intentionally not exposed yet.
 
@@ -221,7 +221,7 @@ npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-conf
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable set "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 ```
 
-This adds agent guidance for signed-in/account-specific tasks; current releases do not auto-inject `--profile` or `--executable-path` for every launch. Ask the agent to run `agent_browser` with `args: ["profiles"]` and `args: ["doctor"]` when profile resolution fails. The upstream `profiles` command lists Chrome profiles from Chrome's user data directory; `Default` is not canonical on every machine. Use the displayed profile directory name, a full profile/user-data directory path when upstream accepts one, or a configured `browser.executablePath` plus `sessionMode: "fresh"` for a different Chromium-compatible browser.
+This adds agent guidance for signed-in/account-specific tasks; current releases do not auto-inject `--profile` or `--executable-path` for every launch. Configure profile/executable guidance globally or through `PI_AGENT_BROWSER_CONFIG`; project-local browser config is not trusted to steer host executable/profile prompt guidance. Ask the agent to run `agent_browser` with `args: ["profiles"]` and `args: ["doctor"]` when profile resolution fails. The upstream `profiles` command lists Chrome profiles from Chrome's user data directory; `Default` is not canonical on every machine. Use the displayed profile directory name, a full profile/user-data directory path when upstream accepts one, or a configured `browser.executablePath` plus `sessionMode: "fresh"` for a different Chromium-compatible browser.
 
 ## Common agent calls
 

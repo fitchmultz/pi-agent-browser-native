@@ -12,7 +12,7 @@ import process from "node:process";
 const CONFIG_ENV = "PI_AGENT_BROWSER_CONFIG";
 const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 const EXA_API_KEY_ENV = "EXA_API_KEY";
-const WEB_SEARCH_PROVIDERS = ["brave", "exa"];
+const WEB_SEARCH_PROVIDERS = ["exa", "brave"];
 const WEB_SEARCH_KEY_FIELDS = { brave: "braveApiKey", exa: "exaApiKey" };
 const WEB_SEARCH_ENV_VARS = { brave: BRAVE_API_KEY_ENV, exa: EXA_API_KEY_ENV };
 const DEFAULT_WEB_SEARCH_PROVIDER = "exa";
@@ -33,10 +33,10 @@ Usage:
   pi-agent-browser-config paths
   pi-agent-browser-config show
   pi-agent-browser-config web-search status
-  pi-agent-browser-config web-search set-key --stdin [--provider brave|exa] [--global]
+  pi-agent-browser-config web-search set-key --stdin --provider <exa|brave> [--global]
   pi-agent-browser-config web-search set-env <ENV_VAR> [--provider brave|exa] [--global|--project]
-  pi-agent-browser-config web-search set-command <command> [--provider brave|exa] [--global]
-  pi-agent-browser-config web-search clear [--provider brave|exa|all] [--global|--project]
+  pi-agent-browser-config web-search set-command <command> --provider <exa|brave> [--global]
+  pi-agent-browser-config web-search clear --provider <exa|brave|all> [--global|--project]
   pi-agent-browser-config web-search prefer <exa|brave|auto> [--global|--project]
   pi-agent-browser-config web-search enable [--global|--project]
   pi-agent-browser-config web-search disable [--global|--project]
@@ -44,7 +44,7 @@ Usage:
   pi-agent-browser-config browser profile set <name|path> [--policy explicit-only|authenticated-only|always] [--global|--project]
   pi-agent-browser-config browser profile clear [--global|--project]
   pi-agent-browser-config browser executable status
-  pi-agent-browser-config browser executable set <path> [--global|--project]
+  pi-agent-browser-config browser executable set <path> [--global]
   pi-agent-browser-config browser executable clear [--global|--project]
 
 Notes:
@@ -52,6 +52,7 @@ Notes:
   Project config: .pi/config/pi-agent-browser-native/config.json
   Override:       PI_AGENT_BROWSER_CONFIG=/path/to/config.json
   Project-local plaintext, interpolation-literal, malformed, and command-backed web-search keys are refused; use exact set-env references there.
+  Use --provider for set-key, set-command, and clear; set-env infers exa/brave from EXA_API_KEY or BRAVE_API_KEY.
 `;
 }
 
@@ -142,7 +143,7 @@ function getProviderLabel(provider) {
 
 function validateWebSearchProvider(provider, { allowAll = false } = {}) {
 	if (WEB_SEARCH_PROVIDERS.includes(provider) || (allowAll && provider === "all")) return provider;
-	throw new UsageError(`--provider must be one of ${allowAll ? "brave, exa, all" : "brave, exa"}.`);
+	throw new UsageError(`--provider must be one of ${allowAll ? `${WEB_SEARCH_PROVIDERS.join(", ")}, all` : WEB_SEARCH_PROVIDERS.join(", ")}.`);
 }
 
 function inferWebSearchProviderFromEnvName(envName) {
@@ -154,7 +155,9 @@ function inferWebSearchProviderFromEnvName(envName) {
 function getWebSearchProvider(flags, options = {}) {
 	const configured = flags.get("--provider");
 	if (configured) return validateWebSearchProvider(configured, options);
-	return options.envName ? inferWebSearchProviderFromEnvName(options.envName) ?? "brave" : "brave";
+	const inferred = options.envName ? inferWebSearchProviderFromEnvName(options.envName) : undefined;
+	if (inferred) return inferred;
+	throw new UsageError(options.allowAll ? "--provider is required and must be exa, brave, or all." : "--provider is required and must be exa or brave.");
 }
 
 function setWebSearchCredential(config, provider, value) {
@@ -179,6 +182,36 @@ function mergeConfig() {
 		webSearch: { ...(current.webSearch ?? {}), ...(layer.config.webSearch ?? {}) },
 	}), { ...DEFAULT_CONFIG });
 	return { layers, merged, paths };
+}
+
+function findBrowserLayerValue(layers, field, { trustedOnly = false } = {}) {
+	for (let index = layers.length - 1; index >= 0; index -= 1) {
+		const layer = layers[index];
+		if (!layer || (trustedOnly && layer.scope === "project")) continue;
+		const value = layer.config.browser?.[field];
+		if (value !== undefined) return { scope: layer.scope, value };
+	}
+	return undefined;
+}
+
+function formatBrowserProfileStatus(layers) {
+	const raw = findBrowserLayerValue(layers, "defaultProfile");
+	if (!raw?.value?.name) return "not configured";
+	const profile = raw.value;
+	const base = `${profile.name} (policy: ${profile.policy ?? "authenticated-only"}; ${raw.scope})`;
+	if (raw.scope !== "project") return base;
+	const trusted = findBrowserLayerValue(layers, "defaultProfile", { trustedOnly: true });
+	const trustedText = trusted?.value?.name ? `; trusted guidance: ${trusted.value.name} (${trusted.scope})` : "";
+	return `${base}; ignored for prompt guidance${trustedText}`;
+}
+
+function formatBrowserExecutableStatus(layers) {
+	const raw = findBrowserLayerValue(layers, "executablePath");
+	if (!raw?.value) return "not configured";
+	if (raw.scope !== "project") return `${raw.value} (${raw.scope})`;
+	const trusted = findBrowserLayerValue(layers, "executablePath", { trustedOnly: true });
+	const trustedText = trusted?.value ? `; trusted guidance: ${trusted.value} (${trusted.scope})` : "";
+	return `${raw.value} (${raw.scope}; ignored for prompt guidance${trustedText})`;
 }
 
 function printPaths() {
@@ -206,9 +239,8 @@ function printStatus() {
 		const source = merged.webSearch?.[field];
 		console.log(`  webSearch.${field}: ${source ? classifyCredential(source) : process.env[envName]?.trim() ? `configured via ${envName} environment fallback` : "not configured"}`);
 	}
-	const profile = merged.browser?.defaultProfile;
-	console.log(`  browser.defaultProfile: ${profile?.name ? `${profile.name} (policy: ${profile.policy ?? "authenticated-only"})` : "not configured"}`);
-	console.log(`  browser.executablePath: ${merged.browser?.executablePath ? merged.browser.executablePath : "not configured"}`);
+	console.log(`  browser.defaultProfile: ${formatBrowserProfileStatus(layers)}`);
+	console.log(`  browser.executablePath: ${formatBrowserExecutableStatus(layers)}`);
 	if (layers.length === 0) console.log("  layers: none");
 }
 
@@ -316,6 +348,9 @@ function handleBrowser(args, flags) {
 			if (!name) throw new UsageError("browser profile set requires a profile name or profile directory path.");
 			const policy = flags.get("--policy") || "authenticated-only";
 			if (!["explicit-only", "authenticated-only", "always"].includes(policy)) throw new UsageError("Invalid --policy value.");
+			if (flags.get("--project") && policy !== "explicit-only") {
+				throw new UsageError("Project-local browser profile config may only use --policy explicit-only; authenticated or always profile guidance must be configured globally or through PI_AGENT_BROWSER_CONFIG.");
+			}
 			const { path, scope } = selectWritePath(flags);
 			mutateConfig(path, (config) => {
 				config.browser = { ...(config.browser ?? {}), defaultProfile: { name, policy } };
@@ -341,6 +376,9 @@ function handleBrowser(args, flags) {
 		if (action === "set") {
 			const executablePath = args.slice(2).join(" ").trim();
 			if (!executablePath) throw new UsageError("browser executable set requires a browser executable path.");
+			if (flags.get("--project")) {
+				throw new UsageError("Project-local browser executable config cannot steer host launch guidance; configure it globally or through PI_AGENT_BROWSER_CONFIG.");
+			}
 			const { path, scope } = selectWritePath(flags);
 			mutateConfig(path, (config) => {
 				config.browser = { ...(config.browser ?? {}), executablePath };

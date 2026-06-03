@@ -18,7 +18,6 @@ import {
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	hasLaunchScopedTabCorrectionFlag,
-	hasUsableBraveApiKey,
 	redactInvocationArgs,
 	redactSensitiveText,
 	redactSensitiveValue,
@@ -51,13 +50,6 @@ test("getAgentBrowserSocketDir uses a short user-specific unix socket directory 
 	assert.equal(getAgentBrowserSocketDir("darwin", 501), "/tmp/piab-501");
 	assert.equal(getAgentBrowserSocketDir("linux", 1000), "/tmp/piab-1000");
 	assert.equal(getAgentBrowserSocketDir("win32", undefined), undefined);
-});
-
-test("hasUsableBraveApiKey only accepts non-empty values", () => {
-	assert.equal(hasUsableBraveApiKey(null), false);
-	assert.equal(hasUsableBraveApiKey(""), false);
-	assert.equal(hasUsableBraveApiKey("   \n\t  "), false);
-	assert.equal(hasUsableBraveApiKey("demo-key"), true);
 });
 
 test("shared parsing helpers preserve boundary parsing semantics", () => {

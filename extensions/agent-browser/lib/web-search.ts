@@ -22,7 +22,7 @@ export const DEFAULT_SEARCH_RESULT_COUNT = 5;
 export const MAX_SEARCH_RESULT_COUNT = 10;
 export const SEARCH_REQUEST_TIMEOUT_MS = 15_000;
 export const EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS = 45_000;
-export const BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS = 1_100;
+export const WEB_SEARCH_MIN_REQUEST_INTERVAL_MS = 1_100;
 export const EXA_SEARCH_TYPES = ["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"] as const;
 export type ExaSearchType = typeof EXA_SEARCH_TYPES[number];
 export const WEB_SEARCH_PROVIDER_PARAM_VALUES = ["auto", ...WEB_SEARCH_PROVIDERS] as const;
@@ -81,6 +81,18 @@ export type NormalizedSearchResult = {
 	source?: string;
 	age?: string;
 	language?: string;
+};
+
+type WebSearchToolDetails = {
+	provider: WebSearchProvider;
+	query: string;
+	returnedQuery: string;
+	count: number;
+	offset: number;
+	fetchedAt: string;
+	results: NormalizedSearchResult[];
+	searchType?: string;
+	requestId?: string;
 };
 
 export const AgentBrowserWebSearchParams = Type.Object(
@@ -278,7 +290,7 @@ function normalizeHighlightList(value: unknown): string[] | undefined {
 	return highlights.length > 0 ? highlights : undefined;
 }
 
-export function normalizeSearchResult(result: BraveWebSearchResult): NormalizedSearchResult | undefined {
+export function normalizeBraveSearchResult(result: BraveWebSearchResult): NormalizedSearchResult | undefined {
 	const title = cleanSearchText(result.title, 180);
 	const url = normalizeSearchUrl(result.url);
 	if (!title || !url) return undefined;
@@ -409,7 +421,7 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
-export class BraveSearchRequestGate {
+export class WebSearchRequestGate {
 	private lastRequestStartedAt = 0;
 	private tail: Promise<unknown> = Promise.resolve();
 
@@ -420,8 +432,8 @@ export class BraveSearchRequestGate {
 
 	run<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
 		const runTask = async () => {
-			const elapsedMs = this.lastRequestStartedAt === 0 ? BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS : this.now() - this.lastRequestStartedAt;
-			const waitMs = Math.max(0, BRAVE_SEARCH_MIN_REQUEST_INTERVAL_MS - elapsedMs);
+			const elapsedMs = this.lastRequestStartedAt === 0 ? WEB_SEARCH_MIN_REQUEST_INTERVAL_MS : this.now() - this.lastRequestStartedAt;
+			const waitMs = Math.max(0, WEB_SEARCH_MIN_REQUEST_INTERVAL_MS - elapsedMs);
 			if (waitMs > 0) await this.sleep(waitMs, signal);
 			if (signal?.aborted) throw signal.reason ?? new Error("Web search cancelled");
 			this.lastRequestStartedAt = this.now();
@@ -513,7 +525,7 @@ function buildMissingCredentialError(provider: WebSearchProviderParam): string {
 }
 
 export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigState) {
-	const requestGate = new BraveSearchRequestGate();
+	const requestGate = new WebSearchRequestGate();
 	return defineTool({
 		name: AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
 		label: "Agent Browser Web Search",
@@ -550,22 +562,21 @@ export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigS
 				});
 				const data = await requestGate.run(signal, () => fetchBraveSearchJson(url, resolved.credential.value, signal));
 				const results = (data.web?.results ?? [])
-					.map(normalizeSearchResult)
+					.map(normalizeBraveSearchResult)
 					.filter((result): result is NormalizedSearchResult => Boolean(result));
 				const returnedQuery = cleanSearchText(data.query?.altered, 300) ?? cleanSearchText(data.query?.original, 300) ?? query;
+				const details: WebSearchToolDetails = {
+					provider: "brave",
+					query,
+					returnedQuery,
+					count,
+					offset,
+					fetchedAt: new Date().toISOString(),
+					results,
+				};
 				return {
 					content: [{ type: "text", text: formatSearchResults("brave", returnedQuery, results) }],
-					details: {
-						provider: "brave",
-						query,
-						returnedQuery,
-						count,
-						offset,
-						searchType: undefined as string | undefined,
-						requestId: undefined as string | undefined,
-						fetchedAt: new Date().toISOString(),
-						results,
-					},
+					details,
 				};
 			}
 			const searchType = params.searchType ?? "auto";
@@ -585,19 +596,20 @@ export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigS
 				.slice(offset, offset + count);
 			const returnedQuery = query;
 			const responseSearchType = cleanSearchText(data.searchType, 80) ?? searchType;
+			const details: WebSearchToolDetails = {
+				provider: "exa",
+				query,
+				returnedQuery,
+				count,
+				offset,
+				searchType: responseSearchType,
+				requestId: cleanSearchText(data.requestId, 120),
+				fetchedAt: new Date().toISOString(),
+				results,
+			};
 			return {
 				content: [{ type: "text", text: formatSearchResults("exa", returnedQuery, results) }],
-				details: {
-					provider: "exa",
-					query,
-					returnedQuery,
-					count,
-					offset,
-					searchType: responseSearchType,
-					requestId: cleanSearchText(data.requestId, 120),
-					fetchedAt: new Date().toISOString(),
-					results,
-				},
+				details,
 			};
 		},
 	});
