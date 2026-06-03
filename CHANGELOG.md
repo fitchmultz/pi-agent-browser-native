@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added
+
+- Added Exa support to the optional `agent_browser_web_search` companion tool. When both Exa and Brave credentials are configured, `provider: "auto"` now prefers Exa by default; use `pi-agent-browser-config web-search prefer brave --global` or `webSearch.preferredProvider: "brave"` to keep Brave as the default provider.
+- Added `webSearch.enabled: false` to disable the companion search tool even when `EXA_API_KEY` or `BRAVE_API_KEY` is present.
+
+### Changed
+
+- Tightened project-local web-search credential config: `.pi/config/pi-agent-browser-native/config.json` may only reference the matching provider env var (`$EXA_API_KEY` / `${EXA_API_KEY}` for Exa, `$BRAVE_API_KEY` / `${BRAVE_API_KEY}` for Brave). Project-local custom env aliases now fail config validation; move aliases to global config or `PI_AGENT_BROWSER_CONFIG`.
+- Updated `pi-agent-browser-config web-search set-key`, `set-command`, and `clear` to require `--provider`; `set-env` still infers the provider from `EXA_API_KEY` or `BRAVE_API_KEY`.
+- Browser profile/executable prompt guidance now comes only from trusted global config or `PI_AGENT_BROWSER_CONFIG`; project-local browser config is status-only for host profile/executable launch guidance and cannot shadow trusted global guidance.
+- `--executable-path` is treated as launch-scoped, so using it after an active implicit browser session returns fresh-session recovery guidance instead of being quietly ignored by session reuse.
+
+### Fixed
+
+- Rejected `--session-mode` inside `agent_browser.args` with guidance to use the top-level `sessionMode` field.
+- Added profile/config recovery hints and `profiles` / `doctor` next actions for Chrome profile and user-data-dir failures, including upstream `Chrome profile ... not found` errors.
+- Added web-search rate-limit guidance and serialized companion web-search requests so agents avoid repeated or parallel provider calls after HTTP 429s.
+
 ## 0.2.40 - 2026-06-02
 
 ### Added

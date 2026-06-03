@@ -77,6 +77,32 @@ test("registers agent_browser_web_search with env fallback and rate-limit guidan
 	});
 });
 
+test("auto provider uses Brave when only BRAVE_API_KEY is configured", async () => {
+	const fixture = await createFixture();
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "brave-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
+		const harness = createExtensionHarness({ cwd: fixture.cwd });
+		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+		assert.ok(tool);
+		await withFakeFetch((input, init) => {
+			const url = new URL(String(input));
+			assert.equal(url.origin + url.pathname, "https://api.search.brave.com/res/v1/web/search");
+			assert.equal(url.searchParams.get("q"), "brave only");
+			assert.equal(init?.headers && (init.headers as Record<string, string>)["X-Subscription-Token"], "brave-secret");
+			return new Response(JSON.stringify({
+				query: { original: "brave only" },
+				web: { results: [{ title: "Brave Only", url: "https://example.com/brave", description: "Brave result" }] },
+			}), { status: 200 });
+		}, async () => {
+			const result = await executeRegisteredTool(tool, harness.ctx, { query: "brave only", provider: "auto", count: 1 });
+			const text = result.content[0]?.text ?? "";
+			assert.match(text, /Brave web search results/);
+			assert.match(text, /Brave Only/);
+			assert.equal(result.details?.provider, "brave");
+			assert.doesNotMatch(JSON.stringify(result), /brave-secret/);
+		});
+	});
+});
+
 test("registers command-sourced config without executing command until search execution", async () => {
 	const fixture = await createFixture();
 	await writeJson(fixture.overrideConfigPath, {
