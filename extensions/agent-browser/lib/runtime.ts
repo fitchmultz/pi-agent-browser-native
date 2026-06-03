@@ -24,82 +24,14 @@ import {
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
+import { LAUNCH_SCOPED_FLAG_DEFINITIONS, LAUNCH_SCOPED_FLAG_LABEL, LAUNCH_SCOPED_TAB_CORRECTION_FLAGS } from "./launch-scoped-flags.js";
 
 export type { CommandInfo } from "./argv-descriptor.js";
 export { extractCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo } from "./argv-descriptor.js";
 
 import { isRecord } from "./parsing.js";
 
-/**
- * Launch-scoped flags that select the upstream browser session/auth mechanism at launch time.
- *
- * These flags must not be silently appended after an already-active extension-managed session
- * because upstream ignores or conflicts with them once a session is reused. Every flag here
- * participates in implicit-session validation blocking and recovery-hint generation.
- *
- * Intentionally excluded from the tab-correction subset:
- * - `--auto-connect` attaches to a running browser but is a general-purpose debug/attach mode,
- *   not a state-restore mechanism that typically leaves restored tabs stealing focus.
- * - `--cdp` connects to an arbitrary endpoint; similar reasoning to `--auto-connect`.
- *
- * Other flags like `--headed`, `--engine`, `--executable-path`, `--user-agent`, and
- * `--download-path` are first-launch-sensitive but not alternate session/auth attach
- * mechanisms and do not inject pre-page JavaScript, so they are intentionally excluded
- * from the full launch-scoped set.
- */
-const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
-	{
-		flag: "--auto-connect",
-		reason: "attaches to an already-running browser at launch time instead of reusing an existing named session",
-	},
-	{
-		flag: "--cdp",
-		reason: "selects the browser/CDP endpoint used when an upstream session is launched",
-	},
-	{
-		flag: "--enable",
-		reason: "selects built-in page init scripts before the upstream browser session is launched",
-	},
-	{
-		flag: "--init-script",
-		reason: "registers page init scripts before the upstream browser session is launched",
-	},
-	{
-		flag: "--device",
-		reason: "selects the provider device for the upstream launch",
-	},
-	{
-		flag: "--profile",
-		reason: "selects Chrome profile state for the upstream launch",
-	},
-	{
-		flag: "--provider",
-		reason: "selects the upstream browser provider for the launch",
-	},
-	{
-		flag: "-p",
-		reason: "selects the upstream browser provider for the launch",
-	},
-	{
-		flag: "--session-name",
-		reason: "selects upstream saved auth/session state for the launch",
-	},
-	{
-		flag: "--state",
-		reason: "loads persisted upstream browser/auth state at launch time",
-	},
-] as const;
-
-const LAUNCH_SCOPED_FLAG_LABEL = LAUNCH_SCOPED_FLAG_DEFINITIONS.map((definition) => definition.flag).join(", ");
-
-/**
- * The subset of launch-scoped flags that can restore browser/auth state with pre-existing tabs
- * and are plausible wrong-active-tab sources after a fresh launch. These trigger post-open
- * tab-correction (the `tab list` + re-select cycle).
- */
-const LAUNCH_SCOPED_TAB_CORRECTION_FLAGS = new Set(["--profile", "--session-name", "--state"] as const);
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
-const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
@@ -430,10 +362,6 @@ export function isPlainTextInspectionArgs(args: string[]): boolean {
 	return args.some((token) => INSPECTION_FLAGS.has(token));
 }
 
-export function hasUsableBraveApiKey(apiKey: string | null | undefined = process.env[BRAVE_API_KEY_ENV]): boolean {
-	return typeof apiKey === "string" && apiKey.trim().length > 0;
-}
-
 function parseTimeoutMs(rawValue: string | undefined, minimumValue: number): number | undefined {
 	if (typeof rawValue !== "string") return undefined;
 	const normalizedValue = rawValue.trim();
@@ -693,6 +621,11 @@ export function validateToolArgs(args: string[]): string | undefined {
 	const shellOperator = args.find((token) => SHELL_OPERATOR_TOKENS.has(token));
 	if (shellOperator) {
 		return `Do not pass shell operators like \`${shellOperator}\`. Pass exact agent-browser CLI arguments only.`;
+	}
+
+	const sessionModeArg = args.find((token) => token === "--session-mode" || token.startsWith("--session-mode="));
+	if (sessionModeArg) {
+		return "Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: [\"--profile\", \"Default\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
 	}
 
 	return undefined;

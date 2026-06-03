@@ -163,11 +163,11 @@ npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-conf
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config show
 ```
 
-The optional `agent_browser_web_search` companion tool is Brave-only today and is registered only when a usable Brave Search credential source is configured or resolvable. It is not an `agent_browser` input mode and does not launch a browser; agents may use it whenever current/live external web information helps, then use `agent_browser` when they need page interaction, screenshots, authenticated/profile content, or DOM inspection.
+The optional `agent_browser_web_search` companion tool is registered only when a usable Exa or Brave credential source is configured or resolvable. It is not an `agent_browser` input mode and does not launch a browser; agents may use it whenever current/live external web information helps, then use `agent_browser` when they need page interaction, screenshots, authenticated/profile content, or DOM inspection. If both keys are available, the default provider is Exa because its `/search` endpoint returns agent-friendly highlights and search modes; set `webSearch.preferredProvider` to `"brave"` when you prefer Brave Search.
 
-Get a Brave Search API key from the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). Brave currently advertises free monthly credits for Search API usage, which is usually ample for light personal agent/dogfood use; confirm current pricing and limits on Brave's dashboard before relying on it for heavier workflows.
+Get an Exa API key from the [Exa dashboard](https://dashboard.exa.ai/api-keys) or a Brave Search API key from the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). Most users can simply export `EXA_API_KEY` or `BRAVE_API_KEY` in the environment that launches `pi`; config is only needed when you want Pi-scoped secret references, a preferred provider, or to disable this built-in search tool.
 
-Most users should store an env-var reference in the Pi-scoped config, then make `BRAVE_API_KEY` available in the environment that launches `pi`:
+Most config users should store env-var references in the Pi-scoped config:
 
 ```bash
 mkdir -p ~/.pi/config/pi-agent-browser-native
@@ -175,6 +175,9 @@ cat > ~/.pi/config/pi-agent-browser-native/config.json <<'JSON'
 {
   "version": 1,
   "webSearch": {
+    "enabled": true,
+    "preferredProvider": "exa",
+    "exaApiKey": "$EXA_API_KEY",
     "braveApiKey": "$BRAVE_API_KEY"
   }
 }
@@ -184,28 +187,48 @@ JSON
 If you prefer the helper, run it through npm unless you know `pi-agent-browser-config` is already on your `PATH`:
 
 ```bash
-# Store an env-var reference in global config.
+# Store env-var references in global config.
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env EXA_API_KEY --global
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env BRAVE_API_KEY --global
 
 # Store an env-var reference in project config.
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env BRAVE_API_KEY --project
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env EXA_API_KEY --project
+
+# Prefer Brave when both Exa and Brave keys are available, or clear with "auto".
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search prefer brave --global
+
+# Disable this package's built-in web-search tool in global config even if API keys are in the environment.
+# Global disable applies to normal runs unless a project config or PI_AGENT_BROWSER_CONFIG override explicitly re-enables it.
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search disable --global
+
+# Hard-disable web search for one run, regardless of project config, by using the highest-priority override layer.
+cat > /tmp/pi-agent-browser-disable-web-search.json <<'JSON'
+{ "version": 1, "webSearch": { "enabled": false } }
+JSON
+PI_AGENT_BROWSER_CONFIG=/tmp/pi-agent-browser-disable-web-search.json pi
 
 # Store a plaintext key in global Pi-scoped user config; output stays redacted.
-printf '%s' "$BRAVE_API_KEY" | npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --stdin
+printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --provider exa --stdin
 
 # Store a global secret-manager command source.
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --global
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --provider brave --global
 ```
 
-Project-local plaintext, interpolation-literal, malformed, and command-backed Brave keys are refused; use an exact environment reference such as `$BRAVE_API_KEY` or `${BRAVE_API_KEY}` for `.pi/config/pi-agent-browser-native/config.json`. The tool content, details, status output, and docs examples must not expose the resolved key.
+Config merges in this order: global → project → `PI_AGENT_BROWSER_CONFIG` override. `webSearch.enabled` is evaluated after that merge. Use `web-search disable --global` for a user default, `web-search disable --project` for one repo, and a `PI_AGENT_BROWSER_CONFIG` override with `{ "webSearch": { "enabled": false } }` when web search must stay off even if project config exists. Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused; project config may only use the matching provider env refs (`$EXA_API_KEY` / `${EXA_API_KEY}` for Exa and `$BRAVE_API_KEY` / `${BRAVE_API_KEY}` for Brave). `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. The tool content, details, status output, and docs examples must not expose resolved keys.
 
-The same config file can record conservative browser defaults such as a profile hint:
+For Exa, the tool defaults to `searchType: "auto"` with `contents.highlights: true`. Agents may pass `searchType` (`fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`) only when the task needs that latency/depth tradeoff; structured output schemas are intentionally not exposed yet.
+
+The same config file can record conservative browser defaults such as a profile hint or a Chromium-compatible executable path:
 
 ```bash
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile set Default --policy authenticated-only
+# Ask the agent to use this profile for signed-in/account-specific work.
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile set "Profile 1" --policy authenticated-only
+
+# Ask the agent to launch a different Chromium-compatible browser executable.
+npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable set "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 ```
 
-This adds agent guidance for signed-in/account-specific tasks; current releases do not auto-inject `--profile` for every launch.
+This adds agent guidance for signed-in/account-specific tasks; current releases do not auto-inject `--profile` or `--executable-path` for every launch. Configure profile/executable guidance globally or through `PI_AGENT_BROWSER_CONFIG`; project-local browser config is not trusted to steer host executable/profile prompt guidance. Ask the agent to run `agent_browser` with `args: ["profiles"]` and `args: ["doctor"]` when profile resolution fails. The upstream `profiles` command lists Chrome profiles from Chrome's user data directory; `Default` is not canonical on every machine. Use the displayed profile directory name, a full profile/user-data directory path when upstream accepts one, or a configured `browser.executablePath` plus `sessionMode: "fresh"` for a different Chromium-compatible browser.
 
 ## Common agent calls
 
@@ -410,19 +433,30 @@ Artifact cleanup is host-owned, not a browser command. Close commands (`close`, 
 Start a fresh profiled browser after the implicit public-browsing session already exists:
 
 ```json
-{ "args": ["--profile", "Default", "open", "https://example.com/account"], "sessionMode": "fresh" }
+{ "args": ["--profile", "Profile 1", "open", "https://example.com/account"], "sessionMode": "fresh" }
+```
+
+Start a fresh launch with a different Chromium-compatible executable:
+
+```json
+{
+  "args": ["--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "open", "https://example.com/account"],
+  "sessionMode": "fresh"
+}
 ```
 
 After a successful unnamed fresh launch, later default `sessionMode: "auto"` calls follow that browser automatically. If the fresh launch fails or times out, `details.managedSessionOutcome` records whether the previous managed session was preserved or the attempted fresh session was abandoned before any managed session became current; a `Managed session outcome: …` line is appended only when the failing call used `sessionMode: "fresh"`. If you explicitly close the current wrapper-managed session with `--session <name> close`, later default auto calls rotate to a new wrapper-generated session instead of reusing that closed name, and repeated closes keep reserving fresh names across resume/branch restore.
 
 ## Authenticated/profile workflows
 
-The wrapper does not clone profiles or hide what upstream Chrome profile you chose. Passing `--profile` is an explicit upstream `agent-browser` choice. Visible page content from real profiles is model-visible and may persist in transcripts or saved artifacts; redaction protects credential-like cookie/storage/auth values, not ordinary page text you asked the browser to read.
+The wrapper does not clone profiles or hide what upstream Chrome/Chromium profile or executable you chose. Passing `--profile` or `--executable-path` is an explicit upstream `agent-browser` choice. Visible page content from real profiles is model-visible and may persist in transcripts or saved artifacts; redaction protects credential-like cookie/storage/auth values, not ordinary page text you asked the browser to read.
 
 Use these rules:
 
 - Use public/temp profiles for tests and examples.
-- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
+- Do not assume `--profile Default` is correct. Ask the agent to run `profiles` to list Chrome profile directory names, then `doctor` if profile/user-data-dir resolution still fails.
+- For non-Chrome Chromium browsers such as Brave, Edge, Arc, or Vivaldi, use `--executable-path <path>` when upstream can launch that executable. If you need that browser's existing login state, use the browser's real profile/user-data directory path when upstream accepts it, or attach with `--auto-connect` / `connect` to a debug-enabled running browser when appropriate.
+- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--executable-path`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
 - Use `--session` when you want to manage a live upstream session name yourself.
 - Do not treat `--session` as persisted auth or tab restore after `close`, `quit`, or `exit`; use `--profile`, `--session-name`, or `--state` for persistence.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.

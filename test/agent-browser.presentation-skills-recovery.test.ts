@@ -294,6 +294,61 @@ test("buildToolPresentation suggests grouped getter commands for common unknown 
 	assert.equal(textFailure.nextActions, undefined);
 });
 
+test("buildToolPresentation explains browser profile config failures with diagnostics next actions", async () => {
+	for (const errorText of [
+		"No Chrome user data directory found. Cannot resolve profile name.",
+		'Chrome profile "pi-agent-browser-nonexistent-dogfood-profile" not found. Available profiles:\n  Default (user)\nIf you meant a directory path, use a full path (e.g., /path/to/profile).',
+	]) {
+		const presentation = await buildToolPresentation({
+			args: ["--profile", "Default", "open", "https://example.com"],
+			commandInfo: { command: "open", subcommand: "https://example.com" },
+			cwd: process.cwd(),
+			errorText,
+		});
+
+		assert.equal(presentation.content[0]?.type, "text");
+		const text = (presentation.content[0] as { text: string }).text;
+		assert.match(text, /profile\/config hint/i);
+		assert.match(text, /Do not keep retrying the same open\/profile call/);
+		assert.match(text, /top-level `sessionMode: "fresh"` field/);
+		assert.deepEqual(presentation.nextActions?.map((action) => ({ id: action.id, args: action.params?.args })), [
+			{ id: "inspect-browser-profiles", args: ["profiles"] },
+			{ id: "run-agent-browser-doctor", args: ["doctor"] },
+		]);
+	}
+});
+
+test("buildToolPresentation suppresses browser profile recovery self loops", async () => {
+	const profilesFailure = await buildToolPresentation({
+		args: ["profiles"],
+		commandInfo: { command: "profiles" },
+		cwd: process.cwd(),
+		errorText: "No Chrome user data directory found. Cannot resolve profile name.",
+	});
+	assert.match((profilesFailure.content[0] as { text: string }).text, /profile\/config hint/i);
+	assert.deepEqual(profilesFailure.nextActions?.map((action) => action.id), ["run-agent-browser-doctor"]);
+
+	const doctorFailure = await buildToolPresentation({
+		args: ["doctor"],
+		commandInfo: { command: "doctor" },
+		cwd: process.cwd(),
+		errorText: "Chrome profile \"Missing\" not found. Available profiles: Default.",
+	});
+	assert.match((doctorFailure.content[0] as { text: string }).text, /profile\/config hint/i);
+	assert.deepEqual(doctorFailure.nextActions?.map((action) => action.id), ["inspect-browser-profiles"]);
+});
+
+test("buildToolPresentation ignores unrelated profile text outside launch setup context", async () => {
+	const presentation = await buildToolPresentation({
+		args: ["get", "text", "#profile-card"],
+		commandInfo: { command: "get", subcommand: "text" },
+		cwd: process.cwd(),
+		errorText: "Could not read profile card text from selector.",
+	});
+	assert.doesNotMatch((presentation.content[0] as { text: string }).text, /profile\/config hint/i);
+	assert.equal(presentation.nextActions, undefined);
+});
+
 test("buildToolPresentation explains localhost navigation failures as browser-host reachability", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "open", subcommand: "http://127.0.0.1:8766/page.html" },

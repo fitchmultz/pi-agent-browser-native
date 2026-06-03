@@ -1,5 +1,6 @@
 import { isOpenNavigationCommand } from "../../command-taxonomy.js";
 import type { CommandInfo } from "../../runtime.js";
+import { buildBrowserProfileConfigRecovery } from "./browser-profile-recovery.js";
 import { redactModelFacingText } from "./common.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails } from "../categories.js";
@@ -119,10 +120,12 @@ export function buildErrorPresentation(options: {
 	const selectorHintedErrorText = appendSelectorRecoveryHint(safeErrorText);
 	const unknownCommandSuggestions = getUnknownCommandSuggestions(commandInfo.command, safeErrorText);
 	const unknownCommandSuggestionText = formatUnknownCommandSuggestionText(unknownCommandSuggestions);
+	const browserProfileConfigRecovery = buildBrowserProfileConfigRecovery({ args, commandInfo, errorText: safeErrorText });
 	const localhostNavigationHint = getLocalhostNavigationHint(commandInfo, safeErrorText);
 	const hintedErrorParts = [
 		selectorHintedErrorText,
 		unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:") ? unknownCommandSuggestionText : undefined,
+		browserProfileConfigRecovery?.hint,
 		localhostNavigationHint,
 	].filter((part): part is string => Boolean(part));
 	const hintedErrorText = hintedErrorParts.join("\n\n");
@@ -134,6 +137,7 @@ export function buildErrorPresentation(options: {
 	});
 	const nextActions = [
 		...(buildUnknownCommandSuggestionActions(unknownCommandSuggestions, sessionName) ?? []),
+		...(browserProfileConfigRecovery?.actions ?? []),
 		...(buildAgentBrowserNextActions({
 			args,
 			command: commandInfo.command,

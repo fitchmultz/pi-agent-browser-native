@@ -12,9 +12,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-// @ts-expect-error The benchmark is a local ESM maintainer script without a declaration file.
-import * as benchmarkModule from "../scripts/agent-browser-efficiency-benchmark.mjs";
-
 interface BenchmarkScenarioInput {
   id: string;
   [key: string]: unknown;
@@ -77,8 +74,9 @@ const {
   percentile95,
   sampleAgentBrowserJsonl,
   summarizeScenario,
+  main,
 }: {
-  BENCHMARK_SCENARIOS: BenchmarkScenarioInput[];
+  BENCHMARK_SCENARIOS: readonly BenchmarkScenarioInput[];
   agentBrowserToolResults: (entries: unknown[]) => unknown[];
   buildBenchmarkReport: (options?: { jsonlSample?: JsonlSampleReport }) => BenchmarkReport;
   buildJsonlSampleReport: (options: { path: string; results: unknown[] }) => JsonlSampleReport;
@@ -89,7 +87,21 @@ const {
   percentile95: (values: number[]) => number;
   sampleAgentBrowserJsonl: (path: string) => Promise<JsonlSampleReport>;
   summarizeScenario: (scenario: BenchmarkScenarioInput) => BenchmarkScenarioSummary;
-} = benchmarkModule;
+  main: (argv: string[]) => Promise<number>;
+} = (await import("../scripts/agent-browser-efficiency-benchmark.mjs")) as unknown as {
+  BENCHMARK_SCENARIOS: readonly BenchmarkScenarioInput[];
+  agentBrowserToolResults: (entries: unknown[]) => unknown[];
+  buildBenchmarkReport: (options?: { jsonlSample?: JsonlSampleReport }) => BenchmarkReport;
+  buildJsonlSampleReport: (options: { path: string; results: unknown[] }) => JsonlSampleReport;
+  compareBenchmarkReports: (current: BenchmarkReport, candidate: BenchmarkReport) => { passed: boolean; regressions: string[] };
+  inferJsonlWorkflowId: (message: unknown) => string;
+  measureToolResultModelVisibleBytes: (message: unknown) => number;
+  parseJsonl: (text: string) => unknown[];
+  percentile95: (values: number[]) => number;
+  sampleAgentBrowserJsonl: (path: string) => Promise<JsonlSampleReport>;
+  summarizeScenario: (scenario: BenchmarkScenarioInput) => BenchmarkScenarioSummary;
+  main: (argv: string[]) => Promise<number>;
+};
 
 const sampleFixturePath = join(import.meta.dirname, "fixtures", "agent-browser-efficiency-sample.jsonl");
 
@@ -339,6 +351,6 @@ test("main rejects invalid JSONL sample paths", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "pi-benchmark-jsonl-"));
   const invalidPath = join(tempDir, "invalid.jsonl");
   await writeFile(invalidPath, '{"ok":true}\nnot-json\n', "utf8");
-  const exitCode = await benchmarkModule.main(["--sample-jsonl", invalidPath, "--json"]);
+  const exitCode = await main(["--sample-jsonl", invalidPath, "--json"]);
   assert.equal(exitCode, 1);
 });

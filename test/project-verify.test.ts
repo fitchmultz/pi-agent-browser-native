@@ -7,9 +7,9 @@
  */
 
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
-// @ts-expect-error scripts/project.mjs is an executable ESM maintainer script without a .d.ts surface.
 const projectModule = (await import("../scripts/project.mjs")) as {
 	docsSteps: (options: { mode: string; target: string }) => Array<{ command: string; args: string[]; env?: Record<string, string> }>;
 	parseVerifyArgs: (argv?: string[]) => { mode: string; passthrough: string[]; showHelp: boolean };
@@ -20,6 +20,13 @@ const { docsSteps, parseVerifyArgs, verifySteps } = projectModule;
 function labels(steps: Array<{ args: string[]; env?: Record<string, string> }>): string[] {
 	return steps.map((step) => step.args.join(" "));
 }
+
+test("typecheck gate covers shared JavaScript config policy implementation", () => {
+	const tsconfig = JSON.parse(readFileSync("tsconfig.json", "utf8")) as { compilerOptions?: { allowJs?: boolean }; include?: string[] };
+	assert.equal(tsconfig.compilerOptions?.allowJs, true);
+	assert.ok(tsconfig.include?.includes("extensions/agent-browser/lib/config-policy.js"));
+	assert.equal(existsSync("extensions/agent-browser/lib/config-policy.d.ts"), false);
+});
 
 test("verify facade default gate keeps docs, typecheck, unit/fake, and command-reference drift checks", () => {
 	const steps = verifySteps({ mode: "default", passthrough: [], showHelp: false });

@@ -16,7 +16,7 @@ import { Theme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
 
 import {
-	BRAVE_SEARCH_PROMPT_GUIDELINE,
+	WEB_SEARCH_PROMPT_GUIDELINE,
 	QUICK_START_GUIDELINES,
 	buildInstalledDocsGuideline,
 	SHARED_BROWSER_PLAYBOOK_GUIDELINES,

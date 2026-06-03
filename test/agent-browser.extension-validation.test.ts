@@ -16,7 +16,7 @@ import { Theme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
 
 import {
-	BRAVE_SEARCH_PROMPT_GUIDELINE,
+	WEB_SEARCH_PROMPT_GUIDELINE,
 	QUICK_START_GUIDELINES,
 	RUNTIME_PROMPT_GUIDELINES,
 	buildInstalledDocsGuideline,
@@ -67,7 +67,7 @@ import {
 
 test("agentBrowserExtension keeps concise browser guidance plus installed doc pointers in tool metadata", async () => {
 	const isolatedHome = await mkdtemp(join(tmpdir(), "pi-agent-browser-guidance-test-"));
-	await withPatchedEnv({ BRAVE_API_KEY: "demo-key", HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
+	await withPatchedEnv({ BRAVE_API_KEY: "demo-key", EXA_API_KEY: undefined, HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: process.cwd() });
 		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "session_tree", "tool_call", "tool_result"]);
 		assert.equal(harness.tool.name, "agent_browser");
@@ -86,7 +86,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			...TOOL_PROMPT_GUIDELINES_PREFIX,
 			docsGuideline,
 			...RUNTIME_PROMPT_GUIDELINES,
-			BRAVE_SEARCH_PROMPT_GUIDELINE,
+			WEB_SEARCH_PROMPT_GUIDELINE,
 			TOOL_PROMPT_GUIDELINES_SUFFIX[0],
 			TOOL_PROMPT_GUIDELINES_SUFFIX[1],
 		];
@@ -150,6 +150,87 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.equal(browserTurn?.systemPrompt.includes("Quick start:"), false);
 		assert.equal(browserTurn?.systemPrompt.includes("Browser operating playbook:"), false);
 	});
+});
+
+test("agentBrowserExtension includes configured browser executable guidance", async () => {
+	const isolatedHome = await mkdtemp(join(tmpdir(), "pi-agent-browser-executable-guidance-test-"));
+	const configPath = join(isolatedHome, ".pi", "config", "pi-agent-browser-native", "config.json");
+	await mkdir(dirname(configPath), { recursive: true });
+	await writeFile(configPath, JSON.stringify({
+		version: 1,
+		browser: {
+			executablePath: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+		},
+	}, null, 2), "utf8");
+	await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
+		const harness = createExtensionHarness({ cwd: process.cwd() });
+		const guidelineText = harness.tool.promptGuidelines.join("\n");
+		assert.match(guidelineText, /browser\.executablePath/);
+		assert.match(guidelineText, /--executable-path/);
+		assert.match(guidelineText, /profiles command still lists Chrome profiles only/);
+	});
+});
+
+test("agentBrowserExtension keeps trusted browser launch guidance when project config shadows it", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-project-shadow-guidance-test-"));
+	try {
+		const cwd = join(root, "repo");
+		const isolatedHome = join(root, "home");
+		const globalConfigPath = join(isolatedHome, ".pi", "config", "pi-agent-browser-native", "config.json");
+		const projectConfigPath = join(cwd, ".pi", "config", "pi-agent-browser-native", "config.json");
+		await mkdir(dirname(globalConfigPath), { recursive: true });
+		await mkdir(dirname(projectConfigPath), { recursive: true });
+		await writeFile(globalConfigPath, JSON.stringify({
+			version: 1,
+			browser: {
+				defaultProfile: { name: "Global Profile", policy: "authenticated-only" },
+				executablePath: "/Applications/Global Browser.app/Contents/MacOS/Global Browser",
+			},
+		}, null, 2), "utf8");
+		await writeFile(projectConfigPath, JSON.stringify({
+			version: 1,
+			browser: {
+				defaultProfile: { name: "Project Profile", policy: "authenticated-only" },
+				executablePath: "/tmp/project-browser",
+			},
+		}, null, 2), "utf8");
+		await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
+			const harness = createExtensionHarness({ cwd });
+			const guidelineText = harness.tool.promptGuidelines.join("\n");
+			assert.match(guidelineText, /Global Profile/);
+			assert.match(guidelineText, /\/Applications\/Global Browser\.app/);
+			assert.doesNotMatch(guidelineText, /Project Profile/);
+			assert.doesNotMatch(guidelineText, /\/tmp\/project-browser/);
+		});
+	} finally {
+		await rm(root, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension suppresses project-local browser launch guidance", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-project-guidance-test-"));
+	try {
+		const cwd = join(root, "repo");
+		const isolatedHome = join(root, "home");
+		const configPath = join(cwd, ".pi", "config", "pi-agent-browser-native", "config.json");
+		await mkdir(dirname(configPath), { recursive: true });
+		await mkdir(isolatedHome, { recursive: true });
+		await writeFile(configPath, JSON.stringify({
+			version: 1,
+			browser: {
+				defaultProfile: { name: "Project Profile", policy: "authenticated-only" },
+				executablePath: "/tmp/project-browser",
+			},
+		}, null, 2), "utf8");
+		await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
+			const harness = createExtensionHarness({ cwd });
+			const guidelineText = harness.tool.promptGuidelines.join("\n");
+			assert.doesNotMatch(guidelineText, /Project Profile/);
+			assert.doesNotMatch(guidelineText, /\/tmp\/project-browser/);
+		});
+	} finally {
+		await rm(root, { force: true, recursive: true });
+	}
 });
 
 test("agentBrowserExtension rejects unsupported public schema fields", () => {

@@ -6,6 +6,7 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
@@ -14,6 +15,7 @@
   "include": [
     ".pi/extensions/**/*.ts",
     "extensions/**/*.ts",
+    "extensions/agent-browser/lib/config-policy.js",
     "test/**/*.ts"
   ]
 }
