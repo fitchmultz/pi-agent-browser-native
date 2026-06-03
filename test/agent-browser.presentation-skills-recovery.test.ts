@@ -295,22 +295,27 @@ test("buildToolPresentation suggests grouped getter commands for common unknown 
 });
 
 test("buildToolPresentation explains browser profile config failures with diagnostics next actions", async () => {
-	const presentation = await buildToolPresentation({
-		args: ["--profile", "Default", "open", "https://example.com"],
-		commandInfo: { command: "open", subcommand: "https://example.com" },
-		cwd: process.cwd(),
-		errorText: "No Chrome user data directory found. Cannot resolve profile name.",
-	});
+	for (const errorText of [
+		"No Chrome user data directory found. Cannot resolve profile name.",
+		'Chrome profile "pi-agent-browser-nonexistent-dogfood-profile" not found. Available profiles:\n  Default (user)\nIf you meant a directory path, use a full path (e.g., /path/to/profile).',
+	]) {
+		const presentation = await buildToolPresentation({
+			args: ["--profile", "Default", "open", "https://example.com"],
+			commandInfo: { command: "open", subcommand: "https://example.com" },
+			cwd: process.cwd(),
+			errorText,
+		});
 
-	assert.equal(presentation.content[0]?.type, "text");
-	const text = (presentation.content[0] as { text: string }).text;
-	assert.match(text, /profile\/config hint/i);
-	assert.match(text, /Do not keep retrying the same open\/profile call/);
-	assert.match(text, /top-level `sessionMode: "fresh"` field/);
-	assert.deepEqual(presentation.nextActions?.map((action) => ({ id: action.id, args: action.params?.args })), [
-		{ id: "inspect-browser-profiles", args: ["profiles"] },
-		{ id: "run-agent-browser-doctor", args: ["doctor"] },
-	]);
+		assert.equal(presentation.content[0]?.type, "text");
+		const text = (presentation.content[0] as { text: string }).text;
+		assert.match(text, /profile\/config hint/i);
+		assert.match(text, /Do not keep retrying the same open\/profile call/);
+		assert.match(text, /top-level `sessionMode: "fresh"` field/);
+		assert.deepEqual(presentation.nextActions?.map((action) => ({ id: action.id, args: action.params?.args })), [
+			{ id: "inspect-browser-profiles", args: ["profiles"] },
+			{ id: "run-agent-browser-doctor", args: ["doctor"] },
+		]);
+	}
 });
 
 test("buildToolPresentation explains localhost navigation failures as browser-host reachability", async () => {

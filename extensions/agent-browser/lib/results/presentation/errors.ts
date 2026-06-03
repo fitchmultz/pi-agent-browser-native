@@ -83,7 +83,7 @@ function buildUnknownCommandSuggestionActions(suggestions: CommandSuggestion[], 
 }
 
 function getBrowserProfileConfigHint(errorText: string): string | undefined {
-	if (!/\b(?:No Chrome user data directory found|Cannot resolve profile name|Chrome user data directory|profile name)\b/i.test(errorText)) {
+	if (!/\b(?:No Chrome user data directory found|Cannot resolve profile name|Chrome user data directory|profile name|Chrome profile\s+.+?\s+not found|Available profiles|If you meant a directory path)\b/i.test(errorText)) {
 		return undefined;
 	}
 	return [
