@@ -197,8 +197,15 @@ npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-conf
 # Prefer Brave when both Exa and Brave keys are available, or clear with "auto".
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search prefer brave --global
 
-# Disable this package's built-in web-search tool even if API keys are in the environment.
+# Disable this package's built-in web-search tool in global config even if API keys are in the environment.
+# Global disable applies to normal runs unless a project config or PI_AGENT_BROWSER_CONFIG override explicitly re-enables it.
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search disable --global
+
+# Hard-disable web search for one run, regardless of project config, by using the highest-priority override layer.
+cat > /tmp/pi-agent-browser-disable-web-search.json <<'JSON'
+{ "version": 1, "webSearch": { "enabled": false } }
+JSON
+PI_AGENT_BROWSER_CONFIG=/tmp/pi-agent-browser-disable-web-search.json pi
 
 # Store a plaintext key in global Pi-scoped user config; output stays redacted.
 printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --provider exa --stdin
@@ -207,7 +214,7 @@ printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native@la
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --provider brave --global
 ```
 
-Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused; project config may only use the matching provider env refs (`$EXA_API_KEY` / `${EXA_API_KEY}` for Exa and `$BRAVE_API_KEY` / `${BRAVE_API_KEY}` for Brave). `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. The tool content, details, status output, and docs examples must not expose resolved keys.
+Config merges in this order: global → project → `PI_AGENT_BROWSER_CONFIG` override. `webSearch.enabled` is evaluated after that merge. Use `web-search disable --global` for a user default, `web-search disable --project` for one repo, and a `PI_AGENT_BROWSER_CONFIG` override with `{ "webSearch": { "enabled": false } }` when web search must stay off even if project config exists. Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused; project config may only use the matching provider env refs (`$EXA_API_KEY` / `${EXA_API_KEY}` for Exa and `$BRAVE_API_KEY` / `${BRAVE_API_KEY}` for Brave). `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. The tool content, details, status output, and docs examples must not expose resolved keys.
 
 For Exa, the tool defaults to `searchType: "auto"` with `contents.highlights: true`. Agents may pass `searchType` (`fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`) only when the task needs that latency/depth tradeoff; structured output schemas are intentionally not exposed yet.
 

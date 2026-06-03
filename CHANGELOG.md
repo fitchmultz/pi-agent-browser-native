@@ -19,6 +19,7 @@
 - Rejected `--session-mode` inside `agent_browser.args` with guidance to use the top-level `sessionMode` field.
 - Added profile/config recovery hints and `profiles` / `doctor` next actions for Chrome profile and user-data-dir failures, including upstream `Chrome profile ... not found` errors.
 - Added web-search rate-limit guidance and serialized companion web-search requests so agents avoid repeated or parallel provider calls after HTTP 429s.
+- Clarified web-search disable precedence: `webSearch.enabled` is evaluated after global → project → `PI_AGENT_BROWSER_CONFIG` merge, so users know when to use global, project, or override-level disable.
 
 ## 0.2.40 - 2026-06-02
 
