@@ -979,6 +979,56 @@ if (args.includes("open")) {
 	}
 });
 
+test("agentBrowserExtension tracks fresh managed sessions that fail after allowed-domain policy checks", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-allowed-domains-fresh-fail-"));
+	const statePath = join(tempDir, "page-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const statePath = ${JSON.stringify(statePath)};
+function writeState(state) { fs.writeFileSync(statePath, JSON.stringify(state)); }
+if (args.includes("open")) {
+  const url = args.at(-1);
+  const state = url.includes("iana.org") ? { title: "Example Domains", url } : { title: "Example Domain", url: "https://example.com/" };
+  writeState(state);
+  process.stdout.write(JSON.stringify({ success: true, data: state }));
+} else if (args.includes("close")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const escapedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--allowed-domains", "example.com", "open", "https://www.iana.org/"],
+				sessionMode: "fresh",
+			});
+			assert.equal(escapedOpen.isError, true, JSON.stringify(escapedOpen));
+			assert.equal(escapedOpen.details?.failureCategory, "policy-blocked");
+			const outcome = escapedOpen.details?.managedSessionOutcome as { activeAfter?: boolean; attemptedSessionName?: string; currentSessionName?: string; status?: string; succeeded?: boolean } | undefined;
+			assert.equal(outcome?.activeAfter, true);
+			assert.equal(outcome?.status, "created");
+			assert.equal(outcome?.succeeded, false);
+			assert.equal(outcome?.currentSessionName, escapedOpen.details?.sessionName);
+
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+			const closeOutcome = close.details?.managedSessionOutcome as { attemptedSessionName?: string; status?: string } | undefined;
+			assert.equal(closeOutcome?.status, "closed");
+			assert.equal(closeOutcome?.attemptedSessionName, escapedOpen.details?.sessionName);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not restore allowed-domain policy after electron cleanup closes the session", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-allowed-domains-cleanup-"));
 	const statePath = join(tempDir, "page-state.json");

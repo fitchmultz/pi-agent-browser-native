@@ -683,7 +683,7 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 	const status = typeof outcome.status === "string" ? outcome.status : undefined;
 	const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
 	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
-	if (succeeded && outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
+	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
 		trackOwnedManagedSession(sessions, currentSessionName, cwd);
 	}
 	if (succeeded && status === "closed") {
