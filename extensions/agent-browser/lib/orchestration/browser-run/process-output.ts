@@ -224,11 +224,17 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			}
 		}
 
+		const parsedAllowedDomainsPolicy = parseAllowedDomainsPolicyFromArgs(prepared.runtimeToolArgs);
+		const sessionAllowedDomainsPolicy = prepared.executionPlan.sessionName
+			? parsedAllowedDomainsPolicy ?? allowedDomainsBySession.get(prepared.executionPlan.sessionName)
+			: parsedAllowedDomainsPolicy;
+		const shouldCaptureAllowedDomainNavigationSummary = prepared.executionPlan.commandInfo.command === "batch" && sessionAllowedDomainsPolicy !== undefined;
 		if (
 			succeeded &&
 			!navigationSummary &&
 			(shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data) ||
-				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data))
+				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data) ||
+				shouldCaptureAllowedDomainNavigationSummary)
 		) {
 			navigationSummary = await collectNavigationSummary({ cwd, sessionName: prepared.executionPlan.sessionName, signal });
 		}
@@ -272,10 +278,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				if (appliedPostCommandCorrection && !sessionTabCorrection) sessionTabCorrection = appliedPostCommandCorrection;
 			}
 		}
-		const parsedAllowedDomainsPolicy = parseAllowedDomainsPolicyFromArgs(prepared.runtimeToolArgs);
-		const sessionAllowedDomainsPolicy = prepared.executionPlan.sessionName
-			? parsedAllowedDomainsPolicy ?? allowedDomainsBySession.get(prepared.executionPlan.sessionName)
-			: parsedAllowedDomainsPolicy;
 		if (succeeded && prepared.executionPlan.sessionName && parsedAllowedDomainsPolicy) {
 			allowedDomainsBySession = new Map(allowedDomainsBySession);
 			allowedDomainsBySession.set(prepared.executionPlan.sessionName, parsedAllowedDomainsPolicy);
@@ -363,6 +365,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			else if (prepared.sessionTabPinningReason === "restore") sessionPageState.clearRestorePinning(prepared.executionPlan.sessionName);
 		}
 		if (replacedManagedSessionName) {
+			allowedDomainsBySession = new Map(allowedDomainsBySession);
+			allowedDomainsBySession.delete(replacedManagedSessionName);
 			sessionPageState.clearSession(replacedManagedSessionName);
 			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
 			if (!replacedCloseError) state.closedManagedSessionNames.add(replacedManagedSessionName);

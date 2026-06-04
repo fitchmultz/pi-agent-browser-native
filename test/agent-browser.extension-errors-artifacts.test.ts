@@ -958,12 +958,143 @@ if (args.includes("open")) {
 			});
 			assert.equal(open.isError, false, JSON.stringify(open));
 
-			const escapedClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e2"] });
+			const branch = [createToolBranchEntry({ details: open.details ?? {}, isError: false })];
+			const reloadedHarness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(reloadedHarness.handlers, "session_start", { reason: "reload" }, reloadedHarness.ctx);
+
+			const escapedClick = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, { args: ["click", "@e2"] });
 			assert.equal(escapedClick.isError, true, JSON.stringify(escapedClick));
 			assert.equal(escapedClick.details?.resultCategory, "failure");
 			assert.equal(escapedClick.details?.failureCategory, "policy-blocked");
 			assert.match((escapedClick.content[0] as { text: string }).text, /--allowed-domains example\.com does not allow www\.iana\.org/);
 			assert.equal((escapedClick.details?.navigationSummary as { url?: string } | undefined)?.url, "https://www.iana.org/help/example-domains");
+
+			const close = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+			const noPolicyClick = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, { args: ["click", "@e2"] });
+			assert.equal(noPolicyClick.isError, false, JSON.stringify(noPolicyClick));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not restore allowed-domain policy after electron cleanup closes the session", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-allowed-domains-cleanup-"));
+	const statePath = join(tempDir, "page-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const statePath = ${JSON.stringify(statePath)};
+function writeState(state) { fs.writeFileSync(statePath, JSON.stringify(state)); }
+function readState() { try { return JSON.parse(fs.readFileSync(statePath, "utf8")); } catch { return { title: "", url: "about:blank" }; } }
+if (args.includes("open")) {
+  const state = { title: "Example Domain", url: "https://example.com/" };
+  writeState(state);
+  process.stdout.write(JSON.stringify({ success: true, data: state }));
+} else if (args.includes("click")) {
+  const state = { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
+  writeState(state);
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else if (args.includes("eval")) {
+  process.stdout.write(JSON.stringify({ success: true, data: readState() }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--allowed-domains", "example.com", "open", "https://example.com"],
+				sessionMode: "fresh",
+			});
+			assert.equal(open.isError, false, JSON.stringify(open));
+			const sessionName = String(open.details?.sessionName);
+			const branch = [
+				createToolBranchEntry({ details: open.details ?? {}, isError: false }),
+				createToolBranchEntry({
+					details: {
+						args: ["electron", "cleanup"],
+						command: "electron",
+						electron: { cleanup: { results: [{ steps: [{ resource: "managed-session", sessionName, state: "removed" }] }] } },
+						sessionName,
+					},
+					isError: false,
+				}),
+			];
+			const reloadedHarness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(reloadedHarness.handlers, "session_start", { reason: "reload" }, reloadedHarness.ctx);
+
+			const noPolicyClick = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, { args: ["click", "@e2"] });
+			assert.equal(noPolicyClick.isError, false, JSON.stringify(noPolicyClick));
+			assert.equal(noPolicyClick.details?.failureCategory, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension fails when allowed-domain batch navigation escapes", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-allowed-domains-batch-"));
+	const statePath = join(tempDir, "page-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const statePath = ${JSON.stringify(statePath)};
+let stdin = "";
+function writeState(state) { fs.writeFileSync(statePath, JSON.stringify(state)); }
+function readState() { try { return JSON.parse(fs.readFileSync(statePath, "utf8")); } catch { return { title: "", url: "about:blank" }; } }
+function runCommand(command) {
+  if (command[0] === "open") {
+    const state = { title: "Example Domain", url: "https://example.com/" };
+    writeState(state);
+    return { command, success: true, result: { opened: command[1] } };
+  }
+  if (command[0] === "click") {
+    const state = { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
+    writeState(state);
+    return { command, success: true, result: { clicked: command[1] } };
+  }
+  return { command, success: true, result: { ok: true } };
+}
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  if (args.includes("batch")) {
+    process.stdout.write(JSON.stringify(JSON.parse(stdin).map(runCommand)));
+  } else if (args.includes("eval")) {
+    process.stdout.write(JSON.stringify({ success: true, data: readState() }));
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+  }
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const escapedBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--allowed-domains", "example.com", "batch"],
+				sessionMode: "fresh",
+				stdin: JSON.stringify([
+					["open", "https://example.com"],
+					["click", "a.learn"],
+				]),
+			});
+			assert.equal(escapedBatch.isError, true, JSON.stringify(escapedBatch));
+			assert.equal(escapedBatch.details?.failureCategory, "policy-blocked");
+			assert.equal((escapedBatch.details?.navigationSummary as { url?: string } | undefined)?.url, "https://www.iana.org/help/example-domains");
+			assert.match((escapedBatch.content[0] as { text: string }).text, /--allowed-domains example\.com does not allow www\.iana\.org/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

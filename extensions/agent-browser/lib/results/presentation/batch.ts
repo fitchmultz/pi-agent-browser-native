@@ -302,10 +302,13 @@ export async function buildBatchPresentation(options: {
 				return lines.join("\n");
 			})
 			.join("\n\n");
+	const batchSummary = batchFailure === undefined
+		? summary
+		: `Batch failed: ${batchFailure.successCount}/${batchFailure.totalCount} succeeded`;
 	const failureHeader = batchFailure === undefined
 		? undefined
 		: [
-			summary,
+			batchSummary,
 			`First failing step: ${batchFailure.failedStep.index + 1} — ${batchFailure.failedStep.commandText}`,
 			batchFailure.failureCount > 1 ? `${batchFailure.failureCount} steps failed. See the per-step results below.` : "See the per-step results below.",
 		].join("\n");
@@ -324,7 +327,7 @@ export async function buildBatchPresentation(options: {
 			commandInfo: { command: "batch" },
 			data,
 			nextActions,
-			summary,
+			summary: batchSummary,
 		})
 		: changedSteps.length > 0
 			? {
@@ -353,6 +356,6 @@ export async function buildBatchPresentation(options: {
 		pageChangeSummary,
 		resultCategory: batchFailure ? "failure" : "success",
 		successCategory: batchFailure ? undefined : classifyPresentationSuccessCategory({ artifactVerification, artifacts }),
-		summary,
+		summary: batchSummary,
 	};
 }

@@ -558,6 +558,8 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 	});
 
 	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Batch failed: 1\/2 succeeded/);
+	assert.doesNotMatch(text, /Batch: 2\/2 succeeded/);
 	assert.match(text, /Step 1 — click #export/);
 	assert.match(text, /Step 2 — wait --download \/tmp\/export\.csv/);
 	assert.match(text, /Download completed: \/tmp\/export\.csv/);
@@ -570,6 +572,9 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 		path: "/tmp/export.csv",
 		subcommand: "--download",
 	});
+	assert.equal(presentation.summary, "Artifact verification failed: requested download was not found at /tmp/export.csv.");
+	assert.equal(presentation.batchFailure?.successCount, 1);
+	assert.equal(presentation.batchFailure?.totalCount, 2);
 	assert.equal(presentation.batchSteps?.[1]?.artifactVerification?.missingCount, 1);
 	assert.equal(presentation.artifactVerification?.missingCount, 1);
 	assert.deepEqual(presentation.batchSteps?.[1]?.nextActions?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
