@@ -687,7 +687,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(requestsResult.isError, false);
 			assert.match(requestsResult.content[0]?.text ?? "", /Network route diagnostics/);
 			assert.deepEqual((requestsResult.details?.networkRouteDiagnostics as Array<{ reason?: string }> | undefined)?.map((item) => item.reason), ["pending-routed-request"]);
-			assert.deepEqual((requestsResult.details?.nextActions as Array<{ id?: string }> | undefined)?.slice(0, 3).map((action) => action.id), ["inspect-pending-routed-network-request", "start-network-har-capture-for-route-mock", "retry-route-mock-same-origin-fixture"]);
+			assert.deepEqual((requestsResult.details?.nextActions as Array<{ id?: string }> | undefined)?.slice(0, 2).map((action) => action.id), ["inspect-pending-routed-network-request", "start-network-har-capture-for-route-mock"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

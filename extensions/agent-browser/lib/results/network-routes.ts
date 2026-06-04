@@ -1,15 +1,11 @@
 import { isRecord } from "../parsing.js";
 import { redactSensitiveText } from "../runtime.js";
 import type { NetworkRouteDiagnostic, NetworkRouteRecord } from "./contracts.js";
+import { getStringRecordField, isApiLikeNetworkRequest } from "./network.js";
 
 function getArrayField(data: Record<string, unknown>, key: string): unknown[] | undefined {
 	const value = data[key];
 	return Array.isArray(value) ? value : undefined;
-}
-
-function getStringField(data: Record<string, unknown>, key: string): string | undefined {
-	const value = data[key];
-	return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
 function networkRoutePatternMatchesUrl(pattern: string, url: string): boolean {
@@ -21,33 +17,15 @@ function networkRoutePatternMatchesUrl(pattern: string, url: string): boolean {
 	return pattern.length >= 4 && url.includes(pattern);
 }
 
-function getNetworkRequestPath(item: Record<string, unknown>): string {
-	const url = getStringField(item, "url");
-	if (!url) return "";
-	try {
-		return new URL(url).pathname;
-	} catch {
-		return url.split(/[?#]/, 1)[0] ?? "";
-	}
-}
-
-function isApiLikeNetworkRequest(item: Record<string, unknown>): boolean {
-	const method = (getStringField(item, "method") ?? "GET").toUpperCase();
-	const resourceType = (getStringField(item, "resourceType") ?? "").toLowerCase();
-	const mimeType = (getStringField(item, "mimeType") ?? "").toLowerCase();
-	const path = getNetworkRequestPath(item);
-	return resourceType === "fetch" || resourceType === "xhr" || mimeType.includes("json") || /\/(?:api|graphql|rpc)(?:\/|$)/i.test(path) || !["GET", "HEAD"].includes(method);
-}
-
 function getSafeRequestId(item: Record<string, unknown>): string | undefined {
-	const requestId = getStringField(item, "requestId") ?? getStringField(item, "id");
+	const requestId = getStringRecordField(item, "requestId") ?? getStringRecordField(item, "id");
 	if (!requestId || redactSensitiveText(requestId) !== requestId) return undefined;
 	return requestId;
 }
 
 function getRouteDiagnosticReason(item: Record<string, unknown>): NetworkRouteDiagnostic["reason"] | undefined {
 	const statusMissing = typeof item.status !== "number";
-	const error = getStringField(item, "error") ?? getStringField(item, "failureText") ?? getStringField(item, "errorText");
+	const error = getStringRecordField(item, "error") ?? getStringRecordField(item, "failureText") ?? getStringRecordField(item, "errorText");
 	if (error && /(?:cors|cross-origin|preflight|access-control-allow-origin)/i.test(error)) return "cors-likely-routed-request";
 	if (statusMissing && isApiLikeNetworkRequest(item)) return "pending-routed-request";
 	return undefined;
@@ -78,7 +56,7 @@ export function buildNetworkRouteDiagnostics(data: unknown, routes: NetworkRoute
 	const diagnostics: NetworkRouteDiagnostic[] = [];
 	for (const item of requests) {
 		if (!isRecord(item)) continue;
-		const url = getStringField(item, "url");
+		const url = getStringRecordField(item, "url");
 		if (!url) continue;
 		const reason = getRouteDiagnosticReason(item);
 		if (!reason) continue;

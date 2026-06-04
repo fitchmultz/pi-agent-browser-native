@@ -7,7 +7,7 @@
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
-import { classifyNetworkRequestFailure, summarizeNetworkFailures } from "../network.js";
+import { classifyNetworkRequestFailure, isApiLikeNetworkRequest, summarizeNetworkFailures } from "../network.js";
 import { withOptionalSessionArgs } from "../next-actions.js";
 import { stringifyUnknown, truncateText } from "../text.js";
 import {
@@ -37,7 +37,7 @@ const STORAGE_VALUE_PREVIEW_MAX_CHARS = 160;
 
 const STORAGE_SECRET_KEY_PATTERN = /(?:access(?:_|-)?token|account|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|credential|csrf|email|id(?:_|-)?token|jwt|pass(?:word)?|private(?:_|-)?key|profile|refresh(?:_|-)?token|secret|session|sid|sig(?:nature)?|token|user(?:name)?|x(?:_|-)?api(?:_|-)?key|xsrf)/i;
 
-const STORAGE_BENIGN_KEY_PATTERN = /^(?:(?:.*benign.*)|color(?:scheme)?|debug|dev|experiment|feature(?:flag)?|flag|issue74benignkey|language|layout|locale|mode|onboarding|qakey|sort|stresskey|tab|test|theme|timezone|tour|variant|view)$/i;
+const STORAGE_BENIGN_KEY_PATTERN = /^(?:color(?:scheme)?|debug|dev|experiment|feature(?:flag)?|flag|language|layout|locale|mode|onboarding|sort|tab|theme|timezone|tour|variant|view)$/i;
 
 const STORAGE_TOKEN_VALUE_PATTERN = /(?:\bBearer\s+[A-Za-z0-9._~-]+|\bBasic\s+[A-Za-z0-9+/=]+|^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$|(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_~+/=-]{32,})/;
 
@@ -440,14 +440,6 @@ function getNetworkRequestPathFilter(item: Record<string, unknown>): string | un
 	return getSafeNetworkActionValue(filter);
 }
 
-function isApiLikeNetworkRequest(item: Record<string, unknown>): boolean {
-	const method = (getStringField(item, "method") ?? "GET").toUpperCase();
-	const resourceType = (getStringField(item, "resourceType") ?? "").toLowerCase();
-	const mimeType = (getStringField(item, "mimeType") ?? "").toLowerCase();
-	const filter = getNetworkRequestPathFilter(item) ?? "";
-	return resourceType === "fetch" || resourceType === "xhr" || mimeType.includes("json") || /\/(?:api|graphql|rpc)(?:\/|$)/i.test(filter) || !["GET", "HEAD"].includes(method);
-}
-
 function getNetworkRequestActionCandidate(item: Record<string, unknown>): NetworkRequestActionCandidate | undefined {
 	const requestId = getNetworkRequestId(item);
 	if (!requestId) return undefined;
@@ -511,12 +503,6 @@ export function buildNetworkRouteDiagnosticsNextActions(diagnostics: NetworkRout
 		params: { args: withOptionalSessionArgs(sessionName, ["network", "har", "start"]) },
 		reason: "Capture a HAR before reproducing the route mock so pending/CORS behavior has request and response headers.",
 		safety: "HARs can contain URLs and headers; stop to an explicit path and avoid sharing sensitive captures.",
-		tool: "agent_browser",
-	});
-	actions.push({
-		id: "retry-route-mock-same-origin-fixture",
-		reason: "Retry the mock against a same-origin HTTP fixture or add CORS headers if the routed request is cross-origin.",
-		safety: "Guidance only; do not change the target origin without preserving the user-intended scenario.",
 		tool: "agent_browser",
 	});
 	return actions;

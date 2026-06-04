@@ -241,8 +241,8 @@ test("buildToolPresentation keeps benign storage values visible while redacting 
 			data: {
 				entries: [
 					{ key: "theme", value: "dark" },
-					{ key: "stressKey", value: "visible-local-value" },
-					{ key: "issue74BenignKey", value: "visible-issue-value" },
+					{ key: "locale", value: "en-US" },
+					{ key: "layout", value: "grid" },
 					{ key: "featureFlag", value: true },
 					{ key: "apiKey", value: "abc123" },
 					{ key: "sid", value: "plain-session-value" },
@@ -261,13 +261,13 @@ test("buildToolPresentation keeps benign storage values visible while redacting 
 	const text = (presentation.content[0] as { text: string }).text;
 	const details = JSON.stringify(presentation.data);
 	assert.match(text, /theme: dark/);
-	assert.match(text, /stressKey: visible-local-value/);
-	assert.match(text, /issue74BenignKey: visible-issue-value/);
+	assert.match(text, /locale: en-US/);
+	assert.match(text, /layout: grid/);
 	assert.match(text, /featureFlag: true/);
 	assert.match(text, /mode: qa/);
 	assert.match(details, /"value":"dark"/);
-	assert.match(details, /"value":"visible-local-value"/);
-	assert.match(details, /"value":"visible-issue-value"/);
+	assert.match(details, /"value":"en-US"/);
+	assert.match(details, /"value":"grid"/);
 	assert.match(details, /"value":true/);
 	assert.match(details, /"value":"qa"/);
 	assert.doesNotMatch(text, /abc123|plain-session-value|user@example|token=secret|userId=12345|session\/abc123|secret-token/);
@@ -291,7 +291,7 @@ test("buildToolPresentation adds routed pending network diagnostics", async () =
 	assert.match(text, /Network route diagnostics/);
 	assert.match(text, /pending-routed-request/);
 	assert.deepEqual(presentation.networkRouteDiagnostics?.map((item) => item.reason), ["pending-routed-request"]);
-	assert.deepEqual(presentation.nextActions?.slice(0, 3).map((action) => action.id), ["inspect-pending-routed-network-request", "start-network-har-capture-for-route-mock", "retry-route-mock-same-origin-fixture"]);
+	assert.deepEqual(presentation.nextActions?.slice(0, 2).map((action) => action.id), ["inspect-pending-routed-network-request", "start-network-har-capture-for-route-mock"]);
 	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--session", "pi-agent-browser-test", "network", "request", "r1"]);
 });
 

@@ -9,12 +9,12 @@
 import { isRecord } from "../parsing.js";
 import type { NetworkFailureClassification, NetworkFailureSummary } from "./contracts.js";
 
-function getStringRecordField(value: Record<string, unknown>, key: string): string | undefined {
+export function getStringRecordField(value: Record<string, unknown>, key: string): string | undefined {
 	const field = value[key];
 	return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
 }
 
-function getNetworkRequestUrlPath(url: string | undefined): string | undefined {
+export function getNetworkRequestUrlPath(url: string | undefined): string | undefined {
 	if (!url) return undefined;
 	try {
 		return new URL(url).pathname;
@@ -35,6 +35,14 @@ function isBenignAssetFailure(request: Record<string, unknown>, url: string | un
 	return /(?:^|\/)(?:favicon(?:[-.\w]*)?\.(?:ico|png|svg)|apple-touch-icon(?:[-.\w]*)?\.png)$/i.test(path)
 		&& (request.status === 404 || request.failed === true || typeof request.error === "string")
 		&& (!normalizedResourceType || ["image", "img", "other"].includes(normalizedResourceType) || normalizedResourceType.startsWith("image/"));
+}
+
+export function isApiLikeNetworkRequest(request: Record<string, unknown>): boolean {
+	const method = (getStringRecordField(request, "method") ?? "GET").toUpperCase();
+	const resourceType = (getStringRecordField(request, "resourceType") ?? "").toLowerCase();
+	const mimeType = (getStringRecordField(request, "mimeType") ?? "").toLowerCase();
+	const path = getNetworkRequestUrlPath(getStringRecordField(request, "url")) ?? "";
+	return resourceType === "fetch" || resourceType === "xhr" || mimeType.includes("json") || /\/(?:api|graphql|rpc)(?:\/|$)/i.test(path) || !["GET", "HEAD"].includes(method);
 }
 
 export function classifyNetworkRequestFailure(request: Record<string, unknown>): NetworkFailureClassification | undefined {

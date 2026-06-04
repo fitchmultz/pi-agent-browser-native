@@ -4,6 +4,27 @@
 
 No changes yet.
 
+## 0.2.43 - 2026-06-04
+
+### Added
+
+- Added fail-closed artifact verification for explicit saved paths with an `artifact-missing` failure category when upstream reports success but the requested artifact is absent.
+- Added wrapper-side allowed-domain tracking for browser sessions so post-navigation escapes from configured allowed domains fail loudly.
+- Added route-aware network diagnostics for pending or CORS-likely route mocks, including structured follow-up actions for request inspection and HAR capture plus prose guidance for same-origin/CORS-correct fixture retries.
+
+### Changed
+
+- Made same-snapshot form batching less conservative: `check`/`uncheck` on checkbox or radio refs and `select` on combobox refs remain guarded against stale refs but no longer force a fresh snapshot before later same-batch form work; direct `click @ref` remains conservative.
+- Removed unsupported `semanticAction.uncheck` from the public shorthand contract while keeping raw upstream `uncheck <selector-or-ref>` pass-through available.
+- Improved `semanticAction.fill` recovery by resolving exact current editable role/name matches, including comboboxes, through a current visible ref before falling back to upstream locator behavior.
+- Made benign local QA storage values visible for explicitly safe primitive keys while continuing to redact secret-, identity-, session-, email-, token-, and URL-shaped values.
+- Treated the exact upstream “streaming already enabled” response as an idempotent success with cleanup/status next actions, without masking broader stream failures.
+
+### Fixed
+
+- Stopped emitting Electron app-shell broad-selector warnings on ordinary browser pages such as `file://` fixtures; broad Electron `get text` warnings now require wrapper-tracked Electron launch provenance.
+- Clarified clipboard permission denials without leaking denied clipboard write payloads across prose, JSON, batch, parse-failure, and detail surfaces.
+
 ## 0.2.42 - 2026-06-03
 
 ### Fixed

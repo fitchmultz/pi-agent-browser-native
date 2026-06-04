@@ -464,6 +464,13 @@ process.stdin.on("end", () => {
       if (command.includes("--clear")) { staleErrors = false; return { command, success: true, result: { errors: [] } }; }
       return { command, success: true, result: staleErrors || mode === "fail" ? { errors: [{ text: "page boom" }] } : { errors: [] } };
     }
+    if (name === "wait" && process.env.AGENT_BROWSER_FAKE_QA_MODE === "wait-fail") {
+      return { command, success: false, error: "Timed out waiting for QA assertion" };
+    }
+    if (name === "screenshot" && typeof command[1] === "string" && !command[1].includes("missing-qa-screenshot")) {
+      fs.writeFileSync(command[1], "fake screenshot");
+      return { command, success: true, result: { path: command[1] } };
+    }
     return { command, success: true, result: { ok: true } };
   });
   process.stdout.write(JSON.stringify(results));
@@ -510,6 +517,33 @@ process.stdin.on("end", () => {
 			assert.match((benignNetworkResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Network failure summary:/);
 			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Step 1 —/);
+
+			process.env.AGENT_BROWSER_FAKE_QA_MODE = "wait-fail";
+			const failedWaitQaResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: {
+					url: "https://example.test/",
+					expectedText: ["Missing text"],
+				},
+			});
+			assert.equal(failedWaitQaResult.isError, true);
+			assert.equal(failedWaitQaResult.details?.failureCategory, "qa-failure");
+			assert.match((failedWaitQaResult.content[0] as { text: string }).text, /QA preset failed/);
+			process.env.AGENT_BROWSER_FAKE_QA_MODE = "pass";
+
+			const missingQaScreenshotPath = join(tempDir, "missing-qa-screenshot.png");
+			const missingQaScreenshotResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: {
+					url: "https://example.test/",
+					expectedText: ["Welcome"],
+					screenshotPath: missingQaScreenshotPath,
+				},
+			});
+			assert.equal(missingQaScreenshotResult.isError, true);
+			assert.equal(missingQaScreenshotResult.details?.failureCategory, "artifact-missing");
+			assert.equal((missingQaScreenshotResult.details?.qaPreset as { passed?: boolean } | undefined)?.passed, true);
+			assert.match((missingQaScreenshotResult.content[0] as { text: string }).text, /Artifact verification failed/);
+			assert.doesNotMatch((missingQaScreenshotResult.content[0] as { text: string }).text, /QA preset passed/);
+			delete process.env.AGENT_BROWSER_FAKE_QA_MODE;
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {

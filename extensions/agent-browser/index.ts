@@ -1029,6 +1029,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 	let branchStateGeneration = 0;
 
+	const clearSessionScopedBrowserState = (sessionName: string): void => {
+		allowedDomainsBySession.delete(sessionName);
+		networkRoutesBySession.delete(sessionName);
+		sessionPageState.clearSession(sessionName);
+	};
+
 	const restoreBranchBackedState = (ctx: ExtensionContext, options: { resetRuntimeOwnership: boolean }): void => {
 		branchStateGeneration += 1;
 		const previousManagedSessionActive = managedSessionActive;
@@ -1250,8 +1256,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const closedSessionNames = getCleanupResultsClosedManagedSessionNames(cleanupRecords);
 					syncElectronCleanupManagedSessions(ownedManagedSessions, cleanupRecords);
 					for (const closedSessionName of closedSessionNames) {
-						allowedDomainsBySession.delete(closedSessionName);
-						sessionPageState.clearSession(closedSessionName);
+						clearSessionScopedBrowserState(closedSessionName);
 						if (closedSessionName === managedSessionName) {
 							managedSessionActive = false;
 							freshSessionOrdinal += 1;

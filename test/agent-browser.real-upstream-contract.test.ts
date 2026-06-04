@@ -422,17 +422,22 @@ if (!REAL_UPSTREAM_ENABLED) {
 					const clickedExport = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "#delayed-anchor-download"] });
 					assert.equal(clickedExport.isError, false, `click should start async download: ${clickedExport.content[0]?.text ?? ""}`);
 					const waitedDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download", downloadPath] });
-					const waitDownloadDetails = assertSuccessfulResult(waitedDownload, shapes.commands.waitDownload, "wait --download");
+					assert.equal(waitedDownload.isError, true, `wait --download should fail closed when the reported file is missing: ${waitedDownload.content[0]?.text ?? ""}`);
+					assertHasKeys(waitedDownload.details, shapes.commands.waitDownload.detailKeys, "wait --download details");
+					const waitDownloadDetails = waitedDownload.details ?? {};
+					assert.equal(waitDownloadDetails.resultCategory, "failure");
+					assert.equal(waitDownloadDetails.failureCategory, "artifact-missing");
 					assert.equal(waitDownloadDetails.sessionName, managedSessionName);
 					assert.equal(waitDownloadDetails.usedImplicitSession, true);
 					assert.equal(waitDownloadDetails.savedFilePath, downloadPath);
 					assert.equal((waitDownloadDetails.savedFile as { path?: string } | undefined)?.path, downloadPath);
+					assert.match(waitedDownload.content[0]?.text ?? "", /Artifact verification failed/);
 					assert.match(waitedDownload.content[0]?.text ?? "", /Download completed/);
 
 					// Upstream tracking: https://github.com/vercel-labs/agent-browser/issues/1300.
 					// Current upstream agent-browser 0.27.1 reports the requested saveAs path but leaves the
-					// file in the browser's default download directory. Keep this explicit so release docs do
-					// not overstate savedFilePath as a verified on-disk artifact.
+					// file in the browser's default download directory. The wrapper must fail closed so release
+					// docs do not overstate savedFilePath as a verified on-disk artifact.
 					const artifacts = waitDownloadDetails.artifacts as Array<{ exists?: boolean; path?: string; sizeBytes?: number }> | undefined;
 					assert.equal(artifacts?.[0]?.path, downloadPath);
 					assert.equal(artifacts?.[0]?.exists, false);

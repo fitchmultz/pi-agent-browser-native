@@ -485,13 +485,13 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		else if (networkSourceLookup) presentation.content.unshift({ type: "text", text: networkSourceLookup.summary });
 		if (sourceLookup && presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${sourceLookup.summary}\n\n${presentation.content[0].text}` };
 		else if (sourceLookup) presentation.content.unshift({ type: "text", text: sourceLookup.summary });
-		if (qaPreset && !qaPreset.passed) {
+		if (qaPreset && !qaPreset.passed && presentation.failureCategory !== "artifact-missing") {
 			succeeded = false;
 			presentation.failureCategory = "qa-failure";
 			presentation.summary = qaPreset.summary;
 			if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${qaPreset.summary}\n\n${presentation.content[0].text}` };
 			else presentation.content.unshift({ type: "text", text: qaPreset.summary });
-		} else if (qaPreset?.passed && prepared.compiledQaPreset) {
+		} else if (qaPreset?.passed && prepared.compiledQaPreset && succeeded) {
 			const compactText = buildQaCompactPassText({
 				artifactVerification: presentation.artifactVerification,
 				batchStepCount: presentation.batchSteps?.length ?? prepared.compiledQaPreset.steps.length,
