@@ -71,12 +71,28 @@ export function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorTex
 		});
 }
 
-export function redactClipboardPermissionErrorValue(commandInfo: CommandInfo, value: unknown): unknown {
+export function getClipboardWritePayloadCandidates(commandTokens: readonly string[]): string[] {
+	if (commandTokens[0] !== "clipboard" || commandTokens[1] !== "write") return [];
+	const payloadTokens = commandTokens.slice(2).filter((value) => value.length > 0);
+	return [...new Set([...payloadTokens, payloadTokens.join(" ")].filter((value) => value.length > 0))];
+}
+
+function shouldRedactClipboardPayloadField(key: string, value: string, payloadCandidates: readonly string[]): boolean {
+	if (!/payload|value|text|clipboard|argument/i.test(key)) return false;
+	return payloadCandidates.some((candidate) => value === candidate || value.includes(candidate));
+}
+
+export function redactClipboardPermissionErrorValue(commandInfo: CommandInfo, value: unknown, payloadCandidates: readonly string[] = []): unknown {
 	if (commandInfo.command !== "clipboard") return value;
-	if (typeof value === "string") return redactClipboardPermissionEcho(commandInfo, value);
-	if (Array.isArray(value)) return value.map((item) => redactClipboardPermissionErrorValue(commandInfo, item));
+	if (typeof value === "string") return payloadCandidates.includes(value) ? "[REDACTED]" : redactClipboardPermissionEcho(commandInfo, value);
+	if (Array.isArray(value)) return value.map((item) => redactClipboardPermissionErrorValue(commandInfo, item, payloadCandidates));
 	if (!isRecord(value)) return value;
-	return Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [key, redactClipboardPermissionErrorValue(commandInfo, entryValue)]));
+	return Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [
+		key,
+		typeof entryValue === "string" && shouldRedactClipboardPayloadField(key, entryValue, payloadCandidates)
+			? "[REDACTED]"
+			: redactClipboardPermissionErrorValue(commandInfo, entryValue, payloadCandidates),
+	]));
 }
 
 interface CommandSuggestion {

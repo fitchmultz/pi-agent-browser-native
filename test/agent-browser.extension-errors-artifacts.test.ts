@@ -40,7 +40,7 @@ let stdin = "";
 function clipboardError(command) {
   const payload = command.slice(2).join(" ");
   const message = "NotAllowedError: Failed to execute 'writeText' on 'Clipboard': Write permission denied for " + payload + ".";
-  return payload.includes("object-secret") ? { code: "NotAllowedError", message } : message;
+  return payload.includes("object-secret") || payload === "a" ? { code: "NotAllowedError", message, payload } : message;
 }
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
@@ -79,7 +79,7 @@ process.stdin.on("end", () => {
 			assert.equal(shortPayload.details?.command, "clipboard");
 			assert.equal(shortPayload.details?.sessionMode, "auto");
 			assert.match((shortPayload.content[0] as { text: string }).text, /Agent-browser clipboard hint:/);
-			assert.doesNotMatch((shortPayload.details?.error as string | undefined) ?? "", /permission denied for a\./);
+			assert.doesNotMatch(JSON.stringify(shortPayload.details?.error), /permission denied for a\./);
 
 			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
