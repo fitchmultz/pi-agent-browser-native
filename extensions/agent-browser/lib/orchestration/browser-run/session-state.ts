@@ -323,7 +323,22 @@ export function getGuardedRefUsage(commandTokens: string[], stdin?: string, opti
 	return refsBeforeInBatchSnapshot;
 }
 
-function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string): string | undefined {
+function getSnapshotRefRole(refSnapshot: SessionRefSnapshot | undefined, refId: string): string | undefined {
+	return refSnapshot?.refs?.[refId]?.role?.toLowerCase();
+}
+
+function isSafeSameSnapshotFormBatchStep(step: string[], refSnapshot: SessionRefSnapshot | undefined): boolean {
+	const command = step[0];
+	const refIds = collectRefsFromTokens(step);
+	if (refIds.length === 0 || !refSnapshot) return false;
+	const roles = refIds.map((refId) => getSnapshotRefRole(refSnapshot, refId));
+	if (roles.some((role) => role === undefined)) return false;
+	if (command === "check" || command === "uncheck") return roles.every((role) => role === "checkbox" || role === "radio");
+	if (command === "select") return roles.every((role) => role === "combobox");
+	return false;
+}
+
+function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string, refSnapshot?: SessionRefSnapshot): string | undefined {
 	if (commandTokens[0] !== "batch" || stdin === undefined) return undefined;
 	const parsed = parseUserBatchStdin(stdin);
 	if (parsed.error || parsed.steps === undefined) return undefined;
@@ -336,7 +351,7 @@ function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string)
 		if (refIds.length > 0 && isRefGuardedCommand(step[0]) && priorStepInvalidatesRefs) {
 			return `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`;
 		}
-		if (isRefInvalidatingBatchCommand(step[0])) {
+		if (isRefInvalidatingBatchCommand(step[0]) && !isSafeSameSnapshotFormBatchStep(step, refSnapshot)) {
 			priorStepInvalidatesRefs = true;
 		}
 	}
@@ -354,7 +369,7 @@ export function buildStaleRefPreflight(options: {
 	const usedRefIds = options.refSnapshotInvalidation
 		? [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin, { includeRefsAfterBatchSnapshot: true }))]
 		: guardedRefIds;
-	const batchInvalidationMessage = getBatchRefInvalidationMessage(options.commandTokens, options.stdin);
+	const batchInvalidationMessage = getBatchRefInvalidationMessage(options.commandTokens, options.stdin, options.refSnapshot);
 	if (batchInvalidationMessage && guardedRefIds.length > 0) {
 		return {
 			message: batchInvalidationMessage,

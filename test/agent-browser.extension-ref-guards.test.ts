@@ -1855,6 +1855,108 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension allows same-snapshot form control batches before a hard invalidating click", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-form-controls-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://form.example/",
+    refs: {
+      e1: { role: "checkbox", name: "Email alerts" },
+      e2: { role: "checkbox", name: "SMS alerts" },
+      e3: { role: "radio", name: "Daily" },
+      e4: { role: "combobox", name: "Plan" },
+      e5: { role: "button", name: "Submit" },
+      e6: { role: "textbox", name: "Name" }
+    },
+    snapshot: '- checkbox "Email alerts" [ref=e1]\\n- checkbox "SMS alerts" [ref=e2]\\n- radio "Daily" [ref=e3]\\n- combobox "Plan" [ref=e4]\\n- button "Submit" [ref=e5]\\n- textbox "Name" [ref=e6]'
+  } }));
+} else if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  process.stdout.write(JSON.stringify(steps.map((step) => ({ command: step, success: true, result: { ok: step[0] } }))));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+
+			const formControlsBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([
+					["check", "@e1"],
+					["uncheck", "@e1"],
+					["check", "@e2"],
+					["check", "@e3"],
+					["select", "@e4", "Pro"],
+					["click", "@e5"],
+				]),
+			});
+			assert.equal(formControlsBatch.isError, false, JSON.stringify(formControlsBatch));
+
+			const clickCheckboxThenFill = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([
+					["click", "@e1"],
+					["fill", "@e6", "Alice"],
+				]),
+			});
+			assert.equal(clickCheckboxThenFill.isError, true);
+			assert.equal(clickCheckboxThenFill.details?.failureCategory, "stale-ref");
+			assert.match((clickCheckboxThenFill.content[0] as { text: string }).text, /Batch step fill uses page-scoped ref @e6/);
+
+			const clickSubmitThenFill = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([
+					["click", "@e5"],
+					["fill", "@e6", "Alice"],
+				]),
+			});
+			assert.equal(clickSubmitThenFill.isError, true);
+			assert.equal(clickSubmitThenFill.details?.failureCategory, "stale-ref");
+			assert.match((clickSubmitThenFill.content[0] as { text: string }).text, /after an earlier batch step can navigate or mutate/);
+
+			const wrongRoleThenFill = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([
+					["check", "@e6"],
+					["fill", "@e6", "Alice"],
+				]),
+			});
+			assert.equal(wrongRoleThenFill.isError, true);
+			assert.equal(wrongRoleThenFill.details?.failureCategory, "stale-ref");
+			assert.match((wrongRoleThenFill.content[0] as { text: string }).text, /Batch step fill uses page-scoped ref @e6/);
+
+			const invocations = await readInvocationLog(logPath);
+			const batchInvocations = invocations.filter((entry) => entry.args.includes("batch"));
+			assert.equal(batchInvocations.length, 1);
+			assert.deepEqual(JSON.parse(String(batchInvocations[0]?.stdin ?? "[]")), [
+				["check", "@e1"],
+				["uncheck", "@e1"],
+				["check", "@e2"],
+				["check", "@e3"],
+				["select", "@e4", "Pro"],
+				["click", "@e5"],
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension allows batch stdin ref steps after snapshot following an invalidating step", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-snapshot-reset-"));
 	const logPath = join(tempDir, "invocations.log");
