@@ -9,6 +9,7 @@ import type { ChildProcess } from "node:child_process";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult, type ElectronLaunchStatus } from "../../electron/cleanup.js";
 import { discoverElectronApps, type ElectronDiscoveryResult } from "../../electron/discovery.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
+import { boundElectronProbeString } from "../../electron/text.js";
 import type { CompiledAgentBrowserElectron } from "../../input-modes.js";
 import { isRecord } from "../../parsing.js";
 import { buildAgentBrowserNextActions, buildAgentBrowserResultCategoryDetails } from "../../results.js";
@@ -367,12 +368,6 @@ const ELECTRON_FOCUSED_ELEMENT_EVAL = `(() => {
 	};
 	return { focusedElement: describeElement(document.activeElement) };
 })()`;
-
-function boundElectronProbeString(value: string | undefined, maxLength = 240): string | undefined {
-	const trimmed = value?.trim();
-	if (!trimmed) return undefined;
-	return trimmed.length > maxLength ? `${trimmed.slice(0, Math.max(0, maxLength - 3))}...` : trimmed;
-}
 
 function getTrimmedString(value: unknown): string | undefined {
 	return typeof value === "string" ? boundElectronProbeString(value) : undefined;

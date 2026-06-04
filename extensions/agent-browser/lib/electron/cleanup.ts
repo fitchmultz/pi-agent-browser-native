@@ -10,10 +10,10 @@ import { execFile, type ChildProcess } from "node:child_process";
 import { access, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import { fetchCdpJson, parseCdpTargets, parseCdpVersion } from "./cdp.js";
 import { ELECTRON_PROFILE_DIR_PREFIX, type ElectronCdpTarget, type ElectronCdpVersion, type ElectronLaunchRecord } from "./launch.js";
 import { getSecureTempChildDirectoryValidationError } from "../temp.js";
 
-const ELECTRON_STATUS_FETCH_TIMEOUT_MS = 1_000;
 const ELECTRON_CLEANUP_DEFAULT_TIMEOUT_MS = 5_000;
 const ELECTRON_CLEANUP_POLL_INTERVAL_MS = 100;
 const RESTORED_PROCESS_COMMAND_TIMEOUT_MS = 1_000;
@@ -50,51 +50,6 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-function asString(value: unknown): string | undefined {
-	return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-
-function parseCdpVersion(value: unknown): ElectronCdpVersion | undefined {
-	if (!isRecord(value)) return undefined;
-	return {
-		browser: asString(value.Browser) ?? asString(value.browser),
-		protocolVersion: asString(value["Protocol-Version"]) ?? asString(value.protocolVersion),
-		userAgent: asString(value["User-Agent"]) ?? asString(value.userAgent),
-		v8Version: asString(value["V8-Version"]) ?? asString(value.v8Version),
-		webKitVersion: asString(value["WebKit-Version"]) ?? asString(value.webKitVersion),
-		webSocketDebuggerUrl: asString(value.webSocketDebuggerUrl),
-	};
-}
-
-function parseCdpTargets(value: unknown): ElectronCdpTarget[] {
-	if (!Array.isArray(value)) return [];
-	return value.filter(isRecord).map((target) => ({
-		id: asString(target.id),
-		title: asString(target.title),
-		type: asString(target.type),
-		url: asString(target.url),
-		webSocketDebuggerUrl: asString(target.webSocketDebuggerUrl),
-	}));
-}
-
-async function fetchJson(url: string): Promise<unknown | undefined> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), ELECTRON_STATUS_FETCH_TIMEOUT_MS);
-	try {
-		const response = await fetch(url, { signal: controller.signal });
-		if (!response.ok) return undefined;
-		return await response.json() as unknown;
-	} catch {
-		return undefined;
-	} finally {
-		clearTimeout(timeout);
-	}
-}
-
 function isPidAlive(pid: number | undefined): boolean | undefined {
 	if (!pid || !Number.isSafeInteger(pid) || pid <= 0) return undefined;
 	try {
@@ -116,9 +71,9 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function isPortAlive(port: number): Promise<{ targets: ElectronCdpTarget[]; version?: ElectronCdpVersion }> {
-	const version = parseCdpVersion(await fetchJson(`http://127.0.0.1:${port}/json/version`));
+	const version = parseCdpVersion(await fetchCdpJson(`http://127.0.0.1:${port}/json/version`));
 	if (!version) return { targets: [] };
-	const targets = parseCdpTargets(await fetchJson(`http://127.0.0.1:${port}/json/list`));
+	const targets = parseCdpTargets(await fetchCdpJson(`http://127.0.0.1:${port}/json/list`));
 	return { targets, version };
 }
 

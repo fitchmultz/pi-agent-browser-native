@@ -12,12 +12,21 @@ import { readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import {
+	fetchCdpJson,
+	parseCdpTargets,
+	parseCdpVersion,
+	type ElectronCdpTarget,
+	type ElectronCdpVersion,
+} from "./cdp.js";
+import {
 	discoverElectronApps,
 	inspectElectronAppPath,
 	inspectElectronExecutablePath,
 	type ElectronAppDiscovery,
 } from "./discovery.js";
 import { createSecureTempDirectory } from "../temp.js";
+
+export type { ElectronCdpTarget, ElectronCdpVersion } from "./cdp.js";
 
 export const ELECTRON_LAUNCH_RECORD_VERSION = 1;
 export const ELECTRON_LAUNCH_DEFAULT_TIMEOUT_MS = 15_000;
@@ -27,7 +36,6 @@ const DEVTOOLS_ACTIVE_PORT_FILE = "DevToolsActivePort";
 export const ELECTRON_PROFILE_DIR_PREFIX = "electron-profile-";
 const ELECTRON_DEFAULT_APP_ARGS = ["--disable-extensions", "--no-first-run", "--no-default-browser-check"] as const;
 const ELECTRON_DEVTOOLS_POLL_INTERVAL_MS = 100;
-const ELECTRON_CDP_FETCH_TIMEOUT_MS = 1_000;
 
 export interface ElectronDevToolsActivePortRead {
 	error?: string;
@@ -58,23 +66,6 @@ export type ElectronLaunchFailureReason =
 	| "single-instance-conflict"
 	| "spawn-error"
 	| "timeout";
-
-export interface ElectronCdpVersion {
-	browser?: string;
-	protocolVersion?: string;
-	userAgent?: string;
-	v8Version?: string;
-	webKitVersion?: string;
-	webSocketDebuggerUrl?: string;
-}
-
-export interface ElectronCdpTarget {
-	id?: string;
-	title?: string;
-	type?: string;
-	url?: string;
-	webSocketDebuggerUrl?: string;
-}
 
 export interface ElectronLaunchRecord {
 	appName: string;
@@ -200,37 +191,6 @@ export async function resolveElectronLaunchTarget(options: ResolveElectronTarget
 	return undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-function asString(value: unknown): string | undefined {
-	return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-
-function parseCdpVersion(value: unknown): ElectronCdpVersion | undefined {
-	if (!isRecord(value)) return undefined;
-	return {
-		browser: asString(value.Browser) ?? asString(value.browser),
-		protocolVersion: asString(value["Protocol-Version"]) ?? asString(value.protocolVersion),
-		userAgent: asString(value["User-Agent"]) ?? asString(value.userAgent),
-		v8Version: asString(value["V8-Version"]) ?? asString(value.v8Version),
-		webKitVersion: asString(value["WebKit-Version"]) ?? asString(value.webKitVersion),
-		webSocketDebuggerUrl: asString(value.webSocketDebuggerUrl),
-	};
-}
-
-function parseCdpTargets(value: unknown): ElectronCdpTarget[] {
-	if (!Array.isArray(value)) return [];
-	return value.filter(isRecord).map((target) => ({
-		id: asString(target.id),
-		title: asString(target.title),
-		type: asString(target.type),
-		url: asString(target.url),
-		webSocketDebuggerUrl: asString(target.webSocketDebuggerUrl),
-	}));
-}
-
 function targetMatchesType(target: ElectronCdpTarget, targetType: "any" | "page" | "webview" | undefined): boolean {
 	return targetType === undefined || targetType === "any" || target.type === targetType;
 }
@@ -243,20 +203,6 @@ function selectElectronConnectArg(options: {
 }): string {
 	const targetWebSocket = options.targets.find((target) => targetMatchesType(target, options.targetType) && target.webSocketDebuggerUrl)?.webSocketDebuggerUrl;
 	return targetWebSocket ?? options.version.webSocketDebuggerUrl ?? String(options.port);
-}
-
-async function fetchJson(url: string): Promise<unknown | undefined> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), ELECTRON_CDP_FETCH_TIMEOUT_MS);
-	try {
-		const response = await fetch(url, { signal: controller.signal });
-		if (!response.ok) return undefined;
-		return await response.json() as unknown;
-	} catch {
-		return undefined;
-	} finally {
-		clearTimeout(timeout);
-	}
 }
 
 async function readDevToolsActivePort(userDataDir: string): Promise<ElectronDevToolsActivePortRead> {
@@ -304,9 +250,9 @@ async function pollDevToolsActivePort(options: {
 
 async function pollCdpMetadata(port: number, deadlineMs: number): Promise<{ targets: ElectronCdpTarget[]; version: ElectronCdpVersion } | undefined> {
 	while (Date.now() <= deadlineMs) {
-		const version = parseCdpVersion(await fetchJson(`http://127.0.0.1:${port}/json/version`));
+		const version = parseCdpVersion(await fetchCdpJson(`http://127.0.0.1:${port}/json/version`));
 		if (version) {
-			const targets = parseCdpTargets(await fetchJson(`http://127.0.0.1:${port}/json/list`));
+			const targets = parseCdpTargets(await fetchCdpJson(`http://127.0.0.1:${port}/json/list`));
 			return { targets, version };
 		}
 		await sleep(ELECTRON_DEVTOOLS_POLL_INTERVAL_MS);

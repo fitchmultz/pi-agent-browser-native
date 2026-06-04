@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 
 import { isCloseCommand, isOpenNavigationCommand } from "../../command-taxonomy.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
+import { boundElectronProbeString } from "../../electron/text.js";
 import { executableExistsOnPath } from "../../executable-path.js";
 import type { AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserJob, CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
 import { isHttpOrHttpsUrl } from "../../input-modes/job.js";
@@ -48,12 +49,6 @@ const ELECTRON_FILL_VERIFICATION_TIMEOUT_MS = 2_000;
 
 export function sleepMs(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function boundElectronProbeString(value: string | undefined, maxLength = 240): string | undefined {
-	const trimmed = value?.trim();
-	if (!trimmed) return undefined;
-	return trimmed.length > maxLength ? `${trimmed.slice(0, Math.max(0, maxLength - 3))}...` : trimmed;
 }
 
 export async function collectNavigationSummary(options: {
