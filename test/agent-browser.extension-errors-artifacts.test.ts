@@ -39,7 +39,8 @@ test("agentBrowserExtension redacts denied clipboard write payloads from all res
 let stdin = "";
 function clipboardError(command) {
   const payload = command.slice(2).join(" ");
-  return "NotAllowedError: Failed to execute 'writeText' on 'Clipboard': Write permission denied for " + payload + ".";
+  const message = "NotAllowedError: Failed to execute 'writeText' on 'Clipboard': Write permission denied for " + payload + ".";
+  return payload.includes("object-secret") ? { code: "NotAllowedError", message } : message;
 }
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
@@ -67,6 +68,10 @@ process.stdin.on("end", () => {
 			assert.equal(multiline.isError, true, JSON.stringify(multiline));
 			assert.doesNotMatch(JSON.stringify(multiline), /clipboard-secret|second-secret/);
 
+			const objectError = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["clipboard", "write", "object-secret"] });
+			assert.equal(objectError.isError, true, JSON.stringify(objectError));
+			assert.doesNotMatch(JSON.stringify(objectError), /object-secret/);
+
 			const shortPayload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["clipboard", "write", "a"] });
 			assert.equal(shortPayload.isError, true, JSON.stringify(shortPayload));
 			assert.equal(shortPayload.details?.resultCategory, "failure");
@@ -90,6 +95,13 @@ process.stdin.on("end", () => {
 			});
 			assert.equal(multilineBatch.isError, true, JSON.stringify(multilineBatch));
 			assert.doesNotMatch(JSON.stringify(multilineBatch), /clipboard-secret|second-secret/);
+
+			const objectErrorBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["clipboard", "write", "object-secret"]]),
+			});
+			assert.equal(objectErrorBatch.isError, true, JSON.stringify(objectErrorBatch));
+			assert.doesNotMatch(JSON.stringify(objectErrorBatch), /object-secret/);
 
 			const shortBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],

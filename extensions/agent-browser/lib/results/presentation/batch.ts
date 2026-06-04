@@ -19,7 +19,7 @@ import { stringifyModelFacing } from "./common.js";
 import { buildArtifactVerificationSummary, classifyPresentationSuccessCategory, manifestHasNewNoticeWorthyEntries, type ArtifactRequestContext } from "./artifacts.js";
 import { formatBatchStepCommand, getPresentationImages, getPresentationPaths, getPresentationText, isStringArray } from "./content.js";
 import { buildPageChangeSummary } from "./navigation.js";
-import { appendSelectorRecoveryHint, redactClipboardPermissionEcho } from "./errors.js";
+import { appendSelectorRecoveryHint, redactClipboardPermissionErrorValue } from "./errors.js";
 
 export interface BuildNestedToolPresentationOptions {
 	artifactManifest?: SessionArtifactManifest;
@@ -129,8 +129,8 @@ async function buildBatchStepPresentation(options: {
 	const commandText = formatBatchStepCommand(hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command, index);
 
 	if (item.success === false) {
-		const redactedErrorData = command?.[0] === "clipboard" && typeof item.error === "string"
-			? redactSensitiveValue(redactClipboardPermissionEcho({ command: "clipboard", subcommand: command[1] }, item.error))
+		const redactedErrorData = command?.[0] === "clipboard"
+			? redactSensitiveValue(redactClipboardPermissionErrorValue({ command: "clipboard", subcommand: command[1] }, item.error))
 			: redactExactValues(item.error, getStatefulCommandSensitiveValues(command));
 		const errorText = formatBatchStepError(redactedErrorData);
 		const failureCategory = classifyAgentBrowserFailureCategory({

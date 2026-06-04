@@ -24,6 +24,10 @@ const CLIPBOARD_PERMISSION_ERROR_HINT = [
 	"If true clipboard access is required, retry in a browser/profile/session with explicit clipboard permission on a normal http(s) page.",
 ].join(" ");
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
 function getSelectorRecoveryHint(errorText: string): string | undefined {
 	const normalized = errorText.trim();
 	if (normalized.length === 0) return undefined;
@@ -65,6 +69,14 @@ export function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorTex
 			if (!/\bpermission denied\b/i.test(suffix)) return match;
 			return `${prefix}${suffix.replace(/(\bpermission denied\b(?:\s+for)?\s+)([\s\S]+)$/i, "$1[REDACTED]")}`;
 		});
+}
+
+export function redactClipboardPermissionErrorValue(commandInfo: CommandInfo, value: unknown): unknown {
+	if (commandInfo.command !== "clipboard") return value;
+	if (typeof value === "string") return redactClipboardPermissionEcho(commandInfo, value);
+	if (Array.isArray(value)) return value.map((item) => redactClipboardPermissionErrorValue(commandInfo, item));
+	if (!isRecord(value)) return value;
+	return Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [key, redactClipboardPermissionErrorValue(commandInfo, entryValue)]));
 }
 
 interface CommandSuggestion {
