@@ -1118,6 +1118,15 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"authToken",
 		"[REDACTED]",
 	]);
+	assert.deepEqual(redactInvocationArgs(["--json", "--session", "demo", "clipboard", "write", "clipboard-secret", "extra-secret"]), [
+		"--json",
+		"--session",
+		"demo",
+		"clipboard",
+		"write",
+		"[REDACTED]",
+		"[REDACTED]",
+	]);
 	assert.deepEqual(redactInvocationArgs(["chat", "Summarize Authorization: Bearer chat-secret"]), [
 		"chat",
 		"Summarize Authorization: Bearer [REDACTED]",

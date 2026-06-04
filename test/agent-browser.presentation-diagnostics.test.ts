@@ -49,6 +49,24 @@ test("buildToolPresentation redacts scalar extraction results for eval and get c
 	assert.match(getText, /\[REDACTED\]/);
 });
 
+test("buildToolPresentation adds clipboard permission guidance for denied clipboard commands", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "clipboard", subcommand: "read" },
+		cwd: process.cwd(),
+		errorText:
+			"NotAllowedError: Failed to execute 'readText' on 'Clipboard': Read permission denied for clipboard-secret.",
+	});
+
+	assert.equal(presentation.resultCategory, "failure");
+	assert.equal(presentation.failureCategory, "upstream-error");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Agent-browser clipboard hint:/);
+	assert.match(text, /headless, managed, remote-profile, or file:\/\//);
+	assert.match(text, /snapshot -i/);
+	assert.match(text, /keyboard inserttext/);
+	assert.doesNotMatch(text, /clipboard-secret/);
+});
+
 test("buildToolPresentation formats scalar extraction results for eval and get commands", async () => {
 	const evalPresentation = await buildToolPresentation({
 		commandInfo: { command: "eval", subcommand: "--stdin" },

@@ -355,6 +355,12 @@ export function redactInvocationArgs(args: string[]): string[] {
 		redacted[commandStartIndex + 4] = "[REDACTED]";
 	}
 
+	if (commandStartIndex !== undefined && args[commandStartIndex] === "clipboard" && args[commandStartIndex + 1] === "write") {
+		for (let index = commandStartIndex + 2; index < redacted.length; index += 1) {
+			redacted[index] = "[REDACTED]";
+		}
+	}
+
 	return redacted;
 }
 
