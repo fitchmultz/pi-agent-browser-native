@@ -11,9 +11,12 @@ import type {
 	AgentBrowserNextAction,
 	BatchFailurePresentationDetails,
 	BatchStepPresentationDetails,
+	NetworkRouteDiagnostic,
+	NetworkRouteRecord,
 	SessionArtifactManifest,
 	ToolPresentation,
 } from "../contracts.js";
+import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../network-routes.js";
 import { withOptionalSessionArgs } from "../next-actions.js";
 import { stringifyModelFacing } from "./common.js";
 import { buildArtifactVerificationSummary, classifyPresentationSuccessCategory, manifestHasNewNoticeWorthyEntries, type ArtifactRequestContext } from "./artifacts.js";
@@ -28,6 +31,7 @@ export interface BuildNestedToolPresentationOptions {
 	commandInfo: CommandInfo;
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
+	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 }
@@ -120,10 +124,11 @@ async function buildBatchStepPresentation(options: {
 	cwd: string;
 	index: number;
 	item: AgentBrowserBatchResult;
+	networkRoutes?: NetworkRouteRecord[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 }): Promise<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> {
-	const { artifactManifest, artifactRequest, buildNestedToolPresentation, cwd, index, item, persistentArtifactStore, sessionName } = options;
+	const { artifactManifest, artifactRequest, buildNestedToolPresentation, cwd, index, item, networkRoutes, persistentArtifactStore, sessionName } = options;
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const redactedCommand = command ? redactInvocationArgs(command) : undefined;
 	const commandText = formatBatchStepCommand(hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command, index);
@@ -175,13 +180,18 @@ async function buildBatchStepPresentation(options: {
 		};
 	}
 
+	const commandInfo = parseCommandInfo(command ?? []);
+	const networkRouteDiagnostics = commandInfo.command === "network" && commandInfo.subcommand === "requests"
+		? buildNetworkRouteDiagnostics(item.result, networkRoutes)
+		: undefined;
 	const presentation = await buildNestedToolPresentation({
 		artifactManifest,
 		artifactRequest,
-		commandInfo: parseCommandInfo(command ?? []),
+		commandInfo,
 		cwd,
 		args: command,
 		envelope: { data: item.result, success: true },
+		networkRouteDiagnostics,
 		persistentArtifactStore,
 		sessionName,
 	});
@@ -206,7 +216,7 @@ async function buildBatchStepPresentation(options: {
 	});
 	const pageChangeSummary = buildPageChangeSummary({
 		artifacts: presentation.artifacts,
-		commandInfo: parseCommandInfo(command ?? []),
+		commandInfo,
 		data: presentation.data,
 		nextActions,
 		savedFilePath: presentation.savedFilePath,
@@ -226,6 +236,7 @@ async function buildBatchStepPresentation(options: {
 			imagePath: imagePaths[0],
 			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
 			index,
+			networkRouteDiagnostics: presentation.networkRouteDiagnostics,
 			nextActions,
 			pageChangeSummary,
 			resultCategory: stepSucceeded ? "success" : "failure",
@@ -246,14 +257,16 @@ export async function buildBatchPresentation(options: {
 	buildNestedToolPresentation: BuildNestedToolPresentation;
 	cwd: string;
 	data: AgentBrowserBatchResult[];
+	networkRoutes?: NetworkRouteRecord[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 	summary: string;
 }): Promise<ToolPresentation> {
-	const { artifactRequests, buildNestedToolPresentation, cwd, data, persistentArtifactStore, sessionName, summary } = options;
+	const { artifactRequests, buildNestedToolPresentation, cwd, data, networkRoutes, persistentArtifactStore, sessionName, summary } = options;
 	const steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> = [];
 	const protectedPersistentPaths: string[] = [];
 	let currentArtifactManifest = options.artifactManifest;
+	let currentNetworkRoutes = networkRoutes;
 	for (const [index, item] of data.entries()) {
 		const step = await buildBatchStepPresentation({
 			artifactManifest: currentArtifactManifest,
@@ -262,11 +275,13 @@ export async function buildBatchPresentation(options: {
 			cwd,
 			index,
 			item,
+			networkRoutes: currentNetworkRoutes,
 			persistentArtifactStore: persistentArtifactStore ? { ...persistentArtifactStore, protectedPaths: protectedPersistentPaths } : undefined,
 			sessionName,
 		});
 		steps.push(step);
 		currentArtifactManifest = step.presentation.artifactManifest ?? currentArtifactManifest;
+		currentNetworkRoutes = applyNetworkRouteRecords(currentNetworkRoutes, isStringArray(item.command) ? extractCommandTokens(item.command) : undefined, item.success !== false && step.details.success);
 		protectedPersistentPaths.push(
 			...getPresentationPaths({
 				primaryPath: step.presentation.fullOutputPath,

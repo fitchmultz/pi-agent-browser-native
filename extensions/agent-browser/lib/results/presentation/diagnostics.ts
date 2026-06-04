@@ -6,7 +6,7 @@
 
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
-import type { AgentBrowserNextAction } from "../contracts.js";
+import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
 import { classifyNetworkRequestFailure, summarizeNetworkFailures } from "../network.js";
 import { withOptionalSessionArgs } from "../next-actions.js";
 import { stringifyUnknown, truncateText } from "../text.js";
@@ -29,9 +29,23 @@ const NETWORK_BODY_PREVIEW_MAX_CHARS = 280;
 
 const NETWORK_ERROR_PREVIEW_MAX_CHARS = 220;
 
-const NETWORK_NEXT_ACTION_LIMIT = 4;
+const NETWORK_NEXT_ACTION_LIMIT = 6;
 
 const NETWORK_FILTER_MAX_CHARS = 160;
+
+const STORAGE_VALUE_PREVIEW_MAX_CHARS = 160;
+
+const STORAGE_SECRET_KEY_PATTERN = /(?:access(?:_|-)?token|account|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|credential|csrf|email|id(?:_|-)?token|jwt|pass(?:word)?|private(?:_|-)?key|profile|refresh(?:_|-)?token|secret|session|sid|sig(?:nature)?|token|user(?:name)?|x(?:_|-)?api(?:_|-)?key|xsrf)/i;
+
+const STORAGE_BENIGN_KEY_PATTERN = /^(?:(?:.*benign.*)|color(?:scheme)?|debug|dev|experiment|feature(?:flag)?|flag|issue74benignkey|language|layout|locale|mode|onboarding|qakey|sort|stresskey|tab|test|theme|timezone|tour|variant|view)$/i;
+
+const STORAGE_TOKEN_VALUE_PATTERN = /(?:\bBearer\s+[A-Za-z0-9._~-]+|\bBasic\s+[A-Za-z0-9+/=]+|^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$|(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_~+/=-]{32,})/;
+
+const STORAGE_SECRET_VALUE_WORD_PATTERN = /(?:secret|token|password|passwd|bearer|credential|authorization|cookie|session[-_ ]?id)/i;
+
+const STORAGE_EMAIL_VALUE_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const STORAGE_IDENTITY_VALUE_PATTERN = /(?:^|[\s:=/_-])(?:account|profile|session|sid|user(?:id|name)?)(?:[\s:=/_-]|$)/i;
 
 const NETWORK_FILTER_SENSITIVE_SEGMENT_TERMS = [
 	"apikey",
@@ -86,6 +100,15 @@ export function getTabSummary(data: Record<string, unknown>): string | undefined
 }
 
 export function getStreamSummary(data: Record<string, unknown>): string | undefined {
+	if (data.alreadyEnabled === true) {
+		const lines = ["Stream already enabled (idempotent no-op)."];
+		if (typeof data.port === "number") {
+			lines.push(`Port: ${data.port}`);
+			lines.push(`WebSocket URL: ${getStreamWebSocketUrl(data.port)}`);
+		}
+		lines.push("Run stream status for current connection details or stream disable when streaming is no longer needed.");
+		return lines.join("\n");
+	}
 	if (typeof data.enabled !== "boolean" || typeof data.connected !== "boolean") {
 		return undefined;
 	}
@@ -211,6 +234,7 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 
 	if (commandInfo.command === "stream") {
 		if (commandInfo.subcommand === "enable") {
+			if (data.alreadyEnabled === true) return "Stream already enabled";
 			const port = typeof data.port === "number" ? ` on port ${data.port}` : "";
 			return `Stream enabled${port}`;
 		}
@@ -458,7 +482,47 @@ function getNetworkRequestDetailActionId(candidate: NetworkRequestActionCandidat
 	return "inspect-network-request";
 }
 
-export function buildNetworkRequestsNextActions(data: unknown, sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
+export function formatNetworkRouteDiagnosticsText(diagnostics: NetworkRouteDiagnostic[] | undefined): string | undefined {
+	if (!diagnostics || diagnostics.length === 0) return undefined;
+	const lines = ["Network route diagnostics:"];
+	for (const diagnostic of diagnostics) {
+		const target = diagnostic.requestId ? `[${diagnostic.requestId}] ${diagnostic.requestUrl ?? "request"}` : diagnostic.requestUrl ?? "request";
+		lines.push(`- ${diagnostic.reason}: ${target} matched route ${diagnostic.routePattern} (${diagnostic.mode}).`);
+	}
+	lines.push("If this route is intended as a mock, verify the page origin/CORS headers and inspect the request before assuming the mock fulfilled normally.");
+	return lines.join("\n");
+}
+
+export function buildNetworkRouteDiagnosticsNextActions(diagnostics: NetworkRouteDiagnostic[] | undefined, sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
+	const diagnostic = diagnostics?.find((item) => item.requestId) ?? diagnostics?.[0];
+	if (!diagnostic) return undefined;
+	const actions: AgentBrowserNextAction[] = [];
+	if (diagnostic.requestId) {
+		actions.push({
+			id: "inspect-pending-routed-network-request",
+			params: { args: withOptionalSessionArgs(sessionName, ["network", "request", diagnostic.requestId]) },
+			reason: `Inspect the routed request ${diagnostic.requestId} before assuming the route mock fulfilled normally.`,
+			safety: "Read-only request diagnostic; look for pending state, CORS/preflight errors, response status, and headers.",
+			tool: "agent_browser",
+		});
+	}
+	actions.push({
+		id: "start-network-har-capture-for-route-mock",
+		params: { args: withOptionalSessionArgs(sessionName, ["network", "har", "start"]) },
+		reason: "Capture a HAR before reproducing the route mock so pending/CORS behavior has request and response headers.",
+		safety: "HARs can contain URLs and headers; stop to an explicit path and avoid sharing sensitive captures.",
+		tool: "agent_browser",
+	});
+	actions.push({
+		id: "retry-route-mock-same-origin-fixture",
+		reason: "Retry the mock against a same-origin HTTP fixture or add CORS headers if the routed request is cross-origin.",
+		safety: "Guidance only; do not change the target origin without preserving the user-intended scenario.",
+		tool: "agent_browser",
+	});
+	return actions;
+}
+
+export function buildNetworkRequestsNextActions(data: unknown, sessionName: string | undefined, routeDiagnostics?: NetworkRouteDiagnostic[]): AgentBrowserNextAction[] | undefined {
 	if (!isRecord(data)) return undefined;
 	const requests = getArrayField(data, "requests");
 	if (!requests) return undefined;
@@ -504,7 +568,27 @@ export function buildNetworkRequestsNextActions(data: unknown, sessionName: stri
 		safety: "HARs can contain URLs and headers; stop to an explicit path, inspect metadata, and avoid sharing sensitive captures.",
 		tool: "agent_browser",
 	});
-	return actions.slice(0, NETWORK_NEXT_ACTION_LIMIT);
+	return [...(buildNetworkRouteDiagnosticsNextActions(routeDiagnostics, sessionName) ?? []), ...actions].slice(0, NETWORK_NEXT_ACTION_LIMIT);
+}
+
+export function buildStreamNextActions(commandInfo: CommandInfo, data: unknown, sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
+	if (commandInfo.command !== "stream" || commandInfo.subcommand !== "enable" || !isRecord(data) || data.alreadyEnabled !== true) return undefined;
+	return [
+		{
+			id: "check-stream-status-after-noop",
+			params: { args: withOptionalSessionArgs(sessionName, ["stream", "status"]) },
+			reason: "Read current stream port and connection details after the idempotent enable no-op.",
+			safety: "Read-only stream diagnostic.",
+			tool: "agent_browser",
+		},
+		{
+			id: "disable-existing-stream-when-done",
+			params: { args: withOptionalSessionArgs(sessionName, ["stream", "disable"]) },
+			reason: "Disable the existing stream when it is no longer needed.",
+			safety: "Only run when no other workflow is relying on the current stream.",
+			tool: "agent_browser",
+		},
+	];
 }
 
 function formatConsoleText(data: Record<string, unknown>): string | undefined {
@@ -602,6 +686,74 @@ function formatCookiesText(data: Record<string, unknown>): string | undefined {
 	return undefined;
 }
 
+function valueContainsStorageSecret(value: unknown): boolean {
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (trimmed.length === 0) return false;
+		if (STORAGE_TOKEN_VALUE_PATTERN.test(trimmed) || STORAGE_SECRET_VALUE_WORD_PATTERN.test(trimmed) || STORAGE_EMAIL_VALUE_PATTERN.test(trimmed) || STORAGE_IDENTITY_VALUE_PATTERN.test(trimmed)) return true;
+		try {
+			const url = new URL(trimmed);
+			if (url.protocol === "http:" || url.protocol === "https:" || url.username || url.password || url.search) return true;
+		} catch {}
+		if (redactSensitiveText(trimmed) !== trimmed || redactModelFacingTextIfSensitive(trimmed) !== trimmed) return true;
+		try {
+			return valueContainsStorageSecret(JSON.parse(trimmed));
+		} catch {
+			return false;
+		}
+	}
+	if (Array.isArray(value)) return value.some((item) => valueContainsStorageSecret(item));
+	if (!isRecord(value)) return false;
+	return Object.entries(value).some(([key, entryValue]) => STORAGE_SECRET_KEY_PATTERN.test(key) || valueContainsStorageSecret(entryValue));
+}
+
+function shouldRevealStorageValue(key: string | undefined, value: unknown): boolean {
+	if (!key || STORAGE_SECRET_KEY_PATTERN.test(key) || !STORAGE_BENIGN_KEY_PATTERN.test(key)) return false;
+	if (valueContainsStorageSecret(value)) return false;
+	if (typeof value === "string") return value.length <= STORAGE_VALUE_PREVIEW_MAX_CHARS;
+	return value === null || typeof value === "number" || typeof value === "boolean";
+}
+
+function formatStorageValue(key: string | undefined, value: unknown): string {
+	if (!shouldRevealStorageValue(key, value)) return "[REDACTED]";
+	if (typeof value === "string") return redactModelFacingText(value);
+	return stringifyModelFacing(value);
+}
+
+function redactStorageEntryValue(item: Record<string, unknown>): Record<string, unknown> {
+	if (!Object.hasOwn(item, "value")) return redactStructuredPresentationValue(item) as Record<string, unknown>;
+	const key = getStringField(item, "key") ?? getStringField(item, "name");
+	const value = item.value;
+	if (shouldRevealStorageValue(key, value)) return redactStructuredPresentationValue(item) as Record<string, unknown>;
+	return {
+		...redactStructuredPresentationValue({ ...item, value: undefined }) as Record<string, unknown>,
+		value: "[REDACTED]",
+		valueRedacted: true,
+		valueRedactionReason: key && STORAGE_SECRET_KEY_PATTERN.test(key) ? "sensitive-key" : "sensitive-value",
+	};
+}
+
+function redactStorageData(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map((item) => redactStorageData(item));
+	if (!isRecord(value)) return redactStructuredPresentationValue(value);
+	const entries = Object.fromEntries(Object.entries(value).map(([key, entryValue]) => {
+		if ((key === "entries" || key === "items") && Array.isArray(entryValue)) return [key, entryValue.map((item) => isRecord(item) ? redactStorageEntryValue(item) : redactStructuredPresentationValue(item))];
+		if (key === "value") {
+			const itemKey = getStringField(value, "key") ?? getStringField(value, "name");
+			return [key, shouldRevealStorageValue(itemKey, entryValue) ? redactStructuredPresentationValue(entryValue) : "[REDACTED]"];
+		}
+		return [key, redactStructuredPresentationValue(entryValue)];
+	}));
+	if (Object.hasOwn(value, "value")) {
+		const key = getStringField(value, "key") ?? getStringField(value, "name");
+		if (!shouldRevealStorageValue(key, value.value)) {
+			entries.valueRedacted = true;
+			entries.valueRedactionReason = key && STORAGE_SECRET_KEY_PATTERN.test(key) ? "sensitive-key" : "sensitive-value";
+		}
+	}
+	return entries;
+}
+
 function formatStorageText(data: Record<string, unknown>): string | undefined {
 	const type = getStringField(data, "type") ?? getStringField(data, "storage") ?? "storage";
 	const entries = getArrayField(data, "entries") ?? getArrayField(data, "items");
@@ -612,12 +764,12 @@ function formatStorageText(data: Record<string, unknown>): string | undefined {
 				if (!isRecord(item)) return `${index + 1}. [REDACTED]`;
 				const rawKey = getStringField(item, "key") ?? getStringField(item, "name") ?? `(entry ${index + 1})`;
 				const key = redactModelFacingText(rawKey);
-				return Object.hasOwn(item, "value") ? `${key}: [REDACTED]` : key;
+				return Object.hasOwn(item, "value") ? `${key}: ${formatStorageValue(rawKey, item.value)}` : key;
 			})
 			.join("\n");
 	}
 	const key = getStringField(data, "key");
-	if (key && Object.hasOwn(data, "value")) return `${type} ${redactModelFacingText(key)}: [REDACTED]`;
+	if (key && Object.hasOwn(data, "value")) return `${type} ${redactModelFacingText(key)}: ${formatStorageValue(key, data.value)}`;
 	if (key && data.set === true) return `${type} set: ${redactModelFacingText(key)}`;
 	if (data.cleared === true || data.clear === true) return `${type} cleared.`;
 	return undefined;
@@ -690,7 +842,7 @@ function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unkno
 
 export function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
 	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
-	if (commandInfo.command === "storage") return redactStatefulValues(data, new Set(["value"]));
+	if (commandInfo.command === "storage") return redactStorageData(data);
 	return redactStructuredPresentationValue(data);
 }
 

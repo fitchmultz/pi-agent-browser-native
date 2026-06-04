@@ -13,6 +13,7 @@ export * from "./artifact-manifest.js";
 export * from "./artifact-state.js";
 export * from "./editable-ref-evidence.js";
 export * from "./network.js";
+export * from "./network-routes.js";
 export * from "./next-actions.js";
 export * from "./recovery-actions.js";
 export * from "./recovery-next-actions.js";

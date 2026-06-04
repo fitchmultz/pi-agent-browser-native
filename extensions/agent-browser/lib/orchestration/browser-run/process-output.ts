@@ -13,6 +13,8 @@ import {
 	redactNetworkSourceLookupAnalysis,
 } from "../../input-modes.js";
 import {
+	applyNetworkRouteRecords,
+	buildNetworkRouteDiagnostics,
 	buildToolPresentation,
 	getAgentBrowserErrorText,
 	parseAgentBrowserEnvelope,
@@ -23,7 +25,7 @@ import {
 	formatSessionArtifactRetentionSummary,
 	mergeSessionArtifactManifest,
 } from "../../results/artifact-manifest.js";
-import type { SessionArtifactManifest } from "../../results/contracts.js";
+import type { NetworkRouteRecord, SessionArtifactManifest } from "../../results/contracts.js";
 import { getClipboardWritePayloadCandidates, redactClipboardPermissionEcho, redactClipboardPermissionErrorValue } from "../../results/presentation/errors.js";
 import { shouldCaptureSemanticActionNavigationSummary } from "../../results/presentation/semantic-action.js";
 import {
@@ -41,7 +43,7 @@ import {
 import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore } from "../../temp.js";
 import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../../temp.js";
 import { isRecord } from "../../parsing.js";
-import { createFreshSessionName, hasLaunchScopedTabCorrectionFlag, resolveManagedSessionState } from "../../runtime.js";
+import { createFreshSessionName, extractCommandTokens, hasLaunchScopedTabCorrectionFlag, resolveManagedSessionState } from "../../runtime.js";
 import {
 	applyOpenResultTabCorrection,
 	buildAboutBlankRecoveryHint,
@@ -144,6 +146,44 @@ async function repairBatchScreenshotArtifacts(options: {
 	return { envelope: { ...envelope, data: repairedData }, requests: repairedRequests };
 }
 
+function getEnvelopeErrorString(envelope: AgentBrowserEnvelope | undefined): string | undefined {
+	if (!envelope?.error) return undefined;
+	if (typeof envelope.error === "string") return envelope.error;
+	if (isRecord(envelope.error) && typeof envelope.error.message === "string") return envelope.error.message;
+	return String(envelope.error);
+}
+
+function isStreamEnableAlreadyEnabledNoop(options: { command: string | undefined; envelope: AgentBrowserEnvelope | undefined; processSucceeded: boolean; subcommand: string | undefined }): boolean {
+	if (!options.processSucceeded || options.command !== "stream" || options.subcommand !== "enable" || options.envelope?.success !== false) return false;
+	const message = (getEnvelopeErrorString(options.envelope) ?? "").trim().replace(/[.!]+$/, "").toLowerCase();
+	return message === "streaming is already enabled for this session" || message === "streaming is already enabled" || message === "stream already enabled";
+}
+
+function setNetworkRouteState(options: { routes?: NetworkRouteRecord[]; routesBySession: Map<string, NetworkRouteRecord[]>; sessionName: string | undefined }): Map<string, NetworkRouteRecord[]> {
+	if (!options.sessionName) return options.routesBySession;
+	const previousRoutes = options.routesBySession.get(options.sessionName);
+	if (options.routes === previousRoutes) return options.routesBySession;
+	const next = new Map(options.routesBySession);
+	if (options.routes && options.routes.length > 0) next.set(options.sessionName, options.routes);
+	else next.delete(options.sessionName);
+	return next;
+}
+
+function applyNetworkRouteState(options: { commandTokens: string[]; routesBySession: Map<string, NetworkRouteRecord[]>; sessionName: string | undefined; succeeded: boolean }): Map<string, NetworkRouteRecord[]> {
+	const routes = options.sessionName ? applyNetworkRouteRecords(options.routesBySession.get(options.sessionName), options.commandTokens, options.succeeded) : undefined;
+	return setNetworkRouteState({ routes, routesBySession: options.routesBySession, sessionName: options.sessionName });
+}
+
+function applyBatchNetworkRouteState(options: { data: unknown; routesBySession: Map<string, NetworkRouteRecord[]>; sessionName: string | undefined; succeeded: boolean }): Map<string, NetworkRouteRecord[]> {
+	if (!options.succeeded || !options.sessionName || !Array.isArray(options.data)) return options.routesBySession;
+	let routes = options.routesBySession.get(options.sessionName);
+	for (const item of options.data) {
+		if (!isRecord(item) || !Array.isArray(item.command) || !item.command.every((token) => typeof token === "string")) continue;
+		routes = applyNetworkRouteRecords(routes, extractCommandTokens(item.command as string[]), item.success !== false);
+	}
+	return setNetworkRouteState({ routes, routesBySession: options.routesBySession, sessionName: options.sessionName });
+}
+
 export async function preserveParseFailureOutput(options: {
 	artifactManifest?: SessionArtifactManifest;
 	exactSensitiveValues?: string[];
@@ -188,6 +228,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 	let managedSessionActive = state.managedSessionActive;
 	let managedSessionCwd = state.managedSessionCwd;
 	let managedSessionName = state.managedSessionName;
+	let networkRoutesBySession = state.networkRoutesBySession;
 	try {
 		const persistentArtifactStore = getPersistentSessionArtifactStore(ctx);
 		const parsed = await parseAgentBrowserEnvelope({ stdout: processResult.stdout, stdoutPath: processResult.stdoutSpillPath });
@@ -211,6 +252,9 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
 		const plainTextInspection = prepared.executionPlan.plainTextInspection && processSucceeded;
 		const parseSucceeded = plainTextInspection || parseError === undefined;
+		if (isStreamEnableAlreadyEnabledNoop({ command: prepared.executionPlan.commandInfo.command, envelope: presentationEnvelope, processSucceeded, subcommand: prepared.executionPlan.commandInfo.subcommand })) {
+			presentationEnvelope = { success: true, data: { alreadyEnabled: true, enabled: true, message: getEnvelopeErrorString(presentationEnvelope) ?? "Stream already enabled" } };
+		}
 		const envelopeSuccess = plainTextInspection ? true : presentationEnvelope?.success !== false;
 		let succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
 		const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
@@ -316,6 +360,11 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			selectorTextVisibilityDiagnostics = await collectSelectorTextVisibilityDiagnostics({ commandInfo: prepared.executionPlan.commandInfo, commandTokens: prepared.commandTokens, cwd, data: presentationEnvelope?.data, sessionName: prepared.executionPlan.sessionName, signal });
 			electronBroadGetTextScopeDiagnostics = collectElectronBroadGetTextScopeDiagnostics({ commandInfo: prepared.executionPlan.commandInfo, commandTokens: prepared.commandTokens, currentTarget: currentSessionTabTarget, data: presentationEnvelope?.data, electronLaunchRecords, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName });
 		}
+		const activeNetworkRoutes = prepared.executionPlan.sessionName ? networkRoutesBySession.get(prepared.executionPlan.sessionName) : undefined;
+		const networkRouteDiagnostics = succeeded && prepared.executionPlan.commandInfo.command === "network" && prepared.executionPlan.commandInfo.subcommand === "requests" && prepared.executionPlan.sessionName
+			? buildNetworkRouteDiagnostics(presentationEnvelope?.data, activeNetworkRoutes)
+			: undefined;
+		networkRoutesBySession = applyNetworkRouteState({ commandTokens: prepared.commandTokens, routesBySession: networkRoutesBySession, sessionName: prepared.executionPlan.sessionName, succeeded });
 		const comboboxFocusDiagnostic = succeeded ? await collectComboboxFocusDiagnostic({ command: prepared.executionPlan.commandInfo.command, commandTokens: prepared.commandTokens, cwd, semanticAction: prepared.compiledSemanticAction, sessionName: prepared.executionPlan.sessionName, signal }) : undefined;
 		const recordingDependencyWarning = await collectRecordingDependencyWarning({ command: prepared.executionPlan.commandInfo.command, commandTokens: prepared.commandTokens, succeeded });
 		const scrollNoopDiagnostic = succeeded && prepared.shouldProbeScrollNoop ? buildScrollNoopDiagnostic(prepared.scrollPositionBefore, await collectScrollPositionSnapshot({ cwd, sessionName: prepared.executionPlan.sessionName, signal })) : undefined;
@@ -326,6 +375,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) {
 				allowedDomainsBySession = new Map(allowedDomainsBySession);
 				allowedDomainsBySession.delete(prepared.executionPlan.sessionName);
+				networkRoutesBySession = new Map(networkRoutesBySession);
+				networkRoutesBySession.delete(prepared.executionPlan.sessionName);
 				sessionPageState.clearSession(prepared.executionPlan.sessionName);
 				state.closedManagedSessionNames.add(prepared.executionPlan.sessionName);
 			} else if (currentSessionTabTarget) {
@@ -370,6 +421,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		if (replacedManagedSessionName) {
 			allowedDomainsBySession = new Map(allowedDomainsBySession);
 			allowedDomainsBySession.delete(replacedManagedSessionName);
+			networkRoutesBySession = new Map(networkRoutesBySession);
+			networkRoutesBySession.delete(replacedManagedSessionName);
 			sessionPageState.clearSession(replacedManagedSessionName);
 			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
 			if (!replacedCloseError) state.closedManagedSessionNames.add(replacedManagedSessionName);
@@ -407,7 +460,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			errorText = redactClipboardPermissionEcho(prepared.executionPlan.commandInfo, errorText);
 			if (presentationEnvelope?.error !== undefined) presentationEnvelope = { ...presentationEnvelope, error: redactClipboardPermissionErrorValue(prepared.executionPlan.commandInfo, presentationEnvelope.error, clipboardWritePayloadCandidates) };
 		}
-		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
+		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
+		networkRoutesBySession = applyBatchNetworkRouteState({ data: presentationEnvelope?.data, routesBySession: networkRoutesBySession, sessionName: prepared.executionPlan.sessionName, succeeded });
 		if (presentation.failureCategory === "artifact-missing") {
 			succeeded = false;
 			presentationEnvelope = { ...(presentationEnvelope ?? {}), error: presentation.summary, success: false };
@@ -471,7 +525,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		currentRefSnapshot = finalRecoveryState.currentRefSnapshot;
 		currentRefSnapshotInvalidation = finalRecoveryState.currentRefSnapshotInvalidation;
 		const result = buildFinalAgentBrowserToolResult({ aboutBlankSessionMismatch, artifactCleanup, categoryDetails: finalRecoveryState.categoryDetails, clickDispatchDiagnostic, commandTokens: prepared.commandTokens, comboboxFocusDiagnostic, compiledNetworkSourceLookup: prepared.compiledNetworkSourceLookup, compiledSemanticAction: prepared.compiledSemanticAction, compatibilityWorkaround: prepared.compatibilityWorkaround, currentRefSnapshot, currentRefSnapshotInvalidation, currentSessionTabTarget, electronBroadGetTextScopeDiagnostics, electronFailedConnectCleanup, electronHandoff, electronLaunch: prepared.electronLaunch, electronLaunchRecord, electronLaunchRecords, electronPostCommandHealth, electronProfileIsolationDetails: input.electronProfileIsolationDetails, electronRefFreshnessDiagnostic, electronSessionMismatch, errorText, evalResultWarning, evalStdinHint, exactSensitiveValues: prepared.exactSensitiveValues, executionPlan: prepared.executionPlan, fillVerificationDiagnostic, inspectionText, managedSessionOutcome, navigationSummary, networkSourceLookup, noActivePageSnapshotFailure: finalRecoveryState.noActivePageSnapshotFailure, openResultTabCorrection, overlayBlockerDiagnostic, parseError, parseFailureOutput, parseSucceeded, plainTextInspection, presentation, presentationEnvelope, priorSessionTabTarget: prepared.priorSessionTabTarget, processResult, qaAttachedTarget, qaPreset, recordingDependencyWarning, redactedArgs: prepared.redactedArgs, redactedCompiledElectron: prepared.redactedCompiledElectron, redactedCompiledJob: prepared.redactedCompiledJob, redactedCompiledNetworkSourceLookup: prepared.redactedCompiledNetworkSourceLookup, redactedCompiledQaPreset: prepared.redactedCompiledQaPreset, redactedCompiledSemanticAction: prepared.redactedCompiledSemanticAction, redactedCompiledSourceLookup: prepared.redactedCompiledSourceLookup, redactedContent, redactedProcessArgs: prepared.redactedProcessArgs, redactedRecoveryHint: prepared.redactedRecoveryHint, resultArtifactManifest, richInputRecoveryDiagnostic: finalRecoveryState.richInputRecoveryDiagnostic, scrollNoopDiagnostic, selectorTextVisibilityDiagnostics, sessionMode: prepared.sessionMode, sessionTabCorrection, sourceLookup, succeeded, timeoutPartialProgress, userRequestedJson: prepared.userRequestedJson, visibleRefFallbackDiagnostic: finalRecoveryState.visibleRefFallbackDiagnostic, visibleRefFallbackSessionName: finalRecoveryState.visibleRefFallbackSessionName });
-		const statePatch: BrowserRunStatePatch = { allowedDomainsBySession, artifactManifest, freshSessionOrdinal, managedSessionActive, managedSessionCwd, managedSessionName };
+		const statePatch: BrowserRunStatePatch = { allowedDomainsBySession, artifactManifest, freshSessionOrdinal, managedSessionActive, managedSessionCwd, managedSessionName, networkRoutesBySession };
 		return { result, statePatch };
 	} finally {
 		if (processResult.stdoutSpillPath) await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);

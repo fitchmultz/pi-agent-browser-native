@@ -8,6 +8,7 @@
 
 export { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "./results/envelope.js";
 export { buildToolPresentation } from "./results/presentation.js";
+export { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "./results/network-routes.js";
 export {
 	buildAgentBrowserResultCategoryDetails,
 	classifyAgentBrowserFailureCategory,
@@ -30,6 +31,8 @@ export type {
 	AgentBrowserResultCategory,
 	AgentBrowserResultCategoryDetails,
 	AgentBrowserSuccessCategory,
+	NetworkRouteDiagnostic,
+	NetworkRouteRecord,
 	FileArtifactKind,
 	FileArtifactMetadata,
 	ToolPresentation,

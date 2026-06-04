@@ -162,6 +162,7 @@ export interface BatchStepPresentationDetails {
 	imagePath?: string;
 	imagePaths?: string[];
 	index: number;
+	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	nextActions?: AgentBrowserNextAction[];
 	pageChangeSummary?: AgentBrowserPageChangeSummary;
 	resultCategory: AgentBrowserResultCategory;
@@ -194,6 +195,7 @@ export interface ToolPresentation {
 	fullOutputPaths?: string[];
 	imagePath?: string;
 	imagePaths?: string[];
+	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	nextActions?: AgentBrowserNextAction[];
 	pageChangeSummary?: AgentBrowserPageChangeSummary;
 	resultCategory?: AgentBrowserResultCategory;
@@ -218,4 +220,18 @@ export interface NetworkFailureSummary {
 	benignCount: number;
 	failures: NetworkFailureClassification[];
 	totalCount: number;
+}
+
+export interface NetworkRouteRecord {
+	mode: "abort" | "body" | "handler" | "unknown";
+	pattern: string;
+}
+
+export interface NetworkRouteDiagnostic {
+	mode: NetworkRouteRecord["mode"];
+	reason: "pending-routed-request" | "cors-likely-routed-request";
+	requestId?: string;
+	requestUrl?: string;
+	routePattern: string;
+	summary: string;
 }

@@ -97,6 +97,7 @@ import {
 	type ElectronLaunchRecord,
 } from "./lib/orchestration/electron-host/index.js";
 import { buildValidationFailureResult, resolveAgentBrowserInput } from "./lib/orchestration/input-plan.js";
+import type { NetworkRouteRecord } from "./lib/results/contracts.js";
 import type { SessionArtifactManifest } from "./lib/results/contracts.js";
 import {
 	buildEvictedSessionArtifactEntries,
@@ -1019,6 +1020,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
 	let allowedDomainsBySession = new Map<string, AllowedDomainsPolicy>();
+	let networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
 	let electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 	let ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 	let branchOwnedElectronLaunchIds = new Set<string>();
@@ -1061,6 +1063,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = restoreArtifactManifestFromBranch(branch);
 		allowedDomainsBySession = restoreAllowedDomainsBySessionFromBranch(branch);
+		networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
 		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(branch);
 		if (options.resetRuntimeOwnership) {
 			ownedManagedSessions.clear();
@@ -1140,6 +1143,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
 		allowedDomainsBySession = new Map<string, AllowedDomainsPolicy>();
+		networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
 		electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 		ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 		branchOwnedElectronLaunchIds = new Set<string>();
@@ -1286,6 +1290,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					managedSessionBaseName,
 					managedSessionCwd,
 					managedSessionName,
+					networkRoutesBySession,
 					sessionPageState,
 					traceOwners,
 				};
@@ -1307,6 +1312,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				const branchStateStillCurrent = generationAtStart === branchStateGeneration;
 				if (serializeBrowserCommand || branchStateStillCurrent) {
 					allowedDomainsBySession = browserRunState.allowedDomainsBySession;
+					networkRoutesBySession = browserRunState.networkRoutesBySession;
 					artifactManifest = browserRunState.artifactManifest;
 					freshSessionOrdinal = Math.max(freshSessionOrdinal, browserRunState.freshSessionOrdinal);
 					managedSessionActive = browserRunState.managedSessionActive;

@@ -56,6 +56,7 @@ export function applyBrowserRunStatePatch(state: BrowserRunState, patch: Browser
 	if (patch.managedSessionActive !== undefined) state.managedSessionActive = patch.managedSessionActive;
 	if (patch.managedSessionCwd !== undefined) state.managedSessionCwd = patch.managedSessionCwd;
 	if (patch.managedSessionName !== undefined) state.managedSessionName = patch.managedSessionName;
+	if (patch.networkRoutesBySession) state.networkRoutesBySession = patch.networkRoutesBySession;
 }
 
 export function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean): Record<string, unknown> {

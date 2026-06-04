@@ -441,12 +441,16 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise stateful browser workflows." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
+			let storageSetResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
 				assert.equal(result.isError, false, args.join(" "));
-				assert.doesNotMatch(result.content[0]?.text ?? "", /cookie-secret|cookie-get-secret|storage-secret|dark/);
-				assert.doesNotMatch(JSON.stringify(result.details), /cookie-secret|cookie-get-secret|storage-secret|dark/);
+				assert.doesNotMatch(result.content[0]?.text ?? "", /cookie-secret|cookie-get-secret|storage-secret/);
+				assert.doesNotMatch(JSON.stringify(result.details), /cookie-secret|cookie-get-secret|storage-secret/);
+				if (args[0] === "storage" && args[1] === "local" && args[2] === "set") storageSetResult = result;
 			}
+			assert.match(storageSetResult?.content[0]?.text ?? "", /theme: dark/);
+			assert.match(JSON.stringify(storageSetResult?.details), /"value":"dark"/);
 
 			const jsonResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--json", "cookies", "set", "sid", "json-cookie-secret", "--url", "https://example.test"] });
 			assert.equal(jsonResult.isError, false);
@@ -605,6 +609,129 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			}));
 			assert.ok(invocations.some((entry) => entry.args.includes("chat") && entry.args.includes("--model") && entry.model === "anthropic/env-model"));
 			assert.ok(invocations.some((entry) => entry.args.includes("dashboard") && entry.apiKey === "ai-gateway-key"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension treats stream enable already-enabled as idempotent no-op", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stream-idempotent-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: false, error: "Streaming is already enabled for this session" }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Enable stream." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["stream", "enable"] });
+			assert.equal(result.isError, false);
+			assert.equal(result.details?.resultCategory, "success");
+			assert.equal(result.details?.successCategory, "completed");
+			assert.equal((result.details?.data as { alreadyEnabled?: unknown } | undefined)?.alreadyEnabled, true);
+			assert.match(result.content[0]?.text ?? "", /idempotent no-op/);
+			assert.deepEqual((result.details?.nextActions as Array<{ id?: string }> | undefined)?.map((action) => action.id), ["check-stream-status-after-noop", "disable-existing-stream-when-done"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not mask non-exact stream enable failures", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stream-real-failure-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: false, error: "Streaming is already enabled but health check failed" }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Enable stream." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["stream", "enable"] });
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "upstream-error");
+			assert.match(result.content[0]?.text ?? "", /health check failed/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports pending routed network mocks", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-route-diagnostics-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+const commandIndex = args.findIndex((arg, index) => arg === "network" && args[index + 1]);
+const subcommand = args[commandIndex + 1];
+const data = subcommand === "route"
+  ? { routed: args[commandIndex + 2] }
+  : { requests: [{ method: "GET", requestId: "mock-1", resourceType: "fetch", url: "https://example.test/api/mock" }] };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Mock network route." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const routeResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "route", "**/api/**", "--body", "{}", "--resource-type", "fetch"] });
+			assert.equal(routeResult.isError, false);
+
+			const requestsResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "requests"] });
+			assert.equal(requestsResult.isError, false);
+			assert.match(requestsResult.content[0]?.text ?? "", /Network route diagnostics/);
+			assert.deepEqual((requestsResult.details?.networkRouteDiagnostics as Array<{ reason?: string }> | undefined)?.map((item) => item.reason), ["pending-routed-request"]);
+			assert.deepEqual((requestsResult.details?.nextActions as Array<{ id?: string }> | undefined)?.slice(0, 3).map((action) => action.id), ["inspect-pending-routed-network-request", "start-network-har-capture-for-route-mock", "retry-route-mock-same-origin-fixture"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports routed network mocks inside and after batch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-route-diagnostics-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.on("data", chunk => stdin += chunk);
+process.stdin.on("end", () => {
+  const commandIndex = args.findIndex((arg) => arg === "batch" || arg === "network");
+  const command = args[commandIndex];
+  if (command === "batch") {
+    const steps = JSON.parse(stdin);
+    const data = steps.map((step) => step[0] === "network" && step[1] === "route"
+      ? { command: step, success: true, result: { routed: step[2] } }
+      : { command: step, success: true, result: { requests: [{ method: "GET", requestId: "batch-mock-1", resourceType: "fetch", url: "https://example.test/api/batch" }] } });
+    process.stdout.write(JSON.stringify({ success: true, data }));
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { requests: [{ method: "GET", requestId: "later-mock-1", resourceType: "fetch", url: "https://example.test/api/batch" }] } }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Mock network route in a batch." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["network", "route", "**/api/**", "--body", "{}"], ["network", "requests"]]),
+			});
+			assert.equal(batchResult.isError, false);
+			const batchSteps = batchResult.details?.batchSteps as Array<{ networkRouteDiagnostics?: Array<{ reason?: string }> }> | undefined;
+			assert.deepEqual(batchSteps?.[1]?.networkRouteDiagnostics?.map((item) => item.reason), ["pending-routed-request"]);
+
+			const requestsResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "requests"] });
+			assert.equal(requestsResult.isError, false);
+			assert.deepEqual((requestsResult.details?.networkRouteDiagnostics as Array<{ reason?: string }> | undefined)?.map((item) => item.reason), ["pending-routed-request"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
