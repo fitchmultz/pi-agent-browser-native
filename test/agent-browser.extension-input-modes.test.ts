@@ -225,6 +225,7 @@ test("agentBrowserExtension compiles constrained jobs to upstream batch commands
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
 let stdin = "";
 process.stdin.setEncoding("utf8");
@@ -232,7 +233,14 @@ process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
   const steps = JSON.parse(stdin);
-  process.stdout.write(JSON.stringify(steps.map((command) => ({ command, success: true, result: { command } }))));
+  process.stdout.write(JSON.stringify(steps.map((command) => {
+    const artifactPath = command[0] === "screenshot" ? command[1] : command[0] === "wait" && command[1] === "--download" ? command[2] : undefined;
+    if (artifactPath) {
+      fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+      fs.writeFileSync(artifactPath, "artifact");
+    }
+    return { command, success: true, result: artifactPath ? { command, path: artifactPath } : { command } };
+  })));
 });`,
 	);
 

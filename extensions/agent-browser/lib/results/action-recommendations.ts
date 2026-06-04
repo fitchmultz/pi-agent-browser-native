@@ -192,6 +192,21 @@ export function buildAgentBrowserNextActions(options: {
 		}
 	} else {
 		switch (options.failureCategory) {
+			case "artifact-missing":
+				for (const artifact of options.artifacts ?? []) {
+					if (isPendingRecordingArtifact(artifact) || artifact.exists !== false) continue;
+					if (artifact.kind === "download") {
+						actions.push(buildNextToolAction({
+							args: ["wait", "--download", artifact.path],
+							id: "wait-for-download",
+							reason: "The requested download artifact was not found on disk after upstream reported completion.",
+							safety: "Use a bounded wait timeout that stays below the native wrapper IPC budget.",
+						}));
+					} else {
+						actions.push(buildArtifactVerificationAction(artifact));
+					}
+				}
+				break;
 			case "confirmation-required":
 				if (options.confirmationId) {
 					actions.push(

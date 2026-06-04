@@ -44,7 +44,9 @@ test("buildToolPresentation formats download results as saved-file summaries", a
 	assert.match((presentation.content[0] as { text: string }).text, /Downloaded file: \/tmp\/report\.pdf/);
 	assert.match((presentation.content[0] as { text: string }).text, /application\/pdf/);
 	assert.match((presentation.content[0] as { text: string }).text, /not found on disk/);
-	assert.equal(presentation.summary, "Downloaded file: /tmp/report.pdf");
+	assert.equal(presentation.summary, "Artifact verification failed: requested download was not found at /tmp/report.pdf.");
+	assert.equal(presentation.resultCategory, "failure");
+	assert.equal(presentation.failureCategory, "artifact-missing");
 	assert.equal(presentation.artifacts?.[0]?.kind, "download");
 	assert.equal(presentation.artifacts?.[0]?.path, "/tmp/report.pdf");
 	assert.equal(presentation.artifacts?.[0]?.absolutePath, "/tmp/report.pdf");
@@ -121,7 +123,9 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 
 		assert.equal(presentation.content[0]?.type, "text");
 		assert.match((presentation.content[0] as { text: string }).text, new RegExp(item.expectedText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-		assert.equal(presentation.summary, item.expectedText);
+		assert.equal(presentation.summary, `Artifact verification failed: requested ${item.expectedKind} was not found at ${join("/tmp/pi-agent-browser-artifact-tests", item.data.path)}.`);
+		assert.equal(presentation.resultCategory, "failure");
+		assert.equal(presentation.failureCategory, "artifact-missing");
 		assert.equal(presentation.artifacts?.length, 1);
 		assert.equal(presentation.artifacts?.[0]?.kind, item.expectedKind);
 		assert.equal(presentation.artifacts?.[0]?.path, item.data.path);
@@ -171,7 +175,9 @@ test("buildToolPresentation records path-bearing diff screenshots without inlini
 		envelope: { success: true, data: { baselinePath: "baseline.png", diffPath: "diff.png", mismatchPixels: 12 } },
 	});
 
-	assert.equal(presentation.summary, "Saved diff image: diff.png");
+	assert.equal(presentation.summary, "Artifact verification failed: requested image was not found at /tmp/pi-agent-browser-artifact-tests/diff.png.");
+	assert.equal(presentation.resultCategory, "failure");
+	assert.equal(presentation.failureCategory, "artifact-missing");
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /Saved diff image: diff\.png/);
@@ -552,6 +558,8 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 	});
 
 	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Batch failed: 1\/2 succeeded/);
+	assert.doesNotMatch(text, /Batch: 2\/2 succeeded/);
 	assert.match(text, /Step 1 — click #export/);
 	assert.match(text, /Step 2 — wait --download \/tmp\/export\.csv/);
 	assert.match(text, /Download completed: \/tmp\/export\.csv/);
@@ -564,6 +572,9 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 		path: "/tmp/export.csv",
 		subcommand: "--download",
 	});
+	assert.equal(presentation.summary, "Artifact verification failed: requested download was not found at /tmp/export.csv.");
+	assert.equal(presentation.batchFailure?.successCount, 1);
+	assert.equal(presentation.batchFailure?.totalCount, 2);
 	assert.equal(presentation.batchSteps?.[1]?.artifactVerification?.missingCount, 1);
 	assert.equal(presentation.artifactVerification?.missingCount, 1);
 	assert.deepEqual(presentation.batchSteps?.[1]?.nextActions?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);

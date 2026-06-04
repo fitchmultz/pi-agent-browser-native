@@ -50,6 +50,7 @@ export const NAVIGATION_SUMMARY_EVAL = `({ title: document.title, url: location.
 
 export function applyBrowserRunStatePatch(state: BrowserRunState, patch: BrowserRunStatePatch | undefined): void {
 	if (!patch) return;
+	if (patch.allowedDomainsBySession) state.allowedDomainsBySession = patch.allowedDomainsBySession;
 	if ("artifactManifest" in patch) state.artifactManifest = patch.artifactManifest;
 	if (patch.freshSessionOrdinal !== undefined) state.freshSessionOrdinal = patch.freshSessionOrdinal;
 	if (patch.managedSessionActive !== undefined) state.managedSessionActive = patch.managedSessionActive;

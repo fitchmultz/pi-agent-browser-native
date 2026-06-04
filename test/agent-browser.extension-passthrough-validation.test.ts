@@ -277,10 +277,18 @@ test("agentBrowserExtension passes through core command coverage fallback matrix
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const command = args.find((arg, index) => arg !== "--json" && args[index - 1] !== "--session" && arg !== "--session" && args[index - 2] !== "--session") || "unknown";
-const data = command === "download" ? { path: args[args.length - 1] } : { ok: true, command };
+let commandIndex = args[0] === "--json" ? 1 : 0;
+if (args[commandIndex] === "--session") commandIndex += 2;
+const command = args[commandIndex] || "unknown";
+const artifactPath = command === "download" || command === "screenshot" || command === "pdf" || (command === "wait" && args.includes("--download")) ? args[args.length - 1] : undefined;
+if (artifactPath) {
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(artifactPath, "artifact");
+}
+const data = artifactPath ? { path: artifactPath } : { ok: true, command };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 

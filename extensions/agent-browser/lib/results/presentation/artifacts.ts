@@ -340,6 +340,20 @@ export function buildArtifactVerificationSummary(
 	};
 }
 
+export function hasMissingFileArtifact(artifacts: FileArtifactMetadata[] | undefined): boolean {
+	return (artifacts ?? []).some((artifact) => !isPendingRecordingArtifact(artifact) && artifact.exists === false);
+}
+
+export function formatMissingArtifactFailureText(artifacts: FileArtifactMetadata[] | undefined): string | undefined {
+	const missingArtifacts = (artifacts ?? []).filter((artifact) => !isPendingRecordingArtifact(artifact) && artifact.exists === false);
+	if (missingArtifacts.length === 0) return undefined;
+	if (missingArtifacts.length === 1) {
+		const artifact = missingArtifacts[0];
+		return `Artifact verification failed: requested ${artifact.kind} was not found at ${artifact.absolutePath}.`;
+	}
+	return `Artifact verification failed: ${missingArtifacts.length} requested artifacts were not found on disk.`;
+}
+
 export function classifyPresentationSuccessCategory(options: {
 	artifactVerification?: ArtifactVerificationSummary;
 	artifacts?: FileArtifactMetadata[];

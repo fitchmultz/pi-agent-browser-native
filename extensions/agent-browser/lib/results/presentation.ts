@@ -29,7 +29,9 @@ import {
 	extractImagePath,
 	formatArtifactMetadataLines,
 	formatArtifactSummary,
+	formatMissingArtifactFailureText,
 	getSavedFileDetails,
+	hasMissingFileArtifact,
 	isManifestFileArtifact,
 	type ArtifactRequestContext,
 } from "./presentation/artifacts.js";
@@ -161,6 +163,19 @@ export async function buildToolPresentation(options: {
 	) ?? presentationWithManifest.artifactVerification;
 
 	const confirmationRequired = detectConfirmationRequired(data);
+	const missingArtifactFailureText = formatMissingArtifactFailureText(presentationWithManifest.artifacts);
+	if (missingArtifactFailureText && hasMissingFileArtifact(presentationWithManifest.artifacts)) {
+		presentationWithManifest.resultCategory = "failure";
+		presentationWithManifest.failureCategory = "artifact-missing";
+		presentationWithManifest.successCategory = undefined;
+		presentationWithManifest.summary = missingArtifactFailureText;
+		if (presentationWithManifest.content[0]?.type === "text") {
+			presentationWithManifest.content[0] = { ...presentationWithManifest.content[0], text: `${missingArtifactFailureText}\n\n${presentationWithManifest.content[0].text}` };
+		} else {
+			presentationWithManifest.content.unshift({ type: "text", text: missingArtifactFailureText });
+		}
+	}
+
 	if (!presentationWithManifest.resultCategory) {
 		const categoryDetails = buildAgentBrowserResultCategoryDetails({
 			artifacts: presentationWithManifest.artifacts,

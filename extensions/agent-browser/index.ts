@@ -84,6 +84,7 @@ import {
 	type CompiledAgentBrowserSemanticAction,
 	type CompiledAgentBrowserSourceLookup,
 } from "./lib/input-modes.js";
+import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
 import { closeManagedSession, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
@@ -597,6 +598,57 @@ function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactMa
 	return restoredManifest;
 }
 
+function getToolResultArgs(details: Record<string, unknown>): string[] {
+	if (Array.isArray(details.args) && details.args.every((arg) => typeof arg === "string")) return details.args;
+	if (Array.isArray(details.effectiveArgs) && details.effectiveArgs.every((arg) => typeof arg === "string")) return details.effectiveArgs;
+	return [];
+}
+
+function restoreAllowedDomainsBySessionFromBranch(branch: unknown[]): Map<string, AllowedDomainsPolicy> {
+	const restoredPolicies = new Map<string, AllowedDomainsPolicy>();
+	for (const entry of branch) {
+		if (!isRecord(entry) || entry.type !== "message") continue;
+		const message = isRecord(entry.message) ? entry.message : undefined;
+		if (!message || message.toolName !== "agent_browser") continue;
+		const details = isRecord(message.details) ? message.details : undefined;
+		if (!details) continue;
+		const succeeded = getSuccessfulToolResult(details, message);
+		const args = getToolResultArgs(details);
+		const command = typeof details.command === "string" ? details.command : extractCommandTokens(args)[0];
+		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
+		const explicitSessionName = extractExplicitSessionName(args);
+		const outcome = getManagedSessionOutcome(details);
+		const outcomeSucceeded = outcome?.succeeded === true;
+		const outcomeStatus = typeof outcome?.status === "string" ? outcome.status : undefined;
+		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
+		const outcomeAttemptedSessionName = typeof outcome?.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
+		if (outcomeSucceeded && outcomeStatus === "closed") {
+			const closedSessionName = outcomeAttemptedSessionName ?? outcomeCurrentSessionName ?? sessionName;
+			if (closedSessionName) restoredPolicies.delete(closedSessionName);
+		}
+		if (outcomeSucceeded && outcomeStatus === "replaced") {
+			const replacedSessionName = typeof outcome.replacedSessionName === "string" ? outcome.replacedSessionName : undefined;
+			if (replacedSessionName) restoredPolicies.delete(replacedSessionName);
+		}
+		if (succeeded && isCloseCommand(command)) {
+			const closedSessionName = explicitSessionName ?? sessionName ?? outcomeAttemptedSessionName ?? outcomeCurrentSessionName;
+			if (closedSessionName) restoredPolicies.delete(closedSessionName);
+		}
+		const electron = isRecord(details.electron) ? details.electron : undefined;
+		const cleanup = isRecord(electron?.cleanup) ? electron.cleanup : undefined;
+		const cleanupResults = Array.isArray(cleanup?.results) ? cleanup.results : [];
+		for (const cleanupResult of cleanupResults) {
+			for (const closedSessionName of getCleanupResultClosedManagedSessionNames(cleanupResult)) restoredPolicies.delete(closedSessionName);
+		}
+		const outcomeKeepsSessionCurrent = outcome?.activeAfter === true
+			&& (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged")
+			&& outcomeCurrentSessionName === sessionName;
+		const policy = (succeeded || outcomeKeepsSessionCurrent) && sessionName && !isCloseCommand(command) ? parseAllowedDomainsPolicyFromArgs(args) : undefined;
+		if (policy && sessionName) restoredPolicies.set(sessionName, policy);
+	}
+	return restoredPolicies;
+}
+
 function trackOwnedManagedSession(
 	sessions: Map<string, OwnedManagedSession>,
 	sessionName: string | undefined,
@@ -634,7 +686,7 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 	const status = typeof outcome.status === "string" ? outcome.status : undefined;
 	const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
 	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
-	if (succeeded && outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
+	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
 		trackOwnedManagedSession(sessions, currentSessionName, cwd);
 	}
 	if (succeeded && status === "closed") {
@@ -966,6 +1018,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let sessionPageState = new SessionPageState();
 	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
+	let allowedDomainsBySession = new Map<string, AllowedDomainsPolicy>();
 	let electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 	let ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 	let branchOwnedElectronLaunchIds = new Set<string>();
@@ -1007,6 +1060,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		sessionPageState = SessionPageState.fromBranch(branch);
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = restoreArtifactManifestFromBranch(branch);
+		allowedDomainsBySession = restoreAllowedDomainsBySessionFromBranch(branch);
 		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(branch);
 		if (options.resetRuntimeOwnership) {
 			ownedManagedSessions.clear();
@@ -1085,6 +1139,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		sessionPageState.reset();
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
+		allowedDomainsBySession = new Map<string, AllowedDomainsPolicy>();
 		electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 		ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 		branchOwnedElectronLaunchIds = new Set<string>();
@@ -1191,6 +1246,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const closedSessionNames = getCleanupResultsClosedManagedSessionNames(cleanupRecords);
 					syncElectronCleanupManagedSessions(ownedManagedSessions, cleanupRecords);
 					for (const closedSessionName of closedSessionNames) {
+						allowedDomainsBySession.delete(closedSessionName);
 						sessionPageState.clearSession(closedSessionName);
 						if (closedSessionName === managedSessionName) {
 							managedSessionActive = false;
@@ -1219,6 +1275,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				const generationAtStart = branchStateGeneration;
 				const sessionPageStateUpdate = sessionPageState.beginUpdate();
 				const browserRunState: BrowserRunState = {
+					allowedDomainsBySession,
 					artifactManifest,
 					closedManagedSessionNames: new Set<string>(),
 					electronChildProcesses,
@@ -1249,6 +1306,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				});
 				const branchStateStillCurrent = generationAtStart === branchStateGeneration;
 				if (serializeBrowserCommand || branchStateStillCurrent) {
+					allowedDomainsBySession = browserRunState.allowedDomainsBySession;
 					artifactManifest = browserRunState.artifactManifest;
 					freshSessionOrdinal = Math.max(freshSessionOrdinal, browserRunState.freshSessionOrdinal);
 					managedSessionActive = browserRunState.managedSessionActive;

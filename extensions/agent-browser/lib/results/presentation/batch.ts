@@ -192,11 +192,13 @@ async function buildBatchStepPresentation(options: {
 		secondaryPaths: presentation.imagePaths,
 	});
 	const text = getPresentationText(presentation) || presentation.summary;
+	const stepSucceeded = presentation.resultCategory !== "failure";
 	const nextActions = presentation.nextActions ?? buildAgentBrowserNextActions({
 		artifacts: presentation.artifacts,
 		args: command,
 		command: command?.[0],
-		resultCategory: "success",
+		failureCategory: presentation.failureCategory,
+		resultCategory: stepSucceeded ? "success" : "failure",
 		savedFilePath: presentation.savedFilePath,
 		successCategory: presentation.successCategory,
 	});
@@ -216,6 +218,7 @@ async function buildBatchStepPresentation(options: {
 			command: redactedCommand,
 			commandText,
 			data: presentation.data,
+			failureCategory: stepSucceeded ? undefined : presentation.failureCategory,
 			fullOutputPath: fullOutputPaths[0],
 			fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
 			imagePath: imagePaths[0],
@@ -223,11 +226,11 @@ async function buildBatchStepPresentation(options: {
 			index,
 			nextActions,
 			pageChangeSummary,
-			resultCategory: "success",
+			resultCategory: stepSucceeded ? "success" : "failure",
 			savedFile: presentation.savedFile,
 			savedFilePath: presentation.savedFilePath,
-			success: true,
-			successCategory: classifyPresentationSuccessCategory({ artifactVerification: presentation.artifactVerification, artifacts: presentation.artifacts, savedFile: presentation.savedFile }),
+			success: stepSucceeded,
+			successCategory: stepSucceeded ? classifyPresentationSuccessCategory({ artifactVerification: presentation.artifactVerification, artifacts: presentation.artifacts, savedFile: presentation.savedFile }) : undefined,
 			summary: presentation.summary,
 			text,
 		},
@@ -299,10 +302,13 @@ export async function buildBatchPresentation(options: {
 				return lines.join("\n");
 			})
 			.join("\n\n");
+	const batchSummary = batchFailure === undefined
+		? summary
+		: `Batch failed: ${batchFailure.successCount}/${batchFailure.totalCount} succeeded`;
 	const failureHeader = batchFailure === undefined
 		? undefined
 		: [
-			summary,
+			batchSummary,
 			`First failing step: ${batchFailure.failedStep.index + 1} — ${batchFailure.failedStep.commandText}`,
 			batchFailure.failureCount > 1 ? `${batchFailure.failureCount} steps failed. See the per-step results below.` : "See the per-step results below.",
 		].join("\n");
@@ -321,7 +327,7 @@ export async function buildBatchPresentation(options: {
 			commandInfo: { command: "batch" },
 			data,
 			nextActions,
-			summary,
+			summary: batchSummary,
 		})
 		: changedSteps.length > 0
 			? {
@@ -350,6 +356,6 @@ export async function buildBatchPresentation(options: {
 		pageChangeSummary,
 		resultCategory: batchFailure ? "failure" : "success",
 		successCategory: batchFailure ? undefined : classifyPresentationSuccessCategory({ artifactVerification, artifacts }),
-		summary,
+		summary: batchSummary,
 	};
 }
