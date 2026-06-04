@@ -317,6 +317,42 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 	}
 });
 
+test("agentBrowserExtension does not show Electron broad-selector warning on normal file pages", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-normal-file-text-scope-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+const commandIndex = args.findIndex((arg) => arg === "open" || arg === "get" || arg === "close");
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+const data = command === "open"
+  ? { title: "Normal file page", url: "file:///tmp/normal-browser-fixture.html" }
+  : command === "get" && subcommand === "text"
+    ? { origin: "file:///tmp/normal-browser-fixture.html", text: "normal page text" }
+    : { closed: true };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Read a normal file page." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const openResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "file:///tmp/normal-browser-fixture.html"], sessionMode: "fresh" });
+			assert.equal(openResult.isError, false);
+
+			const textResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "body"] });
+			assert.equal(textResult.isError, false);
+			assert.doesNotMatch(textResult.content[0]?.text ?? "", /Broad Electron get text selector warning/);
+			assert.equal((textResult.details as { electronGetTextScopeWarning?: unknown }).electronGetTextScopeWarning, undefined);
+			const nextActionIds = ((textResult.details as { nextActions?: Array<{ id?: string }> }).nextActions ?? []).map((action) => action.id);
+			assert.equal(nextActionIds.includes("snapshot-for-electron-text-scope"), false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports Electron session mismatch and launchId-aware probe", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-mismatch-"));
 	const applicationsDir = join(tempDir, "Applications");

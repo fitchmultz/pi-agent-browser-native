@@ -403,10 +403,6 @@ export function buildSelectorTextVisibilityNextActions(options: { diagnostics: S
 	return options.diagnostics.map((diagnostic, index) => ({ id: index === 0 ? "inspect-visible-text-candidates" : `inspect-visible-text-candidates-${index + 1}`, params: { args: withOptionalSessionArgs(options.sessionName, ["eval", "--stdin"]), stdin: buildVisibleTextProbeScript(diagnostic.selector) }, reason: "Inspect selector match count and visible text before trusting get text on tabbed or hidden DOM content.", safety: "Read-only DOM inspection; use a more specific visible selector or current @ref before acting on hidden-tab text.", tool: "agent_browser" as const }));
 }
 
-function isElectronLikeRendererUrl(url: string | undefined): boolean {
-	return !!url && /^(?:app|file|vscode-file|vscode|chrome-extension):/i.test(url);
-}
-
 function normalizeSelectorForScopeHeuristic(selector: string): string {
 	return selector.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -419,10 +415,9 @@ function isBroadGetTextSelector(selector: string | undefined): selector is strin
 
 function getElectronTextScopeContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic["electronContext"] | undefined {
 	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords);
+	if (!record) return undefined;
 	const url = options.currentTarget?.url ?? options.priorTarget?.url;
-	if (record) return { launchId: record.launchId, sessionName: record.sessionName ?? options.sessionName, url };
-	if (isElectronLikeRendererUrl(url)) return { sessionName: options.sessionName, url };
-	return undefined;
+	return { launchId: record.launchId, sessionName: record.sessionName ?? options.sessionName, url };
 }
 
 export function getSourceLookupElectronContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; priorTarget?: SessionTabTarget; sessionName?: string }): AgentBrowserSourceLookupAnalysis["electronContext"] | undefined {
