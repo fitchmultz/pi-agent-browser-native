@@ -396,6 +396,7 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		savedFilePath: options.presentation.savedFilePath,
 		sourceLookup: options.sourceLookup,
 		networkSourceLookup: options.networkSourceLookup,
+		networkRouteDiagnostics: options.presentation.networkRouteDiagnostics,
 		sessionMode: options.sessionMode,
 		sessionTabCorrection: options.sessionTabCorrection,
 		sessionTabTarget: options.currentSessionTabTarget,

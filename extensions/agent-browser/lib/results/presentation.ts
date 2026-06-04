@@ -14,6 +14,7 @@ import { detectConfirmationRequired } from "./confirmation.js";
 import type {
 	AgentBrowserEnvelope,
 	AgentBrowserNextAction,
+	NetworkRouteDiagnostic,
 	SessionArtifactManifest,
 	ToolPresentation,
 } from "./contracts.js";
@@ -39,7 +40,9 @@ import { buildBatchPresentation, isAgentBrowserBatchResultArray } from "./presen
 import { getPresentationPaths } from "./presentation/content.js";
 import {
 	buildNetworkRequestsNextActions,
+	buildStreamNextActions,
 	enrichStreamStatusData,
+	formatNetworkRouteDiagnosticsText,
 	redactPresentationData,
 } from "./presentation/diagnostics.js";
 import { buildErrorPresentation } from "./presentation/errors.js";
@@ -73,6 +76,8 @@ export async function buildToolPresentation(options: {
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
 	errorText?: string;
+	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
+	networkRoutes?: import("./contracts.js").NetworkRouteRecord[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 }): Promise<ToolPresentation> {
@@ -85,6 +90,8 @@ export async function buildToolPresentation(options: {
 		cwd,
 		envelope,
 		errorText,
+		networkRouteDiagnostics,
+		networkRoutes,
 		persistentArtifactStore,
 		sessionName,
 	} = options;
@@ -110,6 +117,7 @@ export async function buildToolPresentation(options: {
 			buildNestedToolPresentation: buildToolPresentation,
 			cwd,
 			data,
+			networkRoutes,
 			persistentArtifactStore,
 			sessionName,
 			summary,
@@ -126,6 +134,11 @@ export async function buildToolPresentation(options: {
 		};
 	}
 
+	if (networkRouteDiagnostics && networkRouteDiagnostics.length > 0 && presentation.content[0]?.type === "text") {
+		const diagnosticText = formatNetworkRouteDiagnosticsText(networkRouteDiagnostics);
+		if (diagnosticText) presentation.content[0] = { ...presentation.content[0], text: `${diagnosticText}\n\n${presentation.content[0].text}` };
+		presentation.networkRouteDiagnostics = networkRouteDiagnostics;
+	}
 	if (artifacts.length > 0 && !presentation.artifacts) {
 		presentation.artifacts = artifacts;
 	}
@@ -214,12 +227,14 @@ export async function buildToolPresentation(options: {
 		successCategory: presentationWithManifest.successCategory,
 	});
 	const networkNextActions = commandInfo.command === "network" && commandInfo.subcommand === "requests" && presentationWithManifest.resultCategory === "success"
-		? buildNetworkRequestsNextActions(data, sessionName)
+		? buildNetworkRequestsNextActions(data, sessionName, presentationWithManifest.networkRouteDiagnostics)
 		: undefined;
+	const streamNextActions = presentationWithManifest.resultCategory === "success" ? buildStreamNextActions(commandInfo, data, sessionName) : undefined;
 	presentationWithManifest.nextActions = mergeNextActions(
 		presentationWithManifest.nextActions,
 		genericNextActions,
 		networkNextActions,
+		streamNextActions,
 	);
 	presentationWithManifest.pageChangeSummary = presentationWithManifest.pageChangeSummary ?? buildPageChangeSummary({
 		artifacts: presentationWithManifest.artifacts,

@@ -16,7 +16,7 @@ import type {
 } from "../../input-modes.js";
 import type { runAgentBrowserProcess } from "../../process.js";
 import type { AgentBrowserEnvelope, AgentBrowserNextAction, buildAgentBrowserResultCategoryDetails, buildToolPresentation } from "../../results.js";
-import type { SessionArtifactManifest } from "../../results/contracts.js";
+import type { NetworkRouteRecord, SessionArtifactManifest } from "../../results/contracts.js";
 import type { RichInputRecoveryDiagnostic, VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import type { SessionPageState, SessionRefSnapshot, SessionRefSnapshotInvalidation, SessionTabTarget } from "../../session-page-state.js";
 import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection } from "../../runtime.js";
@@ -74,6 +74,7 @@ export interface BrowserRunState {
 	managedSessionBaseName: string;
 	managedSessionCwd: string;
 	managedSessionName: string;
+	networkRoutesBySession: Map<string, NetworkRouteRecord[]>;
 	sessionPageState: SessionPageState;
 	traceOwners: Map<string, TraceOwner>;
 }
@@ -85,6 +86,7 @@ export interface BrowserRunStatePatch {
 	managedSessionActive?: boolean;
 	managedSessionCwd?: string;
 	managedSessionName?: string;
+	networkRoutesBySession?: Map<string, NetworkRouteRecord[]>;
 }
 
 export interface BrowserRunOptions {

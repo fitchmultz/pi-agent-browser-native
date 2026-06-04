@@ -183,8 +183,8 @@ test("buildToolPresentation formats stateful browser-context results without lea
 			commandInfo: { command: "storage", subcommand: "local" },
 			data: { entries: [{ key: "theme", value: "dark" }, { key: "jwt", value: "eyJhbGciOiJIUzI1NiJ9.supersecret.signature" }, { key: "authToken", value: "storage-secret-token" }], type: "local" },
 			summary: "Storage entries: 3",
-			matches: [/theme: \[REDACTED\]/, /jwt: \[REDACTED\]/, /authToken: \[REDACTED\]/],
-			missing: /dark|supersecret|storage-secret-token|eyJhbGci/,
+			matches: [/theme: dark/, /jwt: \[REDACTED\]/, /authToken: \[REDACTED\]/],
+			missing: /supersecret|storage-secret-token|eyJhbGci/,
 		},
 		{
 			commandInfo: { command: "storage", subcommand: "local" },
@@ -230,6 +230,82 @@ test("buildToolPresentation formats stateful browser-context results without lea
 			assert.doesNotMatch(JSON.stringify(presentation.data), testCase.missing);
 		}
 	}
+});
+
+test("buildToolPresentation keeps benign storage values visible while redacting likely secrets", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "storage", subcommand: "local" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				entries: [
+					{ key: "theme", value: "dark" },
+					{ key: "stressKey", value: "visible-local-value" },
+					{ key: "issue74BenignKey", value: "visible-issue-value" },
+					{ key: "featureFlag", value: true },
+					{ key: "apiKey", value: "abc123" },
+					{ key: "sid", value: "plain-session-value" },
+					{ key: "email", value: "user@example.test" },
+					{ key: "theme", value: "https://example.test/?token=secret" },
+					{ key: "theme", value: "https://example.test/session/abc123" },
+					{ key: "theme", value: "userId=12345" },
+					{ key: "mode", value: "qa" },
+					{ key: "profile", value: { token: "secret-token" } },
+				],
+				type: "local",
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	const details = JSON.stringify(presentation.data);
+	assert.match(text, /theme: dark/);
+	assert.match(text, /stressKey: visible-local-value/);
+	assert.match(text, /issue74BenignKey: visible-issue-value/);
+	assert.match(text, /featureFlag: true/);
+	assert.match(text, /mode: qa/);
+	assert.match(details, /"value":"dark"/);
+	assert.match(details, /"value":"visible-local-value"/);
+	assert.match(details, /"value":"visible-issue-value"/);
+	assert.match(details, /"value":true/);
+	assert.match(details, /"value":"qa"/);
+	assert.doesNotMatch(text, /abc123|plain-session-value|user@example|token=secret|userId=12345|session\/abc123|secret-token/);
+	assert.doesNotMatch(details, /abc123|plain-session-value|user@example|token=secret|userId=12345|session\/abc123|secret-token/);
+	assert.match(details, /valueRedacted/);
+});
+
+test("buildToolPresentation adds routed pending network diagnostics", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "network", subcommand: "requests" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: { requests: [{ method: "GET", requestId: "r1", resourceType: "fetch", url: "https://example.test/api/items" }] },
+		},
+		networkRouteDiagnostics: [{ mode: "body", reason: "pending-routed-request", requestId: "r1", requestUrl: "https://example.test/api/items", routePattern: "**/api/**", summary: "pending" }],
+		sessionName: "pi-agent-browser-test",
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Network route diagnostics/);
+	assert.match(text, /pending-routed-request/);
+	assert.deepEqual(presentation.networkRouteDiagnostics?.map((item) => item.reason), ["pending-routed-request"]);
+	assert.deepEqual(presentation.nextActions?.slice(0, 3).map((action) => action.id), ["inspect-pending-routed-network-request", "start-network-har-capture-for-route-mock", "retry-route-mock-same-origin-fixture"]);
+	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--session", "pi-agent-browser-test", "network", "request", "r1"]);
+});
+
+test("buildToolPresentation treats stream enable already-enabled as idempotent", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "stream", subcommand: "enable" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { alreadyEnabled: true, enabled: true } },
+		sessionName: "pi-agent-browser-test",
+	});
+
+	assert.equal(presentation.summary, "Stream already enabled");
+	assert.match((presentation.content[0] as { text: string }).text, /idempotent no-op/);
+	assert.deepEqual(presentation.nextActions?.map((action) => action.id), ["check-stream-status-after-noop", "disable-existing-stream-when-done"]);
 });
 
 test("buildToolPresentation redacts stateful batch details", async () => {
