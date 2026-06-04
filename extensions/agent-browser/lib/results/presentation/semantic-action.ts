@@ -18,9 +18,9 @@ import {
 } from "./navigation.js";
 import { redactModelFacingText } from "./common.js";
 
-const SEMANTIC_NAVIGATION_PROBE_ACTIONS = new Set(["check", "click", "uncheck"]);
+const SEMANTIC_NAVIGATION_PROBE_ACTIONS = new Set(["check", "click"]);
 
-const SEMANTIC_PRESENTATION_ACTIONS = new Set(["check", "click", "fill", "select", "uncheck"]);
+const SEMANTIC_PRESENTATION_ACTIONS = new Set(["check", "click", "fill", "select"]);
 
 function getPageSummary(data: Record<string, unknown>): string | undefined {
 	const title = typeof data.title === "string" ? data.title : undefined;
@@ -55,8 +55,6 @@ export function formatSemanticActionCompactLine(compiled: CompiledAgentBrowserSe
 			return `Filled: ${target}`;
 		case "check":
 			return `Checked: ${target}`;
-		case "uncheck":
-			return `Unchecked: ${target}`;
 		case "select":
 			return `Selected: ${target}`;
 		default:

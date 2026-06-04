@@ -36,7 +36,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 				description: "Intent action to compile to an existing agent-browser find command, or to upstream select when action=select.",
 			}),
 			locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, {
-				description: "Upstream find locator family to use for check/click/fill/uncheck actions.",
+				description: "Upstream find locator family to use for check/click/fill actions.",
 			})),
 			value: Type.Optional(Type.String({ description: "Locator value for find actions, or a single option value for select actions. For locator=role, role may be supplied instead." })),
 			values: Type.Optional(Type.Array(Type.String({ description: "Option value for select actions." }), { description: "One or more option values for select actions.", minItems: 1 })),

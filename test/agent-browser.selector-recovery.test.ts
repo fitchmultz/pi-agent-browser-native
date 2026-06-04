@@ -118,3 +118,45 @@ test("semantic visible-ref resolution requires exact role/name matches", () => {
 	});
 	assert.equal(prefixOnly, undefined);
 });
+
+test("semantic fill visible-ref resolution is internal-only and requires one exact editable ref", () => {
+	const comboboxSnapshot = {
+		origin: "https://example.test/search",
+		refs: {
+			e17: { name: "Search", role: "combobox" },
+		},
+		snapshot: '- combobox "Search" [ref=e17]',
+	};
+	const compiledAction = {
+		action: "fill" as const,
+		args: ["find", "role", "combobox", "fill", "private search", "--name", "Search"],
+		locator: "role" as const,
+	};
+
+	assert.equal(resolveVisibleRefActionFromSnapshot({ compiledAction, snapshotData: comboboxSnapshot }), undefined);
+	assert.deepEqual(resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction, snapshotData: comboboxSnapshot })?.args, ["fill", "@e17", "private search"]);
+
+	const target = getVisibleRefFallbackTarget({ commandTokens: compiledAction.args });
+	const diagnostic = buildVisibleRefFallbackDiagnosticFromSnapshot({ snapshotData: comboboxSnapshot, target: target! });
+	assert.deepEqual(diagnostic?.candidates.map((candidate) => candidate.args), [undefined]);
+	assert.equal(JSON.stringify(sanitizeVisibleRefFallbackDiagnostic(diagnostic!)).includes("private search"), false);
+
+	const ambiguousSnapshot = {
+		...comboboxSnapshot,
+		refs: {
+			e17: { name: "Search", role: "combobox" },
+			e18: { name: "Search", role: "combobox" },
+		},
+		snapshot: '- combobox "Search" [ref=e17]\n- combobox "Search" [ref=e18]',
+	};
+	assert.equal(resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction, snapshotData: ambiguousSnapshot }), undefined);
+
+	const nonEditableSnapshot = {
+		...comboboxSnapshot,
+		refs: {
+			e17: { editable: false, name: "Search", role: "combobox" },
+		},
+		snapshot: '- combobox "Search" [editable=false, ref=e17]',
+	};
+	assert.equal(resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction, snapshotData: nonEditableSnapshot }), undefined);
+});

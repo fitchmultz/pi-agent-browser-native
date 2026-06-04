@@ -188,6 +188,13 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match((missingText.content[0] as { text: string }).text, /semanticAction\.text is required for fill/);
 			assert.equal(missingText.details?.failureCategory, "validation-error");
 
+			const unsupportedUncheck = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "uncheck", locator: "label", value: "Agree terms" },
+			});
+			assert.equal(unsupportedUncheck.isError, true);
+			assert.match((unsupportedUncheck.content[0] as { text: string }).text, /semanticAction\.action must be one of: check, click, fill, select/);
+			assert.equal(unsupportedUncheck.details?.failureCategory, "validation-error");
+
 			const unsupportedRoleName = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "click", locator: "text", value: "Export", name: "Export" },
 			});
