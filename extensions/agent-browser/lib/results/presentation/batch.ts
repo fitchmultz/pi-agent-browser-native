@@ -1,5 +1,5 @@
 import { isRecord } from "../../parsing.js";
-import { extractCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
+import { extractCommandTokens, getClipboardWriteArgumentValues, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
 import { formatSessionArtifactRetentionSummary } from "../artifact-manifest.js";
@@ -91,6 +91,7 @@ function getStatefulCommandSensitiveValues(command: string[] | undefined): strin
 	if (!command) return [];
 	const tokens = extractCommandTokens(command);
 	const values: string[] = [];
+	values.push(...getClipboardWriteArgumentValues(tokens));
 	if (tokens[0] === "cookies" && tokens[1] === "set" && tokens[3]) values.push(tokens[3]);
 	if (tokens[0] === "storage" && ["local", "session"].includes(tokens[1] ?? "") && tokens[2] === "set" && tokens[4]) values.push(tokens[4]);
 	for (let index = 0; index < tokens.length; index += 1) {

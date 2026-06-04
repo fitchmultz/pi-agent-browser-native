@@ -30,6 +30,52 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
+test("agentBrowserExtension redacts denied clipboard write payloads from all result surfaces", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-clipboard-denied-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+let stdin = "";
+function clipboardError(command) {
+  const payload = command.slice(2).join(" ");
+  return "NotAllowedError: Failed to execute 'writeText' on 'Clipboard': Write permission denied for " + payload + ".";
+}
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  if (args.includes("batch")) {
+    const steps = JSON.parse(stdin);
+    process.stdout.write(JSON.stringify(steps.map((command) => ({ command, success: false, error: clipboardError(command) }))));
+  } else {
+    process.stdout.write(JSON.stringify({ success: false, error: clipboardError(args.slice(args.indexOf("clipboard"))) }));
+  }
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const standalone = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["clipboard", "write", "clipboard-secret"] });
+			assert.equal(standalone.isError, true, JSON.stringify(standalone));
+			assert.match((standalone.content[0] as { text: string }).text, /Agent-browser clipboard hint:/);
+			assert.doesNotMatch(JSON.stringify(standalone), /clipboard-secret/);
+
+			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["clipboard", "write", "clipboard-secret"]]),
+			});
+			assert.equal(batch.isError, true, JSON.stringify(batch));
+			assert.match((batch.content[0] as { text: string }).text, /clipboard write \[REDACTED\]/);
+			assert.doesNotMatch(JSON.stringify(batch), /clipboard-secret/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects dangling value-taking flags before spawning agent-browser", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");

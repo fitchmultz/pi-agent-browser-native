@@ -307,6 +307,11 @@ function redactFlagValue(flag: string, value: string): string {
 	return redactUrlToken(value);
 }
 
+export function getClipboardWriteArgumentValues(commandTokens: readonly string[]): string[] {
+	if (commandTokens[0] !== "clipboard" || commandTokens[1] !== "write") return [];
+	return commandTokens.slice(2).filter((value) => value.length > 0);
+}
+
 export function redactInvocationArgs(args: string[]): string[] {
 	const redacted: string[] = [];
 	let pendingValueFlag: string | undefined;
@@ -353,6 +358,12 @@ export function redactInvocationArgs(args: string[]): string[] {
 		&& redacted[commandStartIndex + 4] !== undefined
 	) {
 		redacted[commandStartIndex + 4] = "[REDACTED]";
+	}
+
+	if (commandStartIndex !== undefined && args[commandStartIndex] === "clipboard" && args[commandStartIndex + 1] === "write") {
+		for (let index = commandStartIndex + 2; index < redacted.length; index += 1) {
+			redacted[index] = "[REDACTED]";
+		}
 	}
 
 	return redacted;
