@@ -1,5 +1,6 @@
 /** Target/suite runner for pi-agent-browser-native platform smoke. */
 
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -14,7 +15,7 @@ import {
 	writeManifest,
 	writeSummary,
 } from "./artifacts.mjs";
-import { cleanupStaleTargetState, runOnLease, stopLease, warmupLease } from "./crabbox-runner.mjs";
+import { cleanupStaleTargetState, crabboxBin, describeTarget, runOnLease, stopLease, warmupLease } from "./crabbox-runner.mjs";
 
 export function platformFor(targetName) {
 	return targetName === "windows-native" ? "powershell" : "posix";
@@ -36,6 +37,45 @@ function authEnvAllowList(config = {}) {
 	const raw = process.env.PLATFORM_SMOKE_AUTH_ENV;
 	const names = raw ? raw.split(",") : (config.defaultAuthEnv ?? []);
 	return names.map((name) => String(name).trim()).filter(Boolean);
+}
+
+function packageVersion() {
+	try {
+		return JSON.parse(readFileSync("package.json", "utf8")).version ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function crabboxVersion() {
+	try {
+		return execFileSync(crabboxBin(), ["--version"], { encoding: "utf8", stdio: "pipe", timeout: 10_000 }).trim().split(/\r?\n/)[0] ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function targetEvidence(config, targetName, runId, slug) {
+	const target = describeTarget(targetName, config);
+	return {
+		targetName,
+		platform: platformFor(targetName),
+		runId,
+		slug,
+		packageName: config.packageName,
+		packageVersion: packageVersion(),
+		crabbox: {
+			binary: crabboxBin(),
+			version: crabboxVersion(),
+			provider: target.provider,
+			target: target.crabboxTarget,
+			workRoot: target.workRoot,
+			image: target.image,
+			windowsMode: target.windowsMode,
+			sourceVm: target.sourceVm,
+			snapshot: target.snapshot,
+		},
+	};
 }
 
 function writeRedacted(path, text, secretValues) {
@@ -141,12 +181,11 @@ function finalizeSuite(suiteDir, checks, summary, expectedFiles) {
 	return { assertions: finalAssertions, manifest: writeManifest(suiteDir, [...expectedFiles, "failures.md"]) };
 }
 
-export function createLeaseCleanupResult(config, targetName, leaseId, stopResult, staleCleanupResult = null) {
+export function createLeaseCleanupResult(config, targetName, leaseId, stopResult, staleCleanupResult = null, runId = makeRunId()) {
 	const suiteName = "lease-cleanup";
-	const runId = makeRunId();
 	const suiteDir = createSuiteDir(config.artifactRoot, runId, targetName, suiteName);
 	const secretValues = collectSecretValues(authEnvAllowList(config));
-	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify({ targetName, platform: platformFor(targetName), runId, slug: `${config.packageName}-${targetName}` }, null, 2));
+	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify(targetEvidence(config, targetName, runId, `${config.packageName}-${targetName}`), null, 2));
 	writeFileSync(resolve(suiteDir, "suite.json"), JSON.stringify({ suiteName, leaseId, modelCalls: 0 }, null, 2));
 	writeCommand(suiteDir, `crabbox stop ${targetName} --id ${leaseId}`);
 	writeExitCode(suiteDir, stopResult.code, stopResult.signal);
@@ -180,16 +219,15 @@ export function createLeaseCleanupResult(config, targetName, leaseId, stopResult
 	return { ok: assertions.ok, suiteDir, assertions };
 }
 
-export function createLeaseCleanupFailureResult(config, targetName, leaseId, stopResult) {
-	return createLeaseCleanupResult(config, targetName, leaseId, stopResult);
+export function createLeaseCleanupFailureResult(config, targetName, leaseId, stopResult, runId) {
+	return createLeaseCleanupResult(config, targetName, leaseId, stopResult, null, runId);
 }
 
-export function createLeaseWarmupFailureResult(config, targetName, warmupResult) {
+export function createLeaseWarmupFailureResult(config, targetName, warmupResult, runId = makeRunId()) {
 	const suiteName = "lease-warmup";
-	const runId = makeRunId();
 	const suiteDir = createSuiteDir(config.artifactRoot, runId, targetName, suiteName);
 	const secretValues = collectSecretValues(authEnvAllowList(config));
-	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify({ targetName, platform: platformFor(targetName), runId, slug: `${config.packageName}-${targetName}` }, null, 2));
+	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify(targetEvidence(config, targetName, runId, `${config.packageName}-${targetName}`), null, 2));
 	writeFileSync(resolve(suiteDir, "suite.json"), JSON.stringify({ suiteName, modelCalls: 0 }, null, 2));
 	writeCommand(suiteDir, `crabbox warmup ${targetName}`);
 	writeExitCode(suiteDir, warmupResult.code, warmupResult.signal);
@@ -301,14 +339,13 @@ export function buildBrowserDogfoodCommand(targetName, agentBrowserVersion = "0.
 	return lines.join("\n");
 }
 
-async function runBrowserDogfoodSuite(config, targetName, suiteName, leaseSession) {
-	const runId = makeRunId();
+async function runBrowserDogfoodSuite(config, targetName, suiteName, leaseSession, runId = makeRunId()) {
 	const suiteDir = createSuiteDir(config.artifactRoot, runId, targetName, suiteName);
 	const startedAt = Date.now();
 	const platform = platformFor(targetName);
 	const slug = `${config.packageName}-${targetName}`;
 	const command = buildBrowserDogfoodCommand(targetName, config.agentBrowserVersion);
-	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify({ targetName, platform, runId, slug }, null, 2));
+	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify(targetEvidence(config, targetName, runId, slug), null, 2));
 	writeFileSync(resolve(suiteDir, "suite.json"), JSON.stringify({ suiteName, modelCalls: 0, realBrowser: true }, null, 2));
 	writeCommand(suiteDir, command);
 
@@ -367,15 +404,14 @@ async function runBrowserDogfoodSuite(config, targetName, suiteName, leaseSessio
 	return { ok: assertions.ok, suiteDir, assertions };
 }
 
-async function runPlatformBuildSuite(config, targetName, suiteName, leaseSession) {
-	const runId = makeRunId();
+async function runPlatformBuildSuite(config, targetName, suiteName, leaseSession, runId = makeRunId()) {
 	const suiteDir = createSuiteDir(config.artifactRoot, runId, targetName, suiteName);
 	const startedAt = Date.now();
 	const platform = platformFor(targetName);
 	const slug = `${config.packageName}-${targetName}`;
 	const command = buildPlatformBuildCommand(targetName, config.packageName, config.nodeValidationMajor);
 	mkdirSync(dirname(suiteDir), { recursive: true });
-	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify({ targetName, platform, runId, slug }, null, 2));
+	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify(targetEvidence(config, targetName, runId, slug), null, 2));
 	writeFileSync(resolve(suiteDir, "suite.json"), JSON.stringify({ suiteName, modelCalls: 0 }, null, 2));
 	writeCommand(suiteDir, command);
 
@@ -436,17 +472,18 @@ async function runPlatformBuildSuite(config, targetName, suiteName, leaseSession
 	return { ok: assertions.ok, suiteDir, assertions };
 }
 
-export async function runTargetSuite(config, targetName, suiteName, leaseSession) {
-	if (suiteName === "platform-build") return await runPlatformBuildSuite(config, targetName, suiteName, leaseSession);
-	if (suiteName === "browser-dogfood-smoke") return await runBrowserDogfoodSuite(config, targetName, suiteName, leaseSession);
+export async function runTargetSuite(config, targetName, suiteName, leaseSession, runId) {
+	if (suiteName === "platform-build") return await runPlatformBuildSuite(config, targetName, suiteName, leaseSession, runId);
+	if (suiteName === "browser-dogfood-smoke") return await runBrowserDogfoodSuite(config, targetName, suiteName, leaseSession, runId);
 	throw new Error(`unknown suite: ${suiteName}`);
 }
 
 export async function runTargetSuites(config, targetName, suiteNames) {
 	const slug = `${config.packageName}-${targetName}`;
+	const runId = makeRunId();
 	const lease = await warmupLease(targetName, slug, config);
 	if (!lease.ok) {
-		const warmupFailure = createLeaseWarmupFailureResult(config, targetName, lease);
+		const warmupFailure = createLeaseWarmupFailureResult(config, targetName, lease, runId);
 		return { ok: false, results: [warmupFailure] };
 	}
 	const results = [];
@@ -455,7 +492,7 @@ export async function runTargetSuites(config, targetName, suiteNames) {
 	try {
 		let sync = true;
 		for (const suiteName of suiteNames) {
-			const result = await runTargetSuite(config, targetName, suiteName, { ...lease, sync });
+			const result = await runTargetSuite(config, targetName, suiteName, { ...lease, sync }, runId);
 			results.push(result);
 			sync = false;
 			if (!result.ok) break;
@@ -465,7 +502,7 @@ export async function runTargetSuites(config, targetName, suiteNames) {
 		staleCleanupResult = await cleanupStaleTargetState(targetName, config);
 	}
 	if (stopResult) {
-		results.push(createLeaseCleanupResult(config, targetName, lease.leaseId, stopResult, staleCleanupResult));
+		results.push(createLeaseCleanupResult(config, targetName, lease.leaseId, stopResult, staleCleanupResult, runId));
 	}
 	return { ok: results.every((result) => result.ok), results };
 }

@@ -105,6 +105,17 @@ function checkForbiddenProjectFiles(failures) {
 }
 
 function crabboxProviders(cbox) {
+	const jsonOutput = silent(cbox, ["providers", "--json"]);
+	if (jsonOutput) {
+		try {
+			const parsed = JSON.parse(jsonOutput);
+			if (Array.isArray(parsed)) return parsed.map((provider) => provider.name ?? provider.id ?? provider.provider).filter(Boolean);
+			if (Array.isArray(parsed.providers)) return parsed.providers.map((provider) => provider.name ?? provider.id ?? provider.provider).filter(Boolean);
+			if (typeof parsed === "object" && parsed) return Object.keys(parsed.providers ?? parsed);
+		} catch {
+			// Fall through to text parsing for older or non-JSON provider output.
+		}
+	}
 	const output = silent(cbox, ["providers"]);
 	if (!output) return [];
 	return output.split(/\r?\n/)
@@ -212,9 +223,10 @@ export async function runDoctor(config) {
 		const ubuntuImage = env("PLATFORM_SMOKE_UBUNTU_IMAGE") || config?.ubuntuContainerImage || "pi-agent-browser-native-platform:node24-agent-browser0.27.1";
 		checkCrabboxProvider(cbox, ["--provider", "local-container", "--local-container-image", ubuntuImage], "ubuntu local-container", failures);
 		const macUser = env("PLATFORM_SMOKE_MAC_USER") || env("USER");
-		const macHost = env("PLATFORM_SMOKE_MAC_HOST") || "localhost";
-		const macRoot = env("PLATFORM_SMOKE_MAC_WORK_ROOT") || `/Users/${macUser}/crabbox/${packageName}`;
-		checkCrabboxProvider(cbox, ["--provider", "ssh", "--target", "macos", "--static-host", macHost, "--static-user", macUser, "--static-port", "22", "--static-work-root", macRoot], "macOS ssh", failures);
+		const macHost = env("PLATFORM_SMOKE_MAC_HOST") || config?.macos?.host || "localhost";
+		const macPort = String(env("PLATFORM_SMOKE_MAC_PORT") || config?.macos?.port || 22);
+		const macRoot = env("PLATFORM_SMOKE_MAC_WORK_ROOT") || config?.macos?.workRoot || `/Users/${macUser}/crabbox/${packageName}`;
+		checkCrabboxProvider(cbox, ["--provider", "ssh", "--target", "macos", "--static-host", macHost, "--static-user", macUser, "--static-port", macPort, "--static-work-root", macRoot], "macOS ssh", failures);
 	}
 
 	console.log("\n── Docker / Ubuntu ──");
@@ -226,8 +238,9 @@ export async function runDoctor(config) {
 
 	console.log("\n── macOS SSH ──");
 	const sshUser = env("PLATFORM_SMOKE_MAC_USER") || env("USER");
-	const sshHost = env("PLATFORM_SMOKE_MAC_HOST") || "localhost";
-	const sshProbe = shell(`ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${sshUser}@${sshHost} 'node --version && npm --version && git --version && agent-browser --version'`);
+	const sshHost = env("PLATFORM_SMOKE_MAC_HOST") || config?.macos?.host || "localhost";
+	const sshPort = String(env("PLATFORM_SMOKE_MAC_PORT") || config?.macos?.port || 22);
+	const sshProbe = shell(`ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -p ${sshPort} ${sshUser}@${sshHost} 'node --version && npm --version && git --version && agent-browser --version'`);
 	if (sshProbe) {
 		ok(`SSH ${sshUser}@${sshHost}: ${sshProbe.split(/\r?\n/).join(" | ")}`);
 		if (agentBrowserVersion && !sshProbe.includes(agentBrowserVersion)) fail(`macOS SSH agent-browser does not match expected ${agentBrowserVersion}`, failures);
@@ -241,10 +254,10 @@ export async function runDoctor(config) {
 			fail("prlctl not found", failures);
 		} else {
 			ok("prlctl found");
-			const vmName = env("PLATFORM_SMOKE_WINDOWS_VM") || "pi-extension-windows-template";
-			const snapshot = env("PLATFORM_SMOKE_WINDOWS_SNAPSHOT") || "crabbox-ready";
-			const user = env("PLATFORM_SMOKE_WINDOWS_USER") || env("USER");
-			const workRoot = env("PLATFORM_SMOKE_WINDOWS_WORK_ROOT") || `C:\\crabbox\\${packageName}`;
+			const vmName = env("PLATFORM_SMOKE_WINDOWS_VM") || config?.windowsParallels?.sourceVm || "pi-extension-windows-template";
+			const snapshot = env("PLATFORM_SMOKE_WINDOWS_SNAPSHOT") || config?.windowsParallels?.snapshot || "crabbox-ready";
+			const user = env("PLATFORM_SMOKE_WINDOWS_USER") || config?.windowsParallels?.user || env("USER");
+			const workRoot = env("PLATFORM_SMOKE_WINDOWS_WORK_ROOT") || config?.windowsParallels?.workRoot || `C:\\crabbox\\${packageName}`;
 			const list = shell("prlctl list -a --no-header 2>/dev/null");
 			if (!list) {
 				fail("prlctl list returned no VMs", failures);

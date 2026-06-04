@@ -8,11 +8,20 @@ export default {
 	artifactRoot: ".artifacts/platform-smoke",
 	requiredTargets: ["macos", "ubuntu", "windows-native"],
 	requiredSuites: ["platform-build", "browser-dogfood-smoke"],
+	supportedTargets: ["macos", "ubuntu", "windows-native"],
 	requiredCrabbox: {
 		install: "Homebrew package or PLATFORM_SMOKE_CRABBOX override",
-		minVersion: "0.24.0",
+		minVersion: "0.26.0",
+	},
+	macos: {
+		host: "localhost",
+		port: 22,
 	},
 	ubuntuContainerImage: "pi-agent-browser-native-platform:node24-agent-browser0.27.1",
+	windowsParallels: {
+		sourceVm: "pi-extension-windows-template",
+		snapshot: "crabbox-ready",
+	},
 	nodeValidationMajor: 22,
 	agentBrowserVersion: CAPABILITY_BASELINE.targetVersion,
 };

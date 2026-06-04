@@ -6,15 +6,18 @@ This is a release-blocking gate. Missing Crabbox setup, Docker, macOS SSH, the n
 
 ## Required release gate
 
-Run the cheap harness checks first, then the full matrix:
+Run the cheap harness checks first, build the project-owned Ubuntu image, run doctor explicitly, then run the full matrix and inspect the evidence:
 
 ```sh
 npm run check:platform-smoke
 npm run smoke:platform:ubuntu-image
+npm run smoke:platform:doctor
 npm run smoke:platform:all
+crabbox list --provider local-container
+crabbox list --provider parallels
 ```
 
-`smoke:platform:all` runs `smoke:platform:doctor` before any target suite starts. The canonical `npm run verify -- release` gate also runs the same platform doctor and full `macos,ubuntu,windows-native` matrix after default verification and packaged Pi smoke, so `npm publish` cannot pass `prepublishOnly` without the platform gate.
+`smoke:platform:all` also runs `smoke:platform:doctor` before any target suite starts, so the explicit doctor step is a readable release checklist step rather than a hidden precondition. The canonical `npm run verify -- release` gate also runs the same platform doctor and full `macos,ubuntu,windows-native` matrix after default verification and packaged Pi smoke, so `npm publish` cannot pass `prepublishOnly` without the platform gate. After the matrix, inspect `.artifacts/platform-smoke/<run-id>/...` summaries and manifests; a green Crabbox exit without matching suite assertions is not release proof. Use provider-specific `crabbox list` commands for cleanup review because this host may have unrelated Crabbox providers configured that require credentials.
 
 Per-target commands are for diagnosis:
 
@@ -43,7 +46,7 @@ crabbox --version
 crabbox providers
 ```
 
-Use `PLATFORM_SMOKE_CRABBOX=/path/to/crabbox` only when testing a non-default Crabbox binary.
+Use Crabbox `0.26.0` or newer. Use `PLATFORM_SMOKE_CRABBOX=/path/to/crabbox` only when testing a non-default Crabbox binary.
 
 Standard configuration knobs:
 
@@ -51,6 +54,8 @@ Standard configuration knobs:
 PLATFORM_SMOKE_MAC_HOST=localhost
 PLATFORM_SMOKE_MAC_USER="$USER"
 PLATFORM_SMOKE_MAC_WORK_ROOT="/Users/$USER/crabbox/pi-agent-browser-native"
+# Optional only when localhost SSH does not use port 22.
+PLATFORM_SMOKE_MAC_PORT=22
 
 # Default local image built by npm run smoke:platform:ubuntu-image.
 PLATFORM_SMOKE_UBUNTU_IMAGE="pi-agent-browser-native-platform:node24-agent-browser0.27.1"
@@ -64,7 +69,7 @@ PLATFORM_SMOKE_WINDOWS_WORK_ROOT="C:\\crabbox\\pi-agent-browser-native"
 PLATFORM_SMOKE_AUTH_ENV=""
 ```
 
-The Ubuntu target image is derived from `node:24-bookworm`, installs `agent-browser@0.27.1`, installs Debian Chromium through apt, creates a non-root `circleci` user, and sets `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium`. Rebuild it after upstream rebaselining, or override `PLATFORM_SMOKE_UBUNTU_IMAGE` with an equivalent prepared local image. Do not install `agent-browser` ad hoc inside the Ubuntu smoke command.
+The Ubuntu target image is derived from `node:24-bookworm`, installs `agent-browser@0.27.1`, installs Debian Chromium through apt, creates a non-root `circleci` user, and sets `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium`. Rebuild it after upstream rebaselining, or override `PLATFORM_SMOKE_UBUNTU_IMAGE` with an equivalent prepared local image. Do not install `agent-browser` ad hoc inside the Ubuntu smoke command; a missing tool is image/template drift.
 
 The configured upstream `agent-browser` baseline is imported from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs). Target-local browser suites verify that exact `agent-browser` version before running. Bake the exact upstream CLI and browser runtime into the Windows template/snapshot for speed and reproducibility; missing or stale Windows `agent-browser` / browser readiness is a blocked setup, not something the smoke command repairs. The Windows browser suite checks the preinstalled browser cache and prewarms one short local file URL before the extension harness runs.
 
@@ -78,7 +83,7 @@ Crabbox does not install project runtime tools. The macOS host, Ubuntu image, an
 - Browser/runtime dependencies needed by upstream `agent-browser`.
 - Native PowerShell and OpenSSH Server on Windows.
 
-For Windows, reuse `pi-extension-windows-template` with the shared canonical `crabbox-ready` power-off snapshot. Do not create one-off project VMs. If a reusable tool is missing, update the shared template, verify from a fresh SSH session, remove caches/secrets/checkouts, shut down cleanly, and promote a known-good power-off snapshot.
+For Windows, reuse `pi-extension-windows-template` with the shared canonical `crabbox-ready` power-off snapshot configured in [`platform-smoke.config.mjs`](../platform-smoke.config.mjs). Do not create one-off project VMs or run tests directly on the source VM. If a reusable tool is missing, update the shared template, verify from a fresh SSH session, remove caches/secrets/checkouts, shut down cleanly, and promote a known-good power-off snapshot.
 
 ## What the suites prove
 
@@ -108,7 +113,7 @@ The dogfood suite intentionally uses the checkout harness while `platform-build`
 
 ## Artifact contract
 
-Every target suite writes host-side evidence under:
+Every target run writes host-side evidence under one run id shared by that target’s suites:
 
 ```text
 .artifacts/platform-smoke/<run-id>/<target>/<suite>/
@@ -117,9 +122,9 @@ Every target suite writes host-side evidence under:
 Required files include:
 
 ```text
-summary.json
+summary.json           # includes ok, target, suite, exit code, elapsed time, writtenAt
 artifact-manifest.json
-target.json
+target.json            # package, package version, Crabbox binary/version, provider, work root/image/template
 suite.json
 command.txt
 exit-code.txt

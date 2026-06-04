@@ -66,19 +66,26 @@ test("platform smoke config and package scripts require macOS, Ubuntu, and nativ
 import config from "./platform-smoke.config.mjs";
 const result = {
   agentBrowserVersion: config.agentBrowserVersion,
+  crabboxMinVersion: config.requiredCrabbox.minVersion,
   nodeValidationMajor: config.nodeValidationMajor,
   packageName: config.packageName,
+  supportedTargets: config.supportedTargets,
   ubuntuContainerImage: config.ubuntuContainerImage,
+  windowsSourceVm: config.windowsParallels.sourceVm,
+  windowsSnapshot: config.windowsParallels.snapshot,
   suites: config.requiredSuites,
   targets: config.requiredTargets,
 };
 console.log(JSON.stringify(result));
 if (result.packageName !== "pi-agent-browser-native") process.exit(1);
+if (result.crabboxMinVersion !== "0.26.0") process.exit(1);
 if (result.nodeValidationMajor !== 22) process.exit(1);
 if (!result.ubuntuContainerImage.includes("agent-browser0.27.1")) process.exit(1);
+if (result.windowsSourceVm !== "pi-extension-windows-template" || result.windowsSnapshot !== "crabbox-ready") process.exit(1);
 if (!/^\d+\.\d+\.\d+$/.test(result.agentBrowserVersion)) process.exit(1);
 if (result.suites.join(",") !== "platform-build,browser-dogfood-smoke") process.exit(1);
 if (result.targets.join(",") !== "macos,ubuntu,windows-native") process.exit(1);
+if (result.supportedTargets.join(",") !== "macos,ubuntu,windows-native") process.exit(1);
 `;
 	const result = run(process.execPath, ["--input-type=module", "-e", code]);
 	assert.equal(result.status, 0, result.stderr);
@@ -156,6 +163,7 @@ try {
   });
   const assertions = JSON.parse(readFileSync(join(cleanup.suiteDir, "assertions.json"), "utf8"));
   const successManifest = JSON.parse(readFileSync(join(cleanupSuccess.suiteDir, "artifact-manifest.json"), "utf8"));
+  const successTarget = JSON.parse(readFileSync(join(cleanupSuccess.suiteDir, "target.json"), "utf8"));
   const env = { ZAI_API_KEY: "zai-secret-value-1234567890" };
   const secrets = collectSecretValues(["ZAI_API_KEY"], env);
   const redacted = redactSecrets("token=" + env.ZAI_API_KEY, secrets);
@@ -165,6 +173,7 @@ try {
     cleanupOk: cleanup.ok,
     cleanupSuccessOk: cleanupSuccess.ok,
     cleanupSuccessRecorded: successManifest.present.includes("crabbox.stop.stdout.txt") && successManifest.present.includes("crabbox.cleanup.stdout.txt"),
+    cleanupTargetMetadata: successTarget.packageName === "pi-agent-browser-native" && successTarget.crabbox.provider === "local-container" && successTarget.crabbox.workRoot === "/work/crabbox",
     warmupFailureRecorded: warmupFailure.ok === false && readFileSync(join(warmupFailure.suiteDir, "failures.md"), "utf8").includes("lease-warmup"),
     assertionsOk: assertions.ok,
     leaseCleanupFailed: assertions.checks.some((check) => check.id === "lease-cleanup" && check.ok === false),
@@ -172,7 +181,7 @@ try {
     secretRedacted: !redacted.includes(env.ZAI_API_KEY) && redacted.includes("[REDACTED_SECRET]"),
   };
   console.log(JSON.stringify(result));
-  if (!result.manifestIncludesSelf || !result.missingRecorded || result.cleanupOk || !result.cleanupSuccessOk || !result.cleanupSuccessRecorded || !result.warmupFailureRecorded || result.assertionsOk || !result.leaseCleanupFailed || !result.secretDetected || !result.secretRedacted) process.exit(1);
+  if (!result.manifestIncludesSelf || !result.missingRecorded || result.cleanupOk || !result.cleanupSuccessOk || !result.cleanupSuccessRecorded || !result.cleanupTargetMetadata || !result.warmupFailureRecorded || result.assertionsOk || !result.leaseCleanupFailed || !result.secretDetected || !result.secretRedacted) process.exit(1);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

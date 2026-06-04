@@ -26,6 +26,7 @@ npm install
 npm run doctor
 npm run check:platform-smoke
 npm run smoke:platform:ubuntu-image
+npm run smoke:platform:doctor
 npm run verify -- release
 ```
 
@@ -50,12 +51,17 @@ npm run verify -- dogfood
 For direct Crabbox diagnostics outside the full release compose, run:
 
 ```bash
-npm run smoke:platform:doctor
+npm run check:platform-smoke
 npm run smoke:platform:ubuntu-image
+npm run smoke:platform:doctor
 npm run smoke:platform:all
+crabbox list --provider local-container
+crabbox list --provider parallels
 ```
 
-This mode uses the extension harness and the real `agent-browser` on `PATH` against a deterministic local file fixture, then verifies top-level `qa`, `semanticAction`, constrained `job`, screenshot artifact verification, and session close. Use `npm run verify -- dogfood --keep-artifacts` or `--artifact-dir <path>` only while debugging, then delete retained screenshots. This smoke complements, but does not replace, human-readable interactive transcript evidence.
+The Crabbox gate is only green when suite assertions and artifact manifests under `.artifacts/platform-smoke/` are green and no unexpected lease/clone remains.
+
+The deterministic dogfood mode uses the extension harness and the real `agent-browser` on `PATH` against a deterministic local file fixture, then verifies top-level `qa`, `semanticAction`, constrained `job`, screenshot artifact verification, and session close. Use `npm run verify -- dogfood --keep-artifacts` or `--artifact-dir <path>` only while debugging, then delete retained screenshots. This smoke complements, but does not replace, human-readable interactive transcript evidence.
 
 Every release also requires interactive `tmux`-driven Pi dogfood with the native `agent_browser` tool against real sites. For extension-focused release smokes, use `pi --no-extensions --no-skills -e .` from the checkout before publish so auto-loaded dogfood/QA skills cannot replace the bounded smoke workflow; run separate skill-enabled dogfood only when validating skill routing or report-generation behavior. Drive prompts with `tmux send-keys`, exercise at least one simple static site and one real documentation/product site, include the higher-level `qa` or `job`/`batch` surfaces when they changed, close every opened browser session, remove screenshots/temp artifacts, and record the outcome in the release notes or support-matrix evidence. Automated localhost, fake-upstream, and deterministic dogfood gates do not replace this human-readable live-site transcript evidence. When `agent_browser_web_search` or package config changed, add one key-free smoke proving the optional tool is absent without config, one fake/unit-backed smoke in the default suite, and one opt-in live Exa or Brave Search check with a real key while confirming the key does not appear in transcripts, stdout/stderr, config status, PR text, or artifacts. When `electron.*` surfaces, attached-session diagnostics, or `qa.attached` changed, add a local Electron pass: `electron.list` → `electron.launch` (expect isolated profile behavior) → `snapshot -i` or `electron.probe` / `qa.attached` → `electron.cleanup` with the returned `launchId`, verifying status/mismatch guidance if you simulate a dead renderer or stale refs. For dense-dashboard stress coverage, use the [public Grafana stress checklist](#public-grafana-stress-checklist) below; it is a maintainer workflow, not bundled product skill or recipe runtime.
 

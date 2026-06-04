@@ -575,10 +575,11 @@ Cross-platform release coverage uses Crabbox to run macOS, Ubuntu Linux, and nat
 ```bash
 npm run check:platform-smoke
 npm run smoke:platform:ubuntu-image
+npm run smoke:platform:doctor
 npm run smoke:platform:all
 ```
 
-The required matrix is documented in [`docs/platform-smoke.md`](docs/platform-smoke.md). It runs `platform-build` (fast target-local verify, pack, clean packed Pi install, `pi list`) and `browser-dogfood-smoke` (real `agent-browser`/browser wrapper smoke) on every target.
+The required matrix is documented in [`docs/platform-smoke.md`](docs/platform-smoke.md). It runs `platform-build` (fast target-local verify, pack, clean packed Pi install, `pi list`) and `browser-dogfood-smoke` (real `agent-browser`/browser wrapper smoke) on every target. Inspect `.artifacts/platform-smoke/` and check `crabbox list --provider local-container` plus `crabbox list --provider parallels` after release runs so cleanup proof is not chat-only.
 
 For package release confidence, follow [`docs/RELEASE.md`](docs/RELEASE.md). The release gate is:
 
@@ -586,6 +587,7 @@ For package release confidence, follow [`docs/RELEASE.md`](docs/RELEASE.md). The
 npm run doctor
 npm run check:platform-smoke
 npm run smoke:platform:ubuntu-image
+npm run smoke:platform:doctor
 npm run verify -- release
 ```
 
