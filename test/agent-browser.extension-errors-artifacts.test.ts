@@ -989,11 +989,18 @@ test("agentBrowserExtension tracks fresh managed sessions that fail after allowe
 const args = process.argv.slice(2);
 const statePath = ${JSON.stringify(statePath)};
 function writeState(state) { fs.writeFileSync(statePath, JSON.stringify(state)); }
+function readState() { try { return JSON.parse(fs.readFileSync(statePath, "utf8")); } catch { return { title: "", url: "about:blank" }; } }
 if (args.includes("open")) {
   const url = args.at(-1);
   const state = url.includes("iana.org") ? { title: "Example Domains", url } : { title: "Example Domain", url: "https://example.com/" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: state }));
+} else if (args.includes("click")) {
+  const state = { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
+  writeState(state);
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else if (args.includes("eval")) {
+  process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else if (args.includes("close")) {
   process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 } else {
@@ -1018,7 +1025,14 @@ if (args.includes("open")) {
 			assert.equal(outcome?.succeeded, false);
 			assert.equal(outcome?.currentSessionName, escapedOpen.details?.sessionName);
 
-			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			const branch = [createToolBranchEntry({ details: escapedOpen.details ?? {}, isError: true })];
+			const reloadedHarness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(reloadedHarness.handlers, "session_start", { reason: "reload" }, reloadedHarness.ctx);
+			const reloadedEscape = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, { args: ["click", "@e2"] });
+			assert.equal(reloadedEscape.isError, true, JSON.stringify(reloadedEscape));
+			assert.equal(reloadedEscape.details?.failureCategory, "policy-blocked");
+
+			const close = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, { args: ["close"] });
 			assert.equal(close.isError, false, JSON.stringify(close));
 			const closeOutcome = close.details?.managedSessionOutcome as { attemptedSessionName?: string; status?: string } | undefined;
 			assert.equal(closeOutcome?.status, "closed");

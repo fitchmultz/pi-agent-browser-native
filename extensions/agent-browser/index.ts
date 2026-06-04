@@ -640,7 +640,10 @@ function restoreAllowedDomainsBySessionFromBranch(branch: unknown[]): Map<string
 		for (const cleanupResult of cleanupResults) {
 			for (const closedSessionName of getCleanupResultClosedManagedSessionNames(cleanupResult)) restoredPolicies.delete(closedSessionName);
 		}
-		const policy = succeeded && sessionName && !isCloseCommand(command) ? parseAllowedDomainsPolicyFromArgs(args) : undefined;
+		const outcomeKeepsSessionCurrent = outcome?.activeAfter === true
+			&& (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged")
+			&& outcomeCurrentSessionName === sessionName;
+		const policy = (succeeded || outcomeKeepsSessionCurrent) && sessionName && !isCloseCommand(command) ? parseAllowedDomainsPolicyFromArgs(args) : undefined;
 		if (policy && sessionName) restoredPolicies.set(sessionName, policy);
 	}
 	return restoredPolicies;
