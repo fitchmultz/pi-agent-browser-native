@@ -60,10 +60,10 @@ function getClipboardPermissionHint(commandInfo: CommandInfo, errorText: string)
 export function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorText: string): string {
 	if (commandInfo.command !== "clipboard") return errorText;
 	return errorText
-		.replace(/(\b(?:read|write)\s+permission denied\b(?:\s+for)?\s+)(.+)$/gim, "$1[REDACTED]")
-		.replace(/(\bFailed to execute '[^']+' on 'Clipboard':\s*)(.+)$/gim, (match, prefix: string, suffix: string) => {
+		.replace(/(\b(?:read|write)\s+permission denied\b(?:\s+for)?\s+)([\s\S]+)$/gi, "$1[REDACTED]")
+		.replace(/(\bFailed to execute '[^']+' on 'Clipboard':\s*)([\s\S]+)$/gi, (match, prefix: string, suffix: string) => {
 			if (!/\bpermission denied\b/i.test(suffix)) return match;
-			return `${prefix}${suffix.replace(/(\bpermission denied\b(?:\s+for)?\s+)(.+)$/i, "$1[REDACTED]")}`;
+			return `${prefix}${suffix.replace(/(\bpermission denied\b(?:\s+for)?\s+)([\s\S]+)$/i, "$1[REDACTED]")}`;
 		});
 }
 

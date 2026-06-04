@@ -307,11 +307,6 @@ function redactFlagValue(flag: string, value: string): string {
 	return redactUrlToken(value);
 }
 
-export function getClipboardWriteArgumentValues(commandTokens: readonly string[]): string[] {
-	if (commandTokens[0] !== "clipboard" || commandTokens[1] !== "write") return [];
-	return commandTokens.slice(2).filter((value) => value.length > 0);
-}
-
 export function redactInvocationArgs(args: string[]): string[] {
 	const redacted: string[] = [];
 	let pendingValueFlag: string | undefined;

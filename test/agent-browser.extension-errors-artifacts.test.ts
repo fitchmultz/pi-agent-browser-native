@@ -63,6 +63,10 @@ process.stdin.on("end", () => {
 			assert.match((standalone.content[0] as { text: string }).text, /Agent-browser clipboard hint:/);
 			assert.doesNotMatch(JSON.stringify(standalone), /clipboard-secret/);
 
+			const multiline = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["clipboard", "write", "clipboard-secret\nsecond-secret"] });
+			assert.equal(multiline.isError, true, JSON.stringify(multiline));
+			assert.doesNotMatch(JSON.stringify(multiline), /clipboard-secret|second-secret/);
+
 			const shortPayload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["clipboard", "write", "a"] });
 			assert.equal(shortPayload.isError, true, JSON.stringify(shortPayload));
 			assert.equal(shortPayload.details?.resultCategory, "failure");
@@ -79,6 +83,13 @@ process.stdin.on("end", () => {
 			assert.equal(batch.isError, true, JSON.stringify(batch));
 			assert.match((batch.content[0] as { text: string }).text, /clipboard write \[REDACTED\]/);
 			assert.doesNotMatch(JSON.stringify(batch), /clipboard-secret/);
+
+			const multilineBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["clipboard", "write", "clipboard-secret\nsecond-secret"]]),
+			});
+			assert.equal(multilineBatch.isError, true, JSON.stringify(multilineBatch));
+			assert.doesNotMatch(JSON.stringify(multilineBatch), /clipboard-secret|second-secret/);
 
 			const shortBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
