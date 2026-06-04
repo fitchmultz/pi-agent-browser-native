@@ -4,6 +4,17 @@
 
 No changes yet.
 
+## 0.2.44 - 2026-06-04
+
+### Changed
+
+- Updated the local Pi development baseline to `@earendil-works/*` `0.78.1` after reviewing the installed Pi 0.78.1 changelog, docs, examples, and extension source. The audit found no runtime migration needed for `ctx.mode` or command-only `ctx.getSystemPromptOptions()`, and kept the public peer dependency ranges non-pinning.
+- Extended the read-only package doctor with a warning-only `pi --version` check so release validation can catch a Pi CLI older than the audited 0.78.1 floor without making Pi 0.78.1 a hard runtime requirement.
+
+### Validation
+
+- Ran checkout-based interactive `tmux` Pi dogfood with `pi --no-extensions --no-skills -e .` on Pi 0.78.1: `agent_browser` opened and snapshotted `https://example.com`, ran a QA preset against `https://react.dev` expecting `React`, saved and verified a screenshot, reported no console/network/page errors, closed the browser session, and cleaned the temp artifact directory.
+
 ## 0.2.43 - 2026-06-04
 
 ### Added

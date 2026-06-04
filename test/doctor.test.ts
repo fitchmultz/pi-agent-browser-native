@@ -19,18 +19,28 @@ const doctorModule = (await import(doctorModulePath)) as {
 		pathExists?: (path: string) => Promise<boolean>;
 		readText?: (path: string) => Promise<string | undefined>;
 		runAgentBrowser?: (args: string[]) => Promise<string>;
+		runPi?: (args: string[]) => Promise<string>;
 		settingsPaths?: string[];
 		skipSourceCheck?: boolean;
 	}) => Promise<{ checks: Array<{ status: string; title: string; lines?: string[] }>; failures: unknown[]; warnings: string[] }>;
 	formatDoctorReport: (report: { checks: Array<{ status: string; title: string; lines?: string[] }>; failures: unknown[]; warnings?: string[] }) => string;
 	isDirectRun: (metaUrl: string, argv1?: string, resolveRealPath?: (path: string) => string) => boolean;
 	normalizeAgentBrowserVersion: (output: string) => string;
+	normalizePiVersion: (output: string) => string;
 	parseCliArgs: (argv?: string[]) => { agentDir?: string; cwd?: string; settingsPaths: string[]; showHelp: boolean; skipSourceCheck: boolean };
 };
-const { evaluateDoctor, formatDoctorReport, isDirectRun, normalizeAgentBrowserVersion, parseCliArgs } = doctorModule;
+const { evaluateDoctor, formatDoctorReport, isDirectRun, normalizeAgentBrowserVersion, normalizePiVersion, parseCliArgs } = doctorModule;
 
 function passingVersion() {
 	return `agent-browser ${CAPABILITY_BASELINE.targetVersion}\n`;
+}
+
+function passingPiVersion() {
+	return "0.78.1\n";
+}
+
+function evaluateDoctorWithPi(options: Parameters<typeof evaluateDoctor>[0] = {}) {
+	return evaluateDoctor({ runPi: async () => passingPiVersion(), ...options });
 }
 
 test("normalizeAgentBrowserVersion strips the upstream binary label", () => {
@@ -38,9 +48,14 @@ test("normalizeAgentBrowserVersion strips the upstream binary label", () => {
 	assert.equal(normalizeAgentBrowserVersion("0.26.0\n"), "0.26.0");
 });
 
+test("normalizePiVersion strips an optional pi binary label", () => {
+	assert.equal(normalizePiVersion("pi 0.78.1\n"), "0.78.1");
+	assert.equal(normalizePiVersion("0.78.1\n"), "0.78.1");
+});
+
 test("doctor reports missing agent-browser with actionable install guidance", async () => {
 	const missing = Object.assign(new Error("spawn agent-browser ENOENT"), { code: "ENOENT" });
-	const report = await evaluateDoctor({
+	const report = await evaluateDoctorWithPi({
 		runAgentBrowser: async () => {
 			throw missing;
 		},
@@ -57,7 +72,7 @@ test("doctor reports missing agent-browser with actionable install guidance", as
 });
 
 test("doctor reports version drift from the canonical baseline", async () => {
-	const report = await evaluateDoctor({
+	const report = await evaluateDoctorWithPi({
 		runAgentBrowser: async () => "agent-browser 0.25.0\n",
 		skipSourceCheck: true,
 	});
@@ -75,12 +90,42 @@ test("doctor reports version drift from the canonical baseline", async () => {
 	assert.match(text, /test\/fixtures\/agent-browser-real-output-shapes\.json/);
 });
 
+test("doctor warns instead of failing when Pi is below the recommended release floor", async () => {
+	const report = await evaluateDoctor({
+		runAgentBrowser: async () => passingVersion(),
+		runPi: async () => "0.78.0\n",
+		skipSourceCheck: true,
+	});
+	const text = formatDoctorReport(report);
+
+	assert.equal(report.failures.length, 0);
+	assert.match(text, /Pi 0\.78\.1 or newer is recommended; found 0\.78\.0/);
+	assert.match(text, /does not hard-pin Pi 0\.78\.1/);
+	assert.match(text, /Doctor passed/);
+});
+
+test("doctor warns instead of failing when Pi version cannot be inspected", async () => {
+	const report = await evaluateDoctor({
+		runAgentBrowser: async () => passingVersion(),
+		runPi: async () => {
+			throw Object.assign(new Error("spawn pi ENOENT"), { code: "ENOENT" });
+		},
+		skipSourceCheck: true,
+	});
+	const text = formatDoctorReport(report);
+
+	assert.equal(report.failures.length, 0);
+	assert.match(text, /Could not inspect pi --version/);
+	assert.match(text, /not hard-pinned as a runtime requirement/);
+	assert.match(text, /Doctor passed/);
+});
+
 test("doctor reports duplicate package and checkout sources with remediation", async () => {
 	const settingsByPath = new Map([
 		["/agent/settings.json", JSON.stringify({ packages: ["npm:pi-agent-browser-native"] })],
 		["/repo/.pi/settings.json", JSON.stringify({ extensions: ["/repo/extensions/agent-browser/index.ts"] })],
 	]);
-	const report = await evaluateDoctor({
+	const report = await evaluateDoctorWithPi({
 		agentDir: "/agent",
 		cwd: "/repo",
 		pathExists: async (path) => settingsByPath.has(path),
@@ -100,7 +145,7 @@ test("doctor reports duplicate package and checkout sources with remediation", a
 
 test("doctor passes the source check when exactly one configured source is active", async () => {
 	const settingsByPath = new Map([["/agent/settings.json", JSON.stringify({ packages: ["npm:pi-agent-browser-native"] })]]);
-	const report = await evaluateDoctor({
+	const report = await evaluateDoctorWithPi({
 		agentDir: "/agent",
 		cwd: "/repo",
 		pathExists: async (path) => settingsByPath.has(path),
@@ -116,7 +161,7 @@ test("doctor passes the source check when exactly one configured source is activ
 
 test("doctor resolves relative package sources from their settings file directory", async () => {
 	const settingsByPath = new Map([["/home/user/.pi/agent/settings.json", JSON.stringify({ packages: ["../../Projects/AI/pi-agent-browser"] })]]);
-	const report = await evaluateDoctor({
+	const report = await evaluateDoctorWithPi({
 		agentDir: "/home/user/.pi/agent",
 		cwd: "/home/user/Projects/AI/pi-agent-browser",
 		pathExists: async (path) => settingsByPath.has(path),
@@ -134,7 +179,7 @@ test("doctor resolves relative extension sources from their settings file direct
 	const settingsByPath = new Map([
 		["/home/user/.pi/agent/settings.json", JSON.stringify({ extensions: ["../../Projects/AI/pi-agent-browser/extensions/agent-browser/index.ts"] })],
 	]);
-	const report = await evaluateDoctor({
+	const report = await evaluateDoctorWithPi({
 		agentDir: "/home/user/.pi/agent",
 		cwd: "/home/user/Projects/AI/pi-agent-browser",
 		pathExists: async (path) => settingsByPath.has(path),
@@ -149,7 +194,7 @@ test("doctor resolves relative extension sources from their settings file direct
 });
 
 test("doctor treats no configured source as an informational warning, not a failure", async () => {
-	const report = await evaluateDoctor({
+	const report = await evaluateDoctorWithPi({
 		agentDir: "/agent",
 		cwd: "/repo",
 		pathExists: async () => false,
@@ -166,7 +211,7 @@ test("doctor treats no configured source as an informational warning, not a fail
 test("doctor remains read-only through injected I/O", async () => {
 	const calls: string[] = [];
 	const settingsByPath = new Map([["/agent/settings.json", JSON.stringify({ packages: ["npm:pi-agent-browser-native"] })]]);
-	const report = await evaluateDoctor({
+	const report = await evaluateDoctorWithPi({
 		agentDir: "/agent",
 		cwd: "/repo",
 		pathExists: async (path) => {

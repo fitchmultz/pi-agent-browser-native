@@ -74,6 +74,8 @@ The result is optimized for agent work:
 
 ## Fastest way to try it
 
+Use Pi 0.78.1 or newer when possible. This package does not hard-pin Pi 0.78.1 as a runtime requirement, but the current release is audited and validated against that extension/package baseline.
+
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
 - https://agent-browser.dev/
@@ -142,6 +144,7 @@ The doctor checks:
 
 - upstream `agent-browser` exists on `PATH`
 - the installed upstream version matches this wrapper's command-reference baseline
+- `pi --version` meets the recommended Pi floor for this release, as a warning rather than a hard failure
 - Pi settings do not point at multiple active `pi-agent-browser-native` sources
 
 It does **not** edit Pi settings and does **not** run upstream `agent-browser doctor --fix`.

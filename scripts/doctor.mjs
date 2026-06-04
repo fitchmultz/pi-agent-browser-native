@@ -22,11 +22,33 @@ const PACKAGE_NAME = "pi-agent-browser-native";
 const REPO_URL_FRAGMENT = "github.com/fitchmultz/pi-agent-browser-native";
 const EXTENSION_ENTRYPOINT = "extensions/agent-browser/index.ts";
 const EXPECTED_VERSION = CAPABILITY_BASELINE.targetVersion;
+const RECOMMENDED_PI_VERSION = "0.78.1";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 const THIS_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 export function normalizeAgentBrowserVersion(output) {
 	return String(output ?? "").trim().replace(/^agent-browser\s+/, "");
+}
+
+export function normalizePiVersion(output) {
+	return String(output ?? "").trim().replace(/^pi\s+/, "");
+}
+
+function parseVersionParts(version) {
+	const match = String(version ?? "").match(/^(\d+)\.(\d+)\.(\d+)(?:\b|[-+])/);
+	if (!match) return undefined;
+	return match.slice(1).map((part) => Number.parseInt(part, 10));
+}
+
+function versionAtLeast(actual, minimum) {
+	const actualParts = parseVersionParts(actual);
+	const minimumParts = parseVersionParts(minimum);
+	if (!actualParts || !minimumParts) return undefined;
+	for (let index = 0; index < minimumParts.length; index += 1) {
+		if (actualParts[index] > minimumParts[index]) return true;
+		if (actualParts[index] < minimumParts[index]) return false;
+	}
+	return true;
 }
 
 function printHelp() {
@@ -45,7 +67,8 @@ Options:
 Checks:
   1. agent-browser is installed on PATH.
   2. agent-browser --version matches the package capability baseline.
-  3. Pi settings and repo-local autoload locations do not point at multiple active pi-agent-browser-native sources.
+  3. pi --version is at least the recommended Pi floor for this release.
+  4. Pi settings and repo-local autoload locations do not point at multiple active pi-agent-browser-native sources.
 
 Examples:
   pi-agent-browser-doctor
@@ -98,6 +121,11 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 
 async function defaultRunAgentBrowser(args) {
 	const { stdout, stderr } = await execFile("agent-browser", args, { maxBuffer: 1024 * 1024 });
+	return `${stdout}${stderr}`;
+}
+
+async function defaultRunPi(args) {
+	const { stdout, stderr } = await execFile("pi", args, { maxBuffer: 1024 * 1024 });
 	return `${stdout}${stderr}`;
 }
 
@@ -270,6 +298,43 @@ async function collectRepoLocalSources({ cwd, pathExists }) {
 	return sources;
 }
 
+async function checkPiVersion({ runPi }) {
+	try {
+		const rawOutput = await runPi(["--version"]);
+		const version = normalizePiVersion(rawOutput);
+		const supported = versionAtLeast(version, RECOMMENDED_PI_VERSION);
+		if (supported === false) {
+			return {
+				status: "warn",
+				title: `Pi ${RECOMMENDED_PI_VERSION} or newer is recommended; found ${version || "<empty>"}.`,
+				lines: [
+					"This package does not hard-pin Pi 0.78.1, but this release was audited against Pi 0.78.1 extension/package behavior.",
+					"Update Pi before release validation or lifecycle debugging if you see tool routing, /reload, exact-session, or package-install differences.",
+				],
+			};
+		}
+		if (supported === undefined) {
+			return {
+				status: "warn",
+				title: `Could not parse pi --version output: ${version || "<empty>"}.`,
+				lines: [`Pi ${RECOMMENDED_PI_VERSION} or newer is recommended for this release's validation baseline.`],
+			};
+		}
+		return { status: "pass", title: `Pi version is within the recommended baseline: ${version}`, lines: [] };
+	} catch (error) {
+		const code = error && typeof error === "object" ? error.code : undefined;
+		return {
+			status: "warn",
+			title: "Could not inspect pi --version.",
+			lines: [
+				`Pi ${RECOMMENDED_PI_VERSION} or newer is recommended for this release's validation baseline, but it is not hard-pinned as a runtime requirement.`,
+				"Make sure the same shell that launches pi can run `pi --version` when debugging lifecycle or package-install behavior.",
+				code && code !== "ENOENT" ? `Spawn error: ${String(code)}` : undefined,
+			].filter(Boolean),
+		};
+	}
+}
+
 async function checkAgentBrowserVersion({ runAgentBrowser }) {
 	try {
 		const rawOutput = await runAgentBrowser(["--version"]);
@@ -358,6 +423,7 @@ export async function evaluateDoctor(options = {}) {
 	const readText = options.readText ?? ((path) => readFile(path, "utf8"));
 	const pathExists = options.pathExists ?? defaultPathExists;
 	const runAgentBrowser = options.runAgentBrowser ?? defaultRunAgentBrowser;
+	const runPi = options.runPi ?? defaultRunPi;
 	const checks = [];
 	const failures = [];
 	const warnings = [];
@@ -365,6 +431,9 @@ export async function evaluateDoctor(options = {}) {
 	const versionCheck = await checkAgentBrowserVersion({ runAgentBrowser });
 	checks.push(versionCheck);
 	if (versionCheck.status === "fail") failures.push(versionCheck);
+
+	const piVersionCheck = await checkPiVersion({ runPi });
+	checks.push(piVersionCheck);
 
 	if (!options.skipSourceCheck) {
 		const sourceCheck = await checkPiSources({ cwd, agentDir, settingsPaths, readText, pathExists });

@@ -30,7 +30,7 @@ npm run smoke:platform:doctor
 npm run verify -- release
 ```
 
-`npm run doctor` is a read-only first-run diagnostic for PATH, targeted upstream version, and duplicate package/checkout source conflicts. It does not replace upstream `agent-browser doctor` for browser runtime health and does not edit Pi settings.
+`npm run doctor` is a read-only first-run diagnostic for PATH, targeted upstream version, the recommended Pi release floor, and duplicate package/checkout source conflicts. The Pi version check is a warning, not a hard runtime requirement. It does not replace upstream `agent-browser doctor` for browser runtime health and does not edit Pi settings.
 
 `npm run verify -- release` runs:
 
@@ -233,7 +233,7 @@ These show up often in cloud dev boxes and scripted smokes; they are maintainer 
 
 | Topic | What to watch for | Mitigation |
 | --- | --- | --- |
-| **Pi CLI vs repo devDependencies** | Global `pi` older than the `@earendil-works/pi-coding-agent` range in `package.json` can change TUI behavior, `/reload`, and tool routing during lifecycle or checkout smokes. | Align `pi` with the repo’s pinned coding-agent release before release gates (`pi update` or install the matching version). |
+| **Pi CLI vs repo devDependencies** | Global `pi` older than the recommended Pi floor for the release can change TUI behavior, `/reload`, package installs, and tool routing during lifecycle or checkout smokes. | Run `npm run doctor` and align `pi` with the current audited baseline before release gates (`pi update` or install the matching version). The published peer range stays non-pinning; the local release gate should use the audited Pi version. |
 | **npm lockfile (`packageManager`)** | `package.json` pins **npm@11**. npm 10 may only strip optional `libc` metadata on `@esbuild/*` platform entries in `package-lock.json` (no dependency version change). | Prefer `npx -y npm@11.14.0 install` when refreshing the lockfile; do not commit npm-10-only lockfile churn. |
 | **`pi -p` / print mode** | Non-interactive `pi -p` may hang or emit no stdout for long real-browser smokes without a TTY. | Use **tmux**-driven interactive `pi` for release evidence and checkout smokes; reserve `-p` for short, non-browser checks. |
 | **Real-browser cleanup** | `real-upstream`, Sauce Demo, and live-site runs can leave defunct Chrome/`agent-browser` children if a session aborts mid-flow. | Close via `agent_browser` / `agent-browser` `close`, kill stray tmux sessions, and remove temp screenshots/HARs under `/tmp` or your chosen artifact dirs. |

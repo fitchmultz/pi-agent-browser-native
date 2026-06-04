@@ -51,15 +51,18 @@ async function createFixture() {
 	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-config-cli-test-"));
 	const cwd = join(root, "repo");
 	const home = join(root, "home");
+	const npmCache = join(root, "npm-cache");
 	await mkdir(cwd, { recursive: true });
+	await mkdir(npmCache, { recursive: true });
+	const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toLowerCase().startsWith("npm_")));
 	return {
 		cwd,
 		env: {
-			...process.env,
+			...env,
 			HOME: home,
 			USERPROFILE: home,
 			APPDATA: join(home, "AppData", "Roaming"),
-			NPM_CONFIG_CACHE: join(root, "npm-cache"),
+			NPM_CONFIG_CACHE: npmCache,
 			BRAVE_API_KEY: undefined,
 			EXA_API_KEY: undefined,
 			PI_AGENT_BROWSER_CONFIG: undefined,
