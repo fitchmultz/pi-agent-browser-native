@@ -1,5 +1,5 @@
 import { isRecord } from "../../parsing.js";
-import { extractCommandTokens, getClipboardWriteArgumentValues, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
+import { extractCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
 import { formatSessionArtifactRetentionSummary } from "../artifact-manifest.js";
@@ -19,7 +19,7 @@ import { stringifyModelFacing } from "./common.js";
 import { buildArtifactVerificationSummary, classifyPresentationSuccessCategory, manifestHasNewNoticeWorthyEntries, type ArtifactRequestContext } from "./artifacts.js";
 import { formatBatchStepCommand, getPresentationImages, getPresentationPaths, getPresentationText, isStringArray } from "./content.js";
 import { buildPageChangeSummary } from "./navigation.js";
-import { appendSelectorRecoveryHint } from "./errors.js";
+import { appendSelectorRecoveryHint, redactClipboardPermissionEcho } from "./errors.js";
 
 export interface BuildNestedToolPresentationOptions {
 	artifactManifest?: SessionArtifactManifest;
@@ -91,7 +91,6 @@ function getStatefulCommandSensitiveValues(command: string[] | undefined): strin
 	if (!command) return [];
 	const tokens = extractCommandTokens(command);
 	const values: string[] = [];
-	values.push(...getClipboardWriteArgumentValues(tokens));
 	if (tokens[0] === "cookies" && tokens[1] === "set" && tokens[3]) values.push(tokens[3]);
 	if (tokens[0] === "storage" && ["local", "session"].includes(tokens[1] ?? "") && tokens[2] === "set" && tokens[4]) values.push(tokens[4]);
 	for (let index = 0; index < tokens.length; index += 1) {
@@ -130,7 +129,9 @@ async function buildBatchStepPresentation(options: {
 	const commandText = formatBatchStepCommand(hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command, index);
 
 	if (item.success === false) {
-		const redactedErrorData = redactExactValues(item.error, getStatefulCommandSensitiveValues(command));
+		const redactedErrorData = command?.[0] === "clipboard" && typeof item.error === "string"
+			? redactSensitiveValue(redactClipboardPermissionEcho({ command: "clipboard", subcommand: command[1] }, item.error))
+			: redactExactValues(item.error, getStatefulCommandSensitiveValues(command));
 		const errorText = formatBatchStepError(redactedErrorData);
 		const failureCategory = classifyAgentBrowserFailureCategory({
 			args: command,

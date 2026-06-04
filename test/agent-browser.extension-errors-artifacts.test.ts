@@ -63,6 +63,15 @@ process.stdin.on("end", () => {
 			assert.match((standalone.content[0] as { text: string }).text, /Agent-browser clipboard hint:/);
 			assert.doesNotMatch(JSON.stringify(standalone), /clipboard-secret/);
 
+			const shortPayload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["clipboard", "write", "a"] });
+			assert.equal(shortPayload.isError, true, JSON.stringify(shortPayload));
+			assert.equal(shortPayload.details?.resultCategory, "failure");
+			assert.equal(shortPayload.details?.failureCategory, "upstream-error");
+			assert.equal(shortPayload.details?.command, "clipboard");
+			assert.equal(shortPayload.details?.sessionMode, "auto");
+			assert.match((shortPayload.content[0] as { text: string }).text, /Agent-browser clipboard hint:/);
+			assert.doesNotMatch((shortPayload.details?.error as string | undefined) ?? "", /permission denied for a\./);
+
 			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
 				stdin: JSON.stringify([["clipboard", "write", "clipboard-secret"]]),
@@ -70,6 +79,16 @@ process.stdin.on("end", () => {
 			assert.equal(batch.isError, true, JSON.stringify(batch));
 			assert.match((batch.content[0] as { text: string }).text, /clipboard write \[REDACTED\]/);
 			assert.doesNotMatch(JSON.stringify(batch), /clipboard-secret/);
+
+			const shortBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["clipboard", "write", "a"]]),
+			});
+			assert.equal(shortBatch.isError, true, JSON.stringify(shortBatch));
+			assert.equal(shortBatch.details?.resultCategory, "failure");
+			assert.equal(shortBatch.details?.failureCategory, "upstream-error");
+			assert.match((shortBatch.content[0] as { text: string }).text, /clipboard write \[REDACTED\]/);
+			assert.doesNotMatch((shortBatch.content[0] as { text: string }).text, /permission denied for a\./);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

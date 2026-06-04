@@ -57,7 +57,7 @@ function getClipboardPermissionHint(commandInfo: CommandInfo, errorText: string)
 	return CLIPBOARD_PERMISSION_ERROR_HINT;
 }
 
-function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorText: string): string {
+export function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorText: string): string {
 	if (commandInfo.command !== "clipboard") return errorText;
 	return errorText
 		.replace(/(\b(?:read|write)\s+permission denied\b(?:\s+for)?\s+)(.+)$/gim, "$1[REDACTED]")

@@ -12,7 +12,6 @@ import {
 	buildExecutionPlan,
 	createFreshSessionName,
 	extractCommandTokens,
-	getClipboardWriteArgumentValues,
 	redactInvocationArgs,
 	type CompatibilityWorkaround,
 } from "../../runtime.js";
@@ -295,11 +294,10 @@ function isPasswordStdinAuthSave(options: { command?: string; commandTokens: str
 }
 
 export function getExactSensitiveStdinValues(options: { command?: string; commandTokens: string[]; stdin?: string }): string[] {
-	const values = getClipboardWriteArgumentValues(options.commandTokens);
-	if (options.stdin !== undefined && isPasswordStdinAuthSave(options)) {
-		values.push(options.stdin, options.stdin.trimEnd(), options.stdin.trim());
+	if (options.stdin === undefined || !isPasswordStdinAuthSave(options)) {
+		return [];
 	}
-	return [...new Set(values.filter((value) => value.length > 0))];
+	return [...new Set([options.stdin, options.stdin.trimEnd(), options.stdin.trim()].filter((value) => value.length > 0))];
 }
 
 export function validateStdinCommandContract(options: { command?: string; commandTokens: string[]; stdin?: string }): string | undefined {

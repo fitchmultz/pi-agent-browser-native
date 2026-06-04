@@ -24,6 +24,7 @@ import {
 	mergeSessionArtifactManifest,
 } from "../../results/artifact-manifest.js";
 import type { SessionArtifactManifest } from "../../results/contracts.js";
+import { redactClipboardPermissionEcho } from "../../results/presentation/errors.js";
 import { shouldCaptureSemanticActionNavigationSummary } from "../../results/presentation/semantic-action.js";
 import {
 	commandExplicitlyTargetsAboutBlank,
@@ -400,7 +401,11 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			}
 		}
 
-		const errorText = getAgentBrowserErrorText({ aborted: processResult.aborted, command: prepared.executionPlan.commandInfo.command, effectiveArgs: prepared.redactedProcessArgs, envelope: presentationEnvelope, exitCode: processResult.exitCode, parseError, plainTextInspection, staleRefArgs: getStaleRefArgs(prepared.commandTokens, prepared.runtimeToolStdin), spawnError: processResult.spawnError, stderr: processResult.stderr, timedOut: processResult.timedOut, timeoutMs: processResult.timeoutMs, wrapperRecoveryHint: buildWrapperRecoveryHint({ pinnedBatchUnwrapMode: prepared.pinnedBatchUnwrapMode, sessionTabCorrection }) });
+		let errorText = getAgentBrowserErrorText({ aborted: processResult.aborted, command: prepared.executionPlan.commandInfo.command, effectiveArgs: prepared.redactedProcessArgs, envelope: presentationEnvelope, exitCode: processResult.exitCode, parseError, plainTextInspection, staleRefArgs: getStaleRefArgs(prepared.commandTokens, prepared.runtimeToolStdin), spawnError: processResult.spawnError, stderr: processResult.stderr, timedOut: processResult.timedOut, timeoutMs: processResult.timeoutMs, wrapperRecoveryHint: buildWrapperRecoveryHint({ pinnedBatchUnwrapMode: prepared.pinnedBatchUnwrapMode, sessionTabCorrection }) });
+		if (errorText) {
+			errorText = redactClipboardPermissionEcho(prepared.executionPlan.commandInfo, errorText);
+			if (presentationEnvelope && typeof presentationEnvelope.error === "string") presentationEnvelope = { ...presentationEnvelope, error: redactClipboardPermissionEcho(prepared.executionPlan.commandInfo, presentationEnvelope.error) };
+		}
 		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
 		if (presentation.failureCategory === "artifact-missing") {
 			succeeded = false;
