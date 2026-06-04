@@ -20,6 +20,7 @@ import type { SessionArtifactManifest } from "../../results/contracts.js";
 import type { RichInputRecoveryDiagnostic, VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import type { SessionPageState, SessionRefSnapshot, SessionRefSnapshotInvalidation, SessionTabTarget } from "../../session-page-state.js";
 import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection } from "../../runtime.js";
+import type { AllowedDomainsPolicy } from "../../navigation-policy.js";
 import type { PromptPolicy } from "../../prompt-policy.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
 import type { BatchCommandStep } from "../batch-stdin.js";
@@ -62,6 +63,7 @@ export interface BrowserRunInputFields {
 }
 
 export interface BrowserRunState {
+	allowedDomainsBySession: Map<string, AllowedDomainsPolicy>;
 	artifactManifest?: SessionArtifactManifest;
 	closedManagedSessionNames: Set<string>;
 	electronChildProcesses: Map<string, ChildProcess>;
@@ -77,6 +79,7 @@ export interface BrowserRunState {
 }
 
 export interface BrowserRunStatePatch {
+	allowedDomainsBySession?: Map<string, AllowedDomainsPolicy>;
 	artifactManifest?: SessionArtifactManifest;
 	freshSessionOrdinal?: number;
 	managedSessionActive?: boolean;

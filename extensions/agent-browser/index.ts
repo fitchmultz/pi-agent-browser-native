@@ -84,6 +84,7 @@ import {
 	type CompiledAgentBrowserSemanticAction,
 	type CompiledAgentBrowserSourceLookup,
 } from "./lib/input-modes.js";
+import type { AllowedDomainsPolicy } from "./lib/navigation-policy.js";
 import { closeManagedSession, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
@@ -966,6 +967,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let sessionPageState = new SessionPageState();
 	let traceOwners = new Map<string, TraceOwner>();
 	let artifactManifest: SessionArtifactManifest | undefined;
+	let allowedDomainsBySession = new Map<string, AllowedDomainsPolicy>();
 	let electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 	let ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 	let branchOwnedElectronLaunchIds = new Set<string>();
@@ -1219,6 +1221,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				const generationAtStart = branchStateGeneration;
 				const sessionPageStateUpdate = sessionPageState.beginUpdate();
 				const browserRunState: BrowserRunState = {
+					allowedDomainsBySession,
 					artifactManifest,
 					closedManagedSessionNames: new Set<string>(),
 					electronChildProcesses,
@@ -1249,6 +1252,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				});
 				const branchStateStillCurrent = generationAtStart === branchStateGeneration;
 				if (serializeBrowserCommand || branchStateStillCurrent) {
+					allowedDomainsBySession = browserRunState.allowedDomainsBySession;
 					artifactManifest = browserRunState.artifactManifest;
 					freshSessionOrdinal = Math.max(freshSessionOrdinal, browserRunState.freshSessionOrdinal);
 					managedSessionActive = browserRunState.managedSessionActive;

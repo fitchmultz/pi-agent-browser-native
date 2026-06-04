@@ -29,6 +29,7 @@ export type AgentBrowserSuccessCategory = "artifact-saved" | "artifact-unverifie
 
 export type AgentBrowserFailureCategory =
 	| "aborted"
+	| "artifact-missing"
 	| "cleanup-failed"
 	| "confirmation-required"
 	| "download-not-verified"
