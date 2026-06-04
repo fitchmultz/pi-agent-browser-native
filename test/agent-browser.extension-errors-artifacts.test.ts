@@ -1063,6 +1063,9 @@ function runCommand(command) {
     writeState(state);
     return { command, success: true, result: { clicked: command[1] } };
   }
+  if (command[0] === "screenshot") {
+    return { command, success: true, result: { path: command[1] } };
+  }
   return { command, success: true, result: { ok: true } };
 }
 process.stdin.setEncoding("utf8");
@@ -1095,6 +1098,24 @@ process.stdin.on("end", () => {
 			assert.equal(escapedBatch.details?.failureCategory, "policy-blocked");
 			assert.equal((escapedBatch.details?.navigationSummary as { url?: string } | undefined)?.url, "https://www.iana.org/help/example-domains");
 			assert.match((escapedBatch.content[0] as { text: string }).text, /--allowed-domains example\.com does not allow www\.iana\.org/);
+
+			const missingPath = join(tempDir, "missing-batch.png");
+			const missingArtifactBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--allowed-domains", "example.com", "batch"],
+				sessionMode: "fresh",
+				stdin: JSON.stringify([
+					["open", "https://example.com"],
+					["screenshot", missingPath],
+				]),
+			});
+			assert.equal(missingArtifactBatch.isError, true, JSON.stringify(missingArtifactBatch));
+			assert.equal(missingArtifactBatch.details?.failureCategory, "artifact-missing");
+			assert.equal(Array.isArray(missingArtifactBatch.details?.batchSteps), true);
+			assert.equal(Array.isArray(missingArtifactBatch.details?.data), true);
+			const missingText = (missingArtifactBatch.content[0] as { text: string }).text;
+			assert.match(missingText, /Batch failed: 1\/2 succeeded/);
+			assert.match(missingText, /Step 2 — screenshot/);
+			assert.doesNotMatch(missingText, /"0":/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
