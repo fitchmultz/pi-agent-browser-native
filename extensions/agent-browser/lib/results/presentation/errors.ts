@@ -1,5 +1,5 @@
 import { isOpenNavigationCommand } from "../../command-taxonomy.js";
-import type { CommandInfo } from "../../runtime.js";
+import { redactSensitiveText, type CommandInfo } from "../../runtime.js";
 import { buildBrowserProfileConfigRecovery } from "./browser-profile-recovery.js";
 import { redactModelFacingText } from "./common.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
@@ -15,6 +15,13 @@ const STALE_REF_ERROR_HINT = [
 const SELECTOR_DIALECT_ERROR_HINT = [
 	"Agent-browser hint: This selector may use an unsupported selector dialect.",
 	"Prefer refs from `snapshot -i`, or use supported `find role|text|label|placeholder|alt|title|testid ...` locators; use `scrollintoview` before interacting with off-screen elements.",
+].join(" ");
+
+const CLIPBOARD_PERMISSION_ERROR_HINT = [
+	"Agent-browser clipboard hint: Clipboard read/write access is environment-dependent and often fails in headless, managed, remote-profile, or file:// sessions.",
+	"If you see `NotAllowedError` or `permission denied`, treat it as a browser/OS permission limitation rather than proof that page state changed.",
+	"When possible, prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct input (`keyboard inserttext` / `keyboard type`) instead of relying on OS clipboard access.",
+	"If true clipboard access is required, retry in a browser/profile/session with explicit clipboard permission on a normal http(s) page.",
 ].join(" ");
 
 function getSelectorRecoveryHint(errorText: string): string | undefined {
@@ -40,6 +47,24 @@ function getSelectorRecoveryHint(errorText: string): string | undefined {
 	}
 
 	return undefined;
+}
+
+function getClipboardPermissionHint(commandInfo: CommandInfo, errorText: string): string | undefined {
+	if (commandInfo.command !== "clipboard") return undefined;
+	if (!/\bNotAllowedError\b|\bclipboard\b.*\bpermission denied\b|\bpermission denied\b.*\bclipboard\b/i.test(errorText)) {
+		return undefined;
+	}
+	return CLIPBOARD_PERMISSION_ERROR_HINT;
+}
+
+function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorText: string): string {
+	if (commandInfo.command !== "clipboard") return errorText;
+	return errorText
+		.replace(/(\b(?:read|write)\s+permission denied\b(?:\s+for)?\s+)(.+)$/gim, "$1[REDACTED]")
+		.replace(/(\bFailed to execute '[^']+' on 'Clipboard':\s*)(.+)$/gim, (match, prefix: string, suffix: string) => {
+			if (!/\bpermission denied\b/i.test(suffix)) return match;
+			return `${prefix}${suffix.replace(/(\bpermission denied\b(?:\s+for)?\s+)(.+)$/i, "$1[REDACTED]")}`;
+		});
 }
 
 interface CommandSuggestion {
@@ -116,17 +141,21 @@ export function buildErrorPresentation(options: {
 	sessionName?: string;
 }): ToolPresentation {
 	const { args, commandInfo, errorText, sessionName } = options;
-	const safeErrorText = redactModelFacingText(errorText);
+	const safeErrorText = redactModelFacingText(
+		redactSensitiveText(redactClipboardPermissionEcho(commandInfo, errorText)),
+	);
 	const selectorHintedErrorText = appendSelectorRecoveryHint(safeErrorText);
 	const unknownCommandSuggestions = getUnknownCommandSuggestions(commandInfo.command, safeErrorText);
 	const unknownCommandSuggestionText = formatUnknownCommandSuggestionText(unknownCommandSuggestions);
 	const browserProfileConfigRecovery = buildBrowserProfileConfigRecovery({ args, commandInfo, errorText: safeErrorText });
 	const localhostNavigationHint = getLocalhostNavigationHint(commandInfo, safeErrorText);
+	const clipboardPermissionHint = getClipboardPermissionHint(commandInfo, safeErrorText);
 	const hintedErrorParts = [
 		selectorHintedErrorText,
 		unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:") ? unknownCommandSuggestionText : undefined,
 		browserProfileConfigRecovery?.hint,
 		localhostNavigationHint,
+		clipboardPermissionHint,
 	].filter((part): part is string => Boolean(part));
 	const hintedErrorText = hintedErrorParts.join("\n\n");
 	const categoryDetails = buildAgentBrowserResultCategoryDetails({
