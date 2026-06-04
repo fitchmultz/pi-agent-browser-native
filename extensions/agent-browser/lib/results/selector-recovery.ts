@@ -3,7 +3,7 @@
  * Responsibilities: Parse find/semantic action targets, match current snapshot refs, build public diagnostics, text, and safe nextActions.
  * Scope: Selector recovery policy only; subprocess snapshot probing and result orchestration stay in the extension entrypoint.
  * Usage: The extension entrypoint supplies command tokens plus snapshot data after a selector-not-found failure.
- * Invariants/Assumptions: Fill recovery must never echo or auto-submit the user-provided fill text; keyboard insertion remains a separate explicit action.
+ * Invariants/Assumptions: Public fill recovery must never echo or auto-submit the user-provided fill text; guarded semanticAction fill pre-resolution may execute only one exact current editable ref.
  */
 
 import { isRecord } from "../parsing.js";
@@ -199,14 +199,22 @@ export interface VisibleRefActionResolution {
 }
 
 export function resolveVisibleRefActionFromSnapshot(options: {
+	allowFill?: boolean;
 	compiledAction: SelectorRecoveryCompiledAction;
 	snapshotData: unknown;
 }): VisibleRefActionResolution | undefined {
 	const target = getFindVisibleRefFallbackTarget(options.compiledAction.args, { allowLeadingDashFillText: true });
-	if (!target || target.action === "fill" || target.action === "select") return undefined;
+	if (!target || target.action === "select") return undefined;
 	const snapshot = extractRefSnapshotFromData(options.snapshotData);
 	if (!snapshot) return undefined;
-	const candidate = getVisibleRefFallbackCandidates(target, options.snapshotData).find((item) => item.args !== undefined);
+	const candidates = getVisibleRefFallbackCandidates(target, options.snapshotData);
+	if (target.action === "fill") {
+		if (!options.allowFill || candidates.length !== 1 || target.text === undefined) return undefined;
+		const [candidate] = candidates;
+		if (!candidate || candidate.editableEvidence === false || !EDITABLE_CONTROL_ROLES.has(candidate.role.toLowerCase())) return undefined;
+		return { args: ["fill", candidate.ref, target.text], snapshot };
+	}
+	const candidate = candidates.find((item) => item.args !== undefined);
 	if (!candidate?.args) return undefined;
 	return { args: candidate.args, snapshot };
 }

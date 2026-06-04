@@ -323,9 +323,9 @@ export async function resolveSemanticActionVisibleRefArgs(options: {
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<SemanticActionVisibleRefResolution | undefined> {
-	if (!options.compiled || !options.sessionName || options.compiled.locator !== "role" || !["check", "click", "uncheck"].includes(options.compiled.action)) return undefined;
+	if (!options.compiled || !options.sessionName || options.compiled.locator !== "role" || !["check", "click", "fill"].includes(options.compiled.action)) return undefined;
 	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const resolution = resolveVisibleRefActionFromSnapshot({ compiledAction: options.compiled, snapshotData });
+	const resolution = resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction: options.compiled, snapshotData });
 	if (!resolution) return undefined;
 	return { args: [...getCompiledSemanticActionSessionPrefix(options.compiled), ...resolution.args], snapshot: resolution.snapshot };
 }

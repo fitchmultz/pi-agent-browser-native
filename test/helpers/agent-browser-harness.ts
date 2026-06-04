@@ -188,7 +188,7 @@ export function createToolBranchEntry(options: { details: Record<string, unknown
 export type AgentBrowserToolParams = {
 	args?: string[];
 	semanticAction?: {
-		action: "check" | "click" | "fill" | "select" | "uncheck";
+		action: "check" | "click" | "fill" | "select";
 		locator?: "alt" | "label" | "placeholder" | "role" | "testid" | "text" | "title";
 		value?: string;
 		values?: string[];

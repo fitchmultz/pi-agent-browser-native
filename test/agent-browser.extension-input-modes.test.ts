@@ -147,6 +147,61 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 	}
 });
 
+test("agentBrowserExtension resolves semantic role fills through one exact current editable ref", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-fill-visible-ref-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Search", url: "https://search.example.test/" } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://search.example.test/",
+    refs: { e17: { role: "combobox", name: "Search" } },
+    snapshot: '- combobox "Search" [ref=e17]'
+  } }));
+} else if (args.includes("fill")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { filled: "@e17" } }));
+} else if (args.includes("find")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "selector not found" }));
+  process.exit(1);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://search.example.test/"] });
+			assert.equal(open.isError, false);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "fill", locator: "role", role: "combobox", name: "Search", text: "pi issue 70 search" },
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.deepEqual(result.details?.compiledSemanticAction, {
+				action: "fill",
+				locator: "role",
+				args: ["find", "role", "combobox", "fill", "pi issue 70 search", "--name", "Search"],
+			});
+			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-3), ["fill", "@e17", "pi issue 70 search"]);
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.includes("snapshot")));
+			assert.ok(invocations.some((entry) => entry.args.at(-3) === "fill" && entry.args.at(-2) === "@e17" && entry.args.at(-1) === "pi issue 70 search"));
+			assert.equal(invocations.some((entry) => entry.args.includes("find")), false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension resolves semantic role clicks through current visible snapshot refs when available", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-visible-ref-"));
 	const logPath = join(tempDir, "invocations.log");
