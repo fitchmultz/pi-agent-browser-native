@@ -40,7 +40,7 @@ let stdin = "";
 function clipboardError(command) {
   const payload = command.slice(2).join(" ");
   const message = "NotAllowedError: Failed to execute 'writeText' on 'Clipboard': Write permission denied for " + payload + ".";
-  return payload.includes("object-secret") || payload === "a" ? { code: "NotAllowedError", message, payload } : message;
+  return payload.includes("object-secret") || payload === "a" ? { code: "NotAllowedError", message, payload, text: "safe metadata about clipboard denial", value: "safe value" } : message;
 }
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
@@ -80,6 +80,8 @@ process.stdin.on("end", () => {
 			assert.equal(shortPayload.details?.sessionMode, "auto");
 			assert.match((shortPayload.content[0] as { text: string }).text, /Agent-browser clipboard hint:/);
 			assert.doesNotMatch(JSON.stringify(shortPayload.details?.error), /permission denied for a\./);
+			assert.match(JSON.stringify(shortPayload.details?.error), /safe metadata about clipboard denial/);
+			assert.match(JSON.stringify(shortPayload.details?.error), /safe value/);
 
 			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
@@ -112,6 +114,8 @@ process.stdin.on("end", () => {
 			assert.equal(shortBatch.details?.failureCategory, "upstream-error");
 			assert.match((shortBatch.content[0] as { text: string }).text, /clipboard write \[REDACTED\]/);
 			assert.doesNotMatch((shortBatch.content[0] as { text: string }).text, /permission denied for a\./);
+			assert.match(JSON.stringify(shortBatch.details), /safe metadata about clipboard denial/);
+			assert.match(JSON.stringify(shortBatch.details), /safe value/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

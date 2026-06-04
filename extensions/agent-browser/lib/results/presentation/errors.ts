@@ -78,8 +78,11 @@ export function getClipboardWritePayloadCandidates(commandTokens: readonly strin
 }
 
 function shouldRedactClipboardPayloadField(key: string, value: string, payloadCandidates: readonly string[]): boolean {
-	if (!/payload|value|text|clipboard|argument/i.test(key)) return false;
-	return payloadCandidates.some((candidate) => value === candidate || value.includes(candidate));
+	return payloadCandidates.some((candidate) => {
+		if (value === candidate) return true;
+		if (candidate.length < 8 || !/payload|clipboard|argument/i.test(key)) return false;
+		return value.includes(candidate);
+	});
 }
 
 export function redactClipboardPermissionErrorValue(commandInfo: CommandInfo, value: unknown, payloadCandidates: readonly string[] = []): unknown {
