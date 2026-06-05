@@ -6,6 +6,7 @@ import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
 import { SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS } from "../../process.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
+import { buildSnapshotPresentation } from "../../results/snapshot.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
 import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-recovery.js";
 import { extractRefSnapshotFromData, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
@@ -658,6 +659,116 @@ async function tryPageScrollTo(options: {
 	return buildScrollResult({ ...options, command: "scroll", message, result, scrollField: "scrollPage", scrollValue: { request, result }, succeeded });
 }
 
+interface SnapshotFilterRequest {
+	cleanArgs: string[];
+	role?: string;
+	search?: string;
+}
+
+function parseSnapshotFilterRequest(commandTokens: string[]): SnapshotFilterRequest | undefined {
+	if (commandTokens[0] !== "snapshot") return undefined;
+	const cleanArgs: string[] = [];
+	let role: string | undefined;
+	let search: string | undefined;
+	for (let index = 0; index < commandTokens.length; index += 1) {
+		const token = commandTokens[index];
+		if (token === "--search") {
+			const value = commandTokens[index + 1];
+			if (typeof value === "string" && !value.startsWith("-")) {
+				search = value;
+				index += 1;
+				continue;
+			}
+		}
+		if (token === "--filter") {
+			const value = commandTokens[index + 1];
+			if (typeof value === "string" && !value.startsWith("-")) {
+				const roleMatch = /^role=(.+)$/i.exec(value.trim());
+				if (roleMatch?.[1]) role = roleMatch[1].trim().toLowerCase();
+				index += 1;
+				continue;
+			}
+		}
+		cleanArgs.push(token);
+	}
+	if (!search && !role) return undefined;
+	return { cleanArgs, role, search };
+}
+
+function filterSnapshotData(data: unknown, request: SnapshotFilterRequest): { data: Record<string, unknown>; matchedRefs: number; totalRefs: number; totalLines: number; visibleLines: number } | undefined {
+	if (!isRecord(data)) return undefined;
+	const refs = isRecord(data.refs) ? data.refs : {};
+	const snapshot = typeof data.snapshot === "string" ? data.snapshot : "";
+	const normalizedSearch = request.search?.trim().toLowerCase();
+	const matchingRefIds = new Set<string>();
+	for (const [refId, refValue] of Object.entries(refs)) {
+		if (!isRecord(refValue)) continue;
+		const role = typeof refValue.role === "string" ? refValue.role.toLowerCase() : "";
+		const name = typeof refValue.name === "string" ? refValue.name : "";
+		const roleMatches = request.role ? role === request.role : true;
+		const searchMatches = normalizedSearch ? `${role} ${name}`.toLowerCase().includes(normalizedSearch) : true;
+		if (roleMatches && searchMatches) matchingRefIds.add(refId);
+	}
+	const lines = snapshot.split(/\r?\n/);
+	const visibleLines = lines.filter((line) => {
+		const normalizedLine = line.toLowerCase();
+		if (normalizedSearch && normalizedLine.includes(normalizedSearch)) return true;
+		return [...matchingRefIds].some((refId) => line.includes(`[ref=${refId}]`) || line.includes(`ref=${refId}`));
+	});
+	const filteredRefs = Object.fromEntries(Object.entries(refs).filter(([refId]) => matchingRefIds.has(refId)));
+	const description = [request.role ? `role=${request.role}` : undefined, request.search ? `search=${JSON.stringify(request.search)}` : undefined].filter((part): part is string => part !== undefined).join(", ");
+	const filteredSnapshot = visibleLines.length > 0 ? visibleLines.join("\n") : `(no snapshot lines matched ${description})`;
+	return {
+		data: { ...data, refs: filteredRefs, snapshot: filteredSnapshot },
+		matchedRefs: Object.keys(filteredRefs).length,
+		totalRefs: Object.keys(refs).length,
+		totalLines: lines.filter((line) => line.length > 0).length,
+		visibleLines: visibleLines.length,
+	};
+}
+
+async function trySnapshotFilter(options: {
+	commandTokens: string[];
+	compatibilityWorkaround?: CompatibilityWorkaround;
+	cwd: string;
+	effectiveArgs: string[];
+	redactedArgs: string[];
+	sessionMode: "auto" | "fresh";
+	sessionName?: string;
+	sessionPageState: BrowserRunOptions["state"]["sessionPageState"];
+	sessionPageStateUpdate: ReturnType<BrowserRunOptions["state"]["sessionPageState"]["beginUpdate"]>;
+	signal?: AbortSignal;
+	usedImplicitSession: boolean;
+}): Promise<AgentBrowserToolResult | undefined> {
+	const request = parseSnapshotFilterRequest(options.commandTokens);
+	if (!request || !options.sessionName) return undefined;
+	const snapshotData = await runSessionCommandData({ args: request.cleanArgs, cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const filtered = filterSnapshotData(snapshotData, request);
+	if (!filtered) return undefined;
+	const fullSnapshot = extractRefSnapshotFromData(snapshotData);
+	if (fullSnapshot) options.sessionPageState.applyRefSnapshot({ sessionName: options.sessionName, snapshot: fullSnapshot, update: options.sessionPageStateUpdate });
+	const presentation = await buildSnapshotPresentation(filtered.data);
+	const summary = `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}.`;
+	if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${summary}\n\n${presentation.content[0].text}` };
+	return {
+		content: presentation.content,
+		details: {
+			args: options.redactedArgs,
+			command: "snapshot",
+			compatibilityWorkaround: options.compatibilityWorkaround,
+			data: presentation.data,
+			effectiveArgs: options.effectiveArgs,
+			refSnapshot: fullSnapshot,
+			sessionMode: options.sessionMode,
+			snapshotFilter: { cleanArgs: request.cleanArgs, matchedRefs: filtered.matchedRefs, role: request.role, search: request.search, totalLines: filtered.totalLines, totalRefs: filtered.totalRefs, visibleLines: filtered.visibleLines },
+			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "snapshot", succeeded: true }),
+			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
+			summary,
+		},
+		isError: false,
+	};
+}
+
 function isPasswordStdinAuthSave(options: { command?: string; commandTokens: string[] }): boolean {
 	return options.command === "auth" && options.commandTokens[1] === "save" && options.commandTokens.includes("--password-stdin");
 }
@@ -981,6 +1092,21 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			} };
 		}
 	}
+
+	const snapshotFilter = await trySnapshotFilter({
+		commandTokens,
+		compatibilityWorkaround,
+		cwd,
+		effectiveArgs: redactedEffectiveArgs,
+		redactedArgs,
+		sessionMode,
+		sessionName: executionPlan.sessionName,
+		sessionPageState,
+		sessionPageStateUpdate: options.sessionPageStateUpdate,
+		signal,
+		usedImplicitSession: executionPlan.usedImplicitSession,
+	});
+	if (snapshotFilter) return { kind: "early-result", statePatch, result: snapshotFilter };
 
 	const containerScroll = await tryContainerScroll({
 		commandTokens,

@@ -518,6 +518,52 @@ process.stdin.on("end", () => {
 	}
 });
 
+test("agentBrowserExtension filters snapshot refs with wrapper search and role flags", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-snapshot-filter-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://dense.example/",
+    refs: {
+      e1: { role: "link", name: "Cart" },
+      e2: { role: "button", name: "Checkout" },
+      e3: { role: "combobox", name: "Theme" }
+    },
+    snapshot: ['- link "Cart" [ref=e1]', '- button "Checkout" [ref=e2]', '- combobox "Theme" [ref=e3]'].join('\\n')
+  } }));
+  return;
+}
+process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i", "--search", "checkout"] });
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match(result.content[0]?.text ?? "", /Snapshot filter: 1\/3 refs matched/);
+			assert.match(result.content[0]?.text ?? "", /Checkout/);
+			assert.doesNotMatch(result.content[0]?.text ?? "", /Theme/);
+			assert.equal((result.details?.snapshotFilter as { search?: string; matchedRefs?: number } | undefined)?.search, "checkout");
+			assert.equal((result.details?.snapshotFilter as { matchedRefs?: number } | undefined)?.matchedRefs, 1);
+			assert.deepEqual((result.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1", "e2", "e3"]);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("--search")), false);
+			assert.ok(invocations.some((entry) => entry.args.includes("snapshot") && entry.args.includes("-i")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports focused combobox diagnostics with option-opening next actions", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-combobox-focus-"));
 	const statePath = join(tempDir, "combobox-state.json");

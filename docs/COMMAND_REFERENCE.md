@@ -594,6 +594,8 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 
 When a snapshot is too large for inline output, the Pi wrapper renders a compact view before spilling the full raw snapshot to `details.fullOutputPath`. Compact snapshots are main-content-first, but dense pages and desktop host screens can still hide actionable controls in omitted content; scan `Omitted high-value controls` before opening the spill file. That bounded section favors editable/searchbox/textbox/combobox controls, named tab/surface controls, primary action buttons, and high-signal named links such as repository search results, then includes other useful controls such as checkboxes, radios, options, and menuitems that were not already listed under key refs or other refs. When that section appears, `details.data.highValueControlRefIds` repeats the same visible ref ids for programmatic follow-up alongside fields such as `previewMode`, `previewSections`, and counts on `details.data` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)).
 
+For dense pages, the wrapper also accepts `snapshot -i --search <text>` and `snapshot -i --filter role=<role>` as wrapper-side filters. It runs upstream `snapshot` without those wrapper-only flags, records the full returned ref map in `details.refSnapshot` for stale-ref safety, and renders only matching refs/lines in the model-visible snapshot with `details.snapshotFilter` counts. Use this when you need controls like checkout buttons or all comboboxes without reading a full spill file.
+
 ### Wait
 
 | Mode | Purpose |
