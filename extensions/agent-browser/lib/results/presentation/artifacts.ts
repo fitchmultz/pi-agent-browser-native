@@ -382,6 +382,7 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 		case "har":
 			return "Saved HAR";
 		case "image":
+			if (artifact.exists !== true) return artifact.command === "diff" && artifact.subcommand === "screenshot" ? "Diff image reported; file not verified" : "Image reported; file not verified";
 			return artifact.command === "diff" && artifact.subcommand === "screenshot" ? "Saved diff image" : "Saved image";
 		case "pdf":
 			return "Saved PDF";

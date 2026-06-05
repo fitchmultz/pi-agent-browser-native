@@ -574,6 +574,7 @@ test("extractQaPageContext prefers batch open title over compiled checks url", a
 			},
 			steps: [],
 			args: ["batch"],
+			failFast: false,
 			stdin: "[]",
 		},
 	});

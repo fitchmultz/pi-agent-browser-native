@@ -160,6 +160,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 	),
 	job: Type.Optional(
 		Type.Object({
+			failFast: Type.Optional(Type.Boolean({ description: "Stop the compiled batch on the first failed job step. Defaults to true so later mutating steps do not run after setup/assertion failures." })),
 			steps: Type.Array(
 				Type.Object({
 					action: StringEnum(AGENT_BROWSER_JOB_STEP_ACTIONS, {

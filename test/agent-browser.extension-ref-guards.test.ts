@@ -2051,6 +2051,59 @@ if (args.includes("batch")) {
 	}
 });
 
+test("agentBrowserExtension rejects refs after same-page rerender changes current snapshot identity", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-rerender-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const statePath = ${JSON.stringify(statePath)};
+let count = 0;
+try { count = JSON.parse(fs.readFileSync(statePath, "utf8")).snapshots || 0; } catch {}
+if (args.includes("snapshot")) {
+  count += 1;
+  fs.writeFileSync(statePath, JSON.stringify({ snapshots: count }));
+  const name = count === 1 ? "Old target before rerender" : "New target after rerender";
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://same.example/fixture",
+    refs: { e1: { role: "button", name } },
+    snapshot: '- button "' + name + '" [ref=e1]'
+  } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "unexpected" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true);
+			assert.equal(staleClick.details?.failureCategory, "stale-ref");
+			assert.match((staleClick.content[0] as { text: string }).text, /no longer matches the latest same-page snapshot/);
+			assert.match((staleClick.content[0] as { text: string }).text, /Old target before rerender/);
+			assert.match((staleClick.content[0] as { text: string }).text, /New target after rerender/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects refs absent from the latest same-page snapshot", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-missing-"));
 	const logPath = join(tempDir, "invocations.log");

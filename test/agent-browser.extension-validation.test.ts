@@ -339,10 +339,13 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(noopResult.isError, false);
 			assert.match(noopResult.content[0]?.text ?? "", /Scroll diagnostic: no observed scroll movement/);
 			const noopDetails = noopResult.details as {
+				data: { noMovement?: boolean; scrolled?: boolean };
 				nextActions: Array<{ id: string; params?: { args: string[] } }>;
 				pageChangeSummary: { nextActionIds: string[] };
 				scrollNoop: { before: { containers: Array<{ id: string }> }; reason: string };
 			};
+			assert.equal(noopDetails.data.scrolled, false);
+			assert.equal(noopDetails.data.noMovement, true);
 			assert.equal(noopDetails.scrollNoop.reason, "no-observed-scroll-position-change");
 			assert.equal(noopDetails.scrollNoop.before.containers[0]?.id, "sample-0");
 			assert.deepEqual(
@@ -369,6 +372,88 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, evalCallsBeforeLaunchScopedScroll);
 			assert.ok(invocations.some((entry) => entry.args.includes("--profile") && entry.args.includes("scroll")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension bounds dialog recovery commands and exposes recovery actions", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-dialog-timeout-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const args = process.argv.slice(2);
+if (args.includes("dialog")) {
+  setInterval(() => {}, 60_000);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS: "50" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["dialog", "status"] });
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "timeout");
+			assert.equal(result.details?.timeoutMs, 50);
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; sessionMode?: string } }> | undefined;
+			assert.ok(nextActions?.some((action) => action.id === "inspect-dialog-after-timeout"));
+			assert.ok(nextActions?.some((action) => action.id === "dismiss-dialog-after-timeout"));
+			assert.ok(nextActions?.some((action) => action.id === "recover-fresh-session-after-dialog-timeout" && action.params?.sessionMode === "fresh"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension scrolls explicit CSS containers before falling back to page scroll", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-container-scroll-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("eval") && stdin.includes("document.querySelector")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: {
+      status: "scrolled",
+      selector: "#virtualList",
+      direction: "down",
+      before: { scrollTop: 0, scrollLeft: 0, scrollHeight: 2500, clientHeight: 210, scrollWidth: 400, clientWidth: 400 },
+      after: { scrollTop: 168, scrollLeft: 0, scrollHeight: 2500, clientHeight: 210, scrollWidth: 400, clientWidth: 400 }
+    } } }));
+    return;
+  }
+  if (args.includes("scroll")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { scrolled: "unexpected-page-scroll" } }));
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "#virtualList", "down"] });
+			assert.equal(result.isError, false);
+			assert.match(result.content[0]?.text ?? "", /Scrolled container #virtualList down/);
+			assert.equal((result.details?.data as { status?: string } | undefined)?.status, "scrolled");
+			assert.equal((result.details?.scrollContainer as { request?: { selector?: string } } | undefined)?.request?.selector, "#virtualList");
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("scroll")), false);
+			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

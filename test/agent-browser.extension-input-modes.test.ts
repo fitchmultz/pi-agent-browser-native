@@ -415,13 +415,15 @@ process.stdin.on("end", () => {
 			});
 
 			assert.equal(result.isError, false);
-			assert.deepEqual(result.details?.args, ["batch"]);
+			assert.deepEqual(result.details?.args, ["batch", "--bail"]);
 			const effectiveArgs = result.details?.effectiveArgs as string[] | undefined;
 			assert.deepEqual(effectiveArgs?.slice(0, 2), ["--json", "--session"]);
 			assert.match(effectiveArgs?.[2] ?? "", /^piab-pi-agent-browser-job-/);
 			assert.equal(effectiveArgs?.[3], "batch");
-			const compiledJob = result.details?.compiledJob as { args?: string[]; stdin?: string; steps?: Array<{ action: string; args: string[] }> } | undefined;
-			assert.deepEqual(compiledJob?.args, ["batch"]);
+			assert.equal(effectiveArgs?.[4], "--bail");
+			const compiledJob = result.details?.compiledJob as { args?: string[]; failFast?: boolean; stdin?: string; steps?: Array<{ action: string; args: string[] }> } | undefined;
+			assert.deepEqual(compiledJob?.args, ["batch", "--bail"]);
+			assert.equal(compiledJob?.failFast, true);
 			const expectedCompiledSteps = [
 				["open", "https://example.test/"],
 				["fill", "#email", "user@example.test"],
@@ -445,7 +447,7 @@ process.stdin.on("end", () => {
 			assert.deepEqual(JSON.parse(redactedCompiledJob?.stdin ?? "[]"), redactedCompiledJob?.steps?.map((step) => step.args));
 
 			const invocations = await readInvocationLog(logPath);
-			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
+			assert.deepEqual(invocations[0]?.args.slice(-2), ["batch", "--bail"]);
 			const upstreamSteps = JSON.parse(invocations[0]?.stdin ?? "[]") as string[][];
 			assert.deepEqual(upstreamSteps.slice(0, 9), compiledJob?.steps?.slice(0, 9).map((step) => step.args));
 			assert.equal(upstreamSteps[9]?.[0], "screenshot");
@@ -469,7 +471,7 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-  const command = args.at(-1);
+  const command = args.includes("batch") ? "batch" : args.at(-1);
   if (command === "open") {
     process.stdout.write(JSON.stringify({ success: true, data: { title: "GitHub", url: "https://github.com/vercel-labs/agent-browser" } }));
     return;
@@ -498,6 +500,7 @@ process.stdin.on("end", () => {
 			const screenshotPath = join(tempDir, "wiki.png");
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: {
+					failFast: false,
 					steps: [
 						{ action: "open", url: "https://www.wikipedia.org/" },
 						{ action: "fill", selector: "input[name='search']", text: "agent-browser" },
@@ -776,13 +779,19 @@ process.stdin.on("end", () => {
 				"1 page error(s)",
 			]);
 			const compiledQaPreset = result.details?.compiledQaPreset as { steps?: Array<{ args: string[] }> } | undefined;
-			assert.deepEqual(compiledQaPreset?.steps?.map((step) => step.args), [
+			const compiledQaSteps = compiledQaPreset?.steps?.map((step) => step.args) ?? [];
+			assert.deepEqual(compiledQaSteps.slice(0, 5), [
 				["network", "requests", "--clear"],
 				["console", "--clear"],
 				["errors", "--clear"],
 				["open", "https://fail.example.test/"],
 				["wait", "--load", "domcontentloaded"],
-				["get", "text", "body"],
+			]);
+			assert.equal(compiledQaSteps[5]?.[0], "wait");
+			assert.equal(compiledQaSteps[5]?.[1], "--fn");
+			assert.match(compiledQaSteps[5]?.[2] ?? "", /Welcome/);
+			assert.deepEqual(compiledQaSteps[5]?.slice(3), ["--timeout", "5000"]);
+			assert.deepEqual(compiledQaSteps.slice(6), [
 				["wait", "main"],
 				["network", "requests"],
 				["console"],
@@ -830,11 +839,13 @@ process.stdin.on("end", () => {
 			assert.equal(attachedCompiledQaPreset?.checks?.checkErrors, false);
 			assert.equal(attachedCompiledQaPreset?.checks?.diagnosticsResetAtStart, false);
 			assert.equal(attachedCompiledQaPreset?.checks?.url, undefined);
-			assert.deepEqual(attachedCompiledQaPreset?.steps?.map((step) => step.args), [
-				["wait", "--load", "domcontentloaded"],
-				["get", "text", "body"],
-				["wait", "main"],
-			]);
+			const attachedCompiledQaSteps = attachedCompiledQaPreset?.steps?.map((step) => step.args) ?? [];
+			assert.deepEqual(attachedCompiledQaSteps.slice(0, 1), [["wait", "--load", "domcontentloaded"]]);
+			assert.equal(attachedCompiledQaSteps[1]?.[0], "wait");
+			assert.equal(attachedCompiledQaSteps[1]?.[1], "--fn");
+			assert.match(attachedCompiledQaSteps[1]?.[2] ?? "", /Welcome/);
+			assert.deepEqual(attachedCompiledQaSteps[1]?.slice(3), ["--timeout", "5000"]);
+			assert.deepEqual(attachedCompiledQaSteps.slice(2), [["wait", "main"]]);
 			const attachedInvocation = [...await readInvocationLog(logPath)].reverse().find((entry) => entry.args.at(-1) === "batch" && entry.stdin?.trim().startsWith("["));
 			assert.ok(attachedInvocation);
 			const attachedSteps = JSON.parse(attachedInvocation.stdin ?? "[]") as string[][];

@@ -219,7 +219,8 @@ test("buildToolPresentation records path-bearing diff screenshots without inlini
 	assert.equal(presentation.failureCategory, "artifact-missing");
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = (presentation.content[0] as { text: string }).text;
-	assert.match(text, /Saved diff image: diff\.png/);
+	assert.match(text, /Diff image reported; file not verified: diff\.png/);
+	assert.doesNotMatch(text, /Saved diff image/);
 	assert.match(text, /Artifact type: image/);
 	assert.doesNotMatch(text, /baseline\.png/);
 	assert.equal(presentation.artifacts?.length, 1);

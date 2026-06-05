@@ -590,9 +590,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			}
 
 			const networkNextActions = networkRequestsResult?.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
-			assert.deepEqual(networkNextActions?.map((action) => action.id), ["inspect-network-request", "filter-network-requests-by-path", "start-network-har-capture"]);
+			assert.deepEqual(networkNextActions?.map((action) => action.id), ["inspect-network-request", "filter-network-requests-by-path", "clear-network-requests-before-repro", "start-network-har-capture"]);
 			assert.deepEqual(networkNextActions?.[0]?.params?.args?.slice(-3), ["network", "request", "n1"]);
 			assert.deepEqual(networkNextActions?.[1]?.params?.args?.slice(-4), ["network", "requests", "--filter", "/app.js"]);
+			assert.deepEqual(networkNextActions?.[2]?.params?.args?.slice(-3), ["network", "requests", "--clear"]);
 
 			const invocations = await readInvocationLog(logPath);
 			const userInvocations = invocations.map((entry) => stripWrapperPrefix(entry.args));

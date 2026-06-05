@@ -106,6 +106,7 @@ export interface CompiledAgentBrowserJobStep {
 
 export interface CompiledAgentBrowserJob {
 	args: string[];
+	failFast: boolean;
 	stdin: string;
 	steps: CompiledAgentBrowserJobStep[];
 }

@@ -421,6 +421,7 @@ export interface PreparedBrowserRun {
 	priorSessionTabTarget?: SessionTabTarget;
 	processArgs: string[];
 	processStdin?: string;
+	processTimeoutMs?: number;
 	redactedArgs: string[];
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
 	redactedCompiledJob?: CompiledAgentBrowserJob;

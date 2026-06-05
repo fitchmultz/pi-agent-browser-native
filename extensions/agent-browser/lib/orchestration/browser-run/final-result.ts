@@ -19,6 +19,7 @@ import {
 	AgentBrowserNextActionCollector,
 	alignPageChangeSummaryNextActionIds,
 	isStandaloneSnapshotNextAction,
+	withOptionalSessionArgs,
 } from "../../results/next-actions.js";
 import {
 	buildConnectedSessionNextActions,
@@ -300,6 +301,33 @@ export async function prepareFinalResultRecoveryState(options: {
 	return { categoryDetails, currentRefSnapshot, currentRefSnapshotInvalidation, noActivePageSnapshotFailure, richInputRecoveryDiagnostic, visibleRefFallbackDiagnostic, visibleRefFallbackSessionName };
 }
 
+function buildDialogTimeoutNextActions(options: { command?: string; sessionName?: string }): AgentBrowserNextAction[] {
+	if (options.command !== "dialog" && options.command !== "click" && options.command !== "tap" && options.command !== "find") return [];
+	return [
+		{
+			id: "inspect-dialog-after-timeout",
+			params: { args: withOptionalSessionArgs(options.sessionName, ["dialog", "status"]) },
+			reason: "Check whether a blocking JavaScript dialog is pending after the timed-out interaction.",
+			safety: "Read-only dialog status; this wrapper bounds dialog commands so recovery attempts do not wait for the full default watchdog.",
+			tool: "agent_browser" as const,
+		},
+		{
+			id: "dismiss-dialog-after-timeout",
+			params: { args: withOptionalSessionArgs(options.sessionName, ["dialog", "dismiss"]) },
+			reason: "Dismiss a pending alert/confirm/prompt when the workflow can safely abandon the dialog.",
+			safety: "Only run when dismissing/canceling the dialog is acceptable for the user flow.",
+			tool: "agent_browser" as const,
+		},
+		{
+			id: "recover-fresh-session-after-dialog-timeout",
+			params: { args: ["open", "about:blank"], sessionMode: "fresh" as const },
+			reason: "Start a clean browser session if the current session remains blocked behind a JavaScript dialog.",
+			safety: "Replace about:blank with the intended recovery URL; this abandons the blocked managed session.",
+			tool: "agent_browser" as const,
+		},
+	];
+}
+
 function buildResultNextActions(options: FinalResultInput): AgentBrowserNextAction[] | undefined {
 	const nextActionCollector = new AgentBrowserNextActionCollector(options.presentation.nextActions);
 	if (options.categoryDetails.resultCategory === "success" && options.executionPlan.commandInfo.command === "connect" && !options.electronLaunchRecord) nextActionCollector.appendUnique(buildConnectedSessionNextActions(options.executionPlan.sessionName));
@@ -327,6 +355,7 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	if (options.scrollNoopDiagnostic) nextActionCollector.append(buildScrollNoopNextActions(options.executionPlan.sessionName));
 	if (options.comboboxFocusDiagnostic) nextActionCollector.append(buildComboboxFocusNextActions(options.executionPlan.sessionName));
 	if (options.managedSessionOutcome) nextActionCollector.appendUnique(buildManagedSessionFreshFailureNextActions(options.managedSessionOutcome));
+	if (options.categoryDetails.failureCategory === "timeout" && options.processResult.timedOut) nextActionCollector.appendUnique(buildDialogTimeoutNextActions({ command: options.executionPlan.commandInfo.command, sessionName: options.executionPlan.sessionName }));
 	if (options.categoryDetails.failureCategory === "stale-ref" && options.redactedCompiledSemanticAction && isCompiledSemanticActionFindCommand(options.compiledSemanticAction)) nextActionCollector.append([{ id: "retry-semantic-action-after-stale-ref", params: { args: options.redactedCompiledSemanticAction.args }, reason: "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.", safety: "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.", tool: "agent_browser" as const }]);
 	if (options.electronLaunchRecord) nextActionCollector.append(buildAgentBrowserNextActions({ electron: { launchId: options.electronLaunchRecord.launchId, sessionName: options.electronLaunchRecord.sessionName, status: options.electronLaunchRecord.cleanupState }, failureCategory: options.categoryDetails.failureCategory, resultCategory: options.categoryDetails.resultCategory, successCategory: options.categoryDetails.successCategory }));
 	return nextActionCollector.toArray();

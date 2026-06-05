@@ -335,7 +335,7 @@ test("buildToolPresentation hides data image network noise from preview while pr
 	assert.doesNotMatch(text, /data:image\/png/);
 	assert.doesNotMatch(text, /Network failure summary/);
 	assert.match(JSON.stringify(presentation.data), /data:image\/png/);
-	assert.deepEqual(presentation.nextActions?.map((action) => action.id), ["inspect-network-request", "filter-network-requests-by-path", "start-network-har-capture"]);
+	assert.deepEqual(presentation.nextActions?.map((action) => action.id), ["inspect-network-request", "filter-network-requests-by-path", "clear-network-requests-before-repro", "start-network-har-capture"]);
 });
 
 test("buildToolPresentation treats stream enable already-enabled as idempotent", async () => {
@@ -444,12 +444,14 @@ test("buildToolPresentation formats redacted network payload, response, and erro
 		"inspect-actionable-network-request",
 		"trace-actionable-network-source",
 		"filter-network-requests-by-path",
+		"clear-network-requests-before-repro",
 		"start-network-har-capture",
 	]);
 	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--session", "work", "network", "request", "req-2"]);
 	assert.deepEqual(presentation.nextActions?.[1]?.params?.networkSourceLookup, { requestId: "req-2", session: "work" });
 	assert.deepEqual(presentation.nextActions?.[2]?.params?.args, ["--session", "work", "network", "requests", "--filter", "/items"]);
-	assert.deepEqual(presentation.nextActions?.[3]?.params?.args, ["--session", "work", "network", "har", "start"]);
+	assert.deepEqual(presentation.nextActions?.[3]?.params?.args, ["--session", "work", "network", "requests", "--clear"]);
+	assert.deepEqual(presentation.nextActions?.[4]?.params?.args, ["--session", "work", "network", "har", "start"]);
 	assert.doesNotMatch(JSON.stringify(presentation.nextActions), /url-secret|nested-url-secret|error-secret|sentry-secret|write-secret/);
 });
 
@@ -469,6 +471,7 @@ test("buildToolPresentation returns bounded network request next actions for ben
 	assert.deepEqual(benignPresentation.nextActions?.map((action) => action.id), [
 		"inspect-benign-network-request",
 		"filter-network-requests-by-path",
+		"clear-network-requests-before-repro",
 		"start-network-har-capture",
 	]);
 	assert.deepEqual(benignPresentation.nextActions?.[0]?.params?.args, ["network", "request", "icon-1"]);
@@ -490,11 +493,13 @@ test("buildToolPresentation returns bounded network request next actions for ben
 	assert.deepEqual(apiPresentation.nextActions?.map((action) => action.id), [
 		"inspect-network-request",
 		"filter-network-requests-by-path",
+		"clear-network-requests-before-repro",
 		"start-network-har-capture",
 	]);
 	assert.deepEqual(apiPresentation.nextActions?.[0]?.params?.args, ["--session", "work", "network", "request", "api-1"]);
 	assert.deepEqual(apiPresentation.nextActions?.[1]?.params?.args, ["--session", "work", "network", "requests", "--filter", "/api/items"]);
-	assert.deepEqual(apiPresentation.nextActions?.[2]?.params?.args, ["--session", "work", "network", "har", "start"]);
+	assert.deepEqual(apiPresentation.nextActions?.[2]?.params?.args, ["--session", "work", "network", "requests", "--clear"]);
+	assert.deepEqual(apiPresentation.nextActions?.[3]?.params?.args, ["--session", "work", "network", "har", "start"]);
 	assert.equal(apiPresentation.nextActions?.some((action) => action.id.includes("source")), false);
 	assert.doesNotMatch(JSON.stringify(apiPresentation.nextActions), /url-secret/);
 
@@ -520,8 +525,9 @@ test("buildToolPresentation returns bounded network request next actions for ben
 				},
 			},
 		});
-		assert.deepEqual(sensitivePathPresentation.nextActions?.map((action) => action.id), ["inspect-network-request", "start-network-har-capture"]);
+		assert.deepEqual(sensitivePathPresentation.nextActions?.map((action) => action.id), ["inspect-network-request", "clear-network-requests-before-repro", "start-network-har-capture"]);
 		assert.deepEqual(sensitivePathPresentation.nextActions?.[0]?.params?.args, ["network", "request", requestId]);
+		assert.deepEqual(sensitivePathPresentation.nextActions?.[1]?.params?.args, ["network", "requests", "--clear"]);
 		assert.doesNotMatch(JSON.stringify(sensitivePathPresentation.nextActions), forbiddenPattern);
 	}
 });

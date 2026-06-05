@@ -59,6 +59,11 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 	if (!isRecord(input)) {
 		return { error: "job must be an object." };
 	}
+	const rawFailFast = input.failFast;
+	if (rawFailFast !== undefined && typeof rawFailFast !== "boolean") {
+		return { error: "job.failFast must be a boolean when provided." };
+	}
+	const failFast = rawFailFast !== false;
 	const rawSteps = input.steps;
 	if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
 		return { error: "job.steps must be a non-empty array." };
@@ -115,7 +120,7 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 		}
 		steps.push({ action: jobAction, args });
 	}
-	return { compiled: { args: ["batch"], stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
+	return { compiled: { args: failFast ? ["batch", "--bail"] : ["batch"], failFast, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
 }
 
 export function isHttpOrHttpsUrl(url: string): boolean {
@@ -184,8 +189,57 @@ export function buildQaCompactPassText(options: {
 	return lines.join("\n");
 }
 
+const QA_VISIBLE_TEXT_TIMEOUT_MS = 5_000;
+
 function formatQaExpectedTextPreview(text: string): string {
 	return JSON.stringify(text.length > 80 ? `${text.slice(0, 77)}...` : text);
+}
+
+function buildQaVisibleTextPredicate(text: string): string {
+	return `(() => {
+  const expected = ${JSON.stringify(text)}.replace(/\\s+/g, " ").trim();
+  if (!expected) return false;
+  const root = document.body || document.documentElement;
+  if (!root) return false;
+  const skipTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "SVG"]);
+  const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+  const isVisibleElement = (element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    if (skipTags.has(element.tagName)) return false;
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+    return element.getClientRects().length > 0;
+  };
+  const hasVisibleAncestors = (node) => {
+    for (let element = node.parentElement; element; element = element.parentElement) {
+      if (!isVisibleElement(element)) return false;
+      if (element === root) break;
+    }
+    return true;
+  };
+  const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let visitedText = 0;
+  for (let node = textWalker.nextNode(); node && visitedText < 6000; node = textWalker.nextNode(), visitedText += 1) {
+    if (!hasVisibleAncestors(node)) continue;
+    if (normalize(node.nodeValue).includes(expected)) return true;
+  }
+  const elementWalker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  let visitedElements = 0;
+  for (let node = elementWalker.nextNode(); node && visitedElements < 3000; node = elementWalker.nextNode(), visitedElements += 1) {
+    const element = node;
+    if (!isVisibleElement(element) || !("value" in element)) continue;
+    if (normalize(element.value).includes(expected)) return true;
+  }
+  return false;
+})()`;
+}
+
+function qaVisibleTextWaitPassed(item: ReturnType<typeof getBatchResultItems>[number] | undefined, step: CompiledAgentBrowserJobStep): boolean | undefined {
+	if (step.args[0] !== "wait" || step.args[1] !== "--fn") return undefined;
+	if (!item || item.success === false) return false;
+	if (typeof item.result === "boolean") return item.result;
+	if (isRecord(item.result) && typeof item.result.result === "boolean") return item.result.result;
+	return true;
 }
 
 function extractQaTextAssertionResultText(item: ReturnType<typeof getBatchResultItems>[number] | undefined): string | undefined {
@@ -241,6 +295,8 @@ export function analyzeQaPresetResults(data: unknown, compiled?: CompiledAgentBr
 			if (step.action !== "assertText") return;
 			const expected = compiled.checks.expectedText[expectedTextIndex++];
 			if (!expected) return;
+			const visibleTextPassed = qaVisibleTextWaitPassed(items[index], step);
+			if (visibleTextPassed === true) return;
 			const actual = extractQaTextAssertionResultText(items[index]);
 			if (!actual || !actual.includes(expected)) failedChecks.push(`expected text not found: ${formatQaExpectedTextPreview(expected)}`);
 		});
@@ -311,8 +367,8 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 	if (diagnosticsResetAtStart && checkErrors) steps.push({ action: "wait", args: ["errors", "--clear"] });
 	if (!attached && normalizedUrl) steps.push({ action: "open", args: ["open", normalizedUrl] });
 	steps.push({ action: "wait", args: ["wait", "--load", loadState] });
-	for (const _text of expectedText) {
-		steps.push({ action: "assertText", args: ["get", "text", "body"] });
+	for (const text of expectedText) {
+		steps.push({ action: "assertText", args: ["wait", "--fn", buildQaVisibleTextPredicate(text), "--timeout", String(QA_VISIBLE_TEXT_TIMEOUT_MS)] });
 	}
 	if (typeof expectedSelector === "string") {
 		steps.push({ action: "wait", args: ["wait", expectedSelector] });
@@ -325,6 +381,7 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 		compiled: {
 			args: ["batch"],
 			checks: { attached, checkConsole, checkErrors, checkNetwork, diagnosticsResetAtStart, expectedSelector, expectedText, loadState, screenshotPath, url: normalizedUrl },
+			failFast: false,
 			stdin: JSON.stringify(steps.map((step) => step.args)),
 			steps,
 		},

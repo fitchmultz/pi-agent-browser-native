@@ -24,6 +24,7 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 			env: prepared.executionPlan.managedSessionName ? { AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs } : undefined,
 			signal: options.signal,
 			stdin: prepared.processStdin,
+			timeoutMs: prepared.processTimeoutMs,
 		});
 
 		const missingBinaryResult = await buildMissingBinaryFailureResult({

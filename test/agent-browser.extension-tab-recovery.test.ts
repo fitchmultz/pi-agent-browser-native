@@ -440,15 +440,16 @@ if (args.includes("batch")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 3);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
+			assert.equal(invocations.length, 4);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
 				["tab", "t1"],
 				["click", "@e9"],
 				["eval", "({ title: document.title, url: location.href })"],
 			]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

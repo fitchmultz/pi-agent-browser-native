@@ -421,7 +421,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			: prepared.executionPlan.managedSessionName;
 		const policyBlockedFreshManagedSession = allowedDomainsViolation !== undefined && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName === prepared.executionPlan.sessionName;
 		const postLaunchBatchFailure = !succeeded && processSucceeded && parseSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && batchStartedManagedBrowser(presentationEnvelope?.data);
-		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession || postLaunchBatchFailure;
+		const postLaunchTimeoutWithPage = !succeeded && processResult.timedOut && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && timeoutPartialProgress?.currentPage?.url !== undefined;
+		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage;
 		const managedSessionState = resolveManagedSessionState({ command: prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, priorActive: priorManagedSessionActive, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
 		const replacedManagedSessionName = managedSessionState.replacedSessionName;
 		managedSessionActive = managedSessionState.active;
@@ -483,6 +484,12 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		if (presentation.resultCategory === "failure" && succeeded) {
 			succeeded = false;
 			presentationEnvelope = { ...(presentationEnvelope ?? {}), error: presentation.summary, success: false };
+		}
+		if (scrollNoopDiagnostic) {
+			presentation.summary = "Scroll completed with no observed movement.";
+			if (isRecord(presentation.data)) presentation.data = { ...presentation.data, noMovement: true, scrolled: false };
+			if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `Scroll completed with no observed movement.\n\n${presentation.content[0].text}` };
+			else presentation.content.unshift({ type: "text", text: "Scroll completed with no observed movement." });
 		}
 		if (parseFailureOutput.artifactManifest) { presentation.artifactManifest = parseFailureOutput.artifactManifest; presentation.artifactRetentionSummary = parseFailureOutput.artifactRetentionSummary; }
 		if (parseFailureOutput.fullOutputPath || parseFailureOutput.fullOutputUnavailable) {

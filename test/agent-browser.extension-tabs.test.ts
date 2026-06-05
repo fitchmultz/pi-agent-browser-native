@@ -317,6 +317,7 @@ if (args.includes("open")) {
 			assert.deepEqual(invocations.map((entry) => entry.args.slice(-2).join(" ")), [
 				"open https://example.com/",
 				"snapshot -i",
+				"snapshot -i",
 				"click @e1",
 				"eval --stdin",
 			]);

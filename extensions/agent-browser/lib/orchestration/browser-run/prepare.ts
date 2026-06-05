@@ -8,7 +8,7 @@ import { SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS } from "../../process.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
 import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-recovery.js";
-import { type SessionRefSnapshot } from "../../session-page-state.js";
+import { extractRefSnapshotFromData, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import {
 	buildExecutionPlan,
 	createFreshSessionName,
@@ -24,6 +24,7 @@ import {
 	buildSessionDetailFields,
 	buildStaleRefPreflight,
 	collectSessionTabSelection,
+	getGuardedRefUsage,
 	getTraceOwnerGuardMessage,
 	runSessionCommandData,
 	shouldPinSessionTabForCommand,
@@ -32,7 +33,7 @@ import { isRecord } from "../../parsing.js";
 import { parseBatchStdinJsonArray, parseValidBatchStepEntries } from "../batch-stdin.js";
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
-import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
+import { buildScrollNoopNextActions, collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
 import { findRequestedArtifactCloseViolation } from "./prompt-guards.js";
 
 import type {
@@ -45,6 +46,7 @@ import type {
 	ScreenshotArtifactRequest,
 	ScreenshotPathRequest,
 	SemanticActionVisibleRefResolution,
+	StaleRefPreflight,
 } from "./types.js";
 
 const DIRECT_ANCHOR_DOWNLOAD_MAX_BYTES = 2 * 1024 * 1024;
@@ -428,6 +430,173 @@ export function validateWaitIpcTimeoutContract(commandTokens: string[], stdin: s
 	return undefined;
 }
 
+const DIALOG_COMMAND_PROCESS_TIMEOUT_MS = 5_000;
+const DIALOG_COMMAND_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS";
+const LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS = 8_000;
+const LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS";
+const DIALOG_TRIGGER_TEXT_PATTERN = /\b(?:alert|confirm|dialog|prompt)\b/i;
+
+function getPositiveIntegerEnv(name: string): number | undefined {
+	const value = process.env[name];
+	if (!value || !/^\d+$/.test(value.trim())) return undefined;
+	const parsed = Number(value.trim());
+	return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function getRefIdsFromDirectCommand(commandTokens: string[]): string[] {
+	return [...new Set(getGuardedRefUsage(commandTokens))];
+}
+
+function commandTextLooksLikeDialogTrigger(commandTokens: string[], refSnapshot?: SessionRefSnapshot): boolean {
+	if (commandTokens.some((token) => DIALOG_TRIGGER_TEXT_PATTERN.test(token))) return true;
+	for (const refId of getRefIdsFromDirectCommand(commandTokens)) {
+		const ref = refSnapshot?.refs?.[refId];
+		if (ref && DIALOG_TRIGGER_TEXT_PATTERN.test(`${ref.role} ${ref.name}`)) return true;
+	}
+	return false;
+}
+
+function getDialogAwareProcessTimeoutMs(commandTokens: string[], refSnapshot?: SessionRefSnapshot): number | undefined {
+	const command = commandTokens[0];
+	if (command === "dialog") return getPositiveIntegerEnv(DIALOG_COMMAND_PROCESS_TIMEOUT_ENV) ?? DIALOG_COMMAND_PROCESS_TIMEOUT_MS;
+	if ((command === "click" || command === "tap" || (command === "find" && commandTokens.includes("click"))) && commandTextLooksLikeDialogTrigger(commandTokens, refSnapshot)) return getPositiveIntegerEnv(LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_ENV) ?? LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS;
+	return undefined;
+}
+
+function describeRef(refSnapshot: SessionRefSnapshot | undefined, refId: string): string {
+	const ref = refSnapshot?.refs?.[refId];
+	return ref ? `${ref.role} ${JSON.stringify(ref.name)}` : "not present";
+}
+
+function getSamePageFreshnessPreflightFailure(options: {
+	commandTokens: string[];
+	currentSnapshot: SessionRefSnapshot;
+	previousSnapshot: SessionRefSnapshot;
+}): { message: string; refIds: string[] } | undefined {
+	if (options.commandTokens[0] === "batch") return undefined;
+	const refIds = getRefIdsFromDirectCommand(options.commandTokens);
+	if (refIds.length === 0) return undefined;
+	const previousUrl = options.previousSnapshot.target?.url;
+	const currentUrl = options.currentSnapshot.target?.url;
+	if (!previousUrl || !currentUrl || previousUrl !== currentUrl || currentUrl === "about:blank") return undefined;
+	const mismatchedRefs = refIds.filter((refId) => {
+		const previous = options.previousSnapshot.refs?.[refId];
+		const current = options.currentSnapshot.refs?.[refId];
+		if (!options.currentSnapshot.refIds.includes(refId)) return true;
+		if (!previous || !current) return previous !== current;
+		return previous.role !== current.role || previous.name !== current.name;
+	});
+	if (mismatchedRefs.length === 0) return undefined;
+	const refText = mismatchedRefs.map((refId) => `@${refId}`).join(", ");
+	const evidence = mismatchedRefs.map((refId) => `@${refId}: previous ${describeRef(options.previousSnapshot, refId)}, current ${describeRef(options.currentSnapshot, refId)}`).join("; ");
+	return {
+		message: `Ref ${refText} no longer matches the latest same-page snapshot. The page likely rerendered after the previous snapshot; run snapshot -i and retry with current refs. Evidence: ${evidence}.`,
+		refIds: mismatchedRefs,
+	};
+}
+
+async function collectSamePageRefFreshnessPreflight(options: {
+	commandTokens: string[];
+	cwd: string;
+	currentTarget?: SessionTabTarget;
+	previousSnapshot?: SessionRefSnapshot;
+	sessionName?: string;
+	signal?: AbortSignal;
+}): Promise<StaleRefPreflight | undefined> {
+	if (!options.previousSnapshot || !options.sessionName || options.commandTokens[0] === "batch" || getRefIdsFromDirectCommand(options.commandTokens).length === 0) return undefined;
+	const previousUrl = options.previousSnapshot.target?.url;
+	const currentTargetUrl = options.currentTarget?.url;
+	if (currentTargetUrl === "about:blank" || (previousUrl && currentTargetUrl && previousUrl !== currentTargetUrl)) return undefined;
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const currentSnapshot = extractRefSnapshotFromData(snapshotData);
+	if (!currentSnapshot) return undefined;
+	const snapshotWithTarget = { ...currentSnapshot, target: currentSnapshot.target ?? options.currentTarget };
+	const mismatch = getSamePageFreshnessPreflightFailure({ commandTokens: options.commandTokens, currentSnapshot: snapshotWithTarget, previousSnapshot: options.previousSnapshot });
+	if (!mismatch) return undefined;
+	return { message: mismatch.message, refIds: mismatch.refIds, snapshot: snapshotWithTarget };
+}
+
+const SCROLL_CONTAINER_DIRECTIONS = new Set(["down", "left", "right", "up"]);
+
+function getContainerScrollRequest(commandTokens: string[]): { amount?: string; direction: string; selector: string } | undefined {
+	if (commandTokens[0] !== "scroll" || commandTokens.length < 3) return undefined;
+	const selector = commandTokens[1];
+	const direction = commandTokens[2]?.toLowerCase();
+	if (!selector || selector.startsWith("-") || selector.startsWith("@") || SCROLL_CONTAINER_DIRECTIONS.has(selector.toLowerCase())) return undefined;
+	if (!SCROLL_CONTAINER_DIRECTIONS.has(direction)) return undefined;
+	return { amount: commandTokens[3], direction, selector };
+}
+
+function buildContainerScrollScript(request: { amount?: string; direction: string; selector: string }): string {
+	return `(() => {
+  const selector = ${JSON.stringify(request.selector)};
+  const direction = ${JSON.stringify(request.direction)};
+  const amountToken = ${JSON.stringify(request.amount ?? "")};
+  let element;
+  try { element = document.querySelector(selector); } catch (error) { return { status: "invalid-selector", selector, error: String(error && error.message || error) }; }
+  if (!(element instanceof HTMLElement)) return { status: "not-found", selector };
+  const axis = direction === "left" || direction === "right" ? "x" : "y";
+  const before = { scrollLeft: element.scrollLeft, scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, clientWidth: element.clientWidth };
+  const parseAmount = () => {
+    const token = String(amountToken || "").trim().toLowerCase();
+    const extent = axis === "x" ? element.clientWidth : element.clientHeight;
+    if (!token) return Math.max(1, Math.floor(extent * 0.8));
+    if (token.endsWith("%")) {
+      const value = Number(token.slice(0, -1));
+      return Number.isFinite(value) ? Math.max(1, Math.floor(extent * value / 100)) : Math.max(1, Math.floor(extent * 0.8));
+    }
+    const pixels = Number(token.replace(/px$/, ""));
+    return Number.isFinite(pixels) && pixels > 0 ? Math.floor(pixels) : Math.max(1, Math.floor(extent * 0.8));
+  };
+  const delta = parseAmount() * (direction === "up" || direction === "left" ? -1 : 1);
+  if (axis === "x") element.scrollLeft += delta;
+  else element.scrollTop += delta;
+  const after = { scrollLeft: element.scrollLeft, scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, clientWidth: element.clientWidth };
+  const moved = before.scrollLeft !== after.scrollLeft || before.scrollTop !== after.scrollTop;
+  return { status: moved ? "scrolled" : "no-movement", selector, direction, amount: amountToken || undefined, before, after };
+})()`;
+}
+
+async function tryContainerScroll(options: {
+	commandTokens: string[];
+	compatibilityWorkaround?: CompatibilityWorkaround;
+	cwd: string;
+	effectiveArgs: string[];
+	redactedArgs: string[];
+	sessionMode: "auto" | "fresh";
+	sessionName?: string;
+	signal?: AbortSignal;
+	usedImplicitSession: boolean;
+}): Promise<AgentBrowserToolResult | undefined> {
+	const request = getContainerScrollRequest(options.commandTokens);
+	if (!request || !options.sessionName) return undefined;
+	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildContainerScrollScript(request) });
+	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
+	if (!isRecord(result) || typeof result.status !== "string") return undefined;
+	const succeeded = result.status === "scrolled";
+	const message = succeeded
+		? `Scrolled container ${request.selector} ${request.direction}${request.amount ? ` by ${request.amount}` : ""}.`
+		: `Scroll container ${request.selector} did not move (${result.status}).`;
+	return {
+		content: [{ type: "text", text: message }],
+		details: {
+			args: options.redactedArgs,
+			command: "scroll",
+			compatibilityWorkaround: options.compatibilityWorkaround,
+			data: result,
+			effectiveArgs: options.effectiveArgs,
+			nextActions: succeeded ? undefined : buildScrollNoopNextActions(options.sessionName),
+			scrollContainer: { request, result },
+			sessionMode: options.sessionMode,
+			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "scroll", errorText: succeeded ? undefined : message, succeeded, validationError: succeeded ? undefined : message }),
+			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
+			summary: message,
+			validationError: succeeded ? undefined : message,
+		},
+		isError: !succeeded,
+	};
+}
+
 function isPasswordStdinAuthSave(options: { command?: string; commandTokens: string[] }): boolean {
 	return options.command === "auth" && options.commandTokens[1] === "save" && options.commandTokens.includes("--password-stdin");
 }
@@ -697,6 +866,35 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			isError: true,
 		} };
 	}
+	const samePageRefFreshnessPreflight = await collectSamePageRefFreshnessPreflight({
+		commandTokens,
+		cwd,
+		currentTarget: priorSessionTabTarget,
+		previousSnapshot: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotState,
+		sessionName: executionPlan.sessionName,
+		signal,
+	});
+	if (samePageRefFreshnessPreflight) {
+		if (samePageRefFreshnessPreflight.snapshot && executionPlan.sessionName) {
+			sessionPageState.applyRefSnapshot({ fallbackTarget: priorSessionTabTarget, sessionName: executionPlan.sessionName, snapshot: samePageRefFreshnessPreflight.snapshot, update: options.sessionPageStateUpdate });
+		}
+		return { kind: "early-result", statePatch, result: {
+			content: [{ type: "text", text: samePageRefFreshnessPreflight.message }],
+			details: {
+				args: redactedArgs,
+				command: executionPlan.commandInfo.command,
+				compatibilityWorkaround,
+				effectiveArgs: redactedEffectiveArgs,
+				nextActions: buildSessionAwareStaleRefNextActions(executionPlan.sessionName),
+				refIds: samePageRefFreshnessPreflight.refIds,
+				refSnapshot: samePageRefFreshnessPreflight.snapshot,
+				sessionMode,
+				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: samePageRefFreshnessPreflight.message, failureCategory: "stale-ref", succeeded: false }),
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+			},
+			isError: true,
+		} };
+	}
 
 	if (compiledQaPreset?.checks.attached) {
 		const qaAttachedPrecondition = await validateQaAttachedPrecondition({
@@ -722,6 +920,19 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			} };
 		}
 	}
+
+	const containerScroll = await tryContainerScroll({
+		commandTokens,
+		compatibilityWorkaround,
+		cwd,
+		effectiveArgs: redactedEffectiveArgs,
+		redactedArgs,
+		sessionMode,
+		sessionName: executionPlan.sessionName,
+		signal,
+		usedImplicitSession: executionPlan.usedImplicitSession,
+	});
+	if (containerScroll) return { kind: "early-result", statePatch, result: containerScroll };
 
 	const directAnchorDownload = await tryDirectAnchorDownload({
 		commandTokens,
@@ -835,6 +1046,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
 		? await prepareClickDispatchProbe({ commandTokens, cwd, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
 		: undefined;
+	const processTimeoutMs = getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot);
 	const redactedProcessArgs = redactInvocationArgs(processArgs);
 	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0;
 	const scrollPositionBefore = shouldProbeScrollNoop
@@ -872,6 +1084,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		priorSessionTabTarget,
 		processArgs,
 		processStdin,
+		processTimeoutMs,
 		redactedArgs,
 		redactedCompiledElectron,
 		redactedCompiledJob,

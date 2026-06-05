@@ -566,6 +566,13 @@ export function buildNetworkRequestsNextActions(data: unknown, sessionName: stri
 		});
 	}
 	actions.push({
+		id: "clear-network-requests-before-repro",
+		params: { args: withOptionalSessionArgs(sessionName, ["network", "requests", "--clear"]) },
+		reason: "Clear the aggregate request buffer before reproducing the current-page network behavior.",
+		safety: "This mutates only diagnostic buffers for the session; capture or inspect needed old rows first.",
+		tool: "agent_browser",
+	});
+	actions.push({
 		id: "start-network-har-capture",
 		params: { args: withOptionalSessionArgs(sessionName, ["network", "har", "start"]) },
 		reason: "Start HAR capture before reproducing the network behavior again.",

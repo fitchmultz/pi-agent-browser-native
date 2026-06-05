@@ -743,7 +743,7 @@ if (command === "connect") {
 				invocations
 					.map((entry) => entry.args.find((token) => ["connect", "snapshot", "click"].includes(token)))
 					.filter((command): command is string => command !== undefined),
-				["connect", "snapshot", "snapshot", "snapshot", "click"],
+				["connect", "snapshot", "snapshot", "snapshot", "snapshot", "click"],
 			);
 			assert.equal(invocations.filter((entry) => entry.args.at(-2) === "click" && entry.args.at(-1) === "@e2").length, 1);
 			assert.equal(invocations.filter((entry) => entry.args.includes("@e1")).length, 0);
@@ -773,11 +773,17 @@ for (let i = 0; i < args.length; i += 1) {
 	break;
 }
 const command = args[commandIndex];
+const recoveredPath = ${JSON.stringify(join(tempDir, "recovered.flag"))};
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, command, stdin }) + "\\n");
 if (command === "connect") {
 	process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
 } else if (command === "snapshot") {
-	process.stdout.write(JSON.stringify({ success: true, data: {
+	const recovered = fs.existsSync(recoveredPath);
+	process.stdout.write(JSON.stringify({ success: true, data: recovered ? {
+	origin: "https://active.example/",
+	refs: { e2: { role: "button", name: "Recovered action" } },
+	snapshot: '- button "Recovered action" [ref=e2]'
+	} : {
 	origin: "https://active.example/",
 	refs: { e1: { role: "button", name: "Old action" } },
 	snapshot: '- button "Old action" [ref=e1]'
@@ -786,6 +792,7 @@ if (command === "connect") {
 	const steps = JSON.parse(stdin || "[]");
 	process.stdout.write(JSON.stringify(steps.map((step) => {
 		if (step[0] === "snapshot" && step.includes("--recover")) {
+			fs.writeFileSync(recoveredPath, "1");
 			return { command: step, success: true, result: {
 				origin: "https://active.example/",
 				refs: { e2: { role: "button", name: "Recovered action" } },
@@ -858,7 +865,7 @@ if (command === "connect") {
 				invocations
 					.map((entry) => entry.args.find((token) => ["connect", "snapshot", "batch", "click"].includes(token)))
 					.filter((command): command is string => command !== undefined),
-				["connect", "snapshot", "batch", "batch", "click"],
+				["connect", "snapshot", "batch", "batch", "snapshot", "click"],
 			);
 			assert.equal(invocations.filter((entry) => entry.args.includes("@e1")).length, 0);
 			assert.equal(invocations.filter((entry) => entry.args.includes("@e2")).length, 1);
