@@ -400,7 +400,7 @@ process.stdin.on("end", () => {
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: {
 					steps: [
-						{ action: "open", url: "https://example.test/" },
+						{ action: "open", url: "https://example.test/", loadState: "domcontentloaded" },
 						{ action: "fill", selector: "#email", text: "user@example.test" },
 						{ action: "select", selector: "#theme", values: ["dark", "compact"] },
 						{ action: "click", selector: "#submit" },
@@ -426,6 +426,7 @@ process.stdin.on("end", () => {
 			assert.equal(compiledJob?.failFast, true);
 			const expectedCompiledSteps = [
 				["open", "https://example.test/"],
+				["wait", "--load", "domcontentloaded"],
 				["fill", "#email", "user@example.test"],
 				["select", "#theme", "dark", "compact"],
 				["click", "#submit"],
@@ -449,9 +450,9 @@ process.stdin.on("end", () => {
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-2), ["batch", "--bail"]);
 			const upstreamSteps = JSON.parse(invocations[0]?.stdin ?? "[]") as string[][];
-			assert.deepEqual(upstreamSteps.slice(0, 9), compiledJob?.steps?.slice(0, 9).map((step) => step.args));
-			assert.equal(upstreamSteps[9]?.[0], "screenshot");
-			assert.match(upstreamSteps[9]?.[1] ?? "", /job\.png$/);
+			assert.deepEqual(upstreamSteps.slice(0, 10), compiledJob?.steps?.slice(0, 10).map((step) => step.args));
+			assert.equal(upstreamSteps[10]?.[0], "screenshot");
+			assert.match(upstreamSteps[10]?.[1] ?? "", /job\.png$/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

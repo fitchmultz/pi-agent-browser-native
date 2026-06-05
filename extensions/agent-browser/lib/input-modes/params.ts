@@ -167,6 +167,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 						description: "Constrained one-call job step compiled to existing upstream batch commands.",
 					}),
 					url: Type.Optional(Type.String({ description: "URL for open steps, or URL pattern for assertUrl steps." })),
+					loadState: Type.Optional(StringEnum(AGENT_BROWSER_QA_LOAD_STATES, { description: "Optional readiness wait to insert immediately after an open step; use domcontentloaded/load/networkidle when the next job step needs page hydration evidence before clicking or reading." })),
 					selector: Type.Optional(Type.String({ description: "Selector or @ref for click/fill/select-like steps; omit when using semantic locator fields on click/fill steps." })),
 					locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Semantic locator for click/fill steps when selector is omitted." })),
 					role: Type.Optional(Type.String({ description: "Role locator value for click/fill steps when locator is role." })),

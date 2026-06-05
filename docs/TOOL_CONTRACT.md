@@ -269,8 +269,8 @@ Examples:
 - constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
 - optional `failFast` boolean; defaults to `true`, compiling to upstream `batch --bail` so later mutating job steps do not run after an earlier required step fails. Set `failFast: false` only when you explicitly want upstream batch's continue-after-error behavior.
 - there is no separate reusable named “browser recipe” extension surface above `job`, `qa`, and raw `batch` yet; the closed `RQ-0068` decision, evidence bar, and revisit criteria are in [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) and [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md)
-- supported steps (each row becomes one upstream `batch` step; `click` / `fill` / `select` pass `selector` through as the same argv token shape standalone upstream commands would use, including `@refs`, not the `semanticAction` locator schema):
-  - `open` with `url`
+- supported steps (`open.loadState` can emit an extra readiness row immediately after the `open`; otherwise each row becomes one upstream `batch` step; `click` / `fill` / `select` pass `selector` through as the same argv token shape standalone upstream commands would use, including `@refs`, not the `semanticAction` locator schema):
+  - `open` with `url`; optional `loadState` (`domcontentloaded`, `load`, or `networkidle`) inserts `wait --load <state>` immediately after the open when the next step needs page-readiness evidence
   - `click` with `selector`
   - `fill` with `selector` and `text`
   - `select` with `selector` plus either `value` or `values` (one or more option values; compiled as `select <selector> <value...>`)
@@ -281,7 +281,7 @@ Examples:
   - `snapshot` (compiled as `snapshot -i`; useful between mutation-prone steps before reusing current refs)
   - `screenshot` with `path`
 
-**Navigation assertions are explicit only.** `job` never treats a successful `click` (or a `select` / submit-style interaction that may navigate) as proof that the expected next page loaded. Top-level `click` may still surface optional `details.navigationSummary` or `pageChangeSummary` hints for operators, but compiled `job` / `batch` steps do **not** auto-insert `assertUrl` or `assertText` after clicks—there is no deterministic expected URL source without caller intent. After any navigation-prone step (link/submit clicks, checkout or form flows, tab-sensitive UI), add an explicit `assertUrl` with the destination pattern you expect, `assertText` for on-page copy, or both, **before** screenshots or steps that assume the new page state.
+**Navigation assertions are explicit only.** `job` never treats a successful `click` (or a `select` / submit-style interaction that may navigate) as proof that the expected next page loaded. Top-level `click` may still surface optional `details.navigationSummary` or `pageChangeSummary` hints for operators, but compiled `job` / `batch` steps do **not** auto-insert `assertUrl` or `assertText` after clicks—there is no deterministic expected URL source without caller intent. Use `open.loadState` to wait for initial page readiness after an `open`; after any later navigation-prone step (link/submit clicks, checkout or form flows, tab-sensitive UI), add an explicit `assertUrl` with the destination pattern you expect, `assertText` for on-page copy, or both, **before** screenshots or steps that assume the new page state.
 
 Example (static landing page):
 

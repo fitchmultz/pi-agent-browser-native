@@ -79,10 +79,17 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 		}
 		const jobAction = action as AgentBrowserJobStepAction;
 		let args: string[];
+		let extraSteps: CompiledAgentBrowserJobStep[] = [];
 		if (jobAction === "open") {
 			const result = getRequiredJobString(rawStep, "url", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["open", result.value as string];
+			if (rawStep.loadState !== undefined) {
+				if (typeof rawStep.loadState !== "string" || !AGENT_BROWSER_QA_LOAD_STATES.includes(rawStep.loadState as AgentBrowserQaLoadState)) {
+					return { error: `job.steps[${index}].loadState must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.` };
+				}
+				extraSteps = [{ action: "wait", args: ["wait", "--load", rawStep.loadState] }];
+			}
 		} else if (jobAction === "click" || jobAction === "fill") {
 			const result = compileJobClickOrFillStep(rawStep, jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
@@ -118,7 +125,7 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["screenshot", result.value as string];
 		}
-		steps.push({ action: jobAction, args });
+		steps.push({ action: jobAction, args }, ...extraSteps);
 	}
 	return { compiled: { args: failFast ? ["batch", "--bail"] : ["batch"], failFast, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
 }
