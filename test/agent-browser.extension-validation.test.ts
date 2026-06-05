@@ -564,6 +564,54 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	}
 });
 
+test("agentBrowserExtension filters network requests to the current page origin", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-filter-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://shop.example/products" } }));
+  return;
+}
+if (args.includes("network") && args.includes("requests")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { requests: [
+    { id: "1", method: "GET", status: 200, url: "https://shop.example/app.js" },
+    { id: "2", method: "GET", status: 200, url: "https://cdn.example/lib.js" },
+    { id: "3", method: "POST", status: 500, url: "https://shop.example/api/cart" }
+  ] } }));
+  return;
+}
+process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "requests", "--current-page"] });
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match(result.content[0]?.text ?? "", /2\/3 rows matched/);
+			assert.match(result.content[0]?.text ?? "", /shop\.example\/app\.js/);
+			assert.doesNotMatch(result.content[0]?.text ?? "", /cdn\.example/);
+			const filter = result.details?.networkRequestsPageFilter as { matchedRows?: number; totalRows?: number } | undefined;
+			assert.equal(filter?.matchedRows, 2);
+			assert.equal(filter?.totalRows, 3);
+			const data = result.details?.data as { requests?: Array<{ url?: string }> } | undefined;
+			assert.deepEqual(data?.requests?.map((request) => request.url), ["https://shop.example/app.js", "https://shop.example/api/cart"]);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("--current-page")), false);
+			assert.ok(invocations.some((entry) => entry.args.includes("network") && entry.args.includes("requests")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports focused combobox diagnostics with option-opening next actions", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-combobox-focus-"));
 	const statePath = join(tempDir, "combobox-state.json");
