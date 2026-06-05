@@ -663,6 +663,7 @@ interface SnapshotFilterRequest {
 	cleanArgs: string[];
 	role?: string;
 	search?: string;
+	viewport?: boolean;
 }
 
 function parseSnapshotFilterRequest(commandTokens: string[]): SnapshotFilterRequest | undefined {
@@ -672,6 +673,7 @@ function parseSnapshotFilterRequest(commandTokens: string[]): SnapshotFilterRequ
 	let search: string | undefined;
 	for (let index = 0; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
+		if (token === "--viewport") continue;
 		if (token === "--search") {
 			const value = commandTokens[index + 1];
 			if (typeof value === "string" && !value.startsWith("-")) {
@@ -691,8 +693,9 @@ function parseSnapshotFilterRequest(commandTokens: string[]): SnapshotFilterRequ
 		}
 		cleanArgs.push(token);
 	}
-	if (!search && !role) return undefined;
-	return { cleanArgs, role, search };
+	const viewport = commandTokens.includes("--viewport");
+	if (!search && !role && !viewport) return undefined;
+	return { cleanArgs, role, search, viewport };
 }
 
 function filterSnapshotData(data: unknown, request: SnapshotFilterRequest): { data: Record<string, unknown>; matchedRefs: number; totalRefs: number; totalLines: number; visibleLines: number } | undefined {
@@ -743,13 +746,18 @@ async function trySnapshotFilter(options: {
 	const request = parseSnapshotFilterRequest(options.commandTokens);
 	if (!request || !options.sessionName) return undefined;
 	const snapshotData = await runSessionCommandData({ args: request.cleanArgs, cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const filtered = filterSnapshotData(snapshotData, request);
+	const filtered = request.role || request.search ? filterSnapshotData(snapshotData, request) : isRecord(snapshotData) ? { data: snapshotData, matchedRefs: isRecord(snapshotData.refs) ? Object.keys(snapshotData.refs).length : 0, totalLines: typeof snapshotData.snapshot === "string" ? snapshotData.snapshot.split(/\r?\n/).filter((line) => line.length > 0).length : 0, totalRefs: isRecord(snapshotData.refs) ? Object.keys(snapshotData.refs).length : 0, visibleLines: typeof snapshotData.snapshot === "string" ? snapshotData.snapshot.split(/\r?\n/).filter((line) => line.length > 0).length : 0 } : undefined;
 	if (!filtered) return undefined;
+	const viewport = request.viewport ? await collectScrollPositionSnapshot({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal }) : undefined;
 	const fullSnapshot = extractRefSnapshotFromData(snapshotData);
 	if (fullSnapshot) options.sessionPageState.applyRefSnapshot({ sessionName: options.sessionName, snapshot: fullSnapshot, update: options.sessionPageStateUpdate });
 	const presentation = await buildSnapshotPresentation(filtered.data);
-	const summary = `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}.`;
-	if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${summary}\n\n${presentation.content[0].text}` };
+	const summary = request.role || request.search
+		? `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}.`
+		: "Snapshot viewport metadata collected.";
+	const viewportText = viewport ? `Viewport: ${viewport.innerWidth}×${viewport.innerHeight}, scroll ${viewport.scrollX},${viewport.scrollY}, document ${viewport.scrollWidth}×${viewport.scrollHeight}, sampled scroll containers ${viewport.containers.length}/${viewport.containerCount}.` : undefined;
+	const prefix = [summary, viewportText].filter((line): line is string => line !== undefined).join("\n");
+	if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${prefix}\n\n${presentation.content[0].text}` };
 	return {
 		content: presentation.content,
 		details: {
@@ -760,7 +768,8 @@ async function trySnapshotFilter(options: {
 			effectiveArgs: options.effectiveArgs,
 			refSnapshot: fullSnapshot,
 			sessionMode: options.sessionMode,
-			snapshotFilter: { cleanArgs: request.cleanArgs, matchedRefs: filtered.matchedRefs, role: request.role, search: request.search, totalLines: filtered.totalLines, totalRefs: filtered.totalRefs, visibleLines: filtered.visibleLines },
+			snapshotFilter: request.role || request.search ? { cleanArgs: request.cleanArgs, matchedRefs: filtered.matchedRefs, role: request.role, search: request.search, totalLines: filtered.totalLines, totalRefs: filtered.totalRefs, visibleLines: filtered.visibleLines } : undefined,
+			snapshotViewport: viewport,
 			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "snapshot", succeeded: true }),
 			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
 			summary,

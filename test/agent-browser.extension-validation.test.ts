@@ -564,6 +564,46 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	}
 });
 
+test("agentBrowserExtension reports wrapper snapshot viewport metadata", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-snapshot-viewport-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("eval")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: { scrollX: 0, scrollY: 240, innerHeight: 900, innerWidth: 1440, scrollHeight: 3000, scrollWidth: 1440, containerCount: 1, containers: [{ id: "0:main", scrollTop: 12, scrollLeft: 0 }] } } }));
+  return;
+}
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://dense.example/", refs: { e1: { role: "button", name: "Checkout" } }, snapshot: '- button "Checkout" [ref=e1]' } }));
+  return;
+}
+process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i", "--viewport"] });
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match(result.content[0]?.text ?? "", /Viewport: 1440×900, scroll 0,240/);
+			const viewport = result.details?.snapshotViewport as { innerHeight?: number; scrollY?: number } | undefined;
+			assert.equal(viewport?.innerHeight, 900);
+			assert.equal(viewport?.scrollY, 240);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("--viewport")), false);
+			assert.ok(invocations.some((entry) => entry.args.includes("eval") && entry.args.includes("--stdin")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension filters network requests to the current page origin", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-filter-"));
 	const logPath = join(tempDir, "invocations.log");
