@@ -61,6 +61,25 @@ test("buildToolPresentation formats download results as saved-file summaries", a
 	});
 });
 
+test("buildToolPresentation adds dense-page guidance for annotated screenshots", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-annotated-guidance-"));
+	try {
+		const imagePath = join(tempDir, "annotated.png");
+		await writeFile(imagePath, "fake image");
+		const presentation = await buildToolPresentation({
+			args: ["--json", "screenshot", "--annotate", imagePath],
+			commandInfo: { command: "screenshot", subcommand: "--annotate" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: imagePath } },
+		});
+
+		assert.match((presentation.content[0] as { text: string }).text, /Annotated screenshot note: dense pages can produce overlapping labels/);
+		assert.match((presentation.content[0] as { text: string }).text, /snapshot -i high-value refs/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("buildToolPresentation does not treat data-url download payloads as verified files", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "download", subcommand: "@e5" },
