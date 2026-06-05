@@ -343,6 +343,7 @@ export function createExtensionHarness(options: {
 	prompt?: string;
 	sessionDir?: string;
 	sessionFile?: string;
+	sessionId?: string;
 }) {
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 	const registeredTools = new Map<string, RegisteredTool>();
@@ -370,7 +371,7 @@ export function createExtensionHarness(options: {
 			getBranch: () => branch,
 			getSessionDir: () => sessionDir,
 			getSessionFile: () => options.sessionFile,
-			getSessionId: () => TEST_SESSION_ID,
+			getSessionId: () => options.sessionId ?? TEST_SESSION_ID,
 		},
 	} as const;
 

@@ -8,6 +8,7 @@
  */
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -170,7 +171,7 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 	const shouldRemoveArtifacts = !options.keepArtifacts && !options.artifactDir;
 	await mkdir(artifactDir, { recursive: true });
 	const jobScreenshotPath = join(artifactDir, "job.png");
-	const harness = createExtensionHarness({ cwd });
+	const harness = createExtensionHarness({ cwd, sessionId: randomUUID() });
 	const fixture = await writeDogfoodFixture(artifactDir);
 	const reports: DogfoodStepReport[] = [];
 	let closed = false;
