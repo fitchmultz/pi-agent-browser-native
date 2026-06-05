@@ -66,6 +66,10 @@ function mergeNextActions(...groups: Array<AgentBrowserNextAction[] | undefined>
 	return merged.length > 0 ? merged : undefined;
 }
 
+function shouldAddAnnotatedScreenshotGuidance(commandInfo: CommandInfo, args: string[] | undefined): boolean {
+	return commandInfo.command === "screenshot" && (args?.includes("--annotate") ?? false);
+}
+
 export async function buildToolPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
 	args?: string[];
@@ -149,6 +153,11 @@ export async function buildToolPresentation(options: {
 			presentation.savedFile = savedFile;
 			presentation.savedFilePath = savedFile.path;
 		}
+	}
+
+	if (shouldAddAnnotatedScreenshotGuidance(commandInfo, args) && presentation.content[0]?.type === "text") {
+		const guidance = "Annotated screenshot note: dense pages can produce overlapping labels. If the labels are noisy, capture a scoped element screenshot, take a non-annotated screenshot, or use snapshot -i high-value refs as the machine-readable map.";
+		presentation.content[0] = { ...presentation.content[0], text: `${presentation.content[0].text}\n\n${guidance}` };
 	}
 
 	const imagePath = artifactRequest?.absolutePath ?? extractImagePath(commandInfo, cwd, data);

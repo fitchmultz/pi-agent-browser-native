@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -26,6 +26,21 @@ import {
 } from "./helpers/agent-browser-harness.js";
 
 test("compileAgentBrowserJob preserves explicit assertUrl and assertText immediately after click", () => {
+	const semanticJob = compileAgentBrowserJob({
+		steps: [
+			{ action: "open", url: "https://www.wikipedia.org/" },
+			{ action: "fill", locator: "role", role: "searchbox", name: "Search", text: "agent browser" },
+			{ action: "click", locator: "role", role: "button", name: "Search" },
+		],
+	});
+	assert.equal(semanticJob.error, undefined);
+	assert.deepEqual(semanticJob.compiled?.steps.map((step) => step.args), [
+		["open", "https://www.wikipedia.org/"],
+		["find", "role", "searchbox", "fill", "agent browser", "--name", "Search"],
+		["find", "role", "button", "click", "--name", "Search"],
+	]);
+	assert.match(compileAgentBrowserJob({ steps: [{ action: "click", selector: "button", locator: "text", value: "Search" }] }).error ?? "", /either selector or semantic locator fields/);
+
 	const { compiled, error } = compileAgentBrowserJob({
 		steps: [
 			{ action: "open", url: "https://shop.example/checkout" },
@@ -418,6 +433,73 @@ process.stdin.on("end", () => {
 	}
 });
 
+test("agentBrowserExtension reports failed fresh jobs as post-launch failures", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-fresh-job-failure-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  const command = args.at(-1);
+  if (command === "open") {
+    process.stdout.write(JSON.stringify({ success: true, data: { title: "GitHub", url: "https://github.com/vercel-labs/agent-browser" } }));
+    return;
+  }
+  if (command === "batch") {
+    const steps = JSON.parse(stdin);
+    process.stdout.write(JSON.stringify(steps.map((step, index) => {
+      if (step[0] === "open") return { command: step, success: true, result: { title: "Wikipedia", url: step[1] } };
+      if (step[0] === "screenshot") { fs.writeFileSync(step[1], "wiki-shot"); return { command: step, success: true, result: { path: step[1] } }; }
+      if (index === 2) return { command: step, success: false, error: "Could not locate Search button" };
+      return { command: step, success: true, result: { ok: true } };
+    })));
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://wikipedia.org/", refs: {}, snapshot: "" } }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const prior = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://github.com/vercel-labs/agent-browser"] });
+			assert.equal(prior.isError, false);
+
+			const screenshotPath = join(tempDir, "wiki.png");
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: {
+					steps: [
+						{ action: "open", url: "https://www.wikipedia.org/" },
+						{ action: "fill", selector: "input[name='search']", text: "agent-browser" },
+						{ action: "click", selector: "button[type='submit']" },
+						{ action: "screenshot", path: screenshotPath },
+					],
+				},
+				sessionMode: "fresh",
+			});
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Batch failed: 3\/4 succeeded/);
+			assert.match(result.content[0]?.text ?? "", /Managed session outcome: Fresh launch became current, but this tool call failed after launch\./);
+			const outcome = result.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string; succeeded?: boolean } | undefined;
+			assert.equal(outcome?.activeAfter, true);
+			assert.equal(outcome?.status, "replaced");
+			assert.equal(outcome?.succeeded, false);
+			assert.equal((result.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "run-agent-browser-doctor"), false);
+			assert.equal(await readFile(screenshotPath, "utf8"), "wiki-shot");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension compiles lightweight QA presets and fails diagnostics", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -711,20 +793,23 @@ process.stdin.on("end", () => {
 					expectedSelector: "main",
 				},
 			});
-			assert.equal(attachedResult.isError, false);
-			assert.match((attachedResult.content[0] as { text: string }).text, /QA preset passed\./);
-			assert.match((attachedResult.content[0] as { text: string }).text, /Page: .* — https:\/\/fail\.example\.test\//);
-			assert.doesNotMatch((attachedResult.content[0] as { text: string }).text, /QA attached target:/);
-			assert.doesNotMatch((attachedResult.content[0] as { text: string }).text, /Step 1 —/);
+			assert.equal(attachedResult.isError, true);
+			assert.equal(attachedResult.details?.failureCategory, "qa-failure");
+			assert.match((attachedResult.content[0] as { text: string }).text, /QA preset failed/);
+			assert.match((attachedResult.content[0] as { text: string }).text, /QA attached target: .* — QA Page — https:\/\/fail\.example\.test\//);
+			assert.match((attachedResult.content[0] as { text: string }).text, /Attached diagnostics: existing upstream session console\/network\/error buffers were preserved/);
 			assert.equal((attachedResult.details?.qaAttachedTarget as { title?: string; url?: string } | undefined)?.title, "QA Page");
 			assert.equal((attachedResult.details?.qaAttachedTarget as { title?: string; url?: string } | undefined)?.url, "https://fail.example.test/");
-			const attachedCompiledQaPreset = attachedResult.details?.compiledQaPreset as { checks?: { attached?: boolean; url?: string }; steps?: Array<{ args: string[] }> } | undefined;
+			assert.deepEqual((attachedResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
+				"1 actionable failed network request(s)",
+				"1 console error message(s)",
+				"1 page error(s)",
+			]);
+			const attachedCompiledQaPreset = attachedResult.details?.compiledQaPreset as { checks?: { attached?: boolean; diagnosticsResetAtStart?: boolean; url?: string }; steps?: Array<{ args: string[] }> } | undefined;
 			assert.equal(attachedCompiledQaPreset?.checks?.attached, true);
+			assert.equal(attachedCompiledQaPreset?.checks?.diagnosticsResetAtStart, false);
 			assert.equal(attachedCompiledQaPreset?.checks?.url, undefined);
 			assert.deepEqual(attachedCompiledQaPreset?.steps?.map((step) => step.args), [
-				["network", "requests", "--clear"],
-				["console", "--clear"],
-				["errors", "--clear"],
 				["wait", "--load", "domcontentloaded"],
 				["wait", "--text", "Welcome"],
 				["wait", "main"],

@@ -794,6 +794,37 @@ process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.string
 	}
 });
 
+test("agentBrowserExtension creates parent directories for state save artifacts", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-state-save-path-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const path = args[args.length - 1];
+fs.writeFileSync(path, JSON.stringify({ ok: true }));
+process.stdout.write(JSON.stringify({ success: true, data: { path } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Save browser state." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const statePath = join(tempDir, "missing", "parents", "fixture-state.json");
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["state", "save", statePath] });
+
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.equal(await readFile(statePath, "utf8"), JSON.stringify({ ok: true }));
+			const [invocation] = await readInvocationLog(logPath);
+			assert.equal(invocation.args.at(-1), statePath);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension renders explicit --json tool content as JSON", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-json-visible-"));
 	const basePath = process.env.PATH ?? "";

@@ -319,16 +319,16 @@ test("buildToolPresentation renders stable tab ids from tab list output", async 
 			success: true,
 			data: {
 				tabs: [
-					{ active: false, tabId: "t1", title: "ChatGPT", url: "https://chatgpt.com/" },
-					{ active: true, tabId: "t2", title: "Grok", url: "https://grok.com/" },
+					{ active: false, label: "chat", tabId: "t1", title: "ChatGPT", url: "https://chatgpt.com/" },
+					{ active: true, label: "grok", tabId: "t2", title: "Grok", url: "https://grok.com/" },
 				],
 			},
 		},
 	});
 
 	assert.equal(presentation.content[0]?.type, "text");
-	assert.match((presentation.content[0] as { text: string }).text, /- \[t1\] ChatGPT — https:\/\/chatgpt\.com\//);
-	assert.match((presentation.content[0] as { text: string }).text, /\* \[t2\] Grok — https:\/\/grok\.com\//);
+	assert.match((presentation.content[0] as { text: string }).text, /- \[t1\] label=chat ChatGPT — https:\/\/chatgpt\.com\//);
+	assert.match((presentation.content[0] as { text: string }).text, /\* \[t2\] label=grok Grok — https:\/\/grok\.com\//);
 	assert.equal(presentation.summary, "Tabs: 2");
 });
 
@@ -369,6 +369,14 @@ test("parseAgentBrowserEnvelope accepts valid object envelopes with boolean succ
 
 	assert.equal(parsed.parseError, undefined);
 	assert.equal(parsed.envelope?.success, true);
+});
+
+test("parseAgentBrowserEnvelope treats top-level success responses as data when data is omitted", async () => {
+	const parsed = await parseAgentBrowserEnvelope(JSON.stringify({ checks: [{ message: "ok", status: "pass" }], success: true, summary: { fail: 0, pass: 1 } }));
+
+	assert.equal(parsed.parseError, undefined);
+	assert.equal(parsed.envelope?.success, true);
+	assert.deepEqual(parsed.envelope?.data, { checks: [{ message: "ok", status: "pass" }], summary: { fail: 0, pass: 1 } });
 });
 
 test("getAgentBrowserErrorText explains wrapper watchdog timeouts", () => {
@@ -559,6 +567,7 @@ test("extractQaPageContext prefers batch open title over compiled checks url", a
 				checkConsole: true,
 				checkErrors: true,
 				checkNetwork: true,
+				diagnosticsResetAtStart: true,
 				expectedText: [],
 				loadState: "domcontentloaded",
 				url: "https://example.test/",
@@ -586,6 +595,7 @@ test("isHttpOrHttpsUrl accepts http(s) only", async () => {
 			checkConsole: true,
 			checkErrors: true,
 			checkNetwork: true,
+			diagnosticsResetAtStart: true,
 			expectedText: ["Welcome"],
 			loadState: "domcontentloaded",
 		},
@@ -598,7 +608,7 @@ test("isHttpOrHttpsUrl accepts http(s) only", async () => {
 		},
 	});
 	assert.match(compact, /Page: Example — https:\/\/example\.test\//);
-	assert.match(compact, /Checks run: load:domcontentloaded, text×1, network, console, errors \(8 batch steps\)/);
+	assert.match(compact, /Checks run: load:domcontentloaded, text×1, network, console, errors, diagnostics-reset \(8 batch steps\)/);
 	assert.match(compact, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 });
 

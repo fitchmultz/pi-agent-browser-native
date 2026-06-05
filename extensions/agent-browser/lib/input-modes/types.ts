@@ -115,6 +115,7 @@ export interface CompiledAgentBrowserQaPreset extends CompiledAgentBrowserJob {
 		checkConsole: boolean;
 		checkErrors: boolean;
 		checkNetwork: boolean;
+		diagnosticsResetAtStart: boolean;
 		loadState: AgentBrowserQaLoadState;
 		expectedText: string[];
 		expectedSelector?: string;

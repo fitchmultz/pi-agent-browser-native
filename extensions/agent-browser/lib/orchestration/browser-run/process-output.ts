@@ -160,6 +160,15 @@ function isStreamEnableAlreadyEnabledNoop(options: { command: string | undefined
 	return message === "streaming is already enabled for this session" || message === "streaming is already enabled" || message === "stream already enabled";
 }
 
+function batchStartedManagedBrowser(data: unknown): boolean {
+	if (!Array.isArray(data)) return false;
+	return data.some((entry) => {
+		if (!isRecord(entry) || entry.success !== true || !Array.isArray(entry.command)) return false;
+		const command = typeof entry.command[0] === "string" ? entry.command[0] : undefined;
+		return command === "connect" || command === "goto" || command === "navigate" || isOpenNavigationCommand(command);
+	});
+}
+
 function setNetworkRouteState(options: { routes?: NetworkRouteRecord[]; routesBySession: Map<string, NetworkRouteRecord[]>; sessionName: string | undefined }): Map<string, NetworkRouteRecord[]> {
 	if (!options.sessionName) return options.routesBySession;
 	const previousRoutes = options.routesBySession.get(options.sessionName);
@@ -410,7 +419,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			? prepared.executionPlan.sessionName
 			: prepared.executionPlan.managedSessionName;
 		const policyBlockedFreshManagedSession = allowedDomainsViolation !== undefined && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName === prepared.executionPlan.sessionName;
-		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession;
+		const postLaunchBatchFailure = !succeeded && processSucceeded && parseSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && batchStartedManagedBrowser(presentationEnvelope?.data);
+		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession || postLaunchBatchFailure;
 		const managedSessionState = resolveManagedSessionState({ command: prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, priorActive: priorManagedSessionActive, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
 		const replacedManagedSessionName = managedSessionState.replacedSessionName;
 		managedSessionActive = managedSessionState.active;
@@ -469,7 +479,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
 		networkRoutesBySession = applyBatchNetworkRouteState({ data: presentationEnvelope?.data, routesBySession: networkRoutesBySession, sessionName: prepared.executionPlan.sessionName, succeeded });
-		if (presentation.failureCategory === "artifact-missing") {
+		if (presentation.resultCategory === "failure" && succeeded) {
 			succeeded = false;
 			presentationEnvelope = { ...(presentationEnvelope ?? {}), error: presentation.summary, success: false };
 		}
@@ -515,9 +525,13 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentation.content = [{ type: "text", text: compactText }, ...nonTextContent];
 		}
 		const qaAttachedTargetText = formatQaAttachedTargetText(qaAttachedTarget);
+		const qaAttachedDiagnosticsText = prepared.compiledQaPreset?.checks.attached && prepared.compiledQaPreset.checks.diagnosticsResetAtStart === false
+			? "Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started."
+			: undefined;
+		const qaAttachedBannerText = [qaAttachedTargetText, qaAttachedDiagnosticsText].filter((part): part is string => typeof part === "string" && part.length > 0).join("\n");
 		const skipAttachedTargetBanner = qaPreset?.passed && prepared.compiledQaPreset?.checks.attached;
-		if (!skipAttachedTargetBanner && qaAttachedTargetText && presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${qaAttachedTargetText}\n\n${presentation.content[0].text}` };
-		else if (!skipAttachedTargetBanner && qaAttachedTargetText) presentation.content.unshift({ type: "text", text: qaAttachedTargetText });
+		if (!skipAttachedTargetBanner && qaAttachedBannerText && presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${qaAttachedBannerText}\n\n${presentation.content[0].text}` };
+		else if (!skipAttachedTargetBanner && qaAttachedBannerText) presentation.content.unshift({ type: "text", text: qaAttachedBannerText });
 		if (managedSessionOutcome && managedSessionOutcome.succeeded !== succeeded) managedSessionOutcome = { ...managedSessionOutcome, succeeded };
 		const evalNavigationSummary = navigationSummary ?? extractNavigationSummaryFromData(presentationEnvelope?.data);
 		const evalSessionTabUrl = prepared.executionPlan.sessionName ? sessionPageState.get(prepared.executionPlan.sessionName).tabTarget?.url : undefined;

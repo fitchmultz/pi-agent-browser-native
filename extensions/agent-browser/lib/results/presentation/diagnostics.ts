@@ -86,15 +86,17 @@ export function getTabSummary(data: Record<string, unknown>): string | undefined
 		const marker = tab.active === true ? "*" : "-";
 		const title = typeof tab.title === "string" ? tab.title : "(untitled)";
 		const url = typeof tab.url === "string" ? tab.url : "(no url)";
+		const label = typeof tab.label === "string" && tab.label.trim().length > 0 ? tab.label.trim() : undefined;
 		const tabSelector =
 			typeof tab.tabId === "string" && tab.tabId.trim().length > 0
 				? tab.tabId.trim()
-				: typeof tab.label === "string" && tab.label.trim().length > 0
-					? tab.label.trim()
+				: label
+					? label
 					: typeof tab.index === "number"
 						? String(tab.index)
 						: String(index);
-		return `${marker} [${tabSelector}] ${title} — ${url}`;
+		const labelText = label && label !== tabSelector ? ` label=${redactModelFacingText(label)}` : "";
+		return `${marker} [${tabSelector}]${labelText} ${title} — ${url}`;
 	});
 	return lines.join("\n");
 }
@@ -281,10 +283,17 @@ function formatSessionText(data: Record<string, unknown>): string | undefined {
 				if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
 				const name = redactModelFacingText(getStringField(item, "name") ?? getStringField(item, "session") ?? getStringField(item, "id") ?? `(session ${index + 1})`);
 				const active = item.active === true ? " *active*" : "";
-				const details = [getStringField(item, "url"), getStringField(item, "title")]
-					.flatMap((detail) => (detail ? [redactModelFacingTextIfSensitive(detail)] : []))
-					.join(" — ");
-				return details ? `${index + 1}. ${name}${active} — ${details}` : `${index + 1}. ${name}${active}`;
+				const url = getStringField(item, "url");
+				const title = getStringField(item, "title");
+				const label = getStringField(item, "label");
+				const tabCount = typeof item.tabCount === "number" ? `${item.tabCount} tab${item.tabCount === 1 ? "" : "s"}` : undefined;
+				const metadata = [
+					label ? `label=${redactModelFacingText(label)}` : undefined,
+					title ? `title=${redactModelFacingTextIfSensitive(title)}` : undefined,
+					url ? `url=${redactModelFacingTextIfSensitive(url)}` : undefined,
+					tabCount,
+				].filter(Boolean).join("; ");
+				return metadata ? `${index + 1}. name=${name}${active}; ${metadata}` : `${index + 1}. name=${name}${active}`;
 			})
 			.join("\n");
 	}
@@ -643,9 +652,37 @@ function formatDoctorText(data: Record<string, unknown>): string | undefined {
 	const lines: string[] = [];
 	const status = getStringField(data, "status") ?? getStringField(data, "result");
 	if (status) lines.push(`Status: ${redactModelFacingText(status)}`);
-	for (const key of ["checks", "issues", "problems"] as const) {
+	const summary = isRecord(data.summary) ? data.summary : undefined;
+	if (summary) {
+		const parts = ["pass", "warn", "fail"].flatMap((key) => typeof summary[key] === "number" ? [`${key}:${summary[key]}`] : []);
+		if (parts.length > 0) lines.push(`Summary: ${parts.join(", ")}`);
+	}
+	const checks = getArrayField(data, "checks");
+	if (checks) {
+		lines.push(`Checks: ${checks.length}`);
+		for (const [index, item] of checks.slice(0, 30).entries()) {
+			if (!isRecord(item)) {
+				lines.push(`${index + 1}. ${stringifyModelFacing(item)}`);
+				continue;
+			}
+			const checkStatus = getStringField(item, "status") ?? "info";
+			const id = getStringField(item, "id");
+			const category = getStringField(item, "category");
+			const message = getStringField(item, "message") ?? getStringField(item, "name") ?? getStringField(item, "title") ?? getStringField(item, "check") ?? stringifyModelFacing(item);
+			const label = [category, id].filter(Boolean).join("/");
+			lines.push(`${index + 1}. [${redactModelFacingText(checkStatus)}]${label ? ` ${redactModelFacingText(label)}:` : ""} ${firstLine(redactModelFacingText(message), 220)}`);
+			const fix = getStringField(item, "fix");
+			if (fix) lines.push(`   fix: ${redactModelFacingText(fix)}`);
+		}
+		if (checks.length > 30) lines.push(`... (${checks.length - 30} additional checks omitted from preview)`);
+	}
+	for (const key of ["issues", "problems"] as const) {
 		const items = getArrayField(data, key);
 		if (items) lines.push(`${key}: ${items.length}`);
+	}
+	if (lines.length === 0) {
+		const keys = Object.keys(data).filter((key) => key !== "success");
+		if (keys.length > 0) return `Doctor diagnostics returned unrecognized fields: ${keys.map(redactModelFacingText).join(", ")}. See details.data for structured diagnostics.`;
 	}
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }

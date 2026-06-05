@@ -8,6 +8,7 @@ import type { ArtifactVerificationSummary } from "../results/contracts.js";
 import { isRecord } from "../parsing.js";
 import { summarizeNetworkFailures } from "../results/network.js";
 import { getBatchResultItems, getCommandNameFromBatchItem, getSelectValues } from "./shared.js";
+import { compileAgentBrowserSemanticAction } from "./semantic-action.js";
 import {
 	AGENT_BROWSER_JOB_STEP_ACTIONS,
 	AGENT_BROWSER_QA_LOAD_STATES,
@@ -25,6 +26,33 @@ function getRequiredJobString(step: Record<string, unknown>, field: "path" | "se
 		return { error: `job step ${action} requires a non-empty ${field} string.` };
 	}
 	return { value };
+}
+
+function compileJobClickOrFillStep(step: Record<string, unknown>, action: "click" | "fill"): { args?: string[]; error?: string } {
+	const hasSelector = typeof step.selector === "string" && step.selector.trim().length > 0;
+	const hasLocator = step.locator !== undefined || step.role !== undefined || step.name !== undefined || step.value !== undefined;
+	if (hasSelector && hasLocator) {
+		return { error: `job step ${action} must use either selector or semantic locator fields, not both.` };
+	}
+	if (hasSelector) {
+		if (action === "click") return { args: ["click", step.selector as string] };
+		const text = getRequiredJobString(step, "text", action);
+		if (text.error) return { error: text.error };
+		return { args: ["fill", step.selector as string, text.value as string] };
+	}
+	if (!hasLocator) {
+		return { error: `job step ${action} requires either a non-empty selector string or semantic locator fields.` };
+	}
+	const compiled = compileAgentBrowserSemanticAction({
+		action,
+		locator: step.locator,
+		name: step.name,
+		role: step.role,
+		text: step.text,
+		value: step.value,
+	});
+	if (compiled.error) return { error: compiled.error.replaceAll("semanticAction", `job step ${action}`) };
+	return { args: compiled.compiled?.args };
 }
 
 export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAgentBrowserJob; error?: string } {
@@ -50,16 +78,10 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 			const result = getRequiredJobString(rawStep, "url", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["open", result.value as string];
-		} else if (jobAction === "click") {
-			const result = getRequiredJobString(rawStep, "selector", jobAction);
+		} else if (jobAction === "click" || jobAction === "fill") {
+			const result = compileJobClickOrFillStep(rawStep, jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
-			args = ["click", result.value as string];
-		} else if (jobAction === "fill") {
-			const selector = getRequiredJobString(rawStep, "selector", jobAction);
-			if (selector.error) return { error: `job.steps[${index}]: ${selector.error}` };
-			const text = getRequiredJobString(rawStep, "text", jobAction);
-			if (text.error) return { error: `job.steps[${index}]: ${text.error}` };
-			args = ["fill", selector.value as string, text.value as string];
+			args = result.args as string[];
 		} else if (jobAction === "select") {
 			const selector = getRequiredJobString(rawStep, "selector", jobAction);
 			if (selector.error) return { error: `job.steps[${index}]: ${selector.error}` };
@@ -110,6 +132,7 @@ function describeQaChecksRun(checks: CompiledAgentBrowserQaPreset["checks"]): st
 	if (checks.checkNetwork) parts.push("network");
 	if (checks.checkConsole) parts.push("console");
 	if (checks.checkErrors) parts.push("errors");
+	parts.push(checks.diagnosticsResetAtStart ? "diagnostics-reset" : "attached-diagnostics-preserved");
 	if (checks.screenshotPath) parts.push("screenshot");
 	return parts.join(", ");
 }
@@ -145,6 +168,9 @@ export function buildQaCompactPassText(options: {
 	const pageParts = [options.page?.title, options.page?.url].filter((part): part is string => typeof part === "string" && part.length > 0);
 	if (pageParts.length > 0) lines.push(`Page: ${pageParts.join(" — ")}`);
 	lines.push(`Checks run: ${describeQaChecksRun(options.checks)} (${options.batchStepCount} batch step${options.batchStepCount === 1 ? "" : "s"})`);
+	if (options.checks.attached && !options.checks.diagnosticsResetAtStart) {
+		lines.push("Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started.");
+	}
 	if (options.checks.screenshotPath) {
 		const verification = options.artifactVerification;
 		lines.push(verification
@@ -238,10 +264,11 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 	const checkErrors = input.checkErrors !== false;
 	const checkNetwork = input.checkNetwork !== false;
 	const loadState = (rawLoadState as AgentBrowserQaLoadState | undefined) ?? "domcontentloaded";
+	const diagnosticsResetAtStart = !attached;
 	const steps: CompiledAgentBrowserJobStep[] = [];
-	if (checkNetwork) steps.push({ action: "wait", args: ["network", "requests", "--clear"] });
-	if (checkConsole) steps.push({ action: "wait", args: ["console", "--clear"] });
-	if (checkErrors) steps.push({ action: "wait", args: ["errors", "--clear"] });
+	if (diagnosticsResetAtStart && checkNetwork) steps.push({ action: "wait", args: ["network", "requests", "--clear"] });
+	if (diagnosticsResetAtStart && checkConsole) steps.push({ action: "wait", args: ["console", "--clear"] });
+	if (diagnosticsResetAtStart && checkErrors) steps.push({ action: "wait", args: ["errors", "--clear"] });
 	if (!attached && normalizedUrl) steps.push({ action: "open", args: ["open", normalizedUrl] });
 	steps.push({ action: "wait", args: ["wait", "--load", loadState] });
 	for (const text of expectedText) {
@@ -257,7 +284,7 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 	return {
 		compiled: {
 			args: ["batch"],
-			checks: { attached, checkConsole, checkErrors, checkNetwork, expectedSelector, expectedText, loadState, screenshotPath, url: normalizedUrl },
+			checks: { attached, checkConsole, checkErrors, checkNetwork, diagnosticsResetAtStart, expectedSelector, expectedText, loadState, screenshotPath, url: normalizedUrl },
 			stdin: JSON.stringify(steps.map((step) => step.args)),
 			steps,
 		},

@@ -119,7 +119,7 @@ test("buildToolPresentation formats session status and session list", async () =
 		},
 	});
 	assert.equal(list.summary, "Sessions: 1");
-	assert.equal((list.content[0] as { text: string }).text, "1. work *active* — https://example.com — Example");
+	assert.equal((list.content[0] as { text: string }).text, "1. name=work *active*; title=Example; url=https://example.com");
 });
 
 test("buildToolPresentation formats Chrome profile arrays", async () => {
@@ -613,7 +613,7 @@ test("buildToolPresentation formats dashboard and doctor status", async () => {
 		envelope: { success: true, data: { checks: [{ name: "binary" }], environment: { token: "secret" }, status: "ok" } },
 	});
 	assert.equal(doctor.summary, "Doctor: ok");
-	assert.equal((doctor.content[0] as { text: string }).text, "Status: ok\nchecks: 1");
+	assert.equal((doctor.content[0] as { text: string }).text, "Status: ok\nChecks: 1\n1. [info] binary");
 });
 
 test("buildToolPresentation summarizes non-core command families and redacts diagnostic data", async () => {

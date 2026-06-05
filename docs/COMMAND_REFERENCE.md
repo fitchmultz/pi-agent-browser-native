@@ -200,7 +200,7 @@ On tabbed or hidden-DOM pages, `get text <selector>` reads the upstream-selected
 
 Use `batch --bail` when later steps should stop after the first failed command.
 
-For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`; `select` requires `selector` plus `value` or `values`, and compiles to upstream `select <selector> <value...>`. The wrapper compiles steps to upstream `batch` and records `details.compiledJob.steps[]`. There is still no separate first-class catalog of reusable named browser recipes above `job`, the `qa` preset, and raw `batch`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and revisit bar.
+For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, and `screenshot`. `click` and `fill` accept either a stable `selector` or the same semantic locator fields as top-level `semanticAction` (`locator`, plus `role`/`name` or `value` as appropriate) and compile locator steps to upstream `find` argv. `select` requires `selector` plus `value` or `values`, and compiles to upstream `select <selector> <value...>`. The wrapper compiles steps to upstream `batch` and records `details.compiledJob.steps[]`. There is still no separate first-class catalog of reusable named browser recipes above `job`, the `qa` preset, and raw `batch`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and revisit bar.
 
 **Job navigation is explicit.** A `click` step (or other navigation-prone interaction) does not prove the next page loaded. The wrapper does not auto-insert `assertUrl` or `assertText` after clicks inside `job`; add those steps yourself with the URL pattern or on-page text you expect, especially after forms, checkout, tabs, or submit buttons, before screenshots or later steps.
 
@@ -233,7 +233,7 @@ Navigation-prone flow (open → fill → click → assert destination → screen
 }
 ```
 
-On app pages that expose a native dropdown, add a `select` step such as `{ "action": "select", "selector": "#flavor", "value": "chocolate" }` before the assertion that depends on it.
+On app pages that expose a native dropdown, add a `select` step such as `{ "action": "select", "selector": "#flavor", "value": "chocolate" }` before the assertion that depends on it. On pages where stable CSS is not known, use semantic job steps such as `{ "action": "fill", "locator": "role", "role": "searchbox", "name": "Search", "text": "agent browser" }` and `{ "action": "click", "locator": "role", "role": "button", "name": "Search" }` instead of guessing selectors.
 
 Use raw `args: ["batch"]` with `stdin` when you need arbitrary upstream commands, flags, or batch failure policies outside the constrained schema. Do not pass `stdin` with `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron`; those modes generate or manage their own input.
 
@@ -247,7 +247,7 @@ The same classification drives plain `network requests` presentation: when any r
 
 Optional `loadState`, `checkNetwork`, `checkConsole`, and `checkErrors` default to `"domcontentloaded"`, `true`, `true`, and `true`; set a check to `false` to skip that diagnostic. Omit `expectedText` and `expectedSelector` when you only need load plus diagnostics.
 
-For attached Electron or manually connected CDP sessions, use `qa.attached` after the session exists. It does not open a URL and rejects `sessionMode: "fresh"` because it checks the current managed session. Before running diagnostics, the wrapper requires a readable `http:` or `https:` page URL on the attached session; missing URLs, read failures, and non-http(s) surfaces fail fast with recovery `nextActions` such as `tab list` and `snapshot -i` instead of running the full QA batch.
+For attached Electron or manually connected CDP sessions, use `qa.attached` after the session exists. It does not open a URL and rejects `sessionMode: "fresh"` because it checks the current managed session. Before running diagnostics, the wrapper requires a readable `http:` or `https:` page URL on the attached session; missing URLs, read failures, and non-http(s) surfaces fail fast with recovery `nextActions` such as `tab list` and `snapshot -i` instead of running the full QA batch. Unlike URL-opening QA, `qa.attached` preserves existing upstream network/console/page-error buffers so it cannot false-pass by clearing evidence created before the check; model-visible text and `details.compiledQaPreset.checks.diagnosticsResetAtStart` call out that preserved diagnostics may include earlier events.
 
 ```json
 { "qa": { "attached": true, "expectedText": "Explorer", "screenshotPath": ".dogfood/electron.png" } }
@@ -341,9 +341,9 @@ A successful wait-based download renders a readable summary such as `Download co
 { "args": ["pdf", "/tmp/page.pdf"] }
 ```
 
-The upstream screenshot aliases are `screenshot --full` for full-page capture and `screenshot --annotate` for labeled screenshots. When a user gives exact artifact paths for screenshots, recordings, downloads, PDFs, traces, or HAR files, use those paths or explicitly report why the artifact was unavailable; do not silently substitute another path in the final report. When the latest prompt names exact required screenshot paths, `close` / `quit` / `exit` can be blocked with `details.promptGuard.reason: "requested-artifacts-missing-before-close"` until those paths appear as verified explicit artifacts.
+The upstream screenshot aliases are `screenshot --full` for full-page capture and `screenshot --annotate` for labeled screenshots. Annotated screenshots can be noisy on dense pages because labels overlap real content; when labels obscure evidence, capture a scoped element screenshot, take a non-annotated screenshot, or use `snapshot -i` high-value refs as the machine-readable map. When a user gives exact artifact paths for screenshots, recordings, downloads, PDFs, traces, or HAR files, use those paths or explicitly report why the artifact was unavailable; do not silently substitute another path in the final report. When the latest prompt names exact required screenshot paths, `close` / `quit` / `exit` can be blocked with `details.promptGuard.reason: "requested-artifacts-missing-before-close"` until those paths appear as verified explicit artifacts.
 
-Prefer `download <selector> <path>` when the target element itself is the downloadable link/control. Use `click` plus `wait --download [path]` when a previous action starts the download indirectly.
+Prefer `download <selector> <path>` when the target element itself is the downloadable link/control. For simple loopback HTML anchors with `href` and a non-ref selector, the wrapper first reads the resolved anchor URL and saves the in-page credentialed response directly to the requested host path, avoiding upstream random-name download spills in local fixture tests; non-loopback/profile downloads still use upstream fallback. Use `click` plus `wait --download [path]` when a previous action starts the download indirectly.
 
 For evidence-only screenshots, QA captures, or audit artifacts, save to an explicit path and branch on `details.artifactVerification` plus `details.artifacts` before reporting PASS/FAIL. Inline image attachments are optional convenience when size limits allow; do not require vision review unless the user asked for visual inspection.
 
@@ -355,7 +355,7 @@ Wrapper result rendering is metadata-first for saved files:
 
 `diff screenshot` follows the file-artifact path above for the **diff** image: model-visible text and `details.artifacts` focus on that output, while baseline paths stay out of the artifact summary block, and Pi does **not** auto-inline the diff the way it inlines trusted `screenshot` captures. `state load` may print the loaded path in prose but does not add a saved-file artifact entry the way `state save` does.
 
-For screenshot paths under dot-directories such as `.dogfood/run/foo.png`, the wrapper normalizes the requested path to an absolute path before invoking upstream `agent-browser`, verifies the requested file exists, and repairs from an upstream temp screenshot when possible. The requested path remains visible as `Requested path`, while `Absolute path` shows the actual on-disk location.
+For screenshot paths under dot-directories such as `.dogfood/run/foo.png`, the wrapper normalizes the requested path to an absolute path before invoking upstream `agent-browser`, verifies the requested file exists, and repairs from an upstream temp screenshot when possible. For direct artifact commands and batch artifact steps (`download`, `pdf`, `screenshot`, `state save`, and `wait --download`), the wrapper creates missing parent directories before launch. The requested path remains visible as `Requested path`, while `Absolute path` shows the actual on-disk location.
 
 For annotated screenshots in `batch`, put `--annotate` in top-level args instead of inside the screenshot step:
 
@@ -399,7 +399,7 @@ Oversized snapshots and oversized generic outputs are different: when a persiste
 { "args": ["snapshot", "-i"] }
 ```
 
-Use `tab list` and `tab <tab-id-or-label>` when a profile restore, pop-up, or click opens or focuses the wrong tab. Generic tab-drift recovery lists tabs first; run `snapshot -i` only after selecting or confirming the intended stable target. When the wrapper already knows the target, `details.nextActions` may include recovery actions that list tabs, select the intended tab, and refresh refs in the right session.
+Use `tab list` and `tab <tab-id-or-label>` when a profile restore, pop-up, or click opens or focuses the wrong tab. Wrapper presentation keeps stable tab IDs plus upstream labels from `tab new --label` visible (for example `label=docs`) so multi-tab sessions are easier to read. Generic tab-drift recovery lists tabs first; run `snapshot -i` only after selecting or confirming the intended stable target. When the wrapper already knows the target, `details.nextActions` may include recovery actions that list tabs, select the intended tab, and refresh refs in the right session.
 
 ### Recover from guarded-action confirmations
 
@@ -439,7 +439,8 @@ Operational notes:
 - Visible page content from real authenticated profiles is still model-visible and may persist in transcripts or saved artifacts. The wrapper redacts credential-like cookie/storage/auth data, not the ordinary page text you asked it to read.
 - `stdin` is accepted only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other stdin-bearing calls are rejected before launch.
 - `auth list/show/save/login/delete` summaries avoid expanding profile secrets. Prefer `auth save --password-stdin` over `--password <value>`.
-- `state save <path>` is a verified file-artifact workflow; inspect `details.artifactVerification` before relying on the file. `state load <path>` is not treated as a newly saved artifact.
+- `session list` and `tab list` are formatted as compact field lists so generated names, labels, active markers, page titles, and URLs are visible without relying on raw JSON.
+- `state save <path>` is a verified file-artifact workflow; the wrapper creates missing parent directories before invoking upstream, then inspect `details.artifactVerification` before relying on the file. `state load <path>` is not treated as a newly saved artifact.
 - `cookies get` can expose real authenticated-profile cookies; prefer task-specific page actions and only inspect cookies when the user needs cookie data.
 - `storage local|session` summaries redact sensitive keys and likely secret values but may keep benign primitive local QA values visible, for example `theme: dark`; still avoid broad storage dumps unless necessary.
 - `dialog accept/dismiss/status`, `frame <selector|main>`, and guarded-action `confirm <id>` / `deny <id>` pass through the native tool. Prefer `details.nextActions` for exact confirmation recovery payloads.

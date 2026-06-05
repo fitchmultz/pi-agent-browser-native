@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,194 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+async function listenOnLoopback(server: Server): Promise<number> {
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			server.off("error", reject);
+			resolve();
+		});
+	});
+	const address = server.address();
+	assert.ok(address && typeof address === "object");
+	return address.port;
+}
+
+test("agentBrowserExtension saves simple anchor downloads directly to the requested path", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-anchor-download-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const server = createServer((req, res) => {
+		if (req.url === "/fixture.txt") {
+			res.writeHead(200, { "content-type": "text/plain" });
+			res.end("fixture-download-ok");
+			return;
+		}
+		res.writeHead(404);
+		res.end("missing");
+	});
+	const port = await listenOnLoopback(server);
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("eval")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { bodyBase64: Buffer.from("fixture-download-ok").toString("base64"), contentType: "text/plain", status: "fetched-anchor", href: "http://127.0.0.1:${port}/fixture.txt", pageUrl: "http://127.0.0.1:${port}/", responseUrl: "http://127.0.0.1:${port}/fixture.txt", sizeBytes: Buffer.byteLength("fixture-download-ok"), download: "fixture.txt" } } }));
+    return;
+  }
+  if (args.includes("download")) {
+    process.stdout.write(JSON.stringify({ success: false, error: "download command should not run for simple anchors" }));
+    process.exit(1);
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Fixture", url: "http://127.0.0.1:${port}/" } }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `http://127.0.0.1:${port}/`] });
+			assert.equal(open.isError, false);
+			const requestedPath = join(tempDir, "downloads", "fixture.txt");
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["download", "#download", requestedPath] });
+
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.equal(await readFile(requestedPath, "utf8"), "fixture-download-ok");
+			assert.equal(result.details?.savedFilePath, requestedPath);
+			assert.equal((result.details?.artifactVerification as { verified?: boolean } | undefined)?.verified, true);
+			assert.equal((result.details?.downloadRecovery as { method?: string } | undefined)?.method, "direct-anchor-fetch");
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("download")), false);
+			assert.ok(invocations.some((entry) => entry.args.includes("eval")));
+		});
+	} finally {
+		server.close();
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension falls back when a non-loopback page points at loopback", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-anchor-download-remote-page-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("eval")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { bodyBase64: Buffer.from("unsafe-host-fetch").toString("base64"), contentType: "text/plain", status: "fetched-anchor", href: "http://127.0.0.1:12345/secret.txt", pageUrl: "https://remote.example/", responseUrl: "http://127.0.0.1:12345/secret.txt", sizeBytes: Buffer.byteLength("unsafe-host-fetch"), download: "secret.txt" } } }));
+    return;
+  }
+  if (args.includes("download")) {
+    const outputPath = args.at(-1);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, "upstream-fallback-ok");
+    process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Remote", url: "https://remote.example/" } }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://remote.example/"] });
+			assert.equal(open.isError, false);
+			const requestedPath = join(tempDir, "downloads", "remote.txt");
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["download", "#download", requestedPath] });
+
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.equal(await readFile(requestedPath, "utf8"), "upstream-fallback-ok");
+			assert.equal((result.details?.downloadRecovery as { method?: string } | undefined)?.method, undefined);
+			const invocations = await readInvocationLog(logPath);
+			const evalInvocation = invocations.find((entry) => entry.args.includes("eval"));
+			assert.ok(evalInvocation);
+			assert.ok((evalInvocation.stdin ?? "").indexOf("not-loopback-page") < (evalInvocation.stdin ?? "").indexOf("fetch(anchorUrl.href"));
+			assert.ok(invocations.some((entry) => entry.args.includes("download")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension falls back to upstream download on anchor redirects", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-anchor-download-redirect-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const server = createServer((req, res) => {
+		if (req.url === "/redirect.txt") {
+			res.writeHead(302, { location: "https://example.com/fixture.txt" });
+			res.end();
+			return;
+		}
+		res.writeHead(404);
+		res.end("missing");
+	});
+	const port = await listenOnLoopback(server);
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("eval")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "not-same-origin", href: "http://127.0.0.1:${port}/redirect.txt", pageUrl: "http://127.0.0.1:${port}/", download: "fixture.txt" } } }));
+    return;
+  }
+  if (args.includes("download")) {
+    const outputPath = args.at(-1);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, "upstream-fallback-ok");
+    process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Fixture", url: "http://127.0.0.1:${port}/" } }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `http://127.0.0.1:${port}/`] });
+			assert.equal(open.isError, false);
+			const requestedPath = join(tempDir, "downloads", "redirect.txt");
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["download", "#download", requestedPath] });
+
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.equal(await readFile(requestedPath, "utf8"), "upstream-fallback-ok");
+			assert.equal((result.details?.downloadRecovery as { method?: string } | undefined)?.method, undefined);
+			const invocations = await readInvocationLog(logPath);
+			const evalInvocation = invocations.find((entry) => entry.args.includes("eval"));
+			assert.ok(evalInvocation);
+			assert.match(evalInvocation.stdin ?? "", /redirect: "manual"/);
+			assert.ok(invocations.some((entry) => entry.args.includes("download")));
+		});
+	} finally {
+		server.close();
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
 
 test("agentBrowserExtension returns retry next actions for failed direct download verification", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-direct-download-failure-"));
