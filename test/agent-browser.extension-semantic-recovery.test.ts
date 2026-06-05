@@ -501,6 +501,57 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension offers current ref fallback for failed semantic find steps inside batch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-semantic-ref-fallback-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("snapshot")) {
+    process.stdout.write(JSON.stringify({ success: true, data: {
+      origin: "file:///stress.html",
+      refs: { e18: { role: "button", name: "Shadow action" }, e107: { role: "button", name: "Frame button" } },
+      snapshot: '- button "Shadow action" [ref=e18]\\n- button "Frame button" [ref=e107]'
+    } }));
+    return;
+  }
+  if (args.includes("batch")) {
+    const steps = JSON.parse(stdin);
+    process.stdout.write(JSON.stringify({ success: false, data: steps.map((command, index) => index === 0 ? { command, success: false, error: "Element not found" } : { command, success: true, result: { ok: true } }) }));
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["find", "role", "button", "click", "--name", "Shadow action"]]),
+			});
+
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "selector-not-found");
+			assert.match((result.content[0] as { text: string }).text, /Current snapshot ref fallback:/);
+			assert.match((result.content[0] as { text: string }).text, /@e18 button "Shadow action"/);
+			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
+			assert.ok(nextActions?.some((action) => action.id === "try-current-visible-ref" && action.params?.args?.at(-1) === "@e18"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension returns a safe semantic retry action only for stale-ref find shorthand failures", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-stale-"));
 	const basePath = process.env.PATH ?? "";

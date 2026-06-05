@@ -92,10 +92,12 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /Compact snapshot view/);
+	assert.match(text, /Viewport note: compact snapshots are DOM\/signal-prioritized/);
 	assert.match(text, /Key refs:/);
 	assert.match(presentation.summary, /Snapshot: 90 refs on https:\/\/example.com\/huge \(compact\)/);
 	assert.equal(typeof presentation.fullOutputPath, "string");
-	assert.equal((presentation.data as { compacted: boolean }).compacted, true);
+	assert.equal((presentation.data as { compacted: boolean; viewportOrdering?: string }).compacted, true);
+	assert.equal((presentation.data as { compacted: boolean; viewportOrdering?: string }).viewportOrdering, "dom-signal-prioritized");
 
 	const spillPath = presentation.fullOutputPath;
 	assert.ok(spillPath);

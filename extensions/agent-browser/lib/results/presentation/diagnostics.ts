@@ -7,7 +7,7 @@
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
-import { classifyNetworkRequestFailure, isApiLikeNetworkRequest, summarizeNetworkFailures } from "../network.js";
+import { classifyNetworkRequestFailure, isApiLikeNetworkRequest, isNetworkArtifactNoiseRequest, summarizeNetworkFailures } from "../network.js";
 import { withOptionalSessionArgs } from "../next-actions.js";
 import { stringifyUnknown, truncateText } from "../text.js";
 import {
@@ -282,18 +282,19 @@ function formatSessionText(data: Record<string, unknown>): string | undefined {
 			.map((item, index) => {
 				if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
 				const name = redactModelFacingText(getStringField(item, "name") ?? getStringField(item, "session") ?? getStringField(item, "id") ?? `(session ${index + 1})`);
-				const active = item.active === true ? " *active*" : "";
+				const active = item.active === true;
 				const url = getStringField(item, "url");
 				const title = getStringField(item, "title");
 				const label = getStringField(item, "label");
 				const tabCount = typeof item.tabCount === "number" ? `${item.tabCount} tab${item.tabCount === 1 ? "" : "s"}` : undefined;
 				const metadata = [
+					`active=${active ? "true" : "false"}`,
 					label ? `label=${redactModelFacingText(label)}` : undefined,
 					title ? `title=${redactModelFacingTextIfSensitive(title)}` : undefined,
 					url ? `url=${redactModelFacingTextIfSensitive(url)}` : undefined,
 					tabCount,
 				].filter(Boolean).join("; ");
-				return metadata ? `${index + 1}. name=${name}${active}; ${metadata}` : `${index + 1}. name=${name}${active}`;
+				return `${index + 1}. name=${name}${active ? " *active*" : ""}; ${metadata}`;
 			})
 			.join("\n");
 	}
@@ -365,17 +366,22 @@ function formatNetworkRequestsText(data: Record<string, unknown>): string | unde
 	const requests = getArrayField(data, "requests");
 	if (!requests) return undefined;
 	if (requests.length === 0) return "No network requests captured. Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page.";
-	const networkFailureSummary = summarizeNetworkFailures(requests);
 	const shown = ["Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page; do not attribute old requests to the current page without URL/time evidence."];
+	const indexedRequests = requests.map((item, index) => ({ index, item }));
+	const artifactNoiseRequests = indexedRequests.filter((indexed) => isRecord(indexed.item) && isNetworkArtifactNoiseRequest(indexed.item));
+	const previewRequests = indexedRequests.filter((indexed) => !(isRecord(indexed.item) && isNetworkArtifactNoiseRequest(indexed.item)));
+	const networkFailureSummary = summarizeNetworkFailures(previewRequests.map((indexed) => indexed.item));
 	if (networkFailureSummary.totalCount > 0) {
 		shown.push(`Network failure summary: ${networkFailureSummary.actionableCount} actionable, ${networkFailureSummary.benignCount} benign low-impact (${networkFailureSummary.totalCount} total).`);
 	}
-	const indexedRequests = requests.map((item, index) => ({ index, item }));
 	const failedRequests: typeof indexedRequests = [];
 	const normalRequests: typeof indexedRequests = [];
-	for (const indexed of indexedRequests) {
+	for (const indexed of previewRequests) {
 		if (isRecord(indexed.item) && classifyNetworkRequestFailure(indexed.item)) failedRequests.push(indexed);
 		else normalRequests.push(indexed);
+	}
+	if (artifactNoiseRequests.length > 0) {
+		shown.push(`Diagnostic noise hidden from preview: ${artifactNoiseRequests.length} data:image/artifact request row${artifactNoiseRequests.length === 1 ? "" : "s"}; raw rows remain in details.data.requests.`);
 	}
 	failedRequests.sort((left, right) => {
 		const leftClassification = isRecord(left.item) ? classifyNetworkRequestFailure(left.item) : undefined;
@@ -389,8 +395,9 @@ function formatNetworkRequestsText(data: Record<string, unknown>): string | unde
 		if (!isRecord(item)) return [`${index + 1}. ${stringifyModelFacing(item)}`];
 		return formatNetworkRequestLine(item, index);
 	}));
-	if (requests.length > DIAGNOSTIC_REQUEST_PREVIEW_LIMIT) {
-		shown.push(`... (${requests.length - DIAGNOSTIC_REQUEST_PREVIEW_LIMIT} additional requests omitted from preview; failed requests are shown first when present)`);
+	const omittedPreviewCount = Math.max(0, prioritizedRequests.length - DIAGNOSTIC_REQUEST_PREVIEW_LIMIT);
+	if (omittedPreviewCount > 0) {
+		shown.push(`... (${omittedPreviewCount} additional non-noise requests omitted from preview; failed requests are shown first when present)`);
 	}
 	return shown.join("\n");
 }
@@ -451,6 +458,7 @@ function getNetworkRequestPathFilter(item: Record<string, unknown>): string | un
 }
 
 function getNetworkRequestActionCandidate(item: Record<string, unknown>): NetworkRequestActionCandidate | undefined {
+	if (isNetworkArtifactNoiseRequest(item)) return undefined;
 	const requestId = getNetworkRequestId(item);
 	if (!requestId) return undefined;
 	const classification = classifyNetworkRequestFailure(item);
@@ -491,7 +499,7 @@ export function formatNetworkRouteDiagnosticsText(diagnostics: NetworkRouteDiagn
 		const target = diagnostic.requestId ? `[${diagnostic.requestId}] ${diagnostic.requestUrl ?? "request"}` : diagnostic.requestUrl ?? "request";
 		lines.push(`- ${diagnostic.reason}: ${target} matched route ${diagnostic.routePattern} (${diagnostic.mode}).`);
 	}
-	lines.push("If this route is intended as a mock, verify the page origin/CORS headers and inspect the request before assuming the mock fulfilled normally.");
+	lines.push("If this route is intended as a mock, inspect the request/headers and treat failed, pending, or CORS-looking rows as unfulfilled until a mocked response is observed.");
 	return lines.join("\n");
 }
 
@@ -501,10 +509,10 @@ export function buildNetworkRouteDiagnosticsNextActions(diagnostics: NetworkRout
 	const actions: AgentBrowserNextAction[] = [];
 	if (diagnostic.requestId) {
 		actions.push({
-			id: "inspect-pending-routed-network-request",
+			id: "inspect-routed-network-request",
 			params: { args: withOptionalSessionArgs(sessionName, ["network", "request", diagnostic.requestId]) },
 			reason: `Inspect the routed request ${diagnostic.requestId} before assuming the route mock fulfilled normally.`,
-			safety: "Read-only request diagnostic; look for pending state, CORS/preflight errors, response status, and headers.",
+			safety: "Read-only request diagnostic; look for failed status, pending state, CORS/preflight errors, response body, and headers.",
 			tool: "agent_browser",
 		});
 	}

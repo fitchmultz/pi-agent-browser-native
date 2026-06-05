@@ -486,6 +486,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", firstSessionName, "close"] });
 			assert.equal(close.isError, false, JSON.stringify(close));
 			assert.equal((close.details?.managedSessionOutcome as { status?: string } | undefined)?.status, "closed");
+			assert.match(close.content[0]?.text ?? "", /Managed session outcome: The current wrapper-managed browser session was closed\./);
 
 			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
 			assert.equal(followUp.isError, false, JSON.stringify(followUp));

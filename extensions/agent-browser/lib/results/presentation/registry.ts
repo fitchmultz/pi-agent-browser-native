@@ -33,6 +33,58 @@ function formatConfirmationRequiredSummary(confirmation: ConfirmationRequiredPre
 	return `Confirmation required: ${confirmation.id}`;
 }
 
+const VITALS_METRICS = ["lcp", "fcp", "ttfb", "inp", "cls"] as const;
+
+function coerceVitalsMetricValue(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (isRecord(value)) {
+		for (const nestedKey of ["value", "duration", "startTime", "score"] as const) {
+			const nestedValue = value[nestedKey];
+			if (typeof nestedValue === "number" && Number.isFinite(nestedValue)) return nestedValue;
+		}
+	}
+	return undefined;
+}
+
+function getVitalsMetric(data: Record<string, unknown>, key: string): number | undefined {
+	const metrics = isRecord(data.metrics) ? data.metrics : undefined;
+	return coerceVitalsMetricValue(data[key] ?? data[key.toUpperCase()] ?? metrics?.[key] ?? metrics?.[key.toUpperCase()]);
+}
+
+function formatVitalsMetric(key: string, value: number): string {
+	return key === "cls" ? `${key.toUpperCase()}: ${value}` : `${key.toUpperCase()}: ${Math.round(value)}ms`;
+}
+
+function getVitalsMetrics(data: Record<string, unknown>): string[] {
+	return VITALS_METRICS.flatMap((key) => {
+		const value = getVitalsMetric(data, key);
+		return value === undefined ? [] : [formatVitalsMetric(key, value)];
+	});
+}
+
+function getVitalsUnavailableReason(data: Record<string, unknown>): string {
+	for (const key of ["reason", "message", "error", "status"] as const) {
+		const value = data[key];
+		if (typeof value === "string" && value.trim().length > 0) return redactModelFacingText(value.trim());
+	}
+	return "No Core Web Vitals metric fields were present in the upstream result.";
+}
+
+function formatVitalsText(data: Record<string, unknown>): string {
+	const url = typeof data.url === "string" && data.url.trim().length > 0 ? redactModelFacingText(data.url.trim()) : undefined;
+	const metrics = getVitalsMetrics(data);
+	const lines = [url ? `Vitals for ${url}` : "Vitals result"];
+	if (metrics.length > 0) lines.push(...metrics.map((metric) => `- ${metric}`));
+	else lines.push(`Metrics unavailable: ${getVitalsUnavailableReason(data)}`);
+	return lines.join("\n");
+}
+
+function formatVitalsSummary(data: Record<string, unknown>): string | undefined {
+	const metrics = getVitalsMetrics(data);
+	if (metrics.length > 0) return `Vitals: ${metrics.join(", ")}`;
+	return "Vitals: metrics unavailable";
+}
+
 function formatConfirmationRequiredText(confirmation: ConfirmationRequiredPresentation): string {
 	const lines = [
 		"Confirmation required.",
@@ -86,6 +138,14 @@ const COMMAND_PRESENTERS: Record<string, CommandPresenter> = {
 	tab: {
 		summary: (_commandInfo, data) => isRecord(data) && Array.isArray(data.tabs) ? `Tabs: ${data.tabs.length}` : undefined,
 		text: (_commandInfo, data) => isRecord(data) ? getTabSummary(data) : undefined,
+	},
+	vitals: {
+		summary: (_commandInfo, data) => isRecord(data) ? formatVitalsSummary(data) : undefined,
+		text: (_commandInfo, data) => isRecord(data) ? formatVitalsText(data) : undefined,
+	},
+	"web-vitals": {
+		summary: (_commandInfo, data) => isRecord(data) ? formatVitalsSummary(data) : undefined,
+		text: (_commandInfo, data) => isRecord(data) ? formatVitalsText(data) : undefined,
 	},
 };
 

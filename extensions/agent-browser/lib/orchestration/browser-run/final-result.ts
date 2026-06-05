@@ -282,7 +282,8 @@ export async function prepareFinalResultRecoveryState(options: {
 	let visibleRefFallbackDiagnostic: FinalRecoveryState["visibleRefFallbackDiagnostic"];
 	const visibleRefFallbackSessionName = options.executionPlan.sessionName ?? extractExplicitSessionName(options.runtimeToolArgs);
 	if (categoryDetails.failureCategory === "selector-not-found") {
-		visibleRefFallbackDiagnostic = await collectVisibleRefFallbackDiagnostic({ commandTokens: options.commandTokens, compiledSemanticAction: options.compiledSemanticAction, cwd: options.cwd, sessionName: visibleRefFallbackSessionName, signal: options.signal });
+		const selectorRecoveryCommandTokens = options.presentation.batchFailure?.failedStep.command ?? options.commandTokens;
+		visibleRefFallbackDiagnostic = await collectVisibleRefFallbackDiagnostic({ commandTokens: selectorRecoveryCommandTokens, compiledSemanticAction: options.compiledSemanticAction, cwd: options.cwd, sessionName: visibleRefFallbackSessionName, signal: options.signal });
 		if (visibleRefFallbackDiagnostic && visibleRefFallbackSessionName) {
 			const refUpdate = options.sessionPageState.applyRefSnapshot({ fallbackTarget: options.currentSessionTabTarget, sessionName: visibleRefFallbackSessionName, snapshot: visibleRefFallbackDiagnostic.snapshot, update: options.sessionPageStateUpdate });
 			currentRefSnapshot = refUpdate.refSnapshot;

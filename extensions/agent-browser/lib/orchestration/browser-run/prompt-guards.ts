@@ -4,57 +4,11 @@ import { isCloseCommand } from "../../command-taxonomy.js";
 import { executableExistsOnPath } from "../../executable-path.js";
 import type { SessionArtifactManifest } from "../../results/contracts.js";
 import type { PromptPolicy, PromptRequestedArtifact } from "../../prompt-policy.js";
-import type { SessionRefSnapshot } from "../../session-page-state.js";
-import { findBlockedFinalizingAction, STOP_BOUNDARY_GUARD_SCOPE, type BrowserFinalizingAction } from "./browser-action-model.js";
-
-export interface StopBoundaryViolation {
-	action: BrowserFinalizingAction;
-	command: string[];
-	message: string;
-	reason: "explicit-user-stop-boundary";
-	stepIndex?: number;
-	target?: string;
-}
 
 export interface RequestedArtifactCloseViolation {
 	message: string;
 	missingArtifacts: PromptRequestedArtifact[];
 	reason: "requested-artifacts-missing-before-close";
-}
-
-function formatStopBoundaryActionPhrase(action: BrowserFinalizingAction): string {
-	if (action.kind === "keyboard-submit") return "keyboard submit (Enter/Return)";
-	return "click-like action";
-}
-
-export function findStopBoundaryViolation(options: { commandTokens: string[]; promptPolicy: PromptPolicy; refSnapshot?: SessionRefSnapshot; stdin?: string }): StopBoundaryViolation | undefined {
-	if (!options.promptPolicy.stopBoundary) return undefined;
-	const blocked = findBlockedFinalizingAction({
-		commandTokens: options.commandTokens,
-		refSnapshot: options.refSnapshot,
-		stdin: options.stdin,
-	});
-	if (!blocked) return undefined;
-	const target = blocked.targetLabel;
-	const actionPhrase = formatStopBoundaryActionPhrase(blocked);
-	const scopeNote = `Best-effort guard scope covers ${STOP_BOUNDARY_GUARD_SCOPE.covered.join(", ")}; it does not block ${STOP_BOUNDARY_GUARD_SCOPE.excluded.join(", ")}.`;
-	if (blocked.stepIndex === undefined) {
-		return {
-			action: blocked,
-			command: blocked.command,
-			message: `Blocked likely final submit/order ${actionPhrase} (${target}) because the latest user prompt set an explicit stop boundary. Gather evidence on the current page instead of activating the final action. ${scopeNote}`,
-			reason: "explicit-user-stop-boundary",
-			target,
-		};
-	}
-	return {
-		action: blocked,
-		command: blocked.command,
-		message: `Blocked likely final submit/order ${actionPhrase} in batch step ${blocked.stepIndex + 1} (${target}) because the latest user prompt set an explicit stop boundary. Gather evidence on the current page instead of activating the final action. ${scopeNote}`,
-		reason: "explicit-user-stop-boundary",
-		stepIndex: blocked.stepIndex,
-		target,
-	};
 }
 
 function resolveArtifactPath(cwd: string, path: string): string {

@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { Check } from "typebox/value";
 
-import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
+import { analyzeQaPresetResults, analyzeQaPresetTimeout, compileAgentBrowserJob, compileAgentBrowserQaPreset } from "../extensions/agent-browser/lib/input-modes/job.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -24,6 +24,27 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA failures", () => {
+	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/", expectedText: "Definitely Not On This Page" }).compiled;
+	assert.ok(compiled);
+	const analysis = analyzeQaPresetTimeout(compiled);
+	assert.equal(analysis?.passed, false);
+	assert.deepEqual(analysis?.failedChecks, ['expected text was not verified before timeout: "Definitely Not On This Page"']);
+	assert.match(analysis?.summary ?? "", /QA preset failed/);
+});
+
+test("analyzeQaPresetResults reports missing expected text as QA failure", () => {
+	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/", expectedText: "Definitely Not On This Page" }).compiled;
+	assert.ok(compiled);
+	const analysis = analyzeQaPresetResults([
+		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
+		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+		{ command: ["get", "text", "body"], success: true, result: { result: "Example Domain" } },
+	], compiled);
+	assert.equal(analysis?.passed, false);
+	assert.deepEqual(analysis?.failedChecks, ['expected text not found: "Definitely Not On This Page"']);
+});
 
 test("compileAgentBrowserJob preserves explicit assertUrl and assertText immediately after click", () => {
 	const semanticJob = compileAgentBrowserJob({
@@ -387,6 +408,7 @@ process.stdin.on("end", () => {
 						{ action: "assertUrl", url: "**/dashboard" },
 						{ action: "wait", milliseconds: 250 },
 						{ action: "waitForDownload", path: "report.csv" },
+						{ action: "snapshot" },
 						{ action: "screenshot", path: "job.png" },
 					],
 				},
@@ -409,6 +431,7 @@ process.stdin.on("end", () => {
 				["wait", "--url", "**/dashboard"],
 				["wait", "250"],
 				["wait", "--download", "report.csv"],
+				["snapshot", "-i"],
 				["screenshot", "job.png"],
 			];
 			assert.deepEqual(compiledJob?.steps?.map((step) => step.args), expectedCompiledSteps);
@@ -424,9 +447,9 @@ process.stdin.on("end", () => {
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
 			const upstreamSteps = JSON.parse(invocations[0]?.stdin ?? "[]") as string[][];
-			assert.deepEqual(upstreamSteps.slice(0, 8), compiledJob?.steps?.slice(0, 8).map((step) => step.args));
-			assert.equal(upstreamSteps[8]?.[0], "screenshot");
-			assert.match(upstreamSteps[8]?.[1] ?? "", /job\.png$/);
+			assert.deepEqual(upstreamSteps.slice(0, 9), compiledJob?.steps?.slice(0, 9).map((step) => step.args));
+			assert.equal(upstreamSteps[9]?.[0], "screenshot");
+			assert.match(upstreamSteps[9]?.[1] ?? "", /job\.png$/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -603,6 +626,9 @@ process.stdin.on("end", () => {
       if (command.includes("--clear")) { staleErrors = false; return { command, success: true, result: { errors: [] } }; }
       return { command, success: true, result: staleErrors || mode === "fail" ? { errors: [{ text: "page boom" }] } : { errors: [] } };
     }
+    if (name === "get" && command[1] === "text") {
+      return { command, success: true, result: { result: mode === "blank" ? "" : "Welcome to the QA Page" } };
+    }
     if (name === "wait" && process.env.AGENT_BROWSER_FAKE_QA_MODE === "wait-fail") {
       return { command, success: false, error: "Timed out waiting for QA assertion" };
     }
@@ -756,7 +782,7 @@ process.stdin.on("end", () => {
 				["errors", "--clear"],
 				["open", "https://fail.example.test/"],
 				["wait", "--load", "domcontentloaded"],
-				["wait", "--text", "Welcome"],
+				["get", "text", "body"],
 				["wait", "main"],
 				["network", "requests"],
 				["console"],
@@ -764,9 +790,7 @@ process.stdin.on("end", () => {
 				["screenshot", "qa.png"],
 			]);
 			const invocations = await readInvocationLog(logPath);
-			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
-			assert.deepEqual(invocations[1]?.args.slice(-1), ["batch"]);
-			assert.deepEqual(invocations[2]?.args.slice(-1), ["batch"]);
+			assert.ok(invocations.filter((entry) => entry.args.at(-1) === "batch").length >= 3);
 
 			const firstRunFailureHarness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(firstRunFailureHarness.handlers, "session_start", { reason: "new" }, firstRunFailureHarness.ctx);
@@ -793,34 +817,48 @@ process.stdin.on("end", () => {
 					expectedSelector: "main",
 				},
 			});
-			assert.equal(attachedResult.isError, true);
-			assert.equal(attachedResult.details?.failureCategory, "qa-failure");
-			assert.match((attachedResult.content[0] as { text: string }).text, /QA preset failed/);
-			assert.match((attachedResult.content[0] as { text: string }).text, /QA attached target: .* — QA Page — https:\/\/fail\.example\.test\//);
-			assert.match((attachedResult.content[0] as { text: string }).text, /Attached diagnostics: existing upstream session console\/network\/error buffers were preserved/);
+			assert.equal(attachedResult.isError, false, JSON.stringify(attachedResult));
+			assert.match((attachedResult.content[0] as { text: string }).text, /QA preset passed/);
+			assert.doesNotMatch((attachedResult.content[0] as { text: string }).text, /Attached diagnostics: existing upstream session console\/network\/error buffers were preserved/);
 			assert.equal((attachedResult.details?.qaAttachedTarget as { title?: string; url?: string } | undefined)?.title, "QA Page");
 			assert.equal((attachedResult.details?.qaAttachedTarget as { title?: string; url?: string } | undefined)?.url, "https://fail.example.test/");
-			assert.deepEqual((attachedResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
-				"1 actionable failed network request(s)",
-				"1 console error message(s)",
-				"1 page error(s)",
-			]);
-			const attachedCompiledQaPreset = attachedResult.details?.compiledQaPreset as { checks?: { attached?: boolean; diagnosticsResetAtStart?: boolean; url?: string }; steps?: Array<{ args: string[] }> } | undefined;
+			assert.deepEqual((attachedResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, []);
+			const attachedCompiledQaPreset = attachedResult.details?.compiledQaPreset as { checks?: { attached?: boolean; checkConsole?: boolean; checkErrors?: boolean; checkNetwork?: boolean; diagnosticsResetAtStart?: boolean; url?: string }; steps?: Array<{ args: string[] }> } | undefined;
 			assert.equal(attachedCompiledQaPreset?.checks?.attached, true);
+			assert.equal(attachedCompiledQaPreset?.checks?.checkNetwork, false);
+			assert.equal(attachedCompiledQaPreset?.checks?.checkConsole, false);
+			assert.equal(attachedCompiledQaPreset?.checks?.checkErrors, false);
 			assert.equal(attachedCompiledQaPreset?.checks?.diagnosticsResetAtStart, false);
 			assert.equal(attachedCompiledQaPreset?.checks?.url, undefined);
 			assert.deepEqual(attachedCompiledQaPreset?.steps?.map((step) => step.args), [
 				["wait", "--load", "domcontentloaded"],
-				["wait", "--text", "Welcome"],
+				["get", "text", "body"],
 				["wait", "main"],
-				["network", "requests"],
-				["console"],
-				["errors"],
 			]);
 			const attachedInvocation = [...await readInvocationLog(logPath)].reverse().find((entry) => entry.args.at(-1) === "batch" && entry.stdin?.trim().startsWith("["));
 			assert.ok(attachedInvocation);
 			const attachedSteps = JSON.parse(attachedInvocation.stdin ?? "[]") as string[][];
 			assert.equal(attachedSteps.some((step) => step[0] === "open"), false);
+
+			const attachedCheckedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				qa: {
+					attached: true,
+					checkConsole: true,
+					checkErrors: true,
+					checkNetwork: true,
+					expectedText: "Welcome",
+					expectedSelector: "main",
+				},
+			});
+			assert.equal(attachedCheckedResult.isError, true);
+			assert.equal(attachedCheckedResult.details?.failureCategory, "qa-failure");
+			assert.match((attachedCheckedResult.content[0] as { text: string }).text, /QA preset failed/);
+			assert.match((attachedCheckedResult.content[0] as { text: string }).text, /Attached diagnostics: existing upstream session console\/network\/error buffers were preserved/);
+			assert.deepEqual((attachedCheckedResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
+				"1 actionable failed network request(s)",
+				"1 console error message(s)",
+				"1 page error(s)",
+			]);
 
 			const attachedFreshResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: { attached: true, expectedText: "Welcome" },
@@ -904,7 +942,9 @@ process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
   if (handleStandaloneCommand()) return;
   const steps = JSON.parse(stdin);
-  const results = steps.map((command) => ({ command, success: true, result: { ok: true } }));
+  const results = steps.map((command) => command[0] === "get" && command[1] === "text"
+    ? { command, success: true, result: { result: "Welcome" } }
+    : { command, success: true, result: { ok: true } });
   process.stdout.write(JSON.stringify(results));
 });`,
 	);

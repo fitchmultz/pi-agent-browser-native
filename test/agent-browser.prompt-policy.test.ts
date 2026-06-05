@@ -32,12 +32,12 @@ test("buildPromptPolicy allows explicit tool-specific legacy bash inspection req
 	assert.equal(policy.allowLegacyAgentBrowserBash, true);
 });
 
-test("buildPromptPolicy detects stop boundaries and requested artifact paths", () => {
+test("buildPromptPolicy detects requested artifact paths without deriving semantic action blockers", () => {
 	const policy = buildPromptPolicy(`Stop on the checkout overview page; do not place the order.
 Save a screenshot here: /tmp/pi-smoke/page.png
 Save a short screen recording here if recording is available: /tmp/pi-smoke/run.webm`);
 
-	assert.deepEqual(policy.stopBoundary, { reason: "avoid-final-submit-action" });
+	assert.equal("stopBoundary" in policy, false);
 	assert.deepEqual(policy.requestedArtifacts, [
 		{ kind: "screenshot", path: "/tmp/pi-smoke/page.png", required: true },
 		{ kind: "recording", path: "/tmp/pi-smoke/run.webm", required: false },

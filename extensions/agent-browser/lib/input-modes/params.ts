@@ -54,9 +54,9 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 				expectedText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must appear on the page." })),
 				expectedSelector: Type.Optional(Type.String({ description: "Selector or @ref that must appear on the page." })),
 				screenshotPath: Type.Optional(Type.String({ description: "Optional evidence screenshot path captured at the end of the QA preset." })),
-				checkConsole: Type.Optional(Type.Boolean({ description: "Whether to fail on console error messages. Defaults to true." })),
-				checkErrors: Type.Optional(Type.Boolean({ description: "Whether to fail on page errors. Defaults to true." })),
-				checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to inspect network requests and fail on actionable request failures; benign icon misses warn. Defaults to true." })),
+				checkConsole: Type.Optional(Type.Boolean({ description: "Whether to inspect console messages and fail on console errors. Defaults to false for qa.attached because upstream buffers may predate the check." })),
+				checkErrors: Type.Optional(Type.Boolean({ description: "Whether to inspect page errors and fail when errors are present. Defaults to false for qa.attached because upstream buffers may predate the check." })),
+				checkNetwork: Type.Optional(Type.Boolean({ description: "Whether to inspect network requests and fail on actionable request failures; benign icon misses warn. Defaults to false for qa.attached because upstream buffers may predate the check." })),
 				loadState: Type.Optional(StringEnum(AGENT_BROWSER_QA_LOAD_STATES, { description: "Page readiness state for the QA preset before assertions and diagnostics. Defaults to domcontentloaded; use networkidle only for pages without long-lived background requests." })),
 			}, { additionalProperties: false }),
 			Type.Object({

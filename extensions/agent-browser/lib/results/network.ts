@@ -28,6 +28,12 @@ function isFailedNetworkRequest(request: Record<string, unknown>): boolean {
 	return (typeof request.status === "number" && request.status >= 400) || request.failed === true || typeof request.error === "string";
 }
 
+export function isNetworkArtifactNoiseRequest(request: Record<string, unknown>): boolean {
+	const url = getStringRecordField(request, "url") ?? "";
+	const resourceType = (getStringRecordField(request, "resourceType") ?? getStringRecordField(request, "mimeType") ?? "").toLowerCase();
+	return /^data:image\//i.test(url) || (url.startsWith("data:") && resourceType.includes("image"));
+}
+
 function isBenignAssetFailure(request: Record<string, unknown>, url: string | undefined, resourceType: string | undefined): boolean {
 	const path = getNetworkRequestUrlPath(url);
 	if (!path) return false;
@@ -58,7 +64,7 @@ export function classifyNetworkRequestFailure(request: Record<string, unknown>):
 
 export function summarizeNetworkFailures(requests: unknown[]): NetworkFailureSummary {
 	const failures = requests.flatMap((request) => {
-		if (!isRecord(request)) return [];
+		if (!isRecord(request) || isNetworkArtifactNoiseRequest(request)) return [];
 		const classification = classifyNetworkRequestFailure(request);
 		return classification ? [classification] : [];
 	});

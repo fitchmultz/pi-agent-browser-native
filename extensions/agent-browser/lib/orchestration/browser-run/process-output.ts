@@ -7,6 +7,7 @@ import { getAllowedDomainsViolation, parseAllowedDomainsPolicyFromArgs } from ".
 import {
 	analyzeNetworkSourceLookupResults,
 	analyzeQaPresetResults,
+	analyzeQaPresetTimeout,
 	analyzeSourceLookupResults,
 	buildQaCompactPassText,
 	extractQaPageContext,
@@ -491,7 +492,9 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentation.content[0] = { type: "text", text: existingText.length > 0 ? `${existingText}\n\n${notice}` : notice };
 		}
 		if (presentation.artifactManifest) artifactManifest = presentation.artifactManifest;
-		const qaPreset = prepared.compiledQaPreset ? analyzeQaPresetResults(presentationEnvelope?.data) : undefined;
+		const qaPreset = prepared.compiledQaPreset
+			? (processResult.timedOut ? analyzeQaPresetTimeout(prepared.compiledQaPreset) ?? analyzeQaPresetResults(presentationEnvelope?.data, prepared.compiledQaPreset) : analyzeQaPresetResults(presentationEnvelope?.data, prepared.compiledQaPreset))
+			: undefined;
 		let qaAttachedTarget = prepared.compiledQaPreset?.checks.attached
 			? await collectQaAttachedTarget({ currentTarget: currentSessionTabTarget ?? prepared.priorSessionTabTarget, cwd, sessionName: prepared.executionPlan.sessionName, signal })
 			: undefined;
@@ -525,7 +528,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentation.content = [{ type: "text", text: compactText }, ...nonTextContent];
 		}
 		const qaAttachedTargetText = formatQaAttachedTargetText(qaAttachedTarget);
-		const qaAttachedDiagnosticsText = prepared.compiledQaPreset?.checks.attached && prepared.compiledQaPreset.checks.diagnosticsResetAtStart === false
+		const qaAttachedDiagnosticsText = prepared.compiledQaPreset?.checks.attached && prepared.compiledQaPreset.checks.diagnosticsResetAtStart === false && (prepared.compiledQaPreset.checks.checkNetwork || prepared.compiledQaPreset.checks.checkConsole || prepared.compiledQaPreset.checks.checkErrors)
 			? "Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started."
 			: undefined;
 		const qaAttachedBannerText = [qaAttachedTargetText, qaAttachedDiagnosticsText].filter((part): part is string => typeof part === "string" && part.length > 0).join("\n");

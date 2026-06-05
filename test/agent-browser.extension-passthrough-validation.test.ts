@@ -662,7 +662,7 @@ test("agentBrowserExtension does not mask non-exact stream enable failures", { c
 	}
 });
 
-test("agentBrowserExtension reports pending routed network mocks", { concurrency: false }, async () => {
+test("agentBrowserExtension reports unfulfilled routed network mocks", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-route-diagnostics-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -672,7 +672,7 @@ const commandIndex = args.findIndex((arg, index) => arg === "network" && args[in
 const subcommand = args[commandIndex + 1];
 const data = subcommand === "route"
   ? { routed: args[commandIndex + 2] }
-  : { requests: [{ method: "GET", requestId: "mock-1", resourceType: "fetch", url: "https://example.test/api/mock" }] };
+  : { requests: [{ method: "GET", requestId: "mock-1", resourceType: "fetch", status: 404, url: "https://example.test/api/mock" }] };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
@@ -686,8 +686,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const requestsResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "requests"] });
 			assert.equal(requestsResult.isError, false);
 			assert.match(requestsResult.content[0]?.text ?? "", /Network route diagnostics/);
-			assert.deepEqual((requestsResult.details?.networkRouteDiagnostics as Array<{ reason?: string }> | undefined)?.map((item) => item.reason), ["pending-routed-request"]);
-			assert.deepEqual((requestsResult.details?.nextActions as Array<{ id?: string }> | undefined)?.slice(0, 2).map((action) => action.id), ["inspect-pending-routed-network-request", "start-network-har-capture-for-route-mock"]);
+			assert.deepEqual((requestsResult.details?.networkRouteDiagnostics as Array<{ reason?: string }> | undefined)?.map((item) => item.reason), ["unfulfilled-routed-request"]);
+			assert.deepEqual((requestsResult.details?.nextActions as Array<{ id?: string }> | undefined)?.slice(0, 2).map((action) => action.id), ["inspect-routed-network-request", "start-network-har-capture-for-route-mock"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

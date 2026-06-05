@@ -7,6 +7,7 @@
 export { AGENT_BROWSER_PARAMS } from "./input-modes/params.js";
 export {
 	analyzeQaPresetResults,
+	analyzeQaPresetTimeout,
 	buildQaCompactPassText,
 	compileAgentBrowserJob,
 	compileAgentBrowserQaPreset,

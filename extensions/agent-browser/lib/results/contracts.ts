@@ -229,7 +229,7 @@ export interface NetworkRouteRecord {
 
 export interface NetworkRouteDiagnostic {
 	mode: NetworkRouteRecord["mode"];
-	reason: "pending-routed-request" | "cors-likely-routed-request";
+	reason: "pending-routed-request" | "cors-likely-routed-request" | "unfulfilled-routed-request";
 	requestId?: string;
 	requestUrl?: string;
 	routePattern: string;

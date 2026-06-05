@@ -119,7 +119,7 @@ test("buildToolPresentation formats session status and session list", async () =
 		},
 	});
 	assert.equal(list.summary, "Sessions: 1");
-	assert.equal((list.content[0] as { text: string }).text, "1. name=work *active*; title=Example; url=https://example.com");
+	assert.equal((list.content[0] as { text: string }).text, "1. name=work *active*; active=true; title=Example; url=https://example.com");
 });
 
 test("buildToolPresentation formats Chrome profile arrays", async () => {
@@ -291,8 +291,51 @@ test("buildToolPresentation adds routed pending network diagnostics", async () =
 	assert.match(text, /Network route diagnostics/);
 	assert.match(text, /pending-routed-request/);
 	assert.deepEqual(presentation.networkRouteDiagnostics?.map((item) => item.reason), ["pending-routed-request"]);
-	assert.deepEqual(presentation.nextActions?.slice(0, 2).map((action) => action.id), ["inspect-pending-routed-network-request", "start-network-har-capture-for-route-mock"]);
+	assert.deepEqual(presentation.nextActions?.slice(0, 2).map((action) => action.id), ["inspect-routed-network-request", "start-network-har-capture-for-route-mock"]);
 	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--session", "pi-agent-browser-test", "network", "request", "r1"]);
+});
+
+test("buildToolPresentation flags routed requests that return failed statuses", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "network", subcommand: "requests" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: { requests: [{ method: "GET", requestId: "r404", resourceType: "fetch", status: 404, url: "https://example.test/api/stress" }] },
+		},
+		networkRouteDiagnostics: [{ mode: "body", reason: "unfulfilled-routed-request", requestId: "r404", requestUrl: "https://example.test/api/stress", routePattern: "**/api/stress", summary: "failed" }],
+		sessionName: "pi-agent-browser-test",
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /unfulfilled-routed-request/);
+	assert.match(text, /treat failed, pending, or CORS-looking rows as unfulfilled/);
+	assert.deepEqual(presentation.networkRouteDiagnostics?.map((item) => item.reason), ["unfulfilled-routed-request"]);
+	assert.deepEqual(presentation.nextActions?.slice(0, 2).map((action) => action.id), ["inspect-routed-network-request", "start-network-har-capture-for-route-mock"]);
+});
+
+test("buildToolPresentation hides data image network noise from preview while preserving raw details", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "network", subcommand: "requests" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				requests: [
+					{ method: "GET", requestId: "img-1", resourceType: "Image", status: 500, url: "data:image/png;base64,abcdef" },
+					{ method: "GET", requestId: "api-1", resourceType: "fetch", status: 200, url: "https://example.test/api/items" },
+				],
+			},
+		},
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Diagnostic noise hidden from preview: 1 data:image\/artifact request row/);
+	assert.match(text, /2\. 200 GET https:\/\/example\.test\/api\/items/);
+	assert.doesNotMatch(text, /data:image\/png/);
+	assert.doesNotMatch(text, /Network failure summary/);
+	assert.match(JSON.stringify(presentation.data), /data:image\/png/);
+	assert.deepEqual(presentation.nextActions?.map((action) => action.id), ["inspect-network-request", "filter-network-requests-by-path", "start-network-har-capture"]);
 });
 
 test("buildToolPresentation treats stream enable already-enabled as idempotent", async () => {
@@ -508,6 +551,32 @@ test("buildToolPresentation keeps failed network rows visible when successful ro
 	assert.match(text, /46\. 404 GET https:\/\/example\.test\/missing\.js \(Script\) \[late-failure\] \[actionable: document, script, API, or non-benign request failure\]/);
 	assert.ok(text.indexOf("46. 404 GET") < text.indexOf("1. 200 GET"));
 	assert.match(text, /failed requests are shown first when present/);
+});
+
+test("buildToolPresentation formats vitals metrics and unavailable results", async () => {
+	const metricsPresentation = await buildToolPresentation({
+		commandInfo: { command: "vitals" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { cls: 0.01, fcp: 234.4, lcp: 1234.2, ttfb: 45.8, url: "https://example.test/" } },
+	});
+	assert.equal(metricsPresentation.summary, "Vitals: LCP: 1234ms, FCP: 234ms, TTFB: 46ms, CLS: 0.01");
+	assert.match((metricsPresentation.content[0] as { text: string }).text, /Vitals for https:\/\/example\.test\//);
+	assert.match((metricsPresentation.content[0] as { text: string }).text, /LCP: 1234ms/);
+
+	const nestedPresentation = await buildToolPresentation({
+		commandInfo: { command: "web-vitals" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { metrics: { LCP: { value: 987.6 }, FCP: 101.2, CLS: { value: 0.02 } }, url: "https://example.test/" } },
+	});
+	assert.equal(nestedPresentation.summary, "Vitals: LCP: 988ms, FCP: 101ms, CLS: 0.02");
+
+	const unavailablePresentation = await buildToolPresentation({
+		commandInfo: { command: "vitals" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { message: "No performance entries yet", url: "https://example.test/" } },
+	});
+	assert.equal(unavailablePresentation.summary, "Vitals: metrics unavailable");
+	assert.match((unavailablePresentation.content[0] as { text: string }).text, /Metrics unavailable: No performance entries yet/);
 });
 
 test("buildToolPresentation formats singular network request details without expanding headers", async () => {

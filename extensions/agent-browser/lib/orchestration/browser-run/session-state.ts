@@ -157,7 +157,15 @@ function formatManagedSessionOutcomeRecoveryGuidance(outcome: ManagedSessionOutc
 }
 
 export function formatManagedSessionOutcomeText(outcome: ManagedSessionOutcome | undefined): string | undefined {
-	if (!outcome || outcome.succeeded || outcome.sessionMode !== "fresh") return undefined;
+	if (!outcome) return undefined;
+	if (outcome.status === "closed" && outcome.succeeded) {
+		return [
+			"Managed session outcome: The current wrapper-managed browser session was closed.",
+			"Next sessionMode auto call will start or attach a managed session as needed. If upstream session list still shows rows, they are separate saved/upstream sessions; use close --all only when full cleanup is intended.",
+			"Full session names and transition details remain in details.managedSessionOutcome.",
+		].join("\n");
+	}
+	if (outcome.succeeded || outcome.sessionMode !== "fresh") return undefined;
 	return [formatManagedSessionOutcomeHeadline(outcome), formatManagedSessionOutcomeRecoveryGuidance(outcome)].join("\n");
 }
 

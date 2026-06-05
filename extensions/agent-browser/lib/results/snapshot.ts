@@ -221,6 +221,7 @@ export async function buildSnapshotPresentation(
 		...(roleCountsText ? [`Top roles: ${roleCountsText}`] : []),
 		"",
 		"Compact snapshot view.",
+		"Viewport note: compact snapshots are DOM/signal-prioritized, not guaranteed to start with the currently scrolled viewport; use the full raw snapshot, a screenshot, or listed high-value refs when viewport context matters.",
 	];
 
 	if (fallbackPreview) {
@@ -294,6 +295,7 @@ export async function buildSnapshotPresentation(
 			fullOutputPath,
 			origin,
 			previewMode: fallbackPreview ? "outline" : "structured",
+			viewportOrdering: "dom-signal-prioritized",
 			spillError: spillErrorText,
 			previewRefIds: [...previewRefIds],
 			highValueControlRefIds: visibleHighValueControlEntries.map((entry) => entry.id),

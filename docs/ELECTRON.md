@@ -230,7 +230,7 @@ On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On
 }
 ```
 
-`qa.attached` rejects `url` and is incompatible with `sessionMode: "fresh"` — attach first with `electron.launch` or raw `connect`, then run `qa.attached`. The full field rules and pass/fail classification live in [`TOOL_CONTRACT.md#qa`](TOOL_CONTRACT.md#qa).
+`qa.attached` rejects `url` and is incompatible with `sessionMode: "fresh"` — attach first with `electron.launch` or raw `connect`, then run `qa.attached`. Preserved-buffer diagnostics (`checkConsole`, `checkErrors`, `checkNetwork`) default to `false` for attached QA; opt into them when you want historical session buffers to fail the smoke. The full field rules and pass/fail classification live in [`TOOL_CONTRACT.md#qa`](TOOL_CONTRACT.md#qa).
 
 In attached Electron sessions, broad selectors such as `body`, `html`, `main`, or `[role=application]` can read the entire app shell. When `get text <selector>` looks too broad, the wrapper may attach `details.electronGetTextScopeWarning` and a `snapshot-for-electron-text-scope` next action; prefer a fresh `snapshot -i`, a current `@ref`, or a narrower panel selector.
 

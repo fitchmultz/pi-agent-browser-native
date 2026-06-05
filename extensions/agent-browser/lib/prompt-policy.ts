@@ -1,6 +1,6 @@
 /**
  * Purpose: Derive operator prompt constraints for browser-run preflight guards and legacy bash policy.
- * Responsibilities: Parse the latest user message into stop boundaries, requested artifact paths, and legacy bash allowance.
+ * Responsibilities: Parse the latest user message into requested artifact paths and legacy bash allowance.
  * Scope: Pure prompt-text policy; enforcement lives in orchestration prompt-guards and the extension entrypoint.
  */
 
@@ -10,14 +10,9 @@ export interface PromptRequestedArtifact {
 	required: boolean;
 }
 
-export interface PromptStopBoundary {
-	reason: "avoid-final-submit-action";
-}
-
 export interface PromptPolicy {
 	allowLegacyAgentBrowserBash: boolean;
 	requestedArtifacts: PromptRequestedArtifact[];
-	stopBoundary?: PromptStopBoundary;
 }
 
 const BROWSER_PROMPT_PATTERNS = [
@@ -36,18 +31,7 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
 ];
 
-const STOP_BOUNDARY_PATTERNS = [
-	/\b(?:do\s+not|don't|dont|never)\s+(?:place|submit|complete|finish|finali[sz]e|confirm)\s+(?:the\s+)?(?:order|purchase|checkout|payment)\b/i,
-	/\b(?:do\s+not|don't|dont|never)\s+click\s+(?:the\s+)?(?:finish|submit|place\s+order|complete\s+order|confirm\s+order|buy\s+now|pay\s+now)\b/i,
-	/\bstop\s+(?:on|at|before)\b[^.\n]*(?:checkout\s+overview|finish|place\s+(?:the\s+)?order|submit\s+(?:the\s+)?order|complete\s+(?:the\s+)?order|purchase|payment)\b/i,
-	/\bwithout\s+(?:placing|submitting|completing|finishing|confirming)\s+(?:the\s+)?(?:order|purchase|payment)\b/i,
-];
-
 const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?:[\s"'`),;.]|$)/gi;
-
-function buildPromptStopBoundary(prompt: string): PromptStopBoundary | undefined {
-	return STOP_BOUNDARY_PATTERNS.some((pattern) => pattern.test(prompt)) ? { reason: "avoid-final-submit-action" } : undefined;
-}
 
 function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifact[] {
 	const artifacts: PromptRequestedArtifact[] = [];
@@ -81,7 +65,6 @@ export function buildPromptPolicy(prompt: string): PromptPolicy {
 	return {
 		allowLegacyAgentBrowserBash: LEGACY_BASH_ALLOW_PATTERNS.some((pattern) => pattern.test(prompt)),
 		requestedArtifacts: extractPromptRequestedArtifacts(prompt),
-		stopBoundary: buildPromptStopBoundary(prompt),
 	};
 }
 

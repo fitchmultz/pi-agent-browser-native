@@ -106,6 +106,8 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 			const result = getRequiredJobString(rawStep, "path", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["wait", "--download", result.value as string];
+		} else if (jobAction === "snapshot") {
+			args = ["snapshot", "-i"];
 		} else {
 			const result = getRequiredJobString(rawStep, "path", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
@@ -132,7 +134,8 @@ function describeQaChecksRun(checks: CompiledAgentBrowserQaPreset["checks"]): st
 	if (checks.checkNetwork) parts.push("network");
 	if (checks.checkConsole) parts.push("console");
 	if (checks.checkErrors) parts.push("errors");
-	parts.push(checks.diagnosticsResetAtStart ? "diagnostics-reset" : "attached-diagnostics-preserved");
+	if (checks.diagnosticsResetAtStart) parts.push("diagnostics-reset");
+	else if (checks.checkNetwork || checks.checkConsole || checks.checkErrors) parts.push("attached-diagnostics-preserved");
 	if (checks.screenshotPath) parts.push("screenshot");
 	return parts.join(", ");
 }
@@ -168,7 +171,7 @@ export function buildQaCompactPassText(options: {
 	const pageParts = [options.page?.title, options.page?.url].filter((part): part is string => typeof part === "string" && part.length > 0);
 	if (pageParts.length > 0) lines.push(`Page: ${pageParts.join(" — ")}`);
 	lines.push(`Checks run: ${describeQaChecksRun(options.checks)} (${options.batchStepCount} batch step${options.batchStepCount === 1 ? "" : "s"})`);
-	if (options.checks.attached && !options.checks.diagnosticsResetAtStart) {
+	if (options.checks.attached && !options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
 		lines.push("Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started.");
 	}
 	if (options.checks.screenshotPath) {
@@ -181,7 +184,34 @@ export function buildQaCompactPassText(options: {
 	return lines.join("\n");
 }
 
-export function analyzeQaPresetResults(data: unknown): AgentBrowserQaPresetAnalysis | undefined {
+function formatQaExpectedTextPreview(text: string): string {
+	return JSON.stringify(text.length > 80 ? `${text.slice(0, 77)}...` : text);
+}
+
+function extractQaTextAssertionResultText(item: ReturnType<typeof getBatchResultItems>[number] | undefined): string | undefined {
+	if (!item || item.success === false) return undefined;
+	const result = item.result;
+	if (typeof result === "string") return result;
+	if (!isRecord(result)) return undefined;
+	for (const key of ["result", "text", "value"] as const) {
+		const value = result[key];
+		if (typeof value === "string") return value;
+	}
+	return undefined;
+}
+
+export function analyzeQaPresetTimeout(compiled: CompiledAgentBrowserQaPreset): AgentBrowserQaPresetAnalysis | undefined {
+	if (compiled.checks.expectedText.length === 0) return undefined;
+	const failedChecks = compiled.checks.expectedText.map((text) => `expected text was not verified before timeout: ${formatQaExpectedTextPreview(text)}`);
+	return {
+		failedChecks,
+		passed: false,
+		summary: `QA preset failed: ${failedChecks.join("; ")}.`,
+		warnings: ["The wrapper timed out before expected-text evidence could be verified; inspect timeoutPartialProgress and retry with a narrower readiness condition if the page was still loading."],
+	};
+}
+
+export function analyzeQaPresetResults(data: unknown, compiled?: CompiledAgentBrowserQaPreset): AgentBrowserQaPresetAnalysis | undefined {
 	const items = getBatchResultItems(data);
 	if (items.length === 0) return undefined;
 	const failedChecks: string[] = [];
@@ -204,6 +234,16 @@ export function analyzeQaPresetResults(data: unknown): AgentBrowserQaPresetAnaly
 			if (networkFailures.actionableCount > 0) failedChecks.push(`${networkFailures.actionableCount} actionable failed network request(s)`);
 			if (networkFailures.benignCount > 0) warnings.push(`${networkFailures.benignCount} benign network request failure(s) ignored`);
 		}
+	}
+	if (compiled?.checks.expectedText.length) {
+		let expectedTextIndex = 0;
+		compiled.steps.forEach((step, index) => {
+			if (step.action !== "assertText") return;
+			const expected = compiled.checks.expectedText[expectedTextIndex++];
+			if (!expected) return;
+			const actual = extractQaTextAssertionResultText(items[index]);
+			if (!actual || !actual.includes(expected)) failedChecks.push(`expected text not found: ${formatQaExpectedTextPreview(expected)}`);
+		});
 	}
 	const uniqueFailures = [...new Set(failedChecks)];
 	const uniqueWarnings = [...new Set(warnings)];
@@ -260,9 +300,9 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 	if (rawLoadState !== undefined && (typeof rawLoadState !== "string" || !AGENT_BROWSER_QA_LOAD_STATES.includes(rawLoadState as AgentBrowserQaLoadState))) {
 		return { error: `qa.loadState must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.` };
 	}
-	const checkConsole = input.checkConsole !== false;
-	const checkErrors = input.checkErrors !== false;
-	const checkNetwork = input.checkNetwork !== false;
+	const checkConsole = typeof input.checkConsole === "boolean" ? input.checkConsole : !attached;
+	const checkErrors = typeof input.checkErrors === "boolean" ? input.checkErrors : !attached;
+	const checkNetwork = typeof input.checkNetwork === "boolean" ? input.checkNetwork : !attached;
 	const loadState = (rawLoadState as AgentBrowserQaLoadState | undefined) ?? "domcontentloaded";
 	const diagnosticsResetAtStart = !attached;
 	const steps: CompiledAgentBrowserJobStep[] = [];
@@ -271,8 +311,8 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 	if (diagnosticsResetAtStart && checkErrors) steps.push({ action: "wait", args: ["errors", "--clear"] });
 	if (!attached && normalizedUrl) steps.push({ action: "open", args: ["open", normalizedUrl] });
 	steps.push({ action: "wait", args: ["wait", "--load", loadState] });
-	for (const text of expectedText) {
-		steps.push({ action: "assertText", args: ["wait", "--text", text] });
+	for (const _text of expectedText) {
+		steps.push({ action: "assertText", args: ["get", "text", "body"] });
 	}
 	if (typeof expectedSelector === "string") {
 		steps.push({ action: "wait", args: ["wait", expectedSelector] });

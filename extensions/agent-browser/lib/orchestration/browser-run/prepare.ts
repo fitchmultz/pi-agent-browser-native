@@ -33,7 +33,8 @@ import { parseBatchStdinJsonArray, parseValidBatchStepEntries } from "../batch-s
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
 import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
-import { findRequestedArtifactCloseViolation, findStopBoundaryViolation } from "./prompt-guards.js";
+import { findRequestedArtifactCloseViolation } from "./prompt-guards.js";
+
 import type {
 	AgentBrowserToolResult,
 	BrowserRunInputFields,
@@ -652,24 +653,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
 		: undefined;
 	const promptRefSnapshot = resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState;
-	const stopBoundaryViolation = findStopBoundaryViolation({ commandTokens, promptPolicy: options.promptPolicy, refSnapshot: promptRefSnapshot, stdin: runtimeToolStdin });
-	if (stopBoundaryViolation) {
-		return { kind: "early-result", statePatch, result: {
-			content: [{ type: "text", text: stopBoundaryViolation.message }],
-			details: {
-				args: redactedArgs,
-				command: executionPlan.commandInfo.command,
-				compatibilityWorkaround,
-				effectiveArgs: redactedEffectiveArgs,
-				promptGuard: stopBoundaryViolation,
-				sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: stopBoundaryViolation.message, failureCategory: "policy-blocked", succeeded: false, validationError: stopBoundaryViolation.message }),
-				validationError: stopBoundaryViolation.message,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-			},
-			isError: true,
-		} };
-	}
 	const requestedArtifactCloseViolation = await findRequestedArtifactCloseViolation({ artifactManifest: state.artifactManifest, command: executionPlan.commandInfo.command, cwd, promptPolicy: options.promptPolicy });
 	if (requestedArtifactCloseViolation) {
 		return { kind: "early-result", statePatch, result: {
