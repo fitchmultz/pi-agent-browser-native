@@ -383,8 +383,10 @@ test("agentBrowserExtension bounds dialog recovery commands and exposes recovery
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`const args = process.argv.slice(2);
-if (args.includes("dialog")) {
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm"))) {
   setInterval(() => {}, 60_000);
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
@@ -392,7 +394,7 @@ if (args.includes("dialog")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS: "50" }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS: "50", PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS: "60" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -404,6 +406,13 @@ if (args.includes("dialog")) {
 			assert.ok(nextActions?.some((action) => action.id === "inspect-dialog-after-timeout"));
 			assert.ok(nextActions?.some((action) => action.id === "dismiss-dialog-after-timeout"));
 			assert.ok(nextActions?.some((action) => action.id === "recover-fresh-session-after-dialog-timeout" && action.params?.sessionMode === "fresh"));
+
+			const evalResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: "confirm('Continue?')" });
+			assert.equal(evalResult.isError, true);
+			assert.equal(evalResult.details?.failureCategory, "timeout");
+			assert.equal(evalResult.details?.timeoutMs, 60);
+			const evalNextActions = evalResult.details?.nextActions as Array<{ id?: string }> | undefined;
+			assert.ok(evalNextActions?.some((action) => action.id === "inspect-dialog-after-timeout"));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -451,6 +460,55 @@ process.stdin.on("end", () => {
 			assert.match(result.content[0]?.text ?? "", /Scrolled container #virtualList down/);
 			assert.equal((result.details?.data as { status?: string } | undefined)?.status, "scrolled");
 			assert.equal((result.details?.scrollContainer as { request?: { selector?: string } } | undefined)?.request?.selector, "#virtualList");
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("scroll")), false);
+			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension handles scroll to end before upstream page scroll", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-page-scroll-end-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("eval") && stdin.includes('target = "end"')) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: {
+      status: "scrolled",
+      target: "end",
+      before: { scrollTop: 0, scrollLeft: 0, scrollHeight: 5000, clientHeight: 500, scrollWidth: 800, clientWidth: 800 },
+      after: { scrollTop: 4500, scrollLeft: 0, scrollHeight: 5000, clientHeight: 500, scrollWidth: 800, clientWidth: 800 }
+    } } }));
+    return;
+  }
+  if (args.includes("scroll")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { scrolled: "unexpected-page-scroll" } }));
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "to", "end"] });
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match(result.content[0]?.text ?? "", /Scrolled page to end/);
+			assert.equal((result.details?.data as { status?: string } | undefined)?.status, "scrolled");
+			assert.equal((result.details?.scrollPage as { request?: { target?: string } } | undefined)?.request?.target, "end");
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.some((entry) => entry.args.includes("scroll")), false);
 			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);

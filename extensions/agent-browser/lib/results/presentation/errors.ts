@@ -24,6 +24,11 @@ const CLIPBOARD_PERMISSION_ERROR_HINT = [
 	"If true clipboard access is required, retry in a browser/profile/session with explicit clipboard permission on a normal http(s) page.",
 ].join(" ");
 
+const KEYBOARD_PRESS_ERROR_HINT = [
+	"Agent-browser keyboard hint: upstream keyboard commands are `keyboard type <text>` and `keyboard inserttext <text>`; `keyboard press` is not a supported subcommand in the targeted upstream version.",
+	'For Enter in text fields, use `keyboard type "\\n"` after focusing the intended control, then verify with a fresh snapshot, URL, or page-state check.',
+].join(" ");
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -59,6 +64,12 @@ function getClipboardPermissionHint(commandInfo: CommandInfo, errorText: string)
 		return undefined;
 	}
 	return CLIPBOARD_PERMISSION_ERROR_HINT;
+}
+
+function getKeyboardPressHint(commandInfo: CommandInfo, errorText: string): string | undefined {
+	if (commandInfo.command !== "keyboard" || commandInfo.subcommand !== "press") return undefined;
+	if (!/\bunknown\s+subcommand\b|\bvalid options?\b/i.test(errorText)) return undefined;
+	return KEYBOARD_PRESS_ERROR_HINT;
 }
 
 export function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorText: string): string {
@@ -181,12 +192,14 @@ export function buildErrorPresentation(options: {
 	const browserProfileConfigRecovery = buildBrowserProfileConfigRecovery({ args, commandInfo, errorText: safeErrorText });
 	const localhostNavigationHint = getLocalhostNavigationHint(commandInfo, safeErrorText);
 	const clipboardPermissionHint = getClipboardPermissionHint(commandInfo, safeErrorText);
+	const keyboardPressHint = getKeyboardPressHint(commandInfo, safeErrorText);
 	const hintedErrorParts = [
 		selectorHintedErrorText,
 		unknownCommandSuggestionText && !selectorHintedErrorText.includes("Agent-browser hint:") ? unknownCommandSuggestionText : undefined,
 		browserProfileConfigRecovery?.hint,
 		localhostNavigationHint,
 		clipboardPermissionHint,
+		keyboardPressHint,
 	].filter((part): part is string => Boolean(part));
 	const hintedErrorText = hintedErrorParts.join("\n\n");
 	const categoryDetails = buildAgentBrowserResultCategoryDetails({

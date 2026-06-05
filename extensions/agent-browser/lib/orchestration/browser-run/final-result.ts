@@ -302,7 +302,7 @@ export async function prepareFinalResultRecoveryState(options: {
 }
 
 function buildDialogTimeoutNextActions(options: { command?: string; sessionName?: string }): AgentBrowserNextAction[] {
-	if (options.command !== "dialog" && options.command !== "click" && options.command !== "tap" && options.command !== "find") return [];
+	if (options.command !== "dialog" && options.command !== "click" && options.command !== "tap" && options.command !== "find" && options.command !== "eval") return [];
 	return [
 		{
 			id: "inspect-dialog-after-timeout",

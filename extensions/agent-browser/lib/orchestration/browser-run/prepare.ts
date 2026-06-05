@@ -456,9 +456,10 @@ function commandTextLooksLikeDialogTrigger(commandTokens: string[], refSnapshot?
 	return false;
 }
 
-function getDialogAwareProcessTimeoutMs(commandTokens: string[], refSnapshot?: SessionRefSnapshot): number | undefined {
+function getDialogAwareProcessTimeoutMs(commandTokens: string[], refSnapshot?: SessionRefSnapshot, stdin?: string): number | undefined {
 	const command = commandTokens[0];
 	if (command === "dialog") return getPositiveIntegerEnv(DIALOG_COMMAND_PROCESS_TIMEOUT_ENV) ?? DIALOG_COMMAND_PROCESS_TIMEOUT_MS;
+	if (command === "eval" && typeof stdin === "string" && DIALOG_TRIGGER_TEXT_PATTERN.test(stdin)) return getPositiveIntegerEnv(LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_ENV) ?? LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS;
 	if ((command === "click" || command === "tap" || (command === "find" && commandTokens.includes("click"))) && commandTextLooksLikeDialogTrigger(commandTokens, refSnapshot)) return getPositiveIntegerEnv(LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_ENV) ?? LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS;
 	return undefined;
 }
@@ -557,6 +558,40 @@ function buildContainerScrollScript(request: { amount?: string; direction: strin
 })()`;
 }
 
+function buildScrollResult(options: {
+	command: "scroll";
+	compatibilityWorkaround?: CompatibilityWorkaround;
+	effectiveArgs: string[];
+	message: string;
+	redactedArgs: string[];
+	result: Record<string, unknown>;
+	scrollField: "scrollContainer" | "scrollPage";
+	scrollValue: unknown;
+	sessionMode: "auto" | "fresh";
+	sessionName?: string;
+	succeeded: boolean;
+	usedImplicitSession: boolean;
+}): AgentBrowserToolResult {
+	return {
+		content: [{ type: "text", text: options.message }],
+		details: {
+			args: options.redactedArgs,
+			command: options.command,
+			compatibilityWorkaround: options.compatibilityWorkaround,
+			data: options.result,
+			effectiveArgs: options.effectiveArgs,
+			nextActions: options.succeeded ? undefined : buildScrollNoopNextActions(options.sessionName),
+			[options.scrollField]: options.scrollValue,
+			sessionMode: options.sessionMode,
+			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: options.command, errorText: options.succeeded ? undefined : options.message, succeeded: options.succeeded, validationError: options.succeeded ? undefined : options.message }),
+			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
+			summary: options.message,
+			validationError: options.succeeded ? undefined : options.message,
+		},
+		isError: !options.succeeded,
+	};
+}
+
 async function tryContainerScroll(options: {
 	commandTokens: string[];
 	compatibilityWorkaround?: CompatibilityWorkaround;
@@ -577,24 +612,50 @@ async function tryContainerScroll(options: {
 	const message = succeeded
 		? `Scrolled container ${request.selector} ${request.direction}${request.amount ? ` by ${request.amount}` : ""}.`
 		: `Scroll container ${request.selector} did not move (${result.status}).`;
-	return {
-		content: [{ type: "text", text: message }],
-		details: {
-			args: options.redactedArgs,
-			command: "scroll",
-			compatibilityWorkaround: options.compatibilityWorkaround,
-			data: result,
-			effectiveArgs: options.effectiveArgs,
-			nextActions: succeeded ? undefined : buildScrollNoopNextActions(options.sessionName),
-			scrollContainer: { request, result },
-			sessionMode: options.sessionMode,
-			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "scroll", errorText: succeeded ? undefined : message, succeeded, validationError: succeeded ? undefined : message }),
-			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
-			summary: message,
-			validationError: succeeded ? undefined : message,
-		},
-		isError: !succeeded,
-	};
+	return buildScrollResult({ ...options, command: "scroll", message, result, scrollField: "scrollContainer", scrollValue: { request, result }, succeeded });
+}
+
+function getPageScrollToRequest(commandTokens: string[]): { target: "end" | "top" } | undefined {
+	if (commandTokens[0] !== "scroll" || commandTokens[1]?.toLowerCase() !== "to") return undefined;
+	const target = commandTokens[2]?.toLowerCase();
+	return target === "end" || target === "top" ? { target } : undefined;
+}
+
+function buildPageScrollToScript(request: { target: "end" | "top" }): string {
+	return `(() => {
+  const target = ${JSON.stringify(request.target)};
+  const scroller = document.scrollingElement || document.documentElement || document.body;
+  if (!scroller) return { status: "no-scroller", target };
+  const before = { scrollLeft: scroller.scrollLeft, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, scrollWidth: scroller.scrollWidth, clientHeight: scroller.clientHeight, clientWidth: scroller.clientWidth };
+  const nextTop = target === "top" ? 0 : Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  const nextLeft = scroller.scrollLeft;
+  scroller.scrollTop = nextTop;
+  window.scrollTo(nextLeft, nextTop);
+  const after = { scrollLeft: scroller.scrollLeft, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, scrollWidth: scroller.scrollWidth, clientHeight: scroller.clientHeight, clientWidth: scroller.clientWidth };
+  const moved = before.scrollLeft !== after.scrollLeft || before.scrollTop !== after.scrollTop;
+  return { status: moved ? "scrolled" : "no-movement", target, before, after };
+})()`;
+}
+
+async function tryPageScrollTo(options: {
+	commandTokens: string[];
+	compatibilityWorkaround?: CompatibilityWorkaround;
+	cwd: string;
+	effectiveArgs: string[];
+	redactedArgs: string[];
+	sessionMode: "auto" | "fresh";
+	sessionName?: string;
+	signal?: AbortSignal;
+	usedImplicitSession: boolean;
+}): Promise<AgentBrowserToolResult | undefined> {
+	const request = getPageScrollToRequest(options.commandTokens);
+	if (!request || !options.sessionName) return undefined;
+	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildPageScrollToScript(request) });
+	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
+	if (!isRecord(result) || typeof result.status !== "string") return undefined;
+	const succeeded = result.status === "scrolled";
+	const message = succeeded ? `Scrolled page to ${request.target}.` : `Scroll to ${request.target} completed with no observed movement (${result.status}).`;
+	return buildScrollResult({ ...options, command: "scroll", message, result, scrollField: "scrollPage", scrollValue: { request, result }, succeeded });
 }
 
 function isPasswordStdinAuthSave(options: { command?: string; commandTokens: string[] }): boolean {
@@ -933,6 +994,18 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		usedImplicitSession: executionPlan.usedImplicitSession,
 	});
 	if (containerScroll) return { kind: "early-result", statePatch, result: containerScroll };
+	const pageScrollTo = await tryPageScrollTo({
+		commandTokens,
+		compatibilityWorkaround,
+		cwd,
+		effectiveArgs: redactedEffectiveArgs,
+		redactedArgs,
+		sessionMode,
+		sessionName: executionPlan.sessionName,
+		signal,
+		usedImplicitSession: executionPlan.usedImplicitSession,
+	});
+	if (pageScrollTo) return { kind: "early-result", statePatch, result: pageScrollTo };
 
 	const directAnchorDownload = await tryDirectAnchorDownload({
 		commandTokens,
@@ -1046,7 +1119,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
 		? await prepareClickDispatchProbe({ commandTokens, cwd, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
 		: undefined;
-	const processTimeoutMs = getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot);
+	const processTimeoutMs = getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin);
 	const redactedProcessArgs = redactInvocationArgs(processArgs);
 	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0;
 	const scrollPositionBefore = shouldProbeScrollNoop

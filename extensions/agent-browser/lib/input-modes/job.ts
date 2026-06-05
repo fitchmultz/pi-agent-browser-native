@@ -379,9 +379,9 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 	if (typeof screenshotPath === "string") steps.push({ action: "screenshot", args: ["screenshot", screenshotPath] });
 	return {
 		compiled: {
-			args: ["batch"],
+			args: ["batch", "--bail"],
 			checks: { attached, checkConsole, checkErrors, checkNetwork, diagnosticsResetAtStart, expectedSelector, expectedText, loadState, screenshotPath, url: normalizedUrl },
-			failFast: false,
+			failFast: true,
 			stdin: JSON.stringify(steps.map((step) => step.args)),
 			steps,
 		},

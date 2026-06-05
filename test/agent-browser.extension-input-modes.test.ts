@@ -778,7 +778,9 @@ process.stdin.on("end", () => {
 				"1 console error message(s)",
 				"1 page error(s)",
 			]);
-			const compiledQaPreset = result.details?.compiledQaPreset as { steps?: Array<{ args: string[] }> } | undefined;
+			const compiledQaPreset = result.details?.compiledQaPreset as { args?: string[]; failFast?: boolean; steps?: Array<{ args: string[] }> } | undefined;
+			assert.deepEqual(compiledQaPreset?.args, ["batch", "--bail"]);
+			assert.equal(compiledQaPreset?.failFast, true);
 			const compiledQaSteps = compiledQaPreset?.steps?.map((step) => step.args) ?? [];
 			assert.deepEqual(compiledQaSteps.slice(0, 5), [
 				["network", "requests", "--clear"],
@@ -799,7 +801,7 @@ process.stdin.on("end", () => {
 				["screenshot", "qa.png"],
 			]);
 			const invocations = await readInvocationLog(logPath);
-			assert.ok(invocations.filter((entry) => entry.args.at(-1) === "batch").length >= 3);
+			assert.ok(invocations.filter((entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail").length >= 3);
 
 			const firstRunFailureHarness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(firstRunFailureHarness.handlers, "session_start", { reason: "new" }, firstRunFailureHarness.ctx);
@@ -846,7 +848,7 @@ process.stdin.on("end", () => {
 			assert.match(attachedCompiledQaSteps[1]?.[2] ?? "", /Welcome/);
 			assert.deepEqual(attachedCompiledQaSteps[1]?.slice(3), ["--timeout", "5000"]);
 			assert.deepEqual(attachedCompiledQaSteps.slice(2), [["wait", "main"]]);
-			const attachedInvocation = [...await readInvocationLog(logPath)].reverse().find((entry) => entry.args.at(-1) === "batch" && entry.stdin?.trim().startsWith("["));
+			const attachedInvocation = [...await readInvocationLog(logPath)].reverse().find((entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail" && entry.stdin?.trim().startsWith("["));
 			assert.ok(attachedInvocation);
 			const attachedSteps = JSON.parse(attachedInvocation.stdin ?? "[]") as string[][];
 			assert.equal(attachedSteps.some((step) => step[0] === "open"), false);
@@ -971,7 +973,7 @@ process.stdin.on("end", () => {
 			assert.equal(attachedResult.isError, false);
 			assert.match(attachedResult.content[0]?.text ?? "", /QA preset passed\./);
 			const invocations = await readInvocationLog(logPath);
-			const batchIndex = invocations.findIndex((entry) => entry.args.at(-1) === "batch");
+			const batchIndex = invocations.findIndex((entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail");
 			assert.ok(batchIndex >= 0);
 			const preflightInvocations = invocations.slice(0, batchIndex);
 			assert.ok(preflightInvocations.some((entry) => entry.args.includes("get") && entry.args.includes("url")));

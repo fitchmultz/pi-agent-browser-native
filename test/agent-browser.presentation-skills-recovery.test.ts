@@ -294,6 +294,20 @@ test("buildToolPresentation suggests grouped getter commands for common unknown 
 	assert.equal(textFailure.nextActions, undefined);
 });
 
+test("buildToolPresentation explains unsupported keyboard press commands", async () => {
+	const presentation = await buildToolPresentation({
+		args: ["keyboard", "press", "Enter"],
+		commandInfo: { command: "keyboard", subcommand: "press" },
+		cwd: process.cwd(),
+		errorText: "Unknown subcommand: press. Valid options: type, inserttext",
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /keyboard commands are `keyboard type <text>` and `keyboard inserttext <text>`/);
+	assert.match(text, /keyboard type "\\n"/);
+});
+
 test("buildToolPresentation explains browser profile config failures with diagnostics next actions", async () => {
 	for (const errorText of [
 		"No Chrome user data directory found. Cannot resolve profile name.",
