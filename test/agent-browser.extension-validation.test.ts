@@ -564,6 +564,49 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	}
 });
 
+test("agentBrowserExtension reports wrapper snapshot diffs against previous refs", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-snapshot-diff-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const prior = fs.existsSync(${JSON.stringify(logPath)}) ? fs.readFileSync(${JSON.stringify(logPath)}, "utf8").trim().split("\\n").filter(Boolean).length : 0;
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  const first = prior === 0;
+  const data = first
+    ? { origin: "https://dense.example/", refs: { e1: { role: "link", name: "Cart" }, e2: { role: "button", name: "Checkout" } }, snapshot: ['- link "Cart" [ref=e1]', '- button "Checkout" [ref=e2]'].join('\\n') }
+    : { origin: "https://dense.example/", refs: { e1: { role: "link", name: "Basket" }, e3: { role: "button", name: "Pay" } }, snapshot: ['- link "Basket" [ref=e1]', '- button "Pay" [ref=e3]'].join('\\n') };
+  process.stdout.write(JSON.stringify({ success: true, data }));
+  return;
+}
+process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const first = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i", "--search", "Cart"] });
+			assert.equal(first.isError, false, JSON.stringify(first));
+			const second = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i", "--diff"] });
+			assert.equal(second.isError, false, JSON.stringify(second));
+			assert.match(second.content[0]?.text ?? "", /Snapshot diff: \+1 \/ -1 \/ Δ1 refs/);
+			const diff = second.details?.snapshotDiff as { addedRefs?: string[]; changedRefs?: string[]; removedRefs?: string[] } | undefined;
+			assert.deepEqual(diff?.addedRefs, ["e3"]);
+			assert.deepEqual(diff?.changedRefs, ["e1"]);
+			assert.deepEqual(diff?.removedRefs, ["e2"]);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("--diff")), false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports wrapper snapshot viewport metadata", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-snapshot-viewport-"));
 	const logPath = join(tempDir, "invocations.log");

@@ -661,6 +661,7 @@ async function tryPageScrollTo(options: {
 
 interface SnapshotFilterRequest {
 	cleanArgs: string[];
+	diff?: boolean;
 	role?: string;
 	search?: string;
 	viewport?: boolean;
@@ -674,6 +675,7 @@ function parseSnapshotFilterRequest(commandTokens: string[]): SnapshotFilterRequ
 	for (let index = 0; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
 		if (token === "--viewport") continue;
+		if (token === "--diff") continue;
 		if (token === "--search") {
 			const value = commandTokens[index + 1];
 			if (typeof value === "string" && !value.startsWith("-")) {
@@ -694,8 +696,40 @@ function parseSnapshotFilterRequest(commandTokens: string[]): SnapshotFilterRequ
 		cleanArgs.push(token);
 	}
 	const viewport = commandTokens.includes("--viewport");
-	if (!search && !role && !viewport) return undefined;
-	return { cleanArgs, role, search, viewport };
+	const diff = commandTokens.includes("--diff");
+	if (!search && !role && !viewport && !diff) return undefined;
+	return { cleanArgs, diff, role, search, viewport };
+}
+
+interface SnapshotDiffSummary {
+	addedRefs: string[];
+	changedRefs: string[];
+	removedRefs: string[];
+	summary: string;
+	unchangedRefs: number;
+}
+
+function buildSnapshotDiff(previous: SessionRefSnapshot | undefined, current: SessionRefSnapshot | undefined): SnapshotDiffSummary | undefined {
+	if (!current) return undefined;
+	const currentRefs = current.refs ?? {};
+	const previousRefs = previous?.refs ?? {};
+	if (!previous) return { addedRefs: Object.keys(currentRefs), changedRefs: [], removedRefs: [], summary: `Snapshot diff: no previous snapshot; ${Object.keys(currentRefs).length} current refs recorded.`, unchangedRefs: 0 };
+	const addedRefs: string[] = [];
+	const removedRefs: string[] = [];
+	const changedRefs: string[] = [];
+	let unchangedRefs = 0;
+	for (const refId of Object.keys(currentRefs)) {
+		const currentRef = currentRefs[refId];
+		const previousRef = previousRefs[refId];
+		if (!previousRef) {
+			addedRefs.push(refId);
+			continue;
+		}
+		if (previousRef.role !== currentRef.role || previousRef.name !== currentRef.name) changedRefs.push(refId);
+		else unchangedRefs += 1;
+	}
+	for (const refId of Object.keys(previousRefs)) if (!currentRefs[refId]) removedRefs.push(refId);
+	return { addedRefs, changedRefs, removedRefs, summary: `Snapshot diff: +${addedRefs.length} / -${removedRefs.length} / Δ${changedRefs.length} refs versus previous snapshot.`, unchangedRefs };
 }
 
 function filterSnapshotData(data: unknown, request: SnapshotFilterRequest): { data: Record<string, unknown>; matchedRefs: number; totalRefs: number; totalLines: number; visibleLines: number } | undefined {
@@ -736,6 +770,7 @@ async function trySnapshotFilter(options: {
 	cwd: string;
 	effectiveArgs: string[];
 	redactedArgs: string[];
+	previousRefSnapshot?: SessionRefSnapshot;
 	sessionMode: "auto" | "fresh";
 	sessionName?: string;
 	sessionPageState: BrowserRunOptions["state"]["sessionPageState"];
@@ -750,13 +785,17 @@ async function trySnapshotFilter(options: {
 	if (!filtered) return undefined;
 	const viewport = request.viewport ? await collectScrollPositionSnapshot({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal }) : undefined;
 	const fullSnapshot = extractRefSnapshotFromData(snapshotData);
+	const diff = request.diff ? buildSnapshotDiff(options.previousRefSnapshot, fullSnapshot) : undefined;
 	if (fullSnapshot) options.sessionPageState.applyRefSnapshot({ sessionName: options.sessionName, snapshot: fullSnapshot, update: options.sessionPageStateUpdate });
 	const presentation = await buildSnapshotPresentation(filtered.data);
 	const summary = request.role || request.search
 		? `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}.`
-		: "Snapshot viewport metadata collected.";
+		: request.diff
+			? diff?.summary ?? "Snapshot diff unavailable."
+			: "Snapshot viewport metadata collected.";
 	const viewportText = viewport ? `Viewport: ${viewport.innerWidth}×${viewport.innerHeight}, scroll ${viewport.scrollX},${viewport.scrollY}, document ${viewport.scrollWidth}×${viewport.scrollHeight}, sampled scroll containers ${viewport.containers.length}/${viewport.containerCount}.` : undefined;
-	const prefix = [summary, viewportText].filter((line): line is string => line !== undefined).join("\n");
+	const diffText = diff && (request.role || request.search) ? diff.summary : undefined;
+	const prefix = [summary, diffText, viewportText].filter((line): line is string => line !== undefined).join("\n");
 	if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${prefix}\n\n${presentation.content[0].text}` };
 	return {
 		content: presentation.content,
@@ -768,6 +807,7 @@ async function trySnapshotFilter(options: {
 			effectiveArgs: options.effectiveArgs,
 			refSnapshot: fullSnapshot,
 			sessionMode: options.sessionMode,
+			snapshotDiff: diff,
 			snapshotFilter: request.role || request.search ? { cleanArgs: request.cleanArgs, matchedRefs: filtered.matchedRefs, role: request.role, search: request.search, totalLines: filtered.totalLines, totalRefs: filtered.totalRefs, visibleLines: filtered.visibleLines } : undefined,
 			snapshotViewport: viewport,
 			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "snapshot", succeeded: true }),
@@ -1217,6 +1257,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		compatibilityWorkaround,
 		cwd,
 		effectiveArgs: redactedEffectiveArgs,
+		previousRefSnapshot: priorRefSnapshotState,
 		redactedArgs,
 		sessionMode,
 		sessionName: executionPlan.sessionName,
