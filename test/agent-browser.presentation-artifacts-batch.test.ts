@@ -41,7 +41,7 @@ test("buildToolPresentation formats download results as saved-file summaries", a
 	});
 
 	assert.equal(presentation.content[0]?.type, "text");
-	assert.match((presentation.content[0] as { text: string }).text, /Downloaded file: \/tmp\/report\.pdf/);
+	assert.match((presentation.content[0] as { text: string }).text, /Download reported; file not verified: \/tmp\/report\.pdf/);
 	assert.match((presentation.content[0] as { text: string }).text, /application\/pdf/);
 	assert.match((presentation.content[0] as { text: string }).text, /not found on disk/);
 	assert.equal(presentation.summary, "Artifact verification failed: requested download was not found at /tmp/report.pdf.");
@@ -61,6 +61,26 @@ test("buildToolPresentation formats download results as saved-file summaries", a
 	});
 });
 
+test("buildToolPresentation does not treat data-url download payloads as verified files", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "download", subcommand: "@e5" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				path: "data:text/plain,hello",
+			},
+		},
+	});
+
+	assert.equal(presentation.artifacts, undefined);
+	assert.equal(presentation.artifactVerification, undefined);
+	assert.equal(presentation.savedFile, undefined);
+	assert.equal(presentation.savedFilePath, undefined);
+	assert.equal(presentation.resultCategory, "success");
+	assert.doesNotMatch((presentation.content[0] as { text: string }).text, /Download completed|Downloaded file|not found on disk/);
+});
+
 test("buildToolPresentation renders metadata-first summaries for file artifact commands", async () => {
 	const cases = [
 		{
@@ -75,7 +95,7 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 			data: { path: "download.txt" },
 			expectedKind: "download",
 			expectedMediaType: "text/plain",
-			expectedText: "Download completed: download.txt",
+			expectedText: "Download event reported; file not verified: download.txt",
 		},
 		{
 			commandInfo: { command: "trace", subcommand: "stop" },
@@ -528,9 +548,9 @@ test("buildToolPresentation does not inline non-screenshot path records with ima
 
 		assert.equal(presentation.content.length, 1);
 		assert.equal(presentation.content[0]?.type, "text");
-		assert.match((presentation.content[0] as { text: string }).text, /Downloaded file: downloaded\.png/);
+		assert.match((presentation.content[0] as { text: string }).text, /Downloaded file verified: downloaded\.png/);
 		assert.match((presentation.content[0] as { text: string }).text, /image\/png/);
-		assert.equal(presentation.summary, "Downloaded file: downloaded.png");
+		assert.equal(presentation.summary, "Downloaded file verified: downloaded.png");
 		assert.equal(presentation.artifacts?.[0]?.kind, "download");
 		assert.equal(presentation.artifacts?.[0]?.path, "downloaded.png");
 		assert.equal(presentation.artifacts?.[0]?.absolutePath, imagePath);
@@ -562,7 +582,7 @@ test("buildToolPresentation preserves wait --download saved-file metadata inside
 	assert.doesNotMatch(text, /Batch: 2\/2 succeeded/);
 	assert.match(text, /Step 1 — click #export/);
 	assert.match(text, /Step 2 — wait --download \/tmp\/export\.csv/);
-	assert.match(text, /Download completed: \/tmp\/export\.csv/);
+	assert.match(text, /Download event reported; file not verified: \/tmp\/export\.csv/);
 	assert.equal(presentation.batchSteps?.[1]?.artifacts?.[0]?.kind, "download");
 	assert.equal(presentation.batchSteps?.[1]?.savedFilePath, "/tmp/export.csv");
 	assert.deepEqual(presentation.batchSteps?.[1]?.savedFile, {
@@ -614,7 +634,7 @@ test("buildToolPresentation does not re-append old artifact retention noise for 
 			},
 		});
 		const text = (presentation.content[0] as { text: string }).text;
-		assert.match(text, /Downloaded file: export\.csv/);
+		assert.match(text, /Downloaded file verified: export\.csv/);
 		assert.doesNotMatch(text, /Session artifacts:/);
 		assert.match(presentation.artifactRetentionSummary ?? "", /1 live, 1 evicted/);
 	} finally {

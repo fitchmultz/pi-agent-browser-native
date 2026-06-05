@@ -322,7 +322,7 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	if (options.selectorTextVisibilityDiagnostics.length > 0) nextActionCollector.append(buildSelectorTextVisibilityNextActions({ diagnostics: options.selectorTextVisibilityDiagnostics, sessionName: options.executionPlan.sessionName }));
 	if (options.electronBroadGetTextScopeDiagnostics.length > 0) nextActionCollector.append(buildElectronBroadGetTextScopeNextActions({ diagnostics: options.electronBroadGetTextScopeDiagnostics, sessionName: options.executionPlan.sessionName }));
 	if (options.sourceLookup?.electronContext) nextActionCollector.appendUnique(buildSourceLookupElectronNextActions(options.sourceLookup));
-	if (options.clickDispatchDiagnostic) nextActionCollector.append(buildClickDispatchNextActions({ commandTokens: options.commandTokens, sessionName: options.executionPlan.sessionName }));
+	if (options.clickDispatchDiagnostic) nextActionCollector.append(buildClickDispatchNextActions({ commandTokens: options.commandTokens, diagnostic: options.clickDispatchDiagnostic, sessionName: options.executionPlan.sessionName }));
 	if (options.scrollNoopDiagnostic) nextActionCollector.append(buildScrollNoopNextActions(options.executionPlan.sessionName));
 	if (options.comboboxFocusDiagnostic) nextActionCollector.append(buildComboboxFocusNextActions(options.executionPlan.sessionName));
 	if (options.managedSessionOutcome) nextActionCollector.appendUnique(buildManagedSessionFreshFailureNextActions(options.managedSessionOutcome));

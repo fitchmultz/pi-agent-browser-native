@@ -175,11 +175,11 @@ function normalizeExplicitEvalStdinArgs(args: string[], stdin: string | undefine
 }
 
 export function resolveAgentBrowserInput(options: {
-	getBatchAnnotateValidationError: (args: string[], stdin: string | undefined) => string | undefined;
+	getBatchPreflightValidationError: (args: string[], stdin: string | undefined) => string | undefined;
 	managedSessionActive: boolean;
 	params: AgentBrowserExecuteParams;
 }): ResolvedAgentBrowserInput {
-	const { getBatchAnnotateValidationError, managedSessionActive, params } = options;
+	const { getBatchPreflightValidationError, managedSessionActive, params } = options;
 	const semanticActionResult = params.semanticAction === undefined ? {} : compileAgentBrowserSemanticAction(params.semanticAction);
 	const jobResult = params.job === undefined ? {} : compileAgentBrowserJob(params.job);
 	const qaResult = params.qa === undefined ? {} : compileAgentBrowserQaPreset(params.qa);
@@ -235,7 +235,7 @@ export function resolveAgentBrowserInput(options: {
 		?? inputModeError
 		?? generatedStdinError
 		?? attachedQaSessionError
-		?? (compiledElectron ? undefined : validateToolArgs(toolArgs) ?? getBatchAnnotateValidationError(toolArgs, toolStdin));
+		?? (compiledElectron ? undefined : validateToolArgs(toolArgs) ?? getBatchPreflightValidationError(toolArgs, toolStdin));
 	const redactedCompiledJob = redactCompiledJob(compiledJob);
 	const redactedCompiledSemanticAction = compiledSemanticAction
 		? { ...compiledSemanticAction, args: redactInvocationArgs(compiledSemanticAction.args) }

@@ -334,6 +334,7 @@ function isSafeSameSnapshotFormBatchStep(step: string[], refSnapshot: SessionRef
 	const roles = refIds.map((refId) => getSnapshotRefRole(refSnapshot, refId));
 	if (roles.some((role) => role === undefined)) return false;
 	if (command === "check" || command === "uncheck") return roles.every((role) => role === "checkbox" || role === "radio");
+	if (command === "click" || command === "tap") return roles.every((role) => role === "checkbox" || role === "radio");
 	if (command === "select") return roles.every((role) => role === "combobox");
 	return false;
 }

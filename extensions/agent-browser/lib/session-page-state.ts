@@ -8,6 +8,9 @@
 
 import { isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
+import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
+import { enrichSnapshotRefEntries, getSnapshotRefEntries } from "./results/snapshot-refs.js";
+import { parseSnapshotLines } from "./results/snapshot-segments.js";
 
 export interface SessionTabTarget {
 	title?: string;
@@ -21,7 +24,7 @@ interface OrderedSessionTabTarget {
 
 export interface SessionRefSnapshot {
 	refIds: string[];
-	refs?: Record<string, { name: string; role: string }>;
+	refs?: Record<string, { isContentEditable?: boolean; isEditable?: boolean; name: string; role: string }>;
 	target?: SessionTabTarget;
 }
 
@@ -230,11 +233,15 @@ function getRestoredSessionTabTarget(details: Record<string, unknown>, command: 
 	return storedTarget;
 }
 
-function extractRefSnapshotRefs(data: unknown): Record<string, { name: string; role: string }> | undefined {
+function extractRefSnapshotRefs(data: unknown): Record<string, { isContentEditable?: boolean; isEditable?: boolean; name: string; role: string }> | undefined {
 	if (!isRecord(data) || !isRecord(data.refs)) return undefined;
-	const refs = Object.fromEntries(Object.entries(data.refs).flatMap(([refId, entry]) => {
-		if (!/^e\d+$/.test(refId) || !isRecord(entry) || typeof entry.name !== "string" || typeof entry.role !== "string") return [];
-		return [[refId, { name: entry.name, role: entry.role }] as const];
+	const snapshotLines = typeof data.snapshot === "string" ? parseSnapshotLines(data.snapshot) : [];
+	const lineByRef = new Map(snapshotLines.flatMap((line) => line.ref ? [[line.ref, line.raw] as const] : []));
+	const entries = enrichSnapshotRefEntries(getSnapshotRefEntries(data), snapshotLines);
+	const refs = Object.fromEntries(entries.flatMap((entry) => {
+		if (!/^e\d+$/.test(entry.id) || entry.role.length === 0) return [];
+		const isContentEditable = getEditableRefEvidence({ ref: entry.refData, text: lineByRef.get(entry.id) });
+		return [[entry.id, { ...(isContentEditable === true ? { isContentEditable: true } : {}), ...(entry.isEditable !== undefined ? { isEditable: entry.isEditable } : {}), name: entry.name, role: entry.role }] as const];
 	}));
 	return Object.keys(refs).length > 0 ? refs : undefined;
 }
@@ -310,7 +317,9 @@ function getRestoredRefSnapshot(details: Record<string, unknown>): SessionRefSna
 		? Object.fromEntries(refIds.flatMap((refId) => {
 			const entry = refRecord[refId];
 			if (!isRecord(entry) || typeof entry.name !== "string" || typeof entry.role !== "string") return [];
-			return [[refId, { name: entry.name, role: entry.role }] as const];
+			const isContentEditable = typeof entry.isContentEditable === "boolean" ? entry.isContentEditable : undefined;
+			const isEditable = typeof entry.isEditable === "boolean" ? entry.isEditable : undefined;
+			return [[refId, { ...(isContentEditable !== undefined ? { isContentEditable } : {}), ...(isEditable !== undefined ? { isEditable } : {}), name: entry.name, role: entry.role }] as const];
 		}))
 		: undefined;
 	return {

@@ -355,11 +355,12 @@ function formatNetworkRequestLine(item: Record<string, unknown>, index: number):
 function formatNetworkRequestsText(data: Record<string, unknown>): string | undefined {
 	const requests = getArrayField(data, "requests");
 	if (!requests) return undefined;
-	if (requests.length === 0) return "No network requests captured.";
+	if (requests.length === 0) return "No network requests captured. Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page.";
 	const networkFailureSummary = summarizeNetworkFailures(requests);
-	const shown = networkFailureSummary.totalCount > 0
-		? [`Network failure summary: ${networkFailureSummary.actionableCount} actionable, ${networkFailureSummary.benignCount} benign low-impact (${networkFailureSummary.totalCount} total).`]
-		: [];
+	const shown = ["Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page; do not attribute old requests to the current page without URL/time evidence."];
+	if (networkFailureSummary.totalCount > 0) {
+		shown.push(`Network failure summary: ${networkFailureSummary.actionableCount} actionable, ${networkFailureSummary.benignCount} benign low-impact (${networkFailureSummary.totalCount} total).`);
+	}
 	const indexedRequests = requests.map((item, index) => ({ index, item }));
 	const failedRequests: typeof indexedRequests = [];
 	const normalRequests: typeof indexedRequests = [];
@@ -580,15 +581,17 @@ export function buildStreamNextActions(commandInfo: CommandInfo, data: unknown, 
 function formatConsoleText(data: Record<string, unknown>): string | undefined {
 	const messages = getArrayField(data, "messages");
 	if (!messages) return undefined;
-	if (messages.length === 0) return "No console messages.";
-	const shown = messages.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
+	if (messages.length === 0) return "No console messages. Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page.";
+	const shown = ["Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page; do not attribute old messages to the current page without URL/time evidence."];
+	shown.push(...messages.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
 		if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
 		const type = redactModelFacingText(getStringField(item, "type") ?? "message");
 		const text = getStringField(item, "text") ?? stringifyModelFacing(item);
 		return `${index + 1}. [${type}] ${firstLine(redactModelFacingText(text).replace(/\s+/g, " ").trim(), 220)}`;
-	});
-	if (messages.length > shown.length) {
-		shown.push(`... (${messages.length - shown.length} additional console messages omitted from preview)`);
+	}));
+	const previewedMessageCount = Math.min(messages.length, DIAGNOSTIC_LOG_PREVIEW_LIMIT);
+	if (messages.length > previewedMessageCount) {
+		shown.push(`... (${messages.length - previewedMessageCount} additional console messages omitted from preview)`);
 	}
 	return shown.join("\n");
 }

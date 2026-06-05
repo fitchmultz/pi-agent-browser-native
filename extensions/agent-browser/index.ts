@@ -566,7 +566,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-function getBatchAnnotateValidationError(args: string[], stdin: string | undefined): string | undefined {
+function getBatchPreflightValidationError(args: string[], stdin: string | undefined): string | undefined {
 	const commandTokens = extractCommandTokens(args);
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return undefined;
@@ -575,14 +575,18 @@ function getBatchAnnotateValidationError(args: string[], stdin: string | undefin
 	if (parsed.error || parsed.steps === undefined) {
 		return undefined;
 	}
-	const badStepIndex = parsed.steps.findIndex((step) => Array.isArray(step) && step[0] === "screenshot" && step.includes("--annotate"));
-	if (badStepIndex < 0) {
-		return undefined;
+	for (const [index, step] of parsed.steps.entries()) {
+		if (!Array.isArray(step) || !step.every((token) => typeof token === "string") || step.length === 0) continue;
+		const stepValidationError = validateToolArgs(step);
+		if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
+		if (step[0] === "screenshot" && step.includes("--annotate")) {
+			return [
+				`Unsupported batch screenshot annotation in step ${index + 1}: put --annotate in top-level args, not inside the batch step.`,
+				`Use: { "args": ["--annotate", "batch"], "stdin": "[[\\"screenshot\\",\\"/path/to/image.png\\"]]" }`,
+			].join("\n");
+		}
 	}
-	return [
-		`Unsupported batch screenshot annotation in step ${badStepIndex + 1}: put --annotate in top-level args, not inside the batch step.`,
-		`Use: { "args": ["--annotate", "batch"], "stdin": "[[\\"screenshot\\",\\"/path/to/image.png\\"]]" }`,
-	].join("\n");
+	return undefined;
 }
 
 function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactManifest | undefined {
@@ -1209,7 +1213,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 			const resolvedInput = resolveAgentBrowserInput({
-				getBatchAnnotateValidationError,
+				getBatchPreflightValidationError,
 				managedSessionActive,
 				params,
 			});

@@ -13,6 +13,7 @@ import {
 	SessionPageState,
 	buildNoActivePageRefSnapshotInvalidation,
 	extractLatestRefSnapshotStateFromBatchResults,
+	extractRefSnapshotFromData,
 } from "../extensions/agent-browser/lib/session-page-state.js";
 
 function toolEntry(details: Record<string, unknown>, isError = false): unknown {
@@ -113,6 +114,17 @@ test("SessionPageState rejects stale tab and ref updates after a newer token", (
 	assert.equal(staleRefs.stale, true);
 	assert.deepEqual(staleRefs.refSnapshot?.refIds, ["e2"]);
 	assert.equal(staleRefs.refSnapshotInvalidation, undefined);
+});
+
+test("extractRefSnapshotFromData preserves editable evidence from snapshot text", () => {
+	const snapshot = extractRefSnapshotFromData({
+		refs: { e1: { name: "Editor", role: "generic" }, e2: { name: "Disabled", role: "generic" } },
+		snapshot: '- generic "Editor" [ref=e1] contenteditable=true\n- generic "Disabled" [ref=e2] contenteditable=false',
+		url: "https://example.test/editor",
+	});
+
+	assert.deepEqual(snapshot?.refs?.e1, { isContentEditable: true, isEditable: true, name: "Editor", role: "textbox" });
+	assert.deepEqual(snapshot?.refs?.e2, { isEditable: false, name: "Disabled", role: "generic" });
 });
 
 test("SessionPageState invalidation replaces snapshots and later snapshots clear invalidations", () => {

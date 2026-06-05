@@ -367,6 +367,38 @@ test("buildToolPresentation surfaces omitted high-value controls in compact snap
 	}
 });
 
+test("buildToolPresentation surfaces dense repository result links as high-value refs", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 95 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e70") return [id, { name: "vercel-labs/agent-browser", role: "link" }];
+			return [id, { name: `Result heading ${index + 1}`, role: "heading" }];
+		}),
+	);
+	const snapshot = [
+		'- main "Repository search results" [ref=e1]',
+		...Array.from({ length: 68 }, (_, index) => `  - heading "Result heading ${index + 2}" [ref=e${index + 2}]`),
+		'  - heading "vercel-labs/agent-browser" [ref=e69]',
+		'    - link "vercel-labs/agent-browser" [ref=e70]',
+		...Array.from({ length: 25 }, (_, index) => `  - heading "Result heading ${index + 71}" [ref=e${index + 71}]`),
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { origin: "https://github.com/search?q=agent-browser&type=repositories", refs, snapshot } },
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Omitted high-value controls:/);
+	assert.match(text, /e70 link "vercel-labs\/agent-browser"/);
+	assert.ok((presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds?.includes("e70"));
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
 test("buildToolPresentation keeps dense desktop host high-value controls discoverable in compact snapshots", async () => {
 	const refs = Object.fromEntries(
 		Array.from({ length: 170 }, (_, index) => {

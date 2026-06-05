@@ -11,7 +11,7 @@ import type { AgentBrowserNextAction } from "../../results.js";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.js";
 import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTarget, type VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
-import { extractRefSnapshotFromData, normalizeComparableUrl, type SessionTabTarget } from "../../session-page-state.js";
+import { extractRefSnapshotFromData, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import { redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import {
@@ -283,16 +283,22 @@ export function buildOverlayBlockerNextActions(options: { diagnostic: OverlayBlo
 	return [{ id: "inspect-overlay-state", params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) }, reason: "Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.", safety: "Read-only inspection; use current refs from this snapshot before interacting.", tool: "agent_browser" }, ...options.diagnostic.candidates.map((candidate, index) => ({ id: `try-overlay-blocker-candidate-${index + 1}`, params: { args: withOptionalSessionArgs(options.sessionName, candidate.args) }, reason: candidate.reason, safety: "Only click this if the candidate is clearly a close/dismiss control for an overlay that blocks the intended workflow.", tool: "agent_browser" as const }))];
 }
 
+export function collectSnapshotOverlayBlockerDiagnostic(data: unknown): OverlayBlockerDiagnostic | undefined {
+	const candidates = getOverlayBlockerCandidates(data);
+	const snapshot = extractRefSnapshotFromData(data);
+	if (candidates.length === 0 || !snapshot) return undefined;
+	return { candidates, snapshot, summary: "Snapshot contains dialog/modal context plus likely close or dismiss controls; treat covered controls as potentially obstructed until the overlay state is resolved." };
+}
+
 export async function collectOverlayBlockerDiagnostic(options: { command?: string; cwd: string; data: unknown; navigationSummary?: NavigationSummary; priorTarget?: SessionTabTarget; sessionName?: string; signal?: AbortSignal }): Promise<OverlayBlockerDiagnostic | undefined> {
 	if (options.command !== "click" || !isRecord(options.data) || typeof options.data.clicked !== "string") return undefined;
 	const priorUrl = normalizeComparableUrl(options.priorTarget?.url);
 	const currentUrl = normalizeComparableUrl(options.navigationSummary?.url);
 	if (!priorUrl || !currentUrl || priorUrl !== currentUrl) return undefined;
 	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const candidates = getOverlayBlockerCandidates(snapshotData);
-	const snapshot = extractRefSnapshotFromData(snapshotData);
-	if (candidates.length === 0 || !snapshot) return undefined;
-	return { candidates, snapshot, summary: `Click completed but the page stayed on ${currentUrl}; a fresh snapshot contains likely overlay close/dismiss controls.` };
+	const diagnostic = collectSnapshotOverlayBlockerDiagnostic(snapshotData);
+	if (!diagnostic) return undefined;
+	return { ...diagnostic, summary: `Click completed but the page stayed on ${currentUrl}; a fresh snapshot contains likely overlay close/dismiss controls.` };
 }
 
 const SELECTOR_TEXT_VISIBILITY_CANDIDATE_LIMIT = 8;
@@ -600,17 +606,25 @@ export async function validateQaAttachedPrecondition(options: {
 	return undefined;
 }
 
-function getTopLevelFillInvocation(commandTokens: string[]): { expected: string; selector: string } | undefined {
+function getTopLevelFillInvocation(commandTokens: string[]): { expected: string; refId?: string; selector: string } | undefined {
 	if (commandTokens[0] !== "fill" || commandTokens.length < 3) return undefined;
 	const selector = commandTokens[1];
 	const expected = commandTokens.slice(2).join(" ");
-	return selector && expected.length > 0 ? { expected, selector } : undefined;
+	const refId = selector?.match(/^@?(e\d+)$/)?.[1];
+	return selector && expected.length > 0 ? { expected, ...(refId ? { refId } : {}), selector } : undefined;
+}
+
+function shouldVerifyContenteditableFill(fill: { refId?: string } | undefined, refSnapshot?: SessionRefSnapshot): boolean {
+	if (!fill?.refId) return false;
+	const ref = refSnapshot?.refs?.[fill.refId];
+	if (!ref) return false;
+	return ref.isContentEditable === true && (ref.role === "generic" || ref.role === "unknown" || ref.role === "textbox");
 }
 
 export function buildFillVerificationNextActions(diagnostic: FillVerificationDiagnostic, sessionName: string | undefined): AgentBrowserNextAction[] {
 	return [
-		{ id: "inspect-after-fill-verification", params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) }, reason: "Refresh the UI after a fill that reported success but did not appear to update the input value.", safety: "Read-only snapshot; use current refs before retrying.", tool: "agent_browser" },
-		{ id: "verify-filled-value", params: { args: withOptionalSessionArgs(sessionName, ["get", "value", diagnostic.selector]) }, reason: "Check the target input value directly before submitting or creating files.", safety: "Read-only value check; selector may still be stale if the Electron UI rerendered.", tool: "agent_browser" },
+		{ id: "inspect-after-fill-verification", params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) }, reason: "Refresh the UI after a fill that reported success but did not appear to update the target.", safety: "Read-only snapshot; use current refs before retrying.", tool: "agent_browser" },
+		{ id: "verify-filled-value", params: { args: withOptionalSessionArgs(sessionName, ["get", diagnostic.method, diagnostic.selector]) }, reason: `Check the target ${diagnostic.method} directly before submitting or creating files.`, safety: "Read-only check; selector may still be stale if the UI rerendered.", tool: "agent_browser" },
 	];
 }
 
@@ -622,22 +636,30 @@ function extractFillVerificationValue(data: unknown): string | undefined {
 	return undefined;
 }
 
-export async function collectFillVerificationDiagnostic(options: { commandTokens: string[]; cwd: string; sessionName?: string; signal?: AbortSignal }): Promise<FillVerificationDiagnostic | undefined> {
+export async function collectFillVerificationDiagnostic(options: { commandTokens: string[]; cwd: string; forceValueVerification?: boolean; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<FillVerificationDiagnostic | undefined> {
 	const fill = getTopLevelFillInvocation(options.commandTokens);
 	if (!fill || !options.sessionName) return undefined;
+	const contenteditable = shouldVerifyContenteditableFill(fill, options.refSnapshot);
+	if (!contenteditable && !options.forceValueVerification) return undefined;
+	const method = contenteditable ? "text" : "value";
 	let valueData: unknown | undefined;
-	try { valueData = await runSessionCommandData({ args: ["get", "value", fill.selector], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: ELECTRON_FILL_VERIFICATION_TIMEOUT_MS }); } catch { return undefined; }
+	try { valueData = await runSessionCommandData({ args: ["get", method, fill.selector], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: ELECTRON_FILL_VERIFICATION_TIMEOUT_MS }); } catch { return undefined; }
 	const actual = extractFillVerificationValue(valueData);
 	if (actual === undefined || actual === fill.expected) return undefined;
-	const diagnostic: FillVerificationDiagnostic = { actual: actual.length > 0 ? boundElectronProbeString(actual, 160) : "", expected: boundElectronProbeString(fill.expected, 160) ?? fill.expected, nextActionIds: [], selector: fill.selector, status: "mismatch", summary: `Fill verification warning: fill ${fill.selector} reported success, but get value returned ${actual.length > 0 ? `"${boundElectronProbeString(actual, 80)}"` : "an empty value"}.` };
+	const reason = contenteditable ? "contenteditable-fill-mismatch" : "value-fill-mismatch";
+	const actualPreview = actual.length > 0 ? `"${boundElectronProbeString(actual, 80)}"` : `an empty ${method}`;
+	const diagnostic: FillVerificationDiagnostic = { actual: actual.length > 0 ? boundElectronProbeString(actual, 160) : "", expected: boundElectronProbeString(fill.expected, 160) ?? fill.expected, method, nextActionIds: [], reason, selector: fill.selector, status: "mismatch", summary: `Fill verification warning: fill ${fill.selector} reported success, but get ${method} returned ${actualPreview}.` };
 	diagnostic.nextActionIds = buildFillVerificationNextActions(diagnostic, options.sessionName).map((action) => action.id);
 	return diagnostic;
 }
 
 export function formatFillVerificationText(diagnostic: FillVerificationDiagnostic | undefined): string | undefined {
 	if (!diagnostic) return undefined;
-	const actual = diagnostic.actual !== undefined ? `actual "${diagnostic.actual}"` : "actual value unavailable";
-	return `${diagnostic.summary}\nExpected: "${diagnostic.expected}"; ${actual}.\nNext: re-run snapshot -i, then prefer click/focus plus keyboard type for custom Electron quick-input controls before submitting.`;
+	const actual = diagnostic.actual !== undefined ? `actual "${diagnostic.actual}"` : `actual ${diagnostic.method} unavailable`;
+	const recovery = diagnostic.reason === "contenteditable-fill-mismatch"
+		? "Contenteditable fill may append or prepend instead of replacing. Re-run snapshot -i, then prefer focus/click plus keyboard shortcut selection or direct keyboard insertion only after verifying the editor state."
+		: "Re-run snapshot -i, then prefer click/focus plus keyboard type for custom quick-input controls before submitting.";
+	return `${diagnostic.summary}\nExpected: "${diagnostic.expected}"; ${actual}.\nNext: ${recovery}`;
 }
 
 export async function collectVisibleRefFallbackDiagnostic(options: { commandTokens: string[]; compiledSemanticAction?: CompiledAgentBrowserSemanticAction; cwd: string; sessionName?: string; signal?: AbortSignal }): Promise<VisibleRefFallbackDiagnostic | undefined> {

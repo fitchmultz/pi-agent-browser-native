@@ -26,6 +26,7 @@ import {
 	redactSensitiveValue,
 	resolveManagedSessionState,
 	restoreManagedSessionStateFromBranch,
+	validateToolArgs,
 } from "../extensions/agent-browser/lib/runtime.js";
 import { createToolBranchEntry } from "./helpers/agent-browser-harness.js";
 
@@ -835,6 +836,19 @@ test("buildExecutionPlan leaves command-scoped flags and literal text to upstrea
 
 		assert.equal(plan.validationError, undefined, args.join(" "));
 	}
+});
+
+test("validateToolArgs rejects press/key commands with selector-like extra args", () => {
+	for (const args of [
+		["press", "@e1", "Enter"],
+		["key", "#todo", "Return"],
+		["keydown", "@e1", "Enter"],
+		["keyup"],
+	] as const) {
+		assert.match(validateToolArgs([...args]) ?? "", /accepts exactly one key argument/, args.join(" "));
+	}
+	assert.equal(validateToolArgs(["press", "Enter"]), undefined);
+	assert.equal(validateToolArgs(["key", "Escape"]), undefined);
 });
 
 test("buildExecutionPlan rejects value-taking flags followed by another flag", () => {

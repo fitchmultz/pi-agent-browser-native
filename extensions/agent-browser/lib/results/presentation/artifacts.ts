@@ -132,9 +132,13 @@ function getArtifactKind(commandInfo: CommandInfo): FileArtifactKind | undefined
 	return undefined;
 }
 
+function isNonFileArtifactPathCandidate(path: string): boolean {
+	return /^(?:data|blob|https?|javascript|mailto):/i.test(path.trim());
+}
+
 function extractPathStrings(data: unknown): string[] {
 	if (typeof data === "string") {
-		return data.trim().length > 0 ? [data] : [];
+		return data.trim().length > 0 && !isNonFileArtifactPathCandidate(data) ? [data] : [];
 	}
 	if (!isRecord(data)) {
 		return [];
@@ -143,12 +147,12 @@ function extractPathStrings(data: unknown): string[] {
 	const paths: string[] = [];
 	for (const key of PATH_FIELD_CANDIDATES) {
 		const value = data[key];
-		if (typeof value === "string" && value.trim().length > 0) {
+		if (typeof value === "string" && value.trim().length > 0 && !isNonFileArtifactPathCandidate(value)) {
 			paths.push(value);
 		}
 		if (Array.isArray(value)) {
 			for (const item of value) {
-				if (typeof item === "string" && item.trim().length > 0) {
+				if (typeof item === "string" && item.trim().length > 0 && !isNonFileArtifactPathCandidate(item)) {
 					paths.push(item);
 				}
 			}
@@ -369,7 +373,10 @@ export function classifyPresentationSuccessCategory(options: {
 function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 	switch (artifact.kind) {
 		case "download":
-			return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download completed" : "Downloaded file";
+			if (artifact.exists !== true) {
+				return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download event reported; file not verified" : "Download reported; file not verified";
+			}
+			return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download saved and verified" : "Downloaded file verified";
 		case "file":
 			return artifact.command === "state" ? "State file" : "Saved file";
 		case "har":
@@ -443,7 +450,7 @@ function extractSavedFilePath(data: Record<string, unknown>): string | undefined
 
 export function getSavedFileDetails(commandInfo: CommandInfo, data: Record<string, unknown>): SavedFilePresentationDetails | undefined {
 	const path = extractSavedFilePath(data);
-	if (!path) {
+	if (!path || isNonFileArtifactPathCandidate(path)) {
 		return undefined;
 	}
 	const savedFileCommand = isDownloadWaitCommand(commandInfo)

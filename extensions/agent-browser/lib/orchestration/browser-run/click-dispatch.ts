@@ -71,7 +71,48 @@ function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string
 const marker = ${JSON.stringify(probe.marker)};
 const element = ${resolveTarget};
 if (!element) return { status: "target-not-found", marker };
-const state = { events: [], target: { tagName: element.tagName.toLowerCase() } };
+const cssEscape = (value) => {
+  if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+};
+const getSelector = (node) => {
+  if (!(node instanceof Element)) return undefined;
+  if (node.id) return "#" + cssEscape(node.id);
+  const testId = node.getAttribute("data-testid") || node.getAttribute("data-test-id");
+  if (testId) return '[data-testid="' + cssEscape(testId) + '"]';
+  const parts = [];
+  let current = node;
+  while (current && current !== document.body && parts.length < 4) {
+    const tag = current.tagName.toLowerCase();
+    const parent = current.parentElement;
+    if (!parent) break;
+    const siblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
+    const index = siblings.indexOf(current) + 1;
+    parts.unshift(siblings.length > 1 ? tag + ':nth-of-type(' + index + ')' : tag);
+    current = parent;
+  }
+  return parts.length > 0 ? parts.join(" > ") : undefined;
+};
+const rectInfo = (rect) => ({ bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top });
+const targetRect = element.getBoundingClientRect();
+const targetOutsideViewport = targetRect.bottom < 0 || targetRect.right < 0 || targetRect.top > window.innerHeight || targetRect.left > window.innerWidth;
+let nearestScrollContainer;
+for (let current = element.parentElement; current && current !== document.body; current = current.parentElement) {
+  if (current.scrollHeight > current.clientHeight + 1 || current.scrollWidth > current.clientWidth + 1) {
+    const containerRect = current.getBoundingClientRect();
+    nearestScrollContainer = {
+      selector: getSelector(current),
+      tagName: current.tagName.toLowerCase(),
+      targetOutsideContainer: targetRect.bottom < containerRect.top || targetRect.top > containerRect.bottom || targetRect.right < containerRect.left || targetRect.left > containerRect.right,
+      targetOutsideViewport,
+      rect: rectInfo(containerRect),
+      scrollLeft: current.scrollLeft,
+      scrollTop: current.scrollTop,
+    };
+    break;
+  }
+}
+const state = { events: [], target: { tagName: element.tagName.toLowerCase(), nearestScrollContainer, rect: rectInfo(targetRect), targetOutsideViewport } };
 const eventTypes = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
 const listeners = eventTypes.map((type) => {
   const listener = (event) => {
@@ -126,9 +167,9 @@ export function formatClickDispatchDiagnosticText(diagnostic: ClickDispatchDiagn
 	return `Click dispatch diagnostic: ${diagnostic.summary}`;
 }
 
-export function buildClickDispatchNextActions(options: { commandTokens: string[]; sessionName?: string }): AgentBrowserNextAction[] {
+export function buildClickDispatchNextActions(options: { commandTokens: string[]; diagnostic?: ClickDispatchDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
 	const retryArgs = options.commandTokens[0] === "click" ? options.commandTokens : ["click", ...options.commandTokens];
-	return [
+	const actions: AgentBrowserNextAction[] = [
 		{
 			id: "inspect-click-dispatch-miss",
 			params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) },
@@ -136,14 +177,26 @@ export function buildClickDispatchNextActions(options: { commandTokens: string[]
 			safety: "Read-only snapshot; the wrapper does not replay clicks in-page when upstream reports success without DOM events.",
 			tool: "agent_browser",
 		},
-		{
-			id: "retry-click-after-dispatch-miss",
-			params: { args: withOptionalSessionArgs(options.sessionName, retryArgs) },
-			reason: "Retry the same upstream click after confirming the target is visible; do not assume the prior success mutated the page.",
-			safety: "Only retry when the target is still intended; use page-change evidence or a fresh snapshot before continuing the workflow.",
-			tool: "agent_browser",
-		},
 	];
+	if (options.diagnostic?.scrollContainer) {
+		actions.push({
+			id: "scroll-target-into-view-after-dispatch-miss",
+			params: { args: withOptionalSessionArgs(options.sessionName, ["scrollintoview", retryArgs[1]].filter((item): item is string => typeof item === "string")) },
+			reason: options.diagnostic.scrollContainer.selector
+				? `The target may be outside nested scroll container ${options.diagnostic.scrollContainer.selector}; scroll the target into view before retrying the click.`
+				: "The target may be inside an offscreen nested scroll container; scroll the target into view before retrying the click.",
+			safety: "Use only for the same current page and target; run snapshot -i again if the page rerendered.",
+			tool: "agent_browser",
+		});
+	}
+	actions.push({
+		id: "retry-click-after-dispatch-miss",
+		params: { args: withOptionalSessionArgs(options.sessionName, retryArgs) },
+		reason: "Retry the same upstream click after confirming the target is visible; do not assume the prior success mutated the page.",
+		safety: "Only retry when the target is still intended; use page-change evidence or a fresh snapshot before continuing the workflow.",
+		tool: "agent_browser",
+	});
+	return actions;
 }
 
 export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchProbe | undefined> {
@@ -156,6 +209,20 @@ export async function prepareClickDispatchProbe(options: { commandTokens: string
 	return installResult?.status === "installed" ? probe : undefined;
 }
 
+function getClickDispatchScrollContainerDiagnostic(result: Record<string, unknown>): ClickDispatchDiagnostic["scrollContainer"] {
+	const target = isRecord(result.target) ? result.target : undefined;
+	const scrollContainer = isRecord(target?.nearestScrollContainer) ? target.nearestScrollContainer : undefined;
+	const targetOutsideViewport = typeof target?.targetOutsideViewport === "boolean" ? target.targetOutsideViewport : undefined;
+	const targetOutsideContainer = typeof scrollContainer?.targetOutsideContainer === "boolean" ? scrollContainer.targetOutsideContainer : undefined;
+	if (!scrollContainer && !targetOutsideViewport) return undefined;
+	if (targetOutsideContainer !== true && targetOutsideViewport !== true) return undefined;
+	const selector = typeof scrollContainer?.selector === "string" ? redactSensitiveText(scrollContainer.selector) : undefined;
+	const summary = selector
+		? `Target appears outside nested scroll container ${selector}; use scrollintoview on the target or scroll that container before retrying.`
+		: "Target appears outside the viewport or a nested scroll container; use scrollintoview on the target before retrying.";
+	return { selector, summary, targetOutsideContainer, targetOutsideViewport };
+}
+
 export async function collectClickDispatchDiagnostic(options: { cwd: string; probe?: ClickDispatchProbe; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchDiagnostic | undefined> {
 	if (!options.probe || !options.sessionName) return undefined;
 	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeCheckScript(options.probe) });
@@ -164,10 +231,14 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; pro
 	const status = typeof result.status === "string" ? result.status : undefined;
 	if (status !== "no-native-event-observed") return undefined;
 	const nativeEventCount = typeof result.nativeEventCount === "number" ? result.nativeEventCount : 0;
-	const summary = "Upstream click reported success but no trusted DOM event reached the selected element. Gather evidence with snapshot or page-change checks, then retry upstream click or report the workflow issue; the wrapper does not replay clicks in-page.";
+	const scrollContainer = getClickDispatchScrollContainerDiagnostic(result);
+	const summary = scrollContainer
+		? `Upstream click reported success but no trusted DOM event reached the selected element. ${scrollContainer.summary}`
+		: "Upstream click reported success but no trusted DOM event reached the selected element. Gather evidence with snapshot or page-change checks, then retry upstream click or report the workflow issue; the wrapper does not replay clicks in-page.";
 	return {
 		nativeEventCount,
 		reason: "native-click-produced-no-target-dom-event",
+		...(scrollContainer ? { scrollContainer } : {}),
 		status,
 		summary,
 		target: redactClickDispatchTarget(options.probe.target),

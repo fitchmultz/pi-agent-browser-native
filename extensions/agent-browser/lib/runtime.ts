@@ -619,6 +619,15 @@ export function createFreshSessionName(baseSessionName: string, ephemeralSeed: s
 	return `${baseSessionName}-fresh-${suffix}`;
 }
 
+function getSingleKeyCommandValidationError(args: string[]): string | undefined {
+	const { commandInfo, commandTokens } = parseArgvDescriptor(args);
+	const command = commandInfo.command;
+	if (command !== "press" && command !== "key" && command !== "keydown" && command !== "keyup") return undefined;
+	if (commandTokens.length === 2) return undefined;
+	const label = command === "key" ? "key/press" : command;
+	return `agent-browser ${label} accepts exactly one key argument. Do not pass a selector or ref to ${label}; focus or click the target first, then run ${command} <key> (for example: focus @e1, then press Enter).`;
+}
+
 export function validateToolArgs(args: string[]): string | undefined {
 	if (args.length === 0) {
 		return "`args` must contain at least one agent-browser command token.";
@@ -634,7 +643,7 @@ export function validateToolArgs(args: string[]): string | undefined {
 		return "Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: [\"--profile\", \"Default\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
 	}
 
-	return undefined;
+	return getSingleKeyCommandValidationError(args);
 }
 
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {

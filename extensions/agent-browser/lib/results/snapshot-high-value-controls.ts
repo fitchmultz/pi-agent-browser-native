@@ -17,6 +17,7 @@ const SNAPSHOT_HIGH_VALUE_CONTROL_ROLES = new Set([
 	"button",
 	"checkbox",
 	"combobox",
+	"link",
 	"menuitem",
 	"option",
 	"radio",
@@ -30,11 +31,12 @@ const SNAPSHOT_HIGH_VALUE_CONTROL_ROLE_PRIORITY: Record<string, number> = {
 	textbox: 1,
 	combobox: 2,
 	button: 3,
-	tab: 4,
-	checkbox: 5,
-	radio: 6,
-	option: 7,
-	menuitem: 8,
+	link: 4,
+	tab: 5,
+	checkbox: 6,
+	radio: 7,
+	option: 8,
+	menuitem: 9,
 };
 
 const SNAPSHOT_SURFACE_CONTROL_NAME_PATTERNS = [
@@ -44,6 +46,10 @@ const SNAPSHOT_SURFACE_CONTROL_NAME_PATTERNS = [
 const SNAPSHOT_PRIMARY_ACTION_BUTTON_NAME_PATTERNS = [
 	/^(?:add|apply|ask|attach|choose|confirm|connect|continue|create|deploy|done|download|go|insert|launch|log in|new|next|ok|open|publish|refresh|retry|run|save|search|select|send|sign in|sign up|start|submit|upload)$/i,
 	/^(?:add|apply|ask|confirm|connect|continue|create|launch|new|open|refresh|retry|run|save|search|send|start|submit)\b/i,
+];
+
+const SNAPSHOT_HIGH_VALUE_LINK_NAME_PATTERNS = [
+	/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i,
 ];
 
 function getHighValueControlRole(entry: SnapshotRefEntry): string {
@@ -129,9 +135,14 @@ const SNAPSHOT_HIGH_VALUE_CONTROL_CATEGORY_RULES: readonly HighValueControlCateg
 	},
 ] as const;
 
+function isHighValueLinkRef(entry: SnapshotRefEntry): boolean {
+	return entry.name.length > 0 && SNAPSHOT_HIGH_VALUE_LINK_NAME_PATTERNS.some((pattern) => pattern.test(entry.name));
+}
+
 export function isHighValueControlEntry(entry: SnapshotRefEntry): boolean {
 	const role = getHighValueControlRole(entry);
 	if (!SNAPSHOT_HIGH_VALUE_CONTROL_ROLES.has(role)) return false;
+	if (role === "link") return isHighValueLinkRef(entry);
 	if (entry.isEditable === false && (role === "searchbox" || role === "textbox" || role === "combobox")) return false;
 	return entry.name.length > 0 || isEditableControlRef(entry);
 }

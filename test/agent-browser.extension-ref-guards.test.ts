@@ -1914,9 +1914,7 @@ if (args.includes("snapshot")) {
 					["fill", "@e6", "Alice"],
 				]),
 			});
-			assert.equal(clickCheckboxThenFill.isError, true);
-			assert.equal(clickCheckboxThenFill.details?.failureCategory, "stale-ref");
-			assert.match((clickCheckboxThenFill.content[0] as { text: string }).text, /Batch step fill uses page-scoped ref @e6/);
+			assert.equal(clickCheckboxThenFill.isError, false, JSON.stringify(clickCheckboxThenFill));
 
 			const clickSubmitThenFill = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
@@ -1942,7 +1940,7 @@ if (args.includes("snapshot")) {
 
 			const invocations = await readInvocationLog(logPath);
 			const batchInvocations = invocations.filter((entry) => entry.args.includes("batch"));
-			assert.equal(batchInvocations.length, 1);
+			assert.equal(batchInvocations.length, 2);
 			assert.deepEqual(JSON.parse(String(batchInvocations[0]?.stdin ?? "[]")), [
 				["check", "@e1"],
 				["uncheck", "@e1"],
@@ -1950,6 +1948,10 @@ if (args.includes("snapshot")) {
 				["check", "@e3"],
 				["select", "@e4", "Pro"],
 				["click", "@e5"],
+			]);
+			assert.deepEqual(JSON.parse(String(batchInvocations[1]?.stdin ?? "[]")), [
+				["click", "@e1"],
+				["fill", "@e6", "Alice"],
 			]);
 		});
 	} finally {

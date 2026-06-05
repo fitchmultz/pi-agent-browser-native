@@ -150,9 +150,17 @@ export interface ClickDispatchProbe {
 	target: ClickDispatchProbeTarget;
 }
 
+export interface ClickDispatchScrollContainerDiagnostic {
+	selector?: string;
+	summary: string;
+	targetOutsideContainer?: boolean;
+	targetOutsideViewport?: boolean;
+}
+
 export interface ClickDispatchDiagnostic {
 	nativeEventCount: number;
 	reason: "native-click-produced-no-target-dom-event";
+	scrollContainer?: ClickDispatchScrollContainerDiagnostic;
 	status: "no-native-event-observed";
 	summary: string;
 	target: ClickDispatchProbeTarget;
@@ -374,7 +382,9 @@ export interface ElectronPostCommandHealthDiagnostic {
 export interface FillVerificationDiagnostic {
 	actual?: string;
 	expected: string;
+	method: "text" | "value";
 	nextActionIds: string[];
+	reason: "contenteditable-fill-mismatch" | "value-fill-mismatch";
 	selector: string;
 	status: "mismatch";
 	summary: string;

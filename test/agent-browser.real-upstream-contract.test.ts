@@ -432,7 +432,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(waitDownloadDetails.savedFilePath, downloadPath);
 					assert.equal((waitDownloadDetails.savedFile as { path?: string } | undefined)?.path, downloadPath);
 					assert.match(waitedDownload.content[0]?.text ?? "", /Artifact verification failed/);
-					assert.match(waitedDownload.content[0]?.text ?? "", /Download completed/);
+					assert.match(waitedDownload.content[0]?.text ?? "", /Download event reported; file not verified/);
 
 					// Upstream tracking: https://github.com/vercel-labs/agent-browser/issues/1300.
 					// Current upstream agent-browser 0.27.1 reports the requested saveAs path but leaves the

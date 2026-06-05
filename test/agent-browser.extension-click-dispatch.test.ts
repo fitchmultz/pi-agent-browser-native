@@ -195,7 +195,7 @@ if (args.includes("snapshot")) {
   if (stdin.includes("window[marker] = state")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
   } else if (stdin.includes("no-native-event-observed")) {
-    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0, target: { nearestScrollContainer: { selector: "#todos", targetOutsideContainer: true, targetOutsideViewport: true }, targetOutsideViewport: true } } } }));
   } else {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Shop", url: "https://shop.example/inventory" } } }));
   }
@@ -215,7 +215,16 @@ if (args.includes("snapshot")) {
 			assert.equal((click.details?.clickDispatch as { status?: string } | undefined)?.status, "no-native-event-observed");
 			assert.equal((click.details?.clickDispatch as { target?: { kind?: string; selector?: string } } | undefined)?.target?.kind, "selector");
 			assert.equal((click.details?.clickDispatch as { target?: { kind?: string; selector?: string } } | undefined)?.target?.selector, "[data-test=add-to-cart]");
-			assert.ok((click.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "retry-click-after-dispatch-miss"));
+			assert.deepEqual((click.details?.clickDispatch as { scrollContainer?: unknown } | undefined)?.scrollContainer, {
+				selector: "#todos",
+				summary: "Target appears outside nested scroll container #todos; use scrollintoview on the target or scroll that container before retrying.",
+				targetOutsideContainer: true,
+				targetOutsideViewport: true,
+			});
+			assert.match(click.content[0]?.text ?? "", /nested scroll container #todos/);
+			const nextActionIds = ((click.details?.nextActions as Array<{ id?: string }> | undefined) ?? []).map((action) => action.id);
+			assert.ok(nextActionIds.includes("scroll-target-into-view-after-dispatch-miss"));
+			assert.ok(nextActionIds.includes("retry-click-after-dispatch-miss"));
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);

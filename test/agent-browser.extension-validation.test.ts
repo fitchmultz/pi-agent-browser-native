@@ -251,6 +251,28 @@ test("agentBrowserExtension rejects unsupported public schema fields", () => {
 	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }] } }), true);
 });
 
+test("agentBrowserExtension rejects unsupported extra press/key args before upstream spawn", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-press-validation-"));
+	try {
+		const harness = createExtensionHarness({ cwd: tempDir });
+		await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+		const topLevel = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["press", "@e1", "Enter"] });
+		assert.equal(topLevel.isError, true);
+		assert.match(topLevel.content[0]?.text ?? "", /accepts exactly one key argument/);
+		assert.equal(topLevel.details?.validationError, topLevel.content[0]?.text);
+
+		const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["fill", "#todo", "alpha"], ["key", "#todo", "Return"]]),
+		});
+		assert.equal(batch.isError, true);
+		assert.match(batch.content[0]?.text ?? "", /Unsupported batch step 2: agent-browser key\/press accepts exactly one key argument/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports no-op scroll diagnostics with recovery next actions", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-noop-scroll-"));
 	const logPath = join(tempDir, "invocations.log");

@@ -202,6 +202,63 @@ if (args.includes("open")) {
 	}
 });
 
+test("agentBrowserExtension warns when contenteditable fill does not replace existing text", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-contenteditable-fill-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const command = args.find((arg) => ["open", "snapshot", "fill", "get"].includes(arg));
+if (command === "open") {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Editor", url: "https://editor.example.test/" } }));
+} else if (command === "snapshot") {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://editor.example.test/",
+    refs: { e1: { role: "generic", name: "Composer", contenteditable: true } },
+    snapshot: '- generic "Composer" [ref=e1] contenteditable=true'
+  } }));
+} else if (command === "fill") {
+  process.stdout.write(JSON.stringify({ success: true, data: { filled: "@e1" } }));
+} else if (command === "get") {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "contenteditable replacededit me" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://editor.example.test/"] })).isError, false);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] })).isError, false);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["fill", "@e1", "contenteditable replaced"] });
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match(result.content[0]?.text ?? "", /Contenteditable fill may append or prepend/);
+			assert.deepEqual(result.details?.fillVerification, {
+				actual: "contenteditable replacededit me",
+				expected: "contenteditable replaced",
+				method: "text",
+				nextActionIds: ["inspect-after-fill-verification", "verify-filled-value"],
+				reason: "contenteditable-fill-mismatch",
+				selector: "@e1",
+				status: "mismatch",
+				summary: 'Fill verification warning: fill @e1 reported success, but get text returned "contenteditable replacededit me".',
+			});
+			assert.ok((result.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "verify-filled-value"));
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.includes("get") && entry.args.includes("text") && entry.args.includes("@e1")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension resolves semantic role clicks through current visible snapshot refs when available", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-visible-ref-"));
 	const logPath = join(tempDir, "invocations.log");
