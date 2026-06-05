@@ -4,6 +4,10 @@ import { execFileSync, execSync } from "node:child_process";
 import { accessSync, constants, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
+
+const DEFAULT_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${CAPABILITY_BASELINE.targetVersion}`;
+
 function env(name) {
 	return process.env[name] ?? "";
 }
@@ -220,7 +224,7 @@ export async function runDoctor(config) {
 	console.log("\n── Crabbox providers ──");
 	if (cboxPath) {
 		checkRequiredProviders(cbox, failures);
-		const ubuntuImage = env("PLATFORM_SMOKE_UBUNTU_IMAGE") || config?.ubuntuContainerImage || "pi-agent-browser-native-platform:node24-agent-browser0.27.1";
+		const ubuntuImage = env("PLATFORM_SMOKE_UBUNTU_IMAGE") || config?.ubuntuContainerImage || DEFAULT_UBUNTU_IMAGE;
 		checkCrabboxProvider(cbox, ["--provider", "local-container", "--local-container-image", ubuntuImage], "ubuntu local-container", failures);
 		const macUser = env("PLATFORM_SMOKE_MAC_USER") || env("USER");
 		const macHost = env("PLATFORM_SMOKE_MAC_HOST") || config?.macos?.host || "localhost";
@@ -233,7 +237,7 @@ export async function runDoctor(config) {
 	const dockerVersion = shell("docker info --format '{{.ServerVersion}}'");
 	if (dockerVersion) ok(`Docker ${dockerVersion}`);
 	else fail("Docker is not available or not running", failures);
-	const ubuntuImage = env("PLATFORM_SMOKE_UBUNTU_IMAGE") || config?.ubuntuContainerImage || "pi-agent-browser-native-platform:node24-agent-browser0.27.1";
+	const ubuntuImage = env("PLATFORM_SMOKE_UBUNTU_IMAGE") || config?.ubuntuContainerImage || DEFAULT_UBUNTU_IMAGE;
 	ok(`Ubuntu image: ${ubuntuImage}`);
 
 	console.log("\n── macOS SSH ──");

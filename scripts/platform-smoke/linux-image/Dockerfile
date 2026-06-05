@@ -1,12 +1,10 @@
 # Local Crabbox Ubuntu/Linux target image for pi-agent-browser-native platform smoke.
-# Build with:
-#   docker build -t pi-agent-browser-native-platform:node24-agent-browser0.27.1 \
-#     --build-arg AGENT_BROWSER_VERSION=0.27.1 \
-#     -f scripts/platform-smoke/linux-image/Dockerfile .
+# Build with npm run smoke:platform:ubuntu-image so the agent-browser version
+# comes from scripts/agent-browser-capability-baseline.mjs.
 
 FROM node:24-bookworm
 
-ARG AGENT_BROWSER_VERSION=0.27.1
+ARG AGENT_BROWSER_VERSION
 
 USER root
 RUN apt-get update \

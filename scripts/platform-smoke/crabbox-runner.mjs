@@ -2,6 +2,10 @@
 
 import { spawn } from "node:child_process";
 
+import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
+
+const DEFAULT_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${CAPABILITY_BASELINE.targetVersion}`;
+
 function env(name) {
 	return process.env[name] ?? "";
 }
@@ -38,7 +42,7 @@ export function describeTarget(targetName, config = {}) {
 			};
 		}
 		case "ubuntu": {
-			const image = env("PLATFORM_SMOKE_UBUNTU_IMAGE") || config.ubuntuContainerImage || "pi-agent-browser-native-platform:node24-agent-browser0.27.1";
+			const image = env("PLATFORM_SMOKE_UBUNTU_IMAGE") || config.ubuntuContainerImage || DEFAULT_UBUNTU_IMAGE;
 			return {
 				provider: "local-container",
 				crabboxTarget: "linux",

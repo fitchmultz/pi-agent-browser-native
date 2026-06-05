@@ -7,19 +7,14 @@
  */
 
 import type { ChildProcess } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-	highlightCode,
 	isToolCallEventType,
-	keyHint,
 	type AgentToolResult,
 	type ExtensionAPI,
 	type ExtensionContext,
-	type Theme,
-	type ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
@@ -42,12 +37,12 @@ import {
 	getImplicitSessionIdleTimeoutMs,
 	hasLaunchScopedTabCorrectionFlag,
 	extractExplicitSessionName,
-	redactInvocationArgs,
 	restoreManagedSessionStateFromBranch,
 	resolveManagedSessionState,
 	validateToolArgs,
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
+import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
 import { isCloseCommand } from "./lib/command-taxonomy.js";
 import {
@@ -121,153 +116,19 @@ import {
 import { withOptionalSessionArgs } from "./lib/results/next-actions.js";
 import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
 import { createAgentBrowserWebSearchTool } from "./lib/web-search.js";
+import {
+	isDirectAgentBrowserBashAllowed,
+	isHarmlessAgentBrowserInspectionCommand,
+	looksLikeDirectAgentBrowserBash,
+} from "./lib/bash-guard.js";
+import {
+	AgentBrowserResultComponent,
+	buildAgentBrowserToolResultPatch,
+	formatAgentBrowserRenderCall,
+	formatAgentBrowserRenderResult,
+} from "./lib/pi-tool-rendering.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
-const DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV = "PI_AGENT_BROWSER_ALLOW_DIRECT_BASH";
-const PACKAGE_NAME = "pi-agent-browser-native";
-
-const TUI_COLLAPSED_OUTPUT_MAX_LINES = 10;
-const TUI_INVOCATION_PREVIEW_MAX_CHARS = 120;
-const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B]*(?:\x1B\\)|_[^\x1B]*(?:\x1B\\)|\^[^\x1B]*(?:\x1B\\)|[@-Z\\-_])/g;
-const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
-
-function sanitizeDisplayText(text: string): string {
-	return text
-		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "")
-		.replace(/\r/g, "")
-		.replace(UNSAFE_DISPLAY_CONTROL_PATTERN, "�");
-}
-
-function replaceTabsForDisplay(text: string): string {
-	return text.replaceAll("\t", "    ");
-}
-
-function trimTrailingBlankLines(lines: string[]): string[] {
-	let end = lines.length;
-	while (end > 0 && lines[end - 1].trim().length === 0) {
-		end -= 1;
-	}
-	return lines.slice(0, end);
-}
-
-function isJsonDocumentText(text: string): boolean {
-	const trimmed = text.trim();
-	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-		return false;
-	}
-	try {
-		JSON.parse(trimmed);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function getPrimaryTextContent(result: AgentToolResult<unknown>): string {
-	const textContent = result.content.find((item) => item.type === "text");
-	return textContent?.type === "text" ? textContent.text : "";
-}
-
-function colorizeToolOutputLines(text: string, theme: Theme, isError: boolean): string[] {
-	const normalizedLines = trimTrailingBlankLines(replaceTabsForDisplay(sanitizeDisplayText(text)).split("\n"));
-	const normalizedText = normalizedLines.join("\n");
-	if (normalizedText.length === 0) {
-		return [];
-	}
-	if (isJsonDocumentText(normalizedText)) {
-		return highlightCode(normalizedText, "json");
-	}
-	return normalizedLines.map((line) => {
-		if (line.length === 0) {
-			return "";
-		}
-		return isError ? theme.fg("error", line) : theme.fg("toolOutput", line);
-	});
-}
-
-function formatExpandHint(theme: Theme): string {
-	try {
-		return keyHint("app.tools.expand", "to expand");
-	} catch {
-		return `${theme.fg("dim", "ctrl+o")} ${theme.fg("muted", "to expand")}`;
-	}
-}
-
-function formatVisualTruncationNotice(remainingLines: number, totalLines: number, theme: Theme): string {
-	return `${theme.fg("muted", `... (${remainingLines} more lines, ${totalLines} total, `)}${formatExpandHint(theme)}${theme.fg("muted", ")")}`;
-}
-
-function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
-	const input = isRecord(args) ? args : {};
-	const semanticAction = compileAgentBrowserSemanticAction(input.semanticAction);
-	const job = compileAgentBrowserJob(input.job);
-	const qa = compileAgentBrowserQaPreset(input.qa);
-	const sourceLookup = compileAgentBrowserSourceLookup(input.sourceLookup);
-	const networkSourceLookup = compileAgentBrowserNetworkSourceLookup(input.networkSourceLookup);
-	const electron = compileAgentBrowserElectron(input.electron);
-	const generatedBatch = networkSourceLookup.compiled ?? sourceLookup.compiled ?? job.compiled ?? qa.compiled;
-	const rawArgs = Array.isArray(input.args)
-		? input.args.filter((value): value is string => typeof value === "string")
-		: electron.compiled
-			? ["electron", electron.compiled.action]
-			: (semanticAction.compiled?.args ?? generatedBatch?.args ?? []);
-	const redactedArgs = redactInvocationArgs(rawArgs);
-	const invocation = sanitizeDisplayText(redactedArgs.join(" ")).replace(/\s+/g, " ").trim();
-	const invocationPreview =
-		invocation.length > TUI_INVOCATION_PREVIEW_MAX_CHARS
-			? `${invocation.slice(0, TUI_INVOCATION_PREVIEW_MAX_CHARS - 3)}...`
-			: invocation;
-	let text = theme.fg("toolTitle", theme.bold("agent_browser"));
-	if (invocationPreview.length > 0) {
-		text += ` ${theme.fg("accent", invocationPreview)}`;
-	}
-	if (input.sessionMode === "fresh") {
-		text += theme.fg("dim", " sessionMode=fresh");
-	}
-	if (typeof input.stdin === "string") {
-		text += theme.fg("dim", " + stdin");
-	}
-	return text;
-}
-
-function formatAgentBrowserRenderResult(
-	result: AgentToolResult<unknown>,
-	options: { expanded: boolean; isPartial: boolean },
-	theme: Theme,
-	isError: boolean,
-): string {
-	if (options.isPartial) {
-		return theme.fg("warning", "Running agent-browser...");
-	}
-
-	const outputText = getPrimaryTextContent(result);
-	const outputLines = colorizeToolOutputLines(outputText, theme, isError);
-	if (outputLines.length === 0) {
-		const details = isRecord(result.details) ? result.details : undefined;
-		const rawSummary = typeof details?.summary === "string" ? details.summary : isError ? "agent-browser failed" : "Done";
-		const sanitizedSummary = sanitizeDisplayText(rawSummary).trim();
-		const summary = sanitizedSummary.length > 0 ? sanitizedSummary : isError ? "agent-browser failed" : "Done";
-		return isError ? theme.fg("error", summary) : theme.fg("success", summary);
-	}
-
-	return `\n${outputLines.join("\n")}`;
-}
-
-function formatModelVisibleFailureCategoryNotice(details: unknown): string | undefined {
-	if (!isRecord(details) || details.resultCategory !== "failure") return undefined;
-	const failureCategory = typeof details.failureCategory === "string" && details.failureCategory.length > 0
-		? details.failureCategory
-		: undefined;
-	return `Result category: failure${failureCategory ? `; failureCategory: ${failureCategory}` : ""}; Pi tool isError: true.`;
-}
-
-type AgentBrowserToolContent = AgentToolResult<unknown>["content"];
-type AgentBrowserToolContentItem = AgentBrowserToolContent[number];
-
-type AgentBrowserToolResultPatch = {
-	content?: AgentBrowserToolContent;
-	isError?: boolean;
-};
 
 type OwnedManagedSession = {
 	branchOwned: boolean;
@@ -281,289 +142,6 @@ interface BranchManagedResourceEvents {
 	electronLaunchCleanupRanks: Map<string, number>;
 	managedSessionActiveRanks: Map<string, number>;
 	managedSessionCloseRanks: Map<string, number>;
-}
-
-function agentBrowserToolResultRequestedJson(event: ToolResultEvent): boolean {
-	const details = isRecord(event.details) ? event.details : undefined;
-	const detailArgs = Array.isArray(details?.args) ? details.args : undefined;
-	const inputArgs = isRecord(event.input) && Array.isArray(event.input.args) ? event.input.args : undefined;
-	return detailArgs?.includes("--json") === true || inputArgs?.includes("--json") === true;
-}
-
-function agentBrowserToolResultHasParseableJsonContent(content: AgentBrowserToolContent): boolean {
-	return content.some((item) => {
-		if (item.type !== "text" || typeof item.text !== "string") return false;
-		const text = item.text.trim();
-		if (text.length === 0) return false;
-		try {
-			JSON.parse(text);
-			return true;
-		} catch {
-			return false;
-		}
-	});
-}
-
-function appendModelVisibleFailureCategoryNotice(content: AgentBrowserToolContent, notice: string): AgentBrowserToolContent | undefined {
-	const noticeContent: AgentBrowserToolContentItem = { type: "text", text: notice };
-	const textIndex = content.findIndex((item) => item.type === "text" && typeof item.text === "string");
-	if (textIndex === -1) return [noticeContent, ...content];
-	const textItem = content[textIndex];
-	if (textItem.type !== "text" || typeof textItem.text !== "string" || textItem.text.includes(notice)) return undefined;
-	return content.map((item, index) => index === textIndex
-		? { ...item, text: `${textItem.text}\n\n${notice}` }
-		: item);
-}
-
-function buildAgentBrowserToolResultPatch(event: ToolResultEvent): AgentBrowserToolResultPatch | undefined {
-	if (event.toolName !== "agent_browser") return undefined;
-	const preservesParseableJson = agentBrowserToolResultRequestedJson(event) && agentBrowserToolResultHasParseableJsonContent(event.content);
-	const notice = preservesParseableJson ? undefined : formatModelVisibleFailureCategoryNotice(event.details);
-	const content = notice ? appendModelVisibleFailureCategoryNotice(event.content, notice) : undefined;
-	const shouldMarkError = isRecord(event.details) && event.details.resultCategory === "failure" && event.isError !== true;
-	if (!shouldMarkError && !content) return undefined;
-	return {
-		...(content ? { content } : {}),
-		...(shouldMarkError ? { isError: true } : {}),
-	};
-}
-
-class AgentBrowserResultComponent {
-	private expanded = false;
-	private theme: Theme | undefined;
-	private readonly text = new Text("", 0, 0);
-
-	setState(value: string, expanded: boolean, theme: Theme): void {
-		this.text.setText(value);
-		this.expanded = expanded;
-		this.theme = theme;
-	}
-
-	render(width: number): string[] {
-		const lines = this.text.render(width);
-		if (this.expanded || lines.length <= TUI_COLLAPSED_OUTPUT_MAX_LINES) {
-			return lines;
-		}
-		const theme = this.theme;
-		if (!theme) {
-			return lines.slice(0, TUI_COLLAPSED_OUTPUT_MAX_LINES);
-		}
-		const hiddenLineCount = lines.length - TUI_COLLAPSED_OUTPUT_MAX_LINES;
-		return [
-			...lines.slice(0, TUI_COLLAPSED_OUTPUT_MAX_LINES),
-			formatVisualTruncationNotice(hiddenLineCount, lines.length, theme),
-		];
-	}
-
-	invalidate(): void {
-		this.text.invalidate();
-	}
-}
-
-
-const DIRECT_AGENT_BROWSER_EXECUTABLE_PATTERN = /^(?:[.~]|\.\.?|\/)?(?:[^\s;&|]+\/)?agent-browser$/;
-const HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN = /^\s*(?:command\s+-v|which|type\s+-P)\s+agent-browser\s*$/;
-
-type ShellQuoteState = 'double' | 'single' | undefined;
-
-function isShellAssignmentToken(token: string): boolean {
-	return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
-}
-
-function stripOuterQuotes(token: string): string {
-	if (token.length >= 2 && ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'")))) {
-		return token.slice(1, -1);
-	}
-	return token;
-}
-
-function segmentLaunchesAgentBrowser(tokens: string[]): boolean {
-	let index = 0;
-	while (index < tokens.length && isShellAssignmentToken(tokens[index])) {
-		index += 1;
-	}
-	if (index >= tokens.length) {
-		return false;
-	}
-
-	let executableToken = tokens[index];
-	if (executableToken === 'env') {
-		index += 1;
-		while (index < tokens.length && isShellAssignmentToken(tokens[index])) {
-			index += 1;
-		}
-		executableToken = tokens[index] ?? '';
-	}
-	if (executableToken === 'npx' || executableToken === 'bunx') {
-		index += 1;
-		while (index < tokens.length && tokens[index].startsWith('-')) {
-			index += 1;
-		}
-		executableToken = tokens[index] ?? '';
-	}
-	if (executableToken === 'pnpm' || executableToken === 'yarn') {
-		index += 1;
-		if (tokens[index] !== 'dlx') {
-			return false;
-		}
-		index += 1;
-		while (index < tokens.length && tokens[index].startsWith('-')) {
-			index += 1;
-		}
-		executableToken = tokens[index] ?? '';
-	}
-	return DIRECT_AGENT_BROWSER_EXECUTABLE_PATTERN.test(executableToken);
-}
-
-// Best-effort detection for common direct launches only. This is an ergonomics guard,
-// not a general-purpose bash parser or security boundary.
-function looksLikeDirectAgentBrowserBash(command: string): boolean {
-	let currentToken = '';
-	let quoteState: ShellQuoteState;
-	let awaitingHeredocDelimiter: { stripTabs: boolean } | undefined;
-	let pendingHeredoc: { delimiter: string; stripTabs: boolean } | undefined;
-	let pendingHeredocLine = '';
-	let segmentTokens: string[] = [];
-
-	const acceptToken = (token: string) => {
-		if (token.length === 0) {
-			return;
-		}
-		if (awaitingHeredocDelimiter) {
-			pendingHeredoc = {
-				delimiter: stripOuterQuotes(token),
-				stripTabs: awaitingHeredocDelimiter.stripTabs,
-			};
-			awaitingHeredocDelimiter = undefined;
-			return;
-		}
-		segmentTokens.push(token);
-	};
-	const flushToken = () => {
-		acceptToken(currentToken);
-		currentToken = '';
-	};
-	const flushSegment = () => {
-		const launchesAgentBrowser = segmentLaunchesAgentBrowser(segmentTokens);
-		segmentTokens = [];
-		return launchesAgentBrowser;
-	};
-
-	for (let index = 0; index < command.length; index += 1) {
-		const char = command[index];
-		if (pendingHeredoc) {
-			if (char === '\n') {
-				const candidate = pendingHeredoc.stripTabs ? pendingHeredocLine.replace(/^\t+/, '') : pendingHeredocLine;
-				if (candidate === pendingHeredoc.delimiter) {
-					pendingHeredoc = undefined;
-				}
-				pendingHeredocLine = '';
-				continue;
-			}
-			pendingHeredocLine += char;
-			continue;
-		}
-
-		if (quoteState === 'single') {
-			currentToken += char;
-			if (char === "'") {
-				quoteState = undefined;
-			}
-			continue;
-		}
-		if (quoteState === 'double') {
-			currentToken += char;
-			if (char === '\\' && index + 1 < command.length) {
-				currentToken += command[index + 1];
-				index += 1;
-				continue;
-			}
-			if (char === '"') {
-				quoteState = undefined;
-			}
-			continue;
-		}
-		if (char === "'" || char === '"') {
-			currentToken += char;
-			quoteState = char === "'" ? 'single' : 'double';
-			continue;
-		}
-		if (char === '\\' && index + 1 < command.length) {
-			currentToken += char;
-			currentToken += command[index + 1];
-			index += 1;
-			continue;
-		}
-		if (char === '\n') {
-			flushToken();
-			if (flushSegment()) {
-				return true;
-			}
-			continue;
-		}
-		if (/\s/.test(char)) {
-			flushToken();
-			continue;
-		}
-		const threeCharOperator = command.slice(index, index + 3);
-		if (threeCharOperator === '<<-') {
-			flushToken();
-			awaitingHeredocDelimiter = { stripTabs: true };
-			index += 2;
-			continue;
-		}
-		const twoCharOperator = command.slice(index, index + 2);
-		if (twoCharOperator === '<<') {
-			flushToken();
-			awaitingHeredocDelimiter = { stripTabs: false };
-			index += 1;
-			continue;
-		}
-		if (twoCharOperator === '&&' || twoCharOperator === '||') {
-			flushToken();
-			if (flushSegment()) {
-				return true;
-			}
-			index += 1;
-			continue;
-		}
-		if (char === '|' || char === ';' || char === '&') {
-			flushToken();
-			if (flushSegment()) {
-				return true;
-			}
-			continue;
-		}
-		currentToken += char;
-	}
-
-	flushToken();
-	return flushSegment();
-}
-
-function isHarmlessAgentBrowserInspectionCommand(command: string): boolean {
-	return HARMLESS_AGENT_BROWSER_INSPECTION_PATTERN.test(command);
-}
-
-function isTruthyEnvValue(value: string | undefined): boolean {
-	return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
-}
-
-async function isPackageDevelopmentCwd(cwd: string): Promise<boolean> {
-	try {
-		const packageJson = JSON.parse(await readFile(join(cwd, "package.json"), "utf8")) as { name?: unknown };
-		return packageJson.name === PACKAGE_NAME;
-	} catch {
-		return false;
-	}
-}
-
-async function isDirectAgentBrowserBashAllowed(cwd: string): Promise<boolean> {
-	return isTruthyEnvValue(process.env[DIRECT_AGENT_BROWSER_BASH_BYPASS_ENV]) || await isPackageDevelopmentCwd(cwd);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 function getBatchPreflightValidationError(args: string[], stdin: string | undefined): string | undefined {

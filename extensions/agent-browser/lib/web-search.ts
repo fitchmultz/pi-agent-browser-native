@@ -653,7 +653,7 @@ export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigS
 		promptSnippet: "Search the live web with Exa or Brave for current or external information.",
 		promptGuidelines: [
 			"Use agent_browser_web_search when live web search would help answer the task, find current external information, or discover candidate URLs for agent_browser.",
-			"The tool chooses Exa or Brave from configured keys; when both are available, Exa is preferred by default unless webSearch.preferredProvider says otherwise. Use provider only when the user/config calls for a specific provider.",
+			"agent_browser_web_search chooses Exa or Brave from configured keys; when both are available, Exa is preferred by default unless webSearch.preferredProvider says otherwise. Use provider only when the user/config calls for a specific provider.",
 			"Prefer agent_browser_web_search over opening a search engine results page with agent_browser when a quick result list is enough; use agent_browser for interaction, DOM, screenshots, or auth.",
 			"Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect the results, then only run a focused follow-up if needed. If the provider returns HTTP 429, stop searching and tell the user the API plan/rate limit needs time or a plan change.",
 			"After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",

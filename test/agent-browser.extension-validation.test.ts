@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { Theme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
 import {
@@ -65,6 +66,20 @@ import {
 	writeFakeMacElectronApp,
 } from "./helpers/extension-validation-fixtures.js";
 
+test("agentBrowserExtension names its tools in every prompt guideline", () => {
+	const harness = createExtensionHarness({ cwd: process.cwd(), prompt: "Inspect a page." });
+	assert.ok(harness.tool.promptGuidelines.length > 0);
+	for (const guideline of harness.tool.promptGuidelines) {
+		assert.match(guideline, /agent_browser/, guideline);
+	}
+	const webSearchTool = harness.getTool("agent_browser_web_search");
+	if (webSearchTool) {
+		for (const guideline of webSearchTool.promptGuidelines) {
+			assert.match(guideline, /agent_browser_web_search/, guideline);
+		}
+	}
+});
+
 test("agentBrowserExtension keeps concise browser guidance plus installed doc pointers in tool metadata", async () => {
 	const isolatedHome = await mkdtemp(join(tmpdir(), "pi-agent-browser-guidance-test-"));
 	await withPatchedEnv({ BRAVE_API_KEY: "demo-key", EXA_API_KEY: undefined, HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
@@ -97,8 +112,8 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 				`missing concise runtime guideline: ${guideline}`,
 			);
 		}
-		assert.match(guidelineText, /Use exactly one input mode/);
-		assert.match(guidelineText, /Common flow: open, snapshot -i/);
+		assert.match(guidelineText, /Use agent_browser with exactly one input mode/);
+		assert.match(guidelineText, /For agent_browser, the common flow is open, snapshot -i/);
 		assert.match(guidelineText, /Respect explicit stop boundaries/);
 		assert.match(guidelineText, /stop before order\/post\/purchase\/submit/);
 		assert.equal(
@@ -113,7 +128,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.match(harness.tool.description, /Input choice:/);
 		assert.match(guidelineText, /record stop needs ffmpeg/);
 		assert.match(guidelineText, /For dashboards, verify scroll/);
-		assert.match(guidelineText, /When details\.nextActions is present/);
+		assert.match(guidelineText, /When agent_browser details\.nextActions is present/);
 		assert.equal(harness.tool.promptGuidelines.includes(SHARED_BROWSER_PLAYBOOK_GUIDELINES[12]), false);
 		assert.equal(harness.tool.promptGuidelines.includes(QUICK_START_GUIDELINES[0]), false);
 		assert.equal(
@@ -122,7 +137,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		);
 		assert.ok(harness.tool.promptGuidelines.length <= 12, "promptGuidelines should stay bounded");
 		assert.ok(
-			guidelineText.length < 2_800,
+			guidelineText.length < 3_100,
 			"promptGuidelines should point to docs instead of carrying the full command reference/playbook",
 		);
 		assert.equal(
@@ -628,7 +643,11 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 		PLAIN_RENDER_THEME,
 		createRenderContext({ args: params }),
 	);
-	const collapsedText = collapsedComponent.render(80).join("\n");
+	const collapsedLines = collapsedComponent.render(80);
+	const collapsedText = collapsedLines.join("\n");
+	assert.ok(collapsedLines.every((line) => visibleWidth(line) <= 80), "collapsed render lines must fit width");
+	const narrowCollapsedLines = collapsedComponent.render(24);
+	assert.ok(narrowCollapsedLines.every((line) => visibleWidth(line) <= 24), "narrow collapsed render lines must fit width");
 	assert.match(collapsedText, /\.\.\. \(\d+ more lines, \d+ total,/);
 	assert.doesNotMatch(collapsedText, /item-24/);
 	assert.match(longText, /item-24/, "renderer must not mutate model-facing content");

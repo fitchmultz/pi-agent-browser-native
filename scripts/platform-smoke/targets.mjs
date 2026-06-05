@@ -15,6 +15,7 @@ import {
 	writeManifest,
 	writeSummary,
 } from "./artifacts.mjs";
+import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
 import { cleanupStaleTargetState, crabboxBin, describeTarget, runOnLease, stopLease, warmupLease } from "./crabbox-runner.mjs";
 
 export function platformFor(targetName) {
@@ -300,7 +301,7 @@ export function buildPlatformBuildCommand(targetName, packageName = "pi-agent-br
 	return lines.join("\n");
 }
 
-export function buildBrowserDogfoodCommand(targetName, agentBrowserVersion = "0.27.1") {
+export function buildBrowserDogfoodCommand(targetName, agentBrowserVersion = CAPABILITY_BASELINE.targetVersion) {
 	if (platformFor(targetName) === "powershell") {
 		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\browser-dogfood-windows.ps1 -AgentBrowserVersion ${psSingleQuote(agentBrowserVersion)}`;
 	}

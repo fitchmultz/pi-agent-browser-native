@@ -57,7 +57,7 @@ test("platform smoke config and package scripts require macOS, Ubuntu, and nativ
 	assert.match(packageJson.scripts?.["check:platform-smoke"] ?? "", /node --check scripts\/platform-smoke\.mjs/);
 	assert.match(packageJson.scripts?.["check:platform-smoke"] ?? "", /test\/platform-smoke\.test\.ts/);
 	assert.equal(packageJson.scripts?.["smoke:platform:doctor"], "node scripts/platform-smoke.mjs doctor");
-	assert.match(packageJson.scripts?.["smoke:platform:ubuntu-image"] ?? "", /docker build/);
+	assert.match(packageJson.scripts?.["smoke:platform:ubuntu-image"] ?? "", /build-ubuntu-image\.mjs/);
 	assert.match(packageJson.scripts?.["smoke:platform:all"] ?? "", /smoke:platform:doctor/);
 	assert.match(packageJson.scripts?.["smoke:platform:all"] ?? "", /macos,ubuntu,windows-native/);
 	assert.match(packageJson.scripts?.["smoke:platform:windows-native"] ?? "", /windows-native/);
@@ -80,7 +80,7 @@ console.log(JSON.stringify(result));
 if (result.packageName !== "pi-agent-browser-native") process.exit(1);
 if (result.crabboxMinVersion !== "0.26.0") process.exit(1);
 if (result.nodeValidationMajor !== 22) process.exit(1);
-if (!result.ubuntuContainerImage.includes("agent-browser0.27.1")) process.exit(1);
+if (!result.ubuntuContainerImage.includes("agent-browser" + result.agentBrowserVersion)) process.exit(1);
 if (result.windowsSourceVm !== "pi-extension-windows-template" || result.windowsSnapshot !== "crabbox-ready") process.exit(1);
 if (!/^\d+\.\d+\.\d+$/.test(result.agentBrowserVersion)) process.exit(1);
 if (result.suites.join(",") !== "platform-build,browser-dogfood-smoke") process.exit(1);
@@ -93,6 +93,7 @@ if (result.supportedTargets.join(",") !== "macos,ubuntu,windows-native") process
 
 test("platform command rendering uses POSIX and PowerShell without source-extension shortcuts", () => {
 	const code = String.raw`
+import { CAPABILITY_BASELINE } from "./scripts/agent-browser-capability-baseline.mjs";
 import { buildBrowserDogfoodCommand, buildPlatformBuildCommand, platformFor } from "./scripts/platform-smoke/targets.mjs";
 const posix = buildPlatformBuildCommand("ubuntu", "pi-agent-browser-native", 22);
 const macos = buildPlatformBuildCommand("macos", "pi-agent-browser-native", 22);
@@ -112,9 +113,9 @@ const result = {
   powershellHasPackage: powershell.includes("pi-agent-browser-native"),
   powershellNoExtensionShortcut: !/\bpi\s+(?:-e|--extension)\s+\./.test(powershell),
   dogfoodRunsScript: dogfoodPosix.includes("verify-agent-browser-dogfood.ts"),
-  dogfoodChecksBaseline: dogfoodPosix.includes("EXPECTED_AGENT_BROWSER_VERSION='agent-browser 0.27.1'") && dogfoodPosix.includes("PLATFORM_AGENT_BROWSER_READY_EXIT"),
+  dogfoodChecksBaseline: dogfoodPosix.includes("EXPECTED_AGENT_BROWSER_VERSION='agent-browser " + CAPABILITY_BASELINE.targetVersion + "'") && dogfoodPosix.includes("PLATFORM_AGENT_BROWSER_READY_EXIT"),
   dogfoodKeepsArtifacts: dogfoodPosix.includes("--artifact-dir"),
-  dogfoodWindowsUsesScript: dogfoodWindows.includes("browser-dogfood-windows.ps1") && dogfoodWindows.includes("-AgentBrowserVersion '0.27.1'"),
+  dogfoodWindowsUsesScript: dogfoodWindows.includes("browser-dogfood-windows.ps1") && dogfoodWindows.includes("-AgentBrowserVersion '" + CAPABILITY_BASELINE.targetVersion + "'"),
   dogfoodWindowsDoesNotBootstrap: !dogfoodWindows.includes("npm install -g") && !dogfoodWindows.includes("agent-browser install"),
 };
 console.log(JSON.stringify(result));

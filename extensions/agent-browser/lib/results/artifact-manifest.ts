@@ -6,6 +6,7 @@
  * Invariants/Assumptions: Explicit-path artifacts are host-owned while persistent-session spill files are bounded by the manifest cap.
  */
 
+import { isRecord } from "../parsing.js";
 import type { SessionArtifactManifest, SessionArtifactManifestEntry } from "./contracts.js";
 
 export const SESSION_ARTIFACT_MANIFEST_VERSION = 1;
@@ -21,10 +22,6 @@ function parsePositiveSafeInteger(value: string | undefined): number | undefined
 
 export function getSessionArtifactManifestMaxEntries(env: NodeJS.ProcessEnv = process.env): number {
 	return parsePositiveSafeInteger(env[SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES_ENV]) ?? DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 function isManifestEntry(value: unknown): value is SessionArtifactManifestEntry {

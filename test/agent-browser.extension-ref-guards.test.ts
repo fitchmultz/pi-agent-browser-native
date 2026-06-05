@@ -9,13 +9,14 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
+import { directoryExists } from "../extensions/agent-browser/lib/fs-utils.js";
 import { createImplicitSessionName } from "../extensions/agent-browser/lib/runtime.js";
+import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
 
 import {
 	TEST_SESSION_ID,
@@ -40,10 +41,6 @@ function pidIsAlive(pid: number | undefined): boolean {
 	} catch {
 		return false;
 	}
-}
-
-async function directoryExists(path: string): Promise<boolean> {
-	return (await stat(path).catch(() => undefined))?.isDirectory() === true;
 }
 
 function spawnElectronFixtureProcess(userDataDir: string): ChildProcess {

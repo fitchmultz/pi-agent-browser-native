@@ -1,7 +1,8 @@
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, extname, isAbsolute, resolve } from "node:path";
 
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
+import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
 import { SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS } from "../../process.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
@@ -189,15 +190,6 @@ export async function prepareAgentBrowserArgs(args: string[], stdin: string | un
 		args: [...args.slice(0, commandStartIndex), ...normalized.tokens],
 		screenshotPathRequest: normalized.request,
 	};
-}
-
-async function pathExists(path: string): Promise<boolean> {
-	try {
-		await stat(path);
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 async function repairScreenshotData(options: {

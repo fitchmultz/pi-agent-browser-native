@@ -7,11 +7,12 @@
  */
 
 import { execFile, type ChildProcess } from "node:child_process";
-import { access, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { fetchCdpJson, parseCdpTargets, parseCdpVersion } from "./cdp.js";
 import { ELECTRON_PROFILE_DIR_PREFIX, type ElectronCdpTarget, type ElectronCdpVersion, type ElectronLaunchRecord } from "./launch.js";
+import { pathExists } from "../fs-utils.js";
 import { getSecureTempChildDirectoryValidationError } from "../temp.js";
 
 const ELECTRON_CLEANUP_DEFAULT_TIMEOUT_MS = 5_000;
@@ -58,15 +59,6 @@ function isPidAlive(pid: number | undefined): boolean | undefined {
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		return code === "EPERM" ? true : false;
-	}
-}
-
-async function pathExists(path: string): Promise<boolean> {
-	try {
-		await access(path);
-		return true;
-	} catch {
-		return false;
 	}
 }
 

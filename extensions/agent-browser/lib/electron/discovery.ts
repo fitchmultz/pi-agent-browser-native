@@ -11,6 +11,8 @@ import { access, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
+import { pathExists } from "../fs-utils.js";
+
 export const ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS = 50;
 export const ELECTRON_DISCOVERY_MAX_RESULTS = 200;
 
@@ -148,15 +150,6 @@ function resolveLocations(locations: ElectronDiscoveryScanLocations | undefined)
 		snapBinDirectory: locations?.snapBinDirectory ?? "/snap/bin",
 		snapMountDirectory: locations?.snapMountDirectory ?? "/snap",
 	};
-}
-
-async function pathExists(path: string): Promise<boolean> {
-	try {
-		await access(path, fsConstants.F_OK);
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 async function isDirectory(path: string): Promise<boolean> {

@@ -80,7 +80,7 @@ Modes:
   lifecycle           Run the tmux-driven configured-source lifecycle harness.
   platform-target     Fast platform-local gate used inside Crabbox smoke targets.
   platform-smoke      Run the Crabbox macOS/Ubuntu/native-Windows platform smoke harness.
-  release             Run default verification, package-pi, and release-blocking platform smoke.
+  release             Run default verification, lifecycle, package-pi, and release-blocking platform smoke.
 
 Options:
   --artifact-dir <p>  With dogfood mode, write screenshots to this directory.
@@ -108,8 +108,8 @@ Examples:
   npm run verify -- release
 
 Publisher note:
-  package.json prepublishOnly runs release (default + package-pi + platform smoke), then npm pack --dry-run during npm publish.
-  It does not run lifecycle, real-upstream, dogfood, or benchmark; see docs/RELEASE.md#pre-release-checks.
+  package.json prepublishOnly runs release (default + lifecycle + package-pi + platform smoke), then npm pack --dry-run during npm publish.
+  It does not run real-upstream, dogfood, or benchmark; see docs/RELEASE.md#pre-release-checks.
 
 Exit codes:
   0  Verification passed or help was shown.
@@ -336,6 +336,7 @@ export function verifySteps(options) {
 		case "release":
 			return [
 				...verifySteps({ mode: "default", passthrough: [], showHelp: false }),
+				...verifySteps({ mode: "lifecycle", passthrough: [], showHelp: false }),
 				...verifySteps({ mode: "package-pi", passthrough: [], showHelp: false }),
 				scriptStep(["./scripts/platform-smoke.mjs", "doctor"]),
 				scriptStep(["./scripts/platform-smoke.mjs", "run", "--target", "macos,ubuntu,windows-native"]),

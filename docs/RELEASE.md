@@ -35,12 +35,13 @@ npm run verify -- release
 `npm run verify -- release` runs:
 
 1. `npm run verify` for generated playbook drift, TypeScript, unit/fake coverage, command-reference generated-block drift, and live command-reference verification against the targeted upstream on `PATH`
-2. `npm run verify -- package-pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
-3. `npm run smoke:platform:doctor` and the full Crabbox matrix from [`platform-smoke.md`](platform-smoke.md): macOS SSH, Ubuntu local-container, and native Windows Parallels targets running fast target-local `platform-build` plus `browser-dogfood-smoke`
+2. `npm run verify -- lifecycle`, which launches the configured-source lifecycle harness for `/reload`, exact `--session-id` relaunch, managed-session continuity, persisted spill reachability, and Pi failure-patch behavior
+3. `npm run verify -- package-pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
+4. `npm run smoke:platform:doctor` and the full Crabbox matrix from [`platform-smoke.md`](platform-smoke.md): macOS SSH, Ubuntu local-container, and native Windows Parallels targets running fast target-local `platform-build` plus `browser-dogfood-smoke`
 
-`npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`) plus the packaged Pi smoke in `package-pi` and the release-blocking Crabbox platform matrix. Using `npm publish --ignore-scripts` skips that contract intentionally.
+`npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`), the configured-source lifecycle harness, the packaged Pi smoke in `package-pi`, and the release-blocking Crabbox platform matrix. Using `npm publish --ignore-scripts` skips that contract intentionally.
 
-`prepublishOnly` intentionally does **not** run the standalone host-only `npm run verify -- lifecycle`, `npm run verify -- real-upstream`, `npm run verify -- dogfood`, or `npm run verify -- benchmark` modes; those remain separate `npm run verify` modes in [`scripts/project.mjs`](../scripts/project.mjs). The platform matrix includes its own fast target-local build/package gate and browser dogfood suite, and is automated through the `release` slice.
+`prepublishOnly` intentionally does **not** run the standalone host-only `npm run verify -- real-upstream`, `npm run verify -- dogfood`, or `npm run verify -- benchmark` modes; those remain separate `npm run verify` modes in [`scripts/project.mjs`](../scripts/project.mjs). The platform matrix includes its own fast target-local build/package gate and browser dogfood suite, and is automated through the `release` slice.
 
 For a deterministic host-only real-browser wrapper smoke without model choice in the loop, run:
 

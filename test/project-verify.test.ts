@@ -64,7 +64,7 @@ test("verify facade opt-in modes keep real-upstream, dogfood, package-pi, platfo
 	assert.deepEqual(labels(platformSmoke), ["./scripts/platform-smoke.mjs run --target macos --suite platform-build"]);
 });
 
-test("verify facade release gate composes default verification, packaged Pi smoke, and platform smoke", () => {
+test("verify facade release gate composes default verification, lifecycle, packaged Pi smoke, and platform smoke", () => {
 	const release = verifySteps({ mode: "release", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(release), [
 		"./scripts/check-playbook-drift.ts --check",
@@ -72,6 +72,7 @@ test("verify facade release gate composes default verification, packaged Pi smok
 		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
+		"./scripts/verify-lifecycle.mjs",
 		"./scripts/verify-package.mjs --smoke-pi",
 		"./scripts/platform-smoke.mjs doctor",
 		"./scripts/platform-smoke.mjs run --target macos,ubuntu,windows-native",

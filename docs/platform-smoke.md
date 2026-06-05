@@ -17,7 +17,7 @@ crabbox list --provider local-container
 crabbox list --provider parallels
 ```
 
-`smoke:platform:all` also runs `smoke:platform:doctor` before any target suite starts, so the explicit doctor step is a readable release checklist step rather than a hidden precondition. The canonical `npm run verify -- release` gate also runs the same platform doctor and full `macos,ubuntu,windows-native` matrix after default verification and packaged Pi smoke, so `npm publish` cannot pass `prepublishOnly` without the platform gate. After the matrix, inspect `.artifacts/platform-smoke/<run-id>/...` summaries and manifests; a green Crabbox exit without matching suite assertions is not release proof. Use provider-specific `crabbox list` commands for cleanup review because this host may have unrelated Crabbox providers configured that require credentials.
+`smoke:platform:all` also runs `smoke:platform:doctor` before any target suite starts, so the explicit doctor step is a readable release checklist step rather than a hidden precondition. The canonical `npm run verify -- release` gate also runs the configured-source lifecycle harness, then the same platform doctor and full `macos,ubuntu,windows-native` matrix after default verification and packaged Pi smoke, so `npm publish` cannot pass `prepublishOnly` without lifecycle and platform gates. After the matrix, inspect `.artifacts/platform-smoke/<run-id>/...` summaries and manifests; a green Crabbox exit without matching suite assertions is not release proof. Use provider-specific `crabbox list` commands for cleanup review because this host may have unrelated Crabbox providers configured that require credentials.
 
 Per-target commands are for diagnosis:
 
@@ -58,7 +58,8 @@ PLATFORM_SMOKE_MAC_WORK_ROOT="/Users/$USER/crabbox/pi-agent-browser-native"
 PLATFORM_SMOKE_MAC_PORT=22
 
 # Default local image built by npm run smoke:platform:ubuntu-image.
-PLATFORM_SMOKE_UBUNTU_IMAGE="pi-agent-browser-native-platform:node24-agent-browser0.27.1"
+# The tag suffix is derived from scripts/agent-browser-capability-baseline.mjs.
+PLATFORM_SMOKE_UBUNTU_IMAGE="pi-agent-browser-native-platform:node24-agent-browser<baseline-version>"
 
 PLATFORM_SMOKE_WINDOWS_VM="pi-extension-windows-template"
 PLATFORM_SMOKE_WINDOWS_SNAPSHOT="crabbox-ready"
@@ -69,7 +70,7 @@ PLATFORM_SMOKE_WINDOWS_WORK_ROOT="C:\\crabbox\\pi-agent-browser-native"
 PLATFORM_SMOKE_AUTH_ENV=""
 ```
 
-The Ubuntu target image is derived from `node:24-bookworm`, installs `agent-browser@0.27.1`, installs Debian Chromium through apt, creates a non-root `circleci` user, and sets `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium`. Rebuild it after upstream rebaselining, or override `PLATFORM_SMOKE_UBUNTU_IMAGE` with an equivalent prepared local image. Do not install `agent-browser` ad hoc inside the Ubuntu smoke command; a missing tool is image/template drift.
+The Ubuntu target image is derived from `node:24-bookworm`, installs the `agent-browser` version from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs), installs Debian Chromium through apt, creates a non-root `circleci` user, and sets `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium`. Rebuild it after upstream rebaselining, or override `PLATFORM_SMOKE_UBUNTU_IMAGE` with an equivalent prepared local image. Do not install `agent-browser` ad hoc inside the Ubuntu smoke command; a missing tool is image/template drift.
 
 The configured upstream `agent-browser` baseline is imported from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs). Target-local browser suites verify that exact `agent-browser` version before running. Bake the exact upstream CLI and browser runtime into the Windows template/snapshot for speed and reproducibility; missing or stale Windows `agent-browser` / browser readiness is a blocked setup, not something the smoke command repairs. The Windows browser suite checks the preinstalled browser cache and prewarms one short local file URL before the extension harness runs.
 

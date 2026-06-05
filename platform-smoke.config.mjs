@@ -3,6 +3,9 @@
 
 import { CAPABILITY_BASELINE } from "./scripts/agent-browser-capability-baseline.mjs";
 
+export const PLATFORM_SMOKE_AGENT_BROWSER_VERSION = CAPABILITY_BASELINE.targetVersion;
+export const PLATFORM_SMOKE_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${PLATFORM_SMOKE_AGENT_BROWSER_VERSION}`;
+
 export default {
 	packageName: "pi-agent-browser-native",
 	artifactRoot: ".artifacts/platform-smoke",
@@ -17,11 +20,11 @@ export default {
 		host: "localhost",
 		port: 22,
 	},
-	ubuntuContainerImage: "pi-agent-browser-native-platform:node24-agent-browser0.27.1",
+	ubuntuContainerImage: PLATFORM_SMOKE_UBUNTU_IMAGE,
 	windowsParallels: {
 		sourceVm: "pi-extension-windows-template",
 		snapshot: "crabbox-ready",
 	},
 	nodeValidationMajor: 22,
-	agentBrowserVersion: CAPABILITY_BASELINE.targetVersion,
+	agentBrowserVersion: PLATFORM_SMOKE_AGENT_BROWSER_VERSION,
 };
