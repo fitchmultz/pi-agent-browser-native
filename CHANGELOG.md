@@ -4,6 +4,32 @@
 
 No changes yet.
 
+## 0.2.45 - 2026-06-06
+
+### Added
+
+- Added top-level `outputPath` for successful browser CLI results so extraction, snapshot, and diagnostic payloads can be saved as durable local files without scraping transcript text. Explicit upstream `--json` output remains parseable, and failed upstream results do not write output files.
+- Added direct selector/ref support to `semanticAction` for `click`, `check`, and `fill`, including optional named-session targeting.
+- Added constrained `job` `type` steps with optional human-paced `delayMs` and final `press`, capped for delayed typing and compacted in model-visible batch prose.
+- Added timeout partial-progress diagnostics with generated-step labels, declared artifact state, live-vs-planned page evidence, safe retry actions for read-only/idempotent steps, and fresh-session retry handling when no live page was recovered.
+
+### Changed
+
+- Increased the default wrapper child-process watchdog to 35 seconds while keeping upstream IPC operation waits clamped below the 30-second upstream read timeout.
+- Improved `record start` / `record restart` lifecycle presentation: future WebM outputs are pending/open until `record stop`, `record restart` can show the previous recording saved by the restart, and ffmpeg warnings cover both start-like commands.
+- Tightened dialog timeout precedence so explicit top-level `timeoutMs` overrides dialog-specific watchdog defaults.
+- Updated README, command reference, tool contract, architecture, requirements, support matrix, and generated playbook guidance for timeout recovery, artifact lifecycle, output files, direct semantic selectors, and paced job typing.
+
+### Fixed
+
+- Avoided executable timeout retry actions for mutating steps that may already have clicked, filled, typed, selected, or submitted state before the watchdog fired.
+- Kept `outputPath` write failures aligned with the result-category contract by removing stale success-only category fields when the wrapper-side write fails.
+- Rejected unsupported fields on `job` `type` steps instead of silently accepting irrelevant step fields.
+
+### Validation
+
+- Ran full release verification for this change set before publish, including docs drift checks, TypeScript, unit/fake suite, command-reference verification, dogfood smoke, and release/package validation gates.
+
 ## 0.2.44 - 2026-06-04
 
 ### Changed
