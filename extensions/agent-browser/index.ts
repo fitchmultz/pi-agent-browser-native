@@ -92,6 +92,7 @@ import {
 	type ElectronLaunchRecord,
 } from "./lib/orchestration/electron-host/index.js";
 import { buildValidationFailureResult, resolveAgentBrowserInput } from "./lib/orchestration/input-plan.js";
+import { applyAgentBrowserOutputPath } from "./lib/orchestration/output-file.js";
 import type { NetworkRouteRecord } from "./lib/results/contracts.js";
 import type { SessionArtifactManifest } from "./lib/results/contracts.js";
 import {
@@ -790,6 +791,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
+			const outputPath = isRecord(params) && typeof params.outputPath === "string" ? params.outputPath : undefined;
 			const resolvedInput = resolveAgentBrowserInput({
 				getBatchPreflightValidationError,
 				managedSessionActive,
@@ -852,7 +854,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				? await managedSessionExecutionQueue.run(runElectronHostInput)
 				: await runElectronHostInput();
 			if (electronHostResult) {
-				return electronHostResult;
+				return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result: electronHostResult });
 			}
 
 			const explicitSessionName = extractExplicitSessionName(toolArgs);
@@ -917,7 +919,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					});
 					if (serializeBrowserCommand) branchStateGeneration += 1;
 				}
-				return result;
+				return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, preserveTextContent: Array.isArray(params.args) && params.args.includes("--json"), result });
 			};
 
 			return serializeBrowserCommand

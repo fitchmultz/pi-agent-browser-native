@@ -117,6 +117,89 @@ function redactExactValues(value: unknown, sensitiveValues: string[]): unknown {
 	return redactSensitiveValue(Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [key, redactExactValues(entryValue, sensitiveValues)])));
 }
 
+function getTypedTextLength(command: string[] | undefined): number | undefined {
+	return command?.[0] === "keyboard" && command[1] === "type" && typeof command[2] === "string"
+		? Array.from(command[2]).length
+		: undefined;
+}
+
+function getWaitDelayMs(command: string[] | undefined): string | undefined {
+	return command?.[0] === "wait" && typeof command[1] === "string" && /^\d+$/.test(command[1]) ? command[1] : undefined;
+}
+
+function formatBatchStepDetails(details: BatchStepPresentationDetails, presentation: ToolPresentation): string {
+	const inlineImageCount = getPresentationImages(presentation).length;
+	const status = details.success ? "succeeded" : "failed";
+	const lines = [`Step ${details.index + 1} — ${details.commandText} (${status})`];
+	if (details.text.length > 0) lines.push(details.text);
+	if (inlineImageCount > 0) lines.push(`(${inlineImageCount} inline image attachment${inlineImageCount === 1 ? "" : "s"} below)`);
+	return lines.join("\n");
+}
+
+function formatTypedSequenceSummary(steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }>, startIndex: number): { nextIndex: number; text: string } | undefined {
+	let index = startIndex;
+	const firstDetails = steps[index]?.details;
+	if (!firstDetails?.success) return undefined;
+	let target: string | undefined;
+	if (firstDetails.command?.[0] === "focus" && typeof firstDetails.command[1] === "string") {
+		target = firstDetails.command[1];
+		index += 1;
+	}
+	let typedCharCount = 0;
+	let typedStepCount = 0;
+	let delayMs: string | undefined;
+	while (index < steps.length) {
+		const details = steps[index]?.details;
+		if (!details?.success) break;
+		const typedLength = getTypedTextLength(details.command);
+		if (typedLength === undefined) break;
+		typedCharCount += typedLength;
+		typedStepCount += 1;
+		index += 1;
+		const nextDelay = getWaitDelayMs(steps[index]?.details.command);
+		const followingTypedLength = getTypedTextLength(steps[index + 1]?.details.command);
+		if (nextDelay !== undefined && followingTypedLength !== undefined && steps[index]?.details.success && steps[index + 1]?.details.success) {
+			if (delayMs !== undefined && delayMs !== nextDelay) return undefined;
+			delayMs = nextDelay;
+			index += 1;
+		}
+	}
+	if (typedStepCount < 2) return undefined;
+	let pressedKey: string | undefined;
+	const pressDetails = steps[index]?.details;
+	if (pressDetails?.success && pressDetails.command?.[0] === "press" && typeof pressDetails.command[1] === "string") {
+		pressedKey = pressDetails.command[1];
+		index += 1;
+	}
+	const firstStep = firstDetails.index + 1;
+	const lastStep = steps[index - 1]?.details.index + 1;
+	const stepRange = lastStep && lastStep > firstStep ? `${firstStep}-${lastStep}` : String(firstStep);
+	const commandLabel = target ? `type ${target}` : "keyboard type";
+	const lines = [
+		`Step ${stepRange} — ${commandLabel} (succeeded)`,
+		`Typed ${typedCharCount} char${typedCharCount === 1 ? "" : "s"}${delayMs ? ` with delayMs=${delayMs}` : ""}.`,
+	];
+	if (pressedKey) lines.push(`Pressed ${pressedKey}.`);
+	return { nextIndex: index, text: lines.join("\n") };
+}
+
+function formatBatchStepsText(steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }>): string {
+	if (steps.length === 0) return "(no batch steps)";
+	const lines: string[] = [];
+	for (let index = 0; index < steps.length;) {
+		const typedSequence = formatTypedSequenceSummary(steps, index);
+		if (typedSequence) {
+			lines.push(typedSequence.text);
+			index = typedSequence.nextIndex;
+			continue;
+		}
+		const step = steps[index];
+		if (step) lines.push(formatBatchStepDetails(step.details, step.presentation));
+		index += 1;
+	}
+	return lines.join("\n\n");
+}
+
 async function buildBatchStepPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
 	artifactRequest?: ArtifactRequestContext;
@@ -307,18 +390,7 @@ export async function buildBatchPresentation(options: {
 			? { command: details.command, result: details.data, success: true }
 			: { command: details.command, error: details.text, success: false }
 	));
-	const stepText = steps.length === 0
-		? "(no batch steps)"
-		: steps
-			.map(({ details, presentation }) => {
-				const inlineImageCount = getPresentationImages(presentation).length;
-				const status = details.success ? "succeeded" : "failed";
-				const lines = [`Step ${details.index + 1} — ${details.commandText} (${status})`];
-				if (details.text.length > 0) lines.push(details.text);
-				if (inlineImageCount > 0) lines.push(`(${inlineImageCount} inline image attachment${inlineImageCount === 1 ? "" : "s"} below)`);
-				return lines.join("\n");
-			})
-			.join("\n\n");
+	const stepText = formatBatchStepsText(steps);
 	const batchSummary = batchFailure === undefined
 		? summary
 		: `Batch failed: ${batchFailure.successCount}/${batchFailure.totalCount} succeeded`;

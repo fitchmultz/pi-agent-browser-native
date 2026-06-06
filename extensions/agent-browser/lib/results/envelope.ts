@@ -125,9 +125,12 @@ function buildExitCodeFallback(options: { command?: string; effectiveArgs?: stri
 
 function buildWatchdogTimeoutMessage(options: { timeoutMs?: number }): string {
 	const timeoutText = options.timeoutMs === undefined ? "the wrapper watchdog" : `the ${options.timeoutMs}ms wrapper watchdog`;
+	const ipcTiming = options.timeoutMs !== undefined && options.timeoutMs <= 30_000
+		? "before the upstream CLI entered its 30s IPC retry path"
+		: "after waiting beyond the upstream CLI's 30s IPC retry window";
 	return [
-		`agent-browser exceeded ${timeoutText} and was stopped before the upstream CLI entered its 30s IPC retry path.`,
-		"Keep a single agent-browser command under 30 seconds; split long waits into shorter waits or retry with sessionMode: \"fresh\" if the session state looks stale.",
+		`agent-browser exceeded ${timeoutText} and was stopped ${ipcTiming}.`,
+		"Prefer a condition wait or split long work into shorter calls; for legitimately long opens or captures, pass agent_browser timeoutMs with a bounded higher value and inspect details.timeoutPartialProgress before retrying.",
 	].join(" ");
 }
 

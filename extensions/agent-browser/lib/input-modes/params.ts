@@ -15,6 +15,7 @@ import {
 	AGENT_BROWSER_ELECTRON_HANDOFFS,
 	AGENT_BROWSER_ELECTRON_TARGET_TYPES,
 	AGENT_BROWSER_JOB_STEP_ACTIONS,
+	AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS,
 	AGENT_BROWSER_QA_LOAD_STATES,
 	AGENT_BROWSER_SEMANTIC_ACTIONS,
 	AGENT_BROWSER_SEMANTIC_LOCATORS,
@@ -33,14 +34,14 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 	semanticAction: Type.Optional(
 		Type.Object({
 			action: StringEnum(AGENT_BROWSER_SEMANTIC_ACTIONS, {
-				description: "Intent action to compile to an existing agent-browser find command, or to upstream select when action=select.",
+				description: "Intent action to compile to an existing agent-browser find command, direct selector/ref command, or upstream select when action=select.",
 			}),
 			locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, {
 				description: "Upstream find locator family to use for check/click/fill actions.",
 			})),
 			value: Type.Optional(Type.String({ description: "Locator value for find actions, or a single option value for select actions. For locator=role, role may be supplied instead." })),
 			values: Type.Optional(Type.Array(Type.String({ description: "Option value for select actions." }), { description: "One or more option values for select actions.", minItems: 1 })),
-			selector: Type.Optional(Type.String({ description: "Selector or @ref for select actions; compiled to select <selector> <value...>." })),
+			selector: Type.Optional(Type.String({ description: "Selector or @ref for direct click/check/fill actions, or for select actions compiled to select <selector> <value...>." })),
 			text: Type.Optional(Type.String({ description: "Text/value argument for fill actions." })),
 			role: Type.Optional(Type.String({ description: "Role locator value for locator=role. May be used instead of value; when both are set they must match." })),
 			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
@@ -168,7 +169,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 					}),
 					url: Type.Optional(Type.String({ description: "URL for open steps, or URL pattern for assertUrl steps." })),
 					loadState: Type.Optional(StringEnum(AGENT_BROWSER_QA_LOAD_STATES, { description: "Optional readiness wait to insert immediately after an open step; use domcontentloaded/load/networkidle when the next job step needs page hydration evidence before clicking or reading." })),
-					selector: Type.Optional(Type.String({ description: "Selector or @ref for click/fill/select-like steps; omit when using semantic locator fields on click/fill steps." })),
+					selector: Type.Optional(Type.String({ description: "Selector or @ref for click/fill/type/select-like steps; omit when using semantic locator fields on click/fill steps." })),
 					locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Semantic locator for click/fill steps when selector is omitted." })),
 					role: Type.Optional(Type.String({ description: "Role locator value for click/fill steps when locator is role." })),
 					name: Type.Optional(Type.String({ description: "Accessible name filter for role locator click/fill steps." })),
@@ -176,6 +177,8 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 					value: Type.Optional(Type.String({ description: "Single option value for select steps, or locator value for semantic click/fill steps." })),
 					values: Type.Optional(Type.Array(Type.String({ description: "Option value for select steps." }), { description: "One or more option values for select steps.", minItems: 1 })),
 					path: Type.Optional(Type.String({ description: "Artifact/download path for waitForDownload or screenshot steps." })),
+					delayMs: Type.Optional(Type.Integer({ description: `Optional per-character delay for type steps; when set, the job compiles to focus/keyboard type/wait steps instead of instant fill-like typing, capped at ${AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS} characters.`, minimum: 1 })),
+					press: Type.Optional(Type.String({ description: "Optional key to press after a type step, for example Enter." })),
 					milliseconds: Type.Optional(Type.Number({ description: "Milliseconds for wait steps." })),
 				}, { additionalProperties: false }),
 				{ minItems: 1 },
@@ -183,6 +186,8 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 		}, { additionalProperties: false }),
 	),
 	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, auth save --password-stdin, and is generated internally by job, qa, sourceLookup, or networkSourceLookup mode. Do not use with electron mode." })),
+	outputPath: Type.Optional(Type.String({ description: "Optional workspace-relative or absolute file path that receives the model-facing command data/result after the browser command completes. Useful for eval/get/snapshot captures that should become durable local artifacts.", minLength: 1 })),
+	timeoutMs: Type.Optional(Type.Integer({ description: "Optional per-call wrapper subprocess watchdog in milliseconds for browser CLI args/job/qa/source lookup calls. Use for long opens or large output captures; fixed wait steps still must stay below the upstream IPC wait budget. Electron actions use electron.timeoutMs instead.", minimum: 1 })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:

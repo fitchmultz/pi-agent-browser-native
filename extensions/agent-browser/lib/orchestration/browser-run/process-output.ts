@@ -421,7 +421,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			: prepared.executionPlan.managedSessionName;
 		const policyBlockedFreshManagedSession = allowedDomainsViolation !== undefined && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName === prepared.executionPlan.sessionName;
 		const postLaunchBatchFailure = !succeeded && processSucceeded && parseSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && batchStartedManagedBrowser(presentationEnvelope?.data);
-		const postLaunchTimeoutWithPage = !succeeded && processResult.timedOut && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && timeoutPartialProgress?.currentPage?.url !== undefined;
+		const postLaunchTimeoutWithPage = !succeeded && processResult.timedOut && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && timeoutPartialProgress?.liveUrlRecovered === true;
 		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage;
 		const managedSessionState = resolveManagedSessionState({ command: prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, priorActive: priorManagedSessionActive, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
 		const replacedManagedSessionName = managedSessionState.replacedSessionName;

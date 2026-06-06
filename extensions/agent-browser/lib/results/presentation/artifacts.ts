@@ -13,7 +13,7 @@ import {
 	formatSessionArtifactRetentionSummary,
 	mergeSessionArtifactManifest,
 } from "../artifact-manifest.js";
-import { isPendingRecordingArtifact } from "../artifact-state.js";
+import { isPendingRecordingArtifact, isPendingRecordingCommand } from "../artifact-state.js";
 import { classifyAgentBrowserSuccessCategory } from "../categories.js";
 import type {
 	ArtifactVerificationEntry,
@@ -183,14 +183,17 @@ async function buildFileArtifactMetadata(options: {
 	const absolutePath = options.artifactRequest?.absolutePath ?? resolve(options.cwd, options.path);
 	const displayPath = options.artifactRequest?.path ?? options.path;
 	const extension = extname(absolutePath || options.path).toLowerCase() || undefined;
+	const pendingRecording = isPendingRecordingCommand(options.commandInfo.command, options.commandInfo.subcommand, kind);
 	let exists: boolean | undefined;
 	let sizeBytes: number | undefined;
-	try {
-		const fileStats = await stat(absolutePath);
-		exists = true;
-		sizeBytes = fileStats.size;
-	} catch {
-		exists = false;
+	if (!pendingRecording) {
+		try {
+			const fileStats = await stat(absolutePath);
+			exists = true;
+			sizeBytes = fileStats.size;
+		} catch {
+			exists = false;
+		}
 	}
 
 	return {
@@ -203,12 +206,14 @@ async function buildFileArtifactMetadata(options: {
 		kind,
 		mediaType: extension ? ARTIFACT_EXTENSION_TO_MEDIA_TYPE[extension] : undefined,
 		path: displayPath,
+		recordingState: pendingRecording ? "openRecording" : undefined,
 		requestedPath: options.artifactRequest?.path,
 		session: options.sessionName,
 		sizeBytes,
-		status: options.artifactRequest?.status ?? (exists === false ? "missing" : "saved"),
+		status: options.artifactRequest?.status ?? (pendingRecording ? "pending" : exists === false ? "missing" : "saved"),
 		subcommand: options.commandInfo.subcommand,
 		tempPath: options.artifactRequest?.tempPath,
+		willExistOnStop: pendingRecording ? true : undefined,
 	};
 }
 
@@ -257,12 +262,14 @@ function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactV
 			limitation: "Recording output is pending until record stop completes.",
 			mediaType: artifact.mediaType,
 			path: artifact.path,
+			recordingState: artifact.recordingState ?? "openRecording",
 			requestedPath: artifact.requestedPath,
 			retentionState: undefined,
 			sizeBytes: artifact.sizeBytes,
 			state: "pending",
-			status: artifact.status,
+			status: artifact.status ?? "pending",
 			storageScope: undefined,
+			willExistOnStop: artifact.willExistOnStop ?? true,
 		};
 	}
 	const state = artifact.exists === true
@@ -391,7 +398,8 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 		case "trace":
 			return "Saved trace";
 		case "video":
-			return isPendingRecordingArtifact(artifact) ? "Recording started; output will be written on stop" : "Saved recording";
+			if (!isPendingRecordingArtifact(artifact)) return "Saved recording";
+			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started; output will be written on stop";
 	}
 }
 
@@ -414,8 +422,10 @@ export function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): 
 				`Artifact type: ${artifact.kind}`,
 				`Requested path: ${artifact.requestedPath ?? artifact.path}`,
 				`Absolute path: ${artifact.absolutePath}`,
-				`Exists: ${artifact.exists === true}`,
-				`Status: ${artifact.status ?? (artifact.exists === false ? "missing" : "saved")}`,
+				"Exists: pending until record stop",
+				`Status: ${artifact.status ?? "pending"}`,
+				`Recording state: ${artifact.recordingState ?? "openRecording"}`,
+				`Will exist on stop: ${artifact.willExistOnStop !== false}`,
 				artifact.session ? `Session: ${artifact.session}` : undefined,
 				artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
 				`Machine data: details.artifacts[${index}]`,

@@ -200,13 +200,19 @@ export type AgentBrowserToolParams = {
 	};
 	job?: {
 		steps: Array<{
-			action: "open" | "click" | "fill" | "select" | "wait" | "assertText" | "assertUrl" | "waitForDownload" | "screenshot";
+			action: "open" | "click" | "fill" | "type" | "select" | "wait" | "assertText" | "assertUrl" | "waitForDownload" | "screenshot" | "snapshot";
 			url?: string;
+			loadState?: "domcontentloaded" | "load" | "networkidle";
 			selector?: string;
+			locator?: "alt" | "label" | "placeholder" | "role" | "testid" | "text" | "title";
+			role?: string;
+			name?: string;
 			text?: string;
 			value?: string;
 			values?: string[];
 			path?: string;
+			delayMs?: number;
+			press?: string;
 			milliseconds?: number;
 		}>;
 	};
@@ -259,8 +265,10 @@ export type AgentBrowserToolParams = {
 		launchId?: string;
 		all?: boolean;
 	};
+	outputPath?: string;
 	sessionMode?: "auto" | "fresh";
 	stdin?: string;
+	timeoutMs?: number;
 };
 
 export interface AgentBrowserToolRenderContext {

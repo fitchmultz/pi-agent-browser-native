@@ -23,11 +23,13 @@ export interface AgentBrowserExecuteParams {
 	electron?: unknown;
 	job?: unknown;
 	networkSourceLookup?: unknown;
+	outputPath?: string;
 	qa?: unknown;
 	semanticAction?: unknown;
 	sessionMode?: "auto" | "fresh";
 	sourceLookup?: unknown;
 	stdin?: string;
+	timeoutMs?: number;
 }
 
 export type ResolvedAgentBrowserInputKind = "args" | "electron" | "job" | "networkSourceLookup" | "qa" | "semanticAction" | "sourceLookup";
@@ -219,6 +221,14 @@ export function resolveAgentBrowserInput(options: {
 				? "Do not provide stdin with electron; electron mode is host-only or manages its own input."
 				: undefined
 		: undefined;
+	const outputPathError = params.outputPath !== undefined && (typeof params.outputPath !== "string" || params.outputPath.trim().length === 0)
+		? "outputPath must be a non-empty string when provided."
+		: undefined;
+	const timeoutMsError = params.timeoutMs !== undefined && (typeof params.timeoutMs !== "number" || !Number.isSafeInteger(params.timeoutMs) || params.timeoutMs <= 0)
+		? "timeoutMs must be a positive integer when provided."
+		: compiledElectron && params.timeoutMs !== undefined
+			? "Use electron.timeoutMs for electron actions; top-level timeoutMs applies only to browser CLI subprocess calls."
+			: undefined;
 	const attachedQaSessionError = compiledQaPreset?.checks.attached
 		? params.sessionMode === "fresh"
 			? "qa.attached cannot be used with sessionMode=fresh; attach or launch a session first, then run qa.attached with the current session."
@@ -234,6 +244,8 @@ export function resolveAgentBrowserInput(options: {
 		?? electronResult.error
 		?? inputModeError
 		?? generatedStdinError
+		?? outputPathError
+		?? timeoutMsError
 		?? attachedQaSessionError
 		?? (compiledElectron ? undefined : validateToolArgs(toolArgs) ?? getBatchPreflightValidationError(toolArgs, toolStdin));
 	const redactedCompiledJob = redactCompiledJob(compiledJob);

@@ -135,6 +135,36 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 				args: ["find", "label", "Email", "fill", "user@example.test"],
 			});
 
+			const selectorFillResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "fill", selector: "@e1", text: "selector text" },
+			});
+			assert.equal(selectorFillResult.isError, false);
+			assert.deepEqual(selectorFillResult.details?.compiledSemanticAction, {
+				action: "fill",
+				selector: "@e1",
+				args: ["fill", "@e1", "selector text"],
+			});
+
+			const selectorClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "click", selector: "#submit" },
+			});
+			assert.equal(selectorClickResult.isError, false);
+			assert.deepEqual(selectorClickResult.details?.compiledSemanticAction, {
+				action: "click",
+				selector: "#submit",
+				args: ["click", "#submit"],
+			});
+
+			const selectorSessionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "check", selector: "@e4", session: "named" },
+			});
+			assert.equal(selectorSessionResult.isError, false);
+			assert.deepEqual(selectorSessionResult.details?.compiledSemanticAction, {
+				action: "check",
+				selector: "@e4",
+				args: ["--session", "named", "check", "@e4"],
+			});
+
 			const textClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "click", locator: "text", value: "Close" },
 			});
@@ -173,6 +203,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 			assert.deepEqual(invocations[0]?.args.slice(-6), ["find", "role", "button", "click", "--name", "Export"]);
 			assert.deepEqual(invocations[1]?.args.slice(-6), ["find", "role", "button", "click", "--name", "Continue without Signing In"]);
 			assert.deepEqual(invocations[2]?.args.slice(-5), ["find", "label", "Email", "fill", "user@example.test"]);
+			assert.deepEqual(invocationLog.find((entry) => entry.args.at(-3) === "fill" && entry.args.at(-2) === "@e1")?.args.slice(-3), ["fill", "@e1", "selector text"]);
+			assert.deepEqual(invocationLog.find((entry) => entry.args.at(-2) === "click" && entry.args.at(-1) === "#submit")?.args.slice(-2), ["click", "#submit"]);
+			assert.deepEqual(invocationLog.find((entry) => entry.args.at(-2) === "check" && entry.args.at(-1) === "@e4")?.args.slice(-4), ["--session", "named", "check", "@e4"]);
 			assert.deepEqual(invocations[3]?.args.slice(-4), ["find", "text", "Close", "click"]);
 			assert.deepEqual(invocations[4]?.args.slice(-6), ["--session", "named", "find", "text", "Close", "click"]);
 			const selectInvocation = invocationLog.find((entry) => entry.args.includes("select"));
@@ -402,6 +435,7 @@ process.stdin.on("end", () => {
 					steps: [
 						{ action: "open", url: "https://example.test/", loadState: "domcontentloaded" },
 						{ action: "fill", selector: "#email", text: "user@example.test" },
+						{ action: "type", selector: "#prompt", text: "go", delayMs: 20, press: "Enter" },
 						{ action: "select", selector: "#theme", values: ["dark", "compact"] },
 						{ action: "click", selector: "#submit" },
 						{ action: "assertText", text: "Welcome" },
@@ -421,13 +455,18 @@ process.stdin.on("end", () => {
 			assert.match(effectiveArgs?.[2] ?? "", /^piab-pi-agent-browser-job-/);
 			assert.equal(effectiveArgs?.[3], "batch");
 			assert.equal(effectiveArgs?.[4], "--bail");
-			const compiledJob = result.details?.compiledJob as { args?: string[]; failFast?: boolean; stdin?: string; steps?: Array<{ action: string; args: string[] }> } | undefined;
+			const compiledJob = result.details?.compiledJob as { args?: string[]; failFast?: boolean; stdin?: string; steps?: Array<{ action: string; args: string[]; generatedFrom?: string }> } | undefined;
 			assert.deepEqual(compiledJob?.args, ["batch", "--bail"]);
 			assert.equal(compiledJob?.failFast, true);
 			const expectedCompiledSteps = [
 				["open", "https://example.test/"],
 				["wait", "--load", "domcontentloaded"],
 				["fill", "#email", "user@example.test"],
+				["focus", "#prompt"],
+				["keyboard", "type", "g"],
+				["wait", "20"],
+				["keyboard", "type", "o"],
+				["press", "Enter"],
 				["select", "#theme", "dark", "compact"],
 				["click", "#submit"],
 				["wait", "--text", "Welcome"],
@@ -438,7 +477,13 @@ process.stdin.on("end", () => {
 				["screenshot", "job.png"],
 			];
 			assert.deepEqual(compiledJob?.steps?.map((step) => step.args), expectedCompiledSteps);
+			assert.equal(compiledJob?.steps?.[1]?.generatedFrom, "open.loadState");
+			assert.equal(compiledJob?.steps?.[3]?.generatedFrom, "type.selector");
+			assert.equal(compiledJob?.steps?.[4]?.generatedFrom, "type.delayMs");
+			assert.equal(compiledJob?.steps?.[7]?.generatedFrom, "type.press");
 			assert.deepEqual(JSON.parse(compiledJob?.stdin ?? "[]"), expectedCompiledSteps);
+			assert.match(result.content[0]?.text ?? "", /Step 4-8 — type #prompt \(succeeded\)\nTyped 2 chars with delayMs=20\.\nPressed Enter\./);
+			assert.doesNotMatch(result.content[0]?.text ?? "", /Step 5 — keyboard type g/);
 			const redactedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "open", url: "https://user:secret@example.test/path?token=abc&ok=1#access_token=xyz" }] },
 			});
@@ -450,9 +495,21 @@ process.stdin.on("end", () => {
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-2), ["batch", "--bail"]);
 			const upstreamSteps = JSON.parse(invocations[0]?.stdin ?? "[]") as string[][];
-			assert.deepEqual(upstreamSteps.slice(0, 10), compiledJob?.steps?.slice(0, 10).map((step) => step.args));
-			assert.equal(upstreamSteps[10]?.[0], "screenshot");
-			assert.match(upstreamSteps[10]?.[1] ?? "", /job\.png$/);
+			assert.deepEqual(upstreamSteps.slice(0, 15), compiledJob?.steps?.slice(0, 15).map((step) => step.args));
+			assert.equal(upstreamSteps[15]?.[0], "screenshot");
+			assert.match(upstreamSteps[15]?.[1] ?? "", /job\.png$/);
+
+			const invalidTypeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "type", selector: "#prompt", text: "go", url: "https://example.test" }] },
+			});
+			assert.equal(invalidTypeResult.isError, true);
+			assert.match(invalidTypeResult.content[0]?.text ?? "", /job step type does not support url/);
+
+			const longDelayedTypeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "type", text: "x".repeat(201), delayMs: 1 }] },
+			});
+			assert.equal(longDelayedTypeResult.isError, true);
+			assert.match(longDelayedTypeResult.content[0]?.text ?? "", /delayMs supports at most 200 characters/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

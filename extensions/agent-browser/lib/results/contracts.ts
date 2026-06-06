@@ -64,7 +64,7 @@ export interface AgentBrowserPageChangeSummary {
 
 export type FileArtifactKind = "download" | "file" | "har" | "image" | "pdf" | "profile" | "trace" | "video";
 
-export type FileArtifactStatus = "missing" | "repaired-from-temp" | "saved" | "upstream-temp-only";
+export type FileArtifactStatus = "missing" | "pending" | "repaired-from-temp" | "saved" | "upstream-temp-only";
 
 export interface FileArtifactMetadata {
 	absolutePath: string;
@@ -76,12 +76,14 @@ export interface FileArtifactMetadata {
 	kind: FileArtifactKind;
 	mediaType?: string;
 	path: string;
+	recordingState?: "openRecording";
 	requestedPath?: string;
 	session?: string;
 	sizeBytes?: number;
 	status?: FileArtifactStatus;
 	subcommand?: string;
 	tempPath?: string;
+	willExistOnStop?: boolean;
 }
 
 export type ArtifactVerificationState = "missing" | "pending" | "unverified" | "verified";
@@ -94,11 +96,13 @@ export interface ArtifactVerificationEntry {
 	mediaType?: string;
 	path: string;
 	requestedPath?: string;
+	recordingState?: "openRecording";
 	retentionState?: ArtifactRetentionState;
 	sizeBytes?: number;
 	state: ArtifactVerificationState;
 	status?: FileArtifactStatus;
 	storageScope?: ArtifactStorageScope;
+	willExistOnStop?: boolean;
 }
 
 export interface ArtifactVerificationSummary {

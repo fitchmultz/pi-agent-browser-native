@@ -259,7 +259,9 @@ test("agentBrowserExtension rejects unsupported public schema fields", () => {
 	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }], unknown: true } }), false);
 	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/", unknown: true }] } }), false);
 
-	assert.equal(Check(schema, { args: ["open", "https://example.test/"] }), true);
+	assert.equal(Check(schema, { args: ["open", "https://example.test/"], outputPath: "logs/page.json", timeoutMs: 35_000 }), true);
+	assert.equal(Check(schema, { args: ["open", "https://example.test/"], outputPath: "" }), false);
+	assert.equal(Check(schema, { args: ["open", "https://example.test/"], timeoutMs: 0 }), false);
 	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "role", role: "button", name: "Open" } }), true);
 	assert.equal(Check(schema, { sourceLookup: { selector: "main" } }), true);
 	assert.equal(Check(schema, { networkSourceLookup: { url: "https://example.test/api" } }), true);
@@ -406,6 +408,10 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 			assert.ok(nextActions?.some((action) => action.id === "inspect-dialog-after-timeout"));
 			assert.ok(nextActions?.some((action) => action.id === "dismiss-dialog-after-timeout"));
 			assert.ok(nextActions?.some((action) => action.id === "recover-fresh-session-after-dialog-timeout" && action.params?.sessionMode === "fresh"));
+
+			const explicitTimeoutResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["dialog", "status"], timeoutMs: 75 });
+			assert.equal(explicitTimeoutResult.isError, true);
+			assert.equal(explicitTimeoutResult.details?.timeoutMs, 75);
 
 			const evalResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: "confirm('Continue?')" });
 			assert.equal(evalResult.isError, true);
@@ -886,6 +892,20 @@ process.stdout.write(JSON.stringify({ success: true, data: { command, subcommand
 			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "demo.webm"] });
 			assert.equal(missingResult.isError, false);
 			assert.match(missingResult.content[0]?.text ?? "", /Recording dependency warning: ffmpeg not found on PATH/);
+			assert.match(missingResult.content[0]?.text ?? "", /Exists: pending until record stop/);
+			assert.match(missingResult.content[0]?.text ?? "", /Status: pending/);
+			assert.doesNotMatch(missingResult.content[0]?.text ?? "", /Status: missing/);
+			const missingArtifacts = missingResult.details?.artifacts as Array<{ exists?: boolean; recordingState?: string; status?: string; willExistOnStop?: boolean }> | undefined;
+			assert.equal(missingArtifacts?.[0]?.exists, undefined);
+			assert.equal(missingArtifacts?.[0]?.status, "pending");
+			assert.equal(missingArtifacts?.[0]?.recordingState, "openRecording");
+			assert.equal(missingArtifacts?.[0]?.willExistOnStop, true);
+			const missingVerification = missingResult.details?.artifactVerification as { artifacts?: Array<{ recordingState?: string; state?: string; status?: string; willExistOnStop?: boolean }>; missingCount?: number; pendingCount?: number } | undefined;
+			assert.equal(missingVerification?.pendingCount, 1);
+			assert.equal(missingVerification?.missingCount, 0);
+			assert.equal(missingVerification?.artifacts?.[0]?.state, "pending");
+			assert.equal(missingVerification?.artifacts?.[0]?.status, "pending");
+			assert.equal(missingVerification?.artifacts?.[0]?.willExistOnStop, true);
 			const missingDetails = missingResult.details as { recordingDependencyWarning?: { reason?: string; command?: string; dependency?: string } };
 			assert.deepEqual(missingDetails.recordingDependencyWarning, {
 				command: "record start",

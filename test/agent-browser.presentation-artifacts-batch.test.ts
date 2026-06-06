@@ -252,13 +252,35 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 	assert.equal(presentation.artifacts?.[0]?.path, "recording.webm");
 	assert.equal(presentation.artifacts?.[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", "recording.webm"));
 	assert.equal(presentation.artifacts?.[0]?.mediaType, "video/webm");
-	assert.equal(presentation.artifacts?.[0]?.exists, false);
+	assert.equal(presentation.artifacts?.[0]?.exists, undefined);
+	assert.equal(presentation.artifacts?.[0]?.status, "pending");
+	assert.equal(presentation.artifacts?.[0]?.recordingState, "openRecording");
+	assert.equal(presentation.artifacts?.[0]?.willExistOnStop, true);
 	assert.equal(presentation.artifactManifest, undefined);
 	assert.equal(presentation.artifactRetentionSummary, undefined);
 	assert.equal(presentation.artifactVerification?.pendingCount, 1);
 	assert.equal(presentation.artifactVerification?.verified, false);
 	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "pending");
 	assert.equal(presentation.nextActions, undefined);
+});
+
+test("buildToolPresentation renders record restart as a pending lifecycle state", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "record", subcommand: "restart" },
+		cwd: "/tmp/pi-agent-browser-artifact-tests",
+		envelope: { success: true, data: { path: "recording-restart.webm" } },
+	});
+
+	assert.equal(presentation.summary, "Recording restarted; output will be written on stop: recording-restart.webm");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Recording restarted; output will be written on stop: recording-restart\.webm/);
+	assert.doesNotMatch(text, /Saved recording/);
+	assert.equal(presentation.artifacts?.[0]?.status, "pending");
+	assert.equal(presentation.artifacts?.[0]?.exists, undefined);
+	assert.equal(presentation.artifacts?.[0]?.recordingState, "openRecording");
+	assert.equal(presentation.artifacts?.[0]?.willExistOnStop, true);
+	assert.equal(presentation.artifactVerification?.pendingCount, 1);
+	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "pending");
 });
 
 test("buildToolPresentation records explicit saved files in the bounded session artifact manifest", async () => {

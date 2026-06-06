@@ -42,6 +42,7 @@ import type {
 	SelectorTextVisibilityDiagnostic,
 	TimeoutArtifactEvidence,
 	TimeoutPartialProgress,
+	TimeoutProgressStep,
 } from "./types.js";
 import type { SessionArtifactManifest } from "../../results/contracts.js";
 
@@ -686,8 +687,8 @@ export async function collectElectronHandoff(options: { cwd: string; handoff: "c
 	return { handoff: "snapshot", refSnapshot, snapshot, ...(snapshotRetryCount > 0 ? { snapshotRetryCount } : {}), tabs };
 }
 
-function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, command: string | undefined, stdin: string | undefined): Array<{ args: string[]; index: number }> {
-	if (compiledJob) return compiledJob.steps.map((step, index) => ({ args: step.args, index: index + 1 }));
+function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, command: string | undefined, stdin: string | undefined): Array<{ args: string[]; generatedFrom?: string; index: number }> {
+	if (compiledJob) return compiledJob.steps.map((step, index) => ({ args: step.args, generatedFrom: step.generatedFrom, index: index + 1 }));
 	if (command !== "batch" || !stdin) return [];
 	return parseValidBatchStepEntries(stdin).map(({ index, step }) => ({ args: step, index: index + 1 }));
 }
@@ -738,8 +739,8 @@ async function collectTimeoutArtifactEvidence(cwd: string, steps: Array<{ args: 
 		const absolutePath = isAbsolute(path) ? path : resolve(cwd, path);
 		const artifact = await statTimeoutArtifactPath(absolutePath);
 		evidence.push(artifact.exists
-			? { absolutePath, exists: true, path, sizeBytes: artifact.sizeBytes, stepIndex: step.index }
-			: { absolutePath, exists: false, path, stepIndex: step.index });
+			? { absolutePath, exists: true, path, sizeBytes: artifact.sizeBytes, state: "verified", stepIndex: step.index }
+			: { absolutePath, exists: false, path, state: "missing", stepIndex: step.index });
 	}
 	return evidence;
 }
@@ -752,18 +753,116 @@ function getPlannedCurrentPageUrl(steps: Array<{ args: string[]; index: number }
 	return undefined;
 }
 
+const TIMEOUT_RETRYABLE_COMMANDS = new Set([
+	"console",
+	"diff",
+	"errors",
+	"get",
+	"goto",
+	"navigate",
+	"network",
+	"open",
+	"pdf",
+	"pushstate",
+	"screenshot",
+	"snapshot",
+	"tab",
+	"vitals",
+	"wait",
+]);
+
+function getTimeoutStepRetry(step: { args: string[] }): { args: string[] } | undefined {
+	const command = step.args[0];
+	return command && TIMEOUT_RETRYABLE_COMMANDS.has(command) ? { args: step.args } : undefined;
+}
+
+function normalizeUrlForTimeoutComparison(url: string | undefined): URL | undefined {
+	if (!url) return undefined;
+	try {
+		return new URL(url);
+	} catch {
+		return undefined;
+	}
+}
+
+function currentUrlMatchesNavigationStep(currentUrl: string | undefined, plannedUrl: string | undefined): boolean {
+	if (!currentUrl || !plannedUrl) return false;
+	if (currentUrl === plannedUrl) return true;
+	const current = normalizeUrlForTimeoutComparison(currentUrl);
+	const planned = normalizeUrlForTimeoutComparison(plannedUrl);
+	if (!current || !planned || current.origin !== planned.origin) return false;
+	const plannedPath = planned.pathname.endsWith("/") ? planned.pathname : `${planned.pathname}/`;
+	const currentPath = current.pathname.endsWith("/") ? current.pathname : `${current.pathname}/`;
+	return planned.pathname === "/" || currentPath.startsWith(plannedPath);
+}
+
+function buildTimeoutProgressSteps(options: {
+	artifacts: TimeoutArtifactEvidence[];
+	currentPageSource?: "live" | "planned";
+	currentPageUrl?: string;
+	steps: Array<{ args: string[]; generatedFrom?: string; index: number }>;
+}): { openedButPostOpenTimedOut?: boolean; retryStep?: TimeoutProgressStep; steps: TimeoutProgressStep[] } {
+	let retryStep: TimeoutProgressStep | undefined;
+	let lastCompletedNavigationIndex: number | undefined;
+	const progressSteps = options.steps.map((step): TimeoutProgressStep => {
+		const stepArtifacts = options.artifacts.filter((artifact) => artifact.stepIndex === step.index);
+		const command = step.args[0];
+		const navigationUrl = isOpenNavigationCommand(command) || command === "pushstate" ? getLastPositionalToken(step.args) : undefined;
+		if (stepArtifacts.some((artifact) => artifact.exists)) {
+			return { ...step, reason: "Declared artifact exists on disk after timeout.", status: "completed" };
+		}
+		if (options.currentPageSource === "live" && currentUrlMatchesNavigationStep(options.currentPageUrl, navigationUrl)) {
+			lastCompletedNavigationIndex = step.index;
+			return { ...step, reason: "Live page URL was recovered after timeout.", status: "completed" };
+		}
+		return { ...step, reason: stepArtifacts.length > 0 ? "Declared artifact was not present when the watchdog fired." : undefined, status: "unknown" };
+	});
+	const highestCompletedIndex = Math.max(0, ...progressSteps.filter((step) => step.status === "completed").map((step) => step.index));
+	for (const step of progressSteps) {
+		if (step.status === "unknown" && step.index < highestCompletedIndex) {
+			step.status = "completed";
+			step.reason = "Later step completion evidence indicates the batch advanced past this step before timeout.";
+		}
+	}
+	for (const step of progressSteps) {
+		if (step.status === "completed") continue;
+		if (!retryStep) {
+			const retry = getTimeoutStepRetry(step);
+			retryStep = {
+				...step,
+				reason: step.reason ?? (retry ? "Likely active when the wrapper watchdog fired." : "Likely active when the wrapper watchdog fired; executable retry omitted because this step may have already mutated page state."),
+				retry,
+				status: "failed",
+			};
+			Object.assign(step, retryStep);
+			continue;
+		}
+		step.status = "pending";
+		step.reason = step.reason ?? `Pending behind timed-out step ${retryStep.index}.`;
+	}
+	return {
+		openedButPostOpenTimedOut: lastCompletedNavigationIndex !== undefined && retryStep !== undefined && retryStep.index > lastCompletedNavigationIndex,
+		retryStep,
+		steps: progressSteps,
+	};
+}
+
 export async function collectTimeoutPartialProgress(options: { command?: string; compiledJob?: CompiledAgentBrowserJob; cwd: string; sessionName?: string; stdin?: string }): Promise<TimeoutPartialProgress | undefined> {
-	const steps = getTimeoutProgressSteps(options.compiledJob, options.command, options.stdin);
-	const artifacts = await collectTimeoutArtifactEvidence(options.cwd, steps);
+	const rawSteps = getTimeoutProgressSteps(options.compiledJob, options.command, options.stdin);
+	const artifacts = await collectTimeoutArtifactEvidence(options.cwd, rawSteps);
 	const [urlData, titleData] = await Promise.all([runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName }), runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName })]);
 	const recoveredUrl = extractStringResultField(urlData, "result") ?? extractStringResultField(urlData, "url");
 	const title = extractStringResultField(titleData, "result") ?? extractStringResultField(titleData, "title");
-	const plannedUrl = recoveredUrl ? undefined : getPlannedCurrentPageUrl(steps);
+	const plannedUrl = recoveredUrl ? undefined : getPlannedCurrentPageUrl(rawSteps);
 	const url = recoveredUrl ?? plannedUrl;
-	if (steps.length === 0 && artifacts.length === 0 && !url && !title) return undefined;
+	const currentPageSource = recoveredUrl ? "live" as const : plannedUrl ? "planned" as const : title ? "live" as const : undefined;
+	const stepProgress = buildTimeoutProgressSteps({ artifacts, currentPageSource: recoveredUrl ? "live" : undefined, currentPageUrl: recoveredUrl, steps: rawSteps });
+	if (rawSteps.length === 0 && artifacts.length === 0 && !url && !title) return undefined;
 	const foundArtifacts = artifacts.filter((artifact) => artifact.exists).length;
+	const completedSteps = stepProgress.steps.filter((step) => step.status === "completed").length;
 	const pageStateSummary = recoveredUrl || title ? " and current page state" : plannedUrl ? " and planned page URL" : "";
-	return { artifacts, currentPage: url || title ? { title, url } : undefined, steps: steps.length > 0 ? steps : undefined, summary: `Timed out before upstream returned final results; recovered ${foundArtifacts}/${artifacts.length} declared artifact path${artifacts.length === 1 ? "" : "s"}${pageStateSummary}.` };
+	const retrySummary = stepProgress.retryStep ? ` Retry step ${stepProgress.retryStep.index} is the first incomplete step.` : "";
+	return { artifacts, currentPage: url || title ? { source: currentPageSource, title, url } : undefined, liveUrlRecovered: recoveredUrl !== undefined, openedButPostOpenTimedOut: stepProgress.openedButPostOpenTimedOut, retryStep: stepProgress.retryStep, steps: stepProgress.steps.length > 0 ? stepProgress.steps : undefined, summary: `Timed out before upstream returned final results; recovered ${completedSteps}/${rawSteps.length} planned step state${rawSteps.length === 1 ? "" : "s"} and ${foundArtifacts}/${artifacts.length} declared artifact path${artifacts.length === 1 ? "" : "s"}${pageStateSummary}.${retrySummary}` };
 }
 
 function redactSensitivePathSegmentsForDiagnostic(path: string): string {
@@ -792,8 +891,15 @@ export function formatTimeoutPartialProgressText(progress: TimeoutPartialProgres
 	if (progress.steps && progress.steps.length > 0) {
 		const shownSteps = progress.steps.slice(0, 6);
 		lines.push("Planned steps:");
-		for (const step of shownSteps) lines.push(`- Step ${step.index}: ${redactSensitivePathSegmentsForDiagnostic(redactInvocationArgs(step.args).join(" "))}`);
+		for (const step of shownSteps) {
+			const commandText = redactSensitivePathSegmentsForDiagnostic(redactInvocationArgs(step.args).join(" "));
+			const generatedFrom = step.generatedFrom ? `, generated from ${step.generatedFrom}` : "";
+			lines.push(`- Step ${step.index} [${step.status}${generatedFrom}]: ${commandText}${step.reason ? ` — ${redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(step.reason))}` : ""}`);
+		}
 		if (progress.steps.length > shownSteps.length) lines.push(`- ... ${progress.steps.length - shownSteps.length} more step${progress.steps.length - shownSteps.length === 1 ? "" : "s"} omitted`);
+	}
+	if (progress.retryStep?.retry?.args) {
+		lines.push(`Retry failed step: ${JSON.stringify({ args: redactInvocationArgs(progress.retryStep.retry.args) })}`);
 	}
 	for (const artifact of progress.artifacts) lines.push(`Artifact from step ${artifact.stepIndex}: ${redactSensitivePathSegmentsForDiagnostic(artifact.path)} (${artifact.exists ? `exists${typeof artifact.sizeBytes === "number" ? `, ${artifact.sizeBytes} bytes` : ""}` : "missing"})`);
 	return lines.join("\n");

@@ -22,7 +22,7 @@ const AGENT_BROWSER_DEFAULT_TIMEOUT_ENV = "AGENT_BROWSER_DEFAULT_TIMEOUT";
 const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS";
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
 export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
-const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 28_000;
+const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
 const httpProxyEnvName = "http_proxy";

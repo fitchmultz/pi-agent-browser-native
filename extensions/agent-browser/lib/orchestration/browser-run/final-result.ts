@@ -301,6 +301,24 @@ export async function prepareFinalResultRecoveryState(options: {
 	return { categoryDetails, currentRefSnapshot, currentRefSnapshotInvalidation, noActivePageSnapshotFailure, richInputRecoveryDiagnostic, visibleRefFallbackDiagnostic, visibleRefFallbackSessionName };
 }
 
+function buildTimeoutPartialProgressNextActions(options: FinalResultInput): AgentBrowserNextAction[] {
+	const retryArgs = options.timeoutPartialProgress?.retryStep?.retry?.args;
+	if (!retryArgs) return [];
+	const stepIndex = options.timeoutPartialProgress?.retryStep?.index;
+	const freshSessionAbandoned = options.sessionMode === "fresh" && options.timeoutPartialProgress?.liveUrlRecovered !== true;
+	return [{
+		id: "retry-timeout-step",
+		params: freshSessionAbandoned
+			? { args: retryArgs, sessionMode: "fresh" }
+			: { args: withOptionalSessionArgs(options.executionPlan.sessionName, retryArgs) },
+		reason: freshSessionAbandoned
+			? `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} in a fresh browser session because the timed-out fresh session was not proven live.`
+			: `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} against the current browser session.`,
+		safety: "Only read-only or idempotent timeout steps get executable retry args; inspect current page/artifact state before using the action.",
+		tool: "agent_browser" as const,
+	}];
+}
+
 function buildDialogTimeoutNextActions(options: { command?: string; sessionName?: string }): AgentBrowserNextAction[] {
 	if (options.command !== "dialog" && options.command !== "click" && options.command !== "tap" && options.command !== "find" && options.command !== "eval") return [];
 	return [
@@ -355,7 +373,10 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	if (options.scrollNoopDiagnostic) nextActionCollector.append(buildScrollNoopNextActions(options.executionPlan.sessionName));
 	if (options.comboboxFocusDiagnostic) nextActionCollector.append(buildComboboxFocusNextActions(options.executionPlan.sessionName));
 	if (options.managedSessionOutcome) nextActionCollector.appendUnique(buildManagedSessionFreshFailureNextActions(options.managedSessionOutcome));
-	if (options.categoryDetails.failureCategory === "timeout" && options.processResult.timedOut) nextActionCollector.appendUnique(buildDialogTimeoutNextActions({ command: options.executionPlan.commandInfo.command, sessionName: options.executionPlan.sessionName }));
+	if (options.categoryDetails.failureCategory === "timeout" && options.processResult.timedOut) {
+		nextActionCollector.appendUnique(buildTimeoutPartialProgressNextActions(options));
+		nextActionCollector.appendUnique(buildDialogTimeoutNextActions({ command: options.executionPlan.commandInfo.command, sessionName: options.executionPlan.sessionName }));
+	}
 	if (options.categoryDetails.failureCategory === "stale-ref" && options.redactedCompiledSemanticAction && isCompiledSemanticActionFindCommand(options.compiledSemanticAction)) nextActionCollector.append([{ id: "retry-semantic-action-after-stale-ref", params: { args: options.redactedCompiledSemanticAction.args }, reason: "Retry the same semantic target via its compiled find command after the upstream stale-ref failure proves the prior action did not execute.", safety: "Use only for the same intended target; direct stale @refs still require a fresh snapshot or stable locator before retrying.", tool: "agent_browser" as const }]);
 	if (options.electronLaunchRecord) nextActionCollector.append(buildAgentBrowserNextActions({ electron: { launchId: options.electronLaunchRecord.launchId, sessionName: options.electronLaunchRecord.sessionName, status: options.electronLaunchRecord.cleanupState }, failureCategory: options.categoryDetails.failureCategory, resultCategory: options.categoryDetails.resultCategory, successCategory: options.categoryDetails.successCategory }));
 	return nextActionCollector.toArray();

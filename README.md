@@ -273,7 +273,10 @@ Evaluate page JavaScript through stdin. Put the script in the top-level `stdin` 
 ```json
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 { "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })" }
+{ "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })", "outputPath": "logs/page-state.json" }
 ```
+
+Use `outputPath` when `eval`, `get`, `snapshot`, or another extraction should be saved as a durable workspace file. The wrapper writes `details.data` when present, otherwise the model-facing text content, and returns `details.outputFile` with the saved path and byte count. Explicit upstream `--json` content stays parseable; in that case the save notice lives only in `details.outputFile`.
 
 Extract several known refs or selectors in one `batch` call instead of many serial getter calls:
 
@@ -295,12 +298,14 @@ Download a file from a known link or control:
 
 ### Locator shorthand (`semanticAction`)
 
-For supported upstream `find` flows and native dropdown selection you can omit hand-built `args` and pass a top-level `semanticAction` object instead. The wrapper compiles locator actions to the same `find` argv upstream already understands, or compiles `action: "select"` to upstream `select <selector> <value...>`; compiled argv is echoed as `details.compiledSemanticAction` when the unified result includes that field. Full field rules live in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction).
+For supported upstream `find` flows, direct selector/ref `click` / `check` / `fill`, and native dropdown selection you can omit hand-built `args` and pass a top-level `semanticAction` object instead. The wrapper compiles locator actions to the same `find` argv upstream already understands, direct selector/ref actions to matching upstream commands, or `action: "select"` to upstream `select <selector> <value...>`; compiled argv is echoed as `details.compiledSemanticAction` when the unified result includes that field. Full field rules live in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction).
 
 ```json
 { "semanticAction": { "action": "click", "locator": "text", "value": "Submit" } }
 { "semanticAction": { "action": "click", "locator": "role", "role": "button", "name": "Continue without Signing In" } }
 { "semanticAction": { "action": "fill", "locator": "label", "value": "Email", "text": "user@example.com" } }
+{ "semanticAction": { "action": "fill", "selector": "@e1", "text": "prompt text" } }
+{ "semanticAction": { "action": "click", "selector": "#submit" } }
 { "semanticAction": { "action": "select", "selector": "#flavor", "value": "chocolate" } }
 { "semanticAction": { "action": "click", "locator": "text", "value": "Close", "session": "named-browser" } }
 ```
@@ -323,7 +328,7 @@ Typical pitfalls:
 
 ### Constrained browser jobs
 
-For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, `snapshot`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability. `open` steps can include `loadState` (`domcontentloaded`, `load`, or `networkidle`) to insert a readiness wait before the next step. `click` and `fill` steps can use either CSS `selector` or semantic locator fields (`locator`, `role`/`value`, optional `name`) so a job can express flows like role/name search without brittle selectors. The same compile path backs top-level `qa`, so long `qa` runs surface the same timeout evidence shape. If a long `job`, `qa`, or `batch` hits the wrapper watchdog, `details.timeoutPartialProgress` may recover planned steps, current page title/URL, and declared artifact paths that already exist on disk (see [`docs/TOOL_CONTRACT.md#details`](docs/TOOL_CONTRACT.md#details)). There is no separate catalog of reusable named browser recipes above `job`, `qa`, and raw `batch`; see [`docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and when to revisit it.
+For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `type`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, `snapshot`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability. `open` steps can include `loadState` (`domcontentloaded`, `load`, or `networkidle`) to insert a readiness wait before the next step. `click` and `fill` steps can use either CSS `selector` or semantic locator fields (`locator`, `role`/`value`, optional `name`) so a job can express flows like role/name search without brittle selectors. `type` can use `selector`, `text`, optional `delayMs` for per-character pacing, and optional `press` for a final key such as `Enter`; paced type compiles to existing `focus`, `keyboard type`, `wait`, and `press` batch rows, is capped at 200 characters per delayed step, and compacts model-visible batch text while full rows remain in `details.batchSteps`. The same compile path backs top-level `qa`, so long `qa` runs surface the same timeout evidence shape. If a long `job`, `qa`, or `batch` hits the wrapper watchdog, `details.timeoutPartialProgress` may recover per-step status (`completed`, `failed`, `pending`, or `unknown`), current page title/URL, declared artifact paths that already exist on disk, and a `retry-timeout-step` next action for the first incomplete read-only or idempotent step (see [`docs/TOOL_CONTRACT.md#details`](docs/TOOL_CONTRACT.md#details)). There is no separate catalog of reusable named browser recipes above `job`, `qa`, and raw `batch`; see [`docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and when to revisit it.
 
 **Navigation inside `job` is explicit.** A successful `click` does not prove the next page loaded; add `assertUrl` and/or `assertText` after navigation-prone clicks (forms, checkout, tabs, submit buttons) before screenshots or steps that assume the new page.
 

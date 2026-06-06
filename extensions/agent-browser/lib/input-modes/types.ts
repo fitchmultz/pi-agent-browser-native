@@ -10,7 +10,8 @@ export const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select
 
 export const AGENT_BROWSER_SEMANTIC_LOCATORS = ["alt", "label", "placeholder", "role", "testid", "text", "title"] as const;
 
-export const AGENT_BROWSER_JOB_STEP_ACTIONS = ["open", "click", "fill", "select", "wait", "assertText", "assertUrl", "waitForDownload", "screenshot", "snapshot"] as const;
+export const AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS = 200;
+export const AGENT_BROWSER_JOB_STEP_ACTIONS = ["open", "click", "fill", "type", "select", "wait", "assertText", "assertUrl", "waitForDownload", "screenshot", "snapshot"] as const;
 
 export const AGENT_BROWSER_QA_LOAD_STATES = ["domcontentloaded", "load", "networkidle"] as const;
 
@@ -102,6 +103,7 @@ export interface CompiledAgentBrowserSemanticAction {
 export interface CompiledAgentBrowserJobStep {
 	action: AgentBrowserJobStepAction;
 	args: string[];
+	generatedFrom?: string;
 }
 
 export interface CompiledAgentBrowserJob {

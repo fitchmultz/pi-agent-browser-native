@@ -210,16 +210,32 @@ export interface TimeoutArtifactEvidence {
 	exists: boolean;
 	path: string;
 	sizeBytes?: number;
+	state: "missing" | "verified";
 	stepIndex: number;
+}
+
+export type TimeoutProgressStepStatus = "completed" | "failed" | "pending" | "unknown";
+
+export interface TimeoutProgressStep {
+	args: string[];
+	generatedFrom?: string;
+	index: number;
+	reason?: string;
+	retry?: { args: string[] };
+	status: TimeoutProgressStepStatus;
 }
 
 export interface TimeoutPartialProgress {
 	artifacts: TimeoutArtifactEvidence[];
 	currentPage?: {
+		source?: "live" | "planned";
 		title?: string;
 		url?: string;
 	};
-	steps?: Array<{ args: string[]; index: number }>;
+	liveUrlRecovered?: boolean;
+	openedButPostOpenTimedOut?: boolean;
+	retryStep?: TimeoutProgressStep;
+	steps?: TimeoutProgressStep[];
 	summary: string;
 }
 

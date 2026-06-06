@@ -62,8 +62,28 @@ export function compileAgentBrowserSemanticAction(input: unknown): { compiled?: 
 		const args = typeof session === "string" ? ["--session", session, "select", selector, ...(selectedValues.values as string[])] : ["select", selector, ...(selectedValues.values as string[])];
 		return { compiled: { action: "select", selector, values: selectedValues.values, args } };
 	}
-	if (selector !== undefined || values !== undefined) {
-		return { error: "semanticAction.selector and values are only supported for select actions." };
+	if (values !== undefined) {
+		return { error: "semanticAction.values is only supported for select actions." };
+	}
+	if (selector !== undefined) {
+		if (typeof selector !== "string" || selector.trim().length === 0) {
+			return { error: "semanticAction.selector must be a non-empty string when provided." };
+		}
+		if (locator !== undefined || value !== undefined || role !== undefined || name !== undefined) {
+			return { error: "semanticAction.selector cannot be combined with locator, value, role, or name; use selector for a direct click/check/fill target or locator fields for find-based actions." };
+		}
+		if (text !== undefined && typeof text !== "string") {
+			return { error: "semanticAction.text must be a string when provided." };
+		}
+		if (action === "fill" && (typeof text !== "string" || text.length === 0)) {
+			return { error: `semanticAction.text is required for ${action}.` };
+		}
+		if (action !== "fill" && text !== undefined) {
+			return { error: "semanticAction.text is only supported for fill actions." };
+		}
+		const directArgs = typeof session === "string" ? ["--session", session, action, selector] : [action, selector];
+		if (action === "fill") directArgs.push(text as string);
+		return { compiled: { action: action as AgentBrowserSemanticActionName, selector, args: directArgs } };
 	}
 	if (typeof locator !== "string" || !AGENT_BROWSER_SEMANTIC_LOCATORS.includes(locator as AgentBrowserSemanticLocator)) {
 		return { error: `semanticAction.locator must be one of: ${AGENT_BROWSER_SEMANTIC_LOCATORS.join(", ")}.` };

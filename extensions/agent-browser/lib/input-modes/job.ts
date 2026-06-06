@@ -11,6 +11,7 @@ import { getBatchResultItems, getCommandNameFromBatchItem, getSelectValues } fro
 import { compileAgentBrowserSemanticAction } from "./semantic-action.js";
 import {
 	AGENT_BROWSER_JOB_STEP_ACTIONS,
+	AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS,
 	AGENT_BROWSER_QA_LOAD_STATES,
 	type AgentBrowserJobStepAction,
 	type AgentBrowserQaLoadState,
@@ -55,6 +56,52 @@ function compileJobClickOrFillStep(step: Record<string, unknown>, action: "click
 	return { args: compiled.compiled?.args };
 }
 
+function getUnsupportedJobStepField(step: Record<string, unknown>, allowedFields: ReadonlySet<string>): string | undefined {
+	return Object.keys(step).find((field) => !allowedFields.has(field));
+}
+
+const JOB_TYPE_ALLOWED_FIELDS = new Set(["action", "delayMs", "press", "selector", "text"]);
+
+function compileJobTypeSteps(step: Record<string, unknown>): { error?: string; steps?: CompiledAgentBrowserJobStep[] } {
+	const unsupportedField = getUnsupportedJobStepField(step, JOB_TYPE_ALLOWED_FIELDS);
+	if (unsupportedField) return { error: `job step type does not support ${unsupportedField}; supported fields are selector, text, delayMs, and press.` };
+	const text = getRequiredJobString(step, "text", "type");
+	if (text.error) return { error: text.error };
+	const selector = step.selector;
+	if (selector !== undefined && (typeof selector !== "string" || selector.trim().length === 0)) {
+		return { error: "job step type selector must be a non-empty string when provided." };
+	}
+	if (step.locator !== undefined || step.role !== undefined || step.name !== undefined || step.value !== undefined || step.values !== undefined) {
+		return { error: "job step type supports selector, text, delayMs, and press only; focus the target first or use click/fill semantic locator fields in a separate step." };
+	}
+	const delayMs = step.delayMs;
+	if (delayMs !== undefined && (typeof delayMs !== "number" || !Number.isInteger(delayMs) || delayMs <= 0)) {
+		return { error: "job step type delayMs must be a positive integer when provided." };
+	}
+	const press = step.press;
+	if (press !== undefined && (typeof press !== "string" || press.trim().length === 0)) {
+		return { error: "job step type press must be a non-empty key string when provided." };
+	}
+	const typedText = text.value as string;
+	const typedChars = Array.from(typedText);
+	if (typedChars.length === 0) return { error: "job step type requires non-empty text." };
+	if (delayMs !== undefined && typedChars.length > AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS) {
+		return { error: `job step type delayMs supports at most ${AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS} characters; split longer text into shorter calls or omit delayMs.` };
+	}
+	const compiledSteps: CompiledAgentBrowserJobStep[] = [];
+	if (delayMs === undefined) {
+		compiledSteps.push({ action: "type", args: typeof selector === "string" ? ["type", selector, typedText] : ["keyboard", "type", typedText] });
+	} else {
+		if (typeof selector === "string") compiledSteps.push({ action: "type", args: ["focus", selector], generatedFrom: "type.selector" });
+		for (const [index, char] of typedChars.entries()) {
+			compiledSteps.push({ action: "type", args: ["keyboard", "type", char], generatedFrom: "type.delayMs" });
+			if (index < typedChars.length - 1) compiledSteps.push({ action: "wait", args: ["wait", String(delayMs)], generatedFrom: "type.delayMs" });
+		}
+	}
+	if (typeof press === "string") compiledSteps.push({ action: "type", args: ["press", press], generatedFrom: "type.press" });
+	return { steps: compiledSteps };
+}
+
 export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAgentBrowserJob; error?: string } {
 	if (!isRecord(input)) {
 		return { error: "job must be an object." };
@@ -79,6 +126,7 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 		}
 		const jobAction = action as AgentBrowserJobStepAction;
 		let args: string[];
+		let generatedFrom: string | undefined;
 		let extraSteps: CompiledAgentBrowserJobStep[] = [];
 		if (jobAction === "open") {
 			const result = getRequiredJobString(rawStep, "url", jobAction);
@@ -88,12 +136,19 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 				if (typeof rawStep.loadState !== "string" || !AGENT_BROWSER_QA_LOAD_STATES.includes(rawStep.loadState as AgentBrowserQaLoadState)) {
 					return { error: `job.steps[${index}].loadState must be one of: ${AGENT_BROWSER_QA_LOAD_STATES.join(", ")}.` };
 				}
-				extraSteps = [{ action: "wait", args: ["wait", "--load", rawStep.loadState] }];
+				extraSteps = [{ action: "wait", args: ["wait", "--load", rawStep.loadState], generatedFrom: "open.loadState" }];
 			}
 		} else if (jobAction === "click" || jobAction === "fill") {
 			const result = compileJobClickOrFillStep(rawStep, jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = result.args as string[];
+		} else if (jobAction === "type") {
+			const result = compileJobTypeSteps(rawStep);
+			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
+			const [firstStep, ...restSteps] = result.steps as CompiledAgentBrowserJobStep[];
+			args = firstStep.args;
+			generatedFrom = firstStep.generatedFrom;
+			extraSteps = restSteps;
 		} else if (jobAction === "select") {
 			const selector = getRequiredJobString(rawStep, "selector", jobAction);
 			if (selector.error) return { error: `job.steps[${index}]: ${selector.error}` };
@@ -125,7 +180,7 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["screenshot", result.value as string];
 		}
-		steps.push({ action: jobAction, args }, ...extraSteps);
+		steps.push({ action: jobAction, args, generatedFrom }, ...extraSteps);
 	}
 	return { compiled: { args: failFast ? ["batch", "--bail"] : ["batch"], failFast, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
 }

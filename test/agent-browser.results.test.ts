@@ -390,7 +390,18 @@ test("getAgentBrowserErrorText explains wrapper watchdog timeouts", () => {
 	});
 
 	assert.match(errorText ?? "", /28000ms wrapper watchdog/);
-	assert.match(errorText ?? "", /30s IPC retry path/);
+	assert.match(errorText ?? "", /before the upstream CLI entered its 30s IPC retry path/);
+
+	const longerErrorText = getAgentBrowserErrorText({
+		aborted: false,
+		exitCode: 124,
+		plainTextInspection: false,
+		stderr: "",
+		timedOut: true,
+		timeoutMs: 35000,
+	});
+	assert.match(longerErrorText ?? "", /35000ms wrapper watchdog/);
+	assert.match(longerErrorText ?? "", /after waiting beyond the upstream CLI's 30s IPC retry window/);
 });
 
 test("getAgentBrowserErrorText explains upstream IPC read timeouts", () => {

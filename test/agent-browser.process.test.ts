@@ -142,7 +142,7 @@ test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is
 
 test("process helpers clamp upstream operation timeouts below the CLI IPC read timeout", () => {
 	assert.equal(getAgentBrowserProcessTimeoutMs({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "1234" }), 1234);
-	assert.equal(getAgentBrowserProcessTimeoutMs({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "invalid" }), 28_000);
+	assert.equal(getAgentBrowserProcessTimeoutMs({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "invalid" }), 35_000);
 
 	assert.equal(buildAgentBrowserProcessEnv({ AGENT_BROWSER_DEFAULT_TIMEOUT: "45000" }).AGENT_BROWSER_DEFAULT_TIMEOUT, "25000");
 	assert.equal(buildAgentBrowserProcessEnv({ AGENT_BROWSER_DEFAULT_TIMEOUT: "12000" }).AGENT_BROWSER_DEFAULT_TIMEOUT, "12000");
