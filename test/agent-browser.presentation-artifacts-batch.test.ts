@@ -256,8 +256,9 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 	assert.equal(presentation.artifacts?.[0]?.status, "pending");
 	assert.equal(presentation.artifacts?.[0]?.recordingState, "openRecording");
 	assert.equal(presentation.artifacts?.[0]?.willExistOnStop, true);
-	assert.equal(presentation.artifactManifest, undefined);
-	assert.equal(presentation.artifactRetentionSummary, undefined);
+	assert.equal(presentation.artifactManifest?.entries[0]?.subcommand, "start");
+	assert.equal(presentation.artifactManifest?.entries[0]?.path, "recording.webm");
+	assert.match(presentation.artifactRetentionSummary ?? "", /Session artifacts:/);
 	assert.equal(presentation.artifactVerification?.pendingCount, 1);
 	assert.equal(presentation.artifactVerification?.verified, false);
 	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "pending");
@@ -281,6 +282,41 @@ test("buildToolPresentation renders record restart as a pending lifecycle state"
 	assert.equal(presentation.artifacts?.[0]?.willExistOnStop, true);
 	assert.equal(presentation.artifactVerification?.pendingCount, 1);
 	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "pending");
+});
+
+test("buildToolPresentation notes the previous recording saved by record restart", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-restart-"));
+	try {
+		const firstPath = join(tempDir, "first.webm");
+		const restartedPath = join(tempDir, "restarted.webm");
+		const started = await buildToolPresentation({
+			commandInfo: { command: "record", subcommand: "start" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: firstPath } },
+		});
+		await writeFile(firstPath, "previous recording");
+
+		const restarted = await buildToolPresentation({
+			artifactManifest: started.artifactManifest,
+			commandInfo: { command: "record", subcommand: "restart" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: restartedPath } },
+		});
+
+		assert.match(restarted.summary, /Previous recording saved: .*first\.webm/);
+		assert.match(restarted.summary, /Recording restarted; output will be written on stop: .*restarted\.webm/);
+		const text = (restarted.content[0] as { text: string }).text;
+		assert.match(text, /Previous recording saved: .*first\.webm/);
+		assert.match(text, /Recording restarted; output will be written on stop: .*restarted\.webm/);
+		assert.deepEqual(restarted.artifacts?.map((artifact) => ({ exists: artifact.exists, path: artifact.path, status: artifact.status, subcommand: artifact.subcommand })), [
+			{ exists: true, path: firstPath, status: "saved", subcommand: "restart-previous" },
+			{ exists: undefined, path: restartedPath, status: "pending", subcommand: "restart" },
+		]);
+		assert.equal(restarted.artifactVerification?.verifiedCount, 1);
+		assert.equal(restarted.artifactVerification?.pendingCount, 1);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
 });
 
 test("buildToolPresentation records explicit saved files in the bounded session artifact manifest", async () => {

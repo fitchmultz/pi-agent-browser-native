@@ -217,7 +217,49 @@ async function buildFileArtifactMetadata(options: {
 	};
 }
 
+async function buildPreviousRestartRecordingArtifact(options: {
+	artifactManifest?: SessionArtifactManifest;
+	commandInfo: CommandInfo;
+	currentPaths: ReadonlySet<string>;
+	cwd: string;
+	sessionName?: string;
+}): Promise<FileArtifactMetadata | undefined> {
+	if (options.commandInfo.command !== "record" || options.commandInfo.subcommand !== "restart") return undefined;
+	const previousRecording = options.artifactManifest?.entries.find((entry) => (
+		entry.command === "record" &&
+		(entry.subcommand === "start" || entry.subcommand === "restart") &&
+		entry.kind === "video" &&
+		(!options.sessionName || !entry.session || entry.session === options.sessionName) &&
+		!options.currentPaths.has(entry.path) &&
+		(!entry.absolutePath || !options.currentPaths.has(entry.absolutePath))
+	));
+	if (!previousRecording) return undefined;
+	const absolutePath = previousRecording.absolutePath ?? resolve(options.cwd, previousRecording.path);
+	try {
+		const fileStats = await stat(absolutePath);
+		return {
+			absolutePath,
+			artifactType: "video",
+			command: "record",
+			cwd: previousRecording.cwd ?? options.cwd,
+			exists: true,
+			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
+			kind: "video",
+			mediaType: previousRecording.mediaType,
+			path: previousRecording.path,
+			requestedPath: previousRecording.requestedPath,
+			session: previousRecording.session ?? options.sessionName,
+			sizeBytes: fileStats.size,
+			status: "saved",
+			subcommand: "restart-previous",
+		};
+	} catch {
+		return undefined;
+	}
+}
+
 export async function extractFileArtifacts(options: {
+	artifactManifest?: SessionArtifactManifest;
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
 	cwd: string;
@@ -225,8 +267,10 @@ export async function extractFileArtifacts(options: {
 	sessionName?: string;
 }): Promise<FileArtifactMetadata[]> {
 	const candidates = extractPathStrings(options.data);
-	const artifacts = await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ ...options, path })));
-	return artifacts.filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
+	const currentArtifacts = (await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ ...options, path })))).filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
+	const currentPaths = new Set(currentArtifacts.flatMap((artifact) => [artifact.path, artifact.absolutePath]));
+	const previousRestartRecordingArtifact = await buildPreviousRestartRecordingArtifact({ artifactManifest: options.artifactManifest, commandInfo: options.commandInfo, currentPaths, cwd: options.cwd, sessionName: options.sessionName });
+	return previousRestartRecordingArtifact ? [previousRestartRecordingArtifact, ...currentArtifacts] : currentArtifacts;
 }
 
 export function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMetadata[], nowMs = Date.now()): SessionArtifactManifestEntry[] {
@@ -250,7 +294,7 @@ export function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMeta
 }
 
 export function isManifestFileArtifact(artifact: FileArtifactMetadata): boolean {
-	return !isPendingRecordingArtifact(artifact);
+	return artifact.kind === "video" && artifact.command === "record" ? true : !isPendingRecordingArtifact(artifact);
 }
 
 function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactVerificationEntry {
@@ -398,6 +442,7 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 		case "trace":
 			return "Saved trace";
 		case "video":
+			if (artifact.command === "record" && artifact.subcommand === "restart-previous") return "Previous recording saved";
 			if (!isPendingRecordingArtifact(artifact)) return "Saved recording";
 			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started; output will be written on stop";
 	}
@@ -410,6 +455,11 @@ export function formatArtifactSummary(artifacts: FileArtifactMetadata[]): string
 	if (artifacts.length === 1) {
 		const artifact = artifacts[0];
 		return `${formatArtifactLabel(artifact)}: ${artifact.path}`;
+	}
+	const restartArtifact = artifacts.find((artifact) => isPendingRecordingArtifact(artifact) && artifact.subcommand === "restart");
+	const previousRecordingArtifacts = artifacts.filter((artifact) => artifact.command === "record" && artifact.subcommand === "restart-previous");
+	if (restartArtifact && previousRecordingArtifacts.length > 0) {
+		return [...previousRecordingArtifacts, restartArtifact].map((artifact) => `${formatArtifactLabel(artifact)}: ${artifact.path}`).join("\n");
 	}
 	return `Saved ${artifacts.length} artifacts: ${artifacts.map((artifact) => `${artifact.kind} ${artifact.path}`).join(", ")}`;
 }
