@@ -1,6 +1,6 @@
 /**
  * Purpose: Build the small JSON Schema subset used by Pi tool schemas without importing TypeBox at runtime.
- * Responsibilities: Preserve the TypeBox-shaped objects Pi consumes while keeping extension startup cheap.
+ * Responsibilities: Preserve plain JSON Schema objects Pi consumes while keeping extension startup cheap.
  * Scope: Schema construction only; runtime validation still belongs to Pi and the tool input compilers.
  */
 
@@ -26,7 +26,7 @@ function propertySchema(schema: TSchema): TSchema {
 	return clone as TSchema;
 }
 
-export const Type = {
+export const JsonSchema = {
 	Array(items: TSchema, options?: TSchemaOptions): TSchema {
 		return withOptions({ type: "array", items }, options);
 	},
@@ -69,4 +69,5 @@ export const Type = {
 	},
 };
 
+export type JsonSchemaBuilder = typeof JsonSchema;
 export type { TSchema, TSchemaOptions, TUnsafe };

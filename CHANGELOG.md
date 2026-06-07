@@ -18,7 +18,7 @@ No changes yet.
 
 ### Validation
 
-- Added startup import hygiene coverage so future production extension files avoid reintroducing heavy TypeBox, `@earendil-works/pi-ai`, or `@earendil-works/pi-coding-agent` runtime imports on the cold startup path.
+- Added a cold-start budget test for the real extension entrypoint, schema parity coverage against the canonical TypeBox/StringEnum builders, and rendering coverage for JSON highlighting plus collapsed-output expand hints.
 
 ## 0.2.45 - 2026-06-06
 

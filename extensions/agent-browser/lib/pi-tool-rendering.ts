@@ -1,5 +1,5 @@
 import type { AgentToolResult, Theme, ToolResultEvent } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { getKeybindings, Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 import {
 	compileAgentBrowserElectron,
@@ -15,6 +15,7 @@ import { redactInvocationArgs } from "./runtime.js";
 const TUI_INVOCATION_PREVIEW_MAX_CHARS = 160;
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 12;
 const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B]*(?:\x1B\\)|_[^\x1B]*(?:\x1B\\)|\^[^\x1B]*(?:\x1B\\)|[@-Z\\-_])/g;
+const JSON_TOKEN_PATTERN = /"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\],:]/g;
 const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
 
 function sanitizeDisplayText(value: string): string {
@@ -36,6 +37,37 @@ function trimTrailingBlankLines(lines: string[]): string[] {
 	return lines.slice(0, end);
 }
 
+function isJsonDocumentText(value: string): boolean {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+	try {
+		JSON.parse(trimmed);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function colorizeJsonLine(line: string, theme: Theme): string {
+	let output = "";
+	let cursor = 0;
+	for (const match of line.matchAll(JSON_TOKEN_PATTERN)) {
+		const token = match[0];
+		const index = match.index ?? 0;
+		output += line.slice(cursor, index);
+		const color = token.startsWith('"')
+			? /"\s*$/.test(token) && line.slice(index + token.length).trimStart().startsWith(":")
+				? "syntaxVariable"
+				: "syntaxString"
+			: /^[{}\[\],:]$/.test(token)
+				? "syntaxPunctuation"
+				: "syntaxType";
+		output += theme.fg(color, token);
+		cursor = index + token.length;
+	}
+	return output + line.slice(cursor);
+}
+
 function getPrimaryTextContent(result: AgentToolResult<unknown>): string {
 	const textContent = result.content.find((item) => item.type === "text");
 	return textContent?.type === "text" ? textContent.text : "";
@@ -45,15 +77,23 @@ function colorizeToolOutputLines(outputText: string, theme: Theme, isError: bool
 	const normalizedLines = trimTrailingBlankLines(replaceTabsForDisplay(sanitizeDisplayText(outputText)).split("\n"));
 	const normalizedText = normalizedLines.join("\n");
 	if (normalizedText.length === 0) return [];
+	const isJsonDocument = !isError && isJsonDocumentText(normalizedText);
 	return normalizedLines.map((line) => {
 		if (line.length === 0) {
 			return "";
 		}
+		if (isJsonDocument) return colorizeJsonLine(line, theme);
 		return isError ? theme.fg("error", line) : theme.fg("toolOutput", line);
 	});
 }
 
 function formatExpandHint(theme: Theme): string {
+	try {
+		const [key] = getKeybindings().getKeys("app.tools.expand" as never);
+		if (key) return `${theme.fg("dim", key)} ${theme.fg("muted", "to expand")}`;
+	} catch {
+		// Fall through to the built-in default key when coding-agent keybindings are unavailable.
+	}
 	return `${theme.fg("dim", "ctrl+o")} ${theme.fg("muted", "to expand")}`;
 }
 

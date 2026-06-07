@@ -4,8 +4,8 @@
  * Scope: Live web search only; browser automation remains in the `agent_browser` tool.
  */
 
-import { Type } from "./schema.js";
-import { StringEnum } from "./string-enum-schema.js";
+import { JsonSchema, type JsonSchemaBuilder } from "./json-schema.js";
+import { StringEnum as localStringEnum, type StringEnumBuilder } from "./string-enum-schema.js";
 import {
 	DEFAULT_WEB_SEARCH_PROVIDER,
 	WEB_SEARCH_PROVIDERS,
@@ -118,8 +118,12 @@ export interface WebSearchProviderAdapter<Request = unknown, Response = unknown>
 	provider: WebSearchProvider;
 }
 
-export const AgentBrowserWebSearchParams = Type.Object(
-	{
+export function createAgentBrowserWebSearchParamsSchema(
+	Type: JsonSchemaBuilder = JsonSchema,
+	StringEnum: StringEnumBuilder = localStringEnum,
+) {
+	return Type.Object(
+		{
 		query: Type.String({
 			minLength: 1,
 			description: "Search query to run with the configured Exa or Brave web search provider.",
@@ -171,9 +175,12 @@ export const AgentBrowserWebSearchParams = Type.Object(
 				description: "Optional freshness window: pd=past day, pw=past week, pm=past month, py=past year.",
 			}),
 		),
-	},
-	{ additionalProperties: false },
-);
+		},
+		{ additionalProperties: false },
+	);
+}
+
+export const AgentBrowserWebSearchParams = createAgentBrowserWebSearchParamsSchema();
 
 const HTML_ENTITY_REPLACEMENTS: Readonly<Record<string, string>> = {
 	amp: "&",

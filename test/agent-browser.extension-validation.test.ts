@@ -985,10 +985,14 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	);
 	const collapsedLines = collapsedComponent.render(80);
 	const collapsedText = collapsedLines.join("\n");
+	const wideCollapsedText = collapsedComponent.render(200).join("\n");
 	assert.ok(collapsedLines.every((line) => visibleWidth(line) <= 80), "collapsed render lines must fit width");
 	const narrowCollapsedLines = collapsedComponent.render(24);
 	assert.ok(narrowCollapsedLines.every((line) => visibleWidth(line) <= 24), "narrow collapsed render lines must fit width");
 	assert.match(collapsedText, /\.\.\. \(\d+ more lines, \d+ total,/);
+	assert.match(wideCollapsedText, /<dim>ctrl\+o<\/dim> <muted>to expand<\/muted>/);
+	assert.match(wideCollapsedText, /<syntaxVariable>"origin"<\/syntaxVariable>/);
+	assert.match(wideCollapsedText, /<syntaxString>"https:\/\/example\.com\/"<\/syntaxString>/);
 	assert.doesNotMatch(collapsedText, /item-24/);
 	assert.match(longText, /item-24/, "renderer must not mutate model-facing content");
 

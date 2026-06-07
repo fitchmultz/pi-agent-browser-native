@@ -4,8 +4,8 @@
  * Scope: Schema-only; behavioral validation lives in the mode compilers.
  */
 
-import { Type } from "../schema.js";
-import { StringEnum } from "../string-enum-schema.js";
+import { JsonSchema, type JsonSchemaBuilder } from "../json-schema.js";
+import { StringEnum as localStringEnum, type StringEnumBuilder } from "../string-enum-schema.js";
 
 import {
 	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
@@ -23,7 +23,11 @@ import {
 	SOURCE_LOOKUP_MAX_WORKSPACE_FILES,
 } from "./types.js";
 
-export const AGENT_BROWSER_PARAMS = Type.Object({
+export function createAgentBrowserParamsSchema(
+	Type: JsonSchemaBuilder = JsonSchema,
+	StringEnum: StringEnumBuilder = localStringEnum,
+) {
+	return Type.Object({
 
 	args: Type.Optional(
 		Type.Array(Type.String({ description: "Exact agent-browser CLI arguments, excluding the binary name. Do not pass --json; the wrapper injects it. First-call recipe: open → snapshot -i → click/fill @eN → snapshot -i." }), {
@@ -195,4 +199,7 @@ export const AGENT_BROWSER_PARAMS = Type.Object({
 			default: DEFAULT_SESSION_MODE,
 		}),
 	),
-}, { additionalProperties: false });
+	}, { additionalProperties: false });
+}
+
+export const AGENT_BROWSER_PARAMS = createAgentBrowserParamsSchema();
