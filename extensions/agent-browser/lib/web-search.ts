@@ -4,9 +4,8 @@
  * Scope: Live web search only; browser automation remains in the `agent_browser` tool.
  */
 
-import { StringEnum } from "@earendil-works/pi-ai";
-import { defineTool } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type } from "./schema.js";
+import { StringEnum } from "./string-enum-schema.js";
 import {
 	DEFAULT_WEB_SEARCH_PROVIDER,
 	WEB_SEARCH_PROVIDERS,
@@ -644,9 +643,21 @@ function buildMissingCredentialError(provider: WebSearchProviderParam): string {
 	return "No Exa or Brave web search credential resolved. Configure webSearch.exaApiKey or webSearch.braveApiKey, or load EXA_API_KEY/BRAVE_API_KEY in the runtime environment.";
 }
 
+type AgentBrowserWebSearchParamsInput = {
+	country?: string;
+	count?: number;
+	freshness?: SearchFreshness;
+	offset?: number;
+	provider?: WebSearchProviderParam;
+	query: string;
+	safesearch?: "off" | "moderate" | "strict";
+	searchLang?: string;
+	searchType?: ExaSearchType;
+};
+
 export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigState) {
 	const requestGate = new WebSearchRequestGate();
-	return defineTool({
+	return {
 		name: AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
 		label: "Agent Browser Web Search",
 		description: `Search the web with Exa or Brave when configured. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
@@ -659,7 +670,7 @@ export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigS
 			"After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",
 		],
 		parameters: AgentBrowserWebSearchParams,
-		async execute(_toolCallId, params, signal) {
+		async execute(_toolCallId: string, params: AgentBrowserWebSearchParamsInput, signal?: AbortSignal) {
 			if (!configState.webSearchEnabled) {
 				throw new Error("agent_browser_web_search is disabled by pi-agent-browser-native config.");
 			}
@@ -695,9 +706,9 @@ export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigS
 				results: normalized.results,
 			};
 			return {
-				content: [{ type: "text", text: formatSearchResults(adapter.provider, normalized.returnedQuery, normalized.results) }],
+				content: [{ type: "text" as const, text: formatSearchResults(adapter.provider, normalized.returnedQuery, normalized.results) }],
 				details,
 			};
 		},
-	});
+	};
 }

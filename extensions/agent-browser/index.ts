@@ -10,11 +10,10 @@ import type { ChildProcess } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-	isToolCallEventType,
-	type AgentToolResult,
-	type ExtensionAPI,
-	type ExtensionContext,
+import type {
+	AgentToolResult,
+	ExtensionAPI,
+	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
@@ -91,7 +90,7 @@ import {
 	restoreElectronLaunchRecordsFromBranch,
 	type ElectronLaunchRecord,
 } from "./lib/orchestration/electron-host/index.js";
-import { buildValidationFailureResult, resolveAgentBrowserInput } from "./lib/orchestration/input-plan.js";
+import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.js";
 import { applyAgentBrowserOutputPath } from "./lib/orchestration/output-file.js";
 import type { NetworkRouteRecord } from "./lib/results/contracts.js";
 import type { SessionArtifactManifest } from "./lib/results/contracts.js";
@@ -130,6 +129,16 @@ import {
 } from "./lib/pi-tool-rendering.js";
 
 const DEFAULT_SESSION_MODE = "auto" as const;
+
+type BashToolCallLike = {
+	input: { command: string };
+	toolName: "bash";
+};
+
+function isBashToolCallEvent(event: unknown): event is BashToolCallLike {
+	if (!isRecord(event) || event.toolName !== "bash" || !isRecord(event.input)) return false;
+	return typeof event.input.command === "string";
+}
 
 type OwnedManagedSession = {
 	branchOwned: boolean;
@@ -753,7 +762,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
 		const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 		if (
-			isToolCallEventType("bash", event) &&
+			isBashToolCallEvent(event) &&
 			!promptPolicy.allowLegacyAgentBrowserBash &&
 			looksLikeDirectAgentBrowserBash(event.input.command) &&
 			!isHarmlessAgentBrowserInspectionCommand(event.input.command) &&
@@ -789,7 +798,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			component.setState(formatAgentBrowserRenderResult(result, options, theme, context.isError), options.expanded, theme);
 			return component;
 		},
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async execute(_toolCallId, params: AgentBrowserExecuteParams, signal, onUpdate, ctx) {
 			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 			const outputPath = isRecord(params) && typeof params.outputPath === "string" ? params.outputPath : undefined;
 			const resolvedInput = resolveAgentBrowserInput({

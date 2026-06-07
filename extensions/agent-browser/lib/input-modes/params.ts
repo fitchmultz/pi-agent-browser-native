@@ -4,8 +4,8 @@
  * Scope: Schema-only; behavioral validation lives in the mode compilers.
  */
 
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { Type } from "../schema.js";
+import { StringEnum } from "../string-enum-schema.js";
 
 import {
 	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,

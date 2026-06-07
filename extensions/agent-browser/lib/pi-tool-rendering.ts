@@ -1,5 +1,4 @@
 import type { AgentToolResult, Theme, ToolResultEvent } from "@earendil-works/pi-coding-agent";
-import { highlightCode, keyHint } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 import {
@@ -37,17 +36,6 @@ function trimTrailingBlankLines(lines: string[]): string[] {
 	return lines.slice(0, end);
 }
 
-function isJsonDocumentText(value: string): boolean {
-	const trimmed = value.trim();
-	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
-	try {
-		JSON.parse(trimmed);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 function getPrimaryTextContent(result: AgentToolResult<unknown>): string {
 	const textContent = result.content.find((item) => item.type === "text");
 	return textContent?.type === "text" ? textContent.text : "";
@@ -57,9 +45,6 @@ function colorizeToolOutputLines(outputText: string, theme: Theme, isError: bool
 	const normalizedLines = trimTrailingBlankLines(replaceTabsForDisplay(sanitizeDisplayText(outputText)).split("\n"));
 	const normalizedText = normalizedLines.join("\n");
 	if (normalizedText.length === 0) return [];
-	if (isJsonDocumentText(normalizedText)) {
-		return highlightCode(normalizedText, "json");
-	}
 	return normalizedLines.map((line) => {
 		if (line.length === 0) {
 			return "";
@@ -69,11 +54,7 @@ function colorizeToolOutputLines(outputText: string, theme: Theme, isError: bool
 }
 
 function formatExpandHint(theme: Theme): string {
-	try {
-		return keyHint("app.tools.expand", "to expand");
-	} catch {
-		return `${theme.fg("dim", "ctrl+o")} ${theme.fg("muted", "to expand")}`;
-	}
+	return `${theme.fg("dim", "ctrl+o")} ${theme.fg("muted", "to expand")}`;
 }
 
 function formatVisualTruncationNotice(remainingLines: number, totalLines: number, theme: Theme, width: number): string {

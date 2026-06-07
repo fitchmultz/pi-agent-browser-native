@@ -825,6 +825,12 @@ function buildTimeoutProgressSteps(options: {
 		}
 	}
 	for (const step of progressSteps) {
+		const command = step.args[0];
+		if (step.status === "completed" && (isOpenNavigationCommand(command) || command === "pushstate")) {
+			lastCompletedNavigationIndex = Math.max(lastCompletedNavigationIndex ?? 0, step.index);
+		}
+	}
+	for (const step of progressSteps) {
 		if (step.status === "completed") continue;
 		if (!retryStep) {
 			const retry = getTimeoutStepRetry(step);

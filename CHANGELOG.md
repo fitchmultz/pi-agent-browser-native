@@ -4,6 +4,22 @@
 
 No changes yet.
 
+## 0.2.46 - 2026-06-07
+
+### Changed
+
+- Reduced native extension startup cost by replacing heavy top-level Pi and TypeBox runtime imports with lightweight local schema and event helpers while preserving the public tool schemas.
+- Kept custom browser tool rendering compact without importing Pi's full coding-agent runtime during extension load.
+
+### Fixed
+
+- Fixed issue #84 by cutting local cold extension import plus factory registration from roughly 1.1 seconds to roughly 76 milliseconds in checkout measurements.
+- Stabilized timeout partial-progress diagnostics so post-navigation timeouts are recognized from later completed-step evidence even when live URL recovery is unavailable under load.
+
+### Validation
+
+- Added startup import hygiene coverage so future production extension files avoid reintroducing heavy TypeBox, `@earendil-works/pi-ai`, or `@earendil-works/pi-coding-agent` runtime imports on the cold startup path.
+
 ## 0.2.45 - 2026-06-06
 
 ### Added
