@@ -134,10 +134,24 @@ async function writeDogfoodFixture(rootDir: string): Promise<{ helpUrl: string; 
 	return { helpUrl, origin: pathToFileURL(indexPath).href };
 }
 
+type AgentBrowserToolExecutionResult = Awaited<ReturnType<typeof executeRegisteredTool>>;
+
+async function delay(ms: number): Promise<void> {
+	await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientWindowsBrowserLaunchFailure(result: AgentBrowserToolExecutionResult): boolean {
+	if (process.platform !== "win32") return false;
+	const summary = typeof result.details?.summary === "string" ? result.details.summary : "";
+	return result.isError === true
+		&& result.details?.failureCategory === "upstream-error"
+		&& /connection attempt failed|os error 10060/i.test(summary);
+}
+
 async function assertSuccessfulStep(options: {
 	artifactPath?: string;
 	id: string;
-	result: Awaited<ReturnType<typeof executeRegisteredTool>>;
+	result: AgentBrowserToolExecutionResult;
 	textPattern?: RegExp;
 }): Promise<DogfoodStepReport> {
 	const { artifactPath, id, result, textPattern } = options;
@@ -163,6 +177,26 @@ async function assertSuccessfulStep(options: {
 		textPreview: preview,
 		verifiedArtifact,
 	};
+}
+
+async function runSuccessfulStepWithRetry(options: {
+	artifactPath?: string;
+	execute: () => Promise<AgentBrowserToolExecutionResult>;
+	id: string;
+	shouldRetry: (result: AgentBrowserToolExecutionResult) => boolean;
+	textPattern?: RegExp;
+}): Promise<DogfoodStepReport> {
+	let result = await options.execute();
+	if (options.shouldRetry(result)) {
+		await delay(1_000);
+		result = await options.execute();
+	}
+	return await assertSuccessfulStep({
+		artifactPath: options.artifactPath,
+		id: options.id,
+		result,
+		textPattern: options.textPattern,
+	});
 }
 
 export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Promise<DogfoodStepReport[]> {
@@ -200,13 +234,14 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 			textPattern: /closed/,
 		}));
 
-		reports.push(await assertSuccessfulStep({
+		reports.push(await runSuccessfulStepWithRetry({
 			id: "open-fresh-example",
 			textPattern: new RegExp(fixture.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-			result: await executeRegisteredTool(harness.tool, harness.ctx, {
+			execute: async () => await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["open", fixture.origin],
 				sessionMode: "fresh",
 			}),
+			shouldRetry: isTransientWindowsBrowserLaunchFailure,
 		}));
 
 		reports.push(await assertSuccessfulStep({
