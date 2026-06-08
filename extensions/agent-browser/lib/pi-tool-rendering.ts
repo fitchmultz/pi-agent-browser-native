@@ -102,28 +102,39 @@ function formatVisualTruncationNotice(remainingLines: number, totalLines: number
 	return truncateToWidth(notice, Math.max(0, width));
 }
 
-export function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
-	const input = isRecord(args) ? args : {};
-	const semanticAction = compileAgentBrowserSemanticAction(input.semanticAction);
-	const job = compileAgentBrowserJob(input.job);
-	const qa = compileAgentBrowserQaPreset(input.qa);
-	const sourceLookup = compileAgentBrowserSourceLookup(input.sourceLookup);
-	const networkSourceLookup = compileAgentBrowserNetworkSourceLookup(input.networkSourceLookup);
-	const electron = compileAgentBrowserElectron(input.electron);
-	const generatedBatch = networkSourceLookup.compiled ?? sourceLookup.compiled ?? job.compiled ?? qa.compiled;
-	const rawArgs = Array.isArray(input.args)
-		? input.args.filter((value): value is string => typeof value === "string")
-		: electron.compiled
-			? ["electron", electron.compiled.action]
-			: (semanticAction.compiled?.args ?? generatedBatch?.args ?? []);
+function getStructuredModeInvocation(input: Record<string, unknown>): { mode?: string; rawArgs: string[] } {
+	if (Array.isArray(input.args)) return { rawArgs: input.args.filter((value): value is string => typeof value === "string") };
+	if (input.semanticAction !== undefined) return { mode: "semanticAction", rawArgs: compileAgentBrowserSemanticAction(input.semanticAction).compiled?.args ?? [] };
+	if (input.job !== undefined) return { mode: "job", rawArgs: compileAgentBrowserJob(input.job).compiled?.args ?? [] };
+	if (input.qa !== undefined) return { mode: "qa", rawArgs: compileAgentBrowserQaPreset(input.qa).compiled?.args ?? [] };
+	if (input.sourceLookup !== undefined) return { mode: "sourceLookup", rawArgs: compileAgentBrowserSourceLookup(input.sourceLookup).compiled?.args ?? [] };
+	if (input.networkSourceLookup !== undefined) return { mode: "networkSourceLookup", rawArgs: compileAgentBrowserNetworkSourceLookup(input.networkSourceLookup).compiled?.args ?? [] };
+	if (input.electron !== undefined) {
+		const electron = compileAgentBrowserElectron(input.electron);
+		return { mode: "electron", rawArgs: electron.compiled ? ["electron", electron.compiled.action] : [] };
+	}
+	return { rawArgs: [] };
+}
+
+function formatInvocationPreview(rawArgs: string[]): string {
 	const redactedArgs = redactInvocationArgs(rawArgs);
 	const invocation = sanitizeDisplayText(redactedArgs.join(" ")).replace(/\s+/g, " ").trim();
-	const invocationPreview =
-		invocation.length > TUI_INVOCATION_PREVIEW_MAX_CHARS
-			? `${invocation.slice(0, TUI_INVOCATION_PREVIEW_MAX_CHARS - 3)}...`
-			: invocation;
+	return invocation.length > TUI_INVOCATION_PREVIEW_MAX_CHARS
+		? `${invocation.slice(0, TUI_INVOCATION_PREVIEW_MAX_CHARS - 3)}...`
+		: invocation;
+}
+
+export function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
+	const input = isRecord(args) ? args : {};
+	const { mode, rawArgs } = getStructuredModeInvocation(input);
+	const invocationPreview = formatInvocationPreview(rawArgs);
 	let text = theme.fg("toolTitle", theme.bold("agent_browser"));
-	if (invocationPreview.length > 0) {
+	if (mode) {
+		text += ` ${theme.fg("accent", mode)}`;
+		if (invocationPreview.length > 0) {
+			text += ` ${theme.fg("dim", "→")} ${theme.fg("accent", invocationPreview)}`;
+		}
+	} else if (invocationPreview.length > 0) {
 		text += ` ${theme.fg("accent", invocationPreview)}`;
 	}
 	if (input.sessionMode === "fresh") {
@@ -146,7 +157,11 @@ export function formatAgentBrowserRenderResult(
 	}
 
 	const outputText = getPrimaryTextContent(result);
+	const failureCategoryNotice = formatModelVisibleFailureCategoryNotice(result.details);
 	const outputLines = colorizeToolOutputLines(outputText, theme, isError);
+	if (failureCategoryNotice && outputLines.length > 0) {
+		outputLines.unshift(theme.fg("error", failureCategoryNotice), "");
+	}
 	if (outputLines.length === 0) {
 		const details = isRecord(result.details) ? result.details : undefined;
 		const rawSummary = typeof details?.summary === "string" ? details.summary : isError ? "agent-browser failed" : "Done";

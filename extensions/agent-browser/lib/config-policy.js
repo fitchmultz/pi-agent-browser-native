@@ -23,7 +23,8 @@ import { join, resolve } from "node:path";
 /** @typedef {{ config: AgentBrowserConfig; path: string; scope: ConfigLayerScope }} ConfigLayer */
 /** @typedef {{ kind: CredentialSourceKind; provider?: WebSearchProvider; rawValue: string; scope: AgentBrowserConfigScope }} CredentialSource */
 /** @typedef {{ global: string; project: string; override?: string }} AgentBrowserConfigPaths */
-/** @typedef {{ browserDefaultProfile?: Required<BrowserDefaultProfileConfig>; browserDefaultProfileScope?: ConfigLayerScope; browserExecutablePath?: string; browserExecutablePathScope?: ConfigLayerScope; trustedBrowserDefaultProfile?: Required<BrowserDefaultProfileConfig>; trustedBrowserDefaultProfileScope?: Exclude<ConfigLayerScope, "project">; trustedBrowserExecutablePath?: string; trustedBrowserExecutablePathScope?: Exclude<ConfigLayerScope, "project">; config: AgentBrowserConfig; webSearchCredentialSources: Partial<Record<WebSearchProvider, CredentialSource>>; webSearchEnabled: boolean; webSearchPreferredProvider: WebSearchProvider; errors: string[]; layers: ConfigLayer[]; paths: AgentBrowserConfigPaths; warnings: string[] }} AgentBrowserConfigState */
+/** @typedef {{ cwd?: string; env?: NodeJS.ProcessEnv; includeProjectConfig?: boolean }} AgentBrowserConfigLoadOptions */
+/** @typedef {{ browserDefaultProfile?: Required<BrowserDefaultProfileConfig>; browserDefaultProfileScope?: ConfigLayerScope; browserExecutablePath?: string; browserExecutablePathScope?: ConfigLayerScope; trustedBrowserDefaultProfile?: Required<BrowserDefaultProfileConfig>; trustedBrowserDefaultProfileScope?: Exclude<ConfigLayerScope, "project">; trustedBrowserExecutablePath?: string; trustedBrowserExecutablePathScope?: Exclude<ConfigLayerScope, "project">; config: AgentBrowserConfig; webSearchCredentialSources: Partial<Record<WebSearchProvider, CredentialSource>>; webSearchEnabled: boolean; webSearchPreferredProvider: WebSearchProvider; errors: string[]; layers: ConfigLayer[]; paths: AgentBrowserConfigPaths; projectConfigIncluded: boolean; warnings: string[] }} AgentBrowserConfigState */
 /** @typedef {{ scope: string; path: string; exists: boolean }} ConfigFileSummary */
 
 export const AGENT_BROWSER_CONFIG_ENV = "PI_AGENT_BROWSER_CONFIG";
@@ -469,7 +470,7 @@ export function buildWebSearchCredentialSources(options) {
 }
 
 /**
- * @param {{ env: NodeJS.ProcessEnv; layers: ConfigLayer[]; mergedConfig: AgentBrowserConfig; paths: AgentBrowserConfigPaths; errors: string[]; warnings: string[] }} options
+ * @param {{ env: NodeJS.ProcessEnv; layers: ConfigLayer[]; mergedConfig: AgentBrowserConfig; paths: AgentBrowserConfigPaths; errors: string[]; warnings: string[]; projectConfigIncluded?: boolean }} options
  * @returns {AgentBrowserConfigState}
  */
 export function buildAgentBrowserConfigState(options) {
@@ -492,6 +493,7 @@ export function buildAgentBrowserConfigState(options) {
 		errors: options.errors,
 		layers: options.layers,
 		paths: options.paths,
+		projectConfigIncluded: options.projectConfigIncluded ?? options.layers.some((layer) => layer.scope === "project"),
 		warnings: options.warnings,
 	};
 }
@@ -516,12 +518,13 @@ function readConfigLayerSync(path, scope, errors, warnings) {
 }
 
 /**
- * @param {{ cwd?: string; env?: NodeJS.ProcessEnv }} [options]
+ * @param {AgentBrowserConfigLoadOptions} [options]
  * @returns {AgentBrowserConfigState}
  */
 export function loadAgentBrowserConfigStateSync(options = {}) {
 	const env = options.env ?? process.env;
 	const paths = getAgentBrowserConfigPaths({ cwd: options.cwd, env });
+	const includeProjectConfig = options.includeProjectConfig !== false;
 	/** @type {string[]} */
 	const errors = [];
 	/** @type {string[]} */
@@ -529,7 +532,7 @@ export function loadAgentBrowserConfigStateSync(options = {}) {
 	/** @type {Array<{ path: string; scope: ConfigLayerScope }>} */
 	const layerCandidates = [
 		{ path: paths.global, scope: "global" },
-		{ path: paths.project, scope: "project" },
+		...(includeProjectConfig ? [{ path: paths.project, scope: /** @type {ConfigLayerScope} */ ("project") }] : []),
 		...(paths.override ? [{ path: paths.override, scope: /** @type {ConfigLayerScope} */ ("override") }] : []),
 	];
 	/** @type {ConfigLayer[]} */
@@ -542,7 +545,15 @@ export function loadAgentBrowserConfigStateSync(options = {}) {
 		layers.push(layer);
 		mergedConfig = mergeAgentBrowserConfig(mergedConfig, layer.config);
 	}
-	return buildAgentBrowserConfigState({ env, errors, layers, mergedConfig, paths, warnings });
+	return buildAgentBrowserConfigState({
+		env,
+		errors,
+		layers,
+		mergedConfig,
+		paths,
+		projectConfigIncluded: includeProjectConfig,
+		warnings,
+	});
 }
 
 /**

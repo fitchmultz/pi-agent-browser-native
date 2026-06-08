@@ -74,7 +74,7 @@ The result is optimized for agent work:
 
 ## Fastest way to try it
 
-Use Pi 0.78.1 or newer when possible. This package does not hard-pin Pi 0.78.1 as a runtime requirement, but the current release is audited and validated against that extension/package baseline.
+Use Pi 0.79.0 or newer when possible. This package does not hard-pin Pi 0.79.0 as a runtime requirement, but the current release is audited and validated against that extension/package baseline, including Project Trust.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -109,6 +109,8 @@ For a one-off trial that does not touch your configured Pi extensions:
 ```bash
 pi --no-extensions -e npm:pi-agent-browser-native
 ```
+
+Pi 0.79+ may ask whether to trust the current project before loading project-local instructions, settings, or resources. This extension treats its own project-local package config as developer-trusted by default; use `--no-approve` when you intentionally want Pi and this extension to ignore project-local inputs for that run.
 
 For a specific published version:
 
@@ -217,7 +219,7 @@ printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native@la
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --provider brave --global
 ```
 
-Config merges in this order: global → project → `PI_AGENT_BROWSER_CONFIG` override. `webSearch.enabled` is evaluated after that merge. Use `web-search disable --global` for a user default, `web-search disable --project` for one repo, and a `PI_AGENT_BROWSER_CONFIG` override with `{ "webSearch": { "enabled": false } }` when web search must stay off even if project config exists. Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused; project config may only use the matching provider env refs (`$EXA_API_KEY` / `${EXA_API_KEY}` for Exa and `$BRAVE_API_KEY` / `${BRAVE_API_KEY}` for Brave). `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. The tool content, details, status output, and docs examples must not expose resolved keys.
+Config merges in this order: global → project → `PI_AGENT_BROWSER_CONFIG` override. Under Pi 0.79+, the globally installed or CLI-loaded extension still loads project-local `.pi/config/pi-agent-browser-native/config.json` by default because installed extensions are developer-trusted code; it skips that project layer only when Pi is launched with `--no-approve`. `webSearch.enabled` is evaluated after the loaded layers merge. Use `web-search disable --global` for a user default, `web-search disable --project` for one repo, and a `PI_AGENT_BROWSER_CONFIG` override with `{ "webSearch": { "enabled": false } }` when web search must stay off even if project config exists. Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused; project config may only use the matching provider env refs (`$EXA_API_KEY` / `${EXA_API_KEY}` for Exa and `$BRAVE_API_KEY` / `${BRAVE_API_KEY}` for Brave). `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. The tool content, details, status output, and docs examples must not expose resolved keys.
 
 For Exa, the tool defaults to `searchType: "auto"` with `contents.highlights: true`. Agents may pass `searchType` (`fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`) only when the task needs that latency/depth tradeoff; structured output schemas are intentionally not exposed yet.
 
@@ -330,7 +332,7 @@ Typical pitfalls:
 
 For short repeatable workflows, pass a top-level `job` instead of hand-writing `batch` stdin. The wrapper only supports constrained steps (`open`, `click`, `fill`, `type`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, `snapshot`, and `screenshot`), compiles them to existing upstream `batch` commands, and echoes the compiled commands as `details.compiledJob` for auditability. `open` steps can include `loadState` (`domcontentloaded`, `load`, or `networkidle`) to insert a readiness wait before the next step. `click` and `fill` steps can use either CSS `selector` or semantic locator fields (`locator`, `role`/`value`, optional `name`) so a job can express flows like role/name search without brittle selectors. `type` can use `selector`, `text`, optional `delayMs` for per-character pacing, and optional `press` for a final key such as `Enter`; paced type compiles to existing `focus`, `keyboard type`, `wait`, and `press` batch rows, is capped at 200 characters per delayed step, and compacts model-visible batch text while full rows remain in `details.batchSteps`. The same compile path backs top-level `qa`, so long `qa` runs surface the same timeout evidence shape. If a long `job`, `qa`, or `batch` hits the wrapper watchdog, `details.timeoutPartialProgress` may recover per-step status (`completed`, `failed`, `pending`, or `unknown`), current page title/URL, declared artifact paths that already exist on disk, and a `retry-timeout-step` next action for the first incomplete read-only or idempotent step (see [`docs/TOOL_CONTRACT.md#details`](docs/TOOL_CONTRACT.md#details)). There is no separate catalog of reusable named browser recipes above `job`, `qa`, and raw `batch`; see [`docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and when to revisit it.
 
-**Navigation inside `job` is explicit.** A successful `click` does not prove the next page loaded; add `assertUrl` and/or `assertText` after navigation-prone clicks (forms, checkout, tabs, submit buttons) before screenshots or steps that assume the new page.
+**Navigation inside `job` is explicit.** A successful `click` does not prove the next page loaded; add `assertUrl` and/or `assertText` after navigation-prone clicks (forms, checkout, tabs, submit buttons) before screenshots or steps that assume the new page. `assertUrl` accepts exact URLs and `*` / `**` glob-style patterns; glob patterns compile to a `wait --fn` URL predicate so examples like `**/shipping` do not depend on upstream `wait --url` matcher quirks.
 
 ```json
 {
@@ -436,7 +438,7 @@ When a user gives exact artifact paths for screenshots, recordings, downloads, P
 
 For evidence-only screenshots or QA captures, branch on `details.artifactVerification` and `details.artifacts` before reporting PASS/FAIL; inline image attachments are optional when size limits allow—do not require vision review unless the user asked for visual inspection. If the latest prompt names exact required artifact paths, browser close can be blocked with `details.promptGuard` until those artifacts are saved and verified.
 
-Artifact cleanup is host-owned, not a browser command. Close commands (`close`, `quit`, or `exit`) shut down the browser session but do **not** delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings saved to paths you chose. When the session’s non-empty `details.artifactManifest` is in scope, a successful close command appends an `Artifact lifecycle` note and sets `details.artifactCleanup` with the same retention summary as `details.artifactRetentionSummary`, a fixed `note` about host-owned cleanup, and `explicitArtifactPaths`: up to ten distinct paths from manifest rows whose `storageScope` is `explicit-path` (this list can be empty if the recent window only holds spills or other non-explicit inventory). Remove any listed paths with normal file tools after inspection.
+Artifact cleanup is host-owned, not a browser command. Close commands (`close`, `quit`, or `exit`) shut down the browser session but do **not** delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings saved to paths you chose. When the session’s non-empty `details.artifactManifest` is in scope, a successful close command appends a compact `Artifact lifecycle` note and sets `details.artifactCleanup` with the same retention summary as `details.artifactRetentionSummary`, a fixed `note` about host-owned cleanup, and `explicitArtifactPaths`: up to ten distinct paths from manifest rows whose `storageScope` is `explicit-path` (this list can be empty if the recent window only holds spills or other non-explicit inventory). Remove any listed paths with normal file tools after inspection.
 
 Start a fresh profiled browser after the implicit public-browsing session already exists:
 
@@ -587,7 +589,7 @@ npm run smoke:platform:doctor
 npm run smoke:platform:all
 ```
 
-The required matrix is documented in [`docs/platform-smoke.md`](docs/platform-smoke.md). It runs `platform-build` (fast target-local verify, pack, clean packed Pi install, `pi list`) and `browser-dogfood-smoke` (real `agent-browser`/browser wrapper smoke) on every target. Inspect `.artifacts/platform-smoke/` and check `crabbox list --provider local-container` plus `crabbox list --provider parallels` after release runs so cleanup proof is not chat-only.
+The required matrix is documented in [`docs/platform-smoke.md`](docs/platform-smoke.md). It runs `platform-build` (fast target-local verify, pack, clean packed Pi install with `--approve`, `pi list --approve`) and `browser-dogfood-smoke` (real `agent-browser`/browser wrapper smoke) on every target. Inspect `.artifacts/platform-smoke/` and check `crabbox list --provider local-container` plus `crabbox list --provider parallels` after release runs so cleanup proof is not chat-only.
 
 For package release confidence, follow [`docs/RELEASE.md`](docs/RELEASE.md). The release gate is:
 
@@ -639,10 +641,10 @@ Use the npm version declared in `package.json` `packageManager` when refreshing 
 Quick isolated checkout smoke test:
 
 ```bash
-pi --no-extensions -e .
+pi --approve --no-extensions -e .
 ```
 
-This bypasses Pi settings and configured extensions. After editing extension code, restart that Pi process to test the new checkout.
+This bypasses Pi settings and configured extensions while explicitly trusting this checkout's project-local inputs for the run. Omit `--approve` when you want to exercise Pi's interactive Project Trust prompt instead. After editing extension code, restart that Pi process to test the new checkout.
 
 For a concrete expanded native-tool smoke matrix (version/help/skills through dashboard/chat families), see [Local development validation](docs/RELEASE.md#local-development-validation) in `docs/RELEASE.md`. For bounded release smokes that should validate this extension rather than skill routing, use the [Sauce Demo smoke prompt](docs/RELEASE.md#public-sauce-demo-checkout-smoke-prompt), which adds `--no-skills`. When changes affect dense dashboards, diagnostics, artifacts, recording, scroll, or combobox behavior, use the public [Grafana stress checklist](docs/RELEASE.md#public-grafana-stress-checklist) for repeatable release dogfood without bundling private skills or recipes.
 
@@ -652,7 +654,7 @@ Configured-source lifecycle validation:
 npm run verify -- lifecycle
 ```
 
-The harness defaults to Pi model `zai/glm-5.1` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches Pi 0.78 with a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, persisted spill reachability, and real Pi `tool_result` failure-patch behavior.
+The harness defaults to Pi model `zai/glm-5.1` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches Pi 0.79 with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, persisted spill reachability, and real Pi `tool_result` failure-patch behavior.
 
 Use lifecycle validation when testing `/reload`, exact-session relaunch, `/resume`, managed-session continuity, or persisted artifact behavior. Branch-backed state and `session_tree` cleanup ownership are covered by focused extension harness tests. Maintainers must run the lifecycle harness before every publish; see [Pre-release checks](docs/RELEASE.md#pre-release-checks).
 

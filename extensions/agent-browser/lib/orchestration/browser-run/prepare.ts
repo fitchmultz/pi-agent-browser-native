@@ -789,7 +789,7 @@ async function trySnapshotFilter(options: {
 	if (fullSnapshot) options.sessionPageState.applyRefSnapshot({ sessionName: options.sessionName, snapshot: fullSnapshot, update: options.sessionPageStateUpdate });
 	const presentation = await buildSnapshotPresentation(filtered.data);
 	const summary = request.role || request.search
-		? `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}.`
+		? `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} direct refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}; ${filtered.visibleLines} surrounding snapshot line${filtered.visibleLines === 1 ? "" : "s"} shown.`
 		: request.diff
 			? diff?.summary ?? "Snapshot diff unavailable."
 			: "Snapshot viewport metadata collected.";

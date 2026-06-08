@@ -22,6 +22,7 @@ import {
 } from "./config-policy.js";
 import type {
 	AgentBrowserConfig,
+	AgentBrowserConfigLoadOptions,
 	AgentBrowserConfigScope,
 	AgentBrowserConfigState,
 	BrowserDefaultProfileConfig,
@@ -74,6 +75,7 @@ export {
 } from "./config-policy.js";
 export type {
 	AgentBrowserConfig,
+	AgentBrowserConfigLoadOptions,
 	AgentBrowserConfigScope,
 	AgentBrowserConfigState,
 	BrowserDefaultProfileConfig,
@@ -106,14 +108,15 @@ async function readConfigLayer(path: string, scope: ConfigLayer["scope"], errors
 	return parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings);
 }
 
-export async function loadAgentBrowserConfig(options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<AgentBrowserConfigState> {
+export async function loadAgentBrowserConfig(options: AgentBrowserConfigLoadOptions = {}): Promise<AgentBrowserConfigState> {
 	const env = options.env ?? process.env;
 	const paths = getAgentBrowserConfigPaths({ cwd: options.cwd, env });
+	const includeProjectConfig = options.includeProjectConfig !== false;
 	const errors: string[] = [];
 	const warnings: string[] = [];
 	const layerCandidates = [
 		{ path: paths.global, scope: "global" as const },
-		{ path: paths.project, scope: "project" as const },
+		...(includeProjectConfig ? [{ path: paths.project, scope: "project" as const }] : []),
 		...(paths.override ? [{ path: paths.override, scope: "override" as const }] : []),
 	];
 	const layers: ConfigLayer[] = [];
@@ -124,10 +127,18 @@ export async function loadAgentBrowserConfig(options: { cwd?: string; env?: Node
 		layers.push(layer);
 		mergedConfig = mergeAgentBrowserConfig(mergedConfig, layer.config);
 	}
-	return buildAgentBrowserConfigState({ env, errors, layers, mergedConfig, paths, warnings });
+	return buildAgentBrowserConfigState({
+		env,
+		errors,
+		layers,
+		mergedConfig,
+		paths,
+		projectConfigIncluded: includeProjectConfig,
+		warnings,
+	});
 }
 
-export function loadAgentBrowserConfigSync(options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): AgentBrowserConfigState {
+export function loadAgentBrowserConfigSync(options: AgentBrowserConfigLoadOptions = {}): AgentBrowserConfigState {
 	return loadAgentBrowserConfigStateSync(options);
 }
 

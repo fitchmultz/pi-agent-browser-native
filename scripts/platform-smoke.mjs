@@ -39,7 +39,7 @@ Targets:
   macos, ubuntu, windows-native
 
 Suites:
-  platform-build             npm ci, npm run verify -- platform-target, npm pack, packed pi install, pi list
+  platform-build             npm ci, npm run verify -- platform-target, npm pack, packed pi install --approve, pi list --approve
   browser-dogfood-smoke      model-free native agent_browser smoke with real agent-browser/browser
 
 Options:

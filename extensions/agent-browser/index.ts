@@ -589,11 +589,20 @@ function getInstalledDocsPaths(): { readmePath: string; commandReferencePath: st
 	};
 }
 
+function hasArgvFlag(argv: readonly string[], longFlag: string, shortFlag: string): boolean {
+	return argv.includes(longFlag) || argv.includes(shortFlag);
+}
 
+function shouldIncludeProjectConfig(_cwd: string, argv: readonly string[] = process.argv): boolean {
+	return !hasArgvFlag(argv, "--no-approve", "-na");
+}
 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
-	const agentBrowserConfig = loadAgentBrowserConfigSync({ cwd: process.cwd() });
+	const agentBrowserConfig = loadAgentBrowserConfigSync({
+		cwd: process.cwd(),
+		includeProjectConfig: shouldIncludeProjectConfig(process.cwd()),
+	});
 	const webSearchToolAvailable = canRegisterWebSearchTool(agentBrowserConfig);
 	const toolPromptGuidelines = buildToolPromptGuidelines({
 		browserDefaultProfile: agentBrowserConfig.trustedBrowserDefaultProfile,

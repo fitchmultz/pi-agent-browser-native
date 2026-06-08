@@ -54,7 +54,28 @@ async function createFixture() {
 		cwd,
 		home,
 		overrideConfigPath: join(root, "override-config.json"),
+		projectConfigPath: join(cwd, ".pi", "config", "pi-agent-browser-native", "config.json"),
 	};
+}
+
+async function withTemporaryCwd<T>(cwd: string, run: () => Promise<T>): Promise<T> {
+	const previousCwd = process.cwd();
+	process.chdir(cwd);
+	try {
+		return await run();
+	} finally {
+		process.chdir(previousCwd);
+	}
+}
+
+async function withTemporaryArgv<T>(argv: string[], run: () => Promise<T>): Promise<T> {
+	const previousArgv = process.argv;
+	process.argv = argv;
+	try {
+		return await run();
+	} finally {
+		process.argv = previousArgv;
+	}
 }
 
 test("does not register agent_browser_web_search without env or config credential", async () => {
@@ -63,6 +84,32 @@ test("does not register agent_browser_web_search without env or config credentia
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
 		assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
 		assert.ok(harness.getTool("agent_browser"));
+	});
+});
+
+test("project config affects web-search registration by default", async () => {
+	const fixture = await createFixture();
+	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { enabled: false } });
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "env-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
+		await withTemporaryCwd(fixture.cwd, async () => {
+			const harness = createExtensionHarness({ cwd: fixture.cwd });
+			assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
+			assert.ok(harness.getTool("agent_browser"));
+		});
+	});
+});
+
+test("--no-approve prevents project config from disabling env-backed agent_browser_web_search registration", async () => {
+	const fixture = await createFixture();
+	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { enabled: false } });
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "env-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
+		await withTemporaryCwd(fixture.cwd, async () => {
+			await withTemporaryArgv(["node", "pi", "--no-approve"], async () => {
+				const harness = createExtensionHarness({ cwd: fixture.cwd });
+				assert.ok(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME));
+				assert.ok(harness.getTool("agent_browser"));
+			});
+		});
 	});
 });
 

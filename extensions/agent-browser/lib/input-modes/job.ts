@@ -62,6 +62,21 @@ function getUnsupportedJobStepField(step: Record<string, unknown>, allowedFields
 
 const JOB_TYPE_ALLOWED_FIELDS = new Set(["action", "delayMs", "press", "selector", "text"]);
 
+function globUrlPatternToRegexSource(pattern: string): string {
+	let source = "^";
+	for (const char of pattern) {
+		if (char === "*") source += ".*";
+		else if (char === "?") source += ".";
+		else source += char.replace(/[\\^$+?.()|[\]{}]/g, "\\$&");
+	}
+	return `${source}$`;
+}
+
+function compileJobAssertUrlArgs(url: string): string[] {
+	if (!/[?*]/.test(url)) return ["wait", "--url", url];
+	return ["wait", "--fn", `new RegExp(${JSON.stringify(globUrlPatternToRegexSource(url))}).test(location.href)`];
+}
+
 function compileJobTypeSteps(step: Record<string, unknown>): { error?: string; steps?: CompiledAgentBrowserJobStep[] } {
 	const unsupportedField = getUnsupportedJobStepField(step, JOB_TYPE_ALLOWED_FIELDS);
 	if (unsupportedField) return { error: `job step type does not support ${unsupportedField}; supported fields are selector, text, delayMs, and press.` };
@@ -168,7 +183,7 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 		} else if (jobAction === "assertUrl") {
 			const result = getRequiredJobString(rawStep, "url", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
-			args = ["wait", "--url", result.value as string];
+			args = compileJobAssertUrlArgs(result.value as string);
 		} else if (jobAction === "waitForDownload") {
 			const result = getRequiredJobString(rawStep, "path", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };

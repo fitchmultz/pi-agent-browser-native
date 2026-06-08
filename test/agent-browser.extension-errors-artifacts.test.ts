@@ -800,9 +800,9 @@ if (args.includes("screenshot")) {
 			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
 			assert.equal(close.isError, false);
 			const text = (close.content[0] as { text: string }).text;
-			assert.match(text, /Artifact lifecycle:/);
-			assert.match(text, /Closing the browser session does not delete explicit screenshots/);
-			assert.match(text, /artifact\.png/);
+			assert.match(text, /Artifact lifecycle: 1 explicit artifact remains; expand or inspect details\.artifactCleanup\.explicitArtifactPaths for paths\./);
+			assert.match(text, /Browser close does not delete explicit screenshots/);
+			assert.doesNotMatch(text, /artifact\.png/);
 			assert.doesNotMatch(text, /deleted-artifact\.png/);
 			assert.deepEqual(close.details?.artifactCleanup, {
 				explicitArtifactPaths: [screenshotPath],

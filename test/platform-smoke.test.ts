@@ -93,11 +93,13 @@ if (result.supportedTargets.join(",") !== "macos,ubuntu,windows-native") process
 
 test("platform command rendering uses POSIX and PowerShell without source-extension shortcuts", () => {
 	const code = String.raw`
+import { readFileSync } from "node:fs";
 import { CAPABILITY_BASELINE } from "./scripts/agent-browser-capability-baseline.mjs";
 import { buildBrowserDogfoodCommand, buildPlatformBuildCommand, platformFor } from "./scripts/platform-smoke/targets.mjs";
 const posix = buildPlatformBuildCommand("ubuntu", "pi-agent-browser-native", 22);
 const macos = buildPlatformBuildCommand("macos", "pi-agent-browser-native", 22);
 const powershell = buildPlatformBuildCommand("windows-native", "pi-agent-browser-native", 22);
+const powershellScript = readFileSync("scripts/platform-smoke/platform-build-windows.ps1", "utf8");
 const dogfoodPosix = buildBrowserDogfoodCommand("ubuntu");
 const dogfoodWindows = buildBrowserDogfoodCommand("windows-native");
 const result = {
@@ -105,12 +107,14 @@ const result = {
   ubuntuPlatform: platformFor("ubuntu") === "posix",
   windowsPlatform: platformFor("windows-native") === "powershell",
   posixHasVerify: posix.includes("npm run verify -- platform-target"),
-  posixHasPackedInstall: posix.includes("install -l ./node_modules/pi-agent-browser-native"),
+  posixHasPackedInstall: posix.includes("install -l --approve ./node_modules/pi-agent-browser-native"),
+  posixHasApprovedList: posix.includes("list --approve"),
   posixNoExtensionShortcut: !/\bpi\s+(?:-e|--extension)\s+\./.test(posix),
   posixNoFixtureCopy: !posix.includes("cp -R src prompts"),
   macosHasVerify: macos.includes("npm run verify -- platform-target"),
   powershellUsesScript: powershell.includes("platform-build-windows.ps1"),
   powershellHasPackage: powershell.includes("pi-agent-browser-native"),
+  powershellHasApprovedPackageCommands: powershellScript.includes("install -l --approve") && powershellScript.includes("list --approve"),
   powershellNoExtensionShortcut: !/\bpi\s+(?:-e|--extension)\s+\./.test(powershell),
   dogfoodRunsScript: dogfoodPosix.includes("verify-agent-browser-dogfood.ts"),
   dogfoodChecksBaseline: dogfoodPosix.includes("EXPECTED_AGENT_BROWSER_VERSION='agent-browser " + CAPABILITY_BASELINE.targetVersion + "'") && dogfoodPosix.includes("PLATFORM_AGENT_BROWSER_READY_EXIT"),

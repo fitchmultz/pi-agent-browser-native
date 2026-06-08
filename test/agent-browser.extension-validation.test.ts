@@ -555,7 +555,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i", "--search", "checkout"] });
 			assert.equal(result.isError, false, JSON.stringify(result));
-			assert.match(result.content[0]?.text ?? "", /Snapshot filter: 1\/3 refs matched/);
+			assert.match(result.content[0]?.text ?? "", /Snapshot filter: 1\/3 direct refs matched search "checkout"; 1 surrounding snapshot line shown\./);
 			assert.match(result.content[0]?.text ?? "", /Checkout/);
 			assert.doesNotMatch(result.content[0]?.text ?? "", /Theme/);
 			assert.equal((result.details?.snapshotFilter as { search?: string; matchedRefs?: number } | undefined)?.search, "checkout");
@@ -950,6 +950,26 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.match(callText, /\+ stdin/);
 	assert.doesNotMatch(callText, /document\.body/);
 
+	const qaCallText = renderCall(
+		{ qa: { url: "https://example.com", expectedText: "Example" } },
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: params }),
+	)
+		.render(200)
+		.join("\n");
+	assert.match(qaCallText, /<accent>qa<\/accent>/);
+	assert.match(qaCallText, /<dim>→<\/dim> <accent>batch --bail<\/accent>/);
+
+	const semanticActionCallText = renderCall(
+		{ semanticAction: { action: "click", locator: "text", value: "Definitely Missing Button" } },
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: params }),
+	)
+		.render(200)
+		.join("\n");
+	assert.match(semanticActionCallText, /<accent>semanticAction<\/accent>/);
+	assert.match(semanticActionCallText, /<dim>→<\/dim> <accent>find text Definitely Missing Button click<\/accent>/);
+
 	const maliciousParams: AgentBrowserToolParams = {
 		args: ["open", "\x1B]0;pwned\x07https://example.com/\x1B[31m"],
 		stdin: "secret stdin must not render",
@@ -995,6 +1015,24 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.match(wideCollapsedText, /<syntaxString>"https:\/\/example\.com\/"<\/syntaxString>/);
 	assert.doesNotMatch(collapsedText, /item-24/);
 	assert.match(longText, /item-24/, "renderer must not mutate model-facing content");
+
+	const longFailureText = Array.from({ length: 20 }, (_, index) => `failure-line-${index}`).join("\n");
+	const failedResult: AgentToolResult<unknown> = {
+		content: [{ type: "text", text: longFailureText }],
+		details: { failureCategory: "selector-not-found", resultCategory: "failure", summary: "selector miss" },
+	};
+	const failedCollapsedText = renderResult(
+		failedResult,
+		{ expanded: false, isPartial: false },
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: params }),
+	)
+		.render(100)
+		.join("\n");
+	assert.match(failedCollapsedText, /Result category: failure; failureCategory: selector-not-found; Pi tool isError: true\./);
+	assert.match(failedCollapsedText, /failure-line-0/);
+	assert.doesNotMatch(failedCollapsedText, /failure-line-19/);
+	assert.match(longFailureText, /failure-line-19/, "renderer must not mutate failed model-facing content");
 
 	const expandedComponent = renderResult(
 		longResult,

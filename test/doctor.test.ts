@@ -36,7 +36,7 @@ function passingVersion() {
 }
 
 function passingPiVersion() {
-	return "0.78.1\n";
+	return "0.79.0\n";
 }
 
 function evaluateDoctorWithPi(options: Parameters<typeof evaluateDoctor>[0] = {}) {
@@ -49,8 +49,8 @@ test("normalizeAgentBrowserVersion strips the upstream binary label", () => {
 });
 
 test("normalizePiVersion strips an optional pi binary label", () => {
-	assert.equal(normalizePiVersion("pi 0.78.1\n"), "0.78.1");
-	assert.equal(normalizePiVersion("0.78.1\n"), "0.78.1");
+	assert.equal(normalizePiVersion("pi 0.79.0\n"), "0.79.0");
+	assert.equal(normalizePiVersion("0.79.0\n"), "0.79.0");
 });
 
 test("doctor reports missing agent-browser with actionable install guidance", async () => {
@@ -99,8 +99,8 @@ test("doctor warns instead of failing when Pi is below the recommended release f
 	const text = formatDoctorReport(report);
 
 	assert.equal(report.failures.length, 0);
-	assert.match(text, /Pi 0\.78\.1 or newer is recommended; found 0\.78\.0/);
-	assert.match(text, /does not hard-pin Pi 0\.78\.1/);
+	assert.match(text, /Pi 0\.79\.0 or newer is recommended; found 0\.78\.0/);
+	assert.match(text, /does not hard-pin Pi 0\.79\.0/);
 	assert.match(text, /Doctor passed/);
 });
 
@@ -139,7 +139,7 @@ test("doctor reports duplicate package and checkout sources with remediation", a
 	assert.match(text, /`agent_browser`/);
 	assert.match(text, /npm:pi-agent-browser-native/);
 	assert.match(text, /extensions\/agent-browser\/index\.ts/);
-	assert.match(text, /pi --no-extensions -e <source>/);
+	assert.match(text, /pi --approve --no-extensions -e <source>/);
 	assert.match(text, /keep exactly one active source/i);
 });
 

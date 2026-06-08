@@ -86,6 +86,19 @@ test("uses project config over global config and rejects unsafe project-local Br
 	}
 });
 
+test("can skip project config when caller opts out", async () => {
+	const fixture = await createConfigFixture();
+	await writeJson(fixture.globalPath, { version: 1, webSearch: { braveApiKey: "$GLOBAL_BRAVE_KEY" } });
+	await writeJson(fixture.projectPath, { version: 1, webSearch: { enabled: false, braveApiKey: "$BRAVE_API_KEY" } });
+	const env = { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret", BRAVE_API_KEY: "project-secret" };
+	const state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env, includeProjectConfig: false });
+	assert.equal(state.projectConfigIncluded, false);
+	assert.deepEqual(state.layers.map((layer) => layer.scope), ["global"]);
+	assert.equal(state.webSearchEnabled, true);
+	assert.equal(getCredentialSourceSummary(state.webSearchCredentialSources.brave, "brave"), "configured via environment interpolation (global)");
+	assert.equal(canRegisterWebSearchTool(state, env), true);
+});
+
 test("registers command credential sources without executing them at startup", async () => {
 	const fixture = await createConfigFixture();
 	await writeJson(fixture.globalPath, {

@@ -71,7 +71,7 @@ $PiInstallStderr = Join-Path $PackDir "pi-install.stderr.txt"
 if ($PackedNodeInstallExit -eq 0) {
   Push-Location $PiProject
   $env:PI_OFFLINE = "1"
-  & $PiCli install -l ".\node_modules\$PackageName" >$PiInstallStdout 2>$PiInstallStderr
+  & $PiCli install -l --approve ".\node_modules\$PackageName" >$PiInstallStdout 2>$PiInstallStderr
   $PiInstallExit = $LASTEXITCODE
   Remove-Item Env:\PI_OFFLINE -ErrorAction SilentlyContinue
   Pop-Location
@@ -87,7 +87,7 @@ $PiListStdout = Join-Path $PackDir "pi-list.stdout.txt"
 $PiListStderr = Join-Path $PackDir "pi-list.stderr.txt"
 Push-Location $PiProject
 $env:PI_OFFLINE = "1"
-& $PiCli list >$PiListStdout 2>$PiListStderr
+& $PiCli list --approve >$PiListStdout 2>$PiListStderr
 $PiListExit = $LASTEXITCODE
 Remove-Item Env:\PI_OFFLINE -ErrorAction SilentlyContinue
 Pop-Location

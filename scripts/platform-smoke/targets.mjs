@@ -93,6 +93,10 @@ function section(text, name) {
 	return (endIndex === -1 ? text.slice(contentStart) : text.slice(contentStart, endIndex)).replace(/^\r?\n/, "").replace(/\r?\n$/, "");
 }
 
+function escapeRegExp(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function marker(text, name) {
 	return text.match(new RegExp(`^${name}=(.*)$`, "m"))?.[1]?.trim() ?? "";
 }
@@ -288,11 +292,11 @@ export function buildPlatformBuildCommand(targetName, packageName = "pi-agent-br
 	lines.push(`echo "PLATFORM_PACKED_NODE_INSTALL_EXIT=$PACKED_NODE_INSTALL_EXIT"`);
 	lines.push(`echo "--- PACKED_NODE_INSTALL_STDOUT START ---"; cat "$PACK_DIR/packed-node-install.stdout.txt" 2>/dev/null || true; echo "--- PACKED_NODE_INSTALL_STDOUT END ---"`);
 	lines.push(`echo "--- PACKED_NODE_INSTALL_STDERR START ---"; cat "$PACK_DIR/packed-node-install.stderr.txt" 2>/dev/null || true; echo "--- PACKED_NODE_INSTALL_STDERR END ---"`);
-	lines.push(`if [ "$PACKED_NODE_INSTALL_EXIT" -eq 0 ] && [ -n "$PI_CLI" ]; then (cd "$PI_PROJECT" && PI_OFFLINE=1 "$PI_CLI" install -l ./node_modules/${packageName} >"$PACK_DIR/pi-install.stdout.txt" 2>"$PACK_DIR/pi-install.stderr.txt"); PI_INSTALL_EXIT=$?; else echo "missing pi cli or packed install" >"$PACK_DIR/pi-install.stderr.txt"; PI_INSTALL_EXIT=1; fi`);
+	lines.push(`if [ "$PACKED_NODE_INSTALL_EXIT" -eq 0 ] && [ -n "$PI_CLI" ]; then (cd "$PI_PROJECT" && PI_OFFLINE=1 "$PI_CLI" install -l --approve ./node_modules/${packageName} >"$PACK_DIR/pi-install.stdout.txt" 2>"$PACK_DIR/pi-install.stderr.txt"); PI_INSTALL_EXIT=$?; else echo "missing pi cli or packed install" >"$PACK_DIR/pi-install.stderr.txt"; PI_INSTALL_EXIT=1; fi`);
 	lines.push(`echo "PLATFORM_PI_INSTALL_EXIT=$PI_INSTALL_EXIT"`);
 	lines.push(`echo "--- PI_INSTALL_STDOUT START ---"; cat "$PACK_DIR/pi-install.stdout.txt" 2>/dev/null || true; echo "--- PI_INSTALL_STDOUT END ---"`);
 	lines.push(`echo "--- PI_INSTALL_STDERR START ---"; cat "$PACK_DIR/pi-install.stderr.txt" 2>/dev/null || true; echo "--- PI_INSTALL_STDERR END ---"`);
-	lines.push(`if [ -n "$PI_CLI" ]; then (cd "$PI_PROJECT" && PI_OFFLINE=1 "$PI_CLI" list >"$PACK_DIR/pi-list.stdout.txt" 2>"$PACK_DIR/pi-list.stderr.txt"); PI_LIST_EXIT=$?; else echo "missing pi cli" >"$PACK_DIR/pi-list.stderr.txt"; PI_LIST_EXIT=1; fi`);
+	lines.push(`if [ -n "$PI_CLI" ]; then (cd "$PI_PROJECT" && PI_OFFLINE=1 "$PI_CLI" list --approve >"$PACK_DIR/pi-list.stdout.txt" 2>"$PACK_DIR/pi-list.stderr.txt"); PI_LIST_EXIT=$?; else echo "missing pi cli" >"$PACK_DIR/pi-list.stderr.txt"; PI_LIST_EXIT=1; fi`);
 	lines.push(`echo "PLATFORM_PI_LIST_EXIT=$PI_LIST_EXIT"`);
 	lines.push(`echo "--- PI_LIST_STDOUT START ---"; cat "$PACK_DIR/pi-list.stdout.txt" 2>/dev/null || true; echo "--- PI_LIST_STDOUT END ---"`);
 	lines.push(`echo "--- PI_LIST_STDERR START ---"; cat "$PACK_DIR/pi-list.stderr.txt" 2>/dev/null || true; echo "--- PI_LIST_STDERR END ---"`);
@@ -459,7 +463,7 @@ async function runPlatformBuildSuite(config, targetName, suiteName, leaseSession
 		{ id: "npm-pack", fn: () => /PLATFORM_NPM_PACK_EXIT=0/.test(stdout) && marker(stdout, "PLATFORM_PACKED_TARBALL").length > 0 },
 		{ id: "packed-node-install", fn: () => /PLATFORM_PACKED_NODE_INSTALL_EXIT=0/.test(stdout) },
 		{ id: "pi-install-local-package", fn: () => /PLATFORM_PI_INSTALL_EXIT=0/.test(stdout) },
-		{ id: "pi-list-local-package", fn: () => /PLATFORM_PI_LIST_EXIT=0/.test(stdout) && listOutput.includes(config.packageName) },
+		{ id: "pi-list-local-package", fn: () => /PLATFORM_PI_LIST_EXIT=0/.test(stdout) && new RegExp(`Project packages:[\\s\\S]*${escapeRegExp(config.packageName)}`).test(listOutput) },
 		{ id: "no-source-extension-shortcut", fn: () => !/\bpi\s+(?:-e|--extension)\s+\./.test(stdout) },
 		{ id: "no-secret-artifacts", fn: () => secretViolations.length === 0, error: secretViolations.join(", ") },
 	];

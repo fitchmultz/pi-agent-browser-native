@@ -4,6 +4,23 @@
 
 No changes yet.
 
+## 0.2.47 - 2026-06-08
+
+### Changed
+
+- Updated the local Pi development baseline and release guidance to Pi 0.79.0, including Project Trust-aware lifecycle/package/platform validation commands.
+- Kept this extension risk-on by loading project-local package config by default while honoring explicit Pi `--no-approve` / `-na` opt-out runs.
+- Updated the `pi-extension-development` skill guidance for Pi 0.79.0 and for explicit user consultation before behavioral changes.
+
+### Fixed
+
+- Made platform smoke package install/list checks use Pi 0.79 approval flags so clean target-local package validation is deterministic.
+- Ensured project-local package config can be explicitly skipped without losing global, override, or environment-backed web-search configuration.
+
+### Validation
+
+- Ran docs, typecheck, unit/default verify, package smoke, lifecycle, deterministic dogfood, doctor, platform doctor, full release/Crabbox gates, and interactive tmux native-tool smoke before publish.
+
 ## 0.2.46 - 2026-06-08
 
 ### Changed

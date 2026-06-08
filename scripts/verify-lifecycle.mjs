@@ -62,7 +62,7 @@ export function createLifecycleSessionId(pid = process.pid) {
 }
 
 export function buildPiLaunchArgs({ model, sessionId }) {
-	return ["--model", model, "--session-id", sessionId];
+	return ["--approve", "--model", model, "--session-id", sessionId];
 }
 
 export function parseCliArgs(argv = process.argv.slice(2)) {

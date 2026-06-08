@@ -81,10 +81,13 @@ test("compileAgentBrowserJob preserves explicit assertUrl and assertText immedia
 		["open", "https://shop.example/checkout"],
 		["fill", "#email", "user@example.com"],
 		["click", "#continue"],
-		["wait", "--url", "**/shipping"],
+		["wait", "--fn", 'new RegExp("^.*.*/shipping$").test(location.href)'],
 		["wait", "--text", "Shipping address"],
 		["screenshot", ".dogfood/shipping.png"],
 	]);
+
+	const exactUrlJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/shipping" }] });
+	assert.deepEqual(exactUrlJob.compiled?.steps?.[0]?.args, ["wait", "--url", "https://shop.example/shipping"]);
 	assert.deepEqual(JSON.parse(compiled?.stdin ?? "[]"), compiled?.steps?.map((step) => step.args));
 });
 
@@ -470,7 +473,7 @@ process.stdin.on("end", () => {
 				["select", "#theme", "dark", "compact"],
 				["click", "#submit"],
 				["wait", "--text", "Welcome"],
-				["wait", "--url", "**/dashboard"],
+				["wait", "--fn", 'new RegExp("^.*.*/dashboard$").test(location.href)'],
 				["wait", "250"],
 				["wait", "--download", "report.csv"],
 				["snapshot", "-i"],

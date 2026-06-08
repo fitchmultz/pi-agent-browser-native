@@ -22,7 +22,7 @@ const PACKAGE_NAME = "pi-agent-browser-native";
 const REPO_URL_FRAGMENT = "github.com/fitchmultz/pi-agent-browser-native";
 const EXTENSION_ENTRYPOINT = "extensions/agent-browser/index.ts";
 const EXPECTED_VERSION = CAPABILITY_BASELINE.targetVersion;
-const RECOMMENDED_PI_VERSION = "0.78.1";
+const RECOMMENDED_PI_VERSION = "0.79.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 const THIS_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -308,8 +308,8 @@ async function checkPiVersion({ runPi }) {
 				status: "warn",
 				title: `Pi ${RECOMMENDED_PI_VERSION} or newer is recommended; found ${version || "<empty>"}.`,
 				lines: [
-					"This package does not hard-pin Pi 0.78.1, but this release was audited against Pi 0.78.1 extension/package behavior.",
-					"Update Pi before release validation or lifecycle debugging if you see tool routing, /reload, exact-session, or package-install differences.",
+					"This package does not hard-pin Pi 0.79.0, but this release was audited against Pi 0.79.0 extension/package behavior, including Project Trust.",
+					"Update Pi before release validation or lifecycle debugging if you see tool routing, /reload, exact-session, project trust, or package-install differences.",
 				],
 			};
 		}
@@ -392,7 +392,7 @@ async function checkPiSources({ cwd, agentDir, settingsPaths, readText, pathExis
 				...sources.map((source) => `- ${source.source} from ${source.location}`),
 				"Keep exactly one active source:",
 				"- for normal use: keep `pi install npm:pi-agent-browser-native` and remove/disable checkout paths from Pi settings",
-				"- for temporary package or checkout trials: use `pi --no-extensions -e <source>` so configured sources are bypassed",
+				"- for temporary package or checkout trials: use `pi --approve --no-extensions -e <source>` when you intentionally trust the current project, or omit `--approve` to let Pi prompt in interactive mode",
 				"- for configured-source lifecycle validation: keep exactly one checkout or package source, then launch plain `pi`",
 			],
 			warnings,

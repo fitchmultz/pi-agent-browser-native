@@ -47,12 +47,12 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 ### Install priority
 
 - Prioritize the package install path first.
-- User-facing install docs should lead with `pi install npm:pi-agent-browser-native`; ephemeral package trials and validation must use `pi --no-extensions -e npm:pi-agent-browser-native[@<version>]` so configured checkout or global sources cannot duplicate `agent_browser`.
+- User-facing install docs should lead with `pi install npm:pi-agent-browser-native`; ephemeral package trials and validation should use `pi --no-extensions -e npm:pi-agent-browser-native[@<version>]` so configured checkout or global sources cannot duplicate `agent_browser`, adding `--approve` in Pi 0.79+ automation when the current project is intentionally trusted.
 - User-facing install docs should also include the GitHub source path `pi install https://github.com/fitchmultz/pi-agent-browser-native`.
 - Provide a read-only package-level doctor command that checks upstream `agent-browser` PATH/version and duplicate Pi package/checkout sources before first use. It must not mutate Pi settings and must remain distinct from upstream `agent-browser doctor`.
 - Keep the current local-checkout path documented as the practical pre-release and development flow.
 - Most users will install this extension globally rather than as a project-local extension.
-- Local checkout smoke testing should use explicit CLI loading such as `pi --no-extensions -e .` or `pi --no-extensions -e /absolute/path/to/pi-agent-browser-native`; Pi settings are bypassed in this mode and code edits require a process restart for validation.
+- Local trusted-checkout smoke testing should use explicit CLI loading such as `pi --approve --no-extensions -e .` or `pi --approve --no-extensions -e /absolute/path/to/pi-agent-browser-native`; Pi settings are bypassed in this mode and code edits require a process restart for validation. Omit `--approve` only when the test is meant to cover Pi's Project Trust prompt.
 - Local checkout hot-reload and exact-session relaunch validation should use configured-source lifecycle mode: exactly one active checkout/package source in Pi settings, launched with plain `pi` (or the lifecycle harness' exact `--session-id` relaunch path), so `/reload` and relaunch events exercise discovered/configured resources. Focused extension harness tests validate Pi `session_tree` branch rehydration and cleanup ownership.
 - Do **not** rely on repo-local `.pi/extensions/` auto-discovery for this package, because it conflicts with the global installed-package path.
 
@@ -86,7 +86,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 ### Testing guidance
 
 - The primary confidence path is a real `pi` session driven in `tmux`.
-- For quick local checkout smoke validation, launch `pi --no-extensions -e .` from the repository root so only the checkout copy loads; do not rely on Pi settings or `/reload` semantics in this isolated mode.
+- For quick local checkout smoke validation, launch `pi --approve --no-extensions -e .` from the repository root so only the checkout copy loads; do not rely on Pi settings or `/reload` semantics in this isolated mode.
 - For hot-reload validation, configure exactly one active source for this extension in Pi settings and launch plain `pi`; validate `/reload` there because it exercises auto-discovered/configured resources.
 - Maintain a tmux-driven configured-source lifecycle harness (`npm run verify -- lifecycle`; required before release per `docs/RELEASE.md`) that isolates Pi settings, uses exactly one configured source, exercises `/reload`, full restart plus exact `--session-id` relaunch, and asserts managed-session continuity, persisted artifact survival, and real Pi `tool_result` failure-patch semantics. It remains outside the default `npm run verify` sequence, but it is embedded in `npm run verify -- release` so `prepublishOnly` enforces it before publish unless scripts are intentionally skipped. The harness defaults Pi to model `zai/glm-5.1` (`scripts/verify-lifecycle.mjs`); pass `--model <id>` after `lifecycle` when a different model is required. Keep `docs/RELEASE.md` accurate about the harness behavior, cleanup, transcript retention, and limitations.
 - Validate a full `pi` restart with exact `--session-id` relaunch or `/resume` when changes touch managed-session continuity, reload behavior, or persisted artifact paths. Validate branch-backed state changes with the focused `session_tree` harness tests.
