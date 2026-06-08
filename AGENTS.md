@@ -173,7 +173,7 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 
 ### Practical tmux notes
 
-- Prefer `tmux send-keys ... Enter` for prompt submission.
+- Prefer `tmux send-keys ... Enter` for prompt submission. Collapse multi-line smoke prompts to one line before `send-keys`, or use Pi's external editor / tmux extended-keys path; raw pasted newlines become separate queued user messages.
 - Capture larger pane ranges when debugging: `tmux capture-pane -p -S -300 -t <session>:0.0`.
 - Clean up tmux sessions after testing.
 - Before ending a turn, sweep for and remove repo-local scratch files, project-scoped temp artifacts, and lingering browser sessions created during the work unless the user explicitly asked to keep them.

@@ -579,14 +579,18 @@ if (args.includes("get") && args.includes("url")) {
 			const waitNoPathProgress = waitNoPathResult.details?.timeoutPartialProgress as { artifacts?: Array<{ path?: string }> } | undefined;
 			assert.deepEqual(waitNoPathProgress?.artifacts, []);
 
+			const openBeforeMutatingTimeout = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test"] });
+			assert.equal(openBeforeMutatingTimeout.isError, false);
 			const mutatingTimeoutResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "open", url: "https://example.test" }, { action: "fill", selector: "#search", text: "export" }, { action: "wait", milliseconds: 500 }] },
+				job: { steps: [{ action: "fill", selector: "#search", text: "export" }, { action: "wait", milliseconds: 500 }] },
 			});
 			assert.equal(mutatingTimeoutResult.isError, true);
 			const mutatingProgress = mutatingTimeoutResult.details?.timeoutPartialProgress as { retryStep?: { args?: string[]; retry?: { args?: string[] }; status?: string } } | undefined;
 			assert.deepEqual(mutatingProgress?.retryStep?.args, ["fill", "#search", "export"]);
 			assert.equal(mutatingProgress?.retryStep?.retry, undefined);
-			assert.equal((mutatingTimeoutResult.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "retry-timeout-step") ?? false, false);
+			const mutatingNextActions = (mutatingTimeoutResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined) ?? [];
+			assert.equal(mutatingNextActions.some((action) => action.id === "retry-timeout-step"), false);
+			assert.deepEqual(mutatingNextActions.find((action) => action.id === "inspect-current-page-after-timeout")?.params?.args?.slice(-2), ["snapshot", "-i"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

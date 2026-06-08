@@ -303,18 +303,27 @@ export async function prepareFinalResultRecoveryState(options: {
 
 function buildTimeoutPartialProgressNextActions(options: FinalResultInput): AgentBrowserNextAction[] {
 	const retryArgs = options.timeoutPartialProgress?.retryStep?.retry?.args;
-	if (!retryArgs) return [];
 	const stepIndex = options.timeoutPartialProgress?.retryStep?.index;
 	const freshSessionAbandoned = options.sessionMode === "fresh" && options.timeoutPartialProgress?.liveUrlRecovered !== true;
+	if (retryArgs) {
+		return [{
+			id: "retry-timeout-step",
+			params: freshSessionAbandoned
+				? { args: retryArgs, sessionMode: "fresh" }
+				: { args: withOptionalSessionArgs(options.executionPlan.sessionName, retryArgs) },
+			reason: freshSessionAbandoned
+				? `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} in a fresh browser session because the timed-out fresh session was not proven live.`
+				: `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} against the current browser session.`,
+			safety: "Only read-only or idempotent timeout steps get executable retry args; inspect current page/artifact state before using the action.",
+			tool: "agent_browser" as const,
+		}];
+	}
+	if (!options.timeoutPartialProgress || freshSessionAbandoned || !options.executionPlan.sessionName) return [];
 	return [{
-		id: "retry-timeout-step",
-		params: freshSessionAbandoned
-			? { args: retryArgs, sessionMode: "fresh" }
-			: { args: withOptionalSessionArgs(options.executionPlan.sessionName, retryArgs) },
-		reason: freshSessionAbandoned
-			? `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} in a fresh browser session because the timed-out fresh session was not proven live.`
-			: `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} against the current browser session.`,
-		safety: "Only read-only or idempotent timeout steps get executable retry args; inspect current page/artifact state before using the action.",
+		id: "inspect-current-page-after-timeout",
+		params: { args: withOptionalSessionArgs(options.executionPlan.sessionName, ["snapshot", "-i"]) },
+		reason: `Inspect the current page after timeout before deciding how to resume${stepIndex === undefined ? "" : ` from incomplete step ${stepIndex}`}.`,
+		safety: "Read details.timeoutPartialProgress first. Do not blindly retry mutating steps such as clicks, fills, key presses, selects, or checks; split the remaining flow into shorter batches around the next navigation or DOM mutation boundary.",
 		tool: "agent_browser" as const,
 	}];
 }

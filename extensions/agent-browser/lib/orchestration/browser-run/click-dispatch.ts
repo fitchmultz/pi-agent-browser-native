@@ -15,7 +15,43 @@ function parseClickRefId(selector: string): string | undefined {
 	return /^e\d+$/.test(candidate) ? candidate : undefined;
 }
 
+function normalizeAccessibleName(name: string): string {
+	return name.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function getAccessibleRefDuplicateIndex(refSnapshot: SessionRefSnapshot | undefined, refId: string, role: string, name: string): number | undefined {
+	if (!refSnapshot?.refs) return undefined;
+	const normalizedRole = role.toLowerCase();
+	const normalizedName = normalizeAccessibleName(name);
+	const matchingRefIds = refSnapshot.refIds.filter((candidateRefId) => {
+		const candidate = refSnapshot.refs?.[candidateRefId];
+		return candidate?.role.toLowerCase() === normalizedRole && normalizeAccessibleName(candidate.name) === normalizedName;
+	});
+	if (matchingRefIds.length <= 1) return undefined;
+	const duplicateIndex = matchingRefIds.indexOf(refId);
+	return duplicateIndex >= 0 ? duplicateIndex : undefined;
+}
+
+function getFindClickDispatchProbeTarget(commandTokens: string[]): ClickDispatchProbeTarget | undefined {
+	const findIndex = commandTokens[0] === "--session" ? 2 : 0;
+	if (commandTokens[findIndex] !== "find") return undefined;
+	const locator = commandTokens[findIndex + 1];
+	const value = commandTokens[findIndex + 2];
+	const action = commandTokens[findIndex + 3];
+	if (!locator || !value || action !== "click") return undefined;
+	const nameFlagIndex = commandTokens.indexOf("--name", findIndex + 4);
+	const name = nameFlagIndex >= 0 ? commandTokens[nameFlagIndex + 1] : undefined;
+	return {
+		action: "click",
+		kind: "locator",
+		locator,
+		...(name && !name.startsWith("-") ? { name } : {}),
+		value,
+	};
+}
+
 function getClickDispatchProbeTarget(commandTokens: string[], refSnapshot?: SessionRefSnapshot): ClickDispatchProbeTarget | undefined {
+	if (commandTokens[0] === "find" || (commandTokens[0] === "--session" && commandTokens[2] === "find")) return getFindClickDispatchProbeTarget(commandTokens);
 	if (commandTokens[0] !== "click" || commandTokens.includes("--new-tab")) return undefined;
 	const selector = commandTokens[1];
 	if (!selector || selector.startsWith("-")) return undefined;
@@ -23,7 +59,8 @@ function getClickDispatchProbeTarget(commandTokens: string[], refSnapshot?: Sess
 	if (refId) {
 		const ref = refSnapshot?.refs?.[refId];
 		if (!ref || !ACCESSIBLE_REF_CLICK_DISPATCH_ROLES.has(ref.role)) return undefined;
-		return { kind: "accessible", name: ref.name, refId, role: ref.role };
+		const duplicateIndex = getAccessibleRefDuplicateIndex(refSnapshot, refId, ref.role, ref.name);
+		return { ...(duplicateIndex === undefined ? {} : { duplicateIndex }), kind: "accessible", name: ref.name, refId, role: ref.role };
 	}
 	if (selector.startsWith("xpath=")) return { kind: "xpath", selector: selector.slice("xpath=".length) };
 	return { kind: "selector", selector };
@@ -39,10 +76,13 @@ function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string
 		? `(() => { try { return document.querySelector(${JSON.stringify(target.selector)}); } catch { return null; } })()`
 		: target.kind === "xpath"
 			? `(() => { try { return document.evaluate(${JSON.stringify(target.selector)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; } catch { return null; } })()`
-			: `(() => {
+			: target.kind === "locator"
+				? "null"
+				: `(() => {
   const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
   const expectedRole = ${JSON.stringify(target.role)};
   const expectedName = normalize(${JSON.stringify(target.name)});
+  const duplicateIndex = ${JSON.stringify(target.duplicateIndex)};
   const inferRole = (element) => {
     const explicit = element.getAttribute("role");
     if (explicit) return explicit;
@@ -65,12 +105,14 @@ function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string
     return element.getClientRects().length > 0;
   };
   const candidates = Array.from(document.querySelectorAll("button,a[href],input,select,textarea,summary,[role],[onclick],[tabindex]")).filter((element) => inferRole(element) === expectedRole && inferName(element) === expectedName && isVisible(element));
+  if (typeof duplicateIndex === "number") return candidates[duplicateIndex] || null;
   return candidates.length === 1 ? candidates[0] : null;
 })()`;
 	return `(() => {
 const marker = ${JSON.stringify(probe.marker)};
 const element = ${resolveTarget};
-if (!element) return { status: "target-not-found", marker };
+const targetRequiresElement = ${JSON.stringify(target.kind !== "locator")};
+if (!element && targetRequiresElement) return { status: "target-not-found", marker };
 const cssEscape = (value) => {
   if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
   return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
@@ -94,31 +136,33 @@ const getSelector = (node) => {
   return parts.length > 0 ? parts.join(" > ") : undefined;
 };
 const rectInfo = (rect) => ({ bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top });
-const targetRect = element.getBoundingClientRect();
-const targetOutsideViewport = targetRect.bottom < 0 || targetRect.right < 0 || targetRect.top > window.innerHeight || targetRect.left > window.innerWidth;
+const targetRect = element ? element.getBoundingClientRect() : undefined;
+const targetOutsideViewport = targetRect ? targetRect.bottom < 0 || targetRect.right < 0 || targetRect.top > window.innerHeight || targetRect.left > window.innerWidth : undefined;
 let nearestScrollContainer;
-for (let current = element.parentElement; current && current !== document.body; current = current.parentElement) {
-  if (current.scrollHeight > current.clientHeight + 1 || current.scrollWidth > current.clientWidth + 1) {
-    const containerRect = current.getBoundingClientRect();
-    nearestScrollContainer = {
-      selector: getSelector(current),
-      tagName: current.tagName.toLowerCase(),
-      targetOutsideContainer: targetRect.bottom < containerRect.top || targetRect.top > containerRect.bottom || targetRect.right < containerRect.left || targetRect.left > containerRect.right,
-      targetOutsideViewport,
-      rect: rectInfo(containerRect),
-      scrollLeft: current.scrollLeft,
-      scrollTop: current.scrollTop,
-    };
-    break;
+if (element && targetRect) {
+  for (let current = element.parentElement; current && current !== document.body; current = current.parentElement) {
+    if (current.scrollHeight > current.clientHeight + 1 || current.scrollWidth > current.clientWidth + 1) {
+      const containerRect = current.getBoundingClientRect();
+      nearestScrollContainer = {
+        selector: getSelector(current),
+        tagName: current.tagName.toLowerCase(),
+        targetOutsideContainer: targetRect.bottom < containerRect.top || targetRect.top > containerRect.bottom || targetRect.right < containerRect.left || targetRect.left > containerRect.right,
+        targetOutsideViewport,
+        rect: rectInfo(containerRect),
+        scrollLeft: current.scrollLeft,
+        scrollTop: current.scrollTop,
+      };
+      break;
+    }
   }
 }
-const state = { events: [], target: { tagName: element.tagName.toLowerCase(), nearestScrollContainer, rect: rectInfo(targetRect), targetOutsideViewport } };
+const state = { events: [], target: element && targetRect ? { tagName: element.tagName.toLowerCase(), nearestScrollContainer, rect: rectInfo(targetRect), targetOutsideViewport } : { locator: true } };
 const eventTypes = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
 const listeners = eventTypes.map((type) => {
   const listener = (event) => {
     const path = typeof event.composedPath === "function" ? event.composedPath() : [];
     const eventTarget = event.target;
-    const targetMatched = path.includes(element) || eventTarget === element || (eventTarget instanceof Node && element.contains(eventTarget));
+    const targetMatched = element ? path.includes(element) || eventTarget === element || (eventTarget instanceof Node && element.contains(eventTarget)) : true;
     state.events.push({ type: event.type, isTrusted: event.isTrusted === true, targetMatched });
   };
   document.addEventListener(type, listener, true);
@@ -160,6 +204,9 @@ function redactClickDispatchTarget(target: ClickDispatchProbeTarget): ClickDispa
 	if (target.kind === "selector" || target.kind === "xpath") {
 		return { ...target, selector: redactSensitiveText(target.selector) };
 	}
+	if (target.kind === "locator") {
+		return { ...target, ...(target.name ? { name: redactSensitiveText(target.name) } : {}), value: redactSensitiveText(target.value) };
+	}
 	return { ...target, name: redactSensitiveText(target.name) };
 }
 
@@ -168,7 +215,7 @@ export function formatClickDispatchDiagnosticText(diagnostic: ClickDispatchDiagn
 }
 
 export function buildClickDispatchNextActions(options: { commandTokens: string[]; diagnostic?: ClickDispatchDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
-	const retryArgs = options.commandTokens[0] === "click" ? options.commandTokens : ["click", ...options.commandTokens];
+	const retryArgs = options.commandTokens[0] === "click" || options.commandTokens[0] === "find" ? options.commandTokens : ["click", ...options.commandTokens];
 	const actions: AgentBrowserNextAction[] = [
 		{
 			id: "inspect-click-dispatch-miss",
@@ -200,7 +247,7 @@ export function buildClickDispatchNextActions(options: { commandTokens: string[]
 }
 
 export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchProbe | undefined> {
-	if (!options.sessionName || options.commandTokens[0] !== "click" || options.commandTokens.includes("--new-tab")) return undefined;
+	if (!options.sessionName || !["click", "find"].includes(options.commandTokens[0] ?? "") || options.commandTokens.includes("--new-tab")) return undefined;
 	const target = getClickDispatchProbeTarget(options.commandTokens, options.refSnapshot);
 	if (!target) return undefined;
 	const probe: ClickDispatchProbe = { marker: `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`, target };
@@ -232,9 +279,10 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; pro
 	if (status !== "no-native-event-observed") return undefined;
 	const nativeEventCount = typeof result.nativeEventCount === "number" ? result.nativeEventCount : 0;
 	const scrollContainer = getClickDispatchScrollContainerDiagnostic(result);
+	const targetLabel = options.probe.target.kind === "locator" ? "no trusted DOM click event was observed for the successful locator click" : "no trusted DOM event reached the selected element";
 	const summary = scrollContainer
-		? `Upstream click reported success but no trusted DOM event reached the selected element. ${scrollContainer.summary}`
-		: "Upstream click reported success but no trusted DOM event reached the selected element. Gather evidence with snapshot or page-change checks, then retry upstream click or report the workflow issue; the wrapper does not replay clicks in-page.";
+		? `Upstream click reported success but ${targetLabel}. ${scrollContainer.summary}`
+		: `Upstream click reported success but ${targetLabel}. Gather evidence with snapshot or page-change checks, then retry upstream click or report the workflow issue; the wrapper does not replay clicks in-page.`;
 	return {
 		nativeEventCount,
 		reason: "native-click-produced-no-target-dom-event",

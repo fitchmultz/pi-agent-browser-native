@@ -170,6 +170,113 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension probes duplicate-name ref clicks with snapshot order", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-duplicate-ref-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://shop.example/inventory",
+    refs: {
+      e1: { role: "button", name: "Add to cart" },
+      e2: { role: "button", name: "Add to cart" }
+    },
+    snapshot: '- button "Add to cart" [ref=e1]\\n- button "Add to cart" [ref=e2]'
+  } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
+} else if (args.includes("eval")) {
+  if (stdin.includes("duplicateIndex = 1") && stdin.includes("window[marker] = state")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
+  } else if (stdin.includes("no-native-event-observed")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Shop", url: "https://shop.example/inventory" } } }));
+  }
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e2"] });
+			assert.equal(click.isError, true);
+			assert.deepEqual((click.details?.clickDispatch as { target?: unknown } | undefined)?.target, {
+				duplicateIndex: 1,
+				kind: "accessible",
+				name: "Add to cart",
+				refId: "e2",
+				role: "button",
+			});
+
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("duplicateIndex = 1")));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reports locator click dispatch diagnostic for successful find clicks without DOM events", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-find-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("eval")) {
+  if (stdin.includes("targetRequiresElement = false") && stdin.includes("window[marker] = state")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
+  } else if (stdin.includes("no-native-event-observed")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
+  } else {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Shop", url: "https://shop.example/inventory" } } }));
+  }
+} else if (args.includes("find")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "[data-agent-browser-located='true']" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["find", "text", "Add to cart", "click"] });
+			assert.equal(click.isError, true);
+			assert.match((click.content[0] as { text: string }).text, /no trusted DOM click event was observed for the successful locator click/);
+			assert.deepEqual((click.details?.clickDispatch as { target?: unknown } | undefined)?.target, {
+				action: "click",
+				kind: "locator",
+				locator: "text",
+				value: "Add to cart",
+			});
+			const retryAction = (click.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "retry-click-after-dispatch-miss");
+			assert.deepEqual(retryAction?.params?.args?.slice(-4), ["find", "text", "Add to cart", "click"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports click dispatch diagnostic when upstream reports success without dispatching DOM events", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-"));
 	const logPath = join(tempDir, "invocations.log");

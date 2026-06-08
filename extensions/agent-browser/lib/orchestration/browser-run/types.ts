@@ -139,10 +139,18 @@ export type ClickDispatchProbeTarget =
 		selector: string;
 	}
 	| {
+		duplicateIndex?: number;
 		kind: "accessible";
 		name: string;
 		refId: string;
 		role: string;
+	}
+	| {
+		action: "click";
+		kind: "locator";
+		locator: string;
+		name?: string;
+		value: string;
 	};
 
 export interface ClickDispatchProbe {
