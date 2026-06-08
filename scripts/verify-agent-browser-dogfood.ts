@@ -31,10 +31,13 @@ interface DogfoodOptions {
 interface DogfoodStepReport {
 	artifactPath?: string;
 	artifactSizeBytes?: number;
+	attempts?: number;
 	failureCategory?: unknown;
 	id: string;
 	isError: boolean;
 	resultCategory?: unknown;
+	retriedAfterFailure?: boolean;
+	retriedFailureCategory?: unknown;
 	successCategory?: unknown;
 	textPreview: string;
 	verifiedArtifact?: boolean;
@@ -150,8 +153,11 @@ function isTransientWindowsBrowserLaunchFailure(result: AgentBrowserToolExecutio
 
 async function assertSuccessfulStep(options: {
 	artifactPath?: string;
+	attempts?: number;
 	id: string;
 	result: AgentBrowserToolExecutionResult;
+	retriedAfterFailure?: boolean;
+	retriedFailureCategory?: unknown;
 	textPattern?: RegExp;
 }): Promise<DogfoodStepReport> {
 	const { artifactPath, id, result, textPattern } = options;
@@ -169,10 +175,13 @@ async function assertSuccessfulStep(options: {
 	return {
 		artifactPath,
 		artifactSizeBytes,
+		attempts: options.attempts,
 		failureCategory: result.details?.failureCategory,
 		id,
 		isError: false,
 		resultCategory: result.details?.resultCategory,
+		retriedAfterFailure: options.retriedAfterFailure,
+		retriedFailureCategory: options.retriedFailureCategory,
 		successCategory: result.details?.successCategory,
 		textPreview: preview,
 		verifiedArtifact,
@@ -187,14 +196,21 @@ async function runSuccessfulStepWithRetry(options: {
 	textPattern?: RegExp;
 }): Promise<DogfoodStepReport> {
 	let result = await options.execute();
+	let attempts = 1;
+	let retriedFailureCategory: unknown;
 	if (options.shouldRetry(result)) {
+		retriedFailureCategory = result.details?.failureCategory;
 		await delay(1_000);
+		attempts = 2;
 		result = await options.execute();
 	}
 	return await assertSuccessfulStep({
 		artifactPath: options.artifactPath,
+		attempts,
 		id: options.id,
 		result,
+		retriedAfterFailure: attempts > 1,
+		retriedFailureCategory,
 		textPattern: options.textPattern,
 	});
 }
@@ -296,7 +312,8 @@ function printReport(reports: DogfoodStepReport[], artifactDir: string | undefin
 	if (artifactDir) console.log(`Artifacts: ${resolve(artifactDir)}`);
 	for (const report of reports) {
 		const artifact = report.artifactPath ? ` artifact=${report.verifiedArtifact ? "verified" : "missing"} size=${report.artifactSizeBytes ?? 0}` : "";
-		console.log(`- ${report.id}: ${report.resultCategory}/${report.successCategory ?? "completed"}${artifact}`);
+		const retry = report.retriedAfterFailure ? ` attempts=${report.attempts} retriedAfter=${String(report.retriedFailureCategory ?? "failure")}` : "";
+		console.log(`- ${report.id}: ${report.resultCategory}/${report.successCategory ?? "completed"}${artifact}${retry}`);
 	}
 }
 
