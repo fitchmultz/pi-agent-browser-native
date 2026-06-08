@@ -18,7 +18,7 @@ No changes yet.
 
 ### Validation
 
-- Added a cold-start budget test for the real extension entrypoint, schema parity coverage against the canonical TypeBox/StringEnum builders, rendering coverage for JSON highlighting plus collapsed-output expand hints, and a retry for transient Windows browser-launch flake in the deterministic dogfood smoke.
+- Added a cold-start budget test for the real extension entrypoint, schema parity coverage against the canonical TypeBox/StringEnum builders, rendering coverage for JSON highlighting plus collapsed-output expand hints, and stabilized deterministic dogfood smoke by avoiding a rapid Windows browser close/relaunch race.
 
 ## 0.2.45 - 2026-06-06
 

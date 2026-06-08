@@ -31,13 +31,10 @@ interface DogfoodOptions {
 interface DogfoodStepReport {
 	artifactPath?: string;
 	artifactSizeBytes?: number;
-	attempts?: number;
 	failureCategory?: unknown;
 	id: string;
 	isError: boolean;
 	resultCategory?: unknown;
-	retriedAfterFailure?: boolean;
-	retriedFailureCategory?: unknown;
 	successCategory?: unknown;
 	textPreview: string;
 	verifiedArtifact?: boolean;
@@ -139,25 +136,10 @@ async function writeDogfoodFixture(rootDir: string): Promise<{ helpUrl: string; 
 
 type AgentBrowserToolExecutionResult = Awaited<ReturnType<typeof executeRegisteredTool>>;
 
-async function delay(ms: number): Promise<void> {
-	await new Promise<void>((resolve) => setTimeout(resolve, ms));
-}
-
-function isTransientWindowsBrowserLaunchFailure(result: AgentBrowserToolExecutionResult): boolean {
-	if (process.platform !== "win32") return false;
-	const summary = typeof result.details?.summary === "string" ? result.details.summary : "";
-	return result.isError === true
-		&& result.details?.failureCategory === "upstream-error"
-		&& /connection attempt failed|os error 10060/i.test(summary);
-}
-
 async function assertSuccessfulStep(options: {
 	artifactPath?: string;
-	attempts?: number;
 	id: string;
 	result: AgentBrowserToolExecutionResult;
-	retriedAfterFailure?: boolean;
-	retriedFailureCategory?: unknown;
 	textPattern?: RegExp;
 }): Promise<DogfoodStepReport> {
 	const { artifactPath, id, result, textPattern } = options;
@@ -175,44 +157,14 @@ async function assertSuccessfulStep(options: {
 	return {
 		artifactPath,
 		artifactSizeBytes,
-		attempts: options.attempts,
 		failureCategory: result.details?.failureCategory,
 		id,
 		isError: false,
 		resultCategory: result.details?.resultCategory,
-		retriedAfterFailure: options.retriedAfterFailure,
-		retriedFailureCategory: options.retriedFailureCategory,
 		successCategory: result.details?.successCategory,
 		textPreview: preview,
 		verifiedArtifact,
 	};
-}
-
-async function runSuccessfulStepWithRetry(options: {
-	artifactPath?: string;
-	execute: () => Promise<AgentBrowserToolExecutionResult>;
-	id: string;
-	shouldRetry: (result: AgentBrowserToolExecutionResult) => boolean;
-	textPattern?: RegExp;
-}): Promise<DogfoodStepReport> {
-	let result = await options.execute();
-	let attempts = 1;
-	let retriedFailureCategory: unknown;
-	if (options.shouldRetry(result)) {
-		retriedFailureCategory = result.details?.failureCategory;
-		await delay(1_000);
-		attempts = 2;
-		result = await options.execute();
-	}
-	return await assertSuccessfulStep({
-		artifactPath: options.artifactPath,
-		attempts,
-		id: options.id,
-		result,
-		retriedAfterFailure: attempts > 1,
-		retriedFailureCategory,
-		textPattern: options.textPattern,
-	});
 }
 
 export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Promise<DogfoodStepReport[]> {
@@ -245,19 +197,12 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 		}));
 
 		reports.push(await assertSuccessfulStep({
-			id: "close-after-qa",
-			result: await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] }),
-			textPattern: /closed/,
-		}));
-
-		reports.push(await runSuccessfulStepWithRetry({
 			id: "open-fresh-example",
 			textPattern: new RegExp(fixture.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-			execute: async () => await executeRegisteredTool(harness.tool, harness.ctx, {
+			result: await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["open", fixture.origin],
 				sessionMode: "fresh",
 			}),
-			shouldRetry: isTransientWindowsBrowserLaunchFailure,
 		}));
 
 		reports.push(await assertSuccessfulStep({
@@ -312,8 +257,7 @@ function printReport(reports: DogfoodStepReport[], artifactDir: string | undefin
 	if (artifactDir) console.log(`Artifacts: ${resolve(artifactDir)}`);
 	for (const report of reports) {
 		const artifact = report.artifactPath ? ` artifact=${report.verifiedArtifact ? "verified" : "missing"} size=${report.artifactSizeBytes ?? 0}` : "";
-		const retry = report.retriedAfterFailure ? ` attempts=${report.attempts} retriedAfter=${String(report.retriedFailureCategory ?? "failure")}` : "";
-		console.log(`- ${report.id}: ${report.resultCategory}/${report.successCategory ?? "completed"}${artifact}${retry}`);
+		console.log(`- ${report.id}: ${report.resultCategory}/${report.successCategory ?? "completed"}${artifact}`);
 	}
 }
 
