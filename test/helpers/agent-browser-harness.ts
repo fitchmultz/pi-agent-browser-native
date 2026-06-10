@@ -348,6 +348,7 @@ function adaptRegisteredTool<TParams extends TSchema, TDetails, TState>(
 export function createExtensionHarness(options: {
 	branch?: unknown[];
 	cwd: string;
+	projectTrusted?: boolean;
 	prompt?: string;
 	sessionDir?: string;
 	sessionFile?: string;
@@ -375,6 +376,7 @@ export function createExtensionHarness(options: {
 	const sessionDir = options.sessionDir ?? (options.sessionFile ? dirname(options.sessionFile) : undefined);
 	const ctx = {
 		cwd: options.cwd,
+		isProjectTrusted: () => options.projectTrusted ?? true,
 		sessionManager: {
 			getBranch: () => branch,
 			getSessionDir: () => sessionDir,

@@ -64,16 +64,22 @@ const JOB_TYPE_ALLOWED_FIELDS = new Set(["action", "delayMs", "press", "selector
 
 function globUrlPatternToRegexSource(pattern: string): string {
 	let source = "^";
-	for (const char of pattern) {
-		if (char === "*") source += ".*";
-		else if (char === "?") source += ".";
-		else source += char.replace(/[\\^$+?.()|[\]{}]/g, "\\$&");
+	for (let index = 0; index < pattern.length; index += 1) {
+		const char = pattern.charAt(index);
+		if (char === "*") {
+			let runLength = 1;
+			while (pattern[index + runLength] === "*") runLength += 1;
+			source += runLength === 1 ? "[^/]*" : ".*";
+			index += runLength - 1;
+		} else {
+			source += char.replace(/[\\^$+?.()|[\]{}]/g, "\\$&");
+		}
 	}
 	return `${source}$`;
 }
 
 function compileJobAssertUrlArgs(url: string): string[] {
-	if (!/[?*]/.test(url)) return ["wait", "--url", url];
+	if (!url.includes("*")) return ["wait", "--url", url];
 	return ["wait", "--fn", `new RegExp(${JSON.stringify(globUrlPatternToRegexSource(url))}).test(location.href)`];
 }
 

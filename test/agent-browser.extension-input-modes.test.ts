@@ -25,6 +25,17 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
+function getAssertUrlRegexSource(args: string[] | undefined): string {
+	assert.ok(args);
+	assert.deepEqual(args.slice(0, 2), ["wait", "--fn"]);
+	const expression = args[2] ?? "";
+	const prefix = "new RegExp(";
+	const suffix = ").test(location.href)";
+	assert.ok(expression.startsWith(prefix));
+	assert.ok(expression.endsWith(suffix));
+	return JSON.parse(expression.slice(prefix.length, -suffix.length)) as string;
+}
+
 test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA failures", () => {
 	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/", expectedText: "Definitely Not On This Page" }).compiled;
 	assert.ok(compiled);
@@ -81,14 +92,43 @@ test("compileAgentBrowserJob preserves explicit assertUrl and assertText immedia
 		["open", "https://shop.example/checkout"],
 		["fill", "#email", "user@example.com"],
 		["click", "#continue"],
-		["wait", "--fn", 'new RegExp("^.*.*/shipping$").test(location.href)'],
+		["wait", "--fn", 'new RegExp("^.*/shipping$").test(location.href)'],
 		["wait", "--text", "Shipping address"],
 		["screenshot", ".dogfood/shipping.png"],
 	]);
 
 	const exactUrlJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/shipping" }] });
 	assert.deepEqual(exactUrlJob.compiled?.steps?.[0]?.args, ["wait", "--url", "https://shop.example/shipping"]);
+	const exactQueryUrlJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/shipping?step=1&ref=a?b" }] });
+	assert.deepEqual(exactQueryUrlJob.compiled?.steps?.[0]?.args, ["wait", "--url", "https://shop.example/shipping?step=1&ref=a?b"]);
 	assert.deepEqual(JSON.parse(compiled?.stdin ?? "[]"), compiled?.steps?.map((step) => step.args));
+});
+
+test("compileAgentBrowserJob assertUrl glob semantics are deliberate", () => {
+	const exactQueryUrlJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/shipping?step=1&ref=a?b" }] });
+	assert.deepEqual(exactQueryUrlJob.compiled?.steps?.[0]?.args, ["wait", "--url", "https://shop.example/shipping?step=1&ref=a?b"]);
+
+	const nestedShippingJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "**/shipping" }] });
+	const nestedShippingRegex = new RegExp(getAssertUrlRegexSource(nestedShippingJob.compiled?.steps?.[0]?.args));
+	assert.equal(nestedShippingRegex.test("https://shop.example/checkout/shipping"), true);
+	assert.equal(nestedShippingRegex.test("https://shop.example/account/checkout/shipping"), true);
+	assert.equal(nestedShippingRegex.test("https://shop.example/account/checkout/billing"), false);
+	const longerStarRunRegex = new RegExp(getAssertUrlRegexSource(compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "***/shipping" }] }).compiled?.steps?.[0]?.args));
+	assert.equal(longerStarRunRegex.test("https://shop.example/account/checkout/shipping"), true);
+	assert.equal(longerStarRunRegex.test("https://shop.example/account/checkout/billing"), false);
+
+	const oneSegmentShippingJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/*/shipping" }] });
+	const oneSegmentShippingRegex = new RegExp(getAssertUrlRegexSource(oneSegmentShippingJob.compiled?.steps?.[0]?.args));
+	assert.equal(oneSegmentShippingRegex.test("https://shop.example/cart/shipping"), true);
+	assert.equal(oneSegmentShippingRegex.test("https://shop.example/cart/nested/shipping"), false);
+
+	const literalMetacharactersJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/file.v1+?q=[x]$*" }] });
+	const literalMetacharactersRegex = new RegExp(getAssertUrlRegexSource(literalMetacharactersJob.compiled?.steps?.[0]?.args));
+	assert.equal(literalMetacharactersRegex.test("https://shop.example/file.v1+?q=[x]$tail"), true);
+	assert.equal(literalMetacharactersRegex.test("https://shopXexample/file.v1+?q=[x]$tail"), false);
+	assert.equal(literalMetacharactersRegex.test("https://shop.example/fileAv1+?q=[x]$tail"), false);
+	assert.equal(literalMetacharactersRegex.test("https://shop.example/file.v1+Zq=[x]$tail"), false);
+	assert.equal(literalMetacharactersRegex.test("https://shop.example/file.v1+?q=x$tail"), false);
 });
 
 test("agentBrowserExtension compiles semantic actions to upstream find commands", { concurrency: false }, async () => {
@@ -461,7 +501,8 @@ process.stdin.on("end", () => {
 			const compiledJob = result.details?.compiledJob as { args?: string[]; failFast?: boolean; stdin?: string; steps?: Array<{ action: string; args: string[]; generatedFrom?: string }> } | undefined;
 			assert.deepEqual(compiledJob?.args, ["batch", "--bail"]);
 			assert.equal(compiledJob?.failFast, true);
-			const expectedCompiledSteps = [
+			const compiledStepArgs = compiledJob?.steps?.map((step) => step.args);
+			assert.deepEqual(compiledStepArgs?.slice(0, 11), [
 				["open", "https://example.test/"],
 				["wait", "--load", "domcontentloaded"],
 				["fill", "#email", "user@example.test"],
@@ -473,18 +514,21 @@ process.stdin.on("end", () => {
 				["select", "#theme", "dark", "compact"],
 				["click", "#submit"],
 				["wait", "--text", "Welcome"],
-				["wait", "--fn", 'new RegExp("^.*.*/dashboard$").test(location.href)'],
+			]);
+			const dashboardRegex = new RegExp(getAssertUrlRegexSource(compiledStepArgs?.[11]));
+			assert.equal(dashboardRegex.test("https://example.test/account/dashboard"), true);
+			assert.equal(dashboardRegex.test("https://example.test/account/settings"), false);
+			assert.deepEqual(compiledStepArgs?.slice(12), [
 				["wait", "250"],
 				["wait", "--download", "report.csv"],
 				["snapshot", "-i"],
 				["screenshot", "job.png"],
-			];
-			assert.deepEqual(compiledJob?.steps?.map((step) => step.args), expectedCompiledSteps);
+			]);
 			assert.equal(compiledJob?.steps?.[1]?.generatedFrom, "open.loadState");
 			assert.equal(compiledJob?.steps?.[3]?.generatedFrom, "type.selector");
 			assert.equal(compiledJob?.steps?.[4]?.generatedFrom, "type.delayMs");
 			assert.equal(compiledJob?.steps?.[7]?.generatedFrom, "type.press");
-			assert.deepEqual(JSON.parse(compiledJob?.stdin ?? "[]"), expectedCompiledSteps);
+			assert.deepEqual(JSON.parse(compiledJob?.stdin ?? "[]"), compiledStepArgs);
 			assert.match(result.content[0]?.text ?? "", /Step 4-8 — type #prompt \(succeeded\)\nTyped 2 chars with delayMs=20\.\nPressed Enter\./);
 			assert.doesNotMatch(result.content[0]?.text ?? "", /Step 5 — keyboard type g/);
 			const redactedResult = await executeRegisteredTool(harness.tool, harness.ctx, {

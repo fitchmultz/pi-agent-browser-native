@@ -113,6 +113,26 @@ test("--no-approve prevents project config from disabling env-backed agent_brows
 	});
 });
 
+test("agent_browser_web_search execution ignores project config when ctx reports untrusted project", async () => {
+	const fixture = await createFixture();
+	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { preferredProvider: "brave" } });
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "brave-secret", [EXA_API_KEY_ENV]: "exa-secret" }, async () => {
+		await withTemporaryCwd(fixture.cwd, async () => {
+			const harness = createExtensionHarness({ cwd: fixture.cwd, projectTrusted: false });
+			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+			assert.ok(tool);
+			await withFakeFetch((input, init) => {
+				assert.equal(String(input), "https://api.exa.ai/search");
+				assert.equal(init?.headers && (init.headers as Record<string, string>)["x-api-key"], "exa-secret");
+				return new Response(JSON.stringify({ requestId: "req-untrusted", results: [{ title: "Trusted Exa", url: "https://example.com/exa", text: "Exa result" }] }), { status: 200 });
+			}, async () => {
+				const result = await executeRegisteredTool(tool, harness.ctx, { query: "ignore project preference", provider: "auto", count: 1 });
+				assert.equal(result.details?.provider, "exa");
+			});
+		});
+	});
+});
+
 test("registers agent_browser_web_search with env fallback and rate-limit guidance", async () => {
 	const fixture = await createFixture();
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "test-secret", [EXA_API_KEY_ENV]: undefined }, async () => {

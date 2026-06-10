@@ -662,7 +662,10 @@ type AgentBrowserWebSearchParamsInput = {
 	searchType?: ExaSearchType;
 };
 
-export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigState) {
+export function createAgentBrowserWebSearchTool(
+	configState: AgentBrowserConfigState,
+	options: { loadConfigState?: (ctx: { cwd: string; isProjectTrusted?: () => boolean }) => AgentBrowserConfigState } = {},
+) {
 	const requestGate = new WebSearchRequestGate();
 	return {
 		name: AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
@@ -677,12 +680,13 @@ export function createAgentBrowserWebSearchTool(configState: AgentBrowserConfigS
 			"After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",
 		],
 		parameters: AgentBrowserWebSearchParams,
-		async execute(_toolCallId: string, params: AgentBrowserWebSearchParamsInput, signal?: AbortSignal) {
-			if (!configState.webSearchEnabled) {
+		async execute(_toolCallId: string, params: AgentBrowserWebSearchParamsInput, signal?: AbortSignal, _onUpdate?: unknown, ctx?: { cwd: string; isProjectTrusted?: () => boolean }) {
+			const runtimeConfigState = ctx ? options.loadConfigState?.(ctx) ?? configState : configState;
+			if (!runtimeConfigState.webSearchEnabled) {
 				throw new Error("agent_browser_web_search is disabled by pi-agent-browser-native config.");
 			}
 			const requestedProvider = params.provider ?? "auto";
-			const resolved = await resolvePreferredWebSearchCredential(configState, { provider: requestedProvider, signal });
+			const resolved = await resolvePreferredWebSearchCredential(runtimeConfigState, { provider: requestedProvider, signal });
 			if (!resolved) throw new Error(buildMissingCredentialError(requestedProvider));
 			const query = params.query.trim();
 			if (!query) throw new Error("query must not be blank");

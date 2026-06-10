@@ -593,15 +593,16 @@ function hasArgvFlag(argv: readonly string[], longFlag: string, shortFlag: strin
 	return argv.includes(longFlag) || argv.includes(shortFlag);
 }
 
-function shouldIncludeProjectConfig(_cwd: string, argv: readonly string[] = process.argv): boolean {
-	return !hasArgvFlag(argv, "--no-approve", "-na");
+function shouldIncludeProjectConfig(ctx: { isProjectTrusted?: () => boolean } | undefined, argv: readonly string[] = process.argv): boolean {
+	if (hasArgvFlag(argv, "--no-approve", "-na")) return false;
+	return ctx?.isProjectTrusted?.() ?? true;
 }
 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	const agentBrowserConfig = loadAgentBrowserConfigSync({
 		cwd: process.cwd(),
-		includeProjectConfig: shouldIncludeProjectConfig(process.cwd()),
+		includeProjectConfig: shouldIncludeProjectConfig(undefined),
 	});
 	const webSearchToolAvailable = canRegisterWebSearchTool(agentBrowserConfig);
 	const toolPromptGuidelines = buildToolPromptGuidelines({
@@ -947,6 +948,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	});
 
 	if (webSearchToolAvailable) {
-		pi.registerTool(createAgentBrowserWebSearchTool(agentBrowserConfig));
+		pi.registerTool(createAgentBrowserWebSearchTool(agentBrowserConfig, {
+			loadConfigState(ctx) {
+				return loadAgentBrowserConfigSync({
+					cwd: ctx.cwd,
+					includeProjectConfig: shouldIncludeProjectConfig(ctx),
+				});
+			},
+		}));
 	}
 }

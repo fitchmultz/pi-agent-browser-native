@@ -279,7 +279,7 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; pro
 	if (status !== "no-native-event-observed") return undefined;
 	const nativeEventCount = typeof result.nativeEventCount === "number" ? result.nativeEventCount : 0;
 	const scrollContainer = getClickDispatchScrollContainerDiagnostic(result);
-	const targetLabel = options.probe.target.kind === "locator" ? "no trusted DOM click event was observed for the successful locator click" : "no trusted DOM event reached the selected element";
+	const targetLabel = options.probe.target.kind === "locator" ? "no trusted pointer/mouse/click event was observed for the successful locator click" : "no trusted DOM event reached the selected element";
 	const summary = scrollContainer
 		? `Upstream click reported success but ${targetLabel}. ${scrollContainer.summary}`
 		: `Upstream click reported success but ${targetLabel}. Gather evidence with snapshot or page-change checks, then retry upstream click or report the workflow issue; the wrapper does not replay clicks in-page.`;

@@ -192,7 +192,7 @@ if (args.includes("snapshot")) {
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
 } else if (args.includes("eval")) {
-  if (stdin.includes("duplicateIndex = 1") && stdin.includes("window[marker] = state")) {
+  if (stdin.includes("window[marker] = state")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
   } else if (stdin.includes("no-native-event-observed")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
@@ -223,7 +223,12 @@ if (args.includes("snapshot")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.ok(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("duplicateIndex = 1")));
+			const installInvocation = invocations.find((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("window[marker] = state"));
+			assert.ok(installInvocation, "expected a click dispatch install eval");
+			const installScript = installInvocation.stdin ?? "";
+			assert.ok(installScript.includes("duplicateIndex"));
+			assert.match(installScript, /(?:const|let|var)?\s*duplicateIndex\s*=\s*1\b|"duplicateIndex"\s*:\s*1\b/);
+			assert.ok(installScript.includes("candidates[duplicateIndex]"));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -241,7 +246,7 @@ const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 if (args.includes("eval")) {
-  if (stdin.includes("targetRequiresElement = false") && stdin.includes("window[marker] = state")) {
+  if (stdin.includes("window[marker] = state")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
   } else if (stdin.includes("no-native-event-observed")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
@@ -262,7 +267,7 @@ if (args.includes("eval")) {
 
 			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["find", "text", "Add to cart", "click"] });
 			assert.equal(click.isError, true);
-			assert.match((click.content[0] as { text: string }).text, /no trusted DOM click event was observed for the successful locator click/);
+			assert.match((click.content[0] as { text: string }).text, /no trusted pointer\/mouse\/click event was observed for the successful locator click/);
 			assert.deepEqual((click.details?.clickDispatch as { target?: unknown } | undefined)?.target, {
 				action: "click",
 				kind: "locator",
