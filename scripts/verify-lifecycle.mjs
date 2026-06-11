@@ -1,6 +1,6 @@
 /**
  * Purpose: Exercise the configured-source pi-agent-browser lifecycle path through a real tmux-driven Pi process.
- * Responsibilities: Create isolated Pi settings and a temporary package source, inject a deterministic reload sentinel, drive `/reload` plus restart with exact `--session-id`, assert managed browser-session continuity and persisted artifact survival, capture transcripts, and clean up side effects.
+ * Responsibilities: Create isolated Pi settings and a temporary package source, inject deterministic lifecycle sentinels, drive `/reload` plus restart with exact `--session-id`, assert managed browser-session continuity and persisted artifact survival, capture transcripts, and clean up side effects.
  * Scope: Maintainer regression harness invoked through `npm run verify -- lifecycle` and embedded in `npm run verify -- release`; normal unit/package verification remains in the standard npm scripts.
  * Usage: Run with `node scripts/verify-lifecycle.mjs`, `npm run verify -- lifecycle`, or `node scripts/verify-lifecycle.mjs --keep-artifacts --verbose`.
  * Invariants/Assumptions: `pi` and `tmux` are available on PATH, Pi supports `--session-id`, the configured model (default `zai/glm-5.1`, overridable via `--model`) can follow explicit tool-use prompts, and the temporary configured package path is the only active Pi package source. `/reload` may fail if sent while the TUI still shows a working indicator even after JSONL records a final assistant message; see `docs/RELEASE.md` lifecycle triage.
@@ -20,6 +20,7 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_LIFECYCLE_MODEL = "zai/glm-5.1";
 const EXPECTED_URL = "https://react.dev/";
 const SENTINEL_CUSTOM_TYPE = "piab-lifecycle-sentinel";
+const SENTINEL_COMMAND_PREFIX = "piab-lifecycle-sentinel";
 const SENTINEL_MARKER_START = "// PIAB_LIFECYCLE_SENTINEL_START";
 const SENTINEL_MARKER_END = "// PIAB_LIFECYCLE_SENTINEL_END";
 const PROMPT_SUBMIT_PAUSE_MS = 250;
@@ -214,9 +215,18 @@ async function writeSettings({ agentDir, packageDir, sessionDir }) {
 	return settings;
 }
 
+async function buildPackageRuntime(repoRoot) {
+	await execFile(process.execPath, ["./scripts/build.mjs"], {
+		cwd: repoRoot,
+		maxBuffer: 10 * 1024 * 1024,
+	});
+}
+
 async function copyPackageSource({ packageDir, repoRoot }) {
+	await buildPackageRuntime(repoRoot);
 	await mkdir(packageDir, { recursive: true });
 	await cp(resolve(repoRoot, "extensions"), resolve(packageDir, "extensions"), { recursive: true });
+	await cp(resolve(repoRoot, "dist"), resolve(packageDir, "dist"), { recursive: true });
 	await cp(resolve(repoRoot, "package.json"), resolve(packageDir, "package.json"));
 	const repoNodeModules = resolve(repoRoot, "node_modules");
 	const tempNodeModules = resolve(packageDir, "node_modules");
@@ -225,15 +235,21 @@ async function copyPackageSource({ packageDir, repoRoot }) {
 	}
 }
 
+function lifecycleSentinelCommand(token) {
+	return `${SENTINEL_COMMAND_PREFIX}-${token}`;
+}
+
 export function injectLifecycleSentinelSource(source, token) {
 	const withoutOldSentinel = source.replace(
 		new RegExp(`\\n\\t${SENTINEL_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?\\n\\t${SENTINEL_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n`),
 		"\n",
 	);
-	const marker = "export default function agentBrowserExtension(pi: ExtensionAPI) {";
+	const marker = withoutOldSentinel.includes("export default function agentBrowserExtension(pi: ExtensionAPI) {")
+		? "export default function agentBrowserExtension(pi: ExtensionAPI) {"
+		: "export default function agentBrowserExtension(pi) {";
 	const snippet = `
 	${SENTINEL_MARKER_START}
-	pi.registerCommand("piab-lifecycle-sentinel", {
+	pi.registerCommand(${JSON.stringify(lifecycleSentinelCommand(token))}, {
 		description: "Append the pi-agent-browser lifecycle sentinel token.",
 		handler: async () => {
 			pi.appendEntry("${SENTINEL_CUSTOM_TYPE}", { token: ${JSON.stringify(token)} });
@@ -248,7 +264,7 @@ export function injectLifecycleSentinelSource(source, token) {
 }
 
 async function writeLifecycleSentinel({ packageDir, token }) {
-	const indexPath = resolve(packageDir, "extensions/agent-browser/index.ts");
+	const indexPath = resolve(packageDir, "dist/extensions/agent-browser/index.js");
 	const source = await readFile(indexPath, "utf8");
 	await writeFile(indexPath, injectLifecycleSentinelSource(source, token), "utf8");
 }
@@ -624,14 +640,12 @@ async function verifyLifecycle(options = {}) {
 		assert(typeof firstSessionName === "string" && firstSessionName.length > 0, "Initial open did not report details.sessionName.");
 		assert(openReport.result.details?.usedImplicitSession === true, "Initial open did not use the implicit managed session.");
 
-		await sendLine(tmuxSession, "/piab-lifecycle-sentinel");
+		await sendLine(tmuxSession, `/${lifecycleSentinelCommand("v1")}`);
 		await waitForSentinel({ sessionFile, timeoutMs, token: "v1" });
 
 		await writeLifecycleSentinel({ packageDir, token: "v2" });
 		await sendLine(tmuxSession, "/reload");
 		await sleep(3000);
-		await sendLine(tmuxSession, "/piab-lifecycle-sentinel");
-		await waitForSentinel({ sessionFile, timeoutMs, token: "v2" });
 
 		const reloadSnapshot = await runPromptAndWaitForResult({
 			describe: "post-reload same-page snapshot",
@@ -669,6 +683,8 @@ async function verifyLifecycle(options = {}) {
 				return paneLooksReady(pane) ? pane : undefined;
 			},
 		});
+		await sendLine(tmuxSession, `/${lifecycleSentinelCommand("v2")}`);
+		await waitForSentinel({ sessionFile, timeoutMs, token: "v2" });
 
 		const resumeSnapshot = await runPromptAndWaitForResult({
 			describe: "post-relaunch exact-session snapshot",

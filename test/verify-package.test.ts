@@ -7,11 +7,14 @@
  */
 
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { before } from "node:test";
+import { promisify } from "node:util";
 
+const execFile = promisify(execFileCallback);
 const verifyPackageModulePath = "../scripts/verify-package.mjs";
 
 interface PublishContract {
@@ -77,6 +80,10 @@ const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 	}) => Promise<{ failures: string[]; invocation?: unknown }>;
 	parseCliArgs: (argv?: string[]) => { listFiles: boolean; showHelp: boolean; smokePi: boolean };
 };
+before(async () => {
+	await execFile(process.execPath, ["scripts/build.mjs"], { maxBuffer: 10 * 1024 * 1024 });
+});
+
 const {
 	FORBIDDEN_PACKED_FILES,
 	FORBIDDEN_REPO_FILES,
@@ -129,11 +136,11 @@ test("evaluatePiSmokeResult requires exactly one packaged agent_browser source a
 			tools: [
 				{
 					name: "agent_browser",
-					sourceInfo: { path: "/tmp/pkg/package/extensions/agent-browser/index.ts" },
+					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
 				},
 				{
 					name: "agent_browser_web_search",
-					sourceInfo: { path: "/tmp/pkg/package/extensions/agent-browser/index.ts" },
+					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
 				},
 			],
 		}),
@@ -227,12 +234,16 @@ test("executePackagedAgentBrowserSmoke reports packaged invocation failures clea
 	assert.match(failures, /boom/);
 });
 
-test("package metadata keeps Pi core packages host-provided peers", async () => {
-	const packageJson = JSON.parse(await readFile("package.json", "utf8")) as { peerDependencies?: Record<string, string> };
+test("package metadata keeps Pi core packages host-provided peers and git installs build dist", async () => {
+	const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
+		peerDependencies?: Record<string, string>;
+		scripts?: Record<string, string>;
+	};
 
 	for (const packageName of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
 		assert.equal(packageJson.peerDependencies?.[packageName], "*", `${packageName} should stay host-provided per Pi package docs`);
 	}
+	assert.equal(packageJson.scripts?.prepare, "npm run build", "GitHub/source installs must build the ignored dist entrypoint before Pi loads it");
 });
 
 test("publish contract derives required packed files from package.json", async () => {
@@ -241,6 +252,7 @@ test("publish contract derives required packed files from package.json", async (
 	assert.equal(FORBIDDEN_REPO_FILES.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(FORBIDDEN_PACKED_FILES.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(FORBIDDEN_PACKED_FILES.includes("docs/archive/v1-tool-contract.md"), true);
+	assert.equal(FORBIDDEN_PACKED_FILES.includes("extensions/agent-browser/index.ts"), true);
 	assert.equal(publishContract.forbiddenRepoFiles.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(publishContract.forbiddenPackedFiles.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(publishContract.forbiddenPackedFiles.includes("docs/archive/v1-tool-contract.md"), true);
@@ -248,10 +260,11 @@ test("publish contract derives required packed files from package.json", async (
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/doctor.mjs"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/agent-browser-capability-baseline.mjs"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("docs/COMMAND_REFERENCE.md"), true);
-	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/index.ts"), true);
-	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/lib/parsing.ts"), true);
-	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/lib/playbook.ts"), true);
-	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/lib/results/snapshot.ts"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/index.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/parsing.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/playbook.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/results/snapshot.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("extensions/agent-browser/index.ts"), false);
 });
 
 test("loadPublishContract reports missing package.json files entries clearly", async () => {

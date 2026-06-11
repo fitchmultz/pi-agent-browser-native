@@ -9,7 +9,13 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname } from "node:path";
 import process from "node:process";
 
-import {
+async function loadConfigPolicyModule() {
+	const sourcePolicyUrl = new URL("../extensions/agent-browser/lib/config-policy.js", import.meta.url);
+	if (existsSync(sourcePolicyUrl)) return import(sourcePolicyUrl.href);
+	return import("../dist/extensions/agent-browser/lib/config-policy.js");
+}
+
+const {
 	AGENT_BROWSER_CONFIG_ENV,
 	BRAVE_API_KEY_ENV,
 	DEFAULT_WEB_SEARCH_PROVIDER,
@@ -26,7 +32,7 @@ import {
 	isWebSearchProvider,
 	loadAgentBrowserConfigStateSync,
 	summarizeConfigFiles,
-} from "../extensions/agent-browser/lib/config-policy.js";
+} = await loadConfigPolicyModule();
 
 const DEFAULT_CONFIG = { version: 1 };
 

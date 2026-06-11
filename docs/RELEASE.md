@@ -38,7 +38,7 @@ For PR-ready local confidence before release-only lifecycle and platform cost, r
 npm run verify -- pre-pr
 ```
 
-`pre-pr` composes the default gate with `npm run verify -- package`: generated docs, TypeScript, the full unit/fake suite, live command-reference sampling, and package-content verification. It intentionally does not run lifecycle, packaged Pi smoke, Crabbox platform smoke, real-upstream, dogfood, or benchmark modes.
+`pre-pr` composes the default gate with `npm run verify -- package`: generated docs, clean `dist/` build, TypeScript, the full unit/fake suite, live command-reference sampling, and package-content verification. It intentionally does not run lifecycle, packaged Pi smoke, Crabbox platform smoke, startup-profile, real-upstream, dogfood, or benchmark modes.
 
 `npm run verify -- release` runs:
 
@@ -47,9 +47,18 @@ npm run verify -- pre-pr
 3. `npm run verify -- package-pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
 4. `npm run smoke:platform:doctor` and the full Crabbox matrix from [`platform-smoke.md`](platform-smoke.md): macOS SSH, Ubuntu local-container, and native Windows Parallels targets running fast target-local `platform-build` plus `browser-dogfood-smoke`
 
-`npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`), the configured-source lifecycle harness, the packaged Pi smoke in `package-pi`, and the release-blocking Crabbox platform matrix. Using `npm publish --ignore-scripts` skips that contract intentionally.
+`npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, clean `dist/` build, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`), the configured-source lifecycle harness, the packaged Pi smoke in `package-pi`, and the release-blocking Crabbox platform matrix. Using `npm publish --ignore-scripts` skips that contract intentionally.
 
-`prepublishOnly` intentionally does **not** run the standalone host-only `npm run verify -- real-upstream`, `npm run verify -- dogfood`, or `npm run verify -- benchmark` modes; those remain separate `npm run verify` modes in [`scripts/project.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/project.mjs). The platform matrix includes its own fast target-local build/package gate and browser dogfood suite, and is automated through the `release` slice.
+`prepublishOnly` intentionally does **not** run the standalone host-only `npm run verify -- startup-profile`, `npm run verify -- real-upstream`, `npm run verify -- dogfood`, or `npm run verify -- benchmark` modes; those remain separate `npm run verify` modes in [`scripts/project.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/project.mjs). The platform matrix includes its own fast target-local build/package gate and browser dogfood suite, and is automated through the `release` slice.
+
+Run the opt-in startup profiler whenever package layout, the compiled entrypoint, top-level imports, schema registration, or prompt/config startup logic changes:
+
+```bash
+npm run build
+npm run verify -- startup-profile --samples 3
+```
+
+The profiler first clean-builds `dist/`, then records only direct package entrypoint import/factory timing in fresh Node processes, writes `.artifacts/startup-profile/latest.json`, and includes a safety block confirming it did not launch Pi, tmux, mise, npm, browsers, or `agent-browser`. Full Pi TUI ready-prompt profiling is intentionally excluded because repeated real Pi/tmux launches proved too invasive for routine verification on the operator machine.
 
 For a deterministic host-only real-browser wrapper smoke without model choice in the loop, run:
 
@@ -76,7 +85,7 @@ Every release also requires interactive `tmux`-driven Pi dogfood with the native
 
 When reviewing saved session JSONL after a failed smoke or a `qa` preset that reclassified an upstream-successful batch, expect `agent_browser` tool rows to carry `isError: true` whenever `details.resultCategory` is `failure`. For normal prose output, model-visible text should end with a `Pi tool isError: true` category line; for caller-requested `--json` output, the hook preserves parseable JSON and only patches `isError`. The extension applies that patch on the `tool_result` path so Pi’s transcript matches the wrapper contract ([`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)). Preserve a normal Pi session directory for those checks; avoiding `--no-session` keeps this evidence intact ([`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md) preferred validation workflow).
 
-The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` with `--approve` and validates `/reload`, full relaunch with the same exact Pi 0.79 `--session-id`, managed-session continuity, persisted artifacts, and Pi failure-patch behavior. Branch-backed `session_tree` rehydration and cleanup ownership are validated by focused extension harness tests:
+The configured-source lifecycle regression harness is required before release because it launches an interactive `pi` process under `tmux` with `--approve` and validates `/reload`, full relaunch with the same exact Pi 0.79 `--session-id`, managed-session continuity, persisted artifacts, compiled-entrypoint pickup after process restart, and Pi failure-patch behavior. Branch-backed `session_tree` rehydration and cleanup ownership are validated by focused extension harness tests:
 
 ```bash
 npm run verify -- lifecycle
@@ -155,7 +164,7 @@ Evaluator expectations after the queued Sauce Demo fixes: the agent should indep
 [`scripts/agent-browser-efficiency-benchmark.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/agent-browser-efficiency-benchmark.mjs) is an accounting-only benchmark: it does not shell out to `agent-browser`, launch a browser, or read or write Pi sessions. It models representative `agent_browser` call shapes (including optional `stdin` for `batch` and top-level `job`, `qa`, or experimental `sourceLookup` / `networkSourceLookup` objects that compile to batch) and aggregates success rate, tool-call counts, UTF-8 size of model-visible strings, stale-ref failure and recovery counts, artifact success, distinct failure-category coverage, and summed elapsed-time estimates. When extending scenarios, keep them aligned with the closed `RQ-0068` “no reusable recipe layer” rationale in [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) (benchmark ids cited there are the canonical inventory for that evidence bar).
 
 - **During development:** `npm run benchmark:agent-browser` prints a Markdown report; `npm run benchmark:agent-browser -- --json` saves machine-readable metrics; `npm run benchmark:agent-browser -- --compare path/to/prior.json` fails with exit code `1` on regressions (see the script’s `--help` for exit codes). Optional `--sample-jsonl path/to/session.jsonl` adds a `jsonlSample` section with real UTF-8 byte totals and per-workflow/overall p95 sizes for model-visible `agent_browser` tool-result text without changing deterministic scenario metrics; comparison ignores `jsonlSample` blocks.
-- **Default gate:** `npm run verify` checks generated playbook drift, runs `tsc --noEmit`, runs the full unit/fake suite under `test/**/*.test.ts` with Node test concurrency pinned to `1` (including [`test/agent-browser.efficiency-benchmark.test.ts`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/test/agent-browser.efficiency-benchmark.test.ts) for scenario coverage and comparison behavior), verifies generated command-reference baseline blocks, and samples live upstream command-reference tokens. It does not spawn the standalone benchmark script’s JSON/Markdown run; that is what the opt-in slice below adds.
+- **Default gate:** `npm run verify` checks generated playbook drift, clean-builds `dist/`, runs `tsc --noEmit`, runs the full unit/fake suite under `test/**/*.test.ts` with Node test concurrency pinned to `1` (including [`test/agent-browser.efficiency-benchmark.test.ts`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/test/agent-browser.efficiency-benchmark.test.ts) for scenario coverage and comparison behavior), verifies generated command-reference baseline blocks, and samples live upstream command-reference tokens. It does not spawn the standalone benchmark script’s JSON/Markdown run; that is what the opt-in slice below adds.
 - **Pre-PR gate:** `npm run verify -- pre-pr` runs the default gate plus `npm run verify -- package` for larger handoffs that need package-content confidence without lifecycle, platform, real-upstream, dogfood, or benchmark cost.
 - **Opt-in slice:** `npm run verify -- benchmark` runs the benchmark script once with `--json` and then that same test module alone. It is intentionally **not** part of `npm run verify -- pre-pr` or `npm run verify -- release`, so routine handoff and publish gates stay decoupled from benchmark churn while still allowing a focused check after editing scenarios or `CURRENT_BENCHMARK_VERSION`.
 
@@ -168,9 +177,11 @@ Maintainer constraints for evolving scenarios and version bumps are summarized u
 - no repo-local `.pi/extensions/agent-browser.ts` autoload shim is present
 - `LICENSE` exists in the repo and the packed tarball
 - canonical published docs are present
+- `npm pack --json --dry-run` runs the `prepack` build and packs the compiled `dist/extensions/agent-browser/index.js` entrypoint
+- GitHub/source installs run the package `prepare` build so Pi can load the ignored compiled `dist/extensions/agent-browser/index.js` entrypoint from a fresh clone
 - the package-level doctor command and capability baseline are present
-- extension source files are present, including the split result-rendering modules required by the published facade
-- agent-only and superseded docs are absent from the tarball
+- compiled extension runtime files are present, including the split result-rendering modules required by the published facade
+- source-only, agent-only, and superseded docs are absent from the tarball
 
 `npm run verify -- package-pi` runs the same package-content checks and additionally confirms that:
 
@@ -187,7 +198,7 @@ Current forbidden packed files include:
 - `AGENTS.md`
 - archived planning drafts under `docs/archive/`
 - `.pi/extensions/agent-browser.ts`
-- test and repo-only maintenance files
+- TypeScript extension source and other test/repo-only maintenance files
 
 For a full packed file listing:
 
@@ -203,7 +214,7 @@ Before publishing, validate both local-checkout modes without mixing their assum
 
 1. Install `agent-browser` separately.
 2. Launch `pi --approve --no-extensions -e .` from this trusted repository root. Omit `--approve` only when testing Pi's Project Trust prompt.
-3. Confirm the checkout extension loads from `extensions/agent-browser/index.ts`.
+3. Confirm the checkout package loads the compiled `dist/extensions/agent-browser/index.js` entrypoint (run `npm run build` first after source edits).
 4. Run a smoke prompt that exercises `agent_browser`.
 5. Restart the `pi` process after extension edits; Pi settings and `/reload` are not the validation target in this isolated mode.
 
@@ -221,7 +232,7 @@ Run the automated harness for deterministic configured-source lifecycle regressi
 npm run verify -- lifecycle
 ```
 
-The harness creates an isolated `PI_CODING_AGENT_DIR`, writes settings with exactly one temporary configured package source, runs `pi` in `tmux` with `--approve`, default model **`zai/glm-5.1`**, and a deterministic `--session-id`, puts a deterministic fake `agent-browser` first on `PATH`, drives `/reload`, closes Pi, and relaunches with the same exact session id instead of typing `/resume`. It also asserts the JSONL session header id, same-page managed-session continuity, persisted spill reachability, and real Pi `tool_result` failure-patch semantics for a QA reclassification. Per-step tmux waits default to **180000 ms** (three minutes) in [`scripts/verify-lifecycle.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/verify-lifecycle.mjs) (`DEFAULT_TIMEOUT_MS`); override with `--timeout-ms <ms>` when slower models or cold starts need more headroom. Override the model when needed:
+The harness creates an isolated `PI_CODING_AGENT_DIR`, writes settings with exactly one temporary configured package source, runs `pi` in `tmux` with `--approve`, default model **`zai/glm-5.1`**, and a deterministic `--session-id`, puts a deterministic fake `agent-browser` first on `PATH`, drives `/reload`, closes Pi, and relaunches with the same exact session id instead of typing `/resume`. It also asserts the JSONL session header id, same-page managed-session continuity, compiled JS code pickup after full process relaunch, persisted spill reachability, and real Pi `tool_result` failure-patch semantics for a QA reclassification. Per-step tmux waits default to **180000 ms** (three minutes) in [`scripts/verify-lifecycle.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/verify-lifecycle.mjs) (`DEFAULT_TIMEOUT_MS`); override with `--timeout-ms <ms>` when slower models or cold starts need more headroom. Override the model when needed:
 
 ```bash
 npm run verify -- lifecycle --model openai-codex/gpt-5.5:minimal
@@ -235,7 +246,7 @@ npm run verify -- lifecycle --model openai-codex/gpt-5.5:minimal --timeout-ms 60
 
 On failure it retains transcripts/session artifacts; on success it performs best-effort cleanup. It does not replace occasional real-browser manual smoke testing.
 
-**Lifecycle triage:** a timeout on sentinel `v2` after `/reload` often means Pi rejected reload while the TUI still showed `Working…` (`Wait for the current response to finish before reloading`), even when the session JSONL already has a final assistant message. Re-run with `--keep-artifacts --verbose`, inspect the retained pane capture, and confirm the configured model follows tool prompts reliably. Slower models may need a higher `--timeout-ms` than the **180000 ms** default.
+**Lifecycle triage:** a timeout on sentinel `v2` after exact-session relaunch means the new compiled entrypoint did not load after process restart. A reload-step timeout or missing post-reload snapshot often means Pi rejected reload while the TUI still showed `Working…` (`Wait for the current response to finish before reloading`), even when the session JSONL already has a final assistant message. Re-run with `--keep-artifacts --verbose`, inspect the retained pane capture, and confirm the configured model follows tool prompts reliably. Slower models may need a higher `--timeout-ms` than the **180000 ms** default.
 
 ### Environment and automation pitfalls
 

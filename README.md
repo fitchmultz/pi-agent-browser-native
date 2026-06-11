@@ -561,12 +561,13 @@ npm run typecheck
 The full `npm run verify` gate runs:
 
 - generated playbook/documentation drift checks
+- a clean build of generated `dist/` runtime files
 - `tsc --noEmit`
 - the test suite
 - command-reference baseline checks
 - live command-reference verification against the targeted installed upstream `agent-browser`
 
-Step order and which subprocesses run live in [`scripts/project.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/project.mjs); [`test/project-verify.test.ts`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/test/project-verify.test.ts) locks default, `pre-pr`, `release`, `real-upstream`, `dogfood`, `platform-target`, `platform-smoke`, `package-pi`, and combined-docs orchestration so a gate cannot disappear accidentally. Run `npm run verify -- --help` for opt-in modes and supported passthrough flags.
+Step order and which subprocesses run live in [`scripts/project.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/project.mjs); [`test/project-verify.test.ts`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/test/project-verify.test.ts) locks default, `pre-pr`, `release`, `startup-profile`, `real-upstream`, `dogfood`, `platform-target`, `platform-smoke`, `package-pi`, and combined-docs orchestration so a gate cannot disappear accidentally. Run `npm run verify -- --help` for opt-in modes and supported passthrough flags.
 
 For larger local handoffs or PR-ready confidence before expensive release/lifecycle/platform gates, run:
 
@@ -574,7 +575,7 @@ For larger local handoffs or PR-ready confidence before expensive release/lifecy
 npm run verify -- pre-pr
 ```
 
-That mode composes the full default gate with `npm run verify -- package`, so package contents and forbidden archived/repo-only files are checked without launching Pi lifecycle, Crabbox, or live dogfood flows.
+That mode composes the full default gate with `npm run verify -- package`, so package contents and forbidden archived/repo-only files are checked without launching Pi lifecycle, Crabbox, or live dogfood flows. Package, package-pi, lifecycle, platform-target, and startup-profile modes all build `dist/` first so clean checkouts do not validate stale or missing compiled output. GitHub/source installs run the package `prepare` script so the ignored `dist/` entrypoint exists before Pi loads the extension.
 
 The deterministic agent-efficiency benchmark’s **standalone JSON/Markdown accounting run** is not part of default or pre-PR `npm run verify` (only `npm run verify -- benchmark` or `npm run benchmark:agent-browser` invokes the script). The full unit suite still exercises `test/agent-browser.efficiency-benchmark.test.ts`. Use the script before and after agent-facing abstractions to prove call-count, output-size, stale-ref, artifact, failure-category coverage, success-rate, and elapsed-time effects before changing the wrapper UX:
 
@@ -586,6 +587,15 @@ npm run verify -- benchmark
 Save a JSON baseline (for example before changing playbook or wrapper behavior), then compare later runs: `npm run benchmark:agent-browser -- --json > /tmp/agent-browser-benchmark.json` and `npm run benchmark:agent-browser -- --compare /tmp/agent-browser-benchmark.json`.
 
 It does not launch a browser or mutate local profiles; it models representative raw workflows and provides a stable baseline for later comparisons.
+
+The opt-in startup profiler measures only the package extension entrypoint import plus factory registration in fresh Node processes. It intentionally does **not** launch Pi, tmux, mise, npm, browsers, or `agent-browser`; full Pi TUI ready-prompt profiling proved too invasive for routine verification on the operator machine. Run it after package entrypoint, generated runtime, or top-level import changes:
+
+```bash
+npm run build
+npm run verify -- startup-profile --samples 3
+```
+
+Reports are written to `.artifacts/startup-profile/latest.json` and include a safety block confirming no Pi, tmux, mise, npm, browser, or `agent-browser` subprocesses were launched.
 
 The opt-in real-upstream suite is separate because it drives a real browser installation:
 
@@ -630,7 +640,7 @@ npm run verify -- release
 
 `pi-agent-browser-native` is intentionally thin:
 
-1. Pi loads `extensions/agent-browser/index.ts` from the package manifest.
+1. Pi loads the compiled `dist/extensions/agent-browser/index.js` entrypoint from the package manifest; TypeScript under `extensions/` remains the source of truth and `npm run build` regenerates `dist/` before packing.
 2. The extension registers one native tool named `agent_browser`.
 3. Tool calls are translated into upstream `agent-browser` CLI invocations with controlled args, stdin, environment, timeout, and session planning.
 4. Upstream JSON/plain-text output is parsed into model-friendly content and structured details.
@@ -677,7 +687,7 @@ Configured-source lifecycle validation:
 npm run verify -- lifecycle
 ```
 
-The harness defaults to Pi model `zai/glm-5.1` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches Pi 0.79 with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, persisted spill reachability, and real Pi `tool_result` failure-patch behavior.
+The harness defaults to Pi model `zai/glm-5.1` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches Pi 0.79 with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, compiled-entrypoint pickup after process restart, persisted spill reachability, and real Pi `tool_result` failure-patch behavior.
 
 Use lifecycle validation when testing `/reload`, exact-session relaunch, `/resume`, managed-session continuity, or persisted artifact behavior. Branch-backed state and `session_tree` cleanup ownership are covered by focused extension harness tests. Maintainers must run the lifecycle harness before every publish; see [Pre-release checks](docs/RELEASE.md#pre-release-checks).
 
@@ -714,7 +724,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 
 | Path | Purpose |
 |---|---|
-| `extensions/agent-browser/index.ts` | Pi extension entrypoint and native tool wrapper |
+| `extensions/agent-browser/index.ts` | TypeScript source for the Pi extension entrypoint; packed installs load compiled `dist/extensions/agent-browser/index.js` |
 | `extensions/agent-browser/lib/runtime.ts` | Argv parsing, session planning, redaction, and execution-plan helpers (pure planning; subprocess wiring lives beside the entrypoint) |
 | `extensions/agent-browser/lib/results/` | Model-facing result rendering and error guidance |
 | `extensions/agent-browser/lib/playbook.ts` | Canonical generated agent/browser guidance |
@@ -745,4 +755,4 @@ These calls return plain text and stay stateless: the extension does not inject 
 
 If you are a user, install the package and ask Pi to open a public page with `agent_browser`.
 
-If you are evaluating the implementation, read [`extensions/agent-browser/index.ts`](extensions/agent-browser/index.ts), then run `npm run verify`.
+If you are evaluating the implementation, read [`extensions/agent-browser/index.ts`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/extensions/agent-browser/index.ts), then run `npm run verify`.

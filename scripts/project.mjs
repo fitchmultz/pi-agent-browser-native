@@ -74,6 +74,7 @@ Modes:
   command-reference   Check generated command-reference block and live upstream help drift.
   pre-pr              Run default verification plus package-content checks for larger local handoffs.
   benchmark           Run the deterministic agent-browser efficiency benchmark and focused tests.
+  startup-profile     Run the safe package entrypoint startup profiler.
   real-upstream       Run the opt-in real upstream browser contract suite (localhost fixtures, broad core commands).
   dogfood             Run a deterministic model-free live-browser smoke through the native tool wrapper.
   package             Verify package contents.
@@ -91,6 +92,8 @@ Options:
   --verbose           With lifecycle mode, print progress details.
   --timeout-ms <ms>   With lifecycle mode, override the per-step wait timeout (default 180000).
   --list-files        With package mode, print every packed file path.
+  --samples <n>       With startup-profile mode, fresh Node entrypoint samples.
+  --json              With startup-profile mode, print machine-readable JSON.
   doctor              With platform-smoke mode, run setup doctor.
   run                 With platform-smoke mode, run target suites.
   --target <names>    With platform-smoke mode, comma-separated target list.
@@ -102,6 +105,7 @@ Examples:
   npm run verify -- pre-pr
   npm run verify -- real-upstream
   npm run verify -- dogfood --keep-artifacts
+  npm run verify -- startup-profile --samples 3
   npm run verify -- package --list-files
   npm run verify -- package-pi
   npm run verify -- lifecycle --keep-artifacts --verbose
@@ -207,6 +211,7 @@ export function parseVerifyArgs(argv) {
 		"command-reference",
 		"pre-pr",
 		"benchmark",
+		"startup-profile",
 		"real-upstream",
 		"dogfood",
 		"package",
@@ -253,6 +258,7 @@ function validatePassthrough(mode, passthrough) {
 		"command-reference": new Set(),
 		"pre-pr": new Set(),
 		benchmark: new Set(),
+		"startup-profile": new Set(["--samples", "--json"]),
 		"real-upstream": new Set(),
 		dogfood: new Set(["--artifact-dir", "--keep-artifacts", "--json"]),
 		package: new Set(["--list-files"]),
@@ -273,7 +279,7 @@ function validatePassthrough(mode, passthrough) {
 			if (!value || value.startsWith("-")) throw new UsageError("--model requires a value.");
 			index += 1;
 		}
-		if (arg === "--timeout-ms") {
+		if (mode === "lifecycle" && arg === "--timeout-ms") {
 			const value = passthrough[index + 1];
 			if (!value) throw new UsageError("--timeout-ms requires a value.");
 			index += 1;
@@ -283,7 +289,16 @@ function validatePassthrough(mode, passthrough) {
 			if (!value || value.startsWith("-")) throw new UsageError("--artifact-dir requires a path.");
 			index += 1;
 		}
+		if (mode === "startup-profile" && arg === "--samples") {
+			const value = passthrough[index + 1];
+			if (!value || value.startsWith("-")) throw new UsageError("--samples requires a value.");
+			index += 1;
+		}
 	}
+}
+
+function buildStep() {
+	return scriptStep(["./scripts/build.mjs"]);
 }
 
 function commandReferenceSteps() {
@@ -299,6 +314,7 @@ export function verifySteps(options) {
 		case "default":
 			return [
 				...docsSteps({ mode: "check", target: "playbook" }),
+				buildStep(),
 				localToolStep("tsc", ["--noEmit"]),
 				localToolStep("tsx", ["--test", "--test-concurrency=1", "test/**/*.test.ts"]),
 				...commandReferenceSteps(),
@@ -317,19 +333,22 @@ export function verifySteps(options) {
 				scriptStep(["./scripts/agent-browser-efficiency-benchmark.mjs", "--json"]),
 				localToolStep("tsx", ["--test", "test/agent-browser.efficiency-benchmark.test.ts"]),
 			];
+		case "startup-profile":
+			return [buildStep(), scriptStep(["./scripts/profile-startup.mjs", ...options.passthrough])];
 		case "real-upstream":
 			return [localToolStep("tsx", ["--test", "test/agent-browser.real-upstream-contract.test.ts"], { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" })];
 		case "dogfood":
 			return [localToolStep("tsx", ["./scripts/verify-agent-browser-dogfood.ts", ...options.passthrough])];
 		case "package":
-			return [scriptStep(["./scripts/verify-package.mjs", ...options.passthrough])];
+			return [buildStep(), scriptStep(["./scripts/verify-package.mjs", ...options.passthrough])];
 		case "package-pi":
-			return [scriptStep(["./scripts/verify-package.mjs", "--smoke-pi", ...options.passthrough])];
+			return [buildStep(), scriptStep(["./scripts/verify-package.mjs", "--smoke-pi", ...options.passthrough])];
 		case "lifecycle":
-			return [scriptStep(["./scripts/verify-lifecycle.mjs", ...options.passthrough])];
+			return [buildStep(), scriptStep(["./scripts/verify-lifecycle.mjs", ...options.passthrough])];
 		case "platform-target":
 			return [
 				...docsSteps({ mode: "check", target: "all" }),
+				buildStep(),
 				localToolStep("tsc", ["--noEmit"]),
 				localToolStep("tsx", [
 					"--test",

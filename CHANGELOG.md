@@ -4,6 +4,23 @@
 
 No unreleased changes yet.
 
+## 0.2.49 - 2026-06-11
+
+### Changed
+
+- Ship the Pi package entrypoint as compiled JavaScript under `dist/` so installed package startup no longer pays runtime TypeScript loading cost.
+- Added clean-build orchestration before verification, package, lifecycle, platform-target, test, startup-profile, and GitHub/source install flows that consume generated `dist/` output.
+- Replaced invasive full-Pi startup profiling with a safe direct-entrypoint profiler that clean-builds `dist/`, measures fresh Node import/factory samples, and refuses the old timeout-driven Pi/tmux workflow.
+
+### Fixed
+
+- Prevented clean checkouts from validating missing or stale compiled package entrypoints by building before package/lifecycle/startup consumers, building on GitHub/source install, and ignoring generated `dist/` in the repo.
+- Kept local config and doctor helpers aligned with the compiled package entrypoint while avoiding stale local `dist/` policy reads.
+
+### Validation
+
+- Ran focused build/package/lifecycle/config/doctor/startup tests, `npm run typecheck`, `npm run docs`, `npm run verify -- package-pi`, `npm run verify -- startup-profile --samples 10`, an independent reviewer loop to no findings, and a reload smoke using the native `agent_browser` tool against `https://example.com`.
+
 ## 0.2.48 - 2026-06-11
 
 ### Changed

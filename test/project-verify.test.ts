@@ -1,6 +1,6 @@
 /**
  * Purpose: Lock the maintainer npm verification facade so queue/release gates do not silently drop required checks.
- * Responsibilities: Assert `npm run verify` orchestration keeps docs drift, typecheck, unit/fake tests, command-reference, pre-pr, real-upstream, package Pi smoke, platform-target, and platform smoke steps wired to their focused scripts.
+ * Responsibilities: Assert `npm run verify` orchestration keeps docs drift, typecheck, unit/fake tests, command-reference, pre-pr, safe startup profiling, real-upstream, package Pi smoke, platform-target, and platform smoke steps wired to their focused scripts.
  * Scope: Unit coverage for scripts/project.mjs command planning only; the focused scripts own their own runtime behavior.
  * Usage: Runs under `npm test` via tsx's test runner.
  * Invariants/Assumptions: The default gate is local and deterministic except for live command-reference sampling; real-upstream and platform diagnostics stay explicit modes while release composes the required platform gate.
@@ -34,6 +34,7 @@ test("verify facade default gate keeps docs, typecheck, unit/fake, and command-r
 
 	assert.deepEqual(stepLabels, [
 		"./scripts/check-playbook-drift.ts --check",
+		"./scripts/build.mjs",
 		"--noEmit",
 		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
@@ -45,15 +46,20 @@ test("verify facade pre-pr mode composes default verification with package-conte
 	const steps = verifySteps({ mode: "pre-pr", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(steps), [
 		"./scripts/check-playbook-drift.ts --check",
+		"./scripts/build.mjs",
 		"--noEmit",
 		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
+		"./scripts/build.mjs",
 		"./scripts/verify-package.mjs",
 	]);
 });
 
-test("verify facade opt-in modes keep real-upstream, dogfood, package-pi, platform-target, and platform smoke gates explicit", () => {
+test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, package-pi, platform-target, and platform smoke gates explicit", () => {
+	const startupProfile = verifySteps({ mode: "startup-profile", passthrough: ["--samples", "3", "--json"], showHelp: false });
+	assert.deepEqual(labels(startupProfile), ["./scripts/build.mjs", "./scripts/profile-startup.mjs --samples 3 --json"]);
+
 	const realUpstream = verifySteps({ mode: "real-upstream", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(realUpstream), ["--test test/agent-browser.real-upstream-contract.test.ts"]);
 	assert.equal(realUpstream[0]?.env?.PI_AGENT_BROWSER_REAL_UPSTREAM, "1");
@@ -62,12 +68,13 @@ test("verify facade opt-in modes keep real-upstream, dogfood, package-pi, platfo
 	assert.deepEqual(labels(dogfood), ["./scripts/verify-agent-browser-dogfood.ts --keep-artifacts"]);
 
 	const packagePi = verifySteps({ mode: "package-pi", passthrough: [], showHelp: false });
-	assert.deepEqual(labels(packagePi), ["./scripts/verify-package.mjs --smoke-pi"]);
+	assert.deepEqual(labels(packagePi), ["./scripts/build.mjs", "./scripts/verify-package.mjs --smoke-pi"]);
 
 	const platformTarget = verifySteps({ mode: "platform-target", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(platformTarget), [
 		"./scripts/check-playbook-drift.ts --check",
 		"./scripts/check-command-reference-baseline.mjs --check",
+		"./scripts/build.mjs",
 		"--noEmit",
 		"--test --test-concurrency=1 test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts",
 	]);
@@ -80,11 +87,14 @@ test("verify facade release gate composes default verification, lifecycle, packa
 	const release = verifySteps({ mode: "release", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(release), [
 		"./scripts/check-playbook-drift.ts --check",
+		"./scripts/build.mjs",
 		"--noEmit",
 		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
+		"./scripts/build.mjs",
 		"./scripts/verify-lifecycle.mjs",
+		"./scripts/build.mjs",
 		"./scripts/verify-package.mjs --smoke-pi",
 		"./scripts/platform-smoke.mjs doctor",
 		"./scripts/platform-smoke.mjs run --target macos,ubuntu,windows-native",
@@ -112,6 +122,14 @@ test("verify facade rejects unsupported options before running a partial gate", 
 		/--artifact-dir requires a path/,
 	);
 	assert.throws(
+		() => verifySteps({ mode: "startup-profile", passthrough: ["--samples"], showHelp: false }),
+		/--samples requires a value/,
+	);
+	assert.throws(
+		() => verifySteps({ mode: "startup-profile", passthrough: ["--timeout-ms", "1000"], showHelp: false }),
+		/Option --timeout-ms is not supported for verify mode startup-profile/,
+	);
+	assert.throws(
 		() => verifySteps({ mode: "platform-smoke", passthrough: ["run", "--target"], showHelp: false }),
 		/--target requires a value/,
 	);
@@ -129,6 +147,7 @@ test("verify facade lifecycle mode passes --model and other allowed flags throug
 		showHelp: false,
 	});
 	assert.deepEqual(labels(steps), [
+		"./scripts/build.mjs",
 		"./scripts/verify-lifecycle.mjs --model openai-codex/gpt-5.5:minimal --keep-artifacts --verbose --timeout-ms 600000",
 	]);
 });

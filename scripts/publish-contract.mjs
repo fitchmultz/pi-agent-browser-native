@@ -24,6 +24,7 @@ export const FORBIDDEN_PACKED_FILES = Object.freeze([
 	"docs/archive/IMPLEMENTATION_PLAN.md",
 	"docs/archive/native-integration-design.md",
 	"docs/archive/v1-tool-contract.md",
+	"extensions/agent-browser/index.ts",
 	"progress.md",
 	"scripts/verify-package.mjs",
 	"test/agent-browser.test.ts",

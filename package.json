@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.2.48",
+  "version": "0.2.49",
   "description": "pi extension that exposes agent-browser as a native tool for browser automation",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
@@ -31,7 +31,7 @@
     "pi-agent-browser-doctor": "scripts/doctor.mjs"
   },
   "files": [
-    "extensions",
+    "dist",
     "platform-smoke.config.mjs",
     "scripts/config.mjs",
     "scripts/doctor.mjs",
@@ -52,7 +52,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/agent-browser/index.ts"
+      "./dist/extensions/agent-browser/index.js"
     ]
   },
   "peerDependencies": {
@@ -86,9 +86,13 @@
     "smoke:platform:windows-native": "node scripts/platform-smoke.mjs run --target windows-native",
     "smoke:platform:all": "npm run smoke:platform:doctor && node scripts/platform-smoke.mjs run --target macos,ubuntu,windows-native",
     "typecheck": "node ./scripts/project.mjs verify typecheck",
-    "test": "tsx --test test/**/*.test.ts",
+    "test": "node ./scripts/build.mjs && tsx --test test/**/*.test.ts",
     "verify": "node ./scripts/project.mjs verify",
-    "prepublishOnly": "npm run verify -- release && npm pack --dry-run"
+    "prepublishOnly": "npm run verify -- release && npm pack --dry-run",
+    "build": "node ./scripts/build.mjs",
+    "startup-profile": "node ./scripts/profile-startup.mjs",
+    "prepack": "npm run build",
+    "prepare": "npm run build"
   },
   "packageManager": "npm@11.14.0"
 }

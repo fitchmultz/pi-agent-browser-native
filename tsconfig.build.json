@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "declaration": false,
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "sourceMap": false
+  },
+  "include": [
+    "extensions/**/*.ts",
+    "extensions/agent-browser/lib/config-policy.js"
+  ],
+  "exclude": [
+    "test/**"
+  ]
+}

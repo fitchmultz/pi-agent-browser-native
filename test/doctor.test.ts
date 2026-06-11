@@ -193,6 +193,24 @@ test("doctor resolves relative extension sources from their settings file direct
 	assert.match(text, /Detected source: ..\/..\/Projects\/AI\/pi-agent-browser\/extensions\/agent-browser\/index\.ts/);
 });
 
+test("doctor recognizes compiled extension entrypoint sources", async () => {
+	const settingsByPath = new Map([
+		["/home/user/.pi/agent/settings.json", JSON.stringify({ extensions: ["../../Projects/AI/pi-agent-browser/dist/extensions/agent-browser/index.js"] })],
+	]);
+	const report = await evaluateDoctorWithPi({
+		agentDir: "/home/user/.pi/agent",
+		cwd: "/home/user/Projects/AI/pi-agent-browser",
+		pathExists: async (path) => settingsByPath.has(path),
+		readText: async (path) => settingsByPath.get(path),
+		runAgentBrowser: async () => passingVersion(),
+	});
+	const text = formatDoctorReport(report);
+
+	assert.equal(report.failures.length, 0);
+	assert.match(text, /No duplicate pi-agent-browser-native sources detected/);
+	assert.match(text, /Detected source: ..\/..\/Projects\/AI\/pi-agent-browser\/dist\/extensions\/agent-browser\/index\.js/);
+});
+
 test("doctor treats no configured source as an informational warning, not a failure", async () => {
 	const report = await evaluateDoctorWithPi({
 		agentDir: "/agent",

@@ -20,7 +20,10 @@ import { CAPABILITY_BASELINE, CAPABILITY_BASELINE_SOURCE } from "./agent-browser
 const execFile = promisify(execFileCallback);
 const PACKAGE_NAME = "pi-agent-browser-native";
 const REPO_URL_FRAGMENT = "github.com/fitchmultz/pi-agent-browser-native";
-const EXTENSION_ENTRYPOINT = "extensions/agent-browser/index.ts";
+const EXTENSION_ENTRYPOINTS = Object.freeze([
+	"extensions/agent-browser/index.ts",
+	"dist/extensions/agent-browser/index.js",
+]);
 const EXPECTED_VERSION = CAPABILITY_BASELINE.targetVersion;
 const MINIMUM_PI_VERSION = "0.79.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
@@ -163,15 +166,13 @@ function sourceLooksLikeThisPackage(source, cwd, sourceBaseDir = cwd) {
 
 	if (!isPathLikeSource(text)) return false;
 	const resolvedSource = resolve(sourceBaseDir, expandUserPath(text));
-	const cwdEntrypoint = resolve(cwd, EXTENSION_ENTRYPOINT);
-	const packageEntrypoint = resolve(THIS_PACKAGE_ROOT, EXTENSION_ENTRYPOINT);
+	const cwdEntrypoints = EXTENSION_ENTRYPOINTS.map((entrypoint) => resolve(cwd, entrypoint));
+	const packageEntrypoints = EXTENSION_ENTRYPOINTS.map((entrypoint) => resolve(THIS_PACKAGE_ROOT, entrypoint));
 	return (
 		resolvedSource === cwd ||
-		resolvedSource === cwdEntrypoint ||
 		resolvedSource === THIS_PACKAGE_ROOT ||
-		resolvedSource === packageEntrypoint ||
-		isInsidePath(cwdEntrypoint, resolvedSource) ||
-		isInsidePath(packageEntrypoint, resolvedSource)
+		cwdEntrypoints.some((entrypoint) => resolvedSource === entrypoint || isInsidePath(entrypoint, resolvedSource)) ||
+		packageEntrypoints.some((entrypoint) => resolvedSource === entrypoint || isInsidePath(entrypoint, resolvedSource))
 	);
 }
 
