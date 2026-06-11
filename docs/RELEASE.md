@@ -176,9 +176,7 @@ The packaged execution smoke intentionally uses a temporary fake `agent-browser`
 Current forbidden packed files include:
 
 - `AGENTS.md`
-- `docs/IMPLEMENTATION_PLAN.md`
-- `docs/native-integration-design.md`
-- `docs/v1-tool-contract.md`
+- archived planning drafts under `docs/archive/`
 - `.pi/extensions/agent-browser.ts`
 - test and repo-only maintenance files
 

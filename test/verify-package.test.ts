@@ -238,8 +238,10 @@ test("publish contract derives required packed files from package.json", async (
 
 	assert.equal(FORBIDDEN_REPO_FILES.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(FORBIDDEN_PACKED_FILES.includes(".pi/extensions/agent-browser.ts"), true);
+	assert.equal(FORBIDDEN_PACKED_FILES.includes("docs/archive/v1-tool-contract.md"), true);
 	assert.equal(publishContract.forbiddenRepoFiles.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(publishContract.forbiddenPackedFiles.includes(".pi/extensions/agent-browser.ts"), true);
+	assert.equal(publishContract.forbiddenPackedFiles.includes("docs/archive/v1-tool-contract.md"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("package.json"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/doctor.mjs"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/agent-browser-capability-baseline.mjs"), true);

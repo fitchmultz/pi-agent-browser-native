@@ -21,9 +21,9 @@ export const FORBIDDEN_REPO_FILES = Object.freeze([".pi/extensions/agent-browser
 export const FORBIDDEN_PACKED_FILES = Object.freeze([
 	".pi/extensions/agent-browser.ts",
 	"AGENTS.md",
-	"docs/IMPLEMENTATION_PLAN.md",
-	"docs/native-integration-design.md",
-	"docs/v1-tool-contract.md",
+	"docs/archive/IMPLEMENTATION_PLAN.md",
+	"docs/archive/native-integration-design.md",
+	"docs/archive/v1-tool-contract.md",
 	"progress.md",
 	"scripts/verify-package.mjs",
 	"test/agent-browser.test.ts",
