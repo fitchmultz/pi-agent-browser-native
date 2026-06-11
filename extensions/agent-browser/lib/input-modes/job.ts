@@ -60,7 +60,24 @@ function getUnsupportedJobStepField(step: Record<string, unknown>, allowedFields
 	return Object.keys(step).find((field) => !allowedFields.has(field));
 }
 
+function getUnsupportedJobStepFieldError(step: Record<string, unknown>, action: AgentBrowserJobStepAction, allowedFields: ReadonlySet<string>): string | undefined {
+	const unsupportedField = getUnsupportedJobStepField(step, allowedFields);
+	if (!unsupportedField) return undefined;
+	const supportedFields = [...allowedFields].filter((field) => field !== "action");
+	const supportedText = supportedFields.length > 0 ? `supported fields are ${supportedFields.join(", ")}.` : "no additional fields are supported.";
+	return `job step ${action} does not support ${unsupportedField}; ${supportedText}`;
+}
+
+const JOB_OPEN_ALLOWED_FIELDS = new Set(["action", "loadState", "url"]);
+const JOB_CLICK_ALLOWED_FIELDS = new Set(["action", "locator", "name", "role", "selector", "value"]);
+const JOB_FILL_ALLOWED_FIELDS = new Set(["action", "locator", "name", "role", "selector", "text", "value"]);
 const JOB_TYPE_ALLOWED_FIELDS = new Set(["action", "delayMs", "press", "selector", "text"]);
+const JOB_SELECT_ALLOWED_FIELDS = new Set(["action", "selector", "value", "values"]);
+const JOB_WAIT_ALLOWED_FIELDS = new Set(["action", "milliseconds"]);
+const JOB_ASSERT_TEXT_ALLOWED_FIELDS = new Set(["action", "text"]);
+const JOB_ASSERT_URL_ALLOWED_FIELDS = new Set(["action", "url"]);
+const JOB_PATH_ARTIFACT_ALLOWED_FIELDS = new Set(["action", "path"]);
+const JOB_NO_EXTRA_FIELD_ALLOWED_FIELDS = new Set(["action"]);
 
 function globUrlPatternToRegexSource(pattern: string): string {
 	let source = "^";
@@ -84,8 +101,8 @@ function compileJobAssertUrlArgs(url: string): string[] {
 }
 
 function compileJobTypeSteps(step: Record<string, unknown>): { error?: string; steps?: CompiledAgentBrowserJobStep[] } {
-	const unsupportedField = getUnsupportedJobStepField(step, JOB_TYPE_ALLOWED_FIELDS);
-	if (unsupportedField) return { error: `job step type does not support ${unsupportedField}; supported fields are selector, text, delayMs, and press.` };
+	const unsupportedFieldError = getUnsupportedJobStepFieldError(step, "type", JOB_TYPE_ALLOWED_FIELDS);
+	if (unsupportedFieldError) return { error: unsupportedFieldError };
 	const text = getRequiredJobString(step, "text", "type");
 	if (text.error) return { error: text.error };
 	const selector = step.selector;
@@ -150,6 +167,8 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 		let generatedFrom: string | undefined;
 		let extraSteps: CompiledAgentBrowserJobStep[] = [];
 		if (jobAction === "open") {
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_OPEN_ALLOWED_FIELDS);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			const result = getRequiredJobString(rawStep, "url", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["open", result.value as string];
@@ -160,6 +179,9 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 				extraSteps = [{ action: "wait", args: ["wait", "--load", rawStep.loadState], generatedFrom: "open.loadState" }];
 			}
 		} else if (jobAction === "click" || jobAction === "fill") {
+			const allowedFields = jobAction === "click" ? JOB_CLICK_ALLOWED_FIELDS : JOB_FILL_ALLOWED_FIELDS;
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, allowedFields);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			const result = compileJobClickOrFillStep(rawStep, jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = result.args as string[];
@@ -171,32 +193,46 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 			generatedFrom = firstStep.generatedFrom;
 			extraSteps = restSteps;
 		} else if (jobAction === "select") {
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_SELECT_ALLOWED_FIELDS);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			const selector = getRequiredJobString(rawStep, "selector", jobAction);
 			if (selector.error) return { error: `job.steps[${index}]: ${selector.error}` };
 			const values = getSelectValues(rawStep, `job.steps[${index}]`);
 			if (values.error) return { error: values.error };
 			args = ["select", selector.value as string, ...(values.values as string[])];
 		} else if (jobAction === "wait") {
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_WAIT_ALLOWED_FIELDS);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			const milliseconds = rawStep.milliseconds;
 			if (typeof milliseconds !== "number" || !Number.isInteger(milliseconds) || milliseconds <= 0) {
 				return { error: `job.steps[${index}]: job step wait requires a positive integer milliseconds value.` };
 			}
 			args = ["wait", String(milliseconds)];
 		} else if (jobAction === "assertText") {
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_ASSERT_TEXT_ALLOWED_FIELDS);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			const result = getRequiredJobString(rawStep, "text", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["wait", "--text", result.value as string];
 		} else if (jobAction === "assertUrl") {
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_ASSERT_URL_ALLOWED_FIELDS);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			const result = getRequiredJobString(rawStep, "url", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = compileJobAssertUrlArgs(result.value as string);
 		} else if (jobAction === "waitForDownload") {
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_PATH_ARTIFACT_ALLOWED_FIELDS);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			const result = getRequiredJobString(rawStep, "path", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["wait", "--download", result.value as string];
 		} else if (jobAction === "snapshot") {
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_NO_EXTRA_FIELD_ALLOWED_FIELDS);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			args = ["snapshot", "-i"];
 		} else {
+			const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_PATH_ARTIFACT_ALLOWED_FIELDS);
+			if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
 			const result = getRequiredJobString(rawStep, "path", jobAction);
 			if (result.error) return { error: `job.steps[${index}]: ${result.error}` };
 			args = ["screenshot", result.value as string];

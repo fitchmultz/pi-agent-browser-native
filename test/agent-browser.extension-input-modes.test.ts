@@ -104,6 +104,57 @@ test("compileAgentBrowserJob preserves explicit assertUrl and assertText immedia
 	assert.deepEqual(JSON.parse(compiled?.stdin ?? "[]"), compiled?.steps?.map((step) => step.args));
 });
 
+test("compileAgentBrowserJob rejects unsupported fields for every constrained job action", () => {
+	const invalidSteps = [
+		[{ action: "open", url: "https://example.test/", path: "ignored.png" }, /job step open does not support path/],
+		[{ action: "click", selector: "#submit", text: "ignored" }, /job step click does not support text/],
+		[{ action: "fill", selector: "#email", text: "user@example.test", values: ["ignored"] }, /job step fill does not support values/],
+		[{ action: "type", selector: "#prompt", text: "go", url: "https://example.test/" }, /job step type does not support url/],
+		[{ action: "select", selector: "#theme", values: ["dark"], text: "ignored" }, /job step select does not support text/],
+		[{ action: "wait", milliseconds: 250, selector: "#spinner" }, /job step wait does not support selector/],
+		[{ action: "assertText", text: "Welcome", url: "https://example.test/" }, /job step assertText does not support url/],
+		[{ action: "assertUrl", url: "**/dashboard", text: "Welcome" }, /job step assertUrl does not support text/],
+		[{ action: "waitForDownload", path: "report.csv", url: "https://example.test/report.csv" }, /job step waitForDownload does not support url/],
+		[{ action: "snapshot", selector: "body" }, /job step snapshot does not support selector/],
+		[{ action: "screenshot", path: "job.png", url: "https://example.test/" }, /job step screenshot does not support url/],
+	] as const;
+
+	for (const [step, expectedError] of invalidSteps) {
+		const result = compileAgentBrowserJob({ steps: [step] });
+		assert.equal(result.compiled, undefined, `unexpected compile success for ${JSON.stringify(step)}`);
+		assert.match(result.error ?? "", expectedError);
+	}
+
+	const validJob = compileAgentBrowserJob({
+		steps: [
+			{ action: "open", url: "https://example.test/", loadState: "domcontentloaded" },
+			{ action: "click", locator: "role", role: "button", name: "Search" },
+			{ action: "fill", selector: "#email", text: "user@example.test" },
+			{ action: "select", selector: "#theme", values: ["dark"] },
+			{ action: "wait", milliseconds: 250 },
+			{ action: "assertText", text: "Welcome" },
+			{ action: "assertUrl", url: "**/dashboard" },
+			{ action: "waitForDownload", path: "report.csv" },
+			{ action: "snapshot" },
+			{ action: "screenshot", path: "job.png" },
+		],
+	});
+	assert.equal(validJob.error, undefined);
+	assert.deepEqual(validJob.compiled?.steps.map((step) => step.action), [
+		"open",
+		"wait",
+		"click",
+		"fill",
+		"select",
+		"wait",
+		"assertText",
+		"assertUrl",
+		"waitForDownload",
+		"snapshot",
+		"screenshot",
+	]);
+});
+
 test("compileAgentBrowserJob assertUrl glob semantics are deliberate", () => {
 	const exactQueryUrlJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/shipping?step=1&ref=a?b" }] });
 	assert.deepEqual(exactQueryUrlJob.compiled?.steps?.[0]?.args, ["wait", "--url", "https://shop.example/shipping?step=1&ref=a?b"]);
