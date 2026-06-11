@@ -23,7 +23,7 @@ import {
 	runSessionCommandData,
 } from "./session-state.js";
 import { parseValidBatchStepEntries } from "../batch-stdin.js";
-import { getScreenshotPathTokenIndex } from "./prepare.js";
+import { getScreenshotPathTokenIndex } from "./artifact-paths.js";
 import type {
 	ArtifactCleanupGuidance,
 	ComboboxFocusDiagnostic,
