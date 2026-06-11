@@ -90,7 +90,7 @@ test("doctor reports version drift from the canonical baseline", async () => {
 	assert.match(text, /test\/fixtures\/agent-browser-real-output-shapes\.json/);
 });
 
-test("doctor warns instead of failing when Pi is below the recommended release floor", async () => {
+test("doctor fails when Pi is below the minimum runtime floor", async () => {
 	const report = await evaluateDoctor({
 		runAgentBrowser: async () => passingVersion(),
 		runPi: async () => "0.78.0\n",
@@ -98,10 +98,10 @@ test("doctor warns instead of failing when Pi is below the recommended release f
 	});
 	const text = formatDoctorReport(report);
 
-	assert.equal(report.failures.length, 0);
-	assert.match(text, /Pi 0\.79\.0 or newer is recommended; found 0\.78\.0/);
-	assert.match(text, /does not hard-pin Pi 0\.79\.0/);
-	assert.match(text, /Doctor passed/);
+	assert.equal(report.failures.length, 1);
+	assert.match(text, /Pi 0\.79\.0 or newer is required; found 0\.78\.0/);
+	assert.match(text, /enforces the Pi 0\.79\.0 runtime floor/);
+	assert.match(text, /Doctor found setup failures/);
 });
 
 test("doctor warns instead of failing when Pi version cannot be inspected", async () => {
@@ -116,7 +116,7 @@ test("doctor warns instead of failing when Pi version cannot be inspected", asyn
 
 	assert.equal(report.failures.length, 0);
 	assert.match(text, /Could not inspect pi --version/);
-	assert.match(text, /not hard-pinned as a runtime requirement/);
+	assert.match(text, /Pi 0\.79\.0 or newer is required/);
 	assert.match(text, /Doctor passed/);
 });
 

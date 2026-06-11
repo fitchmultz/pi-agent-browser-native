@@ -62,7 +62,7 @@ Environment:
   PLATFORM_SMOKE_MAC_USER             macOS SSH user; default $USER
   PLATFORM_SMOKE_MAC_WORK_ROOT        macOS Crabbox work root
   PLATFORM_SMOKE_MAC_PORT             macOS SSH port; default 22
-  PLATFORM_SMOKE_UBUNTU_IMAGE         Ubuntu local-container image; default pi-agent-browser-native-platform:node24-agent-browser0.27.1
+  PLATFORM_SMOKE_UBUNTU_IMAGE         Ubuntu local-container image; default pi-agent-browser-native-platform:node24-agent-browser0.27.2
   PLATFORM_SMOKE_WINDOWS_VM           Parallels Windows template VM
   PLATFORM_SMOKE_WINDOWS_SNAPSHOT     Parallels snapshot name
   PLATFORM_SMOKE_WINDOWS_USER         Windows SSH user

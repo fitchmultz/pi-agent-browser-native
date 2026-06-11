@@ -58,6 +58,7 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 		body { min-height: 2200px; }
 		#drop-target { border: 2px dashed #666; margin-top: 1rem; padding: 1rem; }
 		#far-target { margin-top: 1600px; }
+		#contract-frame { width: 420px; height: 180px; border: 1px solid #999; }
 	</style>
 </head>
 <body>
@@ -69,6 +70,9 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 		<button id="double-action" type="button" ondblclick="document.getElementById('status').textContent='Double clicked';">Double action</button>
 		<label for="name-input">Name</label>
 		<input id="name-input" placeholder="Name input" />
+		<input id="aria-label-input" aria-label="Codename" />
+		<span id="alias-label">Alias Name</span>
+		<input id="aria-labelledby-input" aria-labelledby="alias-label" />
 		<label for="notes-input">Notes</label>
 		<textarea id="notes-input"></textarea>
 		<button id="focus-target" type="button" onfocus="document.body.dataset.focused='yes';">Focus target</button>
@@ -83,6 +87,26 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 		<button id="hover-target" type="button" onmouseover="document.body.dataset.hovered='yes';">Hover target</button>
 		<button id="keyboard-target" type="button" onclick="document.getElementById('name-input').focus();">Keyboard target</button>
 		<div id="far-target" tabindex="0">Far scroll target</div>
+		<button id="far-click-target" type="button" onclick="document.getElementById('status').textContent='Far clicked';">Far click target</button>
+		<iframe id="contract-frame" src="/frame-child" title="Contract child frame"></iframe>
+	</main>
+</body>
+</html>`,
+			);
+			return;
+		}
+
+		if (url.pathname === "/frame-child") {
+			sendFixtureHtml(
+				response,
+				`<!doctype html>
+<html lang="en">
+<head><title>Frame Child Contract Fixture</title></head>
+<body>
+	<main>
+		<h1>Frame Child Contract Fixture</h1>
+		<p id="frame-status">Frame ready</p>
+		<button id="frame-button" type="button" onclick="document.getElementById('frame-status').textContent='Frame clicked';">Frame button</button>
 	</main>
 </body>
 </html>`,
@@ -527,6 +551,7 @@ export interface InvocationLogEntry {
 	browserbaseApiKey?: string | null;
 	browserlessApiKey?: string | null;
 	browserUseApiKey?: string | null;
+	defaultTimeout?: string | null;
 	event?: string;
 	idleTimeout?: string | null;
 	iosDevice?: string | null;

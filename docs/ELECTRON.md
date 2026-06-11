@@ -107,7 +107,7 @@ Use this ladder for desktop-host readiness instead of blind sleep loops:
 2. After raw `connect`, inspect targets with `tab list`, select the stable `tab t<N>` app surface, then use a condition wait or `snapshot -i` on that selected surface.
 3. After wrapper-owned `electron.launch`, use `electron.probe` or `electron.status` when launch health, debug-port liveness, or target mismatch matters.
 4. Use `qa.attached` when the readiness check can be expressed as expected text or selector plus diagnostics against the current managed session.
-5. Use fixed waits only as a last resort, and keep each fixed wait below the wrapper IPC budget. `wait 30000` is intentionally blocked; use `25000` ms or less per call when a fixed wait is unavoidable.
+5. Use fixed waits only as a last resort. For legitimately slow waits, pass an explicit upstream wait timeout and let the wrapper derive the subprocess watchdog, or set top-level `timeoutMs` to at least the wait duration plus a small grace window.
 6. Treat a fixed-wait payload such as `"waited":"timeout"` as elapsed time, not proof that the host finished. Verify with an observed condition, fresh `snapshot -i`, or screenshot before continuing.
 
 This project is not adding a first-class host-idle primitive yet. Revisit that only if repeated desktop smokes show that condition waits, `qa.attached`, `electron.probe`, snapshots, and screenshots cannot cover the workflow.

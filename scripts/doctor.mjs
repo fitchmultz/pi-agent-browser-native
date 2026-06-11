@@ -22,7 +22,7 @@ const PACKAGE_NAME = "pi-agent-browser-native";
 const REPO_URL_FRAGMENT = "github.com/fitchmultz/pi-agent-browser-native";
 const EXTENSION_ENTRYPOINT = "extensions/agent-browser/index.ts";
 const EXPECTED_VERSION = CAPABILITY_BASELINE.targetVersion;
-const RECOMMENDED_PI_VERSION = "0.79.0";
+const MINIMUM_PI_VERSION = "0.79.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 const THIS_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -67,7 +67,7 @@ Options:
 Checks:
   1. agent-browser is installed on PATH.
   2. agent-browser --version matches the package capability baseline.
-  3. pi --version is at least the recommended Pi floor for this release.
+  3. pi --version is at least the minimum Pi runtime version for this release.
   4. Pi settings and repo-local autoload locations do not point at multiple active pi-agent-browser-native sources.
 
 Examples:
@@ -302,14 +302,14 @@ async function checkPiVersion({ runPi }) {
 	try {
 		const rawOutput = await runPi(["--version"]);
 		const version = normalizePiVersion(rawOutput);
-		const supported = versionAtLeast(version, RECOMMENDED_PI_VERSION);
+		const supported = versionAtLeast(version, MINIMUM_PI_VERSION);
 		if (supported === false) {
 			return {
-				status: "warn",
-				title: `Pi ${RECOMMENDED_PI_VERSION} or newer is recommended; found ${version || "<empty>"}.`,
+				status: "fail",
+				title: `Pi ${MINIMUM_PI_VERSION} or newer is required; found ${version || "<empty>"}.`,
 				lines: [
-					"This package does not hard-pin Pi 0.79.0, but this release was audited against Pi 0.79.0 extension/package behavior, including Project Trust.",
-					"Update Pi before release validation or lifecycle debugging if you see tool routing, /reload, exact-session, project trust, or package-install differences.",
+					"This release enforces the Pi 0.79.0 runtime floor through the read-only doctor and release/package validation because it depends on Project Trust, package loading, session lifecycle, TUI rendering, and tool_result patch behavior from that baseline.",
+					"Update Pi before using this package or running lifecycle/package validation.",
 				],
 			};
 		}
@@ -317,17 +317,17 @@ async function checkPiVersion({ runPi }) {
 			return {
 				status: "warn",
 				title: `Could not parse pi --version output: ${version || "<empty>"}.`,
-				lines: [`Pi ${RECOMMENDED_PI_VERSION} or newer is recommended for this release's validation baseline.`],
+				lines: [`Pi ${MINIMUM_PI_VERSION} or newer is required for this release; run this doctor from the same shell that launches Pi so the setup gate can verify the host runtime.`],
 			};
 		}
-		return { status: "pass", title: `Pi version is within the recommended baseline: ${version}`, lines: [] };
+		return { status: "pass", title: `Pi version satisfies the minimum runtime floor: ${version}`, lines: [] };
 	} catch (error) {
 		const code = error && typeof error === "object" ? error.code : undefined;
 		return {
 			status: "warn",
 			title: "Could not inspect pi --version.",
 			lines: [
-				`Pi ${RECOMMENDED_PI_VERSION} or newer is recommended for this release's validation baseline, but it is not hard-pinned as a runtime requirement.`,
+				`Pi ${MINIMUM_PI_VERSION} or newer is required for this release; run this doctor from the same shell that launches Pi so the setup gate can verify the host runtime.`,
 				"Make sure the same shell that launches pi can run `pi --version` when debugging lifecycle or package-install behavior.",
 				code && code !== "ENOENT" ? `Spawn error: ${String(code)}` : undefined,
 			].filter(Boolean),
@@ -434,6 +434,7 @@ export async function evaluateDoctor(options = {}) {
 
 	const piVersionCheck = await checkPiVersion({ runPi });
 	checks.push(piVersionCheck);
+	if (piVersionCheck.status === "fail") failures.push(piVersionCheck);
 
 	if (!options.skipSourceCheck) {
 		const sourceCheck = await checkPiSources({ cwd, agentDir, settingsPaths, readText, pathExists });

@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -223,6 +223,14 @@ test("executePackagedAgentBrowserSmoke reports packaged invocation failures clea
 	assert.match(failures, /Packaged agent_browser invocation failed/);
 	assert.match(failures, /--version/);
 	assert.match(failures, /boom/);
+});
+
+test("package metadata keeps Pi core packages host-provided peers", async () => {
+	const packageJson = JSON.parse(await readFile("package.json", "utf8")) as { peerDependencies?: Record<string, string> };
+
+	for (const packageName of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
+		assert.equal(packageJson.peerDependencies?.[packageName], "*", `${packageName} should stay host-provided per Pi package docs`);
+	}
 });
 
 test("publish contract derives required packed files from package.json", async () => {

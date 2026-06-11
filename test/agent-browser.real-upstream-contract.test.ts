@@ -243,6 +243,11 @@ if (!REAL_UPSTREAM_ENABLED) {
 						getResultValue(await runCoreCommand(harness, ["get", "value", "#name-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
 						"Ada Lovelace",
 					);
+					await runCoreCommand(harness, ["type", "#name-input", "Curie", "--clear", "--delay", "1"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#name-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"Curie",
+					);
 					await runCoreCommand(harness, ["focus", "#notes-input"], shapes.commands.coreCommand, managedSessionName);
 					await runCoreCommand(harness, ["keyboard", "type", "keyboard text"], shapes.commands.coreSubcommand, managedSessionName);
 					await runCoreCommand(harness, ["keyboard", "inserttext", " inserted"], shapes.commands.coreSubcommand, managedSessionName);
@@ -271,6 +276,9 @@ if (!REAL_UPSTREAM_ENABLED) {
 						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
 						"chocolate",
 					);
+					const missingSelectOption = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["select", "#flavor-select", "mint"] });
+					assert.equal(missingSelectOption.isError, true, `select should fail when no option matches: ${missingSelectOption.content[0]?.text ?? ""}`);
+					assert.match(missingSelectOption.content[0]?.text ?? "", /option|mint/i);
 					const semanticSelect = await executeRegisteredTool(harness.tool, harness.ctx, {
 						semanticAction: { action: "select", selector: "#flavor-select", value: "vanilla" },
 					});
@@ -302,12 +310,35 @@ if (!REAL_UPSTREAM_ENABLED) {
 					await runCoreCommand(harness, ["mouse", "up"], shapes.commands.coreSubcommand, managedSessionName);
 					await runCoreCommand(harness, ["mouse", "wheel", "240"], shapes.commands.coreSubcommand, managedSessionName);
 					await runCoreCommand(harness, ["scroll", "down", "400"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["click", "#far-click-target"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "text", "#status"], shapes.commands.coreSubcommand, managedSessionName), ["text"]),
+						"Far clicked",
+					);
 					await runCoreCommand(harness, ["scrollintoview", "#far-target"], shapes.commands.coreCommand, managedSessionName);
 					await runCoreCommand(harness, ["wait", "#far-target"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["frame", "#contract-frame"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["wait", "#frame-button"], shapes.commands.coreCommand, managedSessionName);
+					await runCoreCommand(harness, ["click", "#frame-button"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "text", "#frame-status"], shapes.commands.coreSubcommand, managedSessionName), ["text"]),
+						"Frame clicked",
+					);
+					await runCoreCommand(harness, ["frame", "main"], shapes.commands.coreSubcommand, managedSessionName);
 					await runCoreCommand(harness, ["find", "label", "Name", "fill", "Grace"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["find", "label", "Codename", "fill", "Lovelace"], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["find", "label", "Alias Name", "fill", "Analyst"], shapes.commands.coreSubcommand, managedSessionName);
 					assert.equal(
 						getResultValue(await runCoreCommand(harness, ["get", "value", "#name-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
 						"Grace",
+					);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#aria-label-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"Lovelace",
+					);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#aria-labelledby-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"Analyst",
 					);
 					assert.equal(
 						getResultValue(await runCoreCommand(harness, ["get", "attr", "#mark-ready", "id"], shapes.commands.coreSubcommand, managedSessionName), ["value", "attribute"]),
@@ -316,7 +347,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					await runCoreCommand(harness, ["get", "html", "#main"], shapes.commands.coreSubcommand, managedSessionName);
 					assert.equal(
 						getResultValue(await runCoreCommand(harness, ["get", "count", "button"], shapes.commands.coreSubcommand, managedSessionName), ["count"]),
-						5,
+						6,
 					);
 					await runCoreCommand(harness, ["get", "box", "#mark-ready"], shapes.commands.coreSubcommand, managedSessionName);
 					await runCoreCommand(harness, ["get", "styles", "#far-target"], shapes.commands.coreSubcommand, managedSessionName);
@@ -435,7 +466,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.match(waitedDownload.content[0]?.text ?? "", /Download event reported; file not verified/);
 
 					// Upstream tracking: https://github.com/vercel-labs/agent-browser/issues/1300.
-					// Current upstream agent-browser 0.27.1 reports the requested saveAs path but leaves the
+					// Current upstream agent-browser 0.27.2 reports the requested saveAs path but leaves the
 					// file in the browser's default download directory. The wrapper must fail closed so release
 					// docs do not overstate savedFilePath as a verified on-disk artifact.
 					const artifacts = waitDownloadDetails.artifacts as Array<{ exists?: boolean; path?: string; sizeBytes?: number }> | undefined;
@@ -444,7 +475,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(
 						await readFileIfPresent(downloadPath),
 						undefined,
-						"agent-browser 0.27.1 reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
+						"agent-browser 0.27.2 reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
 					);
 				},
 			);

@@ -191,7 +191,7 @@ export function createAgentBrowserParamsSchema(
 	),
 	stdin: Type.Optional(Type.String({ description: "Optional raw stdin content; only supported for batch, eval --stdin, auth save --password-stdin, and is generated internally by job, qa, sourceLookup, or networkSourceLookup mode. Do not use with electron mode." })),
 	outputPath: Type.Optional(Type.String({ description: "Optional workspace-relative or absolute file path that receives the model-facing command data/result after the browser command completes. Useful for eval/get/snapshot captures that should become durable local artifacts.", minLength: 1 })),
-	timeoutMs: Type.Optional(Type.Integer({ description: "Optional per-call wrapper subprocess watchdog in milliseconds for browser CLI args/job/qa/source lookup calls. Use for long opens or large output captures; fixed wait steps still must stay below the upstream IPC wait budget. Electron actions use electron.timeoutMs instead.", minimum: 1 })),
+	timeoutMs: Type.Optional(Type.Integer({ description: "Optional per-call wrapper subprocess watchdog in milliseconds for browser CLI args/job/qa/source lookup calls. Use for long opens or large output captures; explicit long wait steps are forwarded, so set timeoutMs above the wait duration plus a small grace window when overriding the derived watchdog. Electron actions use electron.timeoutMs instead.", minimum: 1 })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:

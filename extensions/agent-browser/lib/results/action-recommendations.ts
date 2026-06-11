@@ -179,7 +179,7 @@ export function buildAgentBrowserNextActions(options: {
 						args: ["wait", "--download", artifact.path],
 						id: "wait-for-download",
 						reason: "Upstream reported a download path, but the wrapper did not verify the file on disk.",
-						safety: "Use a bounded wait timeout that stays below the native wrapper IPC budget.",
+						safety: "Use an explicit wait timeout; if you set top-level timeoutMs, keep it above the wait duration plus a small grace window.",
 					}));
 				} else {
 					actions.push(buildArtifactVerificationAction(artifact));
@@ -200,7 +200,7 @@ export function buildAgentBrowserNextActions(options: {
 							args: ["wait", "--download", artifact.path],
 							id: "wait-for-download",
 							reason: "The requested download artifact was not found on disk after upstream reported completion.",
-							safety: "Use a bounded wait timeout that stays below the native wrapper IPC budget.",
+							safety: "Use an explicit wait timeout; if you set top-level timeoutMs, keep it above the wait duration plus a small grace window.",
 						}));
 					} else {
 						actions.push(buildArtifactVerificationAction(artifact));
@@ -241,7 +241,7 @@ export function buildAgentBrowserNextActions(options: {
 						args: retryPath ? ["wait", "--download", retryPath] : ["wait", "--download"],
 						id: "wait-for-download",
 						reason: "Wait for the browser download and let the wrapper verify saved-file metadata.",
-						safety: "Use a bounded wait timeout that stays below the native wrapper IPC budget.",
+						safety: "Use an explicit wait timeout; if you set top-level timeoutMs, keep it above the wait duration plus a small grace window.",
 					}));
 				}
 				break;

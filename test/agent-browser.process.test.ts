@@ -140,7 +140,7 @@ test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is
 	}
 });
 
-test("process helpers clamp upstream operation timeouts below the CLI IPC read timeout", () => {
+test("process helpers clamp the upstream default operation timeout to the documented baseline", () => {
 	assert.equal(getAgentBrowserProcessTimeoutMs({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "1234" }), 1234);
 	assert.equal(getAgentBrowserProcessTimeoutMs({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "invalid" }), 35_000);
 
@@ -176,7 +176,7 @@ test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls"
 	}
 });
 
-test("runAgentBrowserProcess stops a hung upstream client before the upstream IPC retry path", async () => {
+test("runAgentBrowserProcess stops a hung upstream client at the wrapper watchdog", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-timeout-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(

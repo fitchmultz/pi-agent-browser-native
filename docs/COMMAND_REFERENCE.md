@@ -18,12 +18,23 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.27.1` command/help surface, audited against vercel-labs/agent-browser@90050f2913159875e2c3719e424746396ccb3cbf. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.27.2` command/help surface, audited against vercel-labs/agent-browser@5185339ca3fdab9848e11b8ec676eecfdec3733f. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
+
+### Upstream 0.27.2 changelog support
+
+The 0.27.2 rebaseline is a passthrough-first compatibility update, not a compatibility shim for older upstream releases. The wrapper must not hide these upstream fixes:
+
+- click reliability: upstream now scrolls off-viewport elements before coordinate resolution, handles JavaScript dialogs promptly, recovers mouse state after dialog-opening clicks, and reports overlay interception before dispatching input
+- frame-scoped CSS selectors and waits, including cross-process iframe click-coordinate translation
+- wait timeout handling: documented 25s default, honored `--timeout` across wait variants, and appropriate client read budgets for long waits; the native wrapper forwards explicit long waits and derives a subprocess watchdog when top-level `timeoutMs` is omitted
+- form commands: `find label` matches `aria-label` / `aria-labelledby`, `select` errors when no option matches, and `type` parses `--clear` / `--delay` instead of typing them as literal text
+- warm CLI command latency and batch daemon respawn/retry improvements
+- GNU Linux release artifacts pinned to glibc 2.28
 
 ## Core mental model
 
@@ -129,7 +140,7 @@ Use `vitals [url]` for Core Web Vitals plus React hydration timing when availabl
 { "args": ["pushstate", "/dashboard?tab=settings"] }
 ```
 
-For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant v0.27.1 surfaces are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
+For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant v0.27.2 surfaces are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
 
 ```json
 { "args": ["open"], "sessionMode": "fresh" }
@@ -333,7 +344,7 @@ Top-level `networkSourceLookup` does the same for failed browser requests. When 
 
 Do not omit the load state value; use `wait --load <state>` with `load`, `domcontentloaded`, or `networkidle`.
 
-For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / exact `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream help labels `wait --url` as a pattern matcher, but dogfood found glob forms such as `**/learn` can time out on the current baseline; use an exact URL there, or use `job.assertUrl` for `*` / `**` glob-style matching. Fixed waits are a last resort: `wait 30000` is intentionally blocked by the wrapper IPC budget, and a successful fixed-wait payload such as `"waited":"timeout"` means elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
+For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / exact `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream help labels `wait --url` as a pattern matcher, but dogfood found glob forms such as `**/learn` can time out on the current baseline; use an exact URL there, or use `job.assertUrl` for `*` / `**` glob-style matching. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a successful fixed-wait payload such as `"waited":"timeout"` as elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
 
 Use `wait --download [path]` after an earlier action has already started a browser download, such as a dashboard export button that responds asynchronously:
 
@@ -348,7 +359,7 @@ For one-call flows, put the click and wait in `batch`; the wait step keeps the s
 { "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
 ```
 
-A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.27.1`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
+A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.27.2`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
 
 ### Download, screenshot, and PDF files
 
@@ -620,15 +631,15 @@ For dense pages, the wrapper also accepts `snapshot -i --search <text>` and `sna
 | Mode | Purpose |
 | --- | --- |
 | `wait <selector>` | Wait for an element to appear. |
-| `wait <ms>` | Wait for a fixed number of milliseconds. In the native Pi wrapper, keep each fixed wait at `25000` ms or less and split longer waits into multiple tool calls. |
+| `wait <ms>` | Wait for a fixed number of milliseconds. The native Pi wrapper now forwards long waits and derives a subprocess watchdog from the explicit wait duration when the caller does not provide top-level `timeoutMs`. |
 | `wait --url <pattern>` | Wait for the URL to match a pattern. |
 | `wait --load <state>` | Wait for load state: `load`, `domcontentloaded`, or `networkidle`. |
 | `wait --fn <expression>` | Wait for a JavaScript expression to become truthy. |
 | `wait --text <text>` | Wait for text to appear on the page; failures may include `inspect-after-text-assertion-failure` with a session-scoped `snapshot -i` payload. |
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
-| `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. In the native Pi wrapper, use `25000` ms or less per call to stay under the upstream CLI IPC budget. |
+| `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. The native Pi wrapper forwards explicit wait timeouts and extends the subprocess watchdog unless the caller supplies top-level `timeoutMs`. |
 
-Current v0.27.1 source does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
+Current v0.27.2 source still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
 
 ### Diff, debug, and streaming
 
@@ -840,7 +851,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 - For sessions with observed tab-drift risk, after a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes. Routine same-session commands skip this post-command tab-list probe.
 - If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
-- Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to 25 seconds and use a 35-second child-process watchdog (`PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides the default 35s budget; top-level `timeoutMs` overrides it per browser CLI call). The default now lets ordinary calls survive the upstream 30-second IPC retry window while still bounding wedged children. Dialog commands are additionally bounded to 5 seconds (`PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS`), and click/tap/find refs or tokens plus `eval --stdin` snippets that look like alert/confirm/prompt/dialog triggers are bounded to 8 seconds (`PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS`). When any watchdog fires, `details.timeoutPartialProgress` may include a planned step list with per-step status (including `generatedFrom` labels for wrapper-inserted rows such as `open.loadState`) and a `retry-timeout-step` next action only when the first incomplete step is read-only or idempotent, or `inspect-current-page-after-timeout` when the session is still inspectable but the incomplete step may be mutating and should not be blindly retried. It also includes current page title/URL from best-effort session `get url` / `get title` (or a planned URL inferred from the step list when the session cannot answer), an `openedButPostOpenTimedOut` classification only when a live page URL was recovered before a later step hung, and declared artifact paths such as `screenshot`, `pdf`, `download`, or `wait --download` outputs with existence/state checks; the same evidence is appended under `Timeout partial progress` in visible text with URL/path redaction.
+- Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to the upstream documented 25-second default and use a 35-second child-process watchdog (`PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides the default 35s budget; top-level `timeoutMs` overrides it per browser CLI call). Explicit `wait <ms>` or `wait --timeout <ms>` calls can exceed that default; when top-level `timeoutMs` is omitted, the wrapper derives a subprocess watchdog from the requested wait duration plus a small grace window. Dialog commands are additionally bounded to 5 seconds (`PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS`), and click/tap/find refs or tokens plus `eval --stdin` snippets that look like alert/confirm/prompt/dialog triggers are bounded to 8 seconds (`PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS`). When any watchdog fires, `details.timeoutPartialProgress` may include a planned step list with per-step status (including `generatedFrom` labels for wrapper-inserted rows such as `open.loadState`) and a `retry-timeout-step` next action only when the first incomplete step is read-only or idempotent, or `inspect-current-page-after-timeout` when the session is still inspectable but the incomplete step may be mutating and should not be blindly retried. It also includes current page title/URL from best-effort session `get url` / `get title` (or a planned URL inferred from the step list when the session cannot answer), an `openedButPostOpenTimedOut` classification only when a live page URL was recovered before a later step hung, and declared artifact paths such as `screenshot`, `pdf`, `download`, or `wait --download` outputs with existence/state checks; the same evidence is appended under `Timeout partial progress` in visible text with URL/path redaction.
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result. Recent artifact metadata is bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES` (default 100); persisted spill files are separately bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` (default 32 MiB).
 - The wrapper keeps `--help` and `--version` stateless so they do not consume the implicit managed-session slot.
 
@@ -849,14 +860,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.27.1</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.27.2</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `90050f2913159875e2c3719e424746396ccb3cbf`
-- upstream package version: `0.27.1`
+- upstream HEAD: `5185339ca3fdab9848e11b8ec676eecfdec3733f`
+- upstream package version: `0.27.2`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`

@@ -106,19 +106,26 @@ test("agentBrowserExtension rejects malformed JSON envelopes that omit success",
 	}
 });
 
-test("agentBrowserExtension rejects waits that would cross the upstream IPC read-timeout budget", { concurrency: false }, async () => {
+test("agentBrowserExtension forwards long waits and extends the subprocess watchdog from explicit wait timeouts", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-timeout-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin: null }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin, defaultTimeout: process.env.AGENT_BROWSER_DEFAULT_TIMEOUT }) + "\\n");
+let delay = 100;
+try {
+  const parsed = JSON.parse(stdin);
+  const waitCount = Array.isArray(parsed) ? parsed.filter((step) => Array.isArray(step) && step[0] === "wait").length : 0;
+  if (waitCount > 1) delay = 6500;
+} catch {}
+setTimeout(() => process.stdout.write(JSON.stringify({ success: true, data: { ok: true } })), delay);`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "50" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -128,20 +135,24 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 			const downloadWait = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["wait", "--download", "/tmp/export.csv", "--timeout", "30000"],
 			});
+			const batchWaitStdin = JSON.stringify([["wait", "--text", "42", "--timeout", "1000"], ["wait", "1000"]]);
 			const batchWait = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
-				stdin: JSON.stringify([["wait", "26000"]]),
+				stdin: batchWaitStdin,
 			});
 
 			for (const result of [directWait, downloadWait, batchWait]) {
-				assert.equal(result.isError, true);
-				assert.equal(result.content[0]?.type, "text");
-				assert.match((result.content[0] as { text: string }).text, /30s IPC read timeout/);
-				assert.match(String(result.details?.validationError ?? ""), /25000ms or less/);
-				assert.equal(result.details?.resultCategory, "failure");
-				assert.equal(result.details?.failureCategory, "timeout");
+				assert.equal(result.isError, false);
+				assert.equal(result.details?.resultCategory, "success");
 			}
-			assert.deepEqual(await readInvocationLog(logPath), []);
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations.map((entry) => entry.args.slice(-4)), [
+				["--session", invocations[0].args[2], "wait", "31000"],
+				["--download", "/tmp/export.csv", "--timeout", "30000"],
+				["--json", "--session", invocations[2].args[2], "batch"],
+			]);
+			assert.equal(invocations[2].stdin, batchWaitStdin);
+			assert.deepEqual(invocations.map((entry) => entry.defaultTimeout), ["25000", "25000", "25000"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

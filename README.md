@@ -74,7 +74,7 @@ The result is optimized for agent work:
 
 ## Fastest way to try it
 
-Use Pi 0.79.0 or newer when possible. This package does not hard-pin Pi 0.79.0 as a runtime requirement, but the current release is audited and validated against that extension/package baseline, including Project Trust.
+Use Pi 0.79.0 or newer. This package keeps Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, and `pi-agent-browser-doctor` fails setup when `pi --version` is below the enforced runtime floor. The current release is audited and validated against the Pi 0.79 extension/package baseline, including Project Trust.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -146,7 +146,7 @@ The doctor checks:
 
 - upstream `agent-browser` exists on `PATH`
 - the installed upstream version matches this wrapper's command-reference baseline
-- `pi --version` meets the recommended Pi floor for this release, as a warning rather than a hard failure
+- `pi --version` meets the minimum Pi runtime floor for this release; older Pi versions are setup failures
 - Pi settings do not point at multiple active `pi-agent-browser-native` sources
 
 It does **not** edit Pi settings and does **not** run upstream `agent-browser doctor --fix`.
@@ -393,7 +393,7 @@ For an app you launched yourself with remote debugging enabled, use raw upstream
 
 `connect` success means the debug endpoint accepted the session, not that an active page is ready. If a snapshot says `No active page`, the wrapper clears prior refs for that session; choose a stable `t<N>` tab and retry a condition wait or fresh `snapshot -i` before using `@e…` refs. Close commands (`close`, `quit`, or `exit`) only close the browser/CDP session; manually launched apps, their profiles, and explicit screenshots/downloads/HARs/traces/recordings remain host-owned.
 
-After either path, use `qa: { "attached": true, ... }` for a current-session smoke check without opening a URL. Attached QA preserves existing network/console/page-error buffers instead of clearing them, so it can catch errors raised before the check started; visible output and `details.compiledQaPreset.checks.diagnosticsResetAtStart` identify that scope. Prefer condition waits (`wait --text`, `wait --url`, `wait --fn`, `wait --load <state>`, `wait --download`), `qa.attached`, `electron.probe` / `electron.status`, `tab list` → `tab t<N>`, fresh snapshots, or screenshots over blind sleeps. Keep fixed waits below the wrapper IPC budget: `wait 30000` is intentionally blocked, and a result like `"waited":"timeout"` only proves elapsed time.
+After either path, use `qa: { "attached": true, ... }` for a current-session smoke check without opening a URL. Attached QA preserves existing network/console/page-error buffers instead of clearing them, so it can catch errors raised before the check started; visible output and `details.compiledQaPreset.checks.diagnosticsResetAtStart` identify that scope. Prefer condition waits (`wait --text`, `wait --url`, `wait --fn`, `wait --load <state>`, `wait --download`), `qa.attached`, `electron.probe` / `electron.status`, `tab list` → `tab t<N>`, fresh snapshots, or screenshots over blind sleeps. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a result like `"waited":"timeout"` as elapsed time only.
 
 ### Lightweight QA preset
 
@@ -434,7 +434,7 @@ For asynchronous exports, click first and then wait for the download:
 { "args": ["wait", "--download", "/tmp/report.csv"] }
 ```
 
-When a user gives exact artifact paths for screenshots, recordings, downloads, PDFs, traces, or HAR files, use those paths or explicitly report why the artifact was unavailable; do not silently substitute a different path in the final report. The wrapper creates missing parent directories for direct artifact paths such as `state save`, screenshots, PDFs, downloads, and `wait --download`. For simple loopback `download <selector> <path>` anchor links with HTTP(S) `href`, it can save the in-page response directly to the requested path before falling back to upstream click/download behavior; non-loopback/profile downloads stay upstream-owned. With upstream `agent-browser 0.27.1`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` / `details.artifactVerification.verified` before relying on the requested `wait --download <path>` file being present on disk; non-file download payloads such as `data:` URLs are not verified local artifacts.
+When a user gives exact artifact paths for screenshots, recordings, downloads, PDFs, traces, or HAR files, use those paths or explicitly report why the artifact was unavailable; do not silently substitute a different path in the final report. The wrapper creates missing parent directories for direct artifact paths such as `state save`, screenshots, PDFs, downloads, and `wait --download`. For simple loopback `download <selector> <path>` anchor links with HTTP(S) `href`, it can save the in-page response directly to the requested path before falling back to upstream click/download behavior; non-loopback/profile downloads stay upstream-owned. With upstream `agent-browser 0.27.2`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` / `details.artifactVerification.verified` before relying on the requested `wait --download <path>` file being present on disk; non-file download payloads such as `data:` URLs are not verified local artifacts.
 
 For evidence-only screenshots or QA captures, branch on `details.artifactVerification` and `details.artifacts` before reporting PASS/FAIL; inline image attachments are optional when size limits allow—do not require vision review unless the user asked for visual inspection. If the latest prompt names exact required artifact paths, browser close can be blocked with `details.promptGuard` until those artifacts are saved and verified.
 
@@ -570,7 +570,7 @@ The opt-in real-upstream suite is separate because it drives a real browser inst
 npm run verify -- real-upstream
 ```
 
-That mode sets `PI_AGENT_BROWSER_REAL_UPSTREAM=1` and runs `test/agent-browser.real-upstream-contract.test.ts` against the real `agent-browser` on `PATH` (version must match the capability baseline). It covers inspection, skills, a broad core interaction and navigation matrix on localhost fixtures (including `batch` stdin and `pushstate`), plus `vitals`, network route/requests/HAR, diff snapshot/screenshot/url, trace/profiler, console/errors/highlight, stream enable/status/disable, `cookies set --curl`, a `react tree` missing-renderer path, and `wait --download` with the on-disk caveat documented in release notes. The harness uses a throwaway temp `HOME` and dedicated socket/screenshot directories so the run does not touch your normal browser profile paths. Browser-opening or credential-dependent families such as `inspect`, `dashboard`, `chat`, provider clouds, and OS clipboard flows stay in fake-upstream or manual validation unless a safe deterministic fixture is added. For prerequisites, isolation details, and troubleshooting, see [`docs/RELEASE.md`](docs/RELEASE.md#real-upstream-contract-validation).
+That mode sets `PI_AGENT_BROWSER_REAL_UPSTREAM=1` and runs `test/agent-browser.real-upstream-contract.test.ts` against the real `agent-browser` on `PATH` (version must match the capability baseline). It covers inspection, skills, a broad core interaction and navigation matrix on localhost fixtures (including off-viewport click, frame-scoped selector/wait/click behavior, form command fixes, `batch` stdin, and `pushstate`), plus `vitals`, network route/requests/HAR, diff snapshot/screenshot/url, trace/profiler, console/errors/highlight, stream enable/status/disable, `cookies set --curl`, a `react tree` missing-renderer path, and `wait --download` with the on-disk caveat documented in release notes. The harness uses a throwaway temp `HOME` and dedicated socket/screenshot directories so the run does not touch your normal browser profile paths. Browser-opening or credential-dependent families such as `inspect`, `dashboard`, `chat`, provider clouds, and OS clipboard flows stay in fake-upstream or manual validation unless a safe deterministic fixture is added. For prerequisites, isolation details, and troubleshooting, see [`docs/RELEASE.md`](docs/RELEASE.md#real-upstream-contract-validation).
 
 A deterministic host-only live-browser wrapper smoke is available without an LLM choosing tool calls:
 

@@ -2,7 +2,18 @@
 
 ## Unreleased
 
-No changes yet.
+### Changed
+
+- Rebaselined the upstream capability metadata, command reference, support matrix, and real-upstream contract metadata for `agent-browser` `0.27.2` after reviewing the upstream changelog.
+- Forward explicit long `wait <ms>` / `wait --timeout <ms>` calls now that upstream `agent-browser` `0.27.2` fixes wait timeout and client read-budget handling; the wrapper derives a longer subprocess watchdog when the caller does not provide top-level `timeoutMs`.
+
+### Fixed
+
+- Removed stale docs that said `wait 30000` was intentionally blocked by the wrapper.
+
+### Validation
+
+- Ran focused wrapper/process tests, `npm run typecheck`, `npm run docs`, `npm run verify -- command-reference`, `npm test -- --test-concurrency=1`, `npm run verify -- real-upstream`, `npm run doctor`, `npm run verify -- package`, and `npm run verify -- dogfood` against `agent-browser` `0.27.2`.
 
 ## 0.2.47 - 2026-06-08
 

@@ -4,7 +4,7 @@ import { dirname, extname, isAbsolute, resolve } from "node:path";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
-import { SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS } from "../../process.js";
+import { getAgentBrowserProcessTimeoutMs } from "../../process.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { buildSnapshotPresentation } from "../../results/snapshot.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
@@ -399,36 +399,43 @@ function findWaitTimeoutMs(commandTokens: string[]): { timeoutMs: number; source
 			const timeoutMs = parseMillisecondsToken(token.slice("--timeout=".length));
 			return timeoutMs === undefined ? undefined : { source: "wait --timeout", timeoutMs };
 		}
-		if (!token.startsWith("-")) {
-			const timeoutMs = parseMillisecondsToken(token);
-			if (timeoutMs !== undefined) {
-				return { source: "wait", timeoutMs };
-			}
+	}
+	const firstWaitArgument = commandTokens[1];
+	if (firstWaitArgument && !firstWaitArgument.startsWith("-")) {
+		const timeoutMs = parseMillisecondsToken(firstWaitArgument);
+		if (timeoutMs !== undefined) {
+			return { source: "wait", timeoutMs };
 		}
 	}
 	return undefined;
 }
 
-function buildIpcUnsafeWaitError(source: string, timeoutMs: number, batchStep?: number): string {
-	const location = batchStep === undefined ? source : `batch step ${batchStep + 1} (${source})`;
-	return `${location} requests ${timeoutMs}ms, but upstream agent-browser CLI calls must stay under its 30s IPC read timeout. Use ${SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS}ms or less per wait, split long waits into multiple tool calls, or use a page-specific shorter condition.`;
-}
+const WAIT_PROCESS_TIMEOUT_GRACE_MS = 5_000;
 
-export function validateWaitIpcTimeoutContract(commandTokens: string[], stdin: string | undefined): string | undefined {
+function findWaitTimeoutBudgetMs(commandTokens: string[], stdin: string | undefined): number | undefined {
 	const directWaitTimeout = findWaitTimeoutMs(commandTokens);
-	if (directWaitTimeout && directWaitTimeout.timeoutMs > SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS) {
-		return buildIpcUnsafeWaitError(directWaitTimeout.source, directWaitTimeout.timeoutMs);
+	if (directWaitTimeout) {
+		return directWaitTimeout.timeoutMs;
 	}
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return undefined;
 	}
-	for (const { index, step } of parseValidBatchStepEntries(stdin)) {
+	let batchWaitTimeoutTotal = 0;
+	for (const { step } of parseValidBatchStepEntries(stdin)) {
 		const waitTimeout = findWaitTimeoutMs(step);
-		if (waitTimeout && waitTimeout.timeoutMs > SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS) {
-			return buildIpcUnsafeWaitError(waitTimeout.source, waitTimeout.timeoutMs, index);
+		if (waitTimeout) {
+			batchWaitTimeoutTotal += waitTimeout.timeoutMs;
 		}
 	}
-	return undefined;
+	return batchWaitTimeoutTotal === 0 ? undefined : batchWaitTimeoutTotal;
+}
+
+function getWaitAwareProcessTimeoutMs(commandTokens: string[], stdin: string | undefined): number | undefined {
+	const waitTimeoutBudgetMs = findWaitTimeoutBudgetMs(commandTokens, stdin);
+	if (waitTimeoutBudgetMs === undefined) return undefined;
+	const neededTimeoutMs = waitTimeoutBudgetMs + WAIT_PROCESS_TIMEOUT_GRACE_MS;
+	const defaultProcessTimeoutMs = getAgentBrowserProcessTimeoutMs();
+	return neededTimeoutMs > defaultProcessTimeoutMs ? neededTimeoutMs : undefined;
 }
 
 const DIALOG_COMMAND_PROCESS_TIMEOUT_MS = 5_000;
@@ -1126,24 +1133,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			isError: true,
 		} };
 	}
-	const waitIpcTimeoutError = validateWaitIpcTimeoutContract(commandTokens, runtimeToolStdin);
-	if (waitIpcTimeoutError) {
-		return { kind: "early-result", statePatch, result: {
-			content: [{ type: "text", text: waitIpcTimeoutError }],
-			details: {
-				args: redactedArgs,
-				command: executionPlan.commandInfo.command,
-				compatibilityWorkaround,
-				effectiveArgs: redactedEffectiveArgs,
-				sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: waitIpcTimeoutError, succeeded: false, timedOut: true, validationError: waitIpcTimeoutError }),
-				validationError: waitIpcTimeoutError,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
-			},
-			isError: true,
-		} };
-	}
-
 	const priorSessionPageState = sessionPageState.get(executionPlan.sessionName);
 	const priorSessionTabTarget = priorSessionPageState.tabTarget;
 	const sessionTabPinningReason = priorSessionPageState.pinningReason;
@@ -1418,7 +1407,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
 		? await prepareClickDispatchProbe({ commandTokens, cwd, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
 		: undefined;
-	const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin);
+	const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ?? getWaitAwareProcessTimeoutMs(commandTokens, processStdin);
 	const redactedProcessArgs = redactInvocationArgs(processArgs);
 	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0;
 	const scrollPositionBefore = shouldProbeScrollNoop
