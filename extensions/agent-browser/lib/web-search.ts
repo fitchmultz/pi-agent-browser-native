@@ -682,6 +682,9 @@ export function createAgentBrowserWebSearchTool(
 		parameters: AgentBrowserWebSearchParams,
 		async execute(_toolCallId: string, params: AgentBrowserWebSearchParamsInput, signal?: AbortSignal, _onUpdate?: unknown, ctx?: { cwd: string; isProjectTrusted?: () => boolean }) {
 			const runtimeConfigState = ctx ? options.loadConfigState?.(ctx) ?? configState : configState;
+			if (runtimeConfigState.errors.length > 0) {
+				throw new Error(`agent_browser_web_search config is invalid: ${runtimeConfigState.errors.join("; ")}`);
+			}
 			if (!runtimeConfigState.webSearchEnabled) {
 				throw new Error("agent_browser_web_search is disabled by pi-agent-browser-native config.");
 			}

@@ -144,13 +144,6 @@ export type ClickDispatchProbeTarget =
 		name: string;
 		refId: string;
 		role: string;
-	}
-	| {
-		action: "click";
-		kind: "locator";
-		locator: string;
-		name?: string;
-		value: string;
 	};
 
 export interface ClickDispatchProbe {

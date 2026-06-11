@@ -87,7 +87,7 @@ test("does not register agent_browser_web_search without env or config credentia
 	});
 });
 
-test("project config affects web-search registration by default", async () => {
+test("project config can disable web-search registration despite env fallback", async () => {
 	const fixture = await createFixture();
 	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { enabled: false } });
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "env-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
@@ -95,6 +95,26 @@ test("project config affects web-search registration by default", async () => {
 			const harness = createExtensionHarness({ cwd: fixture.cwd });
 			assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
 			assert.ok(harness.getTool("agent_browser"));
+		});
+	});
+});
+
+test("invalid project web-search config blocks execution before resolving credentials", async () => {
+	const fixture = await createFixture();
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "env-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
+		await withTemporaryCwd(fixture.cwd, async () => {
+			const harness = createExtensionHarness({ cwd: fixture.cwd });
+			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+			assert.ok(tool);
+			await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { braveApiKey: "plaintext-project-secret" } });
+			await withFakeFetch(() => {
+				throw new Error("fetch should not run when config is invalid");
+			}, async () => {
+				await assert.rejects(
+					() => executeRegisteredTool(tool, harness.ctx, { query: "must reject invalid config", provider: "brave" }),
+					/project-local config; plaintext, custom env aliases, interpolation literals, malformed env references, and command-backed project secrets are not allowed/,
+				);
+			});
 		});
 	});
 });
@@ -113,21 +133,23 @@ test("--no-approve prevents project config from disabling env-backed agent_brows
 	});
 });
 
-test("agent_browser_web_search execution ignores project config when ctx reports untrusted project", async () => {
+test("agent_browser_web_search registration and execution ignore project config when project config is not approved", async () => {
 	const fixture = await createFixture();
-	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { preferredProvider: "brave" } });
+	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { enabled: false, preferredProvider: "brave" } });
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "brave-secret", [EXA_API_KEY_ENV]: "exa-secret" }, async () => {
 		await withTemporaryCwd(fixture.cwd, async () => {
-			const harness = createExtensionHarness({ cwd: fixture.cwd, projectTrusted: false });
-			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
-			assert.ok(tool);
-			await withFakeFetch((input, init) => {
-				assert.equal(String(input), "https://api.exa.ai/search");
-				assert.equal(init?.headers && (init.headers as Record<string, string>)["x-api-key"], "exa-secret");
-				return new Response(JSON.stringify({ requestId: "req-untrusted", results: [{ title: "Trusted Exa", url: "https://example.com/exa", text: "Exa result" }] }), { status: 200 });
-			}, async () => {
-				const result = await executeRegisteredTool(tool, harness.ctx, { query: "ignore project preference", provider: "auto", count: 1 });
-				assert.equal(result.details?.provider, "exa");
+			await withTemporaryArgv(["node", "pi", "--no-approve"], async () => {
+				const harness = createExtensionHarness({ cwd: fixture.cwd, projectTrusted: false });
+				const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+				assert.ok(tool);
+				await withFakeFetch((input, init) => {
+					assert.equal(String(input), "https://api.exa.ai/search");
+					assert.equal(init?.headers && (init.headers as Record<string, string>)["x-api-key"], "exa-secret");
+					return new Response(JSON.stringify({ requestId: "req-untrusted", results: [{ title: "Trusted Exa", url: "https://example.com/exa", text: "Exa result" }] }), { status: 200 });
+				}, async () => {
+					const result = await executeRegisteredTool(tool, harness.ctx, { query: "ignore project preference", provider: "auto", count: 1 });
+					assert.equal(result.details?.provider, "exa");
+				});
 			});
 		});
 	});

@@ -92,6 +92,7 @@ import {
 	sleepMs,
 } from "./diagnostics.js";
 import { repairScreenshotData } from "./prepare.js";
+import { getPersistentSessionArtifactStore } from "./session-artifacts.js";
 import {
 	buildFinalAgentBrowserToolResult,
 	buildRedactedPresentationContent,
@@ -112,12 +113,6 @@ import type {
 	ScreenshotArtifactRequest,
 	ScreenshotPathRequest,
 } from "./types.js";
-
-function getPersistentSessionArtifactStore(ctx: BrowserRunContext): PersistentSessionArtifactStore | undefined {
-	const sessionDir = typeof ctx.sessionManager.getSessionDir === "function" ? ctx.sessionManager.getSessionDir() : undefined;
-	const sessionId = ctx.sessionManager.getSessionId();
-	return sessionDir && sessionId ? { sessionDir, sessionId } : undefined;
-}
 
 async function repairScreenshotArtifact(options: {
 	cwd: string;

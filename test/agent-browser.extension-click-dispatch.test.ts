@@ -235,7 +235,7 @@ if (args.includes("snapshot")) {
 	}
 });
 
-test("agentBrowserExtension reports locator click dispatch diagnostic for successful find clicks without DOM events", { concurrency: false }, async () => {
+test("agentBrowserExtension does not run click-dispatch probes for unresolved find locators", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-find-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -246,13 +246,7 @@ const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 if (args.includes("eval")) {
-  if (stdin.includes("window[marker] = state")) {
-    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
-  } else if (stdin.includes("no-native-event-observed")) {
-    process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
-  } else {
-    process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Shop", url: "https://shop.example/inventory" } } }));
-  }
+  process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
 } else if (args.includes("find")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "[data-agent-browser-located='true']" } }));
 } else {
@@ -266,16 +260,10 @@ if (args.includes("eval")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["find", "text", "Add to cart", "click"] });
-			assert.equal(click.isError, true);
-			assert.match((click.content[0] as { text: string }).text, /no trusted pointer\/mouse\/click event was observed for the successful locator click/);
-			assert.deepEqual((click.details?.clickDispatch as { target?: unknown } | undefined)?.target, {
-				action: "click",
-				kind: "locator",
-				locator: "text",
-				value: "Add to cart",
-			});
-			const retryAction = (click.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "retry-click-after-dispatch-miss");
-			assert.deepEqual(retryAction?.params?.args?.slice(-4), ["find", "text", "Add to cart", "click"]);
+			assert.equal(click.isError, false);
+			assert.equal(click.details?.clickDispatch, undefined);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("window[marker] = state")), false);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

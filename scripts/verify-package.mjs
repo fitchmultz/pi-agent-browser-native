@@ -215,7 +215,7 @@ function packedPathExists(packedPaths, targetPath) {
 	return false;
 }
 
-export async function collectPackedDocsMarkdownLinkFailures(options) {
+export async function collectPackedMarkdownLinkFailures(options) {
 	const { cwd = process.cwd(), packedPaths } = options;
 	const failures = [];
 	const markdownPaths = [...packedPaths].filter((path) => path.endsWith(".md")).sort();
@@ -230,8 +230,8 @@ export async function collectPackedDocsMarkdownLinkFailures(options) {
 		for (const match of text.matchAll(MARKDOWN_LINK_PATTERN)) {
 			const rawTarget = match[1] ?? "";
 			const targetPath = normalizePackedMarkdownTarget(sourcePath, rawTarget);
-			if (!targetPath || !targetPath.startsWith("docs/") || packedPathExists(packedPaths, targetPath)) continue;
-			failures.push(`Packed Markdown link ${sourcePath} -> ${rawTarget} resolves to missing packed docs file ${targetPath}.`);
+			if (!targetPath || packedPathExists(packedPaths, targetPath)) continue;
+			failures.push(`Packed Markdown link ${sourcePath} -> ${rawTarget} resolves to missing packed file ${targetPath}.`);
 		}
 	}
 	return failures;
@@ -498,7 +498,7 @@ export async function verifyPackageRelease(options = {}) {
 	const forbiddenRepoFiles = await collectPresentPaths(publishContract.forbiddenRepoFiles, cwd);
 	const packResult = await getDryRunPackResult(cwd);
 	const report = evaluatePackResult({ forbiddenRepoFiles, missingRepoFiles, packResult, publishContract });
-	const packedMarkdownLinkFailures = await collectPackedDocsMarkdownLinkFailures({ cwd, packedPaths: report.packedPaths });
+	const packedMarkdownLinkFailures = await collectPackedMarkdownLinkFailures({ cwd, packedPaths: report.packedPaths });
 	return {
 		...report,
 		failures: [...report.failures, ...packedMarkdownLinkFailures],

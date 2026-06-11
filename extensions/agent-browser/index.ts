@@ -600,9 +600,10 @@ function shouldIncludeProjectConfig(ctx: { isProjectTrusted?: () => boolean } | 
 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
+	const startupProjectConfigAllowed = shouldIncludeProjectConfig(undefined);
 	const agentBrowserConfig = loadAgentBrowserConfigSync({
 		cwd: process.cwd(),
-		includeProjectConfig: shouldIncludeProjectConfig(undefined),
+		includeProjectConfig: startupProjectConfigAllowed,
 	});
 	const webSearchToolAvailable = canRegisterWebSearchTool(agentBrowserConfig);
 	const toolPromptGuidelines = buildToolPromptGuidelines({

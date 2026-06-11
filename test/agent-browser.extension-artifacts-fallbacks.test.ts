@@ -89,6 +89,9 @@ process.stdin.on("end", () => {
 			assert.equal(result.isError, false, JSON.stringify(result));
 			assert.equal(await readFile(requestedPath, "utf8"), "fixture-download-ok");
 			assert.equal(result.details?.savedFilePath, requestedPath);
+			assert.equal((result.details?.artifactManifest as { entries?: Array<{ path?: string; storageScope?: string }>; liveCount?: number } | undefined)?.liveCount, 1);
+			assert.equal((result.details?.artifactManifest as { entries?: Array<{ path?: string; storageScope?: string }> } | undefined)?.entries?.[0]?.storageScope, "explicit-path");
+			assert.equal((result.details?.artifactManifest as { entries?: Array<{ path?: string; storageScope?: string }> } | undefined)?.entries?.[0]?.path, requestedPath);
 			assert.equal((result.details?.artifactVerification as { verified?: boolean } | undefined)?.verified, true);
 			assert.equal((result.details?.downloadRecovery as { method?: string } | undefined)?.method, "direct-anchor-fetch");
 			const invocations = await readInvocationLog(logPath);

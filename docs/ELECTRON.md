@@ -2,7 +2,7 @@
 
 Related docs:
 - [`../README.md`](../README.md)
-- [`../AGENTS.md`](../AGENTS.md) — maintainer verification (`npm run verify`, lifecycle), Pi `tmux` smoke expectations, and upstream rebaselining
+- [`../AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md) — maintainer verification (`npm run verify`, lifecycle), Pi `tmux` smoke expectations, and upstream rebaselining
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md) — full `electron` and `qa.attached` field contracts
 - [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md) — workflow snippets in the broader native command surface
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — wrapper design and the closed `RQ-0068` recipe-layer decision

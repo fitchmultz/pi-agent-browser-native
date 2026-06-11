@@ -180,6 +180,7 @@ export async function resolveWebSearchCredential(
 	provider: WebSearchProvider,
 	options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
 ): Promise<ResolvedCredential | undefined> {
+	if (!state.webSearchEnabled || state.errors.length > 0) return undefined;
 	return resolveCredentialSource(getWebSearchCredentialSource(state, provider), options);
 }
 
@@ -187,6 +188,7 @@ export async function resolvePreferredWebSearchCredential(
 	state: AgentBrowserConfigState,
 	options: { env?: NodeJS.ProcessEnv; provider?: WebSearchProvider | "auto"; signal?: AbortSignal } = {},
 ): Promise<{ provider: WebSearchProvider; credential: ResolvedCredential } | undefined> {
+	if (!state.webSearchEnabled || state.errors.length > 0) return undefined;
 	for (const provider of getWebSearchProviderOrder(state, options.provider)) {
 		const credential = await resolveWebSearchCredential(state, provider, options);
 		if (credential) return { provider, credential };

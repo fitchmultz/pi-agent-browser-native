@@ -6,9 +6,11 @@ import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
 import { tryDirectAnchorDownload } from "./prepare/direct-anchor-download.js";
 import { tryNetworkRequestsPageFilter } from "./prepare/network-page-filter.js";
+import { tryContainerScroll, tryPageScrollTo } from "./prepare/scroll-shims.js";
+import { trySnapshotFilter } from "./prepare/snapshot-filter.js";
 import { getWaitAwareProcessTimeoutMs } from "./prepare/wait-timeouts.js";
+import { getPersistentSessionArtifactStore } from "./session-artifacts.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
-import { buildSnapshotPresentation } from "../../results/snapshot.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
 import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-recovery.js";
 import { extractRefSnapshotFromData, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
@@ -32,11 +34,10 @@ import {
 	runSessionCommandData,
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
-import { isRecord } from "../../parsing.js";
 import { parseBatchStdinJsonArray, parseValidBatchStepEntries } from "../batch-stdin.js";
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
-import { buildScrollNoopNextActions, collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
+import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
 import { getScreenshotPathTokenIndex } from "./artifact-paths.js";
 import { findRequestedArtifactCloseViolation } from "./prompt-guards.js";
 
@@ -44,6 +45,7 @@ import type {
 	AgentBrowserToolResult,
 	BrowserRunInputFields,
 	BrowserRunOptions,
+	BrowserRunStatePatch,
 	PreparedAgentBrowserArgs,
 	PreparedBrowserRun,
 	PrepareBrowserRunResult,
@@ -306,306 +308,6 @@ async function collectSamePageRefFreshnessPreflight(options: {
 	return { message: mismatch.message, refIds: mismatch.refIds, snapshot: snapshotWithTarget };
 }
 
-const SCROLL_CONTAINER_DIRECTIONS = new Set(["down", "left", "right", "up"]);
-
-function getContainerScrollRequest(commandTokens: string[]): { amount?: string; direction: string; selector: string } | undefined {
-	if (commandTokens[0] !== "scroll" || commandTokens.length < 3) return undefined;
-	const selector = commandTokens[1];
-	const direction = commandTokens[2]?.toLowerCase();
-	if (!selector || selector.startsWith("-") || selector.startsWith("@") || SCROLL_CONTAINER_DIRECTIONS.has(selector.toLowerCase())) return undefined;
-	if (!SCROLL_CONTAINER_DIRECTIONS.has(direction)) return undefined;
-	return { amount: commandTokens[3], direction, selector };
-}
-
-function buildContainerScrollScript(request: { amount?: string; direction: string; selector: string }): string {
-	return `(() => {
-  const selector = ${JSON.stringify(request.selector)};
-  const direction = ${JSON.stringify(request.direction)};
-  const amountToken = ${JSON.stringify(request.amount ?? "")};
-  let element;
-  try { element = document.querySelector(selector); } catch (error) { return { status: "invalid-selector", selector, error: String(error && error.message || error) }; }
-  if (!(element instanceof HTMLElement)) return { status: "not-found", selector };
-  const axis = direction === "left" || direction === "right" ? "x" : "y";
-  const before = { scrollLeft: element.scrollLeft, scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, clientWidth: element.clientWidth };
-  const parseAmount = () => {
-    const token = String(amountToken || "").trim().toLowerCase();
-    const extent = axis === "x" ? element.clientWidth : element.clientHeight;
-    if (!token) return Math.max(1, Math.floor(extent * 0.8));
-    if (token.endsWith("%")) {
-      const value = Number(token.slice(0, -1));
-      return Number.isFinite(value) ? Math.max(1, Math.floor(extent * value / 100)) : Math.max(1, Math.floor(extent * 0.8));
-    }
-    const pixels = Number(token.replace(/px$/, ""));
-    return Number.isFinite(pixels) && pixels > 0 ? Math.floor(pixels) : Math.max(1, Math.floor(extent * 0.8));
-  };
-  const delta = parseAmount() * (direction === "up" || direction === "left" ? -1 : 1);
-  if (axis === "x") element.scrollLeft += delta;
-  else element.scrollTop += delta;
-  const after = { scrollLeft: element.scrollLeft, scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, clientWidth: element.clientWidth };
-  const moved = before.scrollLeft !== after.scrollLeft || before.scrollTop !== after.scrollTop;
-  return { status: moved ? "scrolled" : "no-movement", selector, direction, amount: amountToken || undefined, before, after };
-})()`;
-}
-
-function buildScrollResult(options: {
-	command: "scroll";
-	compatibilityWorkaround?: CompatibilityWorkaround;
-	effectiveArgs: string[];
-	message: string;
-	redactedArgs: string[];
-	result: Record<string, unknown>;
-	scrollField: "scrollContainer" | "scrollPage";
-	scrollValue: unknown;
-	sessionMode: "auto" | "fresh";
-	sessionName?: string;
-	succeeded: boolean;
-	usedImplicitSession: boolean;
-}): AgentBrowserToolResult {
-	return {
-		content: [{ type: "text", text: options.message }],
-		details: {
-			args: options.redactedArgs,
-			command: options.command,
-			compatibilityWorkaround: options.compatibilityWorkaround,
-			data: options.result,
-			effectiveArgs: options.effectiveArgs,
-			nextActions: options.succeeded ? undefined : buildScrollNoopNextActions(options.sessionName),
-			[options.scrollField]: options.scrollValue,
-			sessionMode: options.sessionMode,
-			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: options.command, errorText: options.succeeded ? undefined : options.message, succeeded: options.succeeded, validationError: options.succeeded ? undefined : options.message }),
-			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
-			summary: options.message,
-			validationError: options.succeeded ? undefined : options.message,
-		},
-		isError: !options.succeeded,
-	};
-}
-
-async function tryContainerScroll(options: {
-	commandTokens: string[];
-	compatibilityWorkaround?: CompatibilityWorkaround;
-	cwd: string;
-	effectiveArgs: string[];
-	redactedArgs: string[];
-	sessionMode: "auto" | "fresh";
-	sessionName?: string;
-	signal?: AbortSignal;
-	usedImplicitSession: boolean;
-}): Promise<AgentBrowserToolResult | undefined> {
-	const request = getContainerScrollRequest(options.commandTokens);
-	if (!request || !options.sessionName) return undefined;
-	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildContainerScrollScript(request) });
-	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
-	if (!isRecord(result) || typeof result.status !== "string") return undefined;
-	const succeeded = result.status === "scrolled";
-	const message = succeeded
-		? `Scrolled container ${request.selector} ${request.direction}${request.amount ? ` by ${request.amount}` : ""}.`
-		: `Scroll container ${request.selector} did not move (${result.status}).`;
-	return buildScrollResult({ ...options, command: "scroll", message, result, scrollField: "scrollContainer", scrollValue: { request, result }, succeeded });
-}
-
-function getPageScrollToRequest(commandTokens: string[]): { target: "end" | "top" } | undefined {
-	if (commandTokens[0] !== "scroll" || commandTokens[1]?.toLowerCase() !== "to") return undefined;
-	const target = commandTokens[2]?.toLowerCase();
-	return target === "end" || target === "top" ? { target } : undefined;
-}
-
-function buildPageScrollToScript(request: { target: "end" | "top" }): string {
-	return `(() => {
-  const target = ${JSON.stringify(request.target)};
-  const scroller = document.scrollingElement || document.documentElement || document.body;
-  if (!scroller) return { status: "no-scroller", target };
-  const before = { scrollLeft: scroller.scrollLeft, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, scrollWidth: scroller.scrollWidth, clientHeight: scroller.clientHeight, clientWidth: scroller.clientWidth };
-  const nextTop = target === "top" ? 0 : Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-  const nextLeft = scroller.scrollLeft;
-  scroller.scrollTop = nextTop;
-  window.scrollTo(nextLeft, nextTop);
-  const after = { scrollLeft: scroller.scrollLeft, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, scrollWidth: scroller.scrollWidth, clientHeight: scroller.clientHeight, clientWidth: scroller.clientWidth };
-  const moved = before.scrollLeft !== after.scrollLeft || before.scrollTop !== after.scrollTop;
-  return { status: moved ? "scrolled" : "no-movement", target, before, after };
-})()`;
-}
-
-async function tryPageScrollTo(options: {
-	commandTokens: string[];
-	compatibilityWorkaround?: CompatibilityWorkaround;
-	cwd: string;
-	effectiveArgs: string[];
-	redactedArgs: string[];
-	sessionMode: "auto" | "fresh";
-	sessionName?: string;
-	signal?: AbortSignal;
-	usedImplicitSession: boolean;
-}): Promise<AgentBrowserToolResult | undefined> {
-	const request = getPageScrollToRequest(options.commandTokens);
-	if (!request || !options.sessionName) return undefined;
-	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildPageScrollToScript(request) });
-	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
-	if (!isRecord(result) || typeof result.status !== "string") return undefined;
-	const succeeded = result.status === "scrolled";
-	const message = succeeded ? `Scrolled page to ${request.target}.` : `Scroll to ${request.target} completed with no observed movement (${result.status}).`;
-	return buildScrollResult({ ...options, command: "scroll", message, result, scrollField: "scrollPage", scrollValue: { request, result }, succeeded });
-}
-
-interface SnapshotFilterRequest {
-	cleanArgs: string[];
-	diff?: boolean;
-	role?: string;
-	search?: string;
-	viewport?: boolean;
-}
-
-function parseSnapshotFilterRequest(commandTokens: string[]): SnapshotFilterRequest | undefined {
-	if (commandTokens[0] !== "snapshot") return undefined;
-	const cleanArgs: string[] = [];
-	let role: string | undefined;
-	let search: string | undefined;
-	for (let index = 0; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
-		if (token === "--viewport") continue;
-		if (token === "--diff") continue;
-		if (token === "--search") {
-			const value = commandTokens[index + 1];
-			if (typeof value === "string" && !value.startsWith("-")) {
-				search = value;
-				index += 1;
-				continue;
-			}
-		}
-		if (token === "--filter") {
-			const value = commandTokens[index + 1];
-			if (typeof value === "string" && !value.startsWith("-")) {
-				const roleMatch = /^role=(.+)$/i.exec(value.trim());
-				if (roleMatch?.[1]) role = roleMatch[1].trim().toLowerCase();
-				index += 1;
-				continue;
-			}
-		}
-		cleanArgs.push(token);
-	}
-	const viewport = commandTokens.includes("--viewport");
-	const diff = commandTokens.includes("--diff");
-	if (!search && !role && !viewport && !diff) return undefined;
-	return { cleanArgs, diff, role, search, viewport };
-}
-
-interface SnapshotDiffSummary {
-	addedRefs: string[];
-	changedRefs: string[];
-	removedRefs: string[];
-	summary: string;
-	unchangedRefs: number;
-}
-
-function buildSnapshotDiff(previous: SessionRefSnapshot | undefined, current: SessionRefSnapshot | undefined): SnapshotDiffSummary | undefined {
-	if (!current) return undefined;
-	const currentRefs = current.refs ?? {};
-	const previousRefs = previous?.refs ?? {};
-	if (!previous) return { addedRefs: Object.keys(currentRefs), changedRefs: [], removedRefs: [], summary: `Snapshot diff: no previous snapshot; ${Object.keys(currentRefs).length} current refs recorded.`, unchangedRefs: 0 };
-	const addedRefs: string[] = [];
-	const removedRefs: string[] = [];
-	const changedRefs: string[] = [];
-	let unchangedRefs = 0;
-	for (const refId of Object.keys(currentRefs)) {
-		const currentRef = currentRefs[refId];
-		const previousRef = previousRefs[refId];
-		if (!previousRef) {
-			addedRefs.push(refId);
-			continue;
-		}
-		if (previousRef.role !== currentRef.role || previousRef.name !== currentRef.name) changedRefs.push(refId);
-		else unchangedRefs += 1;
-	}
-	for (const refId of Object.keys(previousRefs)) if (!currentRefs[refId]) removedRefs.push(refId);
-	return { addedRefs, changedRefs, removedRefs, summary: `Snapshot diff: +${addedRefs.length} / -${removedRefs.length} / Δ${changedRefs.length} refs versus previous snapshot.`, unchangedRefs };
-}
-
-function filterSnapshotData(data: unknown, request: SnapshotFilterRequest): { data: Record<string, unknown>; matchedRefs: number; totalRefs: number; totalLines: number; visibleLines: number } | undefined {
-	if (!isRecord(data)) return undefined;
-	const refs = isRecord(data.refs) ? data.refs : {};
-	const snapshot = typeof data.snapshot === "string" ? data.snapshot : "";
-	const normalizedSearch = request.search?.trim().toLowerCase();
-	const matchingRefIds = new Set<string>();
-	for (const [refId, refValue] of Object.entries(refs)) {
-		if (!isRecord(refValue)) continue;
-		const role = typeof refValue.role === "string" ? refValue.role.toLowerCase() : "";
-		const name = typeof refValue.name === "string" ? refValue.name : "";
-		const roleMatches = request.role ? role === request.role : true;
-		const searchMatches = normalizedSearch ? `${role} ${name}`.toLowerCase().includes(normalizedSearch) : true;
-		if (roleMatches && searchMatches) matchingRefIds.add(refId);
-	}
-	const lines = snapshot.split(/\r?\n/);
-	const visibleLines = lines.filter((line) => {
-		const normalizedLine = line.toLowerCase();
-		if (normalizedSearch && normalizedLine.includes(normalizedSearch)) return true;
-		return [...matchingRefIds].some((refId) => line.includes(`[ref=${refId}]`) || line.includes(`ref=${refId}`));
-	});
-	const filteredRefs = Object.fromEntries(Object.entries(refs).filter(([refId]) => matchingRefIds.has(refId)));
-	const description = [request.role ? `role=${request.role}` : undefined, request.search ? `search=${JSON.stringify(request.search)}` : undefined].filter((part): part is string => part !== undefined).join(", ");
-	const filteredSnapshot = visibleLines.length > 0 ? visibleLines.join("\n") : `(no snapshot lines matched ${description})`;
-	return {
-		data: { ...data, refs: filteredRefs, snapshot: filteredSnapshot },
-		matchedRefs: Object.keys(filteredRefs).length,
-		totalRefs: Object.keys(refs).length,
-		totalLines: lines.filter((line) => line.length > 0).length,
-		visibleLines: visibleLines.length,
-	};
-}
-
-async function trySnapshotFilter(options: {
-	commandTokens: string[];
-	compatibilityWorkaround?: CompatibilityWorkaround;
-	cwd: string;
-	effectiveArgs: string[];
-	redactedArgs: string[];
-	previousRefSnapshot?: SessionRefSnapshot;
-	sessionMode: "auto" | "fresh";
-	sessionName?: string;
-	sessionPageState: BrowserRunOptions["state"]["sessionPageState"];
-	sessionPageStateUpdate: ReturnType<BrowserRunOptions["state"]["sessionPageState"]["beginUpdate"]>;
-	signal?: AbortSignal;
-	usedImplicitSession: boolean;
-}): Promise<AgentBrowserToolResult | undefined> {
-	const request = parseSnapshotFilterRequest(options.commandTokens);
-	if (!request || !options.sessionName) return undefined;
-	const snapshotData = await runSessionCommandData({ args: request.cleanArgs, cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const filtered = request.role || request.search ? filterSnapshotData(snapshotData, request) : isRecord(snapshotData) ? { data: snapshotData, matchedRefs: isRecord(snapshotData.refs) ? Object.keys(snapshotData.refs).length : 0, totalLines: typeof snapshotData.snapshot === "string" ? snapshotData.snapshot.split(/\r?\n/).filter((line) => line.length > 0).length : 0, totalRefs: isRecord(snapshotData.refs) ? Object.keys(snapshotData.refs).length : 0, visibleLines: typeof snapshotData.snapshot === "string" ? snapshotData.snapshot.split(/\r?\n/).filter((line) => line.length > 0).length : 0 } : undefined;
-	if (!filtered) return undefined;
-	const viewport = request.viewport ? await collectScrollPositionSnapshot({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal }) : undefined;
-	const fullSnapshot = extractRefSnapshotFromData(snapshotData);
-	const diff = request.diff ? buildSnapshotDiff(options.previousRefSnapshot, fullSnapshot) : undefined;
-	if (fullSnapshot) options.sessionPageState.applyRefSnapshot({ sessionName: options.sessionName, snapshot: fullSnapshot, update: options.sessionPageStateUpdate });
-	const presentation = await buildSnapshotPresentation(filtered.data);
-	const summary = request.role || request.search
-		? `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} direct refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}; ${filtered.visibleLines} surrounding snapshot line${filtered.visibleLines === 1 ? "" : "s"} shown.`
-		: request.diff
-			? diff?.summary ?? "Snapshot diff unavailable."
-			: "Snapshot viewport metadata collected.";
-	const viewportText = viewport ? `Viewport: ${viewport.innerWidth}×${viewport.innerHeight}, scroll ${viewport.scrollX},${viewport.scrollY}, document ${viewport.scrollWidth}×${viewport.scrollHeight}, sampled scroll containers ${viewport.containers.length}/${viewport.containerCount}.` : undefined;
-	const diffText = diff && (request.role || request.search) ? diff.summary : undefined;
-	const prefix = [summary, diffText, viewportText].filter((line): line is string => line !== undefined).join("\n");
-	if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${prefix}\n\n${presentation.content[0].text}` };
-	return {
-		content: presentation.content,
-		details: {
-			args: options.redactedArgs,
-			command: "snapshot",
-			compatibilityWorkaround: options.compatibilityWorkaround,
-			data: presentation.data,
-			effectiveArgs: options.effectiveArgs,
-			refSnapshot: fullSnapshot,
-			sessionMode: options.sessionMode,
-			snapshotDiff: diff,
-			snapshotFilter: request.role || request.search ? { cleanArgs: request.cleanArgs, matchedRefs: filtered.matchedRefs, role: request.role, search: request.search, totalLines: filtered.totalLines, totalRefs: filtered.totalRefs, visibleLines: filtered.visibleLines } : undefined,
-			snapshotViewport: viewport,
-			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "snapshot", succeeded: true }),
-			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
-			summary,
-		},
-		isError: false,
-	};
-}
-
 function isPasswordStdinAuthSave(options: { command?: string; commandTokens: string[] }): boolean {
 	return options.command === "auth" && options.commandTokens[1] === "save" && options.commandTokens.includes("--password-stdin");
 }
@@ -727,7 +429,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
 	const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
 	const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
-	const statePatch = executionPlan.managedSessionName === freshSessionName
+	const statePatch: BrowserRunStatePatch = executionPlan.managedSessionName === freshSessionName
 		? { freshSessionOrdinal: freshSessionOrdinal + 1 }
 		: {};
 	if (executionPlan.managedSessionName === freshSessionName) {
@@ -912,11 +614,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		}
 	}
 
+	const persistentArtifactStore = getPersistentSessionArtifactStore(options.ctx);
 	const snapshotFilter = await trySnapshotFilter({
+		artifactManifest: state.artifactManifest,
 		commandTokens,
 		compatibilityWorkaround,
 		cwd,
 		effectiveArgs: redactedEffectiveArgs,
+		persistentArtifactStore,
 		previousRefSnapshot: priorRefSnapshotState,
 		redactedArgs,
 		sessionMode,
@@ -926,7 +631,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		signal,
 		usedImplicitSession: executionPlan.usedImplicitSession,
 	});
-	if (snapshotFilter) return { kind: "early-result", statePatch, result: snapshotFilter };
+	if (snapshotFilter) return { kind: "early-result", statePatch: { ...statePatch, artifactManifest: snapshotFilter.artifactManifest ?? statePatch.artifactManifest }, result: snapshotFilter.result };
 
 	const networkRequestsPageFilter = await tryNetworkRequestsPageFilter({
 		commandTokens,
@@ -967,6 +672,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	if (pageScrollTo) return { kind: "early-result", statePatch, result: pageScrollTo };
 
 	const directAnchorDownload = await tryDirectAnchorDownload({
+		artifactManifest: state.artifactManifest,
 		commandTokens,
 		compatibilityWorkaround,
 		cwd,
@@ -977,7 +683,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		signal,
 		usedImplicitSession: executionPlan.usedImplicitSession,
 	});
-	if (directAnchorDownload) return { kind: "early-result", statePatch, result: directAnchorDownload };
+	if (directAnchorDownload) return { kind: "early-result", statePatch: { ...statePatch, artifactManifest: directAnchorDownload.artifactManifest ?? statePatch.artifactManifest }, result: directAnchorDownload.result };
 
 	let pinnedBatchUnwrapMode: PreparedBrowserRun["pinnedBatchUnwrapMode"];
 	let includePinnedNavigationSummary = false;

@@ -32,26 +32,7 @@ function getAccessibleRefDuplicateIndex(refSnapshot: SessionRefSnapshot | undefi
 	return duplicateIndex >= 0 ? duplicateIndex : undefined;
 }
 
-function getFindClickDispatchProbeTarget(commandTokens: string[]): ClickDispatchProbeTarget | undefined {
-	const findIndex = commandTokens[0] === "--session" ? 2 : 0;
-	if (commandTokens[findIndex] !== "find") return undefined;
-	const locator = commandTokens[findIndex + 1];
-	const value = commandTokens[findIndex + 2];
-	const action = commandTokens[findIndex + 3];
-	if (!locator || !value || action !== "click") return undefined;
-	const nameFlagIndex = commandTokens.indexOf("--name", findIndex + 4);
-	const name = nameFlagIndex >= 0 ? commandTokens[nameFlagIndex + 1] : undefined;
-	return {
-		action: "click",
-		kind: "locator",
-		locator,
-		...(name && !name.startsWith("-") ? { name } : {}),
-		value,
-	};
-}
-
 function getClickDispatchProbeTarget(commandTokens: string[], refSnapshot?: SessionRefSnapshot): ClickDispatchProbeTarget | undefined {
-	if (commandTokens[0] === "find" || (commandTokens[0] === "--session" && commandTokens[2] === "find")) return getFindClickDispatchProbeTarget(commandTokens);
 	if (commandTokens[0] !== "click" || commandTokens.includes("--new-tab")) return undefined;
 	const selector = commandTokens[1];
 	if (!selector || selector.startsWith("-")) return undefined;
@@ -76,9 +57,7 @@ function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string
 		? `(() => { try { return document.querySelector(${JSON.stringify(target.selector)}); } catch { return null; } })()`
 		: target.kind === "xpath"
 			? `(() => { try { return document.evaluate(${JSON.stringify(target.selector)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; } catch { return null; } })()`
-			: target.kind === "locator"
-				? "null"
-				: `(() => {
+			: `(() => {
   const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
   const expectedRole = ${JSON.stringify(target.role)};
   const expectedName = normalize(${JSON.stringify(target.name)});
@@ -111,8 +90,7 @@ function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string
 	return `(() => {
 const marker = ${JSON.stringify(probe.marker)};
 const element = ${resolveTarget};
-const targetRequiresElement = ${JSON.stringify(target.kind !== "locator")};
-if (!element && targetRequiresElement) return { status: "target-not-found", marker };
+if (!element) return { status: "target-not-found", marker };
 const cssEscape = (value) => {
   if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
   return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
@@ -156,13 +134,13 @@ if (element && targetRect) {
     }
   }
 }
-const state = { events: [], target: element && targetRect ? { tagName: element.tagName.toLowerCase(), nearestScrollContainer, rect: rectInfo(targetRect), targetOutsideViewport } : { locator: true } };
+const state = { events: [], target: { tagName: element.tagName.toLowerCase(), nearestScrollContainer, rect: rectInfo(targetRect), targetOutsideViewport } };
 const eventTypes = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
 const listeners = eventTypes.map((type) => {
   const listener = (event) => {
     const path = typeof event.composedPath === "function" ? event.composedPath() : [];
     const eventTarget = event.target;
-    const targetMatched = element ? path.includes(element) || eventTarget === element || (eventTarget instanceof Node && element.contains(eventTarget)) : true;
+    const targetMatched = path.includes(element) || eventTarget === element || (eventTarget instanceof Node && element.contains(eventTarget));
     state.events.push({ type: event.type, isTrusted: event.isTrusted === true, targetMatched });
   };
   document.addEventListener(type, listener, true);
@@ -204,9 +182,6 @@ function redactClickDispatchTarget(target: ClickDispatchProbeTarget): ClickDispa
 	if (target.kind === "selector" || target.kind === "xpath") {
 		return { ...target, selector: redactSensitiveText(target.selector) };
 	}
-	if (target.kind === "locator") {
-		return { ...target, ...(target.name ? { name: redactSensitiveText(target.name) } : {}), value: redactSensitiveText(target.value) };
-	}
 	return { ...target, name: redactSensitiveText(target.name) };
 }
 
@@ -247,7 +222,7 @@ export function buildClickDispatchNextActions(options: { commandTokens: string[]
 }
 
 export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchProbe | undefined> {
-	if (!options.sessionName || !["click", "find"].includes(options.commandTokens[0] ?? "") || options.commandTokens.includes("--new-tab")) return undefined;
+	if (!options.sessionName || options.commandTokens[0] !== "click" || options.commandTokens.includes("--new-tab")) return undefined;
 	const target = getClickDispatchProbeTarget(options.commandTokens, options.refSnapshot);
 	if (!target) return undefined;
 	const probe: ClickDispatchProbe = { marker: `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`, target };
@@ -279,7 +254,7 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; pro
 	if (status !== "no-native-event-observed") return undefined;
 	const nativeEventCount = typeof result.nativeEventCount === "number" ? result.nativeEventCount : 0;
 	const scrollContainer = getClickDispatchScrollContainerDiagnostic(result);
-	const targetLabel = options.probe.target.kind === "locator" ? "no trusted pointer/mouse/click event was observed for the successful locator click" : "no trusted DOM event reached the selected element";
+	const targetLabel = "no trusted DOM event reached the selected element";
 	const summary = scrollContainer
 		? `Upstream click reported success but ${targetLabel}. ${scrollContainer.summary}`
 		: `Upstream click reported success but ${targetLabel}. Gather evidence with snapshot or page-change checks, then retry upstream click or report the workflow issue; the wrapper does not replay clicks in-page.`;

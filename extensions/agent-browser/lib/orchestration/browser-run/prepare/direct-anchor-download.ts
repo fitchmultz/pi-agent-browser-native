@@ -3,10 +3,17 @@ import { dirname, resolve } from "node:path";
 
 import { isRecord } from "../../../parsing.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../../results.js";
+import { formatSessionArtifactRetentionSummary, mergeSessionArtifactManifest } from "../../../results/artifact-manifest.js";
+import type { SessionArtifactManifest, SessionArtifactManifestEntry } from "../../../results/contracts.js";
 import { redactSensitiveText, type CompatibilityWorkaround } from "../../../runtime.js";
 import { buildSessionDetailFields, runSessionCommandData } from "../session-state.js";
 
 import type { AgentBrowserToolResult } from "../types.js";
+
+export interface DirectAnchorDownloadResult {
+	artifactManifest?: SessionArtifactManifest;
+	result: AgentBrowserToolResult;
+}
 
 const DIRECT_ANCHOR_DOWNLOAD_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -27,6 +34,7 @@ function isLoopbackHttpUrl(url: URL): boolean {
 }
 
 export async function tryDirectAnchorDownload(options: {
+	artifactManifest?: SessionArtifactManifest;
 	commandTokens: string[];
 	compatibilityWorkaround?: CompatibilityWorkaround;
 	cwd: string;
@@ -36,7 +44,7 @@ export async function tryDirectAnchorDownload(options: {
 	sessionName?: string;
 	signal?: AbortSignal;
 	usedImplicitSession: boolean;
-}): Promise<AgentBrowserToolResult | undefined> {
+}): Promise<DirectAnchorDownloadResult | undefined> {
 	const request = getDirectDownloadRequest(options.commandTokens);
 	if (!request || !options.sessionName) return undefined;
 	try {
@@ -61,6 +69,23 @@ export async function tryDirectAnchorDownload(options: {
 		await writeFile(absolutePath, body);
 		const fileStat = await stat(absolutePath);
 		const mediaType = typeof probe.contentType === "string" && probe.contentType.length > 0 ? probe.contentType : undefined;
+		const manifestEntry: SessionArtifactManifestEntry = {
+			absolutePath,
+			command: "download",
+			createdAtMs: Date.now(),
+			cwd: options.cwd,
+			exists: true,
+			kind: "download",
+			mediaType,
+			path: absolutePath,
+			requestedPath: request.path,
+			retentionState: "live",
+			session: options.sessionName,
+			sizeBytes: fileStat.size,
+			storageScope: "explicit-path",
+		};
+		const artifactManifest = mergeSessionArtifactManifest({ base: options.artifactManifest, entries: [manifestEntry] });
+		const artifactRetentionSummary = artifactManifest ? formatSessionArtifactRetentionSummary(artifactManifest) : undefined;
 		const artifact = {
 			absolutePath,
 			artifactType: "download" as const,
@@ -95,32 +120,37 @@ export async function tryDirectAnchorDownload(options: {
 		};
 		const savedFile = { command: "download" as const, kind: "download" as const, metadata: { download: probe.download, href: redactSensitiveText(href.href), method: "direct-anchor-fetch" }, path: absolutePath };
 		return {
-			content: [{
-				type: "text",
-				text: [
-					`Download completed: ${absolutePath}`,
-					`Requested path: ${request.path}`,
-					`Source: ${redactSensitiveText(href.href)}`,
-					`Size: ${fileStat.size} bytes`,
-					"Method: direct anchor fetch before upstream download fallback.",
-				].join("\n"),
-			}],
-			details: {
-				args: options.redactedArgs,
-				artifacts: [artifact],
-				artifactVerification,
-				command: "download",
-				compatibilityWorkaround: options.compatibilityWorkaround,
-				downloadRecovery: { href: redactSensitiveText(href.href), method: "direct-anchor-fetch", selector: request.selector },
-				effectiveArgs: options.effectiveArgs,
-				savedFile,
-				savedFilePath: absolutePath,
-				sessionMode: options.sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ artifacts: [artifact], args: options.effectiveArgs, command: "download", savedFile, succeeded: true }),
-				...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
-				summary: `Download completed: ${absolutePath}`,
+			artifactManifest,
+			result: {
+				content: [{
+					type: "text",
+					text: [
+						`Download completed: ${absolutePath}`,
+						`Requested path: ${request.path}`,
+						`Source: ${redactSensitiveText(href.href)}`,
+						`Size: ${fileStat.size} bytes`,
+						"Method: direct anchor fetch before upstream download fallback.",
+					].join("\n"),
+				}],
+				details: {
+					args: options.redactedArgs,
+					artifactManifest,
+					artifactRetentionSummary,
+					artifacts: [artifact],
+					artifactVerification,
+					command: "download",
+					compatibilityWorkaround: options.compatibilityWorkaround,
+					downloadRecovery: { href: redactSensitiveText(href.href), method: "direct-anchor-fetch", selector: request.selector },
+					effectiveArgs: options.effectiveArgs,
+					savedFile,
+					savedFilePath: absolutePath,
+					sessionMode: options.sessionMode,
+					...buildAgentBrowserResultCategoryDetails({ artifacts: [artifact], args: options.effectiveArgs, command: "download", savedFile, succeeded: true }),
+					...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
+					summary: `Download completed: ${absolutePath}`,
+				},
+				isError: false,
 			},
-			isError: false,
 		};
 	} catch {
 		return undefined;

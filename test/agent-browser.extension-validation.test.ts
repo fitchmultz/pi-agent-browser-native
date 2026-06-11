@@ -627,7 +627,9 @@ if (args.includes("eval")) {
   return;
 }
 if (args.includes("snapshot")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://dense.example/", refs: { e1: { role: "button", name: "Checkout" } }, snapshot: '- button "Checkout" [ref=e1]' } }));
+  const refs = Object.fromEntries(Array.from({ length: 90 }, (_, index) => ["e" + (index + 1), { role: "button", name: "Checkout " + (index + 1) }]));
+  const snapshot = Array.from({ length: 90 }, (_, index) => '- button "Checkout ' + (index + 1) + '" [ref=e' + (index + 1) + ']').join('\\n');
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://dense.example/", refs, snapshot } }));
   return;
 }
 process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
@@ -644,6 +646,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 			const viewport = result.details?.snapshotViewport as { innerHeight?: number; scrollY?: number } | undefined;
 			assert.equal(viewport?.innerHeight, 900);
 			assert.equal(viewport?.scrollY, 240);
+			assert.equal(typeof result.details?.fullOutputPath, "string");
+			assert.equal((result.details?.artifactManifest as { entries?: unknown[] } | undefined)?.entries?.length, 1);
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.some((entry) => entry.args.includes("--viewport")), false);
 			assert.ok(invocations.some((entry) => entry.args.includes("eval") && entry.args.includes("--stdin")));
