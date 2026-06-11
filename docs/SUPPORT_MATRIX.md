@@ -2,7 +2,6 @@
 
 Related docs:
 - [`../README.md`](../README.md)
-- [`SOURCE_OF_TRUTH.md`](SOURCE_OF_TRUTH.md)
 - [`../AGENTS.md`](../AGENTS.md) (rebaselining and verification stack)
 - [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
@@ -10,7 +9,6 @@ Related docs:
 - [`RELEASE.md`](RELEASE.md)
 - [`platform-smoke.md`](platform-smoke.md)
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
-- [`support-notes.md`](support-notes.md) (detailed closure notes)
 
 ## Purpose
 
@@ -36,15 +34,15 @@ When upstream ships a new `agent-browser` or the inventory changes:
 
 ## Open UX/reliability follow-ups from 2026-05-29 agent feedback
 
-Detailed feedback triage and implementation notes moved to [`docs/support-notes.md`](support-notes.md#open-uxreliability-follow-ups-from-2026-05-29-agent-feedback). Keep this active matrix limited to release-critical status and gates.
+Detailed feedback triage and implementation notes live in repo-local `docs/support-notes.md` under the 2026-05-29 agent feedback section. Keep this active matrix limited to release-critical status and gates.
 
 Current summary:
 
 | Range | Status | Source of truth |
 | --- | --- | --- |
-| RQ-0110–RQ-0120 | Agent feedback triage resolved or documented; remaining unsupported areas are environment/upstream-owned. | [`support-notes.md`](support-notes.md#open-uxreliability-follow-ups-from-2026-05-29-agent-feedback) |
-| RQ-0123–RQ-0127 | Stress-report wrapper fixes shipped; prompt-derived business-action blocking remains intentionally out of scope. | [`support-notes.md`](support-notes.md#open-uxreliability-follow-ups-from-2026-05-29-agent-feedback) |
-| RQ-0101 | Upstream `agent-browser 0.27.2` rebaseline shipped. | [`support-notes.md`](support-notes.md#open-uxreliability-follow-ups-from-2026-05-29-agent-feedback) |
+| RQ-0110–RQ-0120 | Agent feedback triage resolved or documented; remaining unsupported areas are environment/upstream-owned. | Repo-local `docs/support-notes.md` |
+| RQ-0123–RQ-0127 | Stress-report wrapper fixes shipped; prompt-derived business-action blocking remains intentionally out of scope. | Repo-local `docs/support-notes.md` |
+| RQ-0101 | Upstream `agent-browser 0.27.2` rebaseline shipped. | Repo-local `docs/support-notes.md` |
 
 ## Verification evidence
 
@@ -78,12 +76,12 @@ Runtime floor note: package metadata keeps Pi core package peer ranges wildcard 
 
 ## Follow-up decision after closure
 
-Detailed closure notes moved to [`docs/support-notes.md`](support-notes.md#follow-up-decision-after-closure). Keep this section as the active index of shipped follow-up areas and their canonical contracts.
+Detailed closure notes live in repo-local `docs/support-notes.md` under the follow-up decision section. Keep this section as the active index of shipped follow-up areas and their canonical contracts.
 
 | Area | Active contract | Detail archive |
 | --- | --- | --- |
-| Native structured input modes (`job`, `qa`, `sourceLookup`, `networkSourceLookup`, `semanticAction`) | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md), [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md) | [`support-notes.md`](support-notes.md#follow-up-decision-after-closure) |
-| Electron lifecycle, manual CDP attach, desktop readiness, and tab/surface recovery | [`ELECTRON.md`](ELECTRON.md), [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#electron), [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#electron-desktop-apps) | [`support-notes.md`](support-notes.md#follow-up-decision-after-closure) |
-| Ref lifecycle, click dispatch, selector recovery, rich inputs, and dense snapshots | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details), [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#selector-strategy), README pitfalls | [`support-notes.md`](support-notes.md#follow-up-decision-after-closure) |
-| Diagnostics, artifacts, QA/network classification, timeout recovery, scroll/combobox/recording guidance | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details), [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md), [`RELEASE.md`](RELEASE.md) | [`support-notes.md`](support-notes.md#follow-up-decision-after-closure) |
-| Package config and optional web search | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#optional-companion-web-search), README optional package config, [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#optional-package-config-and-companion-web-search) | [`support-notes.md`](support-notes.md#follow-up-decision-after-closure) |
+| Native structured input modes (`job`, `qa`, `sourceLookup`, `networkSourceLookup`, `semanticAction`) | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md), [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md) | Repo-local `docs/support-notes.md` |
+| Electron lifecycle, manual CDP attach, desktop readiness, and tab/surface recovery | [`ELECTRON.md`](ELECTRON.md), [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#electron), [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#electron-desktop-apps) | Repo-local `docs/support-notes.md` |
+| Ref lifecycle, click dispatch, selector recovery, rich inputs, and dense snapshots | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details), [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#selector-strategy), README pitfalls | Repo-local `docs/support-notes.md` |
+| Diagnostics, artifacts, QA/network classification, timeout recovery, scroll/combobox/recording guidance | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details), [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md), [`RELEASE.md`](RELEASE.md) | Repo-local `docs/support-notes.md` |
+| Package config and optional web search | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#optional-companion-web-search), README optional package config, [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#optional-package-config-and-companion-web-search) | Repo-local `docs/support-notes.md` |

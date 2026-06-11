@@ -365,7 +365,7 @@ Electron support is gated by the same release evidence as the rest of the wrappe
 - `RQ-0096` in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) records the contract, runtime, test, and verification coverage.
 - `electron-lifecycle` and `electron-probe` scenarios in `scripts/agent-browser-efficiency-benchmark.mjs` track the token-efficiency claim deterministically (no real browser, no real launches).
 - Fake-upstream coverage for Electron schema/probe/mismatch/post-command-health/fill-verification/broad-text/discovery-sensitivity lives in `test/agent-browser.extension-validation.test.ts`.
-- Real-app validation is a manual `tmux` smoke pass per the maintainer notes in `AGENTS.md`; the 2026-05-21 dogfood result is recorded at the end of [`docs/plans/electron-extension-2026-05-20.md`](plans/electron-extension-2026-05-20.md).
+- Real-app validation is a manual `tmux` smoke pass per the maintainer notes in `AGENTS.md`; the 2026-05-21 dogfood result is recorded in the repo-local `docs/plans/electron-extension-2026-05-20.md` plan.
 
 Run the local gate the same way as the rest of the project:
 

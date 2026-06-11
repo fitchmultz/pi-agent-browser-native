@@ -7,9 +7,9 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
-import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve, sep } from "node:path";
+import { delimiter, join, posix as posixPath, resolve, sep } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -183,6 +183,58 @@ export function collectPackedPaths(files) {
 			.filter((entry) => typeof entry?.path === "string")
 			.map((entry) => entry.path),
 	);
+}
+
+const MARKDOWN_LINK_PATTERN = /!?\[[^\]\n]*(?:\][^\[\]\n]*)*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+const EXTERNAL_LINK_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
+
+function stripMarkdownLinkFragment(target) {
+	const hashIndex = target.indexOf("#");
+	return hashIndex >= 0 ? target.slice(0, hashIndex) : target;
+}
+
+function normalizePackedMarkdownTarget(sourcePath, rawTarget) {
+	const withoutFragment = stripMarkdownLinkFragment(rawTarget.trim());
+	if (!withoutFragment || withoutFragment.startsWith("#")) return undefined;
+	if (withoutFragment.startsWith("//") || withoutFragment.startsWith("/") || EXTERNAL_LINK_PATTERN.test(withoutFragment)) return undefined;
+	let decoded = withoutFragment;
+	try {
+		decoded = decodeURI(withoutFragment);
+	} catch {
+		// Keep the raw target when it is not URI-encoded cleanly; the normalized lookup will fail if absent.
+	}
+	return posixPath.normalize(posixPath.join(posixPath.dirname(sourcePath), decoded));
+}
+
+function packedPathExists(packedPaths, targetPath) {
+	if (packedPaths.has(targetPath)) return true;
+	const directoryPrefix = targetPath.endsWith("/") ? targetPath : `${targetPath}/`;
+	for (const packedPath of packedPaths) {
+		if (packedPath.startsWith(directoryPrefix)) return true;
+	}
+	return false;
+}
+
+export async function collectPackedMarkdownLinkFailures(options) {
+	const { cwd = process.cwd(), packedPaths } = options;
+	const failures = [];
+	const markdownPaths = [...packedPaths].filter((path) => path.endsWith(".md")).sort();
+	for (const sourcePath of markdownPaths) {
+		let text;
+		try {
+			text = await readFile(resolve(cwd, sourcePath), "utf8");
+		} catch (error) {
+			failures.push(`Packed Markdown file ${sourcePath} could not be read for link verification: ${error instanceof Error ? error.message : String(error)}`);
+			continue;
+		}
+		for (const match of text.matchAll(MARKDOWN_LINK_PATTERN)) {
+			const rawTarget = match[1] ?? "";
+			const targetPath = normalizePackedMarkdownTarget(sourcePath, rawTarget);
+			if (!targetPath || !targetPath.startsWith("docs/") || packedPathExists(packedPaths, targetPath)) continue;
+			failures.push(`Packed Markdown link ${sourcePath} -> ${rawTarget} resolves to missing packed file ${targetPath}.`);
+		}
+	}
+	return failures;
 }
 
 export function pluralize(count, singular, plural = `${singular}s`) {
@@ -445,7 +497,13 @@ export async function verifyPackageRelease(options = {}) {
 	const missingRepoFiles = await collectMissingPaths(publishContract.requiredRepoFiles, cwd);
 	const forbiddenRepoFiles = await collectPresentPaths(publishContract.forbiddenRepoFiles, cwd);
 	const packResult = await getDryRunPackResult(cwd);
-	return evaluatePackResult({ forbiddenRepoFiles, missingRepoFiles, packResult, publishContract });
+	const report = evaluatePackResult({ forbiddenRepoFiles, missingRepoFiles, packResult, publishContract });
+	const packedMarkdownLinkFailures = await collectPackedMarkdownLinkFailures({ cwd, packedPaths: report.packedPaths });
+	return {
+		...report,
+		failures: [...report.failures, ...packedMarkdownLinkFailures],
+		packedMarkdownLinkFailures,
+	};
 }
 
 export async function verifyPackagedPiLoad(options = {}) {

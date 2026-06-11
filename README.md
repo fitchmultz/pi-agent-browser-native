@@ -17,7 +17,7 @@ Start here for install and common usage. For deeper work, use the active docs by
 | Release gates and targeted upstream support | [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md) |
 | Maintainer release process | [`docs/RELEASE.md`](docs/RELEASE.md) |
 
-The complete documentation ownership map is [`docs/SOURCE_OF_TRUTH.md`](docs/SOURCE_OF_TRUTH.md).
+The complete documentation ownership map lives in repo-local `docs/SOURCE_OF_TRUTH.md`.
 
 ## What this looks like in Pi
 

@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -25,6 +25,7 @@ interface PublishContract {
 const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 	FORBIDDEN_PACKED_FILES: string[];
 	FORBIDDEN_REPO_FILES: string[];
+	collectPackedMarkdownLinkFailures: (options: { cwd?: string; packedPaths: Set<string> }) => Promise<string[]>;
 	loadPublishContract: (options?: { cwd?: string }) => Promise<PublishContract>;
 	packToTemporaryPackageDir: (cwd?: string) => Promise<{
 		cleanup: () => Promise<void>;
@@ -79,6 +80,7 @@ const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 const {
 	FORBIDDEN_PACKED_FILES,
 	FORBIDDEN_REPO_FILES,
+	collectPackedMarkdownLinkFailures,
 	collectVerificationFailures,
 	evaluatePackResult,
 	evaluatePiSmokeResult,
@@ -257,6 +259,27 @@ test("loadPublishContract reports missing package.json files entries clearly", a
 	try {
 		await writeFile(join(tempDir, "package.json"), JSON.stringify({ files: ["missing.md"] }), "utf8");
 		await assert.rejects(() => loadPublishContract({ cwd: tempDir }), /package\.json files entry "missing\.md" does not exist/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("collectPackedMarkdownLinkFailures reports links to files absent from the packed tarball", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "packed-doc-links-test-"));
+	try {
+		await writeFile(join(tempDir, "README.md"), "[ok](docs/TOOL_CONTRACT.md) [missing](docs/support-notes.md) [anchor](#usage) [external](https://example.com)\n", "utf8");
+		await writeFile(join(tempDir, "CHANGELOG.md"), "[root](README.md)\n", "utf8");
+		await mkdir(join(tempDir, "docs"));
+		await writeFile(join(tempDir, "docs", "TOOL_CONTRACT.md"), "# Contract\n", "utf8");
+
+		const failures = await collectPackedMarkdownLinkFailures({
+			cwd: tempDir,
+			packedPaths: new Set(["README.md", "CHANGELOG.md", "docs/TOOL_CONTRACT.md"]),
+		});
+
+		assert.deepEqual(failures, [
+			"Packed Markdown link README.md -> docs/support-notes.md resolves to missing packed file docs/support-notes.md.",
+		]);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

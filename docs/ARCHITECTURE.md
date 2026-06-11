@@ -2,7 +2,6 @@
 
 Related docs:
 - [`../README.md`](../README.md)
-- [`SOURCE_OF_TRUTH.md`](SOURCE_OF_TRUTH.md)
 - [`../AGENTS.md`](../AGENTS.md) (maintainer workflows, including upstream capability baseline)
 - [`REQUIREMENTS.md`](REQUIREMENTS.md)
 - [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)
