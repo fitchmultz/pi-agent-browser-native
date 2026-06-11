@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Provide the small public npm-script facade for maintainer docs and verification workflows.
- * Responsibilities: Dispatch consolidated `npm run docs -- ...` and `npm run verify -- ...` commands to the underlying focused scripts, preserve exit codes, and print discoverable help. Default/release/docs verify step wiring is regression-locked in `test/project-verify.test.ts`.
+ * Responsibilities: Dispatch consolidated `npm run docs -- ...` and `npm run verify -- ...` commands to the underlying focused scripts, preserve exit codes, and print discoverable help. Default/pre-pr/release/docs verify step wiring is regression-locked in `test/project-verify.test.ts`.
  * Scope: Local maintainer orchestration only; individual verifier scripts continue to own their domain-specific checks.
  * Usage: Called from package.json scripts (`npm run docs`, `npm run verify -- package-pi`) or directly as `node scripts/project.mjs <docs|verify> ...`.
  * Invariants/Assumptions: `npm install` has populated local `node_modules/.bin` tools, and Pi/tmux are available in the maintainer environment only for lifecycle/package smoke modes.
@@ -72,6 +72,7 @@ Modes:
   default             Docs check, typecheck, unit tests, and live command-reference check (default).
   typecheck           Run TypeScript typecheck only.
   command-reference   Check generated command-reference block and live upstream help drift.
+  pre-pr              Run default verification plus package-content checks for larger local handoffs.
   benchmark           Run the deterministic agent-browser efficiency benchmark and focused tests.
   real-upstream       Run the opt-in real upstream browser contract suite (localhost fixtures, broad core commands).
   dogfood             Run a deterministic model-free live-browser smoke through the native tool wrapper.
@@ -98,6 +99,7 @@ Options:
 Examples:
   npm run verify
   npm run verify -- command-reference
+  npm run verify -- pre-pr
   npm run verify -- real-upstream
   npm run verify -- dogfood --keep-artifacts
   npm run verify -- package --list-files
@@ -203,6 +205,7 @@ export function parseVerifyArgs(argv) {
 		"default",
 		"typecheck",
 		"command-reference",
+		"pre-pr",
 		"benchmark",
 		"real-upstream",
 		"dogfood",
@@ -248,6 +251,7 @@ function validatePassthrough(mode, passthrough) {
 		default: new Set(),
 		typecheck: new Set(),
 		"command-reference": new Set(),
+		"pre-pr": new Set(),
 		benchmark: new Set(),
 		"real-upstream": new Set(),
 		dogfood: new Set(["--artifact-dir", "--keep-artifacts", "--json"]),
@@ -303,6 +307,11 @@ export function verifySteps(options) {
 			return [localToolStep("tsc", ["--noEmit"])];
 		case "command-reference":
 			return commandReferenceSteps();
+		case "pre-pr":
+			return [
+				...verifySteps({ mode: "default", passthrough: [], showHelp: false }),
+				...verifySteps({ mode: "package", passthrough: [], showHelp: false }),
+			];
 		case "benchmark":
 			return [
 				scriptStep(["./scripts/agent-browser-efficiency-benchmark.mjs", "--json"]),

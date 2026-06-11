@@ -1,6 +1,6 @@
 /**
  * Purpose: Lock the maintainer npm verification facade so queue/release gates do not silently drop required checks.
- * Responsibilities: Assert `npm run verify` orchestration keeps docs drift, typecheck, unit/fake tests, command-reference, real-upstream, package Pi smoke, platform-target, and platform smoke steps wired to their focused scripts.
+ * Responsibilities: Assert `npm run verify` orchestration keeps docs drift, typecheck, unit/fake tests, command-reference, pre-pr, real-upstream, package Pi smoke, platform-target, and platform smoke steps wired to their focused scripts.
  * Scope: Unit coverage for scripts/project.mjs command planning only; the focused scripts own their own runtime behavior.
  * Usage: Runs under `npm test` via tsx's test runner.
  * Invariants/Assumptions: The default gate is local and deterministic except for live command-reference sampling; real-upstream and platform diagnostics stay explicit modes while release composes the required platform gate.
@@ -38,6 +38,18 @@ test("verify facade default gate keeps docs, typecheck, unit/fake, and command-r
 		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
+	]);
+});
+
+test("verify facade pre-pr mode composes default verification with package-content checks", () => {
+	const steps = verifySteps({ mode: "pre-pr", passthrough: [], showHelp: false });
+	assert.deepEqual(labels(steps), [
+		"./scripts/check-playbook-drift.ts --check",
+		"--noEmit",
+		"--test --test-concurrency=1 test/**/*.test.ts",
+		"./scripts/check-command-reference-baseline.mjs --check",
+		"./scripts/verify-command-reference.mjs",
+		"./scripts/verify-package.mjs",
 	]);
 });
 
@@ -90,6 +102,10 @@ test("verify facade rejects unsupported options before running a partial gate", 
 	assert.throws(
 		() => verifySteps({ mode: "real-upstream", passthrough: ["--list-files"], showHelp: false }),
 		/Option --list-files is not supported for verify mode real-upstream/,
+	);
+	assert.throws(
+		() => verifySteps({ mode: "pre-pr", passthrough: ["--list-files"], showHelp: false }),
+		/Option --list-files is not supported for verify mode pre-pr/,
 	);
 	assert.throws(
 		() => verifySteps({ mode: "dogfood", passthrough: ["--artifact-dir"], showHelp: false }),

@@ -9,6 +9,7 @@
 - Split `browser-run/prepare.ts` concerns into focused direct-anchor download, network page-filter, and wait-timeout preparation modules while preserving the existing coordinator behavior.
 - Added a documentation source-of-truth map and moved implementation-deep support-matrix closure notes into maintainer notes so the active release checklist stays navigable.
 - Moved superseded implementation-plan and v1 contract drafts into `docs/archive/` with clear non-canonical archive guidance while keeping them out of the published package.
+- Added `npm run verify -- pre-pr` as a named local confidence gate that runs the default verification stack plus package-content checks without release-only lifecycle, platform, live dogfood, or benchmark cost.
 
 ### Fixed
 

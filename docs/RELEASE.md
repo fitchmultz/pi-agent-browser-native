@@ -32,6 +32,14 @@ npm run verify -- release
 
 `npm run doctor` is a read-only first-run diagnostic for PATH, targeted upstream version, the minimum Pi runtime floor, and duplicate package/checkout source conflicts. The package keeps Pi core imports as wildcard `peerDependencies` because installed Pi package docs require the host Pi install to provide those packages, while the doctor fails setup when `pi --version` is below the enforced floor. It does not replace upstream `agent-browser doctor` for browser runtime health and does not edit Pi settings.
 
+For PR-ready local confidence before release-only lifecycle and platform cost, run:
+
+```bash
+npm run verify -- pre-pr
+```
+
+`pre-pr` composes the default gate with `npm run verify -- package`: generated docs, TypeScript, the full unit/fake suite, live command-reference sampling, and package-content verification. It intentionally does not run lifecycle, packaged Pi smoke, Crabbox platform smoke, real-upstream, dogfood, or benchmark modes.
+
 `npm run verify -- release` runs:
 
 1. `npm run verify` for generated playbook drift, TypeScript, unit/fake coverage, command-reference generated-block drift, and live command-reference verification against the targeted upstream on `PATH`
@@ -148,7 +156,8 @@ Evaluator expectations after the queued Sauce Demo fixes: the agent should indep
 
 - **During development:** `npm run benchmark:agent-browser` prints a Markdown report; `npm run benchmark:agent-browser -- --json` saves machine-readable metrics; `npm run benchmark:agent-browser -- --compare path/to/prior.json` fails with exit code `1` on regressions (see the script’s `--help` for exit codes). Optional `--sample-jsonl path/to/session.jsonl` adds a `jsonlSample` section with real UTF-8 byte totals and per-workflow/overall p95 sizes for model-visible `agent_browser` tool-result text without changing deterministic scenario metrics; comparison ignores `jsonlSample` blocks.
 - **Default gate:** `npm run verify` checks generated playbook drift, runs `tsc --noEmit`, runs the full unit/fake suite under `test/**/*.test.ts` with Node test concurrency pinned to `1` (including [`test/agent-browser.efficiency-benchmark.test.ts`](../test/agent-browser.efficiency-benchmark.test.ts) for scenario coverage and comparison behavior), verifies generated command-reference baseline blocks, and samples live upstream command-reference tokens. It does not spawn the standalone benchmark script’s JSON/Markdown run; that is what the opt-in slice below adds.
-- **Opt-in slice:** `npm run verify -- benchmark` runs the benchmark script once with `--json` and then that same test module alone. It is intentionally **not** part of `npm run verify -- release`, so routine publish gates stay decoupled from benchmark churn while still allowing a focused check after editing scenarios or `CURRENT_BENCHMARK_VERSION`.
+- **Pre-PR gate:** `npm run verify -- pre-pr` runs the default gate plus `npm run verify -- package` for larger handoffs that need package-content confidence without lifecycle, platform, real-upstream, dogfood, or benchmark cost.
+- **Opt-in slice:** `npm run verify -- benchmark` runs the benchmark script once with `--json` and then that same test module alone. It is intentionally **not** part of `npm run verify -- pre-pr` or `npm run verify -- release`, so routine handoff and publish gates stay decoupled from benchmark churn while still allowing a focused check after editing scenarios or `CURRENT_BENCHMARK_VERSION`.
 
 Maintainer constraints for evolving scenarios and version bumps are summarized under “Agent browser efficiency benchmark” in [`../AGENTS.md`](../AGENTS.md).
 
