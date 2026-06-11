@@ -4,6 +4,21 @@ A Pi extension that lets coding agents drive real browser sessions with a native
 
 It is for Pi users who want agents to browse sites, inspect pages, click through flows, capture screenshots, use persistent profiles, and handle authenticated web apps without spending context on `agent-browser` CLI ceremony.
 
+## Source-of-truth map
+
+Start here for install and common usage. For deeper work, use the active docs by purpose:
+
+| Need | Read |
+| --- | --- |
+| Command workflows and upstream CLI coverage | [`docs/COMMAND_REFERENCE.md`](docs/COMMAND_REFERENCE.md) |
+| Native tool input/output contract and `details` fields | [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) |
+| Runtime design and package config policy | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Electron desktop lifecycle | [`docs/ELECTRON.md`](docs/ELECTRON.md) |
+| Release gates and targeted upstream support | [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md) |
+| Maintainer release process | [`docs/RELEASE.md`](docs/RELEASE.md) |
+
+The complete documentation ownership map is [`docs/SOURCE_OF_TRUTH.md`](docs/SOURCE_OF_TRUTH.md).
+
 ## What this looks like in Pi
 
 You prompt the agent in plain English:
