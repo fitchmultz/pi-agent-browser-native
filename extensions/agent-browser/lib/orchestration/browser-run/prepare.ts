@@ -1,10 +1,12 @@
-import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, extname, isAbsolute, resolve } from "node:path";
 
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
-import { getAgentBrowserProcessTimeoutMs } from "../../process.js";
+import { tryDirectAnchorDownload } from "./prepare/direct-anchor-download.js";
+import { tryNetworkRequestsPageFilter } from "./prepare/network-page-filter.js";
+import { getWaitAwareProcessTimeoutMs } from "./prepare/wait-timeouts.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { buildSnapshotPresentation } from "../../results/snapshot.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
@@ -50,7 +52,6 @@ import type {
 	StaleRefPreflight,
 } from "./types.js";
 
-const DIRECT_ANCHOR_DOWNLOAD_MAX_BYTES = 2 * 1024 * 1024;
 const SCREENSHOT_VALUE_FLAGS = new Set(["--screenshot-dir", "--screenshot-format", "--screenshot-quality"]);
 const SCREENSHOT_IMAGE_EXTENSIONS = new Set([".jpeg", ".jpg", ".png", ".webp"]);
 
@@ -137,123 +138,6 @@ async function ensureArtifactParentDirectory(commandTokens: string[], cwd: strin
 	const requestedPath = commandTokens[pathIndex];
 	if (!requestedPath) return;
 	await mkdir(dirname(resolve(cwd, requestedPath)), { recursive: true });
-}
-
-function getDirectDownloadRequest(commandTokens: string[]): { path: string; selector: string } | undefined {
-	if (commandTokens[0] !== "download" || commandTokens.length !== 3) return undefined;
-	const selector = commandTokens[1];
-	const path = commandTokens[2];
-	if (!selector || !path || selector.startsWith("@")) return undefined;
-	return { path, selector };
-}
-
-function buildAnchorDownloadProbe(selector: string): string {
-	return `(async () => {\n  const selector = ${JSON.stringify(selector)};\n  const maxBytes = ${DIRECT_ANCHOR_DOWNLOAD_MAX_BYTES};\n  const isLoopbackHttpUrl = (url) => (url.protocol === "http:" || url.protocol === "https:") && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]");\n  const element = document.querySelector(selector);\n  const anchor = element?.closest?.("a[href]");\n  const pageUrl = location.href;\n  const page = new URL(pageUrl);\n  if (!anchor) return { status: "no-anchor", pageUrl };\n  const href = anchor.href;\n  const anchorUrl = new URL(href, pageUrl);\n  if (!isLoopbackHttpUrl(page)) return { download: anchor.getAttribute("download") || "", href, pageUrl, status: "not-loopback-page" };\n  if (anchorUrl.origin !== page.origin) return { download: anchor.getAttribute("download") || "", href, pageUrl, status: "not-same-origin" };\n  if (!isLoopbackHttpUrl(anchorUrl)) return { download: anchor.getAttribute("download") || "", href, pageUrl, status: "not-loopback-href" };\n  const response = await fetch(anchorUrl.href, { credentials: "include", redirect: "manual" });\n  if (!response.ok) return { download: anchor.getAttribute("download") || "", href, pageUrl, responseUrl: response.url, status: "fetch-failed", statusCode: response.status };\n  const responseUrl = new URL(response.url);\n  if (!isLoopbackHttpUrl(responseUrl) || responseUrl.origin !== page.origin) return { download: anchor.getAttribute("download") || "", href, pageUrl, responseUrl: response.url, status: "not-loopback-response" };\n  const buffer = await response.arrayBuffer();\n  if (buffer.byteLength > maxBytes) return { download: anchor.getAttribute("download") || "", href, pageUrl, responseUrl: response.url, sizeBytes: buffer.byteLength, status: "too-large" };\n  const bytes = new Uint8Array(buffer);\n  let binary = "";\n  for (let index = 0; index < bytes.length; index += 32768) binary += String.fromCharCode(...bytes.subarray(index, index + 32768));\n  return { bodyBase64: btoa(binary), contentType: response.headers.get("content-type") || "", download: anchor.getAttribute("download") || "", href, pageUrl, responseUrl: response.url, sizeBytes: buffer.byteLength, status: "fetched-anchor" };\n})()`;
-}
-
-function isLoopbackHttpUrl(url: URL): boolean {
-	return (url.protocol === "http:" || url.protocol === "https:") && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]");
-}
-
-async function tryDirectAnchorDownload(options: {
-	commandTokens: string[];
-	compatibilityWorkaround?: CompatibilityWorkaround;
-	cwd: string;
-	effectiveArgs: string[];
-	redactedArgs: string[];
-	sessionMode: "auto" | "fresh";
-	sessionName?: string;
-	signal?: AbortSignal;
-	usedImplicitSession: boolean;
-}): Promise<AgentBrowserToolResult | undefined> {
-	const request = getDirectDownloadRequest(options.commandTokens);
-	if (!request || !options.sessionName) return undefined;
-	try {
-		const probeData = await runSessionCommandData({
-			args: ["eval", "--stdin"],
-			cwd: options.cwd,
-			sessionName: options.sessionName,
-			signal: options.signal,
-			stdin: buildAnchorDownloadProbe(request.selector),
-		});
-		const probe = isRecord(probeData) && isRecord(probeData.result) ? probeData.result : probeData;
-		if (!isRecord(probe) || probe.status !== "fetched-anchor" || typeof probe.href !== "string" || typeof probe.pageUrl !== "string" || typeof probe.bodyBase64 !== "string") return undefined;
-		const href = new URL(probe.href);
-		const pageUrl = new URL(probe.pageUrl);
-		const responseUrl = typeof probe.responseUrl === "string" ? new URL(probe.responseUrl) : href;
-		if (!isLoopbackHttpUrl(pageUrl) || !isLoopbackHttpUrl(href) || !isLoopbackHttpUrl(responseUrl) || href.origin !== pageUrl.origin || responseUrl.origin !== pageUrl.origin) return undefined;
-		const body = Buffer.from(probe.bodyBase64, "base64");
-		if (body.byteLength > DIRECT_ANCHOR_DOWNLOAD_MAX_BYTES) return undefined;
-		if (typeof probe.sizeBytes === "number" && probe.sizeBytes !== body.byteLength) return undefined;
-		const absolutePath = resolve(options.cwd, request.path);
-		await mkdir(dirname(absolutePath), { recursive: true });
-		await writeFile(absolutePath, body);
-		const fileStat = await stat(absolutePath);
-		const mediaType = typeof probe.contentType === "string" && probe.contentType.length > 0 ? probe.contentType : undefined;
-		const artifact = {
-			absolutePath,
-			artifactType: "download" as const,
-			command: "download",
-			cwd: options.cwd,
-			exists: true,
-			kind: "download" as const,
-			mediaType,
-			path: absolutePath,
-			requestedPath: request.path,
-			session: options.sessionName,
-			sizeBytes: fileStat.size,
-			status: "saved" as const,
-		};
-		const artifactVerification = {
-			artifacts: [{
-				absolutePath,
-				exists: true,
-				kind: "download" as const,
-				mediaType,
-				path: absolutePath,
-				requestedPath: request.path,
-				sizeBytes: fileStat.size,
-				state: "verified" as const,
-				status: "saved" as const,
-			}],
-			missingCount: 0,
-			pendingCount: 0,
-			unverifiedCount: 0,
-			verified: true,
-			verifiedCount: 1,
-		};
-		const savedFile = { command: "download" as const, kind: "download" as const, metadata: { download: probe.download, href: redactSensitiveText(href.href), method: "direct-anchor-fetch" }, path: absolutePath };
-		return {
-			content: [{
-				type: "text",
-				text: [
-					`Download completed: ${absolutePath}`,
-					`Requested path: ${request.path}`,
-					`Source: ${redactSensitiveText(href.href)}`,
-					`Size: ${fileStat.size} bytes`,
-					"Method: direct anchor fetch before upstream download fallback.",
-				].join("\n"),
-			}],
-			details: {
-				args: options.redactedArgs,
-				artifacts: [artifact],
-				artifactVerification,
-				command: "download",
-				compatibilityWorkaround: options.compatibilityWorkaround,
-				downloadRecovery: { href: redactSensitiveText(href.href), method: "direct-anchor-fetch", selector: request.selector },
-				effectiveArgs: options.effectiveArgs,
-				savedFile,
-				savedFilePath: absolutePath,
-				sessionMode: options.sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ artifacts: [artifact], args: options.effectiveArgs, command: "download", savedFile, succeeded: true }),
-				...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
-				summary: `Download completed: ${absolutePath}`,
-			},
-			isError: false,
-		};
-	} catch {
-		return undefined;
-	}
 }
 
 async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: string): Promise<{
@@ -376,67 +260,6 @@ async function repairScreenshotData(options: {
 }
 
 export { repairScreenshotData };
-
-function parseMillisecondsToken(token: string | undefined): number | undefined {
-	if (token === undefined || !/^\d+$/.test(token)) {
-		return undefined;
-	}
-	const parsed = Number(token);
-	return Number.isSafeInteger(parsed) ? parsed : undefined;
-}
-
-function findWaitTimeoutMs(commandTokens: string[]): { timeoutMs: number; source: string } | undefined {
-	if (commandTokens[0] !== "wait") {
-		return undefined;
-	}
-	for (let index = 1; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
-		if (token === "--timeout") {
-			const timeoutMs = parseMillisecondsToken(commandTokens[index + 1]);
-			return timeoutMs === undefined ? undefined : { source: "wait --timeout", timeoutMs };
-		}
-		if (token.startsWith("--timeout=")) {
-			const timeoutMs = parseMillisecondsToken(token.slice("--timeout=".length));
-			return timeoutMs === undefined ? undefined : { source: "wait --timeout", timeoutMs };
-		}
-	}
-	const firstWaitArgument = commandTokens[1];
-	if (firstWaitArgument && !firstWaitArgument.startsWith("-")) {
-		const timeoutMs = parseMillisecondsToken(firstWaitArgument);
-		if (timeoutMs !== undefined) {
-			return { source: "wait", timeoutMs };
-		}
-	}
-	return undefined;
-}
-
-const WAIT_PROCESS_TIMEOUT_GRACE_MS = 5_000;
-
-function findWaitTimeoutBudgetMs(commandTokens: string[], stdin: string | undefined): number | undefined {
-	const directWaitTimeout = findWaitTimeoutMs(commandTokens);
-	if (directWaitTimeout) {
-		return directWaitTimeout.timeoutMs;
-	}
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
-		return undefined;
-	}
-	let batchWaitTimeoutTotal = 0;
-	for (const { step } of parseValidBatchStepEntries(stdin)) {
-		const waitTimeout = findWaitTimeoutMs(step);
-		if (waitTimeout) {
-			batchWaitTimeoutTotal += waitTimeout.timeoutMs;
-		}
-	}
-	return batchWaitTimeoutTotal === 0 ? undefined : batchWaitTimeoutTotal;
-}
-
-function getWaitAwareProcessTimeoutMs(commandTokens: string[], stdin: string | undefined): number | undefined {
-	const waitTimeoutBudgetMs = findWaitTimeoutBudgetMs(commandTokens, stdin);
-	if (waitTimeoutBudgetMs === undefined) return undefined;
-	const neededTimeoutMs = waitTimeoutBudgetMs + WAIT_PROCESS_TIMEOUT_GRACE_MS;
-	const defaultProcessTimeoutMs = getAgentBrowserProcessTimeoutMs();
-	return neededTimeoutMs > defaultProcessTimeoutMs ? neededTimeoutMs : undefined;
-}
 
 const DIALOG_COMMAND_PROCESS_TIMEOUT_MS = 5_000;
 const DIALOG_COMMAND_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS";
@@ -818,116 +641,6 @@ async function trySnapshotFilter(options: {
 			snapshotFilter: request.role || request.search ? { cleanArgs: request.cleanArgs, matchedRefs: filtered.matchedRefs, role: request.role, search: request.search, totalLines: filtered.totalLines, totalRefs: filtered.totalRefs, visibleLines: filtered.visibleLines } : undefined,
 			snapshotViewport: viewport,
 			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "snapshot", succeeded: true }),
-			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
-			summary,
-		},
-		isError: false,
-	};
-}
-
-interface NetworkRequestsPageFilterRequest {
-	cleanArgs: string[];
-	mode: "origin" | "url";
-}
-
-function parseNetworkRequestsPageFilterRequest(commandTokens: string[]): NetworkRequestsPageFilterRequest | undefined {
-	if (commandTokens[0] !== "network" || commandTokens[1] !== "requests") return undefined;
-	const cleanArgs: string[] = [];
-	let mode: NetworkRequestsPageFilterRequest["mode"] | undefined;
-	for (const token of commandTokens) {
-		if (token === "--current-page" || token === "--current-origin") {
-			mode = "origin";
-			continue;
-		}
-		if (token === "--current-url") {
-			mode = "url";
-			continue;
-		}
-		cleanArgs.push(token);
-	}
-	if (!mode) return undefined;
-	return { cleanArgs, mode };
-}
-
-function extractCurrentUrl(data: unknown): string | undefined {
-	if (typeof data === "string") return data;
-	if (!isRecord(data)) return undefined;
-	const candidates = [data.url, data.currentUrl, data.href, data.result];
-	for (const candidate of candidates) if (typeof candidate === "string" && candidate.length > 0) return candidate;
-	return undefined;
-}
-
-function getRequestUrl(row: unknown): string | undefined {
-	if (!isRecord(row)) return undefined;
-	const candidate = row.url ?? row.requestUrl ?? row.href;
-	return typeof candidate === "string" ? candidate : undefined;
-}
-
-function requestMatchesCurrentPage(row: unknown, currentUrl: string, mode: NetworkRequestsPageFilterRequest["mode"]): boolean {
-	const requestUrl = getRequestUrl(row);
-	if (!requestUrl) return false;
-	try {
-		const current = new URL(currentUrl);
-		const request = new URL(requestUrl, current);
-		if (mode === "origin") return current.origin === request.origin;
-		const currentComparable = `${current.origin}${current.pathname}`;
-		const requestComparable = `${request.origin}${request.pathname}`;
-		return requestComparable === currentComparable;
-	} catch {
-		return mode === "url" ? requestUrl === currentUrl : requestUrl.startsWith(currentUrl);
-	}
-}
-
-function filterNetworkRequestsData(data: unknown, currentUrl: string, request: NetworkRequestsPageFilterRequest): { data: Record<string, unknown>; matchedRows: number; totalRows: number; rows: unknown[] } | undefined {
-	if (!isRecord(data)) return undefined;
-	const requestRows = Array.isArray(data.requests) ? data.requests : Array.isArray(data.items) ? data.items : Array.isArray(data.entries) ? data.entries : undefined;
-	if (!requestRows) return undefined;
-	const rows = requestRows.filter((row) => requestMatchesCurrentPage(row, currentUrl, request.mode));
-	const key = Array.isArray(data.requests) ? "requests" : Array.isArray(data.items) ? "items" : "entries";
-	return { data: { ...data, [key]: rows }, matchedRows: rows.length, rows, totalRows: requestRows.length };
-}
-
-function formatNetworkRequestRow(row: unknown): string {
-	if (!isRecord(row)) return redactSensitiveText(String(row));
-	const status = row.status ?? row.statusCode ?? row.responseStatus ?? "?";
-	const method = typeof row.method === "string" ? row.method : typeof row.requestMethod === "string" ? row.requestMethod : "?";
-	const id = typeof row.id === "string" ? ` id=${row.id}` : typeof row.requestId === "string" ? ` id=${row.requestId}` : "";
-	const url = getRequestUrl(row) ?? "(no url)";
-	return redactSensitiveText(`- ${status} ${method}${id} ${url}`);
-}
-
-async function tryNetworkRequestsPageFilter(options: {
-	commandTokens: string[];
-	compatibilityWorkaround?: CompatibilityWorkaround;
-	cwd: string;
-	effectiveArgs: string[];
-	redactedArgs: string[];
-	sessionMode: "auto" | "fresh";
-	sessionName?: string;
-	signal?: AbortSignal;
-	usedImplicitSession: boolean;
-}): Promise<AgentBrowserToolResult | undefined> {
-	const request = parseNetworkRequestsPageFilterRequest(options.commandTokens);
-	if (!request || !options.sessionName) return undefined;
-	const currentUrl = extractCurrentUrl(await runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal }));
-	if (!currentUrl) return undefined;
-	const networkData = await runSessionCommandData({ args: request.cleanArgs, cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
-	const filtered = filterNetworkRequestsData(networkData, currentUrl, request);
-	if (!filtered) return undefined;
-	const summary = `Network requests filtered to current ${request.mode === "origin" ? "origin" : "URL"}: ${filtered.matchedRows}/${filtered.totalRows} rows matched.`;
-	const preview = filtered.rows.slice(0, 12).map(formatNetworkRequestRow);
-	const omitted = filtered.rows.length > preview.length ? [`- …${filtered.rows.length - preview.length} more matching rows omitted`] : [];
-	return {
-		content: [{ type: "text", text: [redactSensitiveText(summary), `Current page: ${redactSensitiveText(currentUrl)}`, ...preview, ...omitted].join("\n") }],
-		details: {
-			args: options.redactedArgs,
-			command: "network",
-			compatibilityWorkaround: options.compatibilityWorkaround,
-			data: filtered.data,
-			effectiveArgs: options.effectiveArgs,
-			networkRequestsPageFilter: { cleanArgs: request.cleanArgs, currentUrl: redactSensitiveText(currentUrl), matchedRows: filtered.matchedRows, mode: request.mode, totalRows: filtered.totalRows },
-			sessionMode: options.sessionMode,
-			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "network", succeeded: true }),
 			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
 			summary,
 		},

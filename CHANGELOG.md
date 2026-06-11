@@ -6,6 +6,7 @@
 
 - Rebaselined the upstream capability metadata, command reference, support matrix, and real-upstream contract metadata for `agent-browser` `0.27.2` after reviewing the upstream changelog.
 - Forward explicit long `wait <ms>` / `wait --timeout <ms>` calls now that upstream `agent-browser` `0.27.2` fixes wait timeout and client read-budget handling; the wrapper derives a longer subprocess watchdog when the caller does not provide top-level `timeoutMs`.
+- Split `browser-run/prepare.ts` concerns into focused direct-anchor download, network page-filter, and wait-timeout preparation modules while preserving the existing coordinator behavior.
 
 ### Fixed
 
