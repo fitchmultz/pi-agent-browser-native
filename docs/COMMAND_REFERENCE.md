@@ -819,7 +819,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
 - `-p, --provider <name>`: provider such as `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.
 - `--device <name>`: iOS device name. Environment: `AGENT_BROWSER_IOS_DEVICE`.
-- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash. iOS requires external Xcode/Appium setup, and cloud providers (`browserbase`, `kernel`, `browseruse`, `browserless`, `agentcore`) require their upstream accounts, credentials, and provider-specific environment variables. Common forwarded provider variables include `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSERLESS_API_KEY`, `BROWSERLESS_API_URL`, `BROWSERLESS_BROWSER_TYPE`, `BROWSERLESS_STEALTH`, `BROWSERLESS_TTL`, `BROWSER_USE_API_KEY`, `KERNEL_API_KEY`, `KERNEL_HEADLESS`, `KERNEL_STEALTH`, `KERNEL_TIMEOUT_SECONDS`, `KERNEL_PROFILE_NAME`, `AGENTCORE_API_KEY`, `AGENTCORE_REGION`, `AGENTCORE_BROWSER_ID`, `AGENTCORE_PROFILE_ID`, `AGENTCORE_SESSION_TIMEOUT`, plus AWS names used by AgentCore such as `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. The wrapper forwards provider flags/env and stays thin; it does not emulate provider setup or cloud browser behavior.
+- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash. iOS requires external Xcode/Appium setup, and cloud providers (`browserbase`, `kernel`, `browseruse`, `browserless`, `agentcore`) require their upstream accounts, credentials, and provider-specific environment variables. Common forwarded provider variables include `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSERLESS_API_KEY`, `BROWSERLESS_API_URL`, `BROWSERLESS_BROWSER_TYPE`, `BROWSERLESS_STEALTH`, `BROWSERLESS_TTL`, `BROWSER_USE_API_KEY`, `KERNEL_API_KEY`, `KERNEL_HEADLESS`, `KERNEL_STEALTH`, `KERNEL_TIMEOUT_SECONDS`, `KERNEL_PROFILE_NAME`, `AGENTCORE_API_KEY`, `AGENTCORE_REGION`, `AGENTCORE_BROWSER_ID`, `AGENTCORE_PROFILE_ID`, `AGENTCORE_SESSION_TIMEOUT`, plus AWS names used by AgentCore such as `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, and `AWS_DEFAULT_REGION`. The wrapper forwards provider flags/env and stays thin; it does not emulate provider setup or cloud browser behavior.
 - `--model <name>`: AI model for `chat`. Environment: `AI_GATEWAY_MODEL`.
 - `-v, --verbose`: show tool commands and raw output.
 - `-q, --quiet`: show only AI text responses.
@@ -936,7 +936,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - Sessions, state, tabs, frames, dialogs, and windows: 20 human-doc token(s), 16 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 43 human-doc token(s), 53 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 24 human-doc token(s), 24 upstream token(s)
-- Global flags, config, providers, policy, and environment: 117 human-doc token(s), 90 upstream token(s)
+- Global flags, config, providers, policy, and environment: 120 human-doc token(s), 90 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1241,6 +1241,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AWS_PROFILE`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
+- `AWS_SESSION_TOKEN`
+- `AWS_REGION`
+- `AWS_DEFAULT_REGION`
 
 #### Upstream help tokens expected
 ##### Built-in skills

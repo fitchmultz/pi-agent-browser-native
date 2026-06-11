@@ -603,7 +603,10 @@ const envelope = {
     aiGatewayApiKey: readEnv("AI_GATEWAY_API_KEY"),
     aiGatewayModel: readEnv("AI_GATEWAY_MODEL"),
     awsAccessKeyId: readEnv("AWS_ACCESS_KEY_ID"),
+    awsDefaultRegion: readEnv("AWS_DEFAULT_REGION"),
+    awsRegion: readEnv("AWS_REGION"),
     awsSecretAccessKey: readEnv("AWS_SECRET_ACCESS_KEY"),
+    awsSessionToken: readEnv("AWS_SESSION_TOKEN"),
     browserbaseApiKey: readEnv("BROWSERBASE_API_KEY"),
     browserbaseProjectId: readEnv("BROWSERBASE_PROJECT_ID"),
     browserlessApiKey: readEnv("BROWSERLESS_API_KEY"),
@@ -641,7 +644,10 @@ process.stdout.write(JSON.stringify(envelope));`,
 				AI_GATEWAY_API_KEY: "ai-gateway-key",
 				AI_GATEWAY_MODEL: "anthropic/test-model",
 				AWS_ACCESS_KEY_ID: "aws-access-key-id",
+				AWS_DEFAULT_REGION: "us-east-1",
+				AWS_REGION: "us-west-2",
 				AWS_SECRET_ACCESS_KEY: "aws-secret-access-key",
+				AWS_SESSION_TOKEN: "aws-session-token",
 				BROWSERBASE_API_KEY: "browserbase-key",
 				BROWSERBASE_PROJECT_ID: "browserbase-project",
 				BROWSERLESS_API_KEY: "browserless-key",
@@ -682,7 +688,10 @@ process.stdout.write(JSON.stringify(envelope));`,
 					aiGatewayApiKey: string | null;
 					aiGatewayModel: string | null;
 					awsAccessKeyId: string | null;
+					awsDefaultRegion: string | null;
+					awsRegion: string | null;
 					awsSecretAccessKey: string | null;
+					awsSessionToken: string | null;
 					browserbaseApiKey: string | null;
 					browserbaseProjectId: string | null;
 					browserlessApiKey: string | null;
@@ -712,7 +721,10 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.aiGatewayApiKey, "ai-gateway-key");
 				assert.equal(data.aiGatewayModel, "anthropic/test-model");
 				assert.equal(data.awsAccessKeyId, "aws-access-key-id");
+				assert.equal(data.awsDefaultRegion, "us-east-1");
+				assert.equal(data.awsRegion, "us-west-2");
 				assert.equal(data.awsSecretAccessKey, "aws-secret-access-key");
+				assert.equal(data.awsSessionToken, "aws-session-token");
 				assert.equal(data.browserbaseApiKey, "browserbase-key");
 				assert.equal(data.browserbaseProjectId, "browserbase-project");
 				assert.equal(data.browserlessApiKey, "browserless-key");
