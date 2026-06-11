@@ -25,7 +25,7 @@ interface PublishContract {
 const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 	FORBIDDEN_PACKED_FILES: string[];
 	FORBIDDEN_REPO_FILES: string[];
-	collectPackedMarkdownLinkFailures: (options: { cwd?: string; packedPaths: Set<string> }) => Promise<string[]>;
+	collectPackedDocsMarkdownLinkFailures: (options: { cwd?: string; packedPaths: Set<string> }) => Promise<string[]>;
 	loadPublishContract: (options?: { cwd?: string }) => Promise<PublishContract>;
 	packToTemporaryPackageDir: (cwd?: string) => Promise<{
 		cleanup: () => Promise<void>;
@@ -80,7 +80,7 @@ const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 const {
 	FORBIDDEN_PACKED_FILES,
 	FORBIDDEN_REPO_FILES,
-	collectPackedMarkdownLinkFailures,
+	collectPackedDocsMarkdownLinkFailures,
 	collectVerificationFailures,
 	evaluatePackResult,
 	evaluatePiSmokeResult,
@@ -264,7 +264,7 @@ test("loadPublishContract reports missing package.json files entries clearly", a
 	}
 });
 
-test("collectPackedMarkdownLinkFailures reports links to files absent from the packed tarball", async () => {
+test("collectPackedDocsMarkdownLinkFailures reports docs links absent from the packed tarball", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "packed-doc-links-test-"));
 	try {
 		await writeFile(join(tempDir, "README.md"), "[ok](docs/TOOL_CONTRACT.md) [missing](docs/support-notes.md) [anchor](#usage) [external](https://example.com)\n", "utf8");
@@ -272,13 +272,13 @@ test("collectPackedMarkdownLinkFailures reports links to files absent from the p
 		await mkdir(join(tempDir, "docs"));
 		await writeFile(join(tempDir, "docs", "TOOL_CONTRACT.md"), "# Contract\n", "utf8");
 
-		const failures = await collectPackedMarkdownLinkFailures({
+		const failures = await collectPackedDocsMarkdownLinkFailures({
 			cwd: tempDir,
 			packedPaths: new Set(["README.md", "CHANGELOG.md", "docs/TOOL_CONTRACT.md"]),
 		});
 
 		assert.deepEqual(failures, [
-			"Packed Markdown link README.md -> docs/support-notes.md resolves to missing packed file docs/support-notes.md.",
+			"Packed Markdown link README.md -> docs/support-notes.md resolves to missing packed docs file docs/support-notes.md.",
 		]);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
