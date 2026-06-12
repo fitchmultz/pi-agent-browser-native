@@ -26,6 +26,10 @@ const LARGE_OUTPUT_PREVIEW_MAX_CHARS = 2_500;
 
 const LARGE_OUTPUT_PREVIEW_MAX_LINES = 40;
 
+const LARGE_OUTPUT_PREVIEW_MAX_LINE_CHARS = 240;
+
+const LARGE_OUTPUT_FAILURE_COMMAND_MAX_CHARS = 240;
+
 const LARGE_OUTPUT_FILE_PREFIX = "pi-agent-browser-output";
 
 function shouldCompactLargeOutput(text: string): boolean {
@@ -41,7 +45,7 @@ function buildLargeOutputPreview(text: string): { omittedLineCount: number; prev
 			break;
 		}
 		const remainingChars = LARGE_OUTPUT_PREVIEW_MAX_CHARS - previewChars;
-		const previewLine = truncateText(line, Math.max(40, remainingChars));
+		const previewLine = truncateText(line, Math.min(Math.max(40, remainingChars), LARGE_OUTPUT_PREVIEW_MAX_LINE_CHARS));
 		previewLines.push(previewLine);
 		previewChars += previewLine.length + 1;
 	}
@@ -49,6 +53,24 @@ function buildLargeOutputPreview(text: string): { omittedLineCount: number; prev
 		omittedLineCount: Math.max(0, lines.length - previewLines.length),
 		previewText: previewLines.join("\n"),
 	};
+}
+
+function buildLargeOutputFailureContext(presentation: ToolPresentation): string[] {
+	const failure = presentation.batchFailure;
+	if (!failure) return [];
+	const failedStep = failure.failedStep;
+	const commandText = truncateText(failedStep.commandText, LARGE_OUTPUT_FAILURE_COMMAND_MAX_CHARS);
+	const lines = [
+		"Failure context:",
+		`- First failing step: ${failedStep.index + 1} — ${commandText}`,
+		`- Batch result: ${failure.successCount}/${failure.totalCount} succeeded${failure.failureCount > 1 ? `; ${failure.failureCount} failed` : ""}`,
+	];
+	if (failedStep.failureCategory) lines.push(`- Failure category: ${failedStep.failureCategory}`);
+	const failureText = (failedStep.text || failedStep.summary).replace(/\s+/g, " ").trim();
+	if (failureText) lines.push(`- Failure detail: ${truncateText(failureText, 700)}`);
+	const stepPaths = [failedStep.fullOutputPath, ...(failedStep.fullOutputPaths ?? [])].filter((path, index, paths): path is string => typeof path === "string" && path.length > 0 && paths.indexOf(path) === index);
+	if (stepPaths.length > 0) lines.push(`- Failed-step spill path${stepPaths.length === 1 ? "" : "s"}: ${stepPaths.join(", ")}`);
+	return lines;
 }
 
 interface LargeOutputSpillWriteResult {
@@ -132,8 +154,10 @@ export async function compactLargePresentationOutput(options: {
 
 	const { omittedLineCount, previewText } = buildLargeOutputPreview(text);
 	const commandLabel = options.commandInfo.command ?? "agent-browser";
+	const failureContext = buildLargeOutputFailureContext(options.presentation);
 	const lines = [
 		`Large ${commandLabel} output compacted.`,
+		...(failureContext.length > 0 ? ["", ...failureContext] : []),
 		"",
 		"Preview:",
 		previewText,

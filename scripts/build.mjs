@@ -18,7 +18,7 @@ const binSuffix = process.platform === "win32" ? ".cmd" : "";
 const tscPath = join(process.cwd(), "node_modules", ".bin", `tsc${binSuffix}`);
 
 async function main() {
-	await rm(join(process.cwd(), "dist"), { force: true, recursive: true });
+	await rm(join(process.cwd(), "dist"), { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	const options = process.platform === "win32" ? { shell: true } : {};
 	try {
 		const { stderr, stdout } = await execFile(tscPath, ["-p", "tsconfig.build.json"], {

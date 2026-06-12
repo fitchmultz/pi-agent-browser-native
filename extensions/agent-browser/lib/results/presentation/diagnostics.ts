@@ -141,6 +141,10 @@ export function enrichStreamStatusData(commandInfo: CommandInfo, data: unknown):
 	};
 }
 
+function isClearDiagnosticCommand(commandInfo: CommandInfo): boolean {
+	return commandInfo.subcommand === "--clear" || commandInfo.commandTokens?.includes("--clear") === true;
+}
+
 export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
 	if (commandInfo.command === "session") {
 		const sessions = getArrayField(data, "sessions");
@@ -202,7 +206,7 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 	if (commandInfo.command === "network") {
 		if (commandInfo.subcommand === "requests") {
 			const requests = getArrayField(data, "requests");
-			if (requests) return `Network requests: ${requests.length}`;
+			if (requests) return isClearDiagnosticCommand(commandInfo) ? `Network requests reset: ${requests.length} cleared` : `Network requests: ${requests.length}`;
 		}
 		if (commandInfo.subcommand === "route") {
 			const routed = getStringField(data, "routed") ?? getStringField(data, "url") ?? getStringField(data, "pattern");
@@ -245,12 +249,12 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 
 	if (commandInfo.command === "console") {
 		const messages = getArrayField(data, "messages");
-		if (messages) return `Console messages: ${messages.length}`;
+		if (messages) return isClearDiagnosticCommand(commandInfo) ? `Console reset: ${messages.length} cleared` : `Console messages: ${messages.length}`;
 	}
 
 	if (commandInfo.command === "errors") {
 		const errors = getArrayField(data, "errors");
-		if (errors) return `Page errors: ${errors.length}`;
+		if (errors) return isClearDiagnosticCommand(commandInfo) ? `Page errors reset: ${errors.length} cleared` : `Page errors: ${errors.length}`;
 	}
 
 	if (commandInfo.command === "dashboard") {
@@ -360,9 +364,14 @@ function formatNetworkRequestLine(item: Record<string, unknown>, index: number):
 	return lines;
 }
 
-function formatNetworkRequestsText(data: Record<string, unknown>): string | undefined {
+function formatNetworkRequestsText(data: Record<string, unknown>, commandInfo: CommandInfo): string | undefined {
 	const requests = getArrayField(data, "requests");
 	if (!requests) return undefined;
+	if (isClearDiagnosticCommand(commandInfo)) {
+		return requests.length === 0
+			? "Network request buffer cleared; no prior request rows were returned. This reset output is not evidence of current-page network activity."
+			: `Network request buffer cleared; upstream returned ${requests.length} cleared/stale row${requests.length === 1 ? "" : "s"}. Treat these as reset output, not current-page request failures.`;
+	}
 	if (requests.length === 0) return "No network requests captured. Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page.";
 	const shown = ["Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page; do not attribute old requests to the current page without URL/time evidence."];
 	const indexedRequests = requests.map((item, index) => ({ index, item }));
@@ -600,9 +609,14 @@ export function buildStreamNextActions(commandInfo: CommandInfo, data: unknown, 
 	];
 }
 
-function formatConsoleText(data: Record<string, unknown>): string | undefined {
+function formatConsoleText(data: Record<string, unknown>, commandInfo: CommandInfo): string | undefined {
 	const messages = getArrayField(data, "messages");
 	if (!messages) return undefined;
+	if (isClearDiagnosticCommand(commandInfo)) {
+		return messages.length === 0
+			? "Console buffer cleared; no prior message rows were returned. This reset output is not evidence of current-page console activity."
+			: `Console buffer cleared; upstream returned ${messages.length} cleared/stale message row${messages.length === 1 ? "" : "s"}. Treat these as reset output, not current-page console errors.`;
+	}
 	if (messages.length === 0) return "No console messages. Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page.";
 	const shown = ["Scope: upstream session aggregate unless the upstream command output says it was cleared or filtered for this page; do not attribute old messages to the current page without URL/time evidence."];
 	shown.push(...messages.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
@@ -618,9 +632,14 @@ function formatConsoleText(data: Record<string, unknown>): string | undefined {
 	return shown.join("\n");
 }
 
-function formatErrorsText(data: Record<string, unknown>): string | undefined {
+function formatErrorsText(data: Record<string, unknown>, commandInfo: CommandInfo): string | undefined {
 	const errors = getArrayField(data, "errors");
 	if (!errors) return undefined;
+	if (isClearDiagnosticCommand(commandInfo)) {
+		return errors.length === 0
+			? "Page error buffer cleared; no prior error rows were returned. This reset output is not evidence of current-page errors."
+			: `Page error buffer cleared; upstream returned ${errors.length} cleared/stale error row${errors.length === 1 ? "" : "s"}. Treat these as reset output, not current-page errors.`;
+	}
 	if (errors.length === 0) return "No page errors.";
 	const shown = errors.slice(0, DIAGNOSTIC_LOG_PREVIEW_LIMIT).map((item, index) => {
 		if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
@@ -897,7 +916,7 @@ export function formatDiagnosticText(commandInfo: CommandInfo, data: Record<stri
 	if (commandInfo.command === "dialog") return formatDialogText(data);
 	if (commandInfo.command === "frame") return formatFrameText(data);
 	if (commandInfo.command === "state") return formatStateText(data);
-	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") return formatNetworkRequestsText(data);
+	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") return formatNetworkRequestsText(data, commandInfo);
 	if (commandInfo.command === "network" && commandInfo.subcommand === "request") return formatNetworkRequestText(data);
 	if (commandInfo.command === "diff") return stringifyModelFacing(data);
 	if (commandInfo.command === "clipboard") {
@@ -909,8 +928,8 @@ export function formatDiagnosticText(commandInfo: CommandInfo, data: Record<stri
 		if (streamSummary) return streamSummary;
 	}
 	if (commandInfo.command === "chat") return formatChatText(data);
-	if (commandInfo.command === "console") return formatConsoleText(data);
-	if (commandInfo.command === "errors") return formatErrorsText(data);
+	if (commandInfo.command === "console") return formatConsoleText(data, commandInfo);
+	if (commandInfo.command === "errors") return formatErrorsText(data, commandInfo);
 	if (commandInfo.command === "dashboard") return formatDashboardText(data);
 	if (commandInfo.command === "doctor") return formatDoctorText(data);
 	return undefined;

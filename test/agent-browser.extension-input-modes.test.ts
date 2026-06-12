@@ -57,6 +57,58 @@ test("analyzeQaPresetResults reports missing expected text as QA failure", () =>
 	assert.deepEqual(analysis?.failedChecks, ['expected text not found: "Definitely Not On This Page"']);
 });
 
+test("analyzeQaPresetResults ignores reset-phase diagnostic rows for URL QA", () => {
+	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/", expectedText: "Example Domain" }).compiled;
+	assert.ok(compiled);
+	const analysis = analyzeQaPresetResults([
+		{ command: ["network", "requests", "--clear"], success: true, result: { requests: [{ method: "GET", status: 500, url: "https://old.example.test/api" }] } },
+		{ command: ["console", "--clear"], success: true, result: { messages: [{ text: "old console boom", type: "error" }] } },
+		{ command: ["errors", "--clear"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
+		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
+		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+		{ command: ["wait", "--fn", compiled.steps.find((step) => step.action === "assertText")?.args[2] ?? "", "--timeout", "5000"], success: true, result: true },
+		{ command: ["network", "requests"], success: true, result: { requests: [] } },
+		{ command: ["console"], success: true, result: { messages: [] } },
+		{ command: ["errors"], success: true, result: { errors: [] } },
+	], compiled);
+	assert.equal(analysis?.passed, true);
+	assert.deepEqual(analysis?.failedChecks, []);
+});
+
+test("analyzeQaPresetResults treats failed reset-phase diagnostic rows as step failures only", () => {
+	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/" }).compiled;
+	assert.ok(compiled);
+	const analysis = analyzeQaPresetResults([
+		{ command: ["network", "requests", "--clear"], error: "clear failed", success: false, result: { requests: [{ method: "GET", status: 500, url: "https://old.example.test/api" }] } },
+		{ command: ["console", "--clear"], error: "clear failed", success: false, result: { messages: [{ text: "old console boom", type: "error" }] } },
+		{ command: ["errors", "--clear"], error: "clear failed", success: false, result: { errors: [{ text: "old ReferenceError" }] } },
+		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
+		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+		{ command: ["network", "requests"], success: true, result: { requests: [] } },
+		{ command: ["console"], success: true, result: { messages: [] } },
+		{ command: ["errors"], success: true, result: { errors: [] } },
+	], compiled);
+	assert.equal(analysis?.passed, false);
+	assert.deepEqual(analysis?.failedChecks, ["network failed", "console failed", "errors failed"]);
+});
+
+test("analyzeQaPresetResults still reports post-open page errors", () => {
+	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/" }).compiled;
+	assert.ok(compiled);
+	const analysis = analyzeQaPresetResults([
+		{ command: ["network", "requests", "--clear"], success: true, result: { requests: [] } },
+		{ command: ["console", "--clear"], success: true, result: { messages: [] } },
+		{ command: ["errors", "--clear"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
+		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
+		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+		{ command: ["network", "requests"], success: true, result: { requests: [] } },
+		{ command: ["console"], success: true, result: { messages: [] } },
+		{ command: ["errors"], success: true, result: { errors: [{ text: "current page boom" }] } },
+	], compiled);
+	assert.equal(analysis?.passed, false);
+	assert.deepEqual(analysis?.failedChecks, ["1 page error(s)"]);
+});
+
 test("compileAgentBrowserJob preserves explicit assertUrl and assertText immediately after click", () => {
 	const semanticJob = compileAgentBrowserJob({
 		steps: [

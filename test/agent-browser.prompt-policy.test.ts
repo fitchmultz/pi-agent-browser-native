@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { WEB_SEARCH_PROMPT_GUIDELINE } from "../extensions/agent-browser/lib/playbook.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "../extensions/agent-browser/lib/prompt-policy.js";
 
 test("buildPromptPolicy and getLatestUserPrompt derive legacy bash policy from prompt text without globals", () => {
@@ -65,4 +66,10 @@ test("shouldAppendBrowserSystemPrompt only targets clearly browser-oriented prom
 	assert.equal(shouldAppendBrowserSystemPrompt("Please review browser compatibility docs."), false);
 	assert.equal(shouldAppendBrowserSystemPrompt("Summarize the article at https://example.com/blog/post for the changelog."), false);
 	assert.equal(shouldAppendBrowserSystemPrompt("Please review the repository architecture."), false);
+});
+
+test("web-search prompt guidance warns about anti-bot search form automation", () => {
+	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /public search-engine forms/);
+	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /anti-bot\/CAPTCHA-gated/);
+	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /after you have a target URL/);
 });

@@ -314,6 +314,9 @@ export function buildQaCompactPassText(options: {
 	const pageParts = [options.page?.title, options.page?.url].filter((part): part is string => typeof part === "string" && part.length > 0);
 	if (pageParts.length > 0) lines.push(`Page: ${pageParts.join(" — ")}`);
 	lines.push(`Checks run: ${describeQaChecksRun(options.checks)} (${options.batchStepCount} batch step${options.batchStepCount === 1 ? "" : "s"})`);
+	if (options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
+		lines.push("Diagnostic reset: URL QA cleared enabled network/console/page-error buffers before opening the target; reset rows in details.batchSteps are not counted as current-page failures.");
+	}
 	if (options.checks.attached && !options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
 		lines.push("Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started.");
 	}
@@ -392,6 +395,13 @@ function extractQaTextAssertionResultText(item: ReturnType<typeof getBatchResult
 	return undefined;
 }
 
+function isDiagnosticResetCommand(item: Record<string, unknown>): boolean {
+	const command = item.command;
+	if (!Array.isArray(command) || !command.every((token): token is string => typeof token === "string")) return false;
+	const [name, subcommand] = command;
+	return command.includes("--clear") && (name === "console" || name === "errors" || (name === "network" && subcommand === "requests"));
+}
+
 export function analyzeQaPresetTimeout(compiled: CompiledAgentBrowserQaPreset): AgentBrowserQaPresetAnalysis | undefined {
 	if (compiled.checks.expectedText.length === 0) return undefined;
 	const failedChecks = compiled.checks.expectedText.map((text) => `expected text was not verified before timeout: ${formatQaExpectedTextPreview(text)}`);
@@ -414,6 +424,9 @@ export function analyzeQaPresetResults(data: unknown, compiled?: CompiledAgentBr
 		}
 		const result = isRecord(item.result) ? item.result : undefined;
 		const commandName = getCommandNameFromBatchItem(item);
+		if (compiled?.checks.diagnosticsResetAtStart && isDiagnosticResetCommand(item)) {
+			continue;
+		}
 		if (commandName === "errors" && Array.isArray(result?.errors) && result.errors.length > 0) {
 			failedChecks.push(`${result.errors.length} page error(s)`);
 		}

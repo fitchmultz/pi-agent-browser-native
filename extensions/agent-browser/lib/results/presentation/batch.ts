@@ -264,13 +264,14 @@ async function buildBatchStepPresentation(options: {
 	}
 
 	const commandInfo = parseCommandInfo(command ?? []);
+	const commandInfoWithTokens = command ? { ...commandInfo, commandTokens: command } : commandInfo;
 	const networkRouteDiagnostics = commandInfo.command === "network" && commandInfo.subcommand === "requests"
 		? buildNetworkRouteDiagnostics(item.result, networkRoutes)
 		: undefined;
 	const presentation = await buildNestedToolPresentation({
 		artifactManifest,
 		artifactRequest,
-		commandInfo,
+		commandInfo: commandInfoWithTokens,
 		cwd,
 		args: command,
 		envelope: { data: item.result, success: true },
@@ -299,7 +300,7 @@ async function buildBatchStepPresentation(options: {
 	});
 	const pageChangeSummary = buildPageChangeSummary({
 		artifacts: presentation.artifacts,
-		commandInfo,
+		commandInfo: commandInfoWithTokens,
 		data: presentation.data,
 		nextActions,
 		savedFilePath: presentation.savedFilePath,

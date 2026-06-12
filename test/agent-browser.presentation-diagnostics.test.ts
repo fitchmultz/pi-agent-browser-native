@@ -643,6 +643,32 @@ test("buildToolPresentation formats console and errors previews", async () => {
 	);
 });
 
+test("buildToolPresentation labels diagnostic clear output as reset scoped", async () => {
+	const networkReset = await buildToolPresentation({
+		commandInfo: { command: "network", commandTokens: ["network", "requests", "--clear"], subcommand: "requests" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { requests: [{ method: "GET", status: 500, url: "https://old.example.test/api" }] } },
+	});
+	assert.equal(networkReset.summary, "Network requests reset: 1 cleared");
+	assert.match((networkReset.content[0] as { text: string }).text, /Treat these as reset output, not current-page request failures/);
+
+	const consoleReset = await buildToolPresentation({
+		commandInfo: { command: "console", commandTokens: ["console", "--clear"], subcommand: "--clear" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { messages: [{ text: "old boom", type: "error" }] } },
+	});
+	assert.equal(consoleReset.summary, "Console reset: 1 cleared");
+	assert.match((consoleReset.content[0] as { text: string }).text, /Treat these as reset output, not current-page console errors/);
+
+	const errorsReset = await buildToolPresentation({
+		commandInfo: { command: "errors", commandTokens: ["errors", "--clear"], subcommand: "--clear" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { errors: [{ text: "old ReferenceError" }] } },
+	});
+	assert.equal(errorsReset.summary, "Page errors reset: 1 cleared");
+	assert.match((errorsReset.content[0] as { text: string }).text, /Treat these as reset output, not current-page errors/);
+});
+
 test("buildToolPresentation redacts dashboard and doctor diagnostic strings", async () => {
 	const dashboardPresentation = await buildToolPresentation({
 		commandInfo: { command: "dashboard" },
@@ -813,5 +839,72 @@ test("buildToolPresentation compacts large diagnostic output and preserves spill
 	assert.ok(spillPath);
 	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	assert.match(await readFile(String(spillPath), "utf8"), /diagnostic console row 180/);
+	await rm(String(spillPath), { force: true });
+});
+
+test("buildToolPresentation keeps failed batch context inline when compacting", async () => {
+	const largeSuccessfulSteps = Array.from({ length: 90 }, (_, index) => ({
+		command: ["eval", "--stdin"],
+		result: { result: `large successful batch row ${index + 1} ${"x".repeat(120)}` },
+		success: true,
+	}));
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: false,
+			data: [
+				...largeSuccessfulSteps,
+				{ command: ["wait", "--text", "Checkout complete"], error: "Timed out waiting for text: Checkout complete", success: false },
+			],
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Large batch output compacted/);
+	assert.match(text, /Failure context:/);
+	assert.match(text, /First failing step: 91/);
+	assert.match(text, /Failure category: timeout/);
+	assert.match(text, /Failure detail: Error: Timed out waiting for text: Checkout complete/);
+	assert.match(text, /Full output path: /);
+	assert.equal(presentation.batchFailure?.failedStep.index, 90);
+	assert.equal(typeof presentation.fullOutputPath, "string");
+	const spillPath = presentation.fullOutputPath;
+	assert.ok(spillPath);
+	assert.match(await readFile(String(spillPath), "utf8"), /large successful batch row 90/);
+	await rm(String(spillPath), { force: true });
+});
+
+test("buildToolPresentation bounds long failed command text when compacting batch output", async () => {
+	const longArgument = `checkout-${"z".repeat(900)}-END_OF_UNBOUNDED_ARGUMENT`;
+	const largeSuccessfulSteps = Array.from({ length: 90 }, (_, index) => ({
+		command: ["eval", "--stdin"],
+		result: { result: `large successful batch row ${index + 1} ${"x".repeat(120)}` },
+		success: true,
+	}));
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: false,
+			data: [
+				...largeSuccessfulSteps,
+				{ command: ["wait", "--text", longArgument], error: "Timed out waiting for text.", success: false },
+			],
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Large batch output compacted/);
+	assert.match(text, /Failure context:/);
+	assert.match(text, /First failing step: 91 — wait --text checkout-z+…/);
+	assert.equal(text.includes(longArgument), false);
+	assert.equal(text.includes("END_OF_UNBOUNDED_ARGUMENT"), false);
+	assert.ok(text.length < 4500, `compacted inline output was unexpectedly large: ${text.length}`);
+	const spillPath = presentation.fullOutputPath;
+	assert.ok(spillPath);
+	assert.match(await readFile(String(spillPath), "utf8"), /END_OF_UNBOUNDED_ARGUMENT/);
 	await rm(String(spillPath), { force: true });
 });

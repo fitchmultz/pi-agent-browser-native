@@ -9,6 +9,7 @@ import { isOpenNavigationCommand } from "./command-taxonomy.js";
 
 export interface CommandInfo {
 	command?: string;
+	commandTokens?: string[];
 	subcommand?: string;
 }
 

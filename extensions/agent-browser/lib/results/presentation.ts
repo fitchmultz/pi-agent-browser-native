@@ -6,7 +6,7 @@
 
 import type { CompiledAgentBrowserSemanticAction } from "../input-modes/types.js";
 import { isRecord } from "../parsing.js";
-import type { CommandInfo } from "../runtime.js";
+import { extractCommandTokens, type CommandInfo } from "../runtime.js";
 import type { PersistentSessionArtifactStore } from "../temp.js";
 import { buildAgentBrowserNextActions } from "./action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails } from "./categories.js";
@@ -99,18 +99,19 @@ export async function buildToolPresentation(options: {
 		persistentArtifactStore,
 		sessionName,
 	} = options;
-	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfo, compiledSemanticAction);
+	const commandInfoWithTokens = commandInfo.commandTokens || !args ? commandInfo : { ...commandInfo, commandTokens: extractCommandTokens(args) };
+	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfoWithTokens, compiledSemanticAction);
 
 	if (errorText) {
 		return buildErrorPresentation({ args, commandInfo, errorText, sessionName });
 	}
 
-	const data = enrichStreamStatusData(commandInfo, envelope?.data);
-	const presentationData = redactPresentationData(commandInfo, data);
+	const data = enrichStreamStatusData(commandInfoWithTokens, envelope?.data);
+	const presentationData = redactPresentationData(commandInfoWithTokens, data);
 	const artifacts = await extractFileArtifacts({ artifactManifest, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);
-	const summary = artifactSummary ?? formatPresentationSummary(commandInfo, data, compiledSemanticAction);
+	const summary = artifactSummary ?? formatPresentationSummary(commandInfoWithTokens, data, compiledSemanticAction);
 	const artifactText = artifacts.length > 0 ? formatArtifactMetadataLines(artifacts).join("\n") : undefined;
 
 	let presentation: ToolPresentation;
@@ -132,7 +133,7 @@ export async function buildToolPresentation(options: {
 		presentation = {
 			artifactVerification,
 			artifacts: artifacts.length > 0 ? artifacts : undefined,
-			content: [{ type: "text", text: artifactText ?? formatPresentationContentText(commandInfo, data, compiledSemanticAction) }],
+			content: [{ type: "text", text: artifactText ?? formatPresentationContentText(commandInfoWithTokens, data, compiledSemanticAction) }],
 			data: presentationData,
 			summary,
 		};
@@ -235,10 +236,10 @@ export async function buildToolPresentation(options: {
 		savedFilePath: presentationWithManifest.savedFilePath,
 		successCategory: presentationWithManifest.successCategory,
 	});
-	const networkNextActions = commandInfo.command === "network" && commandInfo.subcommand === "requests" && presentationWithManifest.resultCategory === "success"
+	const networkNextActions = commandInfoWithTokens.command === "network" && commandInfoWithTokens.subcommand === "requests" && presentationWithManifest.resultCategory === "success"
 		? buildNetworkRequestsNextActions(data, sessionName, presentationWithManifest.networkRouteDiagnostics)
 		: undefined;
-	const streamNextActions = presentationWithManifest.resultCategory === "success" ? buildStreamNextActions(commandInfo, data, sessionName) : undefined;
+	const streamNextActions = presentationWithManifest.resultCategory === "success" ? buildStreamNextActions(commandInfoWithTokens, data, sessionName) : undefined;
 	presentationWithManifest.nextActions = mergeNextActions(
 		presentationWithManifest.nextActions,
 		genericNextActions,
