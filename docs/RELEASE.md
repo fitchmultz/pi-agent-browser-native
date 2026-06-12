@@ -178,7 +178,7 @@ Maintainer constraints for evolving scenarios and version bumps are summarized u
 - `LICENSE` exists in the repo and the packed tarball
 - canonical published docs are present
 - `npm pack --json --dry-run` runs the `prepack` build and packs the compiled `dist/extensions/agent-browser/index.js` entrypoint
-- GitHub/source installs run the package `prepare` build so Pi can load the ignored compiled `dist/extensions/agent-browser/index.js` entrypoint from a fresh clone
+- GitHub/source installs run the package `prepare` build; when Pi installs with `npm install --omit=dev`, `scripts/prepare.mjs` installs source-build dev dependencies with lifecycle scripts disabled before building so Pi can load the ignored compiled `dist/extensions/agent-browser/index.js` entrypoint from a fresh clone
 - the package-level doctor command and capability baseline are present
 - compiled extension runtime files are present, including the split result-rendering modules required by the published facade
 - source-only, agent-only, and superseded docs are absent from the tarball

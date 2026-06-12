@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.2.51 - 2026-06-11
+
+### Fixed
+
+- Made the source-package `prepare` lifecycle install dev dependencies with scripts disabled when Pi's `npm install --omit=dev` package path omits the compiler and peer type packages, so GitHub/source installs can still build `dist/` from a clean clone without changing runtime dependency policy.
+
+### Validation
+
+- Reproduced the `pi install -l --approve https://github.com/fitchmultz/pi-agent-browser-native@v0.2.50` source-install failure, then verified production-dependency source builds, project-local GitHub install, project-local npm install, and release gates before publish.
+
 ## 0.2.50 - 2026-06-11
 
 ### Changed

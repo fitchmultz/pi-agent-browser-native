@@ -243,7 +243,11 @@ test("package metadata keeps Pi core packages host-provided peers and git instal
 	for (const packageName of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
 		assert.equal(packageJson.peerDependencies?.[packageName], "*", `${packageName} should stay host-provided per Pi package docs`);
 	}
-	assert.equal(packageJson.scripts?.prepare, "npm run build", "GitHub/source installs must build the ignored dist entrypoint before Pi loads it");
+	assert.equal(
+		packageJson.scripts?.prepare,
+		"node ./scripts/prepare.mjs",
+		"GitHub/source installs must build the ignored dist entrypoint before Pi loads it, even when Pi installs with --omit=dev",
+	);
 });
 
 test("publish contract derives required packed files from package.json", async () => {
@@ -258,6 +262,7 @@ test("publish contract derives required packed files from package.json", async (
 	assert.equal(publishContract.forbiddenPackedFiles.includes("docs/archive/v1-tool-contract.md"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("package.json"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/doctor.mjs"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("scripts/prepare.mjs"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/agent-browser-capability-baseline.mjs"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("docs/COMMAND_REFERENCE.md"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/index.js"), true);
