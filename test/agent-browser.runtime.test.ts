@@ -1160,8 +1160,28 @@ test("redactSensitiveText preserves help placeholders while redacting bearer cre
 	assert.equal(redactSensitiveText("curl -H 'Bearer abc123'"), "curl -H 'Bearer [REDACTED]'");
 	assert.equal(redactSensitiveText("curl -H 'Bearer token.'"), "curl -H 'Bearer [REDACTED].'");
 	assert.equal(
+		redactSensitiveText("OPENAI_API_KEY=openai-secret AWS_SECRET_ACCESS_KEY: aws-secret export STRIPE_SECRET_KEY='stripe-secret' PRIVATE_KEY=-----BEGIN_PRIVATE_KEY----- X-Private-Key: prose-header-secret private-key=prose-key API-KEY=prose-api Secret-Key: prose-secret apiKey=camel-api privateKey: camel-private connectionString=camel-connection databaseUrl: camel-db mongodbUri=mongodb://user:pass@example/db MONGODB_URI=mongodb://user:pass@example/db failedChecks=true"),
+		"OPENAI_API_KEY=[REDACTED] AWS_SECRET_ACCESS_KEY: [REDACTED] export STRIPE_SECRET_KEY=[REDACTED] PRIVATE_KEY=[REDACTED] X-Private-Key: [REDACTED] private-key=[REDACTED] API-KEY=[REDACTED] Secret-Key: [REDACTED] apiKey=[REDACTED] privateKey: [REDACTED] connectionString=[REDACTED] databaseUrl: [REDACTED] mongodbUri=[REDACTED] MONGODB_URI=[REDACTED] failedChecks=true",
+	);
+	assert.equal(
 		redactSensitiveText("https://o914390.ingest.sentry.io/api/envelope/?sentry_key=sentry-secret&writeKey=write-secret&ok=1"),
 		"https://o914390.ingest.sentry.io/api/envelope/?sentry_key=%5BREDACTED%5D&writeKey=%5BREDACTED%5D&ok=1",
+	);
+	assert.equal(
+		redactSensitiveText("https://example.com/?private_key=url-private-secret&connection_string=db-secret&mongo_uri=mongo-secret&redis_url=redis-secret&database_url=database-secret&ok=1"),
+		"https://example.com/?private_key=%5BREDACTED%5D&connection_string=%5BREDACTED%5D&mongo_uri=%5BREDACTED%5D&redis_url=%5BREDACTED%5D&database_url=%5BREDACTED%5D&ok=1",
+	);
+	assert.equal(
+		redactSensitiveText("Error mongodb://user:pass@example/db and mongodb+srv://srv-user:srv-pass@example/db and redis://redis-user:redis-pass@example/0"),
+		"Error mongodb://%5BREDACTED%5D:%5BREDACTED%5D@example/db and mongodb+srv://%5BREDACTED%5D:%5BREDACTED%5D@example/db and redis://%5BREDACTED%5D:%5BREDACTED%5D@example/0",
+	);
+	assert.equal(
+		redactSensitiveText("Error mongodb://user:pa)ss@example/db?token=secret&ok=1 mongodb://user:p]ss@example/db?private_key=secret&ok=1 mongodb://user:p>ss@example/db#access_token=secret&ok=1"),
+		"Error mongodb://[REDACTED]:[REDACTED]@example/db?token=[REDACTED]&ok=1 mongodb://[REDACTED]:[REDACTED]@example/db?private_key=[REDACTED]&ok=1 mongodb://[REDACTED]:[REDACTED]@example/db#access_token=[REDACTED]&ok=1",
+	);
+	assert.equal(
+		redactSensitiveText("Error mongodb://[REDACTED]:[REDACTED]@example/db?token=secret&ok=1"),
+		"Error mongodb://[REDACTED]:[REDACTED]@example/db?token=[REDACTED]&ok=1",
 	);
 });
 
@@ -1169,6 +1189,19 @@ test("redactSensitiveValue masks obvious secret-bearing object keys", () => {
 	assert.deepEqual(
 		redactSensitiveValue({
 			apiKey: "abc",
+			openaiApiKey: "openai-secret",
+			OPENAI_API_KEY: "openai-env-secret",
+			AWS_SECRET_ACCESS_KEY: "aws-env-secret",
+			STRIPE_SECRET_KEY: "stripe-env-secret",
+			PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----",
+			private_key: "private-key-secret",
+			"X-Private-Key": "header-private-key-secret",
+			privateKey: "camel-private-key-secret",
+			connectionString: "camel-connection-string-secret",
+			mongodbUri: "mongodb://user:pass@example/db",
+			MONGODB_URI: "mongodb://user:pass@example/db",
+			databaseUrl: "postgres://db-secret",
+			DATABASE_URL: "postgres://env-db-secret",
 			nested: {
 				authorization: "Bearer demo",
 				ok: "https://example.com/?ok=1&token=abc",
@@ -1178,6 +1211,19 @@ test("redactSensitiveValue masks obvious secret-bearing object keys", () => {
 		}),
 		{
 			apiKey: "[REDACTED]",
+			openaiApiKey: "[REDACTED]",
+			OPENAI_API_KEY: "[REDACTED]",
+			AWS_SECRET_ACCESS_KEY: "[REDACTED]",
+			STRIPE_SECRET_KEY: "[REDACTED]",
+			PRIVATE_KEY: "[REDACTED]",
+			private_key: "[REDACTED]",
+			"X-Private-Key": "[REDACTED]",
+			privateKey: "[REDACTED]",
+			connectionString: "[REDACTED]",
+			mongodbUri: "[REDACTED]",
+			MONGODB_URI: "[REDACTED]",
+			databaseUrl: "[REDACTED]",
+			DATABASE_URL: "[REDACTED]",
 			nested: {
 				authorization: "[REDACTED]",
 				ok: "https://example.com/?ok=1&token=%5BREDACTED%5D",

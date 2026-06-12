@@ -5,7 +5,7 @@
  */
 
 import { isRecord } from "../../parsing.js";
-import { redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
+import { isSensitiveFieldName, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
 import { classifyNetworkRequestFailure, isApiLikeNetworkRequest, isNetworkArtifactNoiseRequest, summarizeNetworkFailures } from "../network.js";
 import { withOptionalSessionArgs } from "../next-actions.js";
@@ -64,8 +64,6 @@ const NETWORK_FILTER_SENSITIVE_SEGMENT_TERMS = [
 	"session",
 	"token",
 ] as const;
-
-const SENSITIVE_PRESENTATION_FIELD_PATTERN = /^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|x(?:_|-)?api(?:_|-)?key)$/i;
 
 const NETWORK_FILTER_OPAQUE_SEGMENT_PATTERN = /^(?:[A-Fa-f0-9]{16,}|(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_-]{16,})$/;
 
@@ -854,10 +852,6 @@ function formatStateText(data: Record<string, unknown>): string | undefined {
 	return undefined;
 }
 
-function isSensitivePresentationField(key: string): boolean {
-	return SENSITIVE_PRESENTATION_FIELD_PATTERN.test(key);
-}
-
 function redactStructuredPresentationValue(value: unknown): unknown {
 	if (typeof value === "string") return redactModelFacingTextIfSensitive(value);
 	if (Array.isArray(value)) return value.map((item) => redactStructuredPresentationValue(item));
@@ -865,7 +859,7 @@ function redactStructuredPresentationValue(value: unknown): unknown {
 	return Object.fromEntries(
 		Object.entries(value).map(([key, entryValue]) => [
 			key,
-			isSensitivePresentationField(key) ? "[REDACTED]" : redactStructuredPresentationValue(entryValue),
+			isSensitiveFieldName(key) ? "[REDACTED]" : redactStructuredPresentationValue(entryValue),
 		]),
 	);
 }

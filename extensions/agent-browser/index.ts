@@ -18,6 +18,8 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import {
 	PROJECT_RULE_PROMPT,
+	buildBrowserDefaultProfileGuideline,
+	buildBrowserExecutablePathGuideline,
 	buildToolPromptGuidelines,
 } from "./lib/playbook.js";
 import {
@@ -600,10 +602,9 @@ function shouldIncludeProjectConfig(ctx: { isProjectTrusted?: () => boolean } | 
 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
-	const startupProjectConfigAllowed = shouldIncludeProjectConfig(undefined);
 	const agentBrowserConfig = loadAgentBrowserConfigSync({
 		cwd: process.cwd(),
-		includeProjectConfig: startupProjectConfigAllowed,
+		includeProjectConfig: false,
 	});
 	const webSearchToolAvailable = canRegisterWebSearchTool(agentBrowserConfig);
 	const toolPromptGuidelines = buildToolPromptGuidelines({
@@ -614,6 +615,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	});
 	const implicitSessionIdleTimeoutMs = String(getImplicitSessionIdleTimeoutMs());
 	const implicitSessionCloseTimeoutMs = getImplicitSessionCloseTimeoutMs();
+	let webSearchToolRegistered = false;
 	let managedSessionActive = false;
 	let managedSessionBaseName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
 	let managedSessionName = managedSessionBaseName;
@@ -704,9 +706,26 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		});
 	};
 
+	const registerWebSearchToolIfAvailable = (configState: typeof agentBrowserConfig) => {
+		if (webSearchToolRegistered || !canRegisterWebSearchTool(configState)) return;
+		pi.registerTool(createAgentBrowserWebSearchTool(configState, {
+			loadConfigState(ctx) {
+				return loadAgentBrowserConfigSync({
+					cwd: ctx.cwd,
+					includeProjectConfig: shouldIncludeProjectConfig(ctx),
+				});
+			},
+		}));
+		webSearchToolRegistered = true;
+	};
+
 	pi.on("session_start", async (_event, ctx) => {
 		restoreBranchBackedState(ctx, { resetRuntimeOwnership: true });
 		electronChildProcesses = new Map<string, ChildProcess>();
+		registerWebSearchToolIfAvailable(loadAgentBrowserConfigSync({
+			cwd: ctx.cwd,
+			includeProjectConfig: shouldIncludeProjectConfig(ctx),
+		}));
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -761,12 +780,27 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		await cleanupSecureTempArtifacts({ preservePaths: preservedElectronProfileDirs });
 	});
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (!shouldAppendBrowserSystemPrompt(event.prompt)) {
 			return undefined;
 		}
+		const runtimeConfig = loadAgentBrowserConfigSync({
+			cwd: ctx.cwd,
+			includeProjectConfig: shouldIncludeProjectConfig(ctx),
+		});
+		const browserGuidance = [
+			runtimeConfig.browserExecutablePathScope === "project"
+				? buildBrowserExecutablePathGuideline(runtimeConfig.browserExecutablePath)
+				: undefined,
+			runtimeConfig.browserDefaultProfileScope === "project"
+				? buildBrowserDefaultProfileGuideline(runtimeConfig.browserDefaultProfile)
+				: undefined,
+		].filter((line): line is string => typeof line === "string" && line.length > 0);
+		const runtimeConfigPrompt = browserGuidance.length > 0
+			? `\n\nProject agent_browser config guidance:\n${browserGuidance.map((line) => `- ${line}`).join("\n")}`
+			: "";
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n${PROJECT_RULE_PROMPT}`,
+			systemPrompt: `${event.systemPrompt}\n\n${PROJECT_RULE_PROMPT}${runtimeConfigPrompt}`,
 		};
 	});
 
@@ -948,14 +982,5 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	if (webSearchToolAvailable) {
-		pi.registerTool(createAgentBrowserWebSearchTool(agentBrowserConfig, {
-			loadConfigState(ctx) {
-				return loadAgentBrowserConfigSync({
-					cwd: ctx.cwd,
-					includeProjectConfig: shouldIncludeProjectConfig(ctx),
-				});
-			},
-		}));
-	}
+	registerWebSearchToolIfAvailable(agentBrowserConfig);
 }

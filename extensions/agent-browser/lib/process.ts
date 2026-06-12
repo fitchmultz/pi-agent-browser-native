@@ -1,6 +1,6 @@
 /**
  * Purpose: Execute the upstream agent-browser binary for the pi-agent-browser extension.
- * Responsibilities: Spawn the agent-browser subprocess, forward a curated environment surface, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
+ * Responsibilities: Spawn the agent-browser subprocess, forward parent environment variables plus wrapper overrides, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
  * Scope: Process execution only; argument planning, output formatting, and pi tool registration live elsewhere.
  * Usage: Called by the extension tool after argument validation and session planning are complete.
  * Invariants/Assumptions: The binary name is always `agent-browser`; Windows routes through PowerShell to invoke npm launchers with escaped argv; callers handle semantic success/error interpretation.
@@ -25,72 +25,6 @@ export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
-const httpProxyEnvName = "http_proxy";
-const httpsProxyEnvName = "https_proxy";
-const allProxyEnvName = "all_proxy";
-const noProxyEnvName = "no_proxy";
-const INHERITED_ENV_NAMES = new Set([
-	"ALL_PROXY",
-	"APPDATA",
-	"CI",
-	"COLORTERM",
-	"COMSPEC",
-	"DBUS_SESSION_BUS_ADDRESS",
-	"DISPLAY",
-	"FORCE_COLOR",
-	"HOME",
-	"HOMEDRIVE",
-	"HOMEPATH",
-	"HTTPS_PROXY",
-	"HTTP_PROXY",
-	"LANG",
-	"LC_ALL",
-	"LC_CTYPE",
-	"LOCALAPPDATA",
-	"LOGNAME",
-	"NO_COLOR",
-	"NO_PROXY",
-	"NODE_EXTRA_CA_CERTS",
-	"NODE_TLS_REJECT_UNAUTHORIZED",
-	"OS",
-	"PATH",
-	"PATHEXT",
-	"PWD",
-	"SHELL",
-	"SSL_CERT_DIR",
-	"SSL_CERT_FILE",
-	"SYSTEMROOT",
-	"TEMP",
-	"TERM",
-	"TMP",
-	"TMPDIR",
-	"TZ",
-	"USER",
-	"USERNAME",
-	"USERPROFILE",
-	"WAYLAND_DISPLAY",
-	"XAUTHORITY",
-	"AWS_ACCESS_KEY_ID",
-	"AWS_SECRET_ACCESS_KEY",
-	"AWS_SESSION_TOKEN",
-	"AWS_PROFILE",
-	"AWS_REGION",
-	"AWS_DEFAULT_REGION",
-	httpProxyEnvName,
-	httpsProxyEnvName,
-	allProxyEnvName,
-	noProxyEnvName,
-]);
-const INHERITED_ENV_PREFIXES = [
-	"AGENT_BROWSER_",
-	"AGENTCORE_",
-	"AI_GATEWAY_",
-	"BROWSERBASE_",
-	"BROWSERLESS_",
-	"BROWSER_USE_",
-	"KERNEL_",
-	"XDG_",
-] as const;
 
 export interface ProcessRunResult {
 	aborted: boolean;
@@ -281,41 +215,20 @@ async function ensureAgentBrowserSocketDir(socketDir: string): Promise<boolean> 
 	}
 }
 
-function getChildEnvName(name: string): string | undefined {
-	if (processPlatform === "win32") {
-		const upperName = name.toUpperCase();
-		if (INHERITED_ENV_NAMES.has(upperName)) return upperName;
-		return INHERITED_ENV_PREFIXES.some((prefix) => upperName.startsWith(prefix)) ? upperName : undefined;
-	}
-	if (INHERITED_ENV_NAMES.has(name) || INHERITED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))) {
-		return name;
-	}
-	return undefined;
-}
-
 export function buildAgentBrowserProcessEnv(
 	baseEnv: NodeJS.ProcessEnv = processEnv,
 	overrides: NodeJS.ProcessEnv | undefined = undefined,
 ): NodeJS.ProcessEnv {
 	const childEnv: NodeJS.ProcessEnv = {};
 	for (const [name, value] of Object.entries(baseEnv)) {
-		const childName = getChildEnvName(name);
-		if (value !== undefined && childName) {
-			childEnv[childName] = value;
-		}
+		if (value !== undefined) childEnv[name] = value;
 	}
 
-	if (!overrides) {
-		clampUpstreamDefaultTimeout(childEnv);
-		return childEnv;
-	}
-
-	for (const [name, value] of Object.entries(overrides)) {
-		const childName = getChildEnvName(name) ?? name;
+	for (const [name, value] of Object.entries(overrides ?? {})) {
 		if (value === undefined) {
-			delete childEnv[childName];
+			delete childEnv[name];
 		} else {
-			childEnv[childName] = value;
+			childEnv[name] = value;
 		}
 	}
 	clampUpstreamDefaultTimeout(childEnv);

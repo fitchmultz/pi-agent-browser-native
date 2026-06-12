@@ -1,7 +1,7 @@
 // @ts-check
 /**
  * Purpose: Canonical pi-agent-browser-native config policy shared by runtime and setup CLI.
- * Responsibilities: Own config paths, provider descriptors, project-local credential safety, layer validation/merge, status projection, and redacted summaries.
+ * Responsibilities: Own config paths, provider descriptors, credential source parsing, layer validation/merge, status projection, and redacted summaries.
  * Scope: Pure configuration policy plus synchronous status loading; secret command execution and browser/web-search runtime calls live elsewhere.
  */
 
@@ -24,7 +24,7 @@ import { join, resolve } from "node:path";
 /** @typedef {{ kind: CredentialSourceKind; provider?: WebSearchProvider; rawValue: string; scope: AgentBrowserConfigScope }} CredentialSource */
 /** @typedef {{ global: string; project: string; override?: string }} AgentBrowserConfigPaths */
 /** @typedef {{ cwd?: string; env?: NodeJS.ProcessEnv; includeProjectConfig?: boolean }} AgentBrowserConfigLoadOptions */
-/** @typedef {{ browserDefaultProfile?: Required<BrowserDefaultProfileConfig>; browserDefaultProfileScope?: ConfigLayerScope; browserExecutablePath?: string; browserExecutablePathScope?: ConfigLayerScope; trustedBrowserDefaultProfile?: Required<BrowserDefaultProfileConfig>; trustedBrowserDefaultProfileScope?: Exclude<ConfigLayerScope, "project">; trustedBrowserExecutablePath?: string; trustedBrowserExecutablePathScope?: Exclude<ConfigLayerScope, "project">; config: AgentBrowserConfig; webSearchCredentialSources: Partial<Record<WebSearchProvider, CredentialSource>>; webSearchEnabled: boolean; webSearchPreferredProvider: WebSearchProvider; errors: string[]; layers: ConfigLayer[]; paths: AgentBrowserConfigPaths; projectConfigIncluded: boolean; warnings: string[] }} AgentBrowserConfigState */
+/** @typedef {{ browserDefaultProfile?: Required<BrowserDefaultProfileConfig>; browserDefaultProfileScope?: ConfigLayerScope; browserExecutablePath?: string; browserExecutablePathScope?: ConfigLayerScope; trustedBrowserDefaultProfile?: Required<BrowserDefaultProfileConfig>; trustedBrowserDefaultProfileScope?: ConfigLayerScope; trustedBrowserExecutablePath?: string; trustedBrowserExecutablePathScope?: ConfigLayerScope; config: AgentBrowserConfig; webSearchCredentialSources: Partial<Record<WebSearchProvider, CredentialSource>>; webSearchEnabled: boolean; webSearchPreferredProvider: WebSearchProvider; errors: string[]; layers: ConfigLayer[]; paths: AgentBrowserConfigPaths; projectConfigIncluded: boolean; warnings: string[] }} AgentBrowserConfigState */
 /** @typedef {{ scope: string; path: string; exists: boolean }} ConfigFileSummary */
 
 export const AGENT_BROWSER_CONFIG_ENV = "PI_AGENT_BROWSER_CONFIG";
@@ -251,9 +251,8 @@ export function isPlaintextCredentialValue(rawValue) {
  * @param {WebSearchProvider} provider
  */
 export function isProjectSafeCredentialValueForProvider(rawValue, provider) {
-	const envName = getWebSearchProviderEnvVar(provider);
-	const trimmed = rawValue.trim();
-	return trimmed === `$${envName}` || trimmed === `\${${envName}}`;
+	void provider;
+	return rawValue.trim().length > 0;
 }
 
 /**
@@ -290,9 +289,6 @@ export function validateAgentBrowserConfig(value, path, scope, errors, warnings)
 				const apiKey = validateString(value.webSearch[descriptor.configKey], `${path}.webSearch.${descriptor.configKey}`, errors);
 				if (apiKey !== undefined) {
 					webSearch[descriptor.configKey] = apiKey;
-					if (scope === "project" && !isProjectSafeCredentialValueForProvider(apiKey, provider)) {
-						errors.push(`${path}.webSearch.${descriptor.configKey} must be exactly $${descriptor.apiKeyEnv} or \${${descriptor.apiKeyEnv}} in project-local config; plaintext, custom env aliases, interpolation literals, malformed env references, and command-backed project secrets are not allowed.`);
-					}
 				}
 			}
 			if (Object.keys(webSearch).length > 0) config.webSearch = webSearch;
@@ -307,16 +303,10 @@ export function validateAgentBrowserConfig(value, path, scope, errors, warnings)
 			const defaultProfile = validateBrowserDefaultProfile(value.browser.defaultProfile, `${path}.browser.defaultProfile`, errors);
 			if (defaultProfile) {
 				config.browser.defaultProfile = defaultProfile;
-				if (scope === "project" && defaultProfile.policy !== "explicit-only") {
-					warnings.push(`${path}.browser.defaultProfile is project-local; authenticated/always profile prompt guidance is emitted only from global or override config.`);
-				}
 			}
 			const executablePath = validateString(value.browser.executablePath, `${path}.browser.executablePath`, errors)?.trim();
 			if (executablePath) {
 				config.browser.executablePath = executablePath;
-				if (scope === "project") {
-					warnings.push(`${path}.browser.executablePath is project-local; executable launch prompt guidance is emitted only from global or override config.`);
-				}
 			}
 			const defaultLaunchArgs = validateStringArray(value.browser.defaultLaunchArgs, `${path}.browser.defaultLaunchArgs`, errors);
 			if (defaultLaunchArgs) {
@@ -410,28 +400,28 @@ function getBrowserExecutablePathScope(layers) {
 
 /**
  * @param {ConfigLayer[]} layers
- * @returns {{ profile: Required<BrowserDefaultProfileConfig>; scope: Exclude<ConfigLayerScope, "project"> } | undefined}
+ * @returns {{ profile: Required<BrowserDefaultProfileConfig>; scope: ConfigLayerScope } | undefined}
  */
 function getTrustedBrowserDefaultProfile(layers) {
 	for (let index = layers.length - 1; index >= 0; index -= 1) {
 		const layer = layers[index];
-		if (!layer || layer.scope === "project") continue;
+		if (!layer) continue;
 		const profile = getBrowserDefaultProfile(layer.config);
-		if (profile) return { profile, scope: /** @type {Exclude<ConfigLayerScope, "project">} */ (layer.scope) };
+		if (profile) return { profile, scope: layer.scope };
 	}
 	return undefined;
 }
 
 /**
  * @param {ConfigLayer[]} layers
- * @returns {{ executablePath: string; scope: Exclude<ConfigLayerScope, "project"> } | undefined}
+ * @returns {{ executablePath: string; scope: ConfigLayerScope } | undefined}
  */
 function getTrustedBrowserExecutablePath(layers) {
 	for (let index = layers.length - 1; index >= 0; index -= 1) {
 		const layer = layers[index];
-		if (!layer || layer.scope === "project") continue;
+		if (!layer) continue;
 		const executablePath = getBrowserExecutablePath(layer.config);
-		if (executablePath) return { executablePath, scope: /** @type {Exclude<ConfigLayerScope, "project">} */ (layer.scope) };
+		if (executablePath) return { executablePath, scope: layer.scope };
 	}
 	return undefined;
 }
@@ -660,10 +650,7 @@ export function formatBrowserProfileStatus(state) {
 	const profile = state.browserDefaultProfile;
 	if (!profile) return "not configured";
 	const scope = state.browserDefaultProfileScope ?? "unknown";
-	const base = `${profile.name} (policy: ${profile.policy}; ${scope})`;
-	if (scope !== "project") return base;
-	const trustedText = state.trustedBrowserDefaultProfile ? `; trusted guidance: ${state.trustedBrowserDefaultProfile.name} (${state.trustedBrowserDefaultProfileScope})` : "";
-	return `${base}; ignored for prompt guidance${trustedText}`;
+	return `${profile.name} (policy: ${profile.policy}; ${scope})`;
 }
 
 /** @param {AgentBrowserConfigState} state */
@@ -671,9 +658,7 @@ export function formatBrowserExecutableStatus(state) {
 	const executablePath = state.browserExecutablePath;
 	if (!executablePath) return "not configured";
 	const scope = state.browserExecutablePathScope ?? "unknown";
-	if (scope !== "project") return `${executablePath} (${scope})`;
-	const trustedText = state.trustedBrowserExecutablePath ? `; trusted guidance: ${state.trustedBrowserExecutablePath} (${state.trustedBrowserExecutablePathScope})` : "";
-	return `${executablePath} (${scope}; ignored for prompt guidance${trustedText})`;
+	return `${executablePath} (${scope})`;
 }
 
 /**

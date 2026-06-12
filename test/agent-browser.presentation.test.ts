@@ -240,7 +240,7 @@ test("buildToolPresentation redacts structured secrets in generic fallback text"
 			success: true,
 			data: {
 				cookie: "sid=secret-cookie",
-				message: "Authorization: Bearer raw-token Cookie: sid=raw-cookie",
+				message: "Authorization: Bearer raw-token Cookie: sid=raw-cookie https://example.com/?private_key=details-private-secret&ok=1",
 				nested: { token: "secret-token", url: "https://example.com/?api_key=secret-key" },
 			},
 		},
@@ -249,7 +249,8 @@ test("buildToolPresentation redacts structured secrets in generic fallback text"
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /\[REDACTED\]/);
-	assert.doesNotMatch(text, /secret-cookie|raw-token|raw-cookie|secret-token|secret-key/);
+	assert.doesNotMatch(text, /secret-cookie|raw-token|raw-cookie|secret-token|secret-key|details-private-secret/);
+	assert.doesNotMatch(JSON.stringify(presentation.data), /secret-cookie|raw-token|raw-cookie|secret-token|secret-key|details-private-secret/);
 });
 
 test("buildToolPresentation redacts console and page error diagnostics", async () => {

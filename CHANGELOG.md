@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-No unreleased changes yet.
+### Changed
+
+- Keep visual/model-facing secret redaction and the native-tool bash guard while allowing loaded config credential sources and parent environment variables to pass through to upstream/provider runtime paths.
+- Allow trusted project-local package config to provide web-search credential sources and browser profile/executable prompt guidance instead of limiting those capabilities to global or override config.
+
+### Validation
+
+- Ran focused config/web-search/process/redaction/clipboard/extension tests, `npm run typecheck`, `npm run docs`, `npm run verify -- command-reference`, and the default `npm run verify` gate.
 
 ## 0.2.49 - 2026-06-11
 

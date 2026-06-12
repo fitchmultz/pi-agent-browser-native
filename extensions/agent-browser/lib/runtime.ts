@@ -42,7 +42,8 @@ const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--p
 const SENSITIVE_QUERY_PARAM_PATTERN =
 	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth|authorization|bearer|client(?:_|-)?secret|code|cookie|id(?:_|-)?token|key|pass(?:word)?|refresh(?:_|-)?token|secret|sentry(?:_|-)?key|session(?:_|-)?id|sig(?:nature)?|token|write(?:_|-)?key)$/i;
 const SENSITIVE_FIELD_NAME_PATTERN =
-	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|secret|sentry(?:_|-)?key|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|token|write(?:_|-)?key|x(?:_|-)?api(?:_|-)?key)$/i;
+	/^(?:[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?key|private[_-]?key|secret(?:[_-]?(?:key|access[_-]?key))?|token|password|passwd|credentials?|database[_-]?url|db[_-]?url|connection[_-]?string|mongo(?:db)?[_-]?uri|redis[_-]?url)|[A-Za-z0-9]*(?:apiKey|ApiKey|apikey|privateKey|PrivateKey|databaseUrl|DatabaseUrl|dbUrl|DbUrl|connectionString|ConnectionString|mongoUri|MongoUri|mongodbUri|MongodbUri|mongoDbUri|MongoDbUri|redisUrl|RedisUrl|Token|Secret|Password|Credential|Credentials)|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|sentry(?:_|-)?key|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|write(?:_|-)?key|x(?:_|-)?api(?:_|-)?key)$/i;
+const ENV_SECRET_ASSIGNMENT_PATTERN = /\b((?:export\s+)?([A-Za-z_][A-Za-z0-9_-]*)(\s*[:=]\s*))(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/g;
 
 const DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM: Partial<Record<NodeJS.Platform, string>> = {
 	darwin: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
@@ -114,7 +115,7 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function shouldRedactQueryParam(name: string): boolean {
-	return SENSITIVE_QUERY_PARAM_PATTERN.test(name);
+	return SENSITIVE_QUERY_PARAM_PATTERN.test(name) || isSensitiveFieldName(name);
 }
 
 function redactUrlToken(token: string): string {
@@ -122,10 +123,6 @@ function redactUrlToken(token: string): string {
 	try {
 		parsed = new URL(token);
 	} catch {
-		return token;
-	}
-
-	if (!["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
 		return token;
 	}
 
@@ -163,8 +160,29 @@ function redactUrlToken(token: string): string {
 	return parsed.toString();
 }
 
+function redactLooseUrlParameterText(text: string): string {
+	return text.replace(/([?#&])([^=&#\s]+)=([^&#\s]*)/g, (match, separator: string, rawName: string) => {
+		let name = rawName;
+		try {
+			name = decodeURIComponent(rawName.replace(/\+/g, " "));
+		} catch {
+			// Keep the raw name when percent decoding fails.
+		}
+		if (!shouldRedactQueryParam(name)) return match;
+		return `${separator}${rawName}=[REDACTED]`;
+	});
+}
+
+function redactLooseUrlUserinfo(text: string): string {
+	return text.replace(/\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^\s"'`/@]+)@([^\s"'`]+)/g, (match, prefix: string, userinfo: string, suffix: string) => {
+		if (/%5Bredacted%5D/i.test(userinfo)) return match;
+		if (userinfo.includes("[REDACTED]")) return redactLooseUrlParameterText(match);
+		return redactLooseUrlParameterText(`${prefix}${userinfo.includes(":") ? "[REDACTED]:[REDACTED]" : "[REDACTED]"}@${suffix}`);
+	});
+}
+
 function redactLooseUrlMatches(text: string): string {
-	return text.replace(/\b(?:https?|wss?):\/\/[^\s"'`<>\])]+/g, (match) => redactUrlToken(match));
+	return text.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'`<>\])]+/g, (match) => redactUrlToken(match));
 }
 
 function findBalancedJsonEnd(text: string, startIndex: number): number | undefined {
@@ -270,12 +288,32 @@ function redactBearerCredentials(text: string): string {
 		});
 }
 
+export function isSensitiveFieldName(key: string): boolean {
+	SENSITIVE_FIELD_NAME_PATTERN.lastIndex = 0;
+	return SENSITIVE_FIELD_NAME_PATTERN.test(key);
+}
+
+function isEnvSecretAssignmentKey(key: string): boolean {
+	if (!isSensitiveFieldName(key)) return false;
+	if (key.includes("_") || key.includes("-") || key === key.toUpperCase()) return true;
+	return /(?:apiKey|ApiKey|privateKey|PrivateKey|databaseUrl|DatabaseUrl|dbUrl|DbUrl|connectionString|ConnectionString|mongoUri|MongoUri|mongodbUri|MongodbUri|mongoDbUri|MongoDbUri|redisUrl|RedisUrl|Token|Secret|Password|Credential|Credentials)$/.test(key);
+}
+
+function redactEnvSecretAssignments(text: string): string {
+	return text.replace(ENV_SECRET_ASSIGNMENT_PATTERN, (match, prefix: string, key: string) => {
+		if (!isEnvSecretAssignmentKey(key)) return match;
+		return `${prefix}[REDACTED]`;
+	});
+}
+
 export function redactSensitiveText(text: string): string {
 	return redactEmbeddedStructuredText(
-		redactStandaloneBasicCredential(
-			redactBearerCredentials(redactLooseUrlMatches(text))
-				.replace(/\b(Authorization\s*:\s*Basic)\s+[^\s",]+/gi, "$1 [REDACTED]")
-				.replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\n\r"]+/gi, "$1: [REDACTED]"),
+		redactEnvSecretAssignments(
+			redactStandaloneBasicCredential(
+				redactBearerCredentials(redactLooseUrlUserinfo(redactLooseUrlMatches(text)))
+					.replace(/\b(Authorization\s*:\s*Basic)\s+[^\s",]+/gi, "$1 [REDACTED]")
+					.replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\n\r"]+/gi, "$1: [REDACTED]"),
+			),
 		),
 	);
 }
@@ -292,7 +330,7 @@ export function redactSensitiveValue(value: unknown): unknown {
 	}
 	return Object.fromEntries(
 		Object.entries(value).map(([key, entryValue]) => {
-			if (SENSITIVE_FIELD_NAME_PATTERN.test(key)) {
+			if (isSensitiveFieldName(key)) {
 				return [key, "[REDACTED]"];
 			}
 			return [key, redactSensitiveValue(entryValue)];

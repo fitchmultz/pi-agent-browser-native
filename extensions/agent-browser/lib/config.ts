@@ -2,7 +2,7 @@
  * Purpose: Load pi-agent-browser-native package configuration from Pi-scoped global, project, or explicit paths.
  * Responsibilities: Resolve config layers, resolve secrets without exposing values, and provide redacted status for tools/CLIs.
  * Scope: Package-owned configuration only; canonical config policy lives in config-policy.js, browser command execution and web-search API calls live in focused modules.
- * Invariants/Assumptions: Raw project-local plaintext credentials are unsafe and rejected by the shared config policy; command credentials are resolved lazily at execution time.
+ * Invariants/Assumptions: Credential sources from loaded config are passed through to the runtime; command credentials are resolved lazily at execution time and displayed values stay redacted.
  */
 
 import { exec as execCallback } from "node:child_process";

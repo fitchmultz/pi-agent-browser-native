@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,10 +22,12 @@ import {
 
 test("agentBrowserExtension redacts denied clipboard write payloads from all result surfaces", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-clipboard-denied-"));
+	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`const args = process.argv.slice(2);
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
 let stdin = "";
 function clipboardError(command) {
   const payload = command.slice(2).join(" ");
@@ -35,6 +37,7 @@ function clipboardError(command) {
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
   if (args.includes("batch")) {
     const steps = JSON.parse(stdin);
     process.stdout.write(JSON.stringify(steps.map((command) => ({ command, success: false, error: clipboardError(command) }))));
@@ -53,6 +56,8 @@ process.stdin.on("end", () => {
 			assert.equal(standalone.isError, true, JSON.stringify(standalone));
 			assert.match((standalone.content[0] as { text: string }).text, /Agent-browser clipboard hint:/);
 			assert.doesNotMatch(JSON.stringify(standalone), /clipboard-secret/);
+			const firstInvocation = JSON.parse((await readFile(logPath, "utf8")).trim().split("\n")[0] ?? "{}");
+			assert.deepEqual(firstInvocation.args.slice(-3), ["clipboard", "write", "clipboard-secret"]);
 
 			const multiline = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["clipboard", "write", "clipboard-secret\nsecond-secret"] });
 			assert.equal(multiline.isError, true, JSON.stringify(multiline));
@@ -80,6 +85,8 @@ process.stdin.on("end", () => {
 			assert.equal(batch.isError, true, JSON.stringify(batch));
 			assert.match((batch.content[0] as { text: string }).text, /clipboard write \[REDACTED\]/);
 			assert.doesNotMatch(JSON.stringify(batch), /clipboard-secret/);
+			const invocations = (await readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+			assert.equal(invocations.some((entry) => entry.stdin === JSON.stringify([["clipboard", "write", "clipboard-secret"]])), true);
 
 			const multilineBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],

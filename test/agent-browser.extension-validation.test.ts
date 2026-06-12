@@ -186,7 +186,7 @@ test("agentBrowserExtension includes configured browser executable guidance", as
 	});
 });
 
-test("agentBrowserExtension keeps trusted browser launch guidance when project config shadows it", async () => {
+test("agentBrowserExtension uses project browser launch guidance when project config shadows global", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-project-shadow-guidance-test-"));
 	try {
 		const cwd = join(root, "repo");
@@ -209,20 +209,33 @@ test("agentBrowserExtension keeps trusted browser launch guidance when project c
 				executablePath: "/tmp/project-browser",
 			},
 		}, null, 2), "utf8");
-		await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
-			const harness = createExtensionHarness({ cwd });
-			const guidelineText = harness.tool.promptGuidelines.join("\n");
-			assert.match(guidelineText, /Global Profile/);
-			assert.match(guidelineText, /\/Applications\/Global Browser\.app/);
-			assert.doesNotMatch(guidelineText, /Project Profile/);
-			assert.doesNotMatch(guidelineText, /\/tmp\/project-browser/);
-		});
+		const previousCwd = process.cwd();
+		process.chdir(cwd);
+		try {
+			await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
+				const harness = createExtensionHarness({ cwd });
+				const staticGuidelineText = harness.tool.promptGuidelines.join("\n");
+				assert.doesNotMatch(staticGuidelineText, /Project Profile/);
+				assert.doesNotMatch(staticGuidelineText, /\/tmp\/project-browser/);
+				assert.match(staticGuidelineText, /Global Profile/);
+				const [browserTurn] = await runExtensionEventResults<{ systemPrompt: string }>(
+					harness.handlers,
+					"before_agent_start",
+					{ prompt: "Open https://example.com in the signed-in browser.", systemPrompt: "Base system prompt" },
+					harness.ctx,
+				);
+				assert.match(browserTurn?.systemPrompt ?? "", /Project Profile/);
+				assert.match(browserTurn?.systemPrompt ?? "", /\/tmp\/project-browser/);
+			});
+		} finally {
+			process.chdir(previousCwd);
+		}
 	} finally {
 		await rm(root, { force: true, recursive: true });
 	}
 });
 
-test("agentBrowserExtension suppresses project-local browser launch guidance", async () => {
+test("agentBrowserExtension includes project-local browser launch guidance", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-project-guidance-test-"));
 	try {
 		const cwd = join(root, "repo");
@@ -237,12 +250,26 @@ test("agentBrowserExtension suppresses project-local browser launch guidance", a
 				executablePath: "/tmp/project-browser",
 			},
 		}, null, 2), "utf8");
-		await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
-			const harness = createExtensionHarness({ cwd });
-			const guidelineText = harness.tool.promptGuidelines.join("\n");
-			assert.doesNotMatch(guidelineText, /Project Profile/);
-			assert.doesNotMatch(guidelineText, /\/tmp\/project-browser/);
-		});
+		const previousCwd = process.cwd();
+		process.chdir(cwd);
+		try {
+			await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
+				const harness = createExtensionHarness({ cwd });
+				const guidelineText = harness.tool.promptGuidelines.join("\n");
+				assert.doesNotMatch(guidelineText, /Project Profile/);
+				assert.doesNotMatch(guidelineText, /\/tmp\/project-browser/);
+				const [browserTurn] = await runExtensionEventResults<{ systemPrompt: string }>(
+					harness.handlers,
+					"before_agent_start",
+					{ prompt: "Open https://example.com with the configured browser profile.", systemPrompt: "Base system prompt" },
+					harness.ctx,
+				);
+				assert.match(browserTurn?.systemPrompt ?? "", /Project Profile/);
+				assert.match(browserTurn?.systemPrompt ?? "", /\/tmp\/project-browser/);
+			});
+		} finally {
+			process.chdir(previousCwd);
+		}
 	} finally {
 		await rm(root, { force: true, recursive: true });
 	}

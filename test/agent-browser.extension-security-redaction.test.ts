@@ -66,10 +66,13 @@ import {
 
 test("agentBrowserExtension redacts sensitive args in updates and persisted details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
+	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: "https://user:pass@example.com/?token=abc" } }));`,
+		`const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: "https://user:pass@example.com/?token=abc", openaiApiKey: "openai-should-not-leak", unrelatedApiKey: "unrelated-should-not-leak", databaseUrl: "postgres://should-not-leak", OPENAI_API_KEY: "uppercase-openai-should-not-leak", AWS_SECRET_ACCESS_KEY: "uppercase-aws-should-not-leak", STRIPE_SECRET_KEY: "uppercase-stripe-should-not-leak", PRIVATE_KEY: "uppercase-private-key-should-not-leak", private_key: "lower-private-key-should-not-leak", privateKey: "camel-private-key-should-not-leak", connectionString: "camel-connection-string-should-not-leak", mongodbUri: "mongodb://user:pass@example/db", MONGODB_URI: "mongodb://user:pass@example/db", "X-Private-Key": "header-private-key-should-not-leak", message: "Error mongodb://bare-user:bare-pass@example/db and mongodb+srv://srv-user:srv-pass@example/db and mongodb://punct-user:pa)ss@example/db?token=punct-token-secret&ok=1 mongodb://bracket-user:p]ss@example/db?private_key=bracket-key-secret&ok=1 mongodb://angle-user:p>ss@example/db#access_token=angle-token-secret&ok=1", envLine: "OPENAI_API_KEY=prose-openai-should-not-leak AWS_SECRET_ACCESS_KEY: prose-aws-should-not-leak PRIVATE_KEY=prose-private-key-should-not-leak X-Private-Key: prose-header-private-key-should-not-leak API-KEY=prose-api-key-should-not-leak apiKey=prose-camel-api-key-should-not-leak privateKey: prose-camel-private-key-should-not-leak connectionString=prose-camel-connection-string-should-not-leak databaseUrl: prose-camel-db-url-should-not-leak mongodbUri=mongodb://prose-user:prose-pass@example/db MONGODB_URI=mongodb://env-user:env-pass@example/db https://example.com/?private_key=url-private-key-should-not-leak&connection_string=url-connection-string-should-not-leak&ok=1 failedChecks=true" } }));`,
 	);
 
 	try {
@@ -87,6 +90,16 @@ test("agentBrowserExtension redacts sensitive args in updates and persisted deta
 			)) as { content: Array<{ type: string; text?: string }>; details?: Record<string, unknown>; isError?: boolean };
 
 			assert.equal(result.isError, false);
+			const [invocation] = await readInvocationLog(logPath);
+			assert.deepEqual(invocation?.args, [
+				"--json",
+				"--session",
+				result.details?.sessionName,
+				"--headers",
+				'{"Authorization":"Bearer s3cr3t-demo"}',
+				"open",
+				"https://user:pass@example.com/?token=abc",
+			]);
 			assert.equal(Array.isArray(updates), true);
 			const update = updates[0] as { content?: Array<{ text?: string }>; details?: Record<string, unknown> } | undefined;
 			assert.match(update?.content?.[0]?.text ?? "", /\[REDACTED\]/);
@@ -102,6 +115,40 @@ test("agentBrowserExtension redacts sensitive args in updates and persisted deta
 			assert.equal(JSON.stringify(result.details?.effectiveArgs).includes("user:pass"), false);
 			assert.equal(JSON.stringify(result.details?.data).includes("user:pass"), false);
 			assert.equal(JSON.stringify(result.content).includes("user:pass"), false);
+			assert.equal(JSON.stringify(result).includes("openai-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("unrelated-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("postgres://should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("uppercase-openai-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("uppercase-aws-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("uppercase-stripe-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("uppercase-private-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("lower-private-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("header-private-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("camel-private-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("camel-connection-string-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("mongodb://user:pass@example/db"), false);
+			assert.equal(JSON.stringify(result).includes("mongodb://bare-user:bare-pass@example/db"), false);
+			assert.equal(JSON.stringify(result).includes("mongodb+srv://srv-user:srv-pass@example/db"), false);
+			assert.equal(JSON.stringify(result).includes("mongodb://punct-user:pa)ss@example/db"), false);
+			assert.equal(JSON.stringify(result).includes("mongodb://bracket-user:p]ss@example/db"), false);
+			assert.equal(JSON.stringify(result).includes("mongodb://angle-user:p>ss@example/db"), false);
+			assert.equal(JSON.stringify(result).includes("punct-token-secret"), false);
+			assert.equal(JSON.stringify(result).includes("bracket-key-secret"), false);
+			assert.equal(JSON.stringify(result).includes("angle-token-secret"), false);
+			assert.equal(JSON.stringify(result).includes("prose-openai-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("prose-aws-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("prose-private-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("prose-header-private-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("prose-api-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("prose-camel-api-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("prose-camel-private-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("prose-camel-connection-string-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("prose-camel-db-url-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("mongodb://prose-user:prose-pass@example/db"), false);
+			assert.equal(JSON.stringify(result).includes("mongodb://env-user:env-pass@example/db"), false);
+			assert.equal(JSON.stringify(result).includes("url-private-key-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("url-connection-string-should-not-leak"), false);
+			assert.equal(JSON.stringify(result).includes("failedChecks"), true);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

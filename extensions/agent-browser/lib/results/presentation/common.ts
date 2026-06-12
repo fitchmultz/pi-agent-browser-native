@@ -30,7 +30,7 @@ export function redactModelFacingText(text: string): string {
 }
 
 export function redactModelFacingTextIfSensitive(text: string): string {
-	return /(?:@|\b(?:api[_-]?key|auth|authorization|basic|bearer|cookie|pass(?:word)?|secret|session[_-]?id|token)\b)/i.test(text)
+	return /(?:@|\b(?:access[_-]?key|api[_-]?key|auth|authorization|basic|bearer|connection[_-]?string|cookie|database[_-]?url|db[_-]?url|mongo(?:db)?[_-]?uri|pass(?:word)?|private[_-]?key|redis[_-]?url|secret|session[_-]?id|token)\b)/i.test(text)
 		? redactModelFacingText(text)
 		: text;
 }

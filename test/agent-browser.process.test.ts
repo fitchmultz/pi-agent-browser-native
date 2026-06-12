@@ -1,5 +1,5 @@
 /**
- * Purpose: Verify the agent-browser subprocess wrapper and curated process environment behavior.
+ * Purpose: Verify the agent-browser subprocess wrapper and parent environment pass-through behavior.
  * Responsibilities: Assert stdout spill handling, temp-budget failure behavior, full-payload parsing, and environment forwarding constraints.
  * Scope: Node test-runner coverage for process wrapper helpers using local child-process fixtures.
  * Usage: Run with `npx tsx --test test/agent-browser.process.test.ts` or via `npm run verify`.
@@ -147,6 +147,9 @@ test("process helpers clamp the upstream default operation timeout to the docume
 	assert.equal(buildAgentBrowserProcessEnv({ AGENT_BROWSER_DEFAULT_TIMEOUT: "45000" }).AGENT_BROWSER_DEFAULT_TIMEOUT, "25000");
 	assert.equal(buildAgentBrowserProcessEnv({ AGENT_BROWSER_DEFAULT_TIMEOUT: "12000" }).AGENT_BROWSER_DEFAULT_TIMEOUT, "12000");
 	assert.equal(buildAgentBrowserProcessEnv({}).AGENT_BROWSER_DEFAULT_TIMEOUT, "25000");
+	const env = buildAgentBrowserProcessEnv({ OPENAI_API_KEY: "openai-secret", UNRELATED_API_KEY: "unrelated-secret" });
+	assert.equal(env.OPENAI_API_KEY, "openai-secret");
+	assert.equal(env.UNRELATED_API_KEY, "unrelated-secret");
 });
 
 test("runAgentBrowserProcess skips stdin writes for already-aborted stdin calls", async () => {
@@ -579,7 +582,7 @@ if (isNavigationSummaryHelper) {
 	}
 });
 
-test("runAgentBrowserProcess forwards a curated environment instead of the full parent env", { concurrency: false }, async () => {
+test("runAgentBrowserProcess forwards the parent environment while preserving wrapper overrides", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -729,17 +732,17 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.browserbaseProjectId, "browserbase-project");
 				assert.equal(data.browserlessApiKey, "browserless-key");
 				assert.equal(data.browserUseApiKey, "browser-use-key");
-				assert.equal(data.databaseUrl, null);
+				assert.equal(data.databaseUrl, "postgres://should-not-leak");
 				assert.equal(data.idleTimeout, "1234");
 				assert.equal(data.kernelApiKey, "kernel-key");
 				assert.equal(data.lang, "en_US.UTF-8");
-				assert.equal(data.openaiApiKey, null);
-				assert.equal(data.secret, null);
+				assert.equal(data.openaiApiKey, "openai-should-not-leak");
+				assert.equal(data.secret, "should-not-leak");
 				assert.equal(data.socketDir, getAgentBrowserSocketDir());
 				if (data.socketDir) {
 					assert.equal((await stat(data.socketDir)).isDirectory(), true);
 				}
-				assert.equal(data.unrelatedApiKey, null);
+				assert.equal(data.unrelatedApiKey, "unrelated-should-not-leak");
 				assert.equal(data.pathStartsWithTemp, true);
 			},
 		);

@@ -28,7 +28,6 @@ const {
 	getWebSearchProviderConfigKey,
 	getWebSearchProviderEnvVar,
 	getWebSearchProviderLabel,
-	isProjectSafeCredentialValueForProvider,
 	isWebSearchProvider,
 	loadAgentBrowserConfigStateSync,
 	summarizeConfigFiles,
@@ -50,9 +49,9 @@ Usage through npm exec:
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config paths
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config show
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search status
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --stdin --provider <exa|brave> [--global]
+  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --stdin --provider <exa|brave> [--global|--project]
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env <ENV_VAR> [--provider brave|exa] [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command <command> --provider <exa|brave> [--global]
+  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command <command> --provider <exa|brave> [--global|--project]
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search clear --provider <exa|brave|all> [--global|--project]
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search prefer <exa|brave|auto> [--global|--project]
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search enable [--global|--project]
@@ -61,14 +60,14 @@ Usage through npm exec:
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile set <name|path> [--policy explicit-only|authenticated-only|always] [--global|--project]
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile clear [--global|--project]
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable status
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable set <path> [--global]
+  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable set <path> [--global|--project]
   npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable clear [--global|--project]
 
 Notes:
   Global config:  ~/.pi/config/pi-agent-browser-native/config.json
   Project config: .pi/config/pi-agent-browser-native/config.json
   Override:       ${AGENT_BROWSER_CONFIG_ENV}=/path/to/config.json
-  Project-local plaintext, custom env aliases, interpolation-literal, malformed, and command-backed web-search keys are refused; use matching ${EXA_API_KEY_ENV} or ${BRAVE_API_KEY_ENV} set-env references there.
+  Loaded config may use plaintext, environment interpolation, or !command credential sources; displayed status redacts resolved keys.
   Use --provider for set-key, set-command, and clear; set-env infers exa/brave from ${EXA_API_KEY_ENV} or ${BRAVE_API_KEY_ENV}.
 `;
 }
@@ -212,13 +211,12 @@ async function handleWebSearch(args, flags) {
 	}
 	if (action === "set-key") {
 		const provider = getWebSearchProvider(flags);
-		if (flags.get("--project")) throw new UsageError(`Plaintext ${getWebSearchProviderLabel(provider)} keys cannot be written to project-local config. Use set-env or set-command.`);
 		const key = await readSecretFromStdin(Boolean(flags.get("--stdin")));
-		const { path } = selectWritePath(flags);
+		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => {
 			setWebSearchCredential(config, provider, key);
 		});
-		console.log(`Saved ${getWebSearchProviderLabel(provider)} key to global config: ${path}`);
+		console.log(`Saved ${getWebSearchProviderLabel(provider)} key to ${scope} config: ${path}`);
 		return;
 	}
 	if (action === "set-env") {
@@ -226,9 +224,6 @@ async function handleWebSearch(args, flags) {
 		if (!envName || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) throw new UsageError("set-env requires a valid environment variable name.");
 		const provider = getWebSearchProvider(flags, { envName });
 		const envReference = `$${envName}`;
-		if (flags.get("--project") && !isProjectSafeCredentialValueForProvider(envReference, provider)) {
-			throw new UsageError(`Project-local ${getWebSearchProviderLabel(provider)} env references must use ${getWebSearchProviderEnvVar(provider)} exactly; custom env aliases belong in global config or ${AGENT_BROWSER_CONFIG_ENV}.`);
-		}
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => {
 			setWebSearchCredential(config, provider, envReference);
@@ -238,7 +233,6 @@ async function handleWebSearch(args, flags) {
 	}
 	if (action === "set-command") {
 		const provider = getWebSearchProvider(flags);
-		if (flags.get("--project")) throw new UsageError(`Command-backed ${getWebSearchProviderLabel(provider)} keys cannot be written to project-local config. Use set-env there.`);
 		const command = args.slice(1).join(" ").trim();
 		if (!command) throw new UsageError("set-command requires a command string.");
 		const { path, scope } = selectWritePath(flags);
@@ -297,9 +291,6 @@ function handleBrowser(args, flags) {
 			if (!name) throw new UsageError("browser profile set requires a profile name or profile directory path.");
 			const policy = flags.get("--policy") || "authenticated-only";
 			if (!["explicit-only", "authenticated-only", "always"].includes(policy)) throw new UsageError("Invalid --policy value.");
-			if (flags.get("--project") && policy !== "explicit-only") {
-				throw new UsageError("Project-local browser profile config may only use --policy explicit-only; authenticated or always profile guidance must be configured globally or through PI_AGENT_BROWSER_CONFIG.");
-			}
 			const { path, scope } = selectWritePath(flags);
 			mutateConfig(path, (config) => {
 				config.browser = { ...(config.browser ?? {}), defaultProfile: { name, policy } };
@@ -325,9 +316,6 @@ function handleBrowser(args, flags) {
 		if (action === "set") {
 			const executablePath = args.slice(2).join(" ").trim();
 			if (!executablePath) throw new UsageError("browser executable set requires a browser executable path.");
-			if (flags.get("--project")) {
-				throw new UsageError("Project-local browser executable config cannot steer host launch guidance; configure it globally or through PI_AGENT_BROWSER_CONFIG.");
-			}
 			const { path, scope } = selectWritePath(flags);
 			mutateConfig(path, (config) => {
 				config.browser = { ...(config.browser ?? {}), executablePath };

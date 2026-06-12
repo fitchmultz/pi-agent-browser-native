@@ -65,25 +65,30 @@ test("loads Pi-scoped global config and env fallback without leaking secret summ
 	assert.doesNotMatch(getCredentialSourceSummary(state.webSearchCredentialSources.brave, "brave"), /real-secret/);
 });
 
-test("uses project config over global config and rejects unsafe project-local Brave key sources", async () => {
+test("uses project config over global config and allows project-local Brave credential sources", async () => {
 	const fixture = await createConfigFixture();
 	await writeJson(fixture.globalPath, { version: 1, webSearch: { braveApiKey: "$GLOBAL_BRAVE_KEY" } });
+
 	await writeJson(fixture.projectPath, { version: 1, webSearch: { braveApiKey: "plaintext-secret" } });
 	const plaintextState = await loadAgentBrowserConfig({ cwd: fixture.cwd, env: { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" } });
-	assert.match(plaintextState.errors.join("\n"), /plaintext, custom env aliases, interpolation literals, malformed env references, and command-backed project secrets are not allowed/);
-	assert.equal(canRegisterWebSearchTool(plaintextState, { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" }), false);
+	assert.deepEqual(plaintextState.errors, []);
+	assert.equal(canRegisterWebSearchTool(plaintextState, { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" }), true);
+	assert.equal(getCredentialSourceSummary(plaintextState.webSearchCredentialSources.brave, "brave"), "configured as plaintext project value [redacted]");
+	const plaintextResolved = await resolveWebSearchCredential(plaintextState, "brave", { env: fixture.env });
+	assert.equal(plaintextResolved?.value, "plaintext-secret");
 
 	await writeJson(fixture.projectPath, { version: 1, webSearch: { braveApiKey: "!echo command-secret" } });
 	const commandState = await loadAgentBrowserConfig({ cwd: fixture.cwd, env: { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" } });
-	assert.match(commandState.errors.join("\n"), /command-backed project secrets are not allowed/);
-	assert.equal(canRegisterWebSearchTool(commandState, { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" }), false);
+	assert.deepEqual(commandState.errors, []);
+	assert.equal(canRegisterWebSearchTool(commandState, { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" }), true);
+	assert.equal(getCredentialSourceSummary(commandState.webSearchCredentialSources.brave, "brave"), "configured via command (project)");
 
-	for (const unsafeValue of ["$", "$-plaintext-secret", "${BRAVE_API_KEY}_suffix", "$AWS_SECRET_ACCESS_KEY", "${EXA_API_KEY}"]) {
-		await writeJson(fixture.projectPath, { version: 1, webSearch: { braveApiKey: unsafeValue } });
-		const malformedState = await loadAgentBrowserConfig({ cwd: fixture.cwd, env: { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" } });
-		assert.match(malformedState.errors.join("\n"), /must be exactly \$BRAVE_API_KEY or \$\{BRAVE_API_KEY\}/);
-		assert.equal(canRegisterWebSearchTool(malformedState, { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret" }), false);
-	}
+	await writeJson(fixture.projectPath, { version: 1, webSearch: { braveApiKey: "$PROJECT_BRAVE_ALIAS" } });
+	const envState = await loadAgentBrowserConfig({ cwd: fixture.cwd, env: { ...fixture.env, GLOBAL_BRAVE_KEY: "global-secret", PROJECT_BRAVE_ALIAS: "alias-secret" } });
+	assert.deepEqual(envState.errors, []);
+	assert.equal(canRegisterWebSearchTool(envState, { ...fixture.env, PROJECT_BRAVE_ALIAS: "alias-secret" }), true);
+	const envResolved = await resolveWebSearchCredential(envState, "brave", { env: { ...fixture.env, PROJECT_BRAVE_ALIAS: "alias-secret" } });
+	assert.equal(envResolved?.value, "alias-secret");
 });
 
 test("can skip project config when caller opts out", async () => {
@@ -131,7 +136,7 @@ test("captures browser defaults with conservative profile policy and executable 
 	assert.equal(state.trustedBrowserExecutablePathScope, "global");
 });
 
-test("records project-local browser guidance scope without trusting it for prompt injection", async () => {
+test("records project-local browser guidance scope and uses it for prompt injection", async () => {
 	const fixture = await createConfigFixture();
 	await writeJson(fixture.projectPath, {
 		version: 1,
@@ -143,13 +148,14 @@ test("records project-local browser guidance scope without trusting it for promp
 	const state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env: fixture.env });
 	assert.equal(state.browserDefaultProfileScope, "project");
 	assert.equal(state.browserExecutablePathScope, "project");
-	assert.equal(state.trustedBrowserDefaultProfile, undefined);
-	assert.equal(state.trustedBrowserExecutablePath, undefined);
-	assert.match(state.warnings.join("\n"), /authenticated\/always profile prompt guidance is emitted only from global or override config/);
-	assert.match(state.warnings.join("\n"), /executable launch prompt guidance is emitted only from global or override config/);
+	assert.deepEqual(state.trustedBrowserDefaultProfile, { name: "Project Profile", policy: "authenticated-only" });
+	assert.equal(state.trustedBrowserDefaultProfileScope, "project");
+	assert.equal(state.trustedBrowserExecutablePath, "/tmp/project-browser");
+	assert.equal(state.trustedBrowserExecutablePathScope, "project");
+	assert.deepEqual(state.warnings, []);
 });
 
-test("trusted browser guidance skips project shadowing and keeps global values", async () => {
+test("project browser guidance shadows global values when project config is included", async () => {
 	const fixture = await createConfigFixture();
 	await writeJson(fixture.globalPath, {
 		version: 1,
@@ -168,8 +174,8 @@ test("trusted browser guidance skips project shadowing and keeps global values",
 	const state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env: fixture.env });
 	assert.deepEqual(state.browserDefaultProfile, { name: "Project Profile", policy: "authenticated-only" });
 	assert.equal(state.browserExecutablePath, "/tmp/project-browser");
-	assert.deepEqual(state.trustedBrowserDefaultProfile, { name: "Global Profile", policy: "authenticated-only" });
-	assert.equal(state.trustedBrowserExecutablePath, "/Applications/Global Browser.app/Contents/MacOS/Global Browser");
+	assert.deepEqual(state.trustedBrowserDefaultProfile, { name: "Project Profile", policy: "authenticated-only" });
+	assert.equal(state.trustedBrowserExecutablePath, "/tmp/project-browser");
 });
 
 test("uses raw BRAVE_API_KEY only as fallback when no config credential source exists", async () => {
@@ -194,10 +200,12 @@ test("loads Exa config, preferred provider, and disabled web search policy", asy
 	assert.equal(canRegisterWebSearchTool(state, { ...fixture.env, EXA_API_KEY: "exa-secret" }), false);
 });
 
-test("rejects unsafe project-local Exa key sources", async () => {
+test("allows project-local Exa key sources", async () => {
 	const fixture = await createConfigFixture();
 	await writeJson(fixture.projectPath, { version: 1, webSearch: { exaApiKey: "plaintext-secret" } });
 	const state = await loadAgentBrowserConfig({ cwd: fixture.cwd, env: fixture.env });
-	assert.match(state.errors.join("\n"), /webSearch\.exaApiKey must be exactly \$EXA_API_KEY or \$\{EXA_API_KEY\}/);
-	assert.equal(canRegisterWebSearchTool(state, fixture.env), false);
+	assert.deepEqual(state.errors, []);
+	assert.equal(canRegisterWebSearchTool(state, fixture.env), true);
+	const resolved = await resolveWebSearchCredential(state, "exa", { env: fixture.env });
+	assert.equal(resolved?.value, "plaintext-secret");
 });

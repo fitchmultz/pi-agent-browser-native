@@ -106,7 +106,7 @@ The design should comfortably support workflows such as:
 - isolated authenticated browser sessions
 - headless authenticated `chat.com` / ChatGPT / OpenAI browsing without forcing `--headed` or `--auto-connect`
 - upstream profile/debug workflows without adding a local profile-cloning layer in this package
-- provider-backed or iOS device launches where upstream owns credentials, env, and setup; the wrapper forwards argv and a curated provider-related environment without emulating those backends
+- provider-backed or iOS device launches where upstream owns credentials, env, and setup; the wrapper forwards argv and the parent environment without emulating those backends
 - desktop Electron targets using top-level `electron` for discover → isolated launch → attach → probe/cleanup, or raw `args: ["connect", …]` when the operator launches the real app with a debug port for signed-in state (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#electron) and [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#electron-desktop-apps))
 
 ## Implications for the implementation

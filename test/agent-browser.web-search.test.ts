@@ -27,7 +27,7 @@ import {
 	normalizeExaSearchResult,
 	normalizeBraveSearchResult,
 } from "../extensions/agent-browser/lib/web-search.js";
-import { createExtensionHarness, executeRegisteredTool, withPatchedEnv } from "./helpers/agent-browser-harness.js";
+import { createExtensionHarness, executeRegisteredTool, runExtensionEvent, withPatchedEnv } from "./helpers/agent-browser-harness.js";
 
 async function writeJson(path: string, value: unknown): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
@@ -87,19 +87,62 @@ test("does not register agent_browser_web_search without env or config credentia
 	});
 });
 
-test("project config can disable web-search registration despite env fallback", async () => {
+test("trusted project web-search config registers the companion tool on session start", async () => {
+	const fixture = await createFixture();
+	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { braveApiKey: "plaintext-project-secret" } });
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: undefined, [EXA_API_KEY_ENV]: undefined }, async () => {
+		await withTemporaryCwd(fixture.cwd, async () => {
+			const harness = createExtensionHarness({ cwd: fixture.cwd });
+			assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+			assert.ok(tool);
+			await withFakeFetch((input, init) => {
+				assert.equal(new URL(String(input)).searchParams.get("q"), "project only");
+				assert.equal(init?.headers && (init.headers as Record<string, string>)["X-Subscription-Token"], "plaintext-project-secret");
+				return new Response(JSON.stringify({
+					query: { original: "project only" },
+					web: { results: [{ title: "Project Only", url: "https://example.com/project", description: "Project result" }] },
+				}), { status: 200 });
+			}, async () => {
+				const result = await executeRegisteredTool(tool, harness.ctx, { query: "project only", provider: "brave" });
+				assert.equal(result.details?.provider, "brave");
+				assert.doesNotMatch(JSON.stringify(result), /plaintext-project-secret/);
+			});
+		});
+	});
+});
+
+test("untrusted project web-search config does not register the companion tool on session start", async () => {
+	const fixture = await createFixture();
+	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { braveApiKey: "plaintext-project-secret" } });
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: undefined, [EXA_API_KEY_ENV]: undefined }, async () => {
+		await withTemporaryCwd(fixture.cwd, async () => {
+			const harness = createExtensionHarness({ cwd: fixture.cwd, projectTrusted: false });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
+		});
+	});
+});
+
+test("project config can disable web-search execution despite env fallback", async () => {
 	const fixture = await createFixture();
 	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { enabled: false } });
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "env-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
 		await withTemporaryCwd(fixture.cwd, async () => {
 			const harness = createExtensionHarness({ cwd: fixture.cwd });
-			assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
+			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+			assert.ok(tool);
 			assert.ok(harness.getTool("agent_browser"));
+			await assert.rejects(
+				() => executeRegisteredTool(tool, harness.ctx, { query: "disabled project config" }),
+				/agent_browser_web_search is disabled by pi-agent-browser-native config/,
+			);
 		});
 	});
 });
 
-test("invalid project web-search config blocks execution before resolving credentials", async () => {
+test("project web-search plaintext config passes through at execution without exposing the key", async () => {
 	const fixture = await createFixture();
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "env-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
 		await withTemporaryCwd(fixture.cwd, async () => {
@@ -107,19 +150,24 @@ test("invalid project web-search config blocks execution before resolving creden
 			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 			assert.ok(tool);
 			await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { braveApiKey: "plaintext-project-secret" } });
-			await withFakeFetch(() => {
-				throw new Error("fetch should not run when config is invalid");
+			await withFakeFetch((input, init) => {
+				const url = new URL(String(input));
+				assert.equal(url.origin + url.pathname, "https://api.search.brave.com/res/v1/web/search");
+				assert.equal(init?.headers && (init.headers as Record<string, string>)["X-Subscription-Token"], "plaintext-project-secret");
+				return new Response(JSON.stringify({
+					query: { original: "must pass through project config" },
+					web: { results: [{ title: "Project Config", url: "https://example.com/project", description: "Project result" }] },
+				}), { status: 200 });
 			}, async () => {
-				await assert.rejects(
-					() => executeRegisteredTool(tool, harness.ctx, { query: "must reject invalid config", provider: "brave" }),
-					/project-local config; plaintext, custom env aliases, interpolation literals, malformed env references, and command-backed project secrets are not allowed/,
-				);
+				const result = await executeRegisteredTool(tool, harness.ctx, { query: "must pass through project config", provider: "brave" });
+				assert.equal(result.details?.provider, "brave");
+				assert.doesNotMatch(JSON.stringify(result), /plaintext-project-secret/);
 			});
 		});
 	});
 });
 
-test("--no-approve prevents project config from disabling env-backed agent_browser_web_search registration", async () => {
+test("--no-approve prevents project config from disabling env-backed agent_browser_web_search execution", async () => {
 	const fixture = await createFixture();
 	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { enabled: false } });
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "env-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
