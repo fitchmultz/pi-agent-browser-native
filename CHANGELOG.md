@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.50 - 2026-06-11
+
 ### Changed
 
 - Keep visual/model-facing secret redaction and the native-tool bash guard while allowing loaded config credential sources and parent environment variables to pass through to upstream/provider runtime paths.
@@ -9,7 +11,7 @@
 
 ### Validation
 
-- Ran focused config/web-search/process/redaction/clipboard/extension tests, `npm run typecheck`, `npm run docs`, `npm run verify -- command-reference`, and the default `npm run verify` gate.
+- Ran focused config/web-search/process/redaction/clipboard/extension tests, `npm run typecheck`, `npm run docs`, `npm run verify -- command-reference`, the default `npm run verify` gate, and the release gate through lifecycle, package Pi, and platform smoke validation.
 
 ## 0.2.49 - 2026-06-11
 
