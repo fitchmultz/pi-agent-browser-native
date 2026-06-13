@@ -14,8 +14,8 @@ export const COMMAND_REFERENCE_BASELINE_BLOCK_IDS = Object.freeze(["upstream-bas
 
 const sourceEvidence = Object.freeze({
   repository: "vercel-labs/agent-browser",
-  upstreamHead: "5185339ca3fdab9848e11b8ec676eecfdec3733f",
-  upstreamPackageVersion: "0.27.2",
+  upstreamHead: "2c7991c9eccca1c9db6eee1a26a713414778de5a",
+  upstreamPackageVersion: "0.27.3",
   inspectedSources: Object.freeze([
     "agent-browser --version",
     "agent-browser --help",
@@ -709,7 +709,7 @@ const inventorySections = Object.freeze([
 ]);
 
 export const CAPABILITY_BASELINE = Object.freeze({
-  targetVersion: "0.27.2",
+  targetVersion: "0.27.3",
   sourceEvidence,
   helpCommands,
   inventorySections,

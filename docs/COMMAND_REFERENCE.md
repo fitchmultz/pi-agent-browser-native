@@ -18,16 +18,16 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.27.2` command/help surface, audited against vercel-labs/agent-browser@5185339ca3fdab9848e11b8ec676eecfdec3733f. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.27.3` command/help surface, audited against vercel-labs/agent-browser@2c7991c9eccca1c9db6eee1a26a713414778de5a. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
-### Upstream 0.27.2 changelog support
+### Upstream 0.27.3 install-only rebaseline
 
-The 0.27.2 rebaseline is a passthrough-first compatibility update, not a compatibility shim for older upstream releases. The wrapper must not hide these upstream fixes:
+The 0.27.3 rebaseline is an install-only compatibility update: upstream changed Windows ARM64 installation fallback behavior and did not change the CLI/help surface or browser-command semantics. This wrapper adds no compatibility shim for older upstream releases. The wrapper must still not hide these prior upstream fixes:
 
 - click reliability: upstream now scrolls off-viewport elements before coordinate resolution, handles JavaScript dialogs promptly, recovers mouse state after dialog-opening clicks, and reports overlay interception before dispatching input
 - frame-scoped CSS selectors and waits, including cross-process iframe click-coordinate translation
@@ -140,7 +140,7 @@ Use `vitals [url]` for Core Web Vitals plus React hydration timing when availabl
 { "args": ["pushstate", "/dashboard?tab=settings"] }
 ```
 
-For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant v0.27.2 surfaces are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
+For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant v0.27.3 surfaces, unchanged from the prior baseline, are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
 
 ```json
 { "args": ["open"], "sessionMode": "fresh" }
@@ -359,7 +359,7 @@ For one-call flows, put the click and wait in `batch`; the wait step keeps the s
 { "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
 ```
 
-A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.27.2`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
+A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.27.3`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
 
 ### Download, screenshot, and PDF files
 
@@ -639,7 +639,7 @@ For dense pages, the wrapper also accepts `snapshot -i --search <text>` and `sna
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. The native Pi wrapper forwards explicit wait timeouts and extends the subprocess watchdog unless the caller supplies top-level `timeoutMs`. |
 
-Current v0.27.2 source still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
+Current v0.27.3 source still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
 
 ### Diff, debug, and streaming
 
@@ -860,14 +860,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.27.2</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.27.3</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `5185339ca3fdab9848e11b8ec676eecfdec3733f`
-- upstream package version: `0.27.2`
+- upstream HEAD: `2c7991c9eccca1c9db6eee1a26a713414778de5a`
+- upstream package version: `0.27.3`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
