@@ -687,7 +687,7 @@ Configured-source lifecycle validation:
 npm run verify -- lifecycle
 ```
 
-The harness defaults to Pi model `zai/glm-5.1` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches Pi 0.79 with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, compiled-entrypoint pickup after process restart, persisted spill reachability, and real Pi `tool_result` failure-patch behavior.
+The harness defaults to Pi model `zai/glm-5.2` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches Pi 0.79 with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, compiled-entrypoint pickup after process restart, persisted spill reachability, and real Pi `tool_result` failure-patch behavior.
 
 Use lifecycle validation when testing `/reload`, exact-session relaunch, `/resume`, managed-session continuity, or persisted artifact behavior. Branch-backed state and `session_tree` cleanup ownership are covered by focused extension harness tests. Maintainers must run the lifecycle harness before every publish; see [Pre-release checks](docs/RELEASE.md#pre-release-checks).
 

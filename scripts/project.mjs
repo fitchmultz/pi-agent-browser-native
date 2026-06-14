@@ -88,7 +88,7 @@ Options:
   --artifact-dir <p>  With dogfood mode, write screenshots to this directory.
   --keep-artifacts    With lifecycle mode, preserve lifecycle temp artifacts; with dogfood, keep temp screenshots.
   --json              With dogfood mode, print the machine-readable report only.
-  --model <id>        With lifecycle mode, Pi model for tmux prompts (default zai/glm-5.1).
+  --model <id>        With lifecycle mode, Pi model for tmux prompts (default zai/glm-5.2).
   --verbose           With lifecycle mode, print progress details.
   --timeout-ms <ms>   With lifecycle mode, override the per-step wait timeout (default 180000).
   --list-files        With package mode, print every packed file path.

@@ -339,7 +339,7 @@
 ### Changed
 - `sourceLookup`, broad `get text`, fill verification, tab/session mismatch, and stale-ref guidance now include Electron-aware context and recovery actions for packaged desktop apps.
 - Verification coverage now includes deterministic Electron lifecycle/probe benchmark scenarios, fake-upstream Electron discovery/lifecycle tests, lifecycle restore/shutdown cleanup checks, and real-app dogfood evidence recorded in the Electron plan.
-- The configured-source lifecycle harness (`npm run verify -- lifecycle`, `scripts/verify-lifecycle.mjs`) now defaults to Pi model `zai/glm-5.1` with `--model <id>` override; `npm run verify` lifecycle passthrough rejects `--model` without a value.
+- The configured-source lifecycle harness (`npm run verify -- lifecycle`, `scripts/verify-lifecycle.mjs`) now defaults to Pi model `zai/glm-5.2` with `--model <id>` override; `npm run verify` lifecycle passthrough rejects `--model` without a value.
 - Updated the local Pi development baseline to `@earendil-works/*` `0.75.4` and refreshed the npm lockfile.
 
 ### Fixed

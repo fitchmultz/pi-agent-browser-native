@@ -64,14 +64,14 @@ const {
 test("parseCliArgs supports lifecycle harness options", () => {
 	assert.deepEqual(parseCliArgs([]), {
 		keepArtifacts: false,
-		model: "zai/glm-5.1",
+		model: "zai/glm-5.2",
 		showHelp: false,
 		timeoutMs: 180_000,
 		verbose: false,
 	});
 	assert.deepEqual(parseCliArgs(["--keep-artifacts", "--verbose", "--timeout-ms", "42"]), {
 		keepArtifacts: true,
-		model: "zai/glm-5.1",
+		model: "zai/glm-5.2",
 		showHelp: false,
 		timeoutMs: 42,
 		verbose: true,
@@ -97,18 +97,18 @@ test("createLifecycleSessionId returns a Pi 0.79 exact-session-safe id", () => {
 });
 
 test("buildPiLaunchArgs approves project trust and pins lifecycle launches to the exact session id", () => {
-	assert.deepEqual(buildPiLaunchArgs({ model: "zai/glm-5.1", sessionId: "piab-lifecycle-4242" }), [
+	assert.deepEqual(buildPiLaunchArgs({ model: "zai/glm-5.2", sessionId: "piab-lifecycle-4242" }), [
 		"--approve",
 		"--model",
-		"zai/glm-5.1",
+		"zai/glm-5.2",
 		"--session-id",
 		"piab-lifecycle-4242",
 	]);
 });
 
 test("paneLooksReady accepts exact-session relaunches with non-zero context usage", () => {
-	assert.equal(paneLooksReady("~/repo\n↑23k ↓362 R117k 12.0%/200k (auto)                         (zai) glm-5.1 • medium"), true);
-	assert.equal(paneLooksReady("~/repo\n↑1k ↓2 R3k 0.0%/200k (auto)                         (zai) glm-5.1 • medium"), true);
+	assert.equal(paneLooksReady("~/repo\n↑23k ↓362 R117k 12.0%/200k (auto)                         (zai) glm-5.2 • medium"), true);
+	assert.equal(paneLooksReady("~/repo\n↑1k ↓2 R3k 0.0%/200k (auto)                         (zai) glm-5.2 • medium"), true);
 	assert.equal(paneLooksReady("Working…\n↑23k ↓362 R117k 12.0%/200k"), false);
 });
 
