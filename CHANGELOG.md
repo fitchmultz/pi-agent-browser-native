@@ -2,16 +2,20 @@
 
 ## Unreleased
 
-## 0.2.52 - 2026-06-13
+## 0.2.52 - 2026-06-15
 
 ### Changed
 
 - Rebaselined the upstream capability metadata, command reference, support matrix, platform-smoke image tag, and real-upstream output-shape metadata for `agent-browser` `0.27.3` / vercel-labs/agent-browser@2c7991c9eccca1c9db6eee1a26a713414778de5a. This is an install-only upstream update from the prior baseline; no wrapper feature, shim, or inventory-token change was added.
-- Updated the local Pi development baseline to `@earendil-works/*` `0.79.3`, refreshed `.pi-fleet-tested-version`, and refreshed `package-lock.json` with npm 11 while keeping the intentional doctor floor at Pi `0.79.0`.
+- Updated the local Pi development baseline to `@earendil-works/*` `0.79.4`, refreshed `.pi-fleet-tested-version`, and refreshed `package-lock.json` with npm 11 while keeping the intentional doctor floor at Pi `0.79.0`.
+
+### Fixed
+
+- Updated the lifecycle release harness prompt-readiness check to accept Pi 0.79.4 footer units such as `1.0M`, avoiding false readiness timeouts after successful startup.
 
 ### Validation
 
-- Ran `npm install`, `npm run docs -- command-reference write`, `npm run build`, `npm run typecheck`, `npm run docs`, `npm run verify -- command-reference`, the default `npm run verify` gate, and `npm run verify -- dogfood` against `agent-browser` `0.27.3` and Pi `0.79.3`; final release validation evidence is recorded in `docs/SUPPORT_MATRIX.md`.
+- Ran `npm publish --dry-run` against `agent-browser` `0.27.3` and Pi `0.79.4`; the gate passed default verification, command-reference checks, build, lifecycle verification, packaged Pi smoke, and macOS/Ubuntu/Windows-native platform smoke.
 
 ## 0.2.51 - 2026-06-11
 

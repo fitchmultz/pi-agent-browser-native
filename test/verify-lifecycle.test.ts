@@ -109,6 +109,7 @@ test("buildPiLaunchArgs approves project trust and pins lifecycle launches to th
 test("paneLooksReady accepts exact-session relaunches with non-zero context usage", () => {
 	assert.equal(paneLooksReady("~/repo\n↑23k ↓362 R117k 12.0%/200k (auto)                         (zai) glm-5.2 • medium"), true);
 	assert.equal(paneLooksReady("~/repo\n↑1k ↓2 R3k 0.0%/200k (auto)                         (zai) glm-5.2 • medium"), true);
+	assert.equal(paneLooksReady("~/repo\n0.0%/1.0M (auto)                                          (zai) glm-5.2 • medium"), true);
 	assert.equal(paneLooksReady("Working…\n↑23k ↓362 R117k 12.0%/200k"), false);
 });
 

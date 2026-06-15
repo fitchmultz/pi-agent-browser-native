@@ -378,7 +378,7 @@ async function capturePaneText(tmuxSession) {
 }
 
 export function paneLooksReady(pane) {
-	return /\d+(?:\.\d+)?%\/\d+k/.test(pane) && !/Working[.…]*/i.test(pane);
+	return /\d+(?:\.\d+)?%\/\d+(?:\.\d+)?[kKmMgG]/.test(pane) && !/Working[.…]*/i.test(pane);
 }
 
 async function capturePane(tmuxSession, artifactPath) {
