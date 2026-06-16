@@ -11,6 +11,9 @@ const EDITABLE_FALSE_TEXT_PATTERN = /\b(?:contenteditable|editable)\s*=\s*["']?(
 const EDITABLE_ASSIGNMENT_TEXT_PATTERN = /\b(contenteditable|editable)\s*=\s*("[^"]*"|'[^']*'|[^\s,\]]+)/gi;
 const EDITABLE_BARE_TEXT_PATTERN = /\b(?:contenteditable|editable)\b(?!\s*=)/i;
 
+/** Roles that are inherently editable controls in the browser accessibility tree. */
+const KNOWN_EDITABLE_ROLES = new Set(["searchbox", "textbox", "combobox", "spinbutton"]);
+
 function parseEditableEvidenceValue(value: unknown): boolean | undefined {
 	if (typeof value === "boolean") return value;
 	if (typeof value === "number") {
@@ -61,6 +64,11 @@ export function getEditableRefEvidence(options: {
 	const textEvidence = parseEditableEvidenceText(options.text);
 	if (textEvidence === false) return false;
 	if (textEvidence === true) hasPositiveEvidence = true;
+	// Fallback: treat inherently editable ARIA roles as editable even when
+	// upstream snapshot metadata does not include explicit editable flags.
+	if (!hasPositiveEvidence && options.ref?.role && KNOWN_EDITABLE_ROLES.has((options.ref.role as string).toLowerCase())) {
+		hasPositiveEvidence = true;
+	}
 	return hasPositiveEvidence ? true : undefined;
 }
 
