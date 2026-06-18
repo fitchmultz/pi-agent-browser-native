@@ -12,6 +12,10 @@
 - Collapsed duplicated release/platform-smoke prose across README, release docs, and agent guidance in favor of `docs/platform-smoke.md` as the detailed source of truth.
 - Simplified duplicate internal schema/job compiler plumbing without changing the public tool schema or generated argv behavior.
 
+### Fixed
+
+- Retried the Windows platform dogfood smoke once after transient first browser-open failures, matching the existing Windows browser prewarm tolerance while preserving real dogfood failures.
+
 ### Validation
 
 - Ran `npm run verify -- release` against `agent-browser` `0.28.0`; the gate passed default verification, command-reference checks, build, lifecycle verification, packaged Pi smoke, and macOS/Ubuntu/Windows-native platform smoke after refreshing the Ubuntu image and Windows `crabbox-ready` snapshot.

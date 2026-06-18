@@ -92,8 +92,14 @@ Write-Output "PLATFORM_TSX_CLI=$TsxCli"
 $DogfoodStdout = Join-Path $DogfoodDir "dogfood.stdout.txt"
 $DogfoodStderr = Join-Path $DogfoodDir "dogfood.stderr.txt"
 if ($NpmCiExit -eq 0 -and $AgentBrowserExit -eq 0 -and $BrowserCacheExit -eq 0 -and $BrowserPrewarmExit -eq 0) {
-  & $TsxCli "scripts/verify-agent-browser-dogfood.ts" --artifact-dir $DogfoodArtifactDir --json >$DogfoodStdout 2>$DogfoodStderr
-  $DogfoodExit = $LASTEXITCODE
+  $DogfoodExit = 1
+  for ($Attempt = 1; $Attempt -le 2; $Attempt++) {
+    Write-Output "PLATFORM_DOGFOOD_ATTEMPT=$Attempt"
+    if ($Attempt -gt 1) { Start-Sleep -Seconds 2 }
+    & $TsxCli "scripts/verify-agent-browser-dogfood.ts" --artifact-dir $DogfoodArtifactDir --json >$DogfoodStdout 2>$DogfoodStderr
+    $DogfoodExit = $LASTEXITCODE
+    if ($DogfoodExit -eq 0) { break }
+  }
 } else {
   "npm ci or agent-browser setup failed" | Set-Content $DogfoodStderr
   $DogfoodExit = 1

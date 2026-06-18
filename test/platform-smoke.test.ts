@@ -120,6 +120,7 @@ const result = {
   dogfoodChecksBaseline: dogfoodPosix.includes("EXPECTED_AGENT_BROWSER_VERSION='agent-browser " + CAPABILITY_BASELINE.targetVersion + "'") && dogfoodPosix.includes("PLATFORM_AGENT_BROWSER_READY_EXIT"),
   dogfoodKeepsArtifacts: dogfoodPosix.includes("--artifact-dir"),
   dogfoodWindowsUsesScript: dogfoodWindows.includes("browser-dogfood-windows.ps1") && dogfoodWindows.includes("-AgentBrowserVersion '" + CAPABILITY_BASELINE.targetVersion + "'"),
+  dogfoodWindowsRetriesTransientOpen: readFileSync("scripts/platform-smoke/browser-dogfood-windows.ps1", "utf8").includes("PLATFORM_DOGFOOD_ATTEMPT"),
   dogfoodWindowsDoesNotBootstrap: !dogfoodWindows.includes("npm install -g") && !dogfoodWindows.includes("agent-browser install"),
 };
 console.log(JSON.stringify(result));
