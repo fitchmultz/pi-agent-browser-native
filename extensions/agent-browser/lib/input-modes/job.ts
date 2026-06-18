@@ -91,11 +91,6 @@ type CompileJobStepResult = {
 
 type JobStepCompiler = (step: Record<string, unknown>, index: number) => CompileJobStepResult;
 
-type JobStepDescriptor = {
-	allowedFields: ReadonlySet<string>;
-	compile: JobStepCompiler;
-};
-
 function globUrlPatternToRegexSource(pattern: string): string {
 	let source = "^";
 	for (let index = 0; index < pattern.length; index += 1) {
@@ -214,18 +209,21 @@ function compilePathArtifactJobStep(step: Record<string, unknown>, action: "scre
 	return { args: action === "waitForDownload" ? ["wait", "--download", result.value as string] : ["screenshot", result.value as string] };
 }
 
-const JOB_STEP_DESCRIPTORS: Record<AgentBrowserJobStepAction, JobStepDescriptor> = {
-	assertText: { allowedFields: JOB_STEP_ALLOWED_FIELDS.assertText, compile: compileAssertTextJobStep },
-	assertUrl: { allowedFields: JOB_STEP_ALLOWED_FIELDS.assertUrl, compile: compileAssertUrlJobStep },
-	click: { allowedFields: JOB_STEP_ALLOWED_FIELDS.click, compile: compileClickJobStep },
-	fill: { allowedFields: JOB_STEP_ALLOWED_FIELDS.fill, compile: compileFillJobStep },
-	open: { allowedFields: JOB_STEP_ALLOWED_FIELDS.open, compile: compileOpenJobStep },
-	screenshot: { allowedFields: JOB_STEP_ALLOWED_FIELDS.screenshot, compile: (step) => compilePathArtifactJobStep(step, "screenshot") },
-	select: { allowedFields: JOB_STEP_ALLOWED_FIELDS.select, compile: compileSelectJobStep },
-	snapshot: { allowedFields: JOB_STEP_ALLOWED_FIELDS.snapshot, compile: () => ({ args: ["snapshot", "-i"] }) },
-	type: { allowedFields: JOB_STEP_ALLOWED_FIELDS.type, compile: compileTypeJobStep },
-	wait: { allowedFields: JOB_STEP_ALLOWED_FIELDS.wait, compile: compileWaitJobStep },
-	waitForDownload: { allowedFields: JOB_STEP_ALLOWED_FIELDS.waitForDownload, compile: (step) => compilePathArtifactJobStep(step, "waitForDownload") },
+// ponytail: allowedFields for each action live in JOB_STEP_ALLOWED_FIELDS (same key
+// alignment enforced by Record<AgentBrowserJobStepAction, …>), so the compiler map no
+// longer mirrors that set per entry; the call site looks it up by action.
+const JOB_STEP_COMPILERS: Record<AgentBrowserJobStepAction, JobStepCompiler> = {
+	assertText: compileAssertTextJobStep,
+	assertUrl: compileAssertUrlJobStep,
+	click: compileClickJobStep,
+	fill: compileFillJobStep,
+	open: compileOpenJobStep,
+	screenshot: (step) => compilePathArtifactJobStep(step, "screenshot"),
+	select: compileSelectJobStep,
+	snapshot: () => ({ args: ["snapshot", "-i"] }),
+	type: compileTypeJobStep,
+	wait: compileWaitJobStep,
+	waitForDownload: (step) => compilePathArtifactJobStep(step, "waitForDownload"),
 };
 
 export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAgentBrowserJob; error?: string } {
@@ -251,10 +249,10 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 			return { error: `job.steps[${index}].action must be one of: ${AGENT_BROWSER_JOB_STEP_ACTIONS.join(", ")}.` };
 		}
 		const jobAction = action as AgentBrowserJobStepAction;
-		const descriptor = JOB_STEP_DESCRIPTORS[jobAction];
-		const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, descriptor.allowedFields);
+		const compile = JOB_STEP_COMPILERS[jobAction];
+		const unsupportedFieldError = getUnsupportedJobStepFieldError(rawStep, jobAction, JOB_STEP_ALLOWED_FIELDS[jobAction]);
 		if (unsupportedFieldError) return { error: `job.steps[${index}]: ${unsupportedFieldError}` };
-		const compiledStep = descriptor.compile(rawStep, index);
+		const compiledStep = compile(rawStep, index);
 		if (compiledStep.error) return { error: compiledStep.error.startsWith(`job.steps[${index}]`) ? compiledStep.error : `job.steps[${index}]: ${compiledStep.error}` };
 		steps.push({ action: jobAction, args: compiledStep.args as string[], generatedFrom: compiledStep.generatedFrom }, ...(compiledStep.extraSteps ?? []));
 	}

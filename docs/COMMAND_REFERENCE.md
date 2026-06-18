@@ -18,7 +18,7 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.27.3` command/help surface, audited against vercel-labs/agent-browser@2c7991c9eccca1c9db6eee1a26a713414778de5a. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.28.0` command/help surface, audited against vercel-labs/agent-browser@6323df571ffd17d14e60ec19fcb56cc1caf498ab. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
@@ -35,6 +35,17 @@ The 0.27.3 rebaseline is an install-only compatibility update: upstream changed 
 - form commands: `find label` matches `aria-label` / `aria-labelledby`, `select` errors when no option matches, and `type` parses `--clear` / `--delay` instead of typing them as literal text
 - warm CLI command latency and batch daemon respawn/retry improvements
 - GNU Linux release artifacts pinned to glibc 2.28
+
+### Upstream 0.28.0 rebaseline
+
+The 0.28.0 rebaseline tracks new local/infra upstream surfaces and does not change core browser-command semantics. New agent-facing surface captured by the capability baseline:
+
+- `mcp` starts a local MCP stdio server exposing agent-browser tools. It is intended for external MCP clients that spawn `agent-browser mcp` as a subprocess; an agent inside pi would not normally invoke it, and the wrapper treats it as sessionless (no managed browser session injected).
+- `plugin add <ref>`, `plugin [list]`, `plugin show <name>`, and `plugin run <name> <type>` manage configured plugins in `agent-browser.json` (added from npm or GitHub); all are sessionless in the wrapper.
+- `auth login <name> --credential-provider <plugin>` resolves credentials just-in-time from a configured credential plugin (for example, a vault); credentials are not saved locally.
+- `AGENT_BROWSER_PLUGINS` is a JSON plugin registry override.
+
+The wrapper adds no compatibility shim for older upstream releases.
 
 ## Core mental model
 
@@ -140,7 +151,7 @@ Use `vitals [url]` for Core Web Vitals plus React hydration timing when availabl
 { "args": ["pushstate", "/dashboard?tab=settings"] }
 ```
 
-For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant v0.27.3 surfaces, unchanged from the prior baseline, are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
+For first-navigation setup, start on `about:blank`, then stage routes, cookies, or init scripts before navigating. The relevant current upstream surfaces are `network route <url> [--abort|--body <json>] [--resource-type <csv>]` and `cookies set --curl <file>`:
 
 ```json
 { "args": ["open"], "sessionMode": "fresh" }
@@ -359,7 +370,7 @@ For one-call flows, put the click and wait in `batch`; the wait step keeps the s
 { "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
 ```
 
-A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With the current upstream `agent-browser 0.27.3`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
+A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With current upstream `agent-browser`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
 
 ### Download, screenshot, and PDF files
 
@@ -639,7 +650,7 @@ For dense pages, the wrapper also accepts `snapshot -i --search <text>` and `sna
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. The native Pi wrapper forwards explicit wait timeouts and extends the subprocess watchdog unless the caller supplies top-level `timeoutMs`. |
 
-Current v0.27.3 source still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
+Current upstream source still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
 
 ### Diff, debug, and streaming
 
@@ -700,9 +711,15 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `install --with-deps` | Install browser binaries plus Linux system dependencies. |
 | `upgrade` | Upgrade `agent-browser` to the latest version. |
 | `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. Use `doctor --offline --quick` for a fast local-only check and `doctor --json` for structured output. |
+| `plugin add <ref>` | Add a plugin from npm or GitHub (`<owner>/<repo>` or `@scope/<name>`); writes `agent-browser.json`. Flags such as `--name`, `--capability`, `--global`, and `--no-manifest` shape discovery. |
+| `plugin [list]` | List configured plugins (default subcommand). |
+| `plugin show <name>` | Show one configured plugin. |
+| `plugin run <name> <type>` | Run a `command.run` or custom plugin request over the agent-browser plugin stdio protocol. |
+| `auth login <name> --credential-provider <plugin>` | Resolve credentials just-in-time from a configured credential plugin (e.g. a vault) instead of saved passwords; pair with `--item <ref>` and optional selector overrides. Credentials are not stored locally. |
+| `mcp` | Start a local MCP stdio server exposing agent-browser tools (`--tools core,network,react` or `--tools all`). Intended for external MCP clients that spawn it as a subprocess; sessionless in the wrapper. |
 | `profiles` | List available Chrome profiles. |
 
-When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. Local inspection/setup calls (`auth save/list/show/delete/remove`, `dashboard start/stop`, `device list`, `doctor`, `install`, `upgrade`, `profiles`, `session list`, `state list/show/rename`, `state clean --older-than <days>`, `state clear --all`, `state clear -a`, and `state clear <session-name>`) are sessionless unless you explicitly pass `--session`; context-dependent calls such as root `session`, untargeted `state clear`, `auth login`, `chat`, and `state save/load` keep normal session behavior. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. If the same session has active wrapper-observed network routes, failed/pending/CORS-looking matched request rows add `details.networkRouteDiagnostics` and executable route-mock next actions before the generic request actions. `data:image` artifact rows are omitted from compact request previews but remain in raw `details.data.requests`. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Clipboard failures that mention `NotAllowedError` or permission denial are usually browser/OS capability limits, not proof that a read, paste, or page mutation happened; prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct typing (`keyboard inserttext` / `keyboard type`) when the workflow allows it, and retry true clipboard flows only from an allowed profile/session on a normal `http(s)` page. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; low-risk primitive storage values may remain visible, while command echoes still redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, `clipboard write` text, cookie/storage set values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
+When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. Local inspection/setup calls (`auth save/list/show/delete/remove`, `dashboard start/stop`, `device list`, `doctor`, `install`, `upgrade`, `profiles`, `session list`, `plugin add/list/show/run`, `mcp`, `state list/show/rename`, `state clean --older-than <days>`, `state clear --all`, `state clear -a`, and `state clear <session-name>`) are sessionless unless you explicitly pass `--session`; context-dependent calls such as root `session`, untargeted `state clear`, `auth login`, `chat`, and `state save/load` keep normal session behavior. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. If the same session has active wrapper-observed network routes, failed/pending/CORS-looking matched request rows add `details.networkRouteDiagnostics` and executable route-mock next actions before the generic request actions. `data:image` artifact rows are omitted from compact request previews but remain in raw `details.data.requests`. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Clipboard failures that mention `NotAllowedError` or permission denial are usually browser/OS capability limits, not proof that a read, paste, or page mutation happened; prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct typing (`keyboard inserttext` / `keyboard type`) when the workflow allows it, and retry true clipboard flows only from an allowed profile/session on a normal `http(s)` page. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; low-risk primitive storage values may remain visible, while command echoes still redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, `clipboard write` text, cookie/storage set values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
 
 ## Optional package config and companion web search
 
@@ -824,6 +841,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `-v, --verbose`: show tool commands and raw output.
 - `-q, --quiet`: show only AI text responses.
 - `--debug`: debug output. Environment: `AGENT_BROWSER_DEBUG`.
+- `AGENT_BROWSER_PLUGINS`: JSON plugin registry override for the upstream `plugin` commands.
 - `--version`, `-V`: show version.
 
 ### Config precedence
@@ -860,17 +878,19 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.27.3</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.28.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `2c7991c9eccca1c9db6eee1a26a713414778de5a`
-- upstream package version: `0.27.3`
+- upstream HEAD: `6323df571ffd17d14e60ec19fcb56cc1caf498ab`
+- upstream package version: `0.28.0`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
+- inspected: `agent-browser mcp --help`
+- inspected: `agent-browser plugin --help`
 - inspected: `README.md`
 - inspected: `CHANGELOG.md`
 - inspected: `agent-browser.schema.json`
@@ -929,14 +949,16 @@ This generated block is review data for maintainers. The human-authored referenc
 - install help: `agent-browser install --help`
 - upgrade help: `agent-browser upgrade --help`
 - profiles help: `agent-browser profiles --help`
+- mcp help: `agent-browser mcp --help`
+- plugin help: `agent-browser plugin --help`
 
 #### Inventory sections
 - Built-in skills: 13 human-doc token(s), 13 upstream token(s)
 - Core page, element, navigation, and extraction commands: 74 human-doc token(s), 74 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 20 human-doc token(s), 16 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 43 human-doc token(s), 53 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 24 human-doc token(s), 24 upstream token(s)
-- Global flags, config, providers, policy, and environment: 120 human-doc token(s), 90 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 30 human-doc token(s), 34 upstream token(s)
+- Global flags, config, providers, policy, and environment: 121 human-doc token(s), 91 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1121,6 +1143,12 @@ This generated block is review data for maintainers. The human-authored referenc
 - `doctor [--fix]`
 - `doctor --offline --quick`
 - `doctor --json`
+- `mcp`
+- `plugin add <ref>`
+- `plugin [list]`
+- `plugin show <name>`
+- `plugin run <name> <type>`
+- `auth login <name> --credential-provider <plugin>`
 - `profiles`
 
 ##### Global flags, config, providers, policy, and environment
@@ -1194,6 +1222,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_CONFIRM_INTERACTIVE`
 - `-p, --provider <name>`
 - `AGENT_BROWSER_PROVIDER`
+- `AGENT_BROWSER_PLUGINS`
 - `browserbase`
 - `kernel`
 - `browseruse`
@@ -1435,6 +1464,16 @@ This generated block is review data for maintainers. The human-authored referenc
 - chat help: `chat <message>`
 - doctor help: `--offline`
 - doctor help: `--json`
+- root help: `Start an MCP stdio server`
+- root help: `plugin add <ref>`
+- root help: `plugin [list]`
+- root help: `plugin show <name>`
+- root help: `plugin run <name> <type>`
+- auth help: `--credential-provider <p>`
+- mcp help: `agent_browser_open`
+- mcp help: `--tools`
+- plugin help: `Add a plugin from npm or GitHub`
+- plugin help: `credential.read`
 
 ##### Global flags, config, providers, policy, and environment
 - root help: `--profile <name|path>`
@@ -1506,6 +1545,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_CONFIRM_INTERACTIVE`
 - root help: `--provider <name>`
 - root help: `AGENT_BROWSER_PROVIDER`
+- root help: `AGENT_BROWSER_PLUGINS`
 - root help: `agent-browser -p ios device list`
 - root help: `agent-browser -p ios swipe up`
 - root help: `agent-browser -p ios tap @e1`

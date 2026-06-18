@@ -4,7 +4,7 @@
  * Scope: Schema-only; behavioral validation lives in the mode compilers.
  */
 
-import { JsonSchema, type JsonSchemaBuilder } from "../json-schema.js";
+import { JsonSchema, type JsonSchemaBuilder, type TSchema } from "../json-schema.js";
 import { StringEnum as localStringEnum, type StringEnumBuilder } from "../string-enum-schema.js";
 
 import {
@@ -22,6 +22,22 @@ import {
 	DEFAULT_SESSION_MODE,
 	SOURCE_LOOKUP_MAX_WORKSPACE_FILES,
 } from "./types.js";
+
+// ponytail: the four electron.launch variants differ only in their single target field
+// (appPath/appName/bundleId/executablePath); the action literal and the shared optional
+// launch fields are identical, so a helper keeps the duplicate schema blocks in sync.
+function electronLaunchVariant(Type: JsonSchemaBuilder, StringEnum: StringEnumBuilder, targetField: Record<string, TSchema>) {
+	return Type.Object({
+		action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
+		...targetField,
+		appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
+		handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
+		targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
+		timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
+		allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
+		deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
+	}, { additionalProperties: false });
+}
 
 export function createAgentBrowserParamsSchema(
 	Type: JsonSchemaBuilder = JsonSchema,
@@ -102,46 +118,10 @@ export function createAgentBrowserParamsSchema(
 				query: Type.Optional(Type.String({ description: "Optional case-insensitive substring filter for electron.list across app name, bundle id, desktop id, and paths.", minLength: 1 })),
 				maxResults: Type.Optional(Type.Integer({ description: `Maximum electron.list apps to return. Defaults to ${ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS}; values above ${ELECTRON_DISCOVERY_MAX_RESULTS} are clamped.`, minimum: 1 })),
 			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
-				appPath: Type.String({ description: "Electron launch target: macOS .app bundle path. Exactly one launch target is required for electron.launch.", minLength: 1 }),
-				appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
-				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
-				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
-				allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
-				deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
-				appName: Type.String({ description: "Electron launch target: app display name discovered by electron.list. Exactly one launch target is required for electron.launch.", minLength: 1 }),
-				appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
-				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
-				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
-				allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
-				deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
-				bundleId: Type.String({ description: "Electron launch target: macOS bundle identifier discovered by electron.list. Exactly one launch target is required for electron.launch.", minLength: 1 }),
-				appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
-				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
-				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
-				allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
-				deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
-			}, { additionalProperties: false }),
-			Type.Object({
-				action: StringEnum(["launch"] as const, { description: "Launch an Electron app with an isolated wrapper-owned profile." }),
-				executablePath: Type.String({ description: "Electron launch target: executable path. Discovery is not required when this is provided. Exactly one launch target is required for electron.launch.", minLength: 1 }),
-				appArgs: Type.Optional(Type.Array(Type.String({ description: "Argument passed to the Electron application.", minLength: 1 }), { description: "Optional Electron app argv. Wrapper-owned lifecycle/debug flags are rejected." })),
-				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS, { description: "Post-launch handoff depth. Defaults to snapshot." })),
-				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES, { description: "Preferred CDP target type. Defaults to page." })),
-				timeoutMs: Type.Optional(Type.Integer({ description: "Bounded launch timeout in milliseconds.", minimum: 1 })),
-				allow: Type.Optional(Type.Array(Type.String({ description: "App identifier allowed by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned allow list for electron.launch policy checks." })),
-				deny: Type.Optional(Type.Array(Type.String({ description: "App identifier denied by the caller for electron.launch.", minLength: 1 }), { description: "Optional caller-owned deny list for electron.launch policy checks; deny wins over allow." })),
-			}, { additionalProperties: false }),
+			electronLaunchVariant(Type, StringEnum, { appPath: Type.String({ description: "Electron launch target: macOS .app bundle path. Exactly one launch target is required for electron.launch.", minLength: 1 }) }),
+			electronLaunchVariant(Type, StringEnum, { appName: Type.String({ description: "Electron launch target: app display name discovered by electron.list. Exactly one launch target is required for electron.launch.", minLength: 1 }) }),
+			electronLaunchVariant(Type, StringEnum, { bundleId: Type.String({ description: "Electron launch target: macOS bundle identifier discovered by electron.list. Exactly one launch target is required for electron.launch.", minLength: 1 }) }),
+			electronLaunchVariant(Type, StringEnum, { executablePath: Type.String({ description: "Electron launch target: executable path. Discovery is not required when this is provided. Exactly one launch target is required for electron.launch.", minLength: 1 }) }),
 			Type.Object({
 				action: StringEnum(["status", "cleanup"] as const, { description: "Inspect or cleanup one wrapper-tracked Electron launch by launchId." }),
 				launchId: Type.String({ description: "Wrapper launch id for electron.status and electron.cleanup.", minLength: 1 }),

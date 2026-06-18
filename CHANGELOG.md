@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.2.53 - 2026-06-18
+
+### Changed
+
+- Rebaselined upstream capability metadata, command reference, support matrix, platform-smoke image tag, and real-upstream output-shape metadata for `agent-browser` `0.28.0` / vercel-labs/agent-browser@6323df571ffd17d14e60ec19fcb56cc1caf498ab.
+- Documented upstream `mcp`, `plugin add/list/show/run`, plugin-backed `auth login --credential-provider`, and `AGENT_BROWSER_PLUGINS` surfaces while keeping the wrapper thin and compatibility-shim-free.
+- Marked `mcp` and known `plugin` commands as sessionless wrapper calls so local/infra commands do not get an implicit managed browser session.
+- Collapsed duplicated release/platform-smoke prose across README, release docs, and agent guidance in favor of `docs/platform-smoke.md` as the detailed source of truth.
+- Simplified duplicate internal schema/job compiler plumbing without changing the public tool schema or generated argv behavior.
+
+### Validation
+
+- Ran `npm run verify -- release` against `agent-browser` `0.28.0`; the gate passed default verification, command-reference checks, build, lifecycle verification, packaged Pi smoke, and macOS/Ubuntu/Windows-native platform smoke after refreshing the Ubuntu image and Windows `crabbox-ready` snapshot.
+- Ran `npm run verify -- real-upstream`, `npm run verify -- dogfood`, `npm run docs`, `npm run verify -- command-reference`, and `git diff --check`.
+
 ## 0.2.52 - 2026-06-15
 
 ### Changed

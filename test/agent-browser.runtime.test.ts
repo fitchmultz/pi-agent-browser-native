@@ -735,6 +735,13 @@ test("buildExecutionPlan keeps sessionless commands free of implicit managed ses
 		["state", "clear", "piab-demo-123"],
 		["state", "clean", "--older-than", "7"],
 		["state", "rename", "old", "new"],
+		["mcp"],
+		["mcp", "--tools", "core,network"],
+		["plugin"],
+		["plugin", "list"],
+		["plugin", "show", "vault"],
+		["plugin", "add", "agent-browser-plugin-vault"],
+		["plugin", "run", "captcha", "captcha.solve"],
 	] as const) {
 		const callerArgs = [...args];
 		const plan = buildExecutionPlan(callerArgs, {
@@ -784,6 +791,7 @@ test("buildExecutionPlan limits sessionless allowlists to documented subcommands
 		["state", "clean"],
 		["state", "future"],
 		["upgrade", "future"],
+		["plugin", "future"],
 	] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),

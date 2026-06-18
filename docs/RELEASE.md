@@ -66,13 +66,9 @@ For a deterministic host-only real-browser wrapper smoke without model choice in
 npm run verify -- dogfood
 ```
 
-For direct Crabbox diagnostics outside the full release compose, run:
+For direct Crabbox diagnostics outside the full release compose, run the [required platform gate](platform-smoke.md#required-release-gate) (`check:platform-smoke`, `smoke:platform:ubuntu-image`, `smoke:platform:doctor`, `smoke:platform:all`) from [`platform-smoke.md`](platform-smoke.md), then inspect provider leases:
 
 ```bash
-npm run check:platform-smoke
-npm run smoke:platform:ubuntu-image
-npm run smoke:platform:doctor
-npm run smoke:platform:all
 crabbox list --provider local-container
 crabbox list --provider parallels
 ```
@@ -300,7 +296,7 @@ The default unit suite also runs `agentBrowserExtension passes through core comm
 - **Missing or extra `details` / `data` keys:** Update `test/fixtures/agent-browser-real-output-shapes.json` in the same change as the wrapper or presentation code that shifts those keys.
 - **Timeouts:** A 120s bound covers the full matrix; repeated timeouts usually mean a hung browser, blocked loopback, or an environment preventing headful/headless launch—check upstream logs and local security tooling before loosening timeouts.
 
-The current upstream `agent-browser 0.27.3` `wait --download <path>` saveAs persistence limitation is tracked at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300); until it is fixed, release validation must treat `details.savedFilePath` as upstream-reported metadata and use `details.artifacts[].exists` as the filesystem truth (the contract asserts the requested path is absent on disk while upstream still reports success). If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
+The upstream `agent-browser` `wait --download <path>` saveAs persistence limitation is tracked at [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300); until it is fixed, release validation must treat `details.savedFilePath` as upstream-reported metadata and use `details.artifacts[].exists` as the filesystem truth (the contract asserts the requested path is absent on disk while upstream still reports success). If the suite fails because JSON/detail keys drifted, update the wrapper behavior or refresh `test/fixtures/agent-browser-real-output-shapes.json` together with the presentation work that consumes those shapes.
 
 Example smoke prompt:
 

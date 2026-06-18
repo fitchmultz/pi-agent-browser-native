@@ -8,6 +8,7 @@ import type { ArgvDescriptor } from "./argv-descriptor.js";
 import { hasOnlyBooleanFlags, hasOnlyOptionFlags, isNonFlagToken, stripSessionlessShapeGlobalFlags } from "./argv-grammar.js";
 
 const SESSIONLESS_AUTH_SUBCOMMANDS = new Set(["save", "list", "show", "delete", "remove"]);
+const PLUGIN_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "add", "run"]);
 const EMPTY_BOOLEAN_FLAGS = new Set<string>();
 const JSON_BOOLEAN_FLAGS = new Set(["--json"]);
 const AUTH_SAVE_BOOLEAN_FLAGS = new Set(["--json", "--password-stdin"]);
@@ -51,11 +52,19 @@ function isSessionlessStateCommand(commandTokens: readonly string[]): boolean {
 	return secondArg === undefined || (secondArg === "--all" && rest.length === 0);
 }
 
+function isSessionlessPluginCommand(commandTokens: readonly string[]): boolean {
+	const [, subcommand] = commandTokens;
+	if (subcommand === undefined) return true;
+	return PLUGIN_SESSIONLESS_SUBCOMMANDS.has(subcommand);
+}
+
 function isSessionlessCommand(commandTokens: readonly string[]): boolean {
 	const normalizedTokens = stripSessionlessShapeGlobalFlags(commandTokens);
 	const [command, subcommand] = normalizedTokens;
 	if (command === "skills") return ["list", "get", "path"].includes(subcommand ?? "");
 	if (command === "auth") return isSessionlessAuthCommand(normalizedTokens);
+	if (command === "plugin") return isSessionlessPluginCommand(normalizedTokens);
+	if (command === "mcp") return true;
 	if (command === "dashboard") return isSessionlessDashboardCommand(normalizedTokens);
 	if (command === "device") return normalizedTokens.length === 2 && subcommand === "list";
 	if (command === "doctor") return hasOnlyBooleanFlags(normalizedTokens.slice(1), DOCTOR_BOOLEAN_FLAGS);

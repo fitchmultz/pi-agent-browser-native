@@ -14,12 +14,14 @@ export const COMMAND_REFERENCE_BASELINE_BLOCK_IDS = Object.freeze(["upstream-bas
 
 const sourceEvidence = Object.freeze({
   repository: "vercel-labs/agent-browser",
-  upstreamHead: "2c7991c9eccca1c9db6eee1a26a713414778de5a",
-  upstreamPackageVersion: "0.27.3",
+  upstreamHead: "6323df571ffd17d14e60ec19fcb56cc1caf498ab",
+  upstreamPackageVersion: "0.28.0",
   inspectedSources: Object.freeze([
     "agent-browser --version",
     "agent-browser --help",
     "selected agent-browser <command> --help output",
+    "agent-browser mcp --help",
+    "agent-browser plugin --help",
     "README.md",
     "CHANGELOG.md",
     "agent-browser.schema.json",
@@ -91,6 +93,8 @@ const helpCommands = Object.freeze([
   helpCommand("install help", ["install", "--help"]),
   helpCommand("upgrade help", ["upgrade", "--help"]),
   helpCommand("profiles help", ["profiles", "--help"]),
+  helpCommand("mcp help", ["mcp", "--help"]),
+  helpCommand("plugin help", ["plugin", "--help"]),
 ]);
 
 const inventorySections = Object.freeze([
@@ -459,6 +463,12 @@ const inventorySections = Object.freeze([
       "doctor [--fix]",
       "doctor --offline --quick",
       "doctor --json",
+      "mcp",
+      "plugin add <ref>",
+      "plugin [list]",
+      "plugin show <name>",
+      "plugin run <name> <type>",
+      "auth login <name> --credential-provider <plugin>",
       "profiles",
     ],
     [
@@ -486,6 +496,16 @@ const inventorySections = Object.freeze([
       ["chat help", "chat <message>"],
       ["doctor help", "--offline"],
       ["doctor help", "--json"],
+      root("Start an MCP stdio server"),
+      root("plugin add <ref>"),
+      root("plugin [list]"),
+      root("plugin show <name>"),
+      root("plugin run <name> <type>"),
+      ["auth help", "--credential-provider <p>"],
+      ["mcp help", "agent_browser_open"],
+      ["mcp help", "--tools"],
+      ["plugin help", "Add a plugin from npm or GitHub"],
+      ["plugin help", "credential.read"],
     ],
   ),
   section(
@@ -562,6 +582,7 @@ const inventorySections = Object.freeze([
       "AGENT_BROWSER_CONFIRM_INTERACTIVE",
       "-p, --provider <name>",
       "AGENT_BROWSER_PROVIDER",
+      "AGENT_BROWSER_PLUGINS",
       "browserbase",
       "kernel",
       "browseruse",
@@ -683,6 +704,7 @@ const inventorySections = Object.freeze([
       root("AGENT_BROWSER_CONFIRM_INTERACTIVE"),
       root("--provider <name>"),
       root("AGENT_BROWSER_PROVIDER"),
+      root("AGENT_BROWSER_PLUGINS"),
       root("agent-browser -p ios device list"),
       root("agent-browser -p ios swipe up"),
       root("agent-browser -p ios tap @e1"),
@@ -709,7 +731,7 @@ const inventorySections = Object.freeze([
 ]);
 
 export const CAPABILITY_BASELINE = Object.freeze({
-  targetVersion: "0.27.3",
+  targetVersion: "0.28.0",
   sourceEvidence,
   helpCommands,
   inventorySections,

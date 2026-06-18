@@ -449,7 +449,7 @@ For asynchronous exports, click first and then wait for the download:
 { "args": ["wait", "--download", "/tmp/report.csv"] }
 ```
 
-When a user gives exact artifact paths for screenshots, recordings, downloads, PDFs, traces, or HAR files, use those paths or explicitly report why the artifact was unavailable; do not silently substitute a different path in the final report. The wrapper creates missing parent directories for direct artifact paths such as `state save`, screenshots, PDFs, downloads, and `wait --download`. For simple loopback `download <selector> <path>` anchor links with HTTP(S) `href`, it can save the in-page response directly to the requested path before falling back to upstream click/download behavior; non-loopback/profile downloads stay upstream-owned. With upstream `agent-browser 0.27.3`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` / `details.artifactVerification.verified` before relying on the requested `wait --download <path>` file being present on disk; non-file download payloads such as `data:` URLs are not verified local artifacts.
+When a user gives exact artifact paths for screenshots, recordings, downloads, PDFs, traces, or HAR files, use those paths or explicitly report why the artifact was unavailable; do not silently substitute a different path in the final report. The wrapper creates missing parent directories for direct artifact paths such as `state save`, screenshots, PDFs, downloads, and `wait --download`. For simple loopback `download <selector> <path>` anchor links with HTTP(S) `href`, it can save the in-page response directly to the requested path before falling back to upstream click/download behavior; non-loopback/profile downloads stay upstream-owned. With current upstream `agent-browser`, treat `details.savedFilePath` as upstream-reported metadata and confirm `details.artifacts[].exists` / `details.artifactVerification.verified` before relying on the requested `wait --download <path>` file being present on disk; non-file download payloads such as `data:` URLs are not verified local artifacts.
 
 For evidence-only screenshots or QA captures, branch on `details.artifactVerification` and `details.artifacts` before reporting PASS/FAIL; inline image attachments are optional when size limits allow—do not require vision review unless the user asked for visual inspection. If the latest prompt names exact required artifact paths, browser close can be blocked with `details.promptGuard` until those artifacts are saved and verified.
 
@@ -613,18 +613,7 @@ npm run verify -- dogfood
 
 That mode drives the native wrapper through top-level `qa`, `semanticAction`, constrained `job`, screenshot artifact verification, and session close against a deterministic local fixture. It complements, but does not replace, the interactive Pi/tmux release dogfood in [`docs/RELEASE.md`](docs/RELEASE.md#pre-release-checks).
 
-Cross-platform release coverage uses Crabbox to run macOS, Ubuntu Linux, and native Windows target suites:
-
-```bash
-npm run check:platform-smoke
-npm run smoke:platform:ubuntu-image
-npm run smoke:platform:doctor
-npm run smoke:platform:all
-```
-
-The required matrix is documented in [`docs/platform-smoke.md`](docs/platform-smoke.md). It runs `platform-build` (fast target-local verify, pack, clean packed Pi install with `--approve`, `pi list --approve`) and `browser-dogfood-smoke` (real `agent-browser`/browser wrapper smoke) on every target. Inspect `.artifacts/platform-smoke/` and check `crabbox list --provider local-container` plus `crabbox list --provider parallels` after release runs so cleanup proof is not chat-only.
-
-For package release confidence, follow [`docs/RELEASE.md`](docs/RELEASE.md). The release gate is:
+Cross-platform release coverage uses Crabbox to run macOS, Ubuntu Linux, and native Windows target suites; see [`docs/platform-smoke.md`](docs/platform-smoke.md) for the required matrix, standalone coverage (`npm run smoke:platform:all` and per-target `smoke:platform:macos` / `:ubuntu` / `:windows-native`), and artifact/lease inspection. The release gate is:
 
 ```bash
 npm run doctor
@@ -634,7 +623,7 @@ npm run smoke:platform:doctor
 npm run verify -- release
 ```
 
-`npm run verify -- release` includes the default verification gate, packaged Pi smoke coverage, and the release-blocking Crabbox platform matrix. The package also has a `prepublishOnly` hook that runs the same release gate and `npm pack --dry-run` during `npm publish`.
+`npm run verify -- release` includes the default verification gate, packaged Pi smoke coverage, and the release-blocking Crabbox platform matrix (the same matrix `npm run smoke:platform:all` runs standalone). For the full maintainer release flow, follow [`docs/RELEASE.md`](docs/RELEASE.md). The package also has a `prepublishOnly` hook that runs the same release gate and `npm pack --dry-run` during `npm publish`.
 
 ## How it works
 
