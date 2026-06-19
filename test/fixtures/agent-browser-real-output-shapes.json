@@ -20,6 +20,10 @@
     "skillsPath": {
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "subcommand", "summary"]
     },
+    "pluginList": {
+      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "subcommand", "summary"],
+      "dataKeys": ["plugins"]
+    },
     "coreCommand": {
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "summary", "usedImplicitSession"]
     },

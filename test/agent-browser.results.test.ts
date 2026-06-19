@@ -350,6 +350,18 @@ test("parseAgentBrowserEnvelope accepts batch JSON arrays", async () => {
 	assert.equal(parsed.envelope?.success, true);
 });
 
+test("parseAgentBrowserEnvelope accepts exact plugin list and show success envelopes", async () => {
+	const list = await parseAgentBrowserEnvelope(JSON.stringify({ plugins: [] }));
+	const show = await parseAgentBrowserEnvelope(JSON.stringify({ plugin: { capabilities: ["command.run"], name: "demo" } }));
+
+	assert.equal(list.parseError, undefined);
+	assert.equal(list.envelope?.success, true);
+	assert.deepEqual(list.envelope?.data, { plugins: [] });
+	assert.equal(show.parseError, undefined);
+	assert.equal(show.envelope?.success, true);
+	assert.deepEqual(show.envelope?.data, { plugin: { capabilities: ["command.run"], name: "demo" } });
+});
+
 test("parseAgentBrowserEnvelope rejects object envelopes without boolean success", async () => {
 	const parsed = await parseAgentBrowserEnvelope(JSON.stringify({ error: "boom" }));
 

@@ -125,6 +125,66 @@ if (args.includes("--version")) {
 	}
 });
 
+test("agentBrowserExtension passes through plugin list/show and blocks bare mcp one-shots", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-plugin-mcp-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const commandIndex = args.indexOf("plugin");
+const command = commandIndex >= 0 ? "plugin" : args.includes("mcp") ? "mcp" : "unknown";
+const subcommand = command === "plugin" ? (args[commandIndex + 1] || "list") : undefined;
+if (command === "mcp" && args.includes("--help")) {
+  process.stdout.write("agent-browser mcp - Start an MCP stdio server\\nUsage: agent-browser mcp [--tools <profiles>]\\n");
+} else if (subcommand === "list") {
+  process.stdout.write(JSON.stringify({ plugins: [{ name: "demo", capabilities: ["command.run"] }] }));
+} else if (subcommand === "show") {
+  process.stdout.write(JSON.stringify({ plugin: { name: args[commandIndex + 2], capabilities: ["command.run"] } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: false, error: "unexpected command" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise plugin and MCP passthrough." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const pluginList = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["plugin", "list"] });
+			const pluginShow = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["plugin", "show", "demo"] });
+			const bareMcp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["mcp", "--tools", "core"] });
+			const mcpHelp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["mcp", "--help"] });
+			const mcpHelpWord = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["mcp", "help"] });
+
+			assert.equal(pluginList.isError, false);
+			assert.deepEqual(pluginList.details?.data, { plugins: [{ name: "demo", capabilities: ["command.run"] }] });
+			assert.equal(pluginList.details?.sessionName, undefined);
+			assert.equal(pluginList.details?.usedImplicitSession, undefined);
+			assert.equal(pluginShow.isError, false);
+			assert.deepEqual(pluginShow.details?.data, { plugin: { name: "demo", capabilities: ["command.run"] } });
+			assert.equal(pluginShow.details?.sessionName, undefined);
+			assert.equal(bareMcp.isError, true);
+			assert.match(bareMcp.content[0]?.text ?? "", /external MCP clients/);
+			assert.equal(mcpHelp.isError, false);
+			assert.equal(mcpHelp.details?.inspection, true);
+			assert.match(mcpHelp.content[0]?.text ?? "", /Start an MCP stdio server/);
+			assert.equal(mcpHelpWord.isError, true);
+			assert.match(mcpHelpWord.content[0]?.text ?? "", /external MCP clients/);
+
+			assert.deepEqual(await readInvocationLog(logPath), [
+				{ args: ["--json", "plugin", "list"] },
+				{ args: ["--json", "plugin", "show", "demo"] },
+				{ args: ["mcp", "--help"] },
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension keeps skills inspection flows stateless and useful", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-skills-inspection-"));
 	const logPath = join(tempDir, "invocations.log");

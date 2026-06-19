@@ -1,6 +1,6 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, and `wait --download` artifact reporting versus on-disk presence.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
@@ -25,6 +25,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const REAL_UPSTREAM_ENABLED = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1";
+const REAL_UPSTREAM_SKIP_REASON = "Set PI_AGENT_BROWSER_REAL_UPSTREAM=1 to run against the installed upstream binary.";
 const SHAPES_FIXTURE_PATH = new URL("./fixtures/agent-browser-real-output-shapes.json", import.meta.url);
 
 interface RealOutputShapesFixture {
@@ -133,7 +134,8 @@ async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?
 }
 
 if (!REAL_UPSTREAM_ENABLED) {
-	test("real upstream agent-browser contract suite is opt-in", { skip: "Set PI_AGENT_BROWSER_REAL_UPSTREAM=1 to run against the installed upstream binary." }, () => undefined);
+	test("real upstream agent-browser contract suite is opt-in", { skip: REAL_UPSTREAM_SKIP_REASON }, () => undefined);
+	test("real upstream agent-browser plugin list probe is opt-in", { skip: REAL_UPSTREAM_SKIP_REASON }, () => undefined);
 } else {
 	test("real upstream agent-browser contract suite matches wrapper and browser-session expectations", { timeout: 120_000 }, async () => {
 		await assertInstalledAgentBrowserVersion();
@@ -466,8 +468,8 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.match(waitedDownload.content[0]?.text ?? "", /Download event reported; file not verified/);
 
 					// Upstream tracking: https://github.com/vercel-labs/agent-browser/issues/1300.
-					// Current upstream agent-browser 0.27.3 reports the requested saveAs path but leaves the
-					// file in the browser's default download directory. The wrapper must fail closed so release
+					// Current upstream reports the requested saveAs path but leaves the file in the
+					// browser's default download directory. The wrapper must fail closed so release
 					// docs do not overstate savedFilePath as a verified on-disk artifact.
 					const artifacts = waitDownloadDetails.artifacts as Array<{ exists?: boolean; path?: string; sizeBytes?: number }> | undefined;
 					assert.equal(artifacts?.[0]?.path, downloadPath);
@@ -475,13 +477,34 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(
 						await readFileIfPresent(downloadPath),
 						undefined,
-						"agent-browser 0.27.3 reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
+						"current upstream reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
 					);
 				},
 			);
 		} finally {
 			await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: managedSessionName, socketDir });
 			await fixtureServer?.close();
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	});
+
+	test("real upstream agent-browser plugin list stays sessionless", { timeout: 60_000 }, async () => {
+		await assertInstalledAgentBrowserVersion();
+		const shapes = await readOutputShapesFixture();
+		assert.equal(shapes.targetVersion, CAPABILITY_BASELINE.targetVersion, "output-shape fixture must track the canonical target version");
+
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-upstream-plugins-"));
+		try {
+			await withPatchedEnv({ HOME: tempDir, AGENT_BROWSER_PLUGINS: "[]" }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				const pluginList = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["plugin", "list"] });
+				const pluginListDetails = assertSuccessfulResult(pluginList, shapes.commands.pluginList, "plugin list empty");
+				assert.equal(pluginListDetails.sessionName, undefined);
+				assert.equal(pluginListDetails.usedImplicitSession, undefined);
+				assert.deepEqual(pluginListDetails.effectiveArgs, ["--json", "plugin", "list"]);
+				assert.deepEqual((pluginListDetails.data as { plugins?: unknown[] }).plugins, []);
+			});
+		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	});

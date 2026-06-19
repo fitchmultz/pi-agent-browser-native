@@ -735,8 +735,6 @@ test("buildExecutionPlan keeps sessionless commands free of implicit managed ses
 		["state", "clear", "piab-demo-123"],
 		["state", "clean", "--older-than", "7"],
 		["state", "rename", "old", "new"],
-		["mcp"],
-		["mcp", "--tools", "core,network"],
 		["plugin"],
 		["plugin", "list"],
 		["plugin", "show", "vault"],
@@ -760,6 +758,14 @@ test("buildExecutionPlan keeps sessionless commands free of implicit managed ses
 		assert.equal(plan.usedImplicitSession, false);
 		assert.equal(plan.validationError, undefined);
 	}
+});
+
+test("validateToolArgs rejects one-shot mcp server calls but preserves --help/-h", () => {
+	assert.match(validateToolArgs(["mcp"]) ?? "", /stdio MCP server/);
+	assert.match(validateToolArgs(["mcp", "--tools", "core,network"]) ?? "", /external MCP clients/);
+	assert.equal(validateToolArgs(["mcp", "--help"]), undefined);
+	assert.equal(validateToolArgs(["mcp", "-h"]), undefined);
+	assert.match(validateToolArgs(["mcp", "help"]) ?? "", /external MCP clients/);
 });
 
 test("buildExecutionPlan still injects managed sessions for browser-backed state and auth commands", () => {

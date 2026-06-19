@@ -666,6 +666,13 @@ function getSingleKeyCommandValidationError(args: string[]): string | undefined 
 	return `agent-browser ${label} accepts exactly one key argument. Do not pass a selector or ref to ${label}; focus or click the target first, then run ${command} <key> (for example: focus @e1, then press Enter).`;
 }
 
+function getBareMcpValidationError(args: string[]): string | undefined {
+	const { commandInfo, commandTokens } = parseArgvDescriptor(args);
+	if (commandInfo.command !== "mcp") return undefined;
+	if (commandTokens.includes("--help") || commandTokens.includes("-h")) return undefined;
+	return "agent-browser mcp starts a stdio MCP server for external MCP clients, not a one-shot native agent_browser tool workflow. Use the native agent_browser tool modes directly, or configure an MCP client to launch `agent-browser mcp`. Use `mcp --help` for help.";
+}
+
 export function validateToolArgs(args: string[]): string | undefined {
 	if (args.length === 0) {
 		return "`args` must contain at least one agent-browser command token.";
@@ -681,7 +688,7 @@ export function validateToolArgs(args: string[]): string | undefined {
 		return "Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: [\"--profile\", \"Default\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
 	}
 
-	return getSingleKeyCommandValidationError(args);
+	return getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args);
 }
 
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {

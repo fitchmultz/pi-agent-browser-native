@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2.54 - 2026-06-19
+
+### Fixed
+
+- Accepted upstream `plugin list` / `plugin show` JSON and blocked bare `mcp` native-tool calls while preserving `mcp --help`.
+
+### Validation
+
+- Ran `npm run verify -- release` against `agent-browser` `0.28.0`; the gate passed default verification, command-reference checks, build, lifecycle verification, packaged Pi smoke, and macOS/Ubuntu/Windows-native platform smoke.
+- Ran `npm run verify -- real-upstream`, `npm run docs`, `npm run doctor`, `npm run check:platform-smoke`, `npm run smoke:platform:ubuntu-image`, `npm run smoke:platform:doctor`, and `git diff --check`.
+- Ran a tmux-driven Pi checkout dogfood with `pi --approve --no-extensions --no-skills -e .`, covering `--version`, `mcp --help`, `plugin list`, fresh `example.com` open plus `snapshot -i`, `qa` on `react.dev`, and browser close.
+
 ## 0.2.53 - 2026-06-18
 
 ### Changed
