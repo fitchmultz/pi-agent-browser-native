@@ -27,11 +27,13 @@ import { join, resolve } from "node:path";
 /** @typedef {{ browserDefaultProfile?: Required<BrowserDefaultProfileConfig>; browserDefaultProfileScope?: ConfigLayerScope; browserExecutablePath?: string; browserExecutablePathScope?: ConfigLayerScope; trustedBrowserDefaultProfile?: Required<BrowserDefaultProfileConfig>; trustedBrowserDefaultProfileScope?: ConfigLayerScope; trustedBrowserExecutablePath?: string; trustedBrowserExecutablePathScope?: ConfigLayerScope; config: AgentBrowserConfig; webSearchCredentialSources: Partial<Record<WebSearchProvider, CredentialSource>>; webSearchEnabled: boolean; webSearchPreferredProvider: WebSearchProvider; errors: string[]; layers: ConfigLayer[]; paths: AgentBrowserConfigPaths; projectConfigIncluded: boolean; warnings: string[] }} AgentBrowserConfigState */
 /** @typedef {{ scope: string; path: string; exists: boolean }} ConfigFileSummary */
 
+const CONFIG_DIR_NAME = ".pi";
+
 export const AGENT_BROWSER_CONFIG_ENV = "PI_AGENT_BROWSER_CONFIG";
 export const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 export const EXA_API_KEY_ENV = "EXA_API_KEY";
-export const CONFIG_RELATIVE_PATH = /** @type {const} */ ([".pi", "config", "pi-agent-browser-native", "config.json"]);
-export const GLOBAL_CONFIG_RELATIVE_PATH = /** @type {const} */ ([".pi", "config", "pi-agent-browser-native", "config.json"]);
+export const CONFIG_RELATIVE_PATH = /** @type {const} */ ([CONFIG_DIR_NAME, "config", "pi-agent-browser-native", "config.json"]);
+export const GLOBAL_CONFIG_RELATIVE_PATH = /** @type {const} */ ([CONFIG_DIR_NAME, "config", "pi-agent-browser-native", "config.json"]);
 export const SECRET_COMMAND_TIMEOUT_MS = 15_000;
 
 /** @type {Readonly<Record<WebSearchProvider, WebSearchProviderDescriptor>>} */
