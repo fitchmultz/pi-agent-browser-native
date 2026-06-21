@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.2.56 - 2026-06-21
+
+### Fixed
+
+- Corrected the local Pi development baseline to `@earendil-works/*` `0.79.9`, matching the installed `pi 0.79.9` runtime used for release validation.
+
+### Validation
+
+- Re-ran `npm install` and `npm audit --json`; dependency install completed and audit reported zero vulnerabilities.
+
 ## 0.2.55 - 2026-06-21
 
 ### Changed
