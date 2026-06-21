@@ -33,21 +33,26 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 
 const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?:[\s"'`),;.]|$)/gi;
 
+function inferPromptArtifactKind(line: string, path: string): PromptRequestedArtifact["kind"] | undefined {
+	const lowerPath = path.toLowerCase();
+	if (/\.(?:webm|mp4)$/.test(lowerPath)) return "recording";
+	if (/\.(?:png|jpe?g|webp|gif)$/.test(lowerPath)) return "screenshot";
+	const lowerLine = line.toLowerCase();
+	if (lowerLine.includes("screenshot")) return "screenshot";
+	if (/\b(?:screen\s+recording|recording|webm|video)\b/.test(lowerLine)) return "recording";
+	return undefined;
+}
+
 function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifact[] {
 	const artifacts: PromptRequestedArtifact[] = [];
 	const seen = new Set<string>();
 	for (const line of prompt.split(/\r?\n/)) {
-		const lowerLine = line.toLowerCase();
-		const kind = lowerLine.includes("screenshot")
-			? "screenshot"
-			: /\b(?:screen\s+recording|recording|webm|video)\b/.test(lowerLine)
-				? "recording"
-				: undefined;
-		if (!kind) continue;
 		PROMPT_ARTIFACT_PATH_PATTERN.lastIndex = 0;
 		for (const match of line.matchAll(PROMPT_ARTIFACT_PATH_PATTERN)) {
 			const path = match[1]?.trim();
 			if (!path) continue;
+			const kind = inferPromptArtifactKind(line, path);
+			if (!kind) continue;
 			const key = `${kind}:${path}`;
 			if (seen.has(key)) continue;
 			seen.add(key);

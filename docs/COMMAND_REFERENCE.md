@@ -18,23 +18,22 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.28.0` command/help surface, audited against vercel-labs/agent-browser@6323df571ffd17d14e60ec19fcb56cc1caf498ab. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.29.1` command/help surface, audited against vercel-labs/agent-browser@4572acf0d71c0086009206c9c1e2136fc54ec9e5. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
-### Upstream 0.27.3 install-only rebaseline
+### Upstream 0.29.1 rebaseline
 
-The 0.27.3 rebaseline is an install-only compatibility update: upstream changed Windows ARM64 installation fallback behavior and did not change the CLI/help surface or browser-command semantics. This wrapper adds no compatibility shim for older upstream releases. The wrapper must still not hide these prior upstream fixes:
+The 0.29.1 rebaseline adds no new core browser CLI commands. It captures upstream's new hosted-sandbox helper package and install behavior:
 
-- click reliability: upstream now scrolls off-viewport elements before coordinate resolution, handles JavaScript dialogs promptly, recovers mouse state after dialog-opening clicks, and reports overlay interception before dispatching input
-- frame-scoped CSS selectors and waits, including cross-process iframe click-coordinate translation
-- wait timeout handling: documented 25s default, honored `--timeout` across wait variants, and appropriate client read budgets for long waits; the native wrapper forwards explicit long waits and derives a subprocess watchdog when top-level `timeoutMs` is omitted
-- form commands: `find label` matches `aria-label` / `aria-labelledby`, `select` errors when no option matches, and `type` parses `--clear` / `--delay` instead of typing them as literal text
-- warm CLI command latency and batch daemon respawn/retry improvements
-- GNU Linux release artifacts pinned to glibc 2.28
+- `@agent-browser/sandbox` is the upstream helper package for Eve and Vercel Sandbox workflows. It is not bundled by this pi extension; load `skills get vercel-sandbox --full` when a task needs that hosted-sandbox guidance.
+- Fresh Eve and Vercel Sandbox helpers install Chromium system dependencies by default; pass `installSystemDependencies: false` only when the sandbox image already has those libraries.
+- `install --with-deps` now exits nonzero when the package manager cannot install required browser libraries (`install --with-deps exits nonzero`).
+
+Runtime probes on 2026-06-21 confirm two old caveats still stand in `agent-browser 0.29.1`: `find ... uncheck` and `wait <selector> --state hidden|detached` remain advertised by help but fail at runtime, and `wait --url` glob behavior remains narrow. Keep the wrapper's direct `uncheck` passthrough, `wait --fn` disappearance guidance, and `job.assertUrl` glob workaround.
 
 ### Upstream 0.28.0 rebaseline
 
@@ -46,6 +45,17 @@ The 0.28.0 rebaseline tracks new local/infra upstream surfaces and does not chan
 - `AGENT_BROWSER_PLUGINS` is a JSON plugin registry override.
 
 The wrapper adds no compatibility shim for older upstream releases.
+
+### Upstream 0.27.3 install-only rebaseline
+
+The 0.27.3 rebaseline is an install-only compatibility update: upstream changed Windows ARM64 installation fallback behavior and did not change the CLI/help surface or browser-command semantics. This wrapper adds no compatibility shim for older upstream releases. The wrapper must still not hide these prior upstream fixes:
+
+- click reliability: upstream now scrolls off-viewport elements before coordinate resolution, handles JavaScript dialogs promptly, recovers mouse state after dialog-opening clicks, and reports overlay interception before dispatching input
+- frame-scoped CSS selectors and waits, including cross-process iframe click-coordinate translation
+- wait timeout handling: documented 25s default, honored `--timeout` across wait variants, and appropriate client read budgets for long waits; the native wrapper forwards explicit long waits and derives a subprocess watchdog when top-level `timeoutMs` is omitted
+- form commands: `find label` matches `aria-label` / `aria-labelledby`, `select` errors when no option matches, and `type` parses `--clear` / `--delay` instead of typing them as literal text
+- warm CLI command latency and batch daemon respawn/retry improvements
+- GNU Linux release artifacts pinned to glibc 2.28
 
 ## Core mental model
 
@@ -650,7 +660,7 @@ For dense pages, the wrapper also accepts `snapshot -i --search <text>` and `sna
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. The native Pi wrapper forwards explicit wait timeouts and extends the subprocess watchdog unless the caller supplies top-level `timeoutMs`. |
 
-Current upstream source still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
+Current upstream 0.29.1 source still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
 
 ### Diff, debug, and streaming
 
@@ -708,7 +718,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `dashboard stop` | Stop the dashboard server. |
 | `device list` | List available iOS simulators. Use with `-p ios` when exercising iOS provider flows. |
 | `install` | Install browser binaries. |
-| `install --with-deps` | Install browser binaries plus Linux system dependencies. |
+| `install --with-deps` | Install browser binaries plus Linux system dependencies; exits nonzero when required libraries cannot be installed. |
 | `upgrade` | Upgrade `agent-browser` to the latest version. |
 | `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. Use `doctor --offline --quick` for a fast local-only check and `doctor --json` for structured output. |
 | `plugin add <ref>` | Add a plugin from npm or GitHub (`<owner>/<repo>` or `@scope/<name>`); writes `agent-browser.json`. Flags such as `--name`, `--capability`, `--global`, and `--no-manifest` shape discovery. |
@@ -879,14 +889,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.28.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.29.1</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `6323df571ffd17d14e60ec19fcb56cc1caf498ab`
-- upstream package version: `0.28.0`
+- upstream HEAD: `4572acf0d71c0086009206c9c1e2136fc54ec9e5`
+- upstream package version: `0.29.1`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -897,12 +907,17 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `agent-browser.schema.json`
 - inspected: `cli/src/commands.rs`
 - inspected: `cli/src/flags.rs`
+- inspected: `packages/@agent-browser/sandbox/README.md`
+- inspected: `packages/@agent-browser/sandbox/src/shared.ts`
+- inspected: `packages/@agent-browser/sandbox/src/vercel.ts`
+- inspected: `packages/@agent-browser/sandbox/src/eve.ts`
 
 #### Upstream help commands sampled
 - root help: `agent-browser --help`
 - skills help: `agent-browser skills --help`
 - skills list: `agent-browser skills list`
 - core skill full: `agent-browser skills get core --full`
+- vercel sandbox skill full: `agent-browser skills get vercel-sandbox --full`
 - open help: `agent-browser open --help`
 - click help: `agent-browser click --help`
 - key help: `agent-browser key --help`
@@ -954,11 +969,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - plugin help: `agent-browser plugin --help`
 
 #### Inventory sections
-- Built-in skills: 13 human-doc token(s), 13 upstream token(s)
+- Built-in skills: 15 human-doc token(s), 15 upstream token(s)
 - Core page, element, navigation, and extraction commands: 74 human-doc token(s), 74 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 20 human-doc token(s), 16 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 43 human-doc token(s), 53 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 30 human-doc token(s), 34 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 31 human-doc token(s), 35 upstream token(s)
 - Global flags, config, providers, policy, and environment: 121 human-doc token(s), 91 upstream token(s)
 
 #### Human-authored doc tokens required
@@ -974,6 +989,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - `skills get dogfood`
 - `skills get vercel-sandbox`
 - `skills get agentcore`
+- `@agent-browser/sandbox`
+- `installSystemDependencies: false`
 - `skills path [name]`
 - `AGENT_BROWSER_SKILLS_DIR`
 
@@ -1140,6 +1157,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `device list`
 - `install`
 - `install --with-deps`
+- `install --with-deps exits nonzero`
 - `upgrade`
 - `doctor [--fix]`
 - `doctor --offline --quick`
@@ -1287,6 +1305,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills list: `dogfood`
 - skills list: `vercel-sandbox`
 - skills list: `agentcore`
+- vercel sandbox skill full: `@agent-browser/sandbox`
+- vercel sandbox skill full: `installSystemDependencies: false`
 - core skill full: `agent-browser frame @e3`
 - core skill full: `agent-browser dialog accept`
 - core skill full: `agent-browser state save ./auth.json`
@@ -1450,6 +1470,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `dashboard start --port <n>`
 - device help: `device list`
 - root help: `install --with-deps`
+- install help: `fails if deps fail`
 - root help: `upgrade`
 - root help: `doctor [--fix]`
 - root help: `profiles`

@@ -14,8 +14,8 @@ export const COMMAND_REFERENCE_BASELINE_BLOCK_IDS = Object.freeze(["upstream-bas
 
 const sourceEvidence = Object.freeze({
   repository: "vercel-labs/agent-browser",
-  upstreamHead: "6323df571ffd17d14e60ec19fcb56cc1caf498ab",
-  upstreamPackageVersion: "0.28.0",
+  upstreamHead: "4572acf0d71c0086009206c9c1e2136fc54ec9e5",
+  upstreamPackageVersion: "0.29.1",
   inspectedSources: Object.freeze([
     "agent-browser --version",
     "agent-browser --help",
@@ -27,6 +27,10 @@ const sourceEvidence = Object.freeze({
     "agent-browser.schema.json",
     "cli/src/commands.rs",
     "cli/src/flags.rs",
+    "packages/@agent-browser/sandbox/README.md",
+    "packages/@agent-browser/sandbox/src/shared.ts",
+    "packages/@agent-browser/sandbox/src/vercel.ts",
+    "packages/@agent-browser/sandbox/src/eve.ts",
   ]),
 });
 
@@ -46,6 +50,7 @@ const helpCommands = Object.freeze([
   helpCommand("skills help", ["skills", "--help"]),
   helpCommand("skills list", ["skills", "list"]),
   helpCommand("core skill full", ["skills", "get", "core", "--full"]),
+  helpCommand("vercel sandbox skill full", ["skills", "get", "vercel-sandbox", "--full"]),
   helpCommand("open help", ["open", "--help"]),
   helpCommand("click help", ["click", "--help"]),
   helpCommand("key help", ["key", "--help"]),
@@ -113,6 +118,8 @@ const inventorySections = Object.freeze([
       "skills get dogfood",
       "skills get vercel-sandbox",
       "skills get agentcore",
+      "@agent-browser/sandbox",
+      "installSystemDependencies: false",
       "skills path [name]",
       "AGENT_BROWSER_SKILLS_DIR",
     ],
@@ -127,6 +134,8 @@ const inventorySections = Object.freeze([
       ["skills list", "dogfood"],
       ["skills list", "vercel-sandbox"],
       ["skills list", "agentcore"],
+      ["vercel sandbox skill full", "@agent-browser/sandbox"],
+      ["vercel sandbox skill full", "installSystemDependencies: false"],
       ["core skill full", "agent-browser frame @e3"],
       ["core skill full", "agent-browser dialog accept"],
       ["core skill full", "agent-browser state save ./auth.json"],
@@ -459,6 +468,7 @@ const inventorySections = Object.freeze([
       "device list",
       "install",
       "install --with-deps",
+      "install --with-deps exits nonzero",
       "upgrade",
       "doctor [--fix]",
       "doctor --offline --quick",
@@ -481,6 +491,7 @@ const inventorySections = Object.freeze([
       root("dashboard start --port <n>"),
       ["device help", "device list"],
       root("install --with-deps"),
+      ["install help", "fails if deps fail"],
       root("upgrade"),
       root("doctor [--fix]"),
       root("profiles"),
@@ -731,7 +742,7 @@ const inventorySections = Object.freeze([
 ]);
 
 export const CAPABILITY_BASELINE = Object.freeze({
-  targetVersion: "0.28.0",
+  targetVersion: "0.29.1",
   sourceEvidence,
   helpCommands,
   inventorySections,

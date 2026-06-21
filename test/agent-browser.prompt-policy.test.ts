@@ -59,6 +59,15 @@ Save a short screen recording here if recording is available: recordings/run.web
 	]);
 });
 
+test("buildPromptPolicy keeps recording paths distinct when prompts are collapsed to one line", () => {
+	const policy = buildPromptPolicy("Save a screenshot here: /tmp/page.png Save a short screen recording here if recording is available: /tmp/run.webm");
+
+	assert.deepEqual(policy.requestedArtifacts, [
+		{ kind: "screenshot", path: "/tmp/page.png", required: true },
+		{ kind: "recording", path: "/tmp/run.webm", required: false },
+	]);
+});
+
 test("shouldAppendBrowserSystemPrompt only targets clearly browser-oriented prompts", () => {
 	assert.equal(shouldAppendBrowserSystemPrompt("Open https://example.com and take a snapshot."), true);
 	assert.equal(shouldAppendBrowserSystemPrompt("Do web research and read the live docs for this API."), true);

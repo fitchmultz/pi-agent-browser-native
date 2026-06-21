@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.2.55 - 2026-06-21
+
+### Changed
+
+- Rebaselined upstream capability metadata, command reference, support docs, playbook guidance, platform smoke image tag, and real-upstream output-shape metadata for `agent-browser` `0.29.1` / vercel-labs/agent-browser@4572acf0d71c0086009206c9c1e2136fc54ec9e5.
+- Documented the new upstream `@agent-browser/sandbox` package guidance, `installSystemDependencies: false`, and stricter `install --with-deps` nonzero behavior while keeping sandbox support outside this thin Pi wrapper.
+- Updated local Pi development dependencies to `@earendil-works/*` `0.79.8`, kept Pi core package peers host-provided, and marked those peers optional to avoid install-time peer noise for package consumers.
+
+### Fixed
+
+- Kept optional recording paths from being misclassified as required screenshots when release-smoke prompts are collapsed into one line for tmux automation.
+- Added npm overrides for vulnerable transitive dev dependencies so `npm audit` reports zero vulnerabilities without adding runtime dependencies.
+
+### Validation
+
+- Ran `npm run verify -- release` against `agent-browser` `0.29.1`; after rebuilding the Ubuntu image and refreshing the Windows `crabbox-ready` snapshot, the gate passed default verification, command-reference checks, build, lifecycle verification, packaged Pi smoke, and macOS/Ubuntu/Windows-native platform smoke.
+- Ran `npm run verify -- real-upstream`, `npm run verify -- dogfood`, `npm run verify -- benchmark`, `npm run verify -- startup-profile --samples 3`, `npm run docs`, `npm run doctor`, `npm audit --json`, `npm run check:platform-smoke`, `npm run smoke:platform:ubuntu-image`, `npm run smoke:platform:doctor`, focused prompt-guard tests, and `git diff --check`.
+- Ran tmux-driven Pi checkout dogfood with `pi --approve --no-extensions --no-skills -e .`, covering the public Sauce Demo checkout-overview flow with screenshot/recording evidence and no order placement; then verified the collapsed one-line screenshot-plus-recording close guard on `https://example.com` after rebuilding `dist/`.
+
 ## 0.2.54 - 2026-06-19
 
 ### Fixed
