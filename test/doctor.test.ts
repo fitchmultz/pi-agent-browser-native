@@ -36,7 +36,7 @@ function passingVersion() {
 }
 
 function passingPiVersion() {
-	return "0.79.0\n";
+	return "0.79.10\n";
 }
 
 function evaluateDoctorWithPi(options: Parameters<typeof evaluateDoctor>[0] = {}) {
@@ -49,8 +49,8 @@ test("normalizeAgentBrowserVersion strips the upstream binary label", () => {
 });
 
 test("normalizePiVersion strips an optional pi binary label", () => {
-	assert.equal(normalizePiVersion("pi 0.79.0\n"), "0.79.0");
-	assert.equal(normalizePiVersion("0.79.0\n"), "0.79.0");
+	assert.equal(normalizePiVersion("pi 0.79.10\n"), "0.79.10");
+	assert.equal(normalizePiVersion("0.79.10\n"), "0.79.10");
 });
 
 test("doctor reports missing agent-browser with actionable install guidance", async () => {
@@ -93,14 +93,14 @@ test("doctor reports version drift from the canonical baseline", async () => {
 test("doctor fails when Pi is below the minimum runtime floor", async () => {
 	const report = await evaluateDoctor({
 		runAgentBrowser: async () => passingVersion(),
-		runPi: async () => "0.78.0\n",
+		runPi: async () => "0.79.9\n",
 		skipSourceCheck: true,
 	});
 	const text = formatDoctorReport(report);
 
 	assert.equal(report.failures.length, 1);
-	assert.match(text, /Pi 0\.79\.0 or newer is required; found 0\.78\.0/);
-	assert.match(text, /enforces the Pi 0\.79\.0 runtime floor/);
+	assert.match(text, /Pi 0\.79\.10 or newer is required; found 0\.79\.9/);
+	assert.match(text, /enforces the Pi 0\.79\.10 runtime floor/);
 	assert.match(text, /Doctor found setup failures/);
 });
 
@@ -116,7 +116,7 @@ test("doctor warns instead of failing when Pi version cannot be inspected", asyn
 
 	assert.equal(report.failures.length, 0);
 	assert.match(text, /Could not inspect pi --version/);
-	assert.match(text, /Pi 0\.79\.0 or newer is required/);
+	assert.match(text, /Pi 0\.79\.10 or newer is required/);
 	assert.match(text, /Doctor passed/);
 });
 

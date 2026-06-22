@@ -590,7 +590,7 @@ if (args.includes("get") && args.includes("url")) {
 			const waitNoPathProgress = waitNoPathResult.details?.timeoutPartialProgress as { artifacts?: Array<{ path?: string }> } | undefined;
 			assert.deepEqual(waitNoPathProgress?.artifacts, []);
 
-			const openBeforeMutatingTimeout = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test"] });
+			const openBeforeMutatingTimeout = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test"], timeoutMs: 10_000 });
 			assert.equal(openBeforeMutatingTimeout.isError, false);
 			const mutatingTimeoutResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "fill", selector: "#search", text: "export" }, { action: "wait", milliseconds: 500 }] },

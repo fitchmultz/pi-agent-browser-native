@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.2.57 - 2026-06-22
+
+### Changed
+
+- Updated the local Pi development baseline to `@earendil-works/*` `0.79.10` and refreshed `.pi-fleet-tested-version` for the installed `pi 0.79.10` runtime.
+
+### Fixed
+
+- Stabilized the timeout-progress regression test by giving the non-timeout setup open a larger per-call watchdog under full release-suite load.
+
+### Validation
+
+- Reviewed the installed Pi `0.79.10` changelog, extension docs, package docs, security/project-trust docs, and extension API types; no wrapper runtime change was required for the new compaction event metadata.
+- Ran `npm run verify -- release`, `npm run verify`, `npm run verify -- lifecycle`, `npm run verify -- package-pi`, `npm run docs`, `npm run doctor`, `npm audit --json`, `npm run check:platform-smoke`, `npm run smoke:platform:doctor`, `npm run smoke:platform:all`, and `git diff --check` against `agent-browser 0.29.1` and `pi 0.79.10`.
+
 ## 0.2.56 - 2026-06-21
 
 ### Fixed
