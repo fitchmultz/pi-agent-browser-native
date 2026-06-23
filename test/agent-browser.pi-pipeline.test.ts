@@ -17,7 +17,7 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 	type ToolResultMessage,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import {
 	AuthStorage,
 	createAgentSession,

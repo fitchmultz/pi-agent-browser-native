@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 
 import { createAgentBrowserParamsSchema } from "../extensions/agent-browser/lib/input-modes/params.js";

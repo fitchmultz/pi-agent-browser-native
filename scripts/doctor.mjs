@@ -25,7 +25,7 @@ const EXTENSION_ENTRYPOINTS = Object.freeze([
 	"dist/extensions/agent-browser/index.js",
 ]);
 const EXPECTED_VERSION = CAPABILITY_BASELINE.targetVersion;
-const MINIMUM_PI_VERSION = "0.79.10";
+const MINIMUM_PI_VERSION = "0.80.1";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 const THIS_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -309,7 +309,7 @@ async function checkPiVersion({ runPi }) {
 				status: "fail",
 				title: `Pi ${MINIMUM_PI_VERSION} or newer is required; found ${version || "<empty>"}.`,
 				lines: [
-					"This release enforces the Pi 0.79.10 runtime floor through the read-only doctor and release/package validation because it depends on Project Trust, package loading, session lifecycle, TUI rendering, and tool_result patch behavior from that baseline.",
+					"This release enforces the Pi 0.80.1 runtime floor through the read-only doctor and release/package validation because it depends on Project Trust, package loading, session lifecycle, TUI rendering, and tool_result patch behavior from that baseline.",
 					"Update Pi before using this package or running lifecycle/package validation.",
 				],
 			};

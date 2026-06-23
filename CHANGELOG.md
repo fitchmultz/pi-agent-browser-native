@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.58 - 2026-06-23
+
+### Changed
+
+- Updated the local Pi development baseline to `@earendil-works/*` `0.80.1` and raised the doctor/runtime floor to Pi `0.80.1`.
+- Moved extension source/test imports that typecheck against old root `@earendil-works/pi-ai` globals to `@earendil-works/pi-ai/compat`, matching the Pi 0.80 migration guidance.
+
+### Validation
+
+- Pending in this release train.
+
 ## 0.2.57 - 2026-06-22
 
 ### Changed
