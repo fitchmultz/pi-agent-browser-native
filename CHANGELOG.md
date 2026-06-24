@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.60 - 2026-06-24
+
+### Changed
+
+- Removed a dead `as never` cast and unreachable try/catch from the `agent_browser` collapsed-output "to expand" keybinding hint. `app.tools.expand` is a host-registered keybinding id (coding-agent augments pi-tui's `Keybindings` via declaration merging), so the id is resolved cast-free via `getKeybindings().getKeys(...)` with the stock `ctrl+o` fallback preserved for bare-node test contexts. No behavior change; the `pi-coding-agent` package stays type-only in the entrypoint import path so startup tax is unchanged.
+
+### Validation
+
+- Ran `npm run verify` (default gate: docs, typecheck, 575/575 unit, command-reference baseline + live drift), `npm run verify -- startup-profile --samples 3` (median 50.1ms, < 250ms budget), `npm run verify -- real-upstream`, `npm run verify -- lifecycle`, `npm run verify -- dogfood`, `npm run verify -- pre-pr`, and `npm run doctor` against the local checkout.
+- Ran an independent reviewer subagent over the diff; no blockers found and the compaction-orphan audit claim was confirmed disproven against Pi 0.80.2 source.
+
 ## 0.2.59 - 2026-06-24
 
 ### Changed

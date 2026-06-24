@@ -87,14 +87,13 @@ function colorizeToolOutputLines(outputText: string, theme: Theme, isError: bool
 	});
 }
 
+// ponytail: "app.tools.expand" is a host-registered keybinding id (coding-agent augments pi-tui's
+// Keybindings via declaration merging); getKeys returns [] before the host registers its ids
+// (bare-node tests), so fall back to the stock ctrl+o. pi-tui is already a runtime import at
+// the entrypoint, so getKeybindings() adds no startup tax.
 function formatExpandHint(theme: Theme): string {
-	try {
-		const [key] = getKeybindings().getKeys("app.tools.expand" as never);
-		if (key) return `${theme.fg("dim", key)} ${theme.fg("muted", "to expand")}`;
-	} catch {
-		// Fall through to the built-in default key when coding-agent keybindings are unavailable.
-	}
-	return `${theme.fg("dim", "ctrl+o")} ${theme.fg("muted", "to expand")}`;
+	const key = getKeybindings().getKeys("app.tools.expand")[0] ?? "ctrl+o";
+	return `${theme.fg("dim", key)} ${theme.fg("muted", "to expand")}`;
 }
 
 function formatVisualTruncationNotice(remainingLines: number, totalLines: number, theme: Theme, width: number): string {
