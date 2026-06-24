@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.2.59 - 2026-06-24
+
+### Changed
+
+- Shortened the always-on `agent_browser` prompt guidance by over 1KB while preserving the native-tool trigger, open → `snapshot -i` workflow, `sessionMode=fresh`, artifact verification, and extraction rules.
+- Moved the quick live-search guidance onto `agent_browser_web_search` so browser-search routing stays available without duplicating that guidance in the main browser tool prompt.
+
+### Validation
+
+- Ran `npm run verify -- release`, `npm run doctor`, and `npm run verify -- startup-profile --samples 3` against the local checkout.
+- Ran tmux-driven Pi checkout smoke with `pi --approve --model zai/glm-5.2:high --no-extensions --no-skills --session-dir <tmp> -e .`, confirming the model chose `agent_browser` for `open` + `snapshot -i`, chose `agent_browser_web_search` for live search, and closed the managed browser session.
+- Ran an independent reviewer subagent over the diff; no blockers found.
+
 ## 0.2.58 - 2026-06-23
 
 ### Changed

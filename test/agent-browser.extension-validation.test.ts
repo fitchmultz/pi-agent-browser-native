@@ -97,13 +97,14 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			toolContractPath: join(process.cwd(), "docs", "TOOL_CONTRACT.md"),
 		});
 		const guidelineText = harness.tool.promptGuidelines.join("\n");
+		const webSearchTool = harness.getTool("agent_browser_web_search");
+		assert.ok(webSearchTool, "web search tool should register from BRAVE_API_KEY");
+		assert.equal(webSearchTool.promptGuidelines.includes(WEB_SEARCH_PROMPT_GUIDELINE), true);
 		const requiredGuidelines = [
 			...TOOL_PROMPT_GUIDELINES_PREFIX,
 			docsGuideline,
 			...RUNTIME_PROMPT_GUIDELINES,
-			WEB_SEARCH_PROMPT_GUIDELINE,
 			TOOL_PROMPT_GUIDELINES_SUFFIX[0],
-			TOOL_PROMPT_GUIDELINES_SUFFIX[1],
 		];
 		for (const guideline of requiredGuidelines) {
 			assert.equal(
@@ -112,32 +113,32 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 				`missing concise runtime guideline: ${guideline}`,
 			);
 		}
-		assert.match(guidelineText, /Use agent_browser with exactly one input mode/);
-		assert.match(guidelineText, /For agent_browser, the common flow is open, snapshot -i/);
-		assert.match(guidelineText, /Respect explicit stop boundaries/);
-		assert.match(guidelineText, /stop before order\/post\/purchase\/submit/);
+		assert.match(guidelineText, /Use agent_browser with one input mode/);
+		assert.match(guidelineText, /For agent_browser, use open → snapshot -i/);
+		assert.match(guidelineText, /Stop before order\/post\/purchase\/submit/);
 		assert.equal(
-			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("stop before order/post/purchase/submit")),
+			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("Stop before order/post/purchase/submit")),
 			true,
 		);
 		assert.match(guidelineText, /sessionMode=fresh/);
-		assert.match(guidelineText, /exact user path/);
-		assert.match(guidelineText, /signed-in\/account-specific content/);
-		assert.match(guidelineText, /three or more known refs\/selectors/);
-		assert.match(guidelineText, /Do not pass --json in args/);
+		assert.match(guidelineText, /exact user paths/);
+		assert.match(guidelineText, /requested\/configured profiles only/);
+		assert.match(guidelineText, /three-plus known reads/);
+		assert.match(guidelineText, /never pass --json/);
 		assert.match(harness.tool.description, /Input choice:/);
 		assert.match(guidelineText, /record stop needs ffmpeg/);
-		assert.match(guidelineText, /For dashboards, verify scroll/);
-		assert.match(guidelineText, /When agent_browser details\.nextActions is present/);
+		assert.match(guidelineText, /Dashboards: verify scroll/);
+		assert.match(guidelineText, /When agent_browser details\.nextActions exists/);
 		assert.equal(harness.tool.promptGuidelines.includes(SHARED_BROWSER_PLAYBOOK_GUIDELINES[12]), false);
 		assert.equal(harness.tool.promptGuidelines.includes(QUICK_START_GUIDELINES[0]), false);
 		assert.equal(
 			SHARED_BROWSER_PLAYBOOK_GUIDELINES.some((line) => line.includes("evidence-only screenshots")),
 			true,
 		);
-		assert.ok(harness.tool.promptGuidelines.length <= 12, "promptGuidelines should stay bounded");
+		assert.ok(harness.tool.promptGuidelines.length <= 10, "promptGuidelines should stay bounded");
+		const normalizedGuidelineText = guidelineText.split(process.cwd()).join("<cwd>");
 		assert.ok(
-			guidelineText.length < 3_100,
+			normalizedGuidelineText.length < 1_850,
 			"promptGuidelines should point to docs instead of carrying the full command reference/playbook",
 		);
 		assert.equal(

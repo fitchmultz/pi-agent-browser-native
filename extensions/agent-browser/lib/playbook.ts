@@ -12,11 +12,11 @@ export const PROJECT_RULE_PROMPT =
 	"Project rule: when browser automation is needed, prefer the native `agent_browser` tool. Do not run direct `agent-browser` bash commands unless the user explicitly asks for a bash-oriented workflow or browser-integration debugging.";
 
 export const TOOL_PROMPT_GUIDELINES_PREFIX = [
-	"Use agent_browser whenever the task requires a real browser or live web content.",
+	"Use agent_browser for real browser or live web content.",
 ] as const;
 
 export function buildInstalledDocsGuideline(paths: { readmePath: string; commandReferencePath: string; toolContractPath: string }): string {
-	return `For deeper agent_browser guidance without bloating context, read installed package docs on demand: ${paths.readmePath} for setup/external dependencies, ${paths.commandReferencePath} for command workflows, and ${paths.toolContractPath} for result/details contracts. Do not load the full command reference unless needed; prefer targeted sections.`;
+	return `For detailed agent_browser docs, read targeted sections: ${paths.readmePath} (setup), ${paths.commandReferencePath} (commands), ${paths.toolContractPath} (result/details). Do not load the full command reference unless needed.`;
 }
 
 export const QUICK_START_GUIDELINES = [
@@ -32,7 +32,7 @@ export const QUICK_START_GUIDELINES = [
 ] as const;
 
 export const WEB_SEARCH_PROMPT_GUIDELINE =
-	"Use agent_browser_web_search for quick live search/URL discovery; prefer it over browser-automating public search-engine forms, which can hit anti-bot/CAPTCHA-gated pages. Use agent_browser for interaction/DOM/screenshots/auth after you have a target URL. One query, inspect, one follow-up max; on HTTP 429 stop/report limits.";
+	"Use agent_browser_web_search for quick live search/URL discovery; prefer it over public search-engine forms that can hit anti-bot/CAPTCHA-gated pages. Use agent_browser after you have a target URL; one query, one follow-up max; stop on HTTP 429.";
 
 
 export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
@@ -71,8 +71,7 @@ export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 ] as const;
 
 export const TOOL_PROMPT_GUIDELINES_SUFFIX = [
-	"Prefer agent_browser over bash for opening sites, docs, clicking, filling, screenshots, eval, and batch workflows.",
-	"Do not fall back to osascript, AppleScript, or generic browser-driving bash commands when agent_browser can do the job.",
+	"Prefer agent_browser over bash, osascript, AppleScript, or generic browser-driving shell for sites, docs, clicking, filling, screenshots, eval, and batch workflows.",
 	"Pass exact agent-browser CLI arguments in agent_browser args when you are not using semanticAction, job, or qa, excluding the binary name and --json (agent_browser injects --json automatically).",
 	"Use agent_browser stdin only for eval --stdin, batch, auth save --password-stdin, or wrapper-generated job/qa batches instead of shell heredocs or password args; other command/stdin combinations are rejected before launch.",
 	`Let the agent_browser extension-managed session handle the common path unless you explicitly need a fresh launch for launch-scoped flags (${LAUNCH_SCOPED_FLAG_LABEL}).`,
@@ -101,12 +100,12 @@ export function buildSharedBrowserPlaybookGuidelines(options: { includeWebSearch
 
 /** Tier A: always-on tool promptGuidelines (keep small; Tier B lives in SHARED_BROWSER_PLAYBOOK_GUIDELINES and docs). */
 export const RUNTIME_PROMPT_GUIDELINES = [
-	"Use agent_browser with exactly one input mode: args, semanticAction, job, qa, sourceLookup/networkSourceLookup, or electron. stdin only for batch/eval/auth or wrapper batch; electron rejects stdin. Do not pass --json in args; agent_browser injects it.",
-	"For agent_browser, the common flow is open, snapshot -i, use current @refs or semanticAction, then re-snapshot after navigation/scroll/rerender/DOM change. Batch same-snapshot forms unless they may submit/navigate/rerender. Keep job flows short around navigation/click/rerender boundaries on dynamic apps. Respect explicit stop boundaries: stop before order/post/purchase/submit.",
-	"Use agent_browser top-level sessionMode=fresh for launch-scoped flags; never put --session-mode in args. For signed-in/account-specific content, use requested/configured profiles, never assume --profile Default; on profile failures, run profiles/doctor and tell the user what to configure. Use --executable-path for configured Chromium. Profile content is model-visible.",
-	"For agent_browser artifacts, save the exact user path and verify details.artifactVerification/details.artifacts before claiming success. If close is blocked by details.promptGuard, save the required artifact first. record stop needs ffmpeg; close does not delete saved files; waited:timeout is not proof.",
-	"When agent_browser details.nextActions is present, prefer exact payloads over prose/guessed selectors. For dense snapshots, check Omitted high-value controls/details.data.highValueControlRefIds. For dashboards, verify scroll with screenshot/snapshot; if nothing moved, target the real scroll region.",
-	"For agent_browser extraction, prefer get title/url/text/html/value/attr/count or eval --stdin with plain expression, not console.log. Batch three or more known refs/selectors (e.g. [[\"get\",\"text\",\"@e1\"],[\"get\",\"text\",\"@e2\"]]); selector visibility warnings → visible @refs/nextActions.",
+	"Use agent_browser with one input mode: args, semanticAction, job, qa, sourceLookup/networkSourceLookup, or electron. stdin only for batch/eval/auth/wrapper batch; electron rejects stdin; never pass --json.",
+	"For agent_browser, use open → snapshot -i → current @refs or semanticAction → re-snapshot after navigation/scroll/rerender. Batch same-snapshot forms; split before navigation/submits. Stop before order/post/purchase/submit.",
+	"Use agent_browser sessionMode=fresh for launch-scoped flags; never put --session-mode in args. Use requested/configured profiles only; on profile failures run profiles/doctor. Profile content is model-visible.",
+	"For agent_browser artifacts, use exact user paths and verify details.artifactVerification/details.artifacts before claiming success. Save details.promptGuard-required artifacts before close; record stop needs ffmpeg; close keeps files; waited:timeout is not proof.",
+	"When agent_browser details.nextActions exists, use exact payloads over guessed selectors/prose. Dense snapshots: check Omitted high-value controls/highValueControlRefIds. Dashboards: verify scroll with screenshot/snapshot.",
+	"For agent_browser extraction, prefer get title/url/text/html/value/attr/count or eval --stdin returning a plain value, not console.log. Batch three-plus known reads; selector visibility warnings mean use visible @refs/nextActions.",
 ] as const;
 
 export function buildBrowserExecutablePathGuideline(executablePath: string | undefined): string | undefined {
@@ -136,8 +135,6 @@ export function buildToolPromptGuidelines(options: {
 		...RUNTIME_PROMPT_GUIDELINES,
 		...(browserExecutablePathGuideline ? [browserExecutablePathGuideline] : []),
 		...(browserDefaultProfileGuideline ? [browserDefaultProfileGuideline] : []),
-		...(options.includeWebSearch ? [WEB_SEARCH_PROMPT_GUIDELINE] : []),
 		TOOL_PROMPT_GUIDELINES_SUFFIX[0],
-		TOOL_PROMPT_GUIDELINES_SUFFIX[1],
 	];
 }
