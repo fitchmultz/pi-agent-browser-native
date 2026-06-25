@@ -91,27 +91,6 @@ type CompileJobStepResult = {
 
 type JobStepCompiler = (step: Record<string, unknown>, index: number) => CompileJobStepResult;
 
-function globUrlPatternToRegexSource(pattern: string): string {
-	let source = "^";
-	for (let index = 0; index < pattern.length; index += 1) {
-		const char = pattern.charAt(index);
-		if (char === "*") {
-			let runLength = 1;
-			while (pattern[index + runLength] === "*") runLength += 1;
-			source += runLength === 1 ? "[^/]*" : ".*";
-			index += runLength - 1;
-		} else {
-			source += char.replace(/[\\^$+?.()|[\]{}]/g, "\\$&");
-		}
-	}
-	return `${source}$`;
-}
-
-function compileJobAssertUrlArgs(url: string): string[] {
-	if (!url.includes("*")) return ["wait", "--url", url];
-	return ["wait", "--fn", `new RegExp(${JSON.stringify(globUrlPatternToRegexSource(url))}).test(location.href)`];
-}
-
 function compileJobTypeSteps(step: Record<string, unknown>): { error?: string; steps?: CompiledAgentBrowserJobStep[] } {
 	const text = getRequiredJobString(step, "text", "type");
 	if (text.error) return { error: text.error };
@@ -200,7 +179,7 @@ function compileAssertTextJobStep(step: Record<string, unknown>): CompileJobStep
 function compileAssertUrlJobStep(step: Record<string, unknown>): CompileJobStepResult {
 	const result = getRequiredJobString(step, "url", "assertUrl");
 	if (result.error) return { error: result.error };
-	return { args: compileJobAssertUrlArgs(result.value as string) };
+	return { args: ["wait", "--url", result.value as string] };
 }
 
 function compilePathArtifactJobStep(step: Record<string, unknown>, action: "screenshot" | "waitForDownload"): CompileJobStepResult {

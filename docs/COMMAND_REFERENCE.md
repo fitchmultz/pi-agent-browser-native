@@ -18,22 +18,26 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.29.1` command/help surface, audited against vercel-labs/agent-browser@4572acf0d71c0086009206c9c1e2136fc54ec9e5. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.30.1` command/help surface, audited against vercel-labs/agent-browser@7379f7dbea76ad8dbf47f177349c4c3ce9263dcb. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.30.1 rebaseline
+
+The 0.30.1 rebaseline adds no new CLI commands. It fixes `wait --url` / `waitforurl` glob matching against the full active URL, so the wrapper removed its `job.assertUrl` `wait --fn` workaround and now delegates exact and glob patterns to upstream `wait --url`.
+
+Runtime probes on 2026-06-24 confirm `wait --url "**/dashboard"` succeeds after a `pushstate /dashboard`. Two old caveats still stand in `agent-browser 0.30.1`: `find ... uncheck` and `wait <selector> --state hidden|detached` remain advertised by help but fail at runtime. Keep the wrapper's direct `uncheck` passthrough and `wait --fn` disappearance guidance.
+
 ### Upstream 0.29.1 rebaseline
 
-The 0.29.1 rebaseline adds no new core browser CLI commands. It captures upstream's new hosted-sandbox helper package and install behavior:
+The 0.29.1 rebaseline added no new core browser CLI commands. It captured upstream's new hosted-sandbox helper package and install behavior:
 
 - `@agent-browser/sandbox` is the upstream helper package for Eve and Vercel Sandbox workflows. It is not bundled by this pi extension; load `skills get vercel-sandbox --full` when a task needs that hosted-sandbox guidance.
 - Fresh Eve and Vercel Sandbox helpers install Chromium system dependencies by default; pass `installSystemDependencies: false` only when the sandbox image already has those libraries.
-- `install --with-deps` now exits nonzero when the package manager cannot install required browser libraries (`install --with-deps exits nonzero`).
-
-Runtime probes on 2026-06-21 confirm two old caveats still stand in `agent-browser 0.29.1`: `find ... uncheck` and `wait <selector> --state hidden|detached` remain advertised by help but fail at runtime, and `wait --url` glob behavior remains narrow. Keep the wrapper's direct `uncheck` passthrough, `wait --fn` disappearance guidance, and `job.assertUrl` glob workaround.
+- `install --with-deps` exits nonzero when the package manager cannot install required browser libraries (`install --with-deps exits nonzero`).
 
 ### Upstream 0.28.0 rebaseline
 
@@ -239,7 +243,7 @@ Use `batch --bail` when later steps should stop after the first failed command.
 
 For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `type`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, `snapshot`, and `screenshot`. `open` can include `loadState: "domcontentloaded" | "load" | "networkidle"` to insert a `wait --load …` row immediately after navigation before the next click/read step. `click` and `fill` accept either a stable `selector` or the same semantic locator fields as top-level `semanticAction` (`locator`, plus `role`/`name` or `value` as appropriate) and compile locator steps to upstream `find` argv. `type` focuses an optional selector, sends text through upstream keyboard typing, can insert `wait` rows via `delayMs` for human-paced input, and can append a final `press` key such as `Enter`; delayed typing is capped at 200 characters per step, and generated per-character rows are compacted in model-visible batch text while remaining available in `details.batchSteps`. `select` requires `selector` plus `value` or `values`, and compiles to upstream `select <selector> <value...>`. By default the wrapper compiles steps to upstream `batch --bail` so a failed setup/fill/assertion step stops later mutating clicks; set `failFast: false` only when you explicitly need continue-after-error diagnostics. The wrapper records `details.compiledJob.steps[]` plus `details.compiledJob.failFast`. There is still no separate first-class catalog of reusable named browser recipes above `job`, the `qa` preset, and raw `batch`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and revisit bar.
 
-**Job navigation is explicit.** A `click` step (or other navigation-prone interaction) does not prove the next page loaded. The wrapper does not auto-insert `assertUrl` or `assertText` after clicks inside `job`; add those steps yourself with the exact URL, a `*` / `**` glob-style URL pattern, or on-page text you expect, especially after forms, checkout, tabs, or submit buttons, before screenshots or later steps. Exact `assertUrl` values without `*` compile to `wait --url` unchanged, including query strings and literal `?`. Glob-style values compile to a `wait --fn` predicate: single `*` matches within one path segment only, while `**` or longer star runs match across `/`; regex metacharacters such as `.`, `?`, `+`, `[`, `]`, and `$` stay literal. Literal `*` exact URLs are not supported by `assertUrl`; use raw `wait --url` only after verifying upstream behavior. Do not put a whole dynamic checkout into one long job: split around login, sorting/cart mutations, checkout navigation, and final evidence capture so refs and app state can be rechecked between phases. Glob-style `assertUrl` values compile this way so `**/shipping` works even when upstream `wait --url` pattern matching is narrower than its help text implies.
+**Job navigation is explicit.** A `click` step (or other navigation-prone interaction) does not prove the next page loaded. The wrapper does not auto-insert `assertUrl` or `assertText` after clicks inside `job`; add those steps yourself with the exact URL, a `*` / `**` glob-style URL pattern, or on-page text you expect, especially after forms, checkout, tabs, or submit buttons, before screenshots or later steps. Exact and glob-style `assertUrl` values compile to `wait --url` unchanged, including query strings and literal `?`; upstream `agent-browser 0.30.1` matches `*` / `**` patterns against the full active URL. Do not put a whole dynamic checkout into one long job: split around login, sorting/cart mutations, checkout navigation, and final evidence capture so refs and app state can be rechecked between phases.
 
 ```json
 {
@@ -365,7 +369,7 @@ Top-level `networkSourceLookup` does the same for failed browser requests. When 
 
 Do not omit the load state value; use `wait --load <state>` with `load`, `domcontentloaded`, or `networkidle`.
 
-For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / exact `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream help labels `wait --url` as a pattern matcher, but dogfood found glob forms such as `**/learn` can time out on the current baseline; use an exact URL there, or use `job.assertUrl` for `*` / `**` glob-style matching. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a successful fixed-wait payload such as `"waited":"timeout"` as elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
+For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream `agent-browser 0.30.1` supports `wait --url` glob forms such as `**/dashboard` against the full active URL. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a successful fixed-wait payload such as `"waited":"timeout"` as elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
 
 Use `wait --download [path]` after an earlier action has already started a browser download, such as a dashboard export button that responds asynchronously:
 
@@ -660,7 +664,7 @@ For dense pages, the wrapper also accepts `snapshot -i --search <text>` and `sna
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. The native Pi wrapper forwards explicit wait timeouts and extends the subprocess watchdog unless the caller supplies top-level `timeoutMs`. |
 
-Current upstream 0.29.1 source still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
+Current upstream 0.30.1 still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
 
 ### Diff, debug, and streaming
 
@@ -889,14 +893,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.29.1</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.30.1</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `4572acf0d71c0086009206c9c1e2136fc54ec9e5`
-- upstream package version: `0.29.1`
+- upstream HEAD: `7379f7dbea76ad8dbf47f177349c4c3ce9263dcb`
+- upstream package version: `0.30.1`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`

@@ -1,6 +1,6 @@
 {
   "purpose": "Stable real upstream agent-browser output-shape expectations for the opt-in contract suite.",
-  "targetVersion": "0.29.1",
+  "targetVersion": "0.30.1",
   "commands": {
     "version": {
       "detailKeys": ["args", "command", "effectiveArgs", "exitCode", "inspection", "sessionMode", "summary"]

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2.61 - 2026-06-24
+
+### Changed
+
+- Rebaselined upstream capability metadata, command reference, support docs, playbook guidance, and real-upstream output-shape metadata for `agent-browser` `0.30.1` / vercel-labs/agent-browser@7379f7dbea76ad8dbf47f177349c4c3ce9263dcb.
+- Removed the constrained `job.assertUrl` glob-to-`wait --fn` workaround now that upstream `wait --url` matches glob patterns such as `**/dashboard` against the full active URL.
+
+### Validation
+
+- Ran `npm run verify`, `npm run docs`, focused `npx tsx --test test/agent-browser.extension-input-modes.test.ts`, `npm run verify -- command-reference`, and `git diff --check`.
+- Probed upstream `agent-browser 0.30.1` directly: `wait --url "**/dashboard"` succeeds after `pushstate /dashboard`; `find ... uncheck` and `wait <selector> --state hidden|detached` still fail, so only the URL-glob workaround was removed.
+
 ## 0.2.60 - 2026-06-24
 
 ### Changed
