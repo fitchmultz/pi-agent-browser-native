@@ -16,14 +16,23 @@ function Write-Section($Name, $Path) {
   Write-Output "--- $Name END ---"
 }
 
-function Get-AgentBrowserVersion() {
-  if (-not (Get-Command agent-browser -ErrorAction SilentlyContinue)) { return "" }
-  return (& agent-browser --version 2>$null)
+function Get-AgentBrowserCommandPath() {
+  foreach ($Name in @("agent-browser.cmd", "agent-browser.exe", "agent-browser")) {
+    $Command = Get-Command $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($Command) { return $Command.Source }
+  }
+  return ""
 }
 
-function Test-AgentBrowser($Version) {
+function Get-AgentBrowserVersion($AgentBrowserPath) {
+  if (-not $AgentBrowserPath) { return "" }
+  return (& $AgentBrowserPath --version 2>$null)
+}
+
+function Test-AgentBrowser($Version, $AgentBrowserPath) {
   $Expected = "agent-browser $Version"
-  $Current = Get-AgentBrowserVersion
+  $Current = Get-AgentBrowserVersion $AgentBrowserPath
+  Write-Output "PLATFORM_AGENT_BROWSER_PATH=$AgentBrowserPath"
   Write-Output "PLATFORM_AGENT_BROWSER_VERSION=$Current"
   $script:AgentBrowserReadyExit = if ($Current -eq $Expected) { 0 } else { 1 }
 }
@@ -46,6 +55,34 @@ function Test-AgentBrowserBrowserCache() {
   $script:BrowserCacheExit = 1
 }
 
+function Invoke-AgentBrowserWithTimeout($AgentBrowserPath, [string[]]$Arguments, [int]$TimeoutSeconds) {
+  $script:LastAgentBrowserCommandExit = 1
+  if (-not $script:AgentBrowserCommandCounter) { $script:AgentBrowserCommandCounter = 0 }
+  $script:AgentBrowserCommandCounter += 1
+  $OutPath = Join-Path $DogfoodDir ("agent-browser-{0}.stdout.txt" -f $script:AgentBrowserCommandCounter)
+  $ErrPath = Join-Path $DogfoodDir ("agent-browser-{0}.stderr.txt" -f $script:AgentBrowserCommandCounter)
+  $Process = Start-Process -FilePath $AgentBrowserPath -ArgumentList $Arguments -RedirectStandardOutput $OutPath -RedirectStandardError $ErrPath -PassThru -WindowStyle Hidden
+
+  $TimedOut = -not $Process.WaitForExit($TimeoutSeconds * 1000)
+  if ($TimedOut) {
+    & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null
+    Write-Output "PLATFORM_AGENT_BROWSER_COMMAND_TIMEOUT=${TimeoutSeconds}s args=$($Arguments -join ' ')"
+    $script:LastAgentBrowserCommandExit = 124
+  }
+
+  $StdoutText = if (Test-Path $OutPath) { Get-Content -Raw $OutPath } else { "" }
+  $StderrText = if (Test-Path $ErrPath) { Get-Content -Raw $ErrPath } else { "" }
+  if (-not $TimedOut) {
+    if ($null -ne $Process.ExitCode) { $script:LastAgentBrowserCommandExit = $Process.ExitCode }
+    elseif ($StdoutText -match '"success"\s*:\s*true') { $script:LastAgentBrowserCommandExit = 0 }
+    else { $script:LastAgentBrowserCommandExit = 1 }
+  }
+
+  if ($StdoutText) { Write-Output $StdoutText }
+  if ($StderrText) { Write-Output $StderrText }
+  Write-Output "PLATFORM_AGENT_BROWSER_COMMAND_EXIT=$($script:LastAgentBrowserCommandExit)"
+}
+
 Write-Output "Starting browser-dogfood-smoke in $SourceRoot at $((Get-Date).ToUniversalTime().ToString('o'))"
 Write-Output "PLATFORM_RUN_ROOT=$RunRoot"
 Write-Output "PLATFORM_DOGFOOD_ARTIFACT_DIR=$DogfoodArtifactDir"
@@ -57,8 +94,9 @@ Write-Output "PLATFORM_NODE_VERSION=$NodeVersion"
 $NpmCiExit = $LASTEXITCODE
 Write-Output "PLATFORM_NPM_CI_EXIT=$NpmCiExit"
 
+$AgentBrowserPath = Get-AgentBrowserCommandPath
 $script:AgentBrowserReadyExit = 1
-Test-AgentBrowser $AgentBrowserVersion
+Test-AgentBrowser $AgentBrowserVersion $AgentBrowserPath
 $AgentBrowserExit = $script:AgentBrowserReadyExit
 Write-Output "PLATFORM_AGENT_BROWSER_READY_EXIT=$AgentBrowserExit"
 $script:BrowserCacheExit = 1
@@ -72,10 +110,15 @@ if ($BrowserCacheExit -eq 0) {
   $PrewarmUrl = "file:///" + ($PrewarmPath -replace "\\", "/")
   for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
     Write-Output "PLATFORM_AGENT_BROWSER_PREWARM_ATTEMPT=$Attempt"
-    & agent-browser open --json --session "platform-smoke-prewarm-$Attempt" $PrewarmUrl 2>&1
-    $BrowserPrewarmExit = $LASTEXITCODE
-    & agent-browser close --json --session "platform-smoke-prewarm-$Attempt" 2>&1
-    if ($BrowserPrewarmExit -eq 0) { break }
+    $PrewarmSession = "platform-smoke-prewarm-$Attempt"
+    Invoke-AgentBrowserWithTimeout $AgentBrowserPath @("open", "--json", "--session", $PrewarmSession, $PrewarmUrl) 45
+    $BrowserPrewarmExit = $script:LastAgentBrowserCommandExit
+    if ($BrowserPrewarmExit -eq 0) {
+      Invoke-AgentBrowserWithTimeout $AgentBrowserPath @("close", "--json", "--session", $PrewarmSession) 15
+      $CloseExit = $script:LastAgentBrowserCommandExit
+      Write-Output "PLATFORM_AGENT_BROWSER_PREWARM_CLOSE_EXIT=$CloseExit"
+      break
+    }
     Start-Sleep -Seconds 2
   }
 }

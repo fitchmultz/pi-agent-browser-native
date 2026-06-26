@@ -18,12 +18,16 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.31.0` command/help surface, audited against vercel-labs/agent-browser@5acf7f9dc153cd51dcc6c79e1aebb09c83b2261d. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.31.1` command/help surface, audited against vercel-labs/agent-browser@ed2e10598c9064aecfaeb7cf21b540684db4be2c. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
+
+### Upstream 0.31.1 rebaseline
+
+The 0.31.1 rebaseline is a React bugfix release: `react tree`, `react inspect <id>`, and `react suspense` now pick the `react-dom` renderer with mounted fiber roots instead of hardcoding renderer id `1`. This fixes empty React trees on Next.js 16.3 / Turbopack / RSC pages. No CLI/help/schema surface changed, so the wrapper only updates baseline evidence and keeps the 0.31.0 restore/session handling below.
 
 ### Upstream 0.31.0 rebaseline
 
@@ -243,7 +247,7 @@ Use `batch --bail` when later steps should stop after the first failed command.
 
 For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `type`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, `snapshot`, and `screenshot`. `open` can include `loadState: "domcontentloaded" | "load" | "networkidle"` to insert a `wait --load …` row immediately after navigation before the next click/read step. `click` and `fill` accept either a stable `selector` or the same semantic locator fields as top-level `semanticAction` (`locator`, plus `role`/`name` or `value` as appropriate) and compile locator steps to upstream `find` argv. `type` focuses an optional selector, sends text through upstream keyboard typing, can insert `wait` rows via `delayMs` for human-paced input, and can append a final `press` key such as `Enter`; delayed typing is capped at 200 characters per step, and generated per-character rows are compacted in model-visible batch text while remaining available in `details.batchSteps`. `select` requires `selector` plus `value` or `values`, and compiles to upstream `select <selector> <value...>`. By default the wrapper compiles steps to upstream `batch --bail` so a failed setup/fill/assertion step stops later mutating clicks; set `failFast: false` only when you explicitly need continue-after-error diagnostics. The wrapper records `details.compiledJob.steps[]` plus `details.compiledJob.failFast`. There is still no separate first-class catalog of reusable named browser recipes above `job`, the `qa` preset, and raw `batch`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and revisit bar.
 
-**Job navigation is explicit.** A `click` step (or other navigation-prone interaction) does not prove the next page loaded. The wrapper does not auto-insert `assertUrl` or `assertText` after clicks inside `job`; add those steps yourself with the exact URL, a `*` / `**` glob-style URL pattern, or on-page text you expect, especially after forms, checkout, tabs, or submit buttons, before screenshots or later steps. Exact and glob-style `assertUrl` values compile to `wait --url` unchanged, including query strings and literal `?`; upstream `agent-browser 0.31.0` matches `*` / `**` patterns against the full active URL. Do not put a whole dynamic checkout into one long job: split around login, sorting/cart mutations, checkout navigation, and final evidence capture so refs and app state can be rechecked between phases.
+**Job navigation is explicit.** A `click` step (or other navigation-prone interaction) does not prove the next page loaded. The wrapper does not auto-insert `assertUrl` or `assertText` after clicks inside `job`; add those steps yourself with the exact URL, a `*` / `**` glob-style URL pattern, or on-page text you expect, especially after forms, checkout, tabs, or submit buttons, before screenshots or later steps. Exact and glob-style `assertUrl` values compile to `wait --url` unchanged, including query strings and literal `?`; upstream `agent-browser 0.31.1` matches `*` / `**` patterns against the full active URL. Do not put a whole dynamic checkout into one long job: split around login, sorting/cart mutations, checkout navigation, and final evidence capture so refs and app state can be rechecked between phases.
 
 ```json
 {
@@ -369,7 +373,7 @@ Top-level `networkSourceLookup` does the same for failed browser requests. When 
 
 Do not omit the load state value; use `wait --load <state>` with `load`, `domcontentloaded`, or `networkidle`.
 
-For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream `agent-browser 0.31.0` supports `wait --url` glob forms such as `**/dashboard` against the full active URL. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a successful fixed-wait payload such as `"waited":"timeout"` as elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
+For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream `agent-browser 0.31.1` supports `wait --url` glob forms such as `**/dashboard` against the full active URL. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a successful fixed-wait payload such as `"waited":"timeout"` as elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
 
 Use `wait --download [path]` after an earlier action has already started a browser download, such as a dashboard export button that responds asynchronously:
 
@@ -899,14 +903,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.31.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.31.1</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `5acf7f9dc153cd51dcc6c79e1aebb09c83b2261d`
-- upstream package version: `0.31.0`
+- upstream HEAD: `ed2e10598c9064aecfaeb7cf21b540684db4be2c`
+- upstream package version: `0.31.1`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`

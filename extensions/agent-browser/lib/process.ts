@@ -71,11 +71,11 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 	return [args[index], ...leadingGlobals, ...args.slice(index + 1)];
 }
 
-function buildAgentBrowserSpawnCommand(args: string[]): { command: string; args: string[] } {
-	if (processPlatform !== "win32") {
+export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {
+	if (platform !== "win32") {
 		return { command: "agent-browser", args };
 	}
-	const commandLine = ["&", "agent-browser", ...reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg)].join(" ");
+	const commandLine = ["&", "agent-browser.cmd", ...reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg)].join(" ");
 	return { command: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", commandLine] };
 }
 

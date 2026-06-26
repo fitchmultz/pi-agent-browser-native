@@ -144,13 +144,15 @@ if (!REAL_UPSTREAM_ENABLED) {
 
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-upstream-"));
 		const socketDir = join(tempDir, "sockets");
-		await mkdir(join(tempDir, "Downloads"), { recursive: true });
+		const downloadDir = join(tempDir, "Downloads");
+		await mkdir(downloadDir, { recursive: true });
 		let fixtureServer: FixtureServer | undefined;
 		let managedSessionName: string | undefined;
 		try {
 			fixtureServer = await startAgentBrowserContractFixtureServer();
 			await withPatchedEnv(
 				{
+					AGENT_BROWSER_DOWNLOAD_PATH: downloadDir,
 					AGENT_BROWSER_SOCKET_DIR: socketDir,
 					AGENT_BROWSER_SCREENSHOT_DIR: join(tempDir, "screenshots"),
 					HOME: tempDir,

@@ -23,6 +23,10 @@ test("platform smoke scripts have working syntax and help", () => {
 		assert.equal(run(process.execPath, ["--check", path]).status, 0, path);
 	}
 
+	const doctorScript = readFileSync("scripts/platform-smoke/doctor.mjs", "utf8");
+	assert.match(doctorScript, /cleanup failed/);
+	assert.match(doctorScript, /!stop\.ok/);
+
 	for (const path of [
 		"scripts/platform-smoke/platform-build-windows.ps1",
 		"scripts/platform-smoke/browser-dogfood-windows.ps1",
@@ -102,6 +106,7 @@ const powershell = buildPlatformBuildCommand("windows-native", "pi-agent-browser
 const powershellScript = readFileSync("scripts/platform-smoke/platform-build-windows.ps1", "utf8");
 const dogfoodPosix = buildBrowserDogfoodCommand("ubuntu");
 const dogfoodWindows = buildBrowserDogfoodCommand("windows-native");
+const dogfoodWindowsScript = readFileSync("scripts/platform-smoke/browser-dogfood-windows.ps1", "utf8");
 const result = {
   macosPlatform: platformFor("macos") === "posix",
   ubuntuPlatform: platformFor("ubuntu") === "posix",
@@ -120,7 +125,9 @@ const result = {
   dogfoodChecksBaseline: dogfoodPosix.includes("EXPECTED_AGENT_BROWSER_VERSION='agent-browser " + CAPABILITY_BASELINE.targetVersion + "'") && dogfoodPosix.includes("PLATFORM_AGENT_BROWSER_READY_EXIT"),
   dogfoodKeepsArtifacts: dogfoodPosix.includes("--artifact-dir"),
   dogfoodWindowsUsesScript: dogfoodWindows.includes("browser-dogfood-windows.ps1") && dogfoodWindows.includes("-AgentBrowserVersion '" + CAPABILITY_BASELINE.targetVersion + "'"),
-  dogfoodWindowsRetriesTransientOpen: readFileSync("scripts/platform-smoke/browser-dogfood-windows.ps1", "utf8").includes("PLATFORM_DOGFOOD_ATTEMPT"),
+  dogfoodWindowsRetriesTransientOpen: dogfoodWindowsScript.includes("PLATFORM_DOGFOOD_ATTEMPT"),
+  dogfoodWindowsBoundsPrewarmCommands: dogfoodWindowsScript.includes("Invoke-AgentBrowserWithTimeout") && dogfoodWindowsScript.includes("PLATFORM_AGENT_BROWSER_COMMAND_TIMEOUT") && dogfoodWindowsScript.includes("taskkill.exe"),
+  dogfoodWindowsSkipsCloseAfterFailedPrewarm: dogfoodWindowsScript.includes("if ($BrowserPrewarmExit -eq 0)") && dogfoodWindowsScript.includes('"close", "--json", "--session"'),
   dogfoodWindowsDoesNotBootstrap: !dogfoodWindows.includes("npm install -g") && !dogfoodWindows.includes("agent-browser install"),
 };
 console.log(JSON.stringify(result));

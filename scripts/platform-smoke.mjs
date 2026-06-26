@@ -123,7 +123,7 @@ export async function main(argv = process.argv.slice(2)) {
 	}
 
 	if (args.command === "run") {
-		const { runTargetSuite, runTargetSuites } = await import("./platform-smoke/targets.mjs");
+		const { runTargetSuites } = await import("./platform-smoke/targets.mjs");
 		const targets = args.target ? args.target.split(",").map((name) => name.trim()).filter(Boolean) : config.requiredTargets;
 		const suites = args.suite ? [args.suite] : config.requiredSuites;
 		const supportedTargets = config.supportedTargets ?? config.requiredTargets;
@@ -131,9 +131,7 @@ export async function main(argv = process.argv.slice(2)) {
 		validateNames("suite", suites, config.requiredSuites);
 		const runs = targets.map(async (targetName) => {
 			console.log(`\n=== Target: ${targetName} ===`);
-			const result = args.suite
-				? await runTargetSuite(config, targetName, suites[0])
-				: await runTargetSuites(config, targetName, suites);
+			const result = await runTargetSuites(config, targetName, suites);
 			return { targetName, result };
 		});
 		const results = await Promise.all(runs);

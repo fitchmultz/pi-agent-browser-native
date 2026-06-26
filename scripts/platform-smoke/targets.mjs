@@ -497,8 +497,10 @@ export async function runTargetSuites(config, targetName, suiteNames) {
 	try {
 		let sync = true;
 		for (const suiteName of suiteNames) {
+			console.log(`  Suite: ${suiteName}`);
 			const result = await runTargetSuite(config, targetName, suiteName, { ...lease, sync }, runId);
 			results.push(result);
+			console.log(`  ${result.ok ? "PASS" : "FAIL"} ${suiteName} on ${targetName}`);
 			sync = false;
 			if (!result.ok) break;
 		}

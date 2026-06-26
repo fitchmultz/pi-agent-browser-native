@@ -5,6 +5,7 @@ import { accessSync, constants, mkdirSync, unlinkSync, writeFileSync } from "nod
 import { resolve } from "node:path";
 
 import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
+import { buildTargetBaseArgs } from "./crabbox-runner.mjs";
 
 const DEFAULT_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${CAPABILITY_BASELINE.targetVersion}`;
 
@@ -155,6 +156,69 @@ function checkCrabboxProvider(cbox, args, label, failures) {
 	}
 }
 
+function crabbox(cbox, args, timeout = 300_000) {
+	try {
+		return {
+			ok: true,
+			stdout: execFileSync(cbox, args, { timeout, stdio: "pipe", env: { ...process.env, CRABBOX_SYNC_GIT_SEED: "false" } }).toString(),
+			stderr: "",
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			stdout: error.stdout?.toString?.() ?? "",
+			stderr: error.stderr?.toString?.() ?? error.message,
+		};
+	}
+}
+
+function parseLeaseId(text) {
+	return text.match(/\bleased\s+(\S+)/)?.[1]
+		?? text.match(/\blease=(\S+)/)?.[1]
+		?? null;
+}
+
+export function disposableWindowsAgentBrowserProbe(cbox, config, expectedVersion) {
+	const slug = "piab-doctor-agent-browser";
+	const baseArgs = buildTargetBaseArgs("windows-native", config);
+	const warm = crabbox(cbox, ["warmup", ...baseArgs, "--slug", slug, "--keep", "--reclaim"], 300_000);
+	const leaseId = parseLeaseId(`${warm.stdout}\n${warm.stderr}`) ?? slug;
+	if (!warm.ok) return { ok: false, message: `warmup failed: ${(warm.stderr || warm.stdout).slice(-500)}` };
+
+	let outcome;
+	try {
+		const probeScript = `$ErrorActionPreference = "Stop"
+$cmd = Get-Command "agent-browser.cmd" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $cmd) { throw "agent-browser.cmd missing" }
+$version = & $cmd.Source --version
+Write-Output "PLATFORM_DOCTOR_AGENT_BROWSER_PATH=$($cmd.Source)"
+Write-Output "PLATFORM_DOCTOR_AGENT_BROWSER_VERSION=$version"
+$roots = @((Join-Path $env:USERPROFILE ".agent-browser\\browsers"), "C:\\WINDOWS\\system32\\config\\systemprofile\\.agent-browser\\browsers")
+$chrome = Get-ChildItem -Path $roots -Recurse -Filter chrome.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $chrome) { throw "agent-browser browser cache missing chrome.exe" }
+Write-Output "PLATFORM_DOCTOR_AGENT_BROWSER_CHROME=$($chrome.FullName)"`;
+		const probeCommand = `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(probeScript, "utf16le").toString("base64")}`;
+		const run = crabbox(cbox, ["run", ...baseArgs, "--id", leaseId, "--no-sync", "--shell", probeCommand], 180_000);
+		if (!run.ok) outcome = { ok: false, message: `probe failed: ${(run.stderr || run.stdout).slice(-700)}` };
+		else {
+			const output = run.stdout;
+			const versionLine = output.match(/^PLATFORM_DOCTOR_AGENT_BROWSER_VERSION=(.*)$/m)?.[1]?.trim() ?? "";
+			const pathLine = output.match(/^PLATFORM_DOCTOR_AGENT_BROWSER_PATH=(.*)$/m)?.[1]?.trim() ?? "";
+			const chromeLine = output.match(/^PLATFORM_DOCTOR_AGENT_BROWSER_CHROME=(.*)$/m)?.[1]?.trim() ?? "";
+			if (versionLine !== `agent-browser ${expectedVersion}`) outcome = { ok: false, message: `expected agent-browser ${expectedVersion}, got ${versionLine || "missing version"}` };
+			else if (!pathLine || !chromeLine) outcome = { ok: false, message: "agent-browser path or browser cache marker missing" };
+			else outcome = { ok: true, message: `${versionLine} | ${pathLine} | ${chromeLine}` };
+		}
+	} finally {
+		const stop = crabbox(cbox, ["stop", ...baseArgs, "--id", leaseId], 90_000);
+		if (!stop.ok) {
+			const prior = outcome?.ok === false ? `; prior result: ${outcome.message}` : "";
+			outcome = { ok: false, message: `cleanup failed: ${(stop.stderr || stop.stdout).slice(-500)}${prior}` };
+		}
+	}
+	return outcome;
+}
+
 function checkAgentBrowserVersion(expectedVersion, failures, command = "agent-browser") {
 	const version = shell(`${command} --version`);
 	if (!version) {
@@ -289,6 +353,9 @@ export async function runDoctor(config) {
 					fail(`snapshot ${snapshot} not found on ${vmName}`, failures);
 				}
 				checkCrabboxProvider(cbox, ["--provider", "parallels", "--target", "windows", "--windows-mode", "normal", "--parallels-source", vmName, "--parallels-source-snapshot", snapshot, "--parallels-user", user, "--parallels-work-root", workRoot], "windows parallels", failures);
+				const agentBrowserProbe = disposableWindowsAgentBrowserProbe(cbox, { ...config, windowsParallels: { ...config?.windowsParallels, sourceVm: vmName, snapshot, user, workRoot } }, agentBrowserVersion);
+				if (agentBrowserProbe.ok) ok(`Windows disposable agent-browser: ${agentBrowserProbe.message}`);
+				else fail(`Windows disposable agent-browser probe failed: ${agentBrowserProbe.message}`, failures);
 			}
 		}
 	} else {

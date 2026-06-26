@@ -15,6 +15,7 @@ import test from "node:test";
 
 import {
 	buildAgentBrowserProcessEnv,
+	buildAgentBrowserSpawnCommand,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
 	reorderWindowsLeadingGlobalArgs,
@@ -113,6 +114,17 @@ test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", (
 		reorderWindowsLeadingGlobalArgs(["--json", "--headed", "false", "--download-path=/tmp/downloads", "open", "https://example.com"]),
 		["open", "--json", "--headed", "false", "--download-path=/tmp/downloads", "https://example.com"],
 	);
+});
+
+test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
+	assert.deepEqual(
+		buildAgentBrowserSpawnCommand(["--json", "--session", "managed", "open", "https://example.com"], "win32"),
+		{
+			command: "powershell.exe",
+			args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "& agent-browser.cmd 'open' '--json' '--session' 'managed' 'https://example.com'"],
+		},
+	);
+	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
 });
 
 test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is win32", async () => {

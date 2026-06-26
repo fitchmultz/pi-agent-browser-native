@@ -190,7 +190,6 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 					checkErrors: false,
 					checkNetwork: false,
 					expectedText: "Example Domain",
-					loadState: "domcontentloaded",
 					url: fixture.origin,
 				},
 			}),

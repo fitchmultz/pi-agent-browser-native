@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.2.63 - 2026-06-26
+
+### Changed
+
+- Rebaselined upstream capability metadata, command reference, support docs, and real-upstream output-shape metadata for `agent-browser` `0.31.1` / vercel-labs/agent-browser@ed2e10598c9064aecfaeb7cf21b540684db4be2c.
+- Recorded upstream's React renderer bugfix for `react tree`, `react inspect`, and `react suspense`; no wrapper CLI/schema/runtime compatibility change was needed.
+- Isolated the real-upstream `wait --download` contract's browser download directory under the test temp root so upstream's known saveAs limitation no longer spills fixture files into `~/Downloads`.
+
+### Validation
+
+- Ran `npm run docs -- command-reference check`, `npm run verify -- command-reference`, `npm run verify -- real-upstream`, `npm run verify -- dogfood`, `npm run smoke:platform:ubuntu-image`, `npm run verify -- release`, `npm publish --dry-run`, and `git diff --check`.
+- Used subagent and intercom review to confirm 0.31.1 changes are limited to upstream React renderer selection plus version/changelog metadata.
+
 ## 0.2.62 - 2026-06-26
 
 ### Changed
