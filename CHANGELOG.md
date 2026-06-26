@@ -9,6 +9,9 @@
 - Rebaselined upstream capability metadata, command reference, support docs, and real-upstream output-shape metadata for `agent-browser` `0.31.1` / vercel-labs/agent-browser@ed2e10598c9064aecfaeb7cf21b540684db4be2c.
 - Recorded upstream's React renderer bugfix for `react tree`, `react inspect`, and `react suspense`; no wrapper CLI/schema/runtime compatibility change was needed.
 - Isolated the real-upstream `wait --download` contract's browser download directory under the test temp root so upstream's known saveAs limitation no longer spills fixture files into `~/Downloads`.
+- Made Windows browser-dogfood platform smoke fail fast instead of hanging silently by bounding `agent-browser` prewarm commands, killing timed-out process trees, and printing per-suite progress for single-suite runs.
+- Hardened Windows platform-smoke doctor cleanup so disposable probe stop failures fail the doctor instead of leaking Crabbox VMs/leases.
+- Removed a redundant dogfood `domcontentloaded` wait that could race after a successful file-page open on Windows.
 
 ### Validation
 
