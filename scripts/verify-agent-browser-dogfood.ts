@@ -207,10 +207,15 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 
 		reports.push(await assertSuccessfulStep({
 			id: "semantic-click-learn-more",
-			textPattern: /example-domains\.html/,
+			textPattern: /clicked/i,
 			result: await executeRegisteredTool(harness.tool, harness.ctx, {
-				semanticAction: { action: "click", locator: "text", value: "Learn more" },
+				semanticAction: { action: "click", selector: "a" },
 			}),
+		}));
+		reports.push(await assertSuccessfulStep({
+			id: "semantic-click-url",
+			textPattern: /example-domains\.html/,
+			result: await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] }),
 		}));
 
 		reports.push(await assertSuccessfulStep({

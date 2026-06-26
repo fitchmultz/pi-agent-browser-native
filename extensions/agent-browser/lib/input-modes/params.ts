@@ -105,6 +105,7 @@ export function createAgentBrowserParamsSchema(
 	networkSourceLookup: Type.Optional(
 		Type.Object({
 			filter: Type.Optional(Type.String({ description: "Optional upstream network requests filter pattern." })),
+			namespace: Type.Optional(Type.String({ description: "Optional upstream namespace; prepends --namespace <name> before the generated batch." })),
 			requestId: Type.Optional(Type.String({ description: "Optional network request id to inspect with network request <id>." })),
 			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the generated batch." })),
 			url: Type.Optional(Type.String({ description: "Optional failed request URL or URL fragment to correlate with local source." })),
@@ -175,7 +176,7 @@ export function createAgentBrowserParamsSchema(
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:
-				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --profile, --executable-path, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device apply and later auto calls follow the new browser.",
+				"Session handling mode. `auto` reuses the extension-managed pi-scoped session when possible. `fresh` switches that managed session to a fresh upstream launch so launch-scoped flags like --namespace, --restore, --restore-save, restore check flags, --profile, --executable-path, --session-name, --cdp, --state, --auto-connect, --init-script, --enable, -p/--provider, or iOS --device apply and later auto calls follow the new browser.",
 			default: DEFAULT_SESSION_MODE,
 		}),
 	),

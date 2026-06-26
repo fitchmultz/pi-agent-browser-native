@@ -368,16 +368,16 @@ process.stdin.on("end", () => {
 			assert.deepEqual(requestOnlyCompiled?.steps?.map((step) => step.args), [["network", "request", "req-1"]]);
 
 			const sessionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				networkSourceLookup: { requestId: "req-1", session: "named" },
+				networkSourceLookup: { namespace: "review", requestId: "req-1", session: "named" },
 			});
 			assert.equal(sessionResult.isError, false);
 			const sessionCompiled = sessionResult.details?.compiledNetworkSourceLookup as { args?: string[]; steps?: Array<{ args: string[] }> } | undefined;
-			assert.deepEqual(sessionCompiled?.args, ["--session", "named", "batch"]);
+			assert.deepEqual(sessionCompiled?.args, ["--namespace", "review", "--session", "named", "batch"]);
 			assert.deepEqual(sessionCompiled?.steps?.map((step) => step.args), [["network", "request", "req-1"]]);
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
-			assert.deepEqual(invocations[2]?.args.slice(-3), ["--session", "named", "batch"]);
+			assert.deepEqual(invocations[2]?.args.slice(-5), ["--namespace", "review", "--session", "named", "batch"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

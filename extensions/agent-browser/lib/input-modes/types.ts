@@ -186,6 +186,7 @@ export interface CompiledAgentBrowserNetworkSourceLookup {
 	query: {
 		filter?: string;
 		maxWorkspaceFiles: number;
+		namespace?: string;
 		requestId?: string;
 		session?: string;
 		url?: string;

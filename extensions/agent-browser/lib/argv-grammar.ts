@@ -4,12 +4,19 @@
  * Scope: Pure token grammar; command semantics and subprocess execution live elsewhere.
  */
 
+import { isKnownCommandToken } from "./command-taxonomy.js";
+
 export const GLOBAL_VALUE_FLAGS = [
 	"--session",
+	"--namespace",
 	"--cdp",
 	"--config",
 	"--profile",
 	"--session-name",
+	"--restore-save",
+	"--restore-check-url",
+	"--restore-check-text",
+	"--restore-check-fn",
 	"--proxy",
 	"--proxy-bypass",
 	"--headers",
@@ -54,11 +61,13 @@ export const COMMAND_VALUE_FLAGS = [
 	"--name",
 	"--older-than",
 	"--output",
+	"--prefix",
 	"--path",
 	"--port",
 	"--resource-type",
 	"--resource-types",
 	"--sameSite",
+	"--scope",
 	"--selector",
 	"-s",
 	"--status",
@@ -72,6 +81,7 @@ export const COMMAND_VALUE_FLAGS = [
 	"--wait-until",
 ] as const;
 
+export const OPTIONAL_GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(["--restore"]);
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([...GLOBAL_VALUE_FLAGS, ...COMMAND_VALUE_FLAGS]);
 export const PREVALIDATED_VALUE_FLAGS: ReadonlySet<string> = new Set(GLOBAL_VALUE_FLAGS);
 export const GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE: ReadonlySet<string> = new Set(["--args"]);
@@ -123,6 +133,23 @@ export function hasOnlyOptionFlags(
 	return true;
 }
 
+export function optionalGlobalValueFlagConsumesNext(flag: string, nextToken: string | undefined): boolean {
+	if (!OPTIONAL_GLOBAL_VALUE_FLAGS.has(flag) || nextToken === undefined || nextToken.startsWith("-")) return false;
+	return !isKnownCommandToken(nextToken);
+}
+
 export function stripSessionlessShapeGlobalFlags(commandTokens: readonly string[]): string[] {
-	return commandTokens.filter((token) => token !== "--json");
+	const stripped: string[] = [];
+	for (let index = 0; index < commandTokens.length; index += 1) {
+		const token = commandTokens[index];
+		const flagName = getFlagName(token);
+		if (token === "--json") continue;
+		if ((flagName === "--session" || flagName === "--namespace") && !token.includes("=")) {
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("--session=") || token.startsWith("--namespace=")) continue;
+		stripped.push(token);
+	}
+	return stripped;
 }

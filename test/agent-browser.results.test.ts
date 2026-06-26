@@ -25,6 +25,7 @@ import {
 import {
 	AgentBrowserNextActionCollector,
 	alignPageChangeSummaryNextActionIds,
+	applyNamespaceToNextActions,
 	isStandaloneSnapshotNextAction,
 	type AgentBrowserNextAction,
 } from "../extensions/agent-browser/lib/results/next-actions.js";
@@ -65,6 +66,18 @@ test("rich input recovery nextAction id helpers lock exact ids", () => {
 		"focus-current-editable-ref-3",
 		"click-current-editable-ref-3",
 	]);
+});
+
+test("applyNamespaceToNextActions preserves namespaced follow-up context", () => {
+	const namespaced = applyNamespaceToNextActions([
+		{ id: "snapshot", params: { args: ["--session", "work", "snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
+		{ id: "network-source", params: { networkSourceLookup: { requestId: "req-1", session: "work" } }, reason: "r", tool: "agent_browser" },
+		{ id: "status", params: { electron: { action: "status", launchId: "l1" } }, reason: "r", tool: "agent_browser" },
+	], "review");
+	assert.deepEqual(namespaced?.[0]?.params?.args, ["--namespace", "review", "--session", "work", "snapshot", "-i"]);
+	assert.deepEqual(namespaced?.[1]?.params?.networkSourceLookup, { namespace: "review", requestId: "req-1", session: "work" });
+	assert.deepEqual(namespaced?.[2]?.params, { electron: { action: "status", launchId: "l1" } });
+	assert.deepEqual(applyNamespaceToNextActions(namespaced, "review")?.[0]?.params?.args, namespaced?.[0]?.params?.args);
 });
 
 test("AgentBrowserNextActionCollector preserves order, first-id wins, replacement, and snapshot removal", () => {

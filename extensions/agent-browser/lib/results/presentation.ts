@@ -80,6 +80,7 @@ export async function buildToolPresentation(options: {
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
 	errorText?: string;
+	namespace?: string;
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	networkRoutes?: import("./contracts.js").NetworkRouteRecord[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
@@ -94,6 +95,7 @@ export async function buildToolPresentation(options: {
 		cwd,
 		envelope,
 		errorText,
+		namespace,
 		networkRouteDiagnostics,
 		networkRoutes,
 		persistentArtifactStore,
@@ -122,6 +124,7 @@ export async function buildToolPresentation(options: {
 			buildNestedToolPresentation: buildToolPresentation,
 			cwd,
 			data,
+			namespace,
 			networkRoutes,
 			persistentArtifactStore,
 			sessionName,

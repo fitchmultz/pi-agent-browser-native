@@ -23,6 +23,10 @@ interface CommandCapabilityEntry extends Partial<Record<CommandCapabilityFlag, t
 	command: string;
 }
 
+const ADDITIONAL_COMMAND_TOKENS = [
+	"auth", "chat", "clipboard", "confirm", "connect", "dashboard", "deny", "device", "dialog", "diff", "doctor", "errors", "eval", "find", "frame", "get", "highlight", "inspect", "install", "is", "mcp", "plugin", "plugins", "profiles", "profiler", "react", "read", "record", "removeinitscript", "session", "set", "skills", "snapshot", "state", "stream", "trace", "upgrade", "vitals", "wait", "web-vitals", "window",
+] as const;
+
 const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
 		command: "back",
@@ -277,6 +281,12 @@ for (const entry of COMMAND_CAPABILITIES) {
 	for (const alias of entry.aliases ?? []) {
 		COMMAND_CAPABILITY_BY_NAME.set(alias, entry);
 	}
+}
+
+const KNOWN_COMMAND_TOKENS: ReadonlySet<string> = new Set([...COMMAND_CAPABILITY_BY_NAME.keys(), ...ADDITIONAL_COMMAND_TOKENS]);
+
+export function isKnownCommandToken(token: string): boolean {
+	return KNOWN_COMMAND_TOKENS.has(token);
 }
 
 function getCommandCapability(command: string | undefined): CommandCapabilityEntry | undefined {

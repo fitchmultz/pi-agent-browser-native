@@ -1,5 +1,6 @@
 import { isRecord } from "../../../parsing.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../../results.js";
+import { applyNamespaceToNextActions } from "../../../results/next-actions.js";
 import type { CompatibilityWorkaround } from "../../../runtime.js";
 import { buildScrollNoopNextActions } from "../diagnostics.js";
 import { buildSessionDetailFields, runSessionCommandData } from "../session-state.js";
@@ -56,6 +57,7 @@ function buildScrollResult(options: {
 	scrollField: "scrollContainer" | "scrollPage";
 	scrollValue: unknown;
 	sessionMode: "auto" | "fresh";
+	namespace?: string;
 	sessionName?: string;
 	succeeded: boolean;
 	usedImplicitSession: boolean;
@@ -68,11 +70,11 @@ function buildScrollResult(options: {
 			compatibilityWorkaround: options.compatibilityWorkaround,
 			data: options.result,
 			effectiveArgs: options.effectiveArgs,
-			nextActions: options.succeeded ? undefined : buildScrollNoopNextActions(options.sessionName),
+			nextActions: options.succeeded ? undefined : applyNamespaceToNextActions(buildScrollNoopNextActions(options.sessionName), options.namespace),
 			[options.scrollField]: options.scrollValue,
 			sessionMode: options.sessionMode,
 			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: options.command, errorText: options.succeeded ? undefined : options.message, succeeded: options.succeeded, validationError: options.succeeded ? undefined : options.message }),
-			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
+			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession, options.namespace),
 			summary: options.message,
 			validationError: options.succeeded ? undefined : options.message,
 		},
@@ -87,13 +89,14 @@ export async function tryContainerScroll(options: {
 	effectiveArgs: string[];
 	redactedArgs: string[];
 	sessionMode: "auto" | "fresh";
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 	usedImplicitSession: boolean;
 }): Promise<AgentBrowserToolResult | undefined> {
 	const request = getContainerScrollRequest(options.commandTokens);
 	if (!request || !options.sessionName) return undefined;
-	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildContainerScrollScript(request) });
+	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildContainerScrollScript(request) });
 	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
 	if (!isRecord(result) || typeof result.status !== "string") return undefined;
 	const succeeded = result.status === "scrolled";
@@ -132,13 +135,14 @@ export async function tryPageScrollTo(options: {
 	effectiveArgs: string[];
 	redactedArgs: string[];
 	sessionMode: "auto" | "fresh";
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 	usedImplicitSession: boolean;
 }): Promise<AgentBrowserToolResult | undefined> {
 	const request = getPageScrollToRequest(options.commandTokens);
 	if (!request || !options.sessionName) return undefined;
-	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildPageScrollToScript(request) });
+	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildPageScrollToScript(request) });
 	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
 	if (!isRecord(result) || typeof result.status !== "string") return undefined;
 	const succeeded = result.status === "scrolled";

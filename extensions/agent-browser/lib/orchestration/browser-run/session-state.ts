@@ -4,9 +4,10 @@ import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { runAgentBrowserProcess } from "../../process.js";
 import { buildAgentBrowserNextActions, getAgentBrowserErrorText, parseAgentBrowserEnvelope, type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results.js";
-import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
+import { buildNextToolAction, withOptionalNamespaceArgs, withOptionalSessionArgs } from "../../results/next-actions.js";
 import {
 	extractRefSnapshotFromData,
+	getSessionPageStateKey,
 	isAboutBlankUrl,
 	normalizeComparableUrl,
 	normalizeSessionTabTarget,
@@ -56,11 +57,14 @@ export function applyBrowserRunStatePatch(state: BrowserRunState, patch: Browser
 	if (patch.managedSessionActive !== undefined) state.managedSessionActive = patch.managedSessionActive;
 	if (patch.managedSessionCwd !== undefined) state.managedSessionCwd = patch.managedSessionCwd;
 	if (patch.managedSessionName !== undefined) state.managedSessionName = patch.managedSessionName;
+	if ("managedSessionNamespace" in patch) state.managedSessionNamespace = patch.managedSessionNamespace;
 	if (patch.networkRoutesBySession) state.networkRoutesBySession = patch.networkRoutesBySession;
 }
 
-export function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean): Record<string, unknown> {
-	return sessionName ? { sessionName, usedImplicitSession } : {};
+export const getSessionContextKey = getSessionPageStateKey;
+
+export function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean, namespace?: string): Record<string, unknown> {
+	return { ...(namespace ? { namespace } : {}), ...(sessionName ? { sessionName, usedImplicitSession } : {}) };
 }
 
 export function buildManagedSessionOutcome(options: {
@@ -69,12 +73,14 @@ export function buildManagedSessionOutcome(options: {
 	attemptedSessionName?: string;
 	command?: string;
 	currentSessionName: string;
+	currentSessionNamespace?: string;
 	previousSessionName: string;
 	replacedSessionName?: string;
+	replacedSessionNamespace?: string;
 	sessionMode: "auto" | "fresh";
 	succeeded: boolean;
 }): ManagedSessionOutcome | undefined {
-	const { activeAfter, activeBefore, attemptedSessionName, command, currentSessionName, previousSessionName, replacedSessionName, sessionMode, succeeded } = options;
+	const { activeAfter, activeBefore, attemptedSessionName, command, currentSessionName, currentSessionNamespace, previousSessionName, replacedSessionName, replacedSessionNamespace, sessionMode, succeeded } = options;
 	if (!attemptedSessionName) return undefined;
 	let status: ManagedSessionOutcome["status"];
 	let summary: string;
@@ -112,8 +118,10 @@ export function buildManagedSessionOutcome(options: {
 		activeBefore,
 		attemptedSessionName,
 		currentSessionName,
+		...(currentSessionNamespace ? { currentSessionNamespace } : {}),
 		previousSessionName,
 		replacedSessionName,
+		replacedSessionNamespace,
 		sessionMode,
 		status,
 		succeeded,
@@ -182,15 +190,16 @@ export function buildManagedSessionFreshFailureNextActions(outcome: ManagedSessi
 	}
 	if ((outcome.status === "preserved" || isFreshPostLaunchFailure(outcome)) && outcome.activeAfter && outcome.currentSessionName) {
 		const sessionLabel = isFreshPostLaunchFailure(outcome) ? "current managed session" : "preserved managed session";
+		const currentSessionArgs = (args: string[]) => withOptionalNamespaceArgs(outcome.currentSessionNamespace, withOptionalSessionArgs(outcome.currentSessionName, args));
 		actions.push(
 			buildNextToolAction({
-				args: withOptionalSessionArgs(outcome.currentSessionName, ["get", "url"]),
+				args: currentSessionArgs(["get", "url"]),
 				id: "verify-current-managed-session",
 				reason: `Confirm the ${sessionLabel} before continuing with sessionMode auto.`,
 				safety: `Read-only URL check on the ${sessionLabel}.`,
 			}),
 			buildNextToolAction({
-				args: withOptionalSessionArgs(outcome.currentSessionName, ["snapshot", "-i"]),
+				args: currentSessionArgs(["snapshot", "-i"]),
 				id: "snapshot-current-managed-session",
 				reason: `Refresh interactive refs on the ${sessionLabel} before retrying the workflow.`,
 				safety: "Read-only snapshot; no navigation.",
@@ -274,6 +283,7 @@ export function extractNavigationSummaryFromData(data: unknown): NavigationSumma
 }
 
 export function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {
+	if (isRecord(data) && typeof data.clicked === "string" && !data.clicked.startsWith("@") && !data.clicked.startsWith("ref=") && typeof data.href !== "string") return false;
 	return (
 		isNavigationObservableCommandName(command) &&
 		(!isRecord(data) || (typeof data.title !== "string" && typeof data.url !== "string"))
@@ -554,16 +564,17 @@ export function unwrapPinnedSessionBatchEnvelope(options: {
 export async function runSessionCommandData(options: {
 	args: string[];
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
 }): Promise<unknown | undefined> {
-	const { args, cwd, sessionName, signal, stdin, timeoutMs } = options;
+	const { args, cwd, namespace, sessionName, signal, stdin, timeoutMs } = options;
 	if (!sessionName) return undefined;
 
 	const processResult = await runAgentBrowserProcess({
-		args: ["--json", "--session", sessionName, ...args],
+		args: ["--json", ...(namespace ? ["--namespace", namespace] : []), "--session", sessionName, ...args],
 		cwd,
 		signal,
 		stdin,
@@ -590,13 +601,14 @@ export async function runSessionCommandData(options: {
 
 export async function collectOpenResultTabCorrection(options: {
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 	targetTitle?: string;
 	targetUrl?: string;
 }): Promise<OpenResultTabCorrection | undefined> {
-	const { cwd, sessionName, signal, targetTitle, targetUrl } = options;
-	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, sessionName, signal });
+	const { cwd, namespace, sessionName, signal, targetTitle, targetUrl } = options;
+	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, namespace, sessionName, signal });
 	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) {
 		return undefined;
 	}
@@ -613,12 +625,13 @@ export async function collectOpenResultTabCorrection(options: {
 
 export async function collectSessionTabSelection(options: {
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 	target: SessionTabTarget;
 }): Promise<OpenResultTabCorrection | undefined> {
-	const { cwd, sessionName, signal, target } = options;
-	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, sessionName, signal });
+	const { cwd, namespace, sessionName, signal, target } = options;
+	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, namespace, sessionName, signal });
 	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) {
 		return undefined;
 	}
@@ -636,13 +649,15 @@ export async function collectSessionTabSelection(options: {
 export async function applyOpenResultTabCorrection(options: {
 	correction: OpenResultTabCorrection;
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<OpenResultTabCorrection | undefined> {
-	const { correction, cwd, sessionName, signal } = options;
+	const { correction, cwd, namespace, sessionName, signal } = options;
 	const result = await runSessionCommandData({
 		args: ["tab", correction.selectedTab],
 		cwd,
+		namespace,
 		sessionName,
 		signal,
 	});
@@ -832,11 +847,11 @@ export function formatElectronRefFreshnessText(diagnostic: ElectronRefFreshnessD
 	return diagnostic?.summary;
 }
 
-export async function closeManagedSession(options: { cwd: string; sessionName: string; timeoutMs: number }): Promise<string | undefined> {
+export async function closeManagedSession(options: { cwd: string; namespace?: string; sessionName: string; timeoutMs: number }): Promise<string | undefined> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 	let stdoutSpillPath: string | undefined;
-	const closeArgs = ["--session", options.sessionName, "close"];
+	const closeArgs = [...(options.namespace ? ["--namespace", options.namespace] : []), "--session", options.sessionName, "close"];
 	try {
 		const processResult = await runAgentBrowserProcess({
 			args: closeArgs,

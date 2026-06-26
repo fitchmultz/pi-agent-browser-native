@@ -74,6 +74,7 @@ export interface BrowserRunState {
 	managedSessionBaseName: string;
 	managedSessionCwd: string;
 	managedSessionName: string;
+	managedSessionNamespace?: string;
 	networkRoutesBySession: Map<string, NetworkRouteRecord[]>;
 	sessionPageState: SessionPageState;
 	traceOwners: Map<string, TraceOwner>;
@@ -86,6 +87,7 @@ export interface BrowserRunStatePatch {
 	managedSessionActive?: boolean;
 	managedSessionCwd?: string;
 	managedSessionName?: string;
+	managedSessionNamespace?: string;
 	networkRoutesBySession?: Map<string, NetworkRouteRecord[]>;
 }
 
@@ -262,8 +264,10 @@ export interface ManagedSessionOutcome {
 	activeBefore: boolean;
 	attemptedSessionName?: string;
 	currentSessionName: string;
+	currentSessionNamespace?: string;
 	previousSessionName: string;
 	replacedSessionName?: string;
+	replacedSessionNamespace?: string;
 	sessionMode: "auto" | "fresh";
 	status: "abandoned" | "closed" | "created" | "preserved" | "replaced" | "unchanged";
 	succeeded: boolean;

@@ -373,6 +373,11 @@ function stripRefSnapshotInvalidationOrder(invalidation: OrderedSessionRefSnapsh
 	return invalidation ? { reason: invalidation.reason, summary: invalidation.summary } : undefined;
 }
 
+export function getSessionPageStateKey(sessionName: string | undefined, namespace?: string): string | undefined {
+	if (!sessionName) return undefined;
+	return namespace ? `${namespace}\u0000${sessionName}` : sessionName;
+}
+
 export class SessionPageState {
 	private refSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
 	private refSnapshots = new Map<string, OrderedSessionRefSnapshot>();
@@ -390,12 +395,14 @@ export class SessionPageState {
 			const details = isRecord(message.details) ? message.details : undefined;
 			if (!details) continue;
 			const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
-			if (!sessionName) continue;
+			const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
+			const sessionKey = getSessionPageStateKey(sessionName, namespace);
+			if (!sessionKey) continue;
 			const command = typeof details.command === "string" ? details.command : undefined;
 			const subcommand = typeof details.subcommand === "string" ? details.subcommand : undefined;
 			if (isCloseCommand(command) && message.isError !== true) {
 				restoredOrder += 1;
-				state.clearSession(sessionName);
+				state.clearSession(sessionKey);
 				continue;
 			}
 			const tabTarget = getRestoredSessionTabTarget(details, command, subcommand);
@@ -403,13 +410,13 @@ export class SessionPageState {
 			const refSnapshot = refSnapshotInvalidation ? undefined : getRestoredRefSnapshot(details);
 			if (!tabTarget && !refSnapshotInvalidation && !refSnapshot) continue;
 			restoredOrder += 1;
-			if (tabTarget) state.tabTargets.set(sessionName, { order: restoredOrder, target: tabTarget });
+			if (tabTarget) state.tabTargets.set(sessionKey, { order: restoredOrder, target: tabTarget });
 			if (refSnapshotInvalidation) {
-				state.refSnapshots.delete(sessionName);
-				state.refSnapshotInvalidations.set(sessionName, { ...refSnapshotInvalidation, order: restoredOrder });
+				state.refSnapshots.delete(sessionKey);
+				state.refSnapshotInvalidations.set(sessionKey, { ...refSnapshotInvalidation, order: restoredOrder });
 			} else if (refSnapshot) {
-				state.refSnapshotInvalidations.delete(sessionName);
-				state.refSnapshots.set(sessionName, { ...refSnapshot, order: restoredOrder });
+				state.refSnapshotInvalidations.delete(sessionKey);
+				state.refSnapshots.set(sessionKey, { ...refSnapshot, order: restoredOrder });
 			}
 		}
 		state.updateOrder = Math.max(

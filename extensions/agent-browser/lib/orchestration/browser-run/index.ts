@@ -6,7 +6,7 @@ import { prepareBrowserRun } from "./prepare.js";
 import { processBrowserOutput } from "./process-output.js";
 import type { AgentBrowserToolResult, BrowserRunOptions } from "./types.js";
 
-export { closeManagedSession } from "./session-state.js";
+export { closeManagedSession, getSessionContextKey } from "./session-state.js";
 export type { AgentBrowserToolResult, BrowserRunOptions, BrowserRunState, TraceOwner } from "./types.js";
 
 export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
@@ -34,6 +34,7 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 			implicitSessionCloseTimeoutMs: options.implicitSessionCloseTimeoutMs,
 			managedSessionActive: options.state.managedSessionActive,
 			managedSessionName: options.state.managedSessionName,
+			managedSessionNamespace: options.state.managedSessionNamespace,
 			processResult,
 			redactedArgs: prepared.redactedArgs,
 			redactedProcessArgs: prepared.redactedProcessArgs,
@@ -48,6 +49,6 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 		applyBrowserRunStatePatch(options.state, output.statePatch);
 		return output.result;
 	} finally {
-		await cleanupClickDispatchProbe({ cwd: options.cwd, probe: prepared.clickDispatchProbe, sessionName: prepared.executionPlan.sessionName });
+		await cleanupClickDispatchProbe({ cwd: options.cwd, namespace: prepared.executionPlan.namespace, probe: prepared.clickDispatchProbe, sessionName: prepared.executionPlan.sessionName });
 	}
 }

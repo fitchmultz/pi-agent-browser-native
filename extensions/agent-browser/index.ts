@@ -34,6 +34,7 @@ import {
 	createFreshSessionName,
 	createImplicitSessionName,
 	extractCommandTokens,
+	extractExplicitNamespace,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	hasLaunchScopedTabCorrectionFlag,
@@ -81,7 +82,7 @@ import {
 	type CompiledAgentBrowserSourceLookup,
 } from "./lib/input-modes.js";
 import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
-import { closeManagedSession, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run.js";
+import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
 import {
@@ -145,6 +146,8 @@ function isBashToolCallEvent(event: unknown): event is BashToolCallLike {
 type OwnedManagedSession = {
 	branchOwned: boolean;
 	cwd: string;
+	namespace?: string;
+	sessionName: string;
 };
 
 // Event ranks are local to the branch being restored. Keep them out of owned-resource
@@ -211,6 +214,8 @@ function restoreAllowedDomainsBySessionFromBranch(branch: unknown[]): Map<string
 		const args = getToolResultArgs(details);
 		const command = typeof details.command === "string" ? details.command : extractCommandTokens(args)[0];
 		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
+		const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
+		const sessionKey = getSessionContextKey(sessionName, namespace);
 		const explicitSessionName = extractExplicitSessionName(args);
 		const outcome = getManagedSessionOutcome(details);
 		const outcomeSucceeded = outcome?.succeeded === true;
@@ -219,15 +224,16 @@ function restoreAllowedDomainsBySessionFromBranch(branch: unknown[]): Map<string
 		const outcomeAttemptedSessionName = typeof outcome?.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
 		if (outcomeSucceeded && outcomeStatus === "closed") {
 			const closedSessionName = outcomeAttemptedSessionName ?? outcomeCurrentSessionName ?? sessionName;
-			if (closedSessionName) restoredPolicies.delete(closedSessionName);
+			if (closedSessionName) restoredPolicies.delete(getSessionContextKey(closedSessionName, namespace) ?? closedSessionName);
 		}
 		if (outcomeSucceeded && outcomeStatus === "replaced") {
 			const replacedSessionName = typeof outcome.replacedSessionName === "string" ? outcome.replacedSessionName : undefined;
-			if (replacedSessionName) restoredPolicies.delete(replacedSessionName);
+			const replacedSessionNamespace = typeof outcome.replacedSessionNamespace === "string" ? outcome.replacedSessionNamespace : namespace;
+			if (replacedSessionName) restoredPolicies.delete(getSessionContextKey(replacedSessionName, replacedSessionNamespace) ?? replacedSessionName);
 		}
 		if (succeeded && isCloseCommand(command)) {
 			const closedSessionName = explicitSessionName ?? sessionName ?? outcomeAttemptedSessionName ?? outcomeCurrentSessionName;
-			if (closedSessionName) restoredPolicies.delete(closedSessionName);
+			if (closedSessionName) restoredPolicies.delete(getSessionContextKey(closedSessionName, namespace) ?? closedSessionName);
 		}
 		const electron = isRecord(details.electron) ? details.electron : undefined;
 		const cleanup = isRecord(electron?.cleanup) ? electron.cleanup : undefined;
@@ -238,8 +244,8 @@ function restoreAllowedDomainsBySessionFromBranch(branch: unknown[]): Map<string
 		const outcomeKeepsSessionCurrent = outcome?.activeAfter === true
 			&& (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged")
 			&& outcomeCurrentSessionName === sessionName;
-		const policy = (succeeded || outcomeKeepsSessionCurrent) && sessionName && !isCloseCommand(command) ? parseAllowedDomainsPolicyFromArgs(args) : undefined;
-		if (policy && sessionName) restoredPolicies.set(sessionName, policy);
+		const policy = (succeeded || outcomeKeepsSessionCurrent) && sessionKey && !isCloseCommand(command) ? parseAllowedDomainsPolicyFromArgs(args) : undefined;
+		if (policy && sessionKey) restoredPolicies.set(sessionKey, policy);
 	}
 	return restoredPolicies;
 }
@@ -248,16 +254,19 @@ function trackOwnedManagedSession(
 	sessions: Map<string, OwnedManagedSession>,
 	sessionName: string | undefined,
 	cwd: string,
-	options: { branchOwned?: boolean } = {},
+	options: { branchOwned?: boolean; namespace?: string } = {},
 ): void {
 	if (!sessionName) return;
-	const existing = sessions.get(sessionName);
+	const key = getSessionContextKey(sessionName, options.namespace) ?? sessionName;
+	const existing = sessions.get(key);
 	const branchOwned = existing && !existing.branchOwned ? false : options.branchOwned === true;
-	sessions.set(sessionName, { branchOwned, cwd });
+	sessions.set(key, { branchOwned, cwd, namespace: options.namespace, sessionName });
 }
 
-function untrackOwnedManagedSession(sessions: Map<string, OwnedManagedSession>, sessionName: string | undefined): void {
-	if (sessionName) sessions.delete(sessionName);
+function untrackOwnedManagedSession(sessions: Map<string, OwnedManagedSession>, sessionName: string | undefined, namespace?: string): void {
+	if (!sessionName) return;
+	if (sessionName.includes("\u0000")) sessions.delete(sessionName);
+	else sessions.delete(getSessionContextKey(sessionName, namespace) ?? sessionName);
 }
 
 function untrackOwnedManagedSessionFromBranchClose(
@@ -282,7 +291,8 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 	const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
 	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
 	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
-		trackOwnedManagedSession(sessions, currentSessionName, cwd);
+		const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
+		trackOwnedManagedSession(sessions, currentSessionName, cwd, { namespace });
 	}
 	if (succeeded && status === "closed") {
 		untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName);
@@ -463,6 +473,7 @@ function collectBranchManagedResourceEvents(branch: unknown[]): BranchManagedRes
 		const args = Array.isArray(details.args) && details.args.every((arg) => typeof arg === "string") ? details.args : [];
 		const command = typeof details.command === "string" ? details.command : extractCommandTokens(args)[0];
 		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
+		const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
 		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
 		const usedImplicitSession = details.usedImplicitSession === true;
 		const explicitSessionName = extractExplicitSessionName(args);
@@ -472,19 +483,20 @@ function collectBranchManagedResourceEvents(branch: unknown[]): BranchManagedRes
 		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
 		const outcomeAttemptedSessionName = typeof outcome?.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
 		if (outcomeSucceeded && outcome.activeAfter === true && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged")) {
-			setBranchRankForString(events.managedSessionActiveRanks, outcomeCurrentSessionName, eventRank);
+			setBranchRankForString(events.managedSessionActiveRanks, getSessionContextKey(outcomeCurrentSessionName, namespace), eventRank);
 		}
 		if (outcomeSucceeded && outcomeStatus === "closed") {
-			setBranchRankForString(events.managedSessionCloseRanks, outcomeAttemptedSessionName ?? outcomeCurrentSessionName ?? sessionName, eventRank);
+			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(outcomeAttemptedSessionName ?? outcomeCurrentSessionName ?? sessionName, namespace), eventRank);
 		}
 		if (outcomeSucceeded && outcomeStatus === "replaced") {
-			setBranchRankForString(events.managedSessionCloseRanks, outcome.replacedSessionName, eventRank);
+			const replacedSessionNamespace = typeof outcome.replacedSessionNamespace === "string" ? outcome.replacedSessionNamespace : namespace;
+			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(typeof outcome.replacedSessionName === "string" ? outcome.replacedSessionName : undefined, replacedSessionNamespace), eventRank);
 		}
 		if (succeeded && !isCloseCommand(command) && sessionName && (usedImplicitSession || sessionMode === "fresh")) {
-			events.managedSessionActiveRanks.set(sessionName, eventRank);
+			events.managedSessionActiveRanks.set(getSessionContextKey(sessionName, namespace) ?? sessionName, eventRank);
 		}
 		if (succeeded && isCloseCommand(command)) {
-			setBranchRankForString(events.managedSessionCloseRanks, explicitSessionName ?? sessionName ?? outcomeAttemptedSessionName ?? outcomeCurrentSessionName, eventRank);
+			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(explicitSessionName ?? sessionName ?? outcomeAttemptedSessionName ?? outcomeCurrentSessionName, namespace), eventRank);
 		}
 
 		const electron = isRecord(details.electron) ? details.electron : undefined;
@@ -527,11 +539,12 @@ function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSe
 	}
 }
 
-async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManagedSession>, keepSessionName: string | undefined, timeoutMs: number): Promise<void> {
-	for (const [sessionName, owner] of [...sessions]) {
-		if (sessionName === keepSessionName) continue;
-		const error = await closeManagedSession({ cwd: owner.cwd, sessionName, timeoutMs });
-		if (!error) sessions.delete(sessionName);
+async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManagedSession>, keepSessionName: string | undefined, timeoutMs: number, keepNamespace?: string): Promise<void> {
+	const keepKey = getSessionContextKey(keepSessionName, keepNamespace);
+	for (const [key, owner] of [...sessions]) {
+		if (key === keepKey) continue;
+		const error = await closeManagedSession({ cwd: owner.cwd, namespace: owner.namespace, sessionName: owner.sessionName, timeoutMs });
+		if (!error) sessions.delete(key);
 	}
 }
 
@@ -549,6 +562,7 @@ function getOffBranchOwnedElectronLaunchRecords(ownedRecords: Map<string, Electr
 }
 
 function shouldSerializeBrowserCommand(options: {
+	explicitNamespace?: string;
 	explicitSessionName?: string;
 	managedSessionName: string;
 	ownedElectronLaunchRecords: Map<string, ElectronLaunchRecord>;
@@ -556,7 +570,7 @@ function shouldSerializeBrowserCommand(options: {
 }): boolean {
 	if (!options.explicitSessionName) return true;
 	if (options.explicitSessionName === options.managedSessionName) return true;
-	if (options.ownedManagedSessions.has(options.explicitSessionName)) return true;
+	if (options.ownedManagedSessions.has(getSessionContextKey(options.explicitSessionName, options.explicitNamespace) ?? options.explicitSessionName)) return true;
 	return getActiveElectronRecords(options.ownedElectronLaunchRecords).some((record) => record.sessionName === options.explicitSessionName);
 }
 
@@ -620,6 +634,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let managedSessionBaseName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
 	let managedSessionName = managedSessionBaseName;
 	let managedSessionCwd = process.cwd();
+	let managedSessionNamespace: string | undefined;
 	let freshSessionOrdinal = 0;
 	let sessionPageState = new SessionPageState();
 	let traceOwners = new Map<string, TraceOwner>();
@@ -634,10 +649,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 	let branchStateGeneration = 0;
 
-	const clearSessionScopedBrowserState = (sessionName: string): void => {
-		allowedDomainsBySession.delete(sessionName);
-		networkRoutesBySession.delete(sessionName);
-		sessionPageState.clearSession(sessionName);
+	const clearSessionScopedBrowserState = (sessionName: string, namespace?: string): void => {
+		const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
+		allowedDomainsBySession.delete(key);
+		networkRoutesBySession.delete(key);
+		sessionPageState.clearSession(key);
 	};
 
 	const restoreBranchBackedState = (ctx: ExtensionContext, options: { resetRuntimeOwnership: boolean }): void => {
@@ -668,6 +684,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				? previousManagedSessionName
 				: createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, nextFreshSessionOrdinal)
 			: restoredState.sessionName;
+		managedSessionNamespace = shouldReservePostCloseSession ? undefined : restoredState.namespace;
 		managedSessionCwd = ctx.cwd;
 		freshSessionOrdinal = nextFreshSessionOrdinal;
 		sessionPageState = SessionPageState.fromBranch(branch);
@@ -698,7 +715,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			);
 		}
 		if (restoredState.active) {
-			trackOwnedManagedSession(ownedManagedSessions, restoredState.sessionName, ctx.cwd, { branchOwned: true });
+			trackOwnedManagedSession(ownedManagedSessions, restoredState.sessionName, ctx.cwd, { branchOwned: true, namespace: restoredState.namespace });
 		}
 		mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords, {
 			branchOwnedLaunchIds: branchOwnedElectronLaunchIds,
@@ -763,10 +780,12 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					ownedManagedSessions,
 					managedSessionActive ? managedSessionName : undefined,
 					implicitSessionCloseTimeoutMs,
+					managedSessionActive ? managedSessionNamespace : undefined,
 				);
 			}
 		});
 		managedSessionActive = false;
+		managedSessionNamespace = undefined;
 		sessionPageState.reset();
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
@@ -897,6 +916,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						clearSessionScopedBrowserState(closedSessionName);
 						if (closedSessionName === managedSessionName) {
 							managedSessionActive = false;
+							managedSessionNamespace = undefined;
 							freshSessionOrdinal += 1;
 							managedSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal);
 						}
@@ -912,7 +932,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			const explicitSessionName = extractExplicitSessionName(toolArgs);
+			const explicitNamespace = extractExplicitNamespace(toolArgs);
 			const serializeBrowserCommand = shouldSerializeBrowserCommand({
+				explicitNamespace,
 				explicitSessionName,
 				managedSessionName,
 				ownedElectronLaunchRecords,
@@ -933,6 +955,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					managedSessionBaseName,
 					managedSessionCwd,
 					managedSessionName,
+					managedSessionNamespace,
 					networkRoutesBySession,
 					sessionPageState,
 					traceOwners,
@@ -961,6 +984,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					managedSessionActive = browserRunState.managedSessionActive;
 					managedSessionCwd = browserRunState.managedSessionCwd;
 					managedSessionName = browserRunState.managedSessionName;
+					managedSessionNamespace = browserRunState.managedSessionNamespace;
 					for (const closedSessionName of browserRunState.closedManagedSessionNames) {
 						untrackOwnedManagedSession(ownedManagedSessions, closedSessionName);
 					}

@@ -37,6 +37,8 @@ if (args.includes("eval")) {
   } else {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "unexpected" } } }));
   }
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "file:///tmp/fixture.html", refs: { e1: { role: "button", name: "Save" } }, snapshot: '- button "Save" [ref=e1]' } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: false, error: "click failed" }));
   process.exit(2);
@@ -50,7 +52,8 @@ if (args.includes("eval")) {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "[data-test=save]"] });
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(click.isError, true);
 			assert.equal(click.details?.clickDispatch, undefined);
 
@@ -86,6 +89,8 @@ if (args.includes("eval")) {
   } else {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "unexpected" } } }));
   }
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "file:///tmp/fixture.html", refs: { e1: { role: "button", name: "Save" } }, snapshot: '- button "Save" [ref=e1]' } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
 } else {
@@ -98,7 +103,8 @@ if (args.includes("eval")) {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "[data-test=save]"] });
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(click.isError, false);
 			assert.equal(click.details?.clickDispatch, undefined);
 
@@ -309,12 +315,13 @@ if (args.includes("snapshot")) {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "[data-test=add-to-cart]"] });
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(click.isError, true);
 			assert.match((click.content[0] as { text: string }).text, /Click dispatch diagnostic:/);
 			assert.equal((click.details?.clickDispatch as { status?: string } | undefined)?.status, "no-native-event-observed");
-			assert.equal((click.details?.clickDispatch as { target?: { kind?: string; selector?: string } } | undefined)?.target?.kind, "selector");
-			assert.equal((click.details?.clickDispatch as { target?: { kind?: string; selector?: string } } | undefined)?.target?.selector, "[data-test=add-to-cart]");
+			assert.equal((click.details?.clickDispatch as { target?: { kind?: string; refId?: string } } | undefined)?.target?.kind, "accessible");
+			assert.equal((click.details?.clickDispatch as { target?: { kind?: string; refId?: string } } | undefined)?.target?.refId, "e1");
 			assert.deepEqual((click.details?.clickDispatch as { scrollContainer?: unknown } | undefined)?.scrollContainer, {
 				selector: "#todos",
 				summary: "Target appears outside nested scroll container #todos; use scrollintoview on the target or scroll that container before retrying.",

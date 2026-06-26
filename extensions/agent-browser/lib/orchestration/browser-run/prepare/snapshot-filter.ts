@@ -129,7 +129,9 @@ export async function trySnapshotFilter(options: {
 	redactedArgs: string[];
 	previousRefSnapshot?: SessionRefSnapshot;
 	sessionMode: "auto" | "fresh";
+	namespace?: string;
 	sessionName?: string;
+	sessionStateKey?: string;
 	sessionPageState: BrowserRunOptions["state"]["sessionPageState"];
 	sessionPageStateUpdate: ReturnType<BrowserRunOptions["state"]["sessionPageState"]["beginUpdate"]>;
 	signal?: AbortSignal;
@@ -137,13 +139,13 @@ export async function trySnapshotFilter(options: {
 }): Promise<SnapshotFilterResult | undefined> {
 	const request = parseSnapshotFilterRequest(options.commandTokens);
 	if (!request || !options.sessionName) return undefined;
-	const snapshotData = await runSessionCommandData({ args: request.cleanArgs, cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const snapshotData = await runSessionCommandData({ args: request.cleanArgs, cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	const filtered = request.role || request.search ? filterSnapshotData(snapshotData, request) : isRecord(snapshotData) ? { data: snapshotData, matchedRefs: isRecord(snapshotData.refs) ? Object.keys(snapshotData.refs).length : 0, totalLines: typeof snapshotData.snapshot === "string" ? snapshotData.snapshot.split(/\r?\n/).filter((line) => line.length > 0).length : 0, totalRefs: isRecord(snapshotData.refs) ? Object.keys(snapshotData.refs).length : 0, visibleLines: typeof snapshotData.snapshot === "string" ? snapshotData.snapshot.split(/\r?\n/).filter((line) => line.length > 0).length : 0 } : undefined;
 	if (!filtered) return undefined;
-	const viewport = request.viewport ? await collectScrollPositionSnapshot({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal }) : undefined;
+	const viewport = request.viewport ? await collectScrollPositionSnapshot({ cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }) : undefined;
 	const fullSnapshot = extractRefSnapshotFromData(snapshotData);
 	const diff = request.diff ? buildSnapshotDiff(options.previousRefSnapshot, fullSnapshot) : undefined;
-	if (fullSnapshot) options.sessionPageState.applyRefSnapshot({ sessionName: options.sessionName, snapshot: fullSnapshot, update: options.sessionPageStateUpdate });
+	if (fullSnapshot) options.sessionPageState.applyRefSnapshot({ sessionName: options.sessionStateKey ?? options.sessionName, snapshot: fullSnapshot, update: options.sessionPageStateUpdate });
 	const presentation = await buildSnapshotPresentation(filtered.data, options.persistentArtifactStore, options.artifactManifest);
 	const summary = request.role || request.search
 		? `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} direct refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}; ${filtered.visibleLines} surrounding snapshot line${filtered.visibleLines === 1 ? "" : "s"} shown.`
@@ -174,7 +176,7 @@ export async function trySnapshotFilter(options: {
 				snapshotFilter: request.role || request.search ? { cleanArgs: request.cleanArgs, matchedRefs: filtered.matchedRefs, role: request.role, search: request.search, totalLines: filtered.totalLines, totalRefs: filtered.totalRefs, visibleLines: filtered.visibleLines } : undefined,
 				snapshotViewport: viewport,
 				...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "snapshot", succeeded: true }),
-				...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
+				...buildSessionDetailFields(options.sessionName, options.usedImplicitSession, options.namespace),
 				summary,
 			},
 			isError: false,

@@ -11,6 +11,7 @@ import { trySnapshotFilter } from "./prepare/snapshot-filter.js";
 import { getWaitAwareProcessTimeoutMs } from "./prepare/wait-timeouts.js";
 import { getPersistentSessionArtifactStore } from "./session-artifacts.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
+import { applyNamespaceToNextActions } from "../../results/next-actions.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
 import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-recovery.js";
 import { extractRefSnapshotFromData, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
@@ -28,6 +29,7 @@ import {
 	buildPinnedBatchPlan,
 	buildSessionDetailFields,
 	buildStaleRefPreflight,
+	getSessionContextKey,
 	collectSessionTabSelection,
 	getGuardedRefUsage,
 	getTraceOwnerGuardMessage,
@@ -292,6 +294,7 @@ async function collectSamePageRefFreshnessPreflight(options: {
 	cwd: string;
 	currentTarget?: SessionTabTarget;
 	previousSnapshot?: SessionRefSnapshot;
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<StaleRefPreflight | undefined> {
@@ -299,7 +302,7 @@ async function collectSamePageRefFreshnessPreflight(options: {
 	const previousUrl = options.previousSnapshot.target?.url;
 	const currentTargetUrl = options.currentTarget?.url;
 	if (currentTargetUrl === "about:blank" || (previousUrl && currentTargetUrl && previousUrl !== currentTargetUrl)) return undefined;
-	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	const currentSnapshot = extractRefSnapshotFromData(snapshotData);
 	if (!currentSnapshot) return undefined;
 	const snapshotWithTarget = { ...currentSnapshot, target: currentSnapshot.target ?? options.currentTarget };
@@ -339,11 +342,12 @@ export function validateStdinCommandContract(options: { command?: string; comman
 export async function resolveSemanticActionVisibleRefArgs(options: {
 	compiled: CompiledAgentBrowserSemanticAction | undefined;
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<SemanticActionVisibleRefResolution | undefined> {
 	if (!options.compiled || !options.sessionName || options.compiled.locator !== "role" || !["check", "click", "fill"].includes(options.compiled.action)) return undefined;
-	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	const resolution = resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction: options.compiled, snapshotData });
 	if (!resolution) return undefined;
 	return { args: [...getCompiledSemanticActionSessionPrefix(options.compiled), ...resolution.args], snapshot: resolution.snapshot };
@@ -407,6 +411,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		freshSessionName,
 		managedSessionActive: state.managedSessionActive,
 		managedSessionName: state.managedSessionName,
+		managedSessionNamespace: state.managedSessionNamespace,
 		sessionMode,
 	});
 	let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
@@ -414,6 +419,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		semanticActionVisibleRefResolution = await resolveSemanticActionVisibleRefArgs({
 			compiled: compiledSemanticAction,
 			cwd,
+			namespace: executionPlan.namespace,
 			sessionName: executionPlan.sessionName,
 			signal,
 		});
@@ -422,6 +428,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				freshSessionName,
 				managedSessionActive: state.managedSessionActive,
 				managedSessionName: state.managedSessionName,
+				managedSessionNamespace: state.managedSessionNamespace,
 				sessionMode,
 			});
 		}
@@ -463,9 +470,10 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		commandTokens,
 		stdin: runtimeToolStdin,
 	});
+	const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const traceOwnerGuardMessage = getTraceOwnerGuardMessage({
 		command: executionPlan.commandInfo.command,
-		sessionName: executionPlan.sessionName,
+		sessionName: sessionStateKey,
 		subcommand: executionPlan.commandInfo.subcommand,
 		traceOwners,
 	});
@@ -480,7 +488,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				sessionMode,
 				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: traceOwnerGuardMessage, succeeded: false, validationError: traceOwnerGuardMessage }),
 				validationError: traceOwnerGuardMessage,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 			},
 			isError: true,
 		} };
@@ -501,12 +509,12 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				sessionMode,
 				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: stdinValidationError, succeeded: false, validationError: stdinValidationError }),
 				validationError: stdinValidationError,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 			},
 			isError: true,
 		} };
 	}
-	const priorSessionPageState = sessionPageState.get(executionPlan.sessionName);
+	const priorSessionPageState = sessionPageState.get(sessionStateKey);
 	const priorSessionTabTarget = priorSessionPageState.tabTarget;
 	const sessionTabPinningReason = priorSessionPageState.pinningReason;
 	const priorRefSnapshotState = priorSessionPageState.refSnapshot;
@@ -528,7 +536,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				sessionMode,
 				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: requestedArtifactCloseViolation.message, failureCategory: "policy-blocked", succeeded: false, validationError: requestedArtifactCloseViolation.message }),
 				validationError: requestedArtifactCloseViolation.message,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 			},
 			isError: true,
 		} };
@@ -548,13 +556,13 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				command: executionPlan.commandInfo.command,
 				compatibilityWorkaround,
 				effectiveArgs: redactedEffectiveArgs,
-				nextActions: buildSessionAwareStaleRefNextActions(executionPlan.sessionName),
+				nextActions: applyNamespaceToNextActions(buildSessionAwareStaleRefNextActions(executionPlan.sessionName), executionPlan.namespace),
 				refIds: staleRefPreflight.refIds,
 				refSnapshot: staleRefPreflight.snapshot,
 				refSnapshotInvalidation: staleRefPreflight.snapshotInvalidation,
 				sessionMode,
 				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: staleRefPreflight.message, failureCategory: "stale-ref", succeeded: false }),
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 			},
 			isError: true,
 		} };
@@ -564,12 +572,13 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		cwd,
 		currentTarget: priorSessionTabTarget,
 		previousSnapshot: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotState,
+		namespace: executionPlan.namespace,
 		sessionName: executionPlan.sessionName,
 		signal,
 	});
 	if (samePageRefFreshnessPreflight) {
-		if (samePageRefFreshnessPreflight.snapshot && executionPlan.sessionName) {
-			sessionPageState.applyRefSnapshot({ fallbackTarget: priorSessionTabTarget, sessionName: executionPlan.sessionName, snapshot: samePageRefFreshnessPreflight.snapshot, update: options.sessionPageStateUpdate });
+		if (samePageRefFreshnessPreflight.snapshot && sessionStateKey) {
+			sessionPageState.applyRefSnapshot({ fallbackTarget: priorSessionTabTarget, sessionName: sessionStateKey, snapshot: samePageRefFreshnessPreflight.snapshot, update: options.sessionPageStateUpdate });
 		}
 		return { kind: "early-result", statePatch, result: {
 			content: [{ type: "text", text: samePageRefFreshnessPreflight.message }],
@@ -578,12 +587,12 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				command: executionPlan.commandInfo.command,
 				compatibilityWorkaround,
 				effectiveArgs: redactedEffectiveArgs,
-				nextActions: buildSessionAwareStaleRefNextActions(executionPlan.sessionName),
+				nextActions: applyNamespaceToNextActions(buildSessionAwareStaleRefNextActions(executionPlan.sessionName), executionPlan.namespace),
 				refIds: samePageRefFreshnessPreflight.refIds,
 				refSnapshot: samePageRefFreshnessPreflight.snapshot,
 				sessionMode,
 				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: samePageRefFreshnessPreflight.message, failureCategory: "stale-ref", succeeded: false }),
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 			},
 			isError: true,
 		} };
@@ -592,6 +601,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	if (compiledQaPreset?.checks.attached) {
 		const qaAttachedPrecondition = await validateQaAttachedPrecondition({
 			cwd,
+			namespace: executionPlan.namespace,
 			sessionName: executionPlan.sessionName,
 			signal,
 		});
@@ -603,11 +613,11 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					compiledQaPreset: redactedCompiledQaPreset,
 					compatibilityWorkaround,
 					effectiveArgs: redactedEffectiveArgs,
-					nextActions: qaAttachedPrecondition.nextActions,
+					nextActions: applyNamespaceToNextActions(qaAttachedPrecondition.nextActions, executionPlan.namespace),
 					sessionMode,
 					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: qaAttachedPrecondition.error, succeeded: false, validationError: qaAttachedPrecondition.error }),
 					validationError: qaAttachedPrecondition.error,
-					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 				},
 				isError: true,
 			} };
@@ -624,8 +634,10 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		persistentArtifactStore,
 		previousRefSnapshot: priorRefSnapshotState,
 		redactedArgs,
+		namespace: executionPlan.namespace,
 		sessionMode,
 		sessionName: executionPlan.sessionName,
+		sessionStateKey,
 		sessionPageState,
 		sessionPageStateUpdate: options.sessionPageStateUpdate,
 		signal,
@@ -640,6 +652,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		effectiveArgs: redactedEffectiveArgs,
 		redactedArgs,
 		sessionMode,
+		namespace: executionPlan.namespace,
 		sessionName: executionPlan.sessionName,
 		signal,
 		usedImplicitSession: executionPlan.usedImplicitSession,
@@ -653,6 +666,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		effectiveArgs: redactedEffectiveArgs,
 		redactedArgs,
 		sessionMode,
+		namespace: executionPlan.namespace,
 		sessionName: executionPlan.sessionName,
 		signal,
 		usedImplicitSession: executionPlan.usedImplicitSession,
@@ -665,6 +679,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		effectiveArgs: redactedEffectiveArgs,
 		redactedArgs,
 		sessionMode,
+		namespace: executionPlan.namespace,
 		sessionName: executionPlan.sessionName,
 		signal,
 		usedImplicitSession: executionPlan.usedImplicitSession,
@@ -679,6 +694,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		effectiveArgs: redactedEffectiveArgs,
 		redactedArgs,
 		sessionMode,
+		namespace: executionPlan.namespace,
 		sessionName: executionPlan.sessionName,
 		signal,
 		usedImplicitSession: executionPlan.usedImplicitSession,
@@ -702,6 +718,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	) {
 		const plannedSessionTabSelection = await collectSessionTabSelection({
 			cwd,
+			namespace: executionPlan.namespace,
 			sessionName: executionPlan.sessionName,
 			signal,
 			target: priorSessionTabTarget,
@@ -711,6 +728,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				const appliedSessionTabSelection = await applyOpenResultTabCorrection({
 					correction: plannedSessionTabSelection,
 					cwd,
+					namespace: executionPlan.namespace,
 					sessionName: executionPlan.sessionName,
 					signal,
 				});
@@ -726,15 +744,15 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 							sessionMode,
 							sessionTabCorrection: plannedSessionTabSelection,
 							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: error }),
-							nextActions: buildSessionTabRecoveryNextActions({
+							nextActions: applyNamespaceToNextActions(buildSessionTabRecoveryNextActions({
 								kind: "tab-drift",
 								resultCategory: "failure",
 								sessionName: executionPlan.sessionName,
 								tabCorrection: plannedSessionTabSelection,
 								target: priorSessionTabTarget,
-							}),
+							}), executionPlan.namespace),
 							validationError: error,
-							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 						},
 						isError: true,
 					} };
@@ -758,22 +776,22 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 							sessionMode,
 							sessionTabCorrection: plannedSessionTabSelection,
 							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: pinnedBatchPlan.error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: pinnedBatchPlan.error }),
-							nextActions: buildSessionTabRecoveryNextActions({
+							nextActions: applyNamespaceToNextActions(buildSessionTabRecoveryNextActions({
 								kind: "tab-drift",
 								resultCategory: "failure",
 								sessionName: executionPlan.sessionName,
 								tabCorrection: plannedSessionTabSelection,
 								target: priorSessionTabTarget,
-							}),
+							}), executionPlan.namespace),
 							validationError: pinnedBatchPlan.error,
-							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 						},
 						isError: true,
 					} };
 				}
 				if (pinnedBatchPlan) {
 					sessionTabCorrection = plannedSessionTabSelection;
-					processArgs = ["--json", "--session", executionPlan.sessionName, "batch"];
+					processArgs = ["--json", ...(executionPlan.namespace ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
 					processStdin = JSON.stringify(pinnedBatchPlan.steps);
 					includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
 					pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;
@@ -782,13 +800,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		}
 	}
 	const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
-		? await prepareClickDispatchProbe({ commandTokens, cwd, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
+		? await prepareClickDispatchProbe({ commandTokens, cwd, namespace: executionPlan.namespace, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
 		: undefined;
 	const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ?? getWaitAwareProcessTimeoutMs(commandTokens, processStdin);
 	const redactedProcessArgs = redactInvocationArgs(processArgs);
-	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0;
+	const scrollAmount = Number(commandTokens.find((token) => /^\d+(?:\.\d+)?$/.test(token)));
+	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0 && (state.managedSessionActive || sessionMode === "fresh") && (!Number.isFinite(scrollAmount) || scrollAmount >= 500);
 	const scrollPositionBefore = shouldProbeScrollNoop
-		? await collectScrollPositionSnapshot({ cwd, sessionName: executionPlan.sessionName, signal })
+		? await collectScrollPositionSnapshot({ cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal })
 		: undefined;
 
 	onUpdate?.({
@@ -798,7 +817,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			effectiveArgs: redactedProcessArgs,
 			sessionMode,
 			sessionTabCorrection,
-			...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession),
+			...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
 		},
 	});
 

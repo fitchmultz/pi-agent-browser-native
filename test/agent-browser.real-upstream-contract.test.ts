@@ -213,10 +213,8 @@ if (!REAL_UPSTREAM_ENABLED) {
 					const evalDetails = assertSuccessfulResult(evaluated, shapes.commands.eval, "eval --stdin");
 					assert.equal(evalDetails.sessionName, managedSessionName);
 					assert.equal(evalDetails.usedImplicitSession, true);
-					assert.deepEqual(evalDetails.data, {
-						origin: contractUrl,
-						result: "Agent Browser Contract Fixture",
-					});
+					assert.equal((evalDetails.data as { origin?: string }).origin, contractUrl);
+					assert.equal((evalDetails.data as { result?: string }).result, "Agent Browser Contract Fixture");
 
 					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 					const snapshotDetails = assertSuccessfulResult(snapshot, shapes.commands.snapshot, "snapshot -i");

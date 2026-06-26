@@ -19,6 +19,7 @@ const DOCTOR_BOOLEAN_FLAGS = new Set(["--fix", "--json", "--offline", "--quick"]
 const INSTALL_BOOLEAN_FLAGS = new Set(["--with-deps", "-d"]);
 const STATE_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "clear", "clean", "rename"]);
 const STATE_CLEAN_VALUE_FLAGS = new Set(["--older-than"]);
+const SESSION_ID_VALUE_FLAGS = new Set(["--scope", "--prefix"]);
 
 function isSessionlessAuthCommand(commandTokens: readonly string[]): boolean {
 	const [, subcommand, target, ...rest] = commandTokens;
@@ -58,6 +59,13 @@ function isSessionlessPluginCommand(commandTokens: readonly string[]): boolean {
 	return PLUGIN_SESSIONLESS_SUBCOMMANDS.has(subcommand);
 }
 
+function isSessionlessSessionCommand(commandTokens: readonly string[]): boolean {
+	const [, subcommand, ...rest] = commandTokens;
+	if (subcommand === "list" || subcommand === "info") return rest.length === 0;
+	if (subcommand === "id") return hasOnlyOptionFlags(rest, JSON_BOOLEAN_FLAGS, SESSION_ID_VALUE_FLAGS);
+	return false;
+}
+
 function isSessionlessCommand(commandTokens: readonly string[]): boolean {
 	const normalizedTokens = stripSessionlessShapeGlobalFlags(commandTokens);
 	const [command, subcommand] = normalizedTokens;
@@ -70,7 +78,7 @@ function isSessionlessCommand(commandTokens: readonly string[]): boolean {
 	if (command === "doctor") return hasOnlyBooleanFlags(normalizedTokens.slice(1), DOCTOR_BOOLEAN_FLAGS);
 	if (command === "install") return hasOnlyBooleanFlags(normalizedTokens.slice(1), INSTALL_BOOLEAN_FLAGS);
 	if (command === "profiles" || command === "upgrade") return normalizedTokens.length === 1;
-	if (command === "session") return normalizedTokens.length === 2 && subcommand === "list";
+	if (command === "session") return isSessionlessSessionCommand(normalizedTokens);
 	if (command === "state") return isSessionlessStateCommand(normalizedTokens);
 	return false;
 }

@@ -4,7 +4,7 @@
  * Scope: Pure argv parsing; runtime planning and session policy consume descriptors instead of re-parsing tokens.
  */
 
-import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "./argv-grammar.js";
+import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS, optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
 import { isOpenNavigationCommand } from "./command-taxonomy.js";
 
 export interface CommandInfo {
@@ -26,12 +26,14 @@ function isBooleanLiteral(token: string | undefined): boolean {
 export function findCommandStartIndex(args: string[]): number | undefined {
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
-		if (token.startsWith("--session=")) {
+		if (token.startsWith("--session=") || token.startsWith("--namespace=") || token.startsWith("--restore=")) {
 			continue;
 		}
 		if (token.startsWith("-")) {
 			const normalizedToken = token.split("=", 1)[0] ?? token;
-			if (VALUE_FLAGS.has(normalizedToken) && !token.includes("=")) {
+			if (optionalGlobalValueFlagConsumesNext(normalizedToken, args[index + 1])) {
+				index += 1;
+			} else if (VALUE_FLAGS.has(normalizedToken) && !token.includes("=")) {
 				index += 1;
 			} else if (
 				GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken) &&

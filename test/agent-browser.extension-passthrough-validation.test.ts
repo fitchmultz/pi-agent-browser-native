@@ -430,12 +430,17 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			}
 
 			const invocations = await readInvocationLog(logPath);
-			assert.deepEqual(
-				invocations
-					.map((entry) => stripWrapperPrefix(entry.args))
-					.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin")),
-				commands.map((args) => [...args]),
-			);
+			const commandInvocations = invocations
+				.map((entry) => stripWrapperPrefix(entry.args))
+				.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin"));
+			const expectedInvocations = commands.flatMap((args) => {
+				const command = args[0];
+				if (command === "click") return [[...args], ["get", "url"], ["get", "title"]];
+				return command === "back" || command === "forward" || command === "reload" || command === "dblclick"
+					? [[...args], ["get", "url"], ["get", "title"]]
+					: [[...args]];
+			});
+			assert.deepEqual(commandInvocations, expectedInvocations);
 			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));
 		});
 	} finally {

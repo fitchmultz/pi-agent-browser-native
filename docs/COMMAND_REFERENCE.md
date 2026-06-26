@@ -18,18 +18,18 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.30.1` command/help surface, audited against vercel-labs/agent-browser@7379f7dbea76ad8dbf47f177349c4c3ce9263dcb. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.31.0` command/help surface, audited against vercel-labs/agent-browser@5acf7f9dc153cd51dcc6c79e1aebb09c83b2261d. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
-### Upstream 0.30.1 rebaseline
+### Upstream 0.31.0 rebaseline
 
-The 0.30.1 rebaseline adds no new CLI commands. It fixes `wait --url` / `waitforurl` glob matching against the full active URL, so the wrapper removed its `job.assertUrl` `wait --fn` workaround and now delegates exact and glob patterns to upstream `wait --url`.
+The 0.31.0 rebaseline adds restore workflow and namespace/session lifecycle surfaces: `--restore [name]`, `--restore-save <policy>`, restore check flags, `--namespace <name>`, `session id`, and `session info`. The wrapper parses those globals, keeps `--namespace` before `--session`, carries namespace context through managed-session probes and state, and keeps `session id` / `session info` sessionless. Use `agent_browser` with `args: ["session", "id", "--scope", "worktree", "--prefix", "my-skill"]` to derive reusable session ids from inside Pi; use `--restore=<key>` when passing an explicit key that could be confused with a command word.
 
-Runtime probes on 2026-06-24 confirm `wait --url "**/dashboard"` succeeds after a `pushstate /dashboard`. Two old caveats still stand in `agent-browser 0.30.1`: `find ... uncheck` and `wait <selector> --state hidden|detached` remain advertised by help but fail at runtime. Keep the wrapper's direct `uncheck` passthrough and `wait --fn` disappearance guidance.
+Runtime probes retain the 0.30.1 `wait --url` fix: `wait --url "**/dashboard"` succeeds after a `pushstate /dashboard`, so `job.assertUrl` delegates exact and glob patterns to upstream `wait --url`. Two old caveats still stand: `find ... uncheck` and `wait <selector> --state hidden|detached` remain advertised by help but fail at runtime. Keep the wrapper's direct `uncheck` passthrough and `wait --fn` disappearance guidance.
 
 ### Upstream 0.29.1 rebaseline
 
@@ -110,7 +110,7 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 - `timeoutMs`: optional per-call wrapper subprocess watchdog override in milliseconds for browser CLI modes. Use it for known-slow opens/captures rather than relying on repeated retries.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
-  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags (`--auto-connect`, `--cdp`, `--enable`, `--executable-path`, `--init-script`, `--device`, `--profile`, `--provider`, `-p`, `--session-name`, `--state`) apply.
+  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags (`--auto-connect`, `--cdp`, `--enable`, `--executable-path`, `--init-script`, `--device`, `--namespace`, `--profile`, `--provider`, `-p`, `--restore`, `--restore-save`, `--restore-check-url`, `--restore-check-text`, `--restore-check-fn`, `--session-name`, `--state`) apply.
   - If a fresh launch fails or times out, read `details.managedSessionOutcome` for `preserved` vs `abandoned` (and related fields). A model-visible `Managed session outcome: …` line is appended only for failing calls that used `sessionMode: "fresh"`; `"auto"` failures can still populate the struct without that extra line. If you explicitly close the current wrapper-managed session with `--session <name> close`, later default auto calls rotate to a new wrapper-generated session instead of reusing the closed name; repeated closes and branch restores keep those generated names monotonic.
 
 ### Debug, diff, stream, dashboard, and chat families
@@ -208,9 +208,9 @@ Do not assume Playwright selector dialects such as `text=Close` or `button:has-t
 
 Treat `@e…` refs as page-scoped. After a successful `snapshot`, the wrapper records the latest refs and page target for that session; mutation-prone ref commands such as non-form `click @e4`, `select @e5 chocolate`, or batch steps with old refs fail with `failureCategory: "stale-ref"` when the page target changed or the ref is absent from the latest same-page snapshot. If a session `snapshot -i` fails with `No active page`, the wrapper invalidates prior refs for that session; later mutation-prone `@e…` calls fail before upstream until a successful fresh `snapshot -i` records refs again. Inside `batch` stdin JSON, the wrapper also walks steps in order before spawn: steps whose first token can navigate or mutate set a latch; a later step whose first token is `snapshot` clears that latch for following rows; guarded steps that still mention `@e…` after an uncleared latch fail with the same `stale-ref` bucket without launching upstream. Same-snapshot form fills and native form-control steps are allowed before a click or submit step, so `fill`, `check`/`uncheck` checkbox or radio refs, checkbox/radio `click`/`tap` refs, `select` combobox refs, then a final submit `click` can run from one snapshot. Split dynamic or autosubmit forms with a fresh snapshot if a control interaction rerenders the targets. Follow the `refresh-interactive-refs` next action (it includes `--session <name>` when needed) and prefer stable `find` or `semanticAction` locators when navigation or rerendering is likely. Contract detail: [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details) (`refSnapshot`, `refSnapshotInvalidation`).
 
-A successful `click` result means upstream reported a target, not that the app definitely handled the event. For top-level non-Electron direct clicks on selectors, `xpath=` targets, and eligible current `@e…` refs, the wrapper installs a bounded target-specific DOM-event probe when it can; when upstream reports success but no trusted event reaches the resolved target, it fails the tool and exposes `details.clickDispatch` plus a `Click dispatch diagnostic` line with explicit retry/inspect next actions (no in-page click replay). Raw `find … click` locator calls are not probed because the wrapper has no concrete element before upstream resolves the locator, and document-level probes can falsely fail frame-scoped clicks. Direct `@e…` click probes are role-gated to current snapshot refs whose accessible role is `button`, `checkbox`, `menuitem`, `radio`, `switch`, or `tab`; duplicate names use snapshot order. If the probe evidence shows the target is outside a nested scroll container or viewport, `details.clickDispatch.scrollContainer` and `scroll-target-into-view-after-dispatch-miss` point to `scrollintoview <target>` before retry. When the workflow depends on a mutation, use `details.pageChangeSummary`, a wait, URL/text extraction, or a fresh `snapshot -i` before trusting the state; if nothing changed, retry with a current visible ref or stable selector and report the workflow issue. For static local fixtures or debugging where the user explicitly accepts scripted activation, `eval --stdin` can call `document.querySelector(...).click()` to exercise inline handlers and app code; treat that as an untrusted programmatic event, not as evidence that CDP/user-like clicking works. Respect explicit user stop boundaries yourself: if the user says to stop before a final order, post, purchase, or submit action, gather evidence from that page and do not click the final action or use scripted activation to bypass the stop. The wrapper does not infer broad business intent from prompt text; `details.promptGuard` is reserved for concrete artifact-before-close checks. `press`, `key`, `keydown`, and `keyup` accept exactly one key token; focus or click the target first, then run `press Enter` or another single-key command.
+A successful `click` result means upstream reported a target, not that the app definitely handled the event. For top-level non-Electron direct clicks on `xpath=` targets and eligible current `@e…` refs, the wrapper installs a bounded target-specific DOM-event probe when it can; when upstream reports success but no trusted event reaches the resolved target, it fails the tool and exposes `details.clickDispatch` plus a `Click dispatch diagnostic` line with explicit retry/inspect next actions (no in-page click replay). Raw `find … click` locator calls are not probed because the wrapper has no concrete element before upstream resolves the locator, and document-level probes can falsely fail frame-scoped clicks. Direct `@e…` click probes are role-gated to current snapshot refs whose accessible role is `button`, `checkbox`, `menuitem`, `radio`, `switch`, or `tab`; duplicate names use snapshot order. If the probe evidence shows the target is outside a nested scroll container or viewport, `details.clickDispatch.scrollContainer` and `scroll-target-into-view-after-dispatch-miss` point to `scrollintoview <target>` before retry. When the workflow depends on a mutation, use `details.pageChangeSummary`, a wait, URL/text extraction, or a fresh `snapshot -i` before trusting the state; if nothing changed, retry with a current visible ref or stable selector and report the workflow issue. For static local fixtures or debugging where the user explicitly accepts scripted activation, `eval --stdin` can call `document.querySelector(...).click()` to exercise inline handlers and app code; treat that as an untrusted programmatic event, not as evidence that CDP/user-like clicking works. Respect explicit user stop boundaries yourself: if the user says to stop before a final order, post, purchase, or submit action, gather evidence from that page and do not click the final action or use scripted activation to bypass the stop. The wrapper does not infer broad business intent from prompt text; `details.promptGuard` is reserved for concrete artifact-before-close checks. `press`, `key`, `keydown`, and `keyup` accept exactly one key token; focus or click the target first, then run `press Enter` or another single-key command.
 
-Successful `snapshot -i` results can also surface `Possible overlay blockers` when their own refs already show dialog/alertdialog context plus close/dismiss controls, so agents can detect likely obstruction before clicking. When a **top-level** `click` succeeds (not a `click` hidden inside a `batch`/`job` tool call—the unified command must be `click`), the upstream payload includes `data.clicked`, no `details.clickDispatch` diagnostic fired for the same result, and the wrapper sees the active tab URL unchanged after the same normalization it uses for ref guards (**`#fragment` ignored**), it may run one extra `snapshot -i` and surface `Possible overlay blockers` plus `details.overlayBlockers` (`candidates`, `summary`, and a `snapshot` map that can refresh `refSnapshot`) when that snapshot shows strong modal context (`dialog` / `alertdialog`) **and** up to three close/dismiss-like controls; page-wide words such as privacy, sign in, or banner alone do not trigger it. The URL check compares the session’s prior pinned tab target to `details.navigationSummary.url` after the click; that summary is gathered with one read-only `eval` when the click JSON omits **both** string `data.url` and `data.title`—if upstream already echoes either field, overlay diagnostics are skipped on this path. The diagnostic is skipped if the wrapper already applied tab-focus correction or about-blank recovery on that result. Appended `inspect-overlay-state` / `try-overlay-blocker-candidate-*` entries in `details.nextActions` include `--session <name>` when the session is named, same as other session-scoped follow-ups. Treat `inspect-overlay-state` as the safe first follow-up; only use a `try-overlay-blocker-candidate-*` next action when the candidate is clearly the control you intend to close.
+Successful `snapshot -i` results can also surface `Possible overlay blockers` when their own refs already show dialog/alertdialog context plus close/dismiss controls, so agents can detect likely obstruction before clicking. When a **top-level** `@e…`/`ref=` click succeeds (not a `click` hidden inside a `batch`/`job` tool call—the unified command must be `click`), the upstream payload includes `data.clicked`, no `details.clickDispatch` diagnostic fired for the same result, and the wrapper sees `details.navigationSummary.url` unchanged after the same normalization it uses for ref guards (**`#fragment` ignored**), it may run one extra `snapshot -i` and surface `Possible overlay blockers` plus `details.overlayBlockers` (`candidates`, `summary`, and a `snapshot` map that can refresh `refSnapshot`) when that snapshot shows strong modal context (`dialog` / `alertdialog`) **and** up to three close/dismiss-like controls; page-wide words such as privacy, sign in, or banner alone do not trigger it. The URL check compares the session’s prior pinned tab target to `details.navigationSummary.url`. CSS selector clicks do not run this overlay probe. The diagnostic is skipped if the wrapper already applied tab-focus correction or about-blank recovery on that result. Appended `inspect-overlay-state` / `try-overlay-blocker-candidate-*` entries in `details.nextActions` preserve namespace/session context (`--namespace <namespace> --session <name>` when namespaced, otherwise `--session <name>` when the session is named), same as other session-scoped follow-ups. Treat `inspect-overlay-state` as the safe first follow-up; only use a `try-overlay-blocker-candidate-*` next action when the candidate is clearly the control you intend to close.
 
 ### Extract page data
 
@@ -231,7 +231,7 @@ Prefer `get` and scoped `eval --stdin` for read-only extraction. Getter names ar
 
 Return the intended JavaScript value from `eval --stdin` instead of relying on `console.log`. In the native pi tool, the JavaScript belongs in the top-level `stdin` field; do **not** write it as a third `args` item such as `{ "args": ["eval", "--stdin", "document.title"] }`. The wrapper tolerates that common misplaced form by moving the trailing token to stdin before spawn, but the explicit `stdin` field is the documented form and avoids ambiguity for multiline snippets. For object-shaped extraction, pass a plain expression such as `({ title: document.title, url: location.href })`; if the result should be kept outside the transcript as a durable file, add top-level `outputPath` (for example `{ "args": ["eval", "--stdin"], "stdin": "({ title: document.title })", "outputPath": "logs/page-title.json" }`). If you send a function-shaped snippet, invoke it explicitly, for example `(() => ({ title: document.title }))()`. When upstream serializes a function result to `{}`, the wrapper can append `Eval stdin hint` and `details.evalStdinHint`.
 
-On tabbed or hidden-DOM pages, `get text <selector>` reads the upstream-selected match, which may be hidden even when a later match is visible. For non-`@ref` CSS selectors with multiple matches, including successful `batch` steps, the wrapper may add `Selector text visibility warning`, `details.selectorTextVisibility` (and `details.selectorTextVisibilityAll` for multiple batched warnings), and `inspect-visible-text-candidates` next actions. The warning names the matching `details.nextActions` id so agents know to use a fresher `snapshot -i`, a visible `@ref`, or a more specific selector instead of trusting hidden tab content. If the probe still leaves multiple visible candidates, do not keep reading the broad selector; switch to a current visible `@ref`, add a narrower selector such as a known panel/container id, or use a targeted `eval --stdin` expression that filters for visible elements and returns the intended index/text.
+On tabbed or hidden-DOM pages, `get text <selector>` reads the upstream-selected match, which may be hidden even when a later match is visible. For non-`@ref`, non-simple-id CSS selectors with multiple matches, including successful `batch` steps, the wrapper may add `Selector text visibility warning`, `details.selectorTextVisibility` (and `details.selectorTextVisibilityAll` for multiple batched warnings), and `inspect-visible-text-candidates` next actions. The warning names the matching `details.nextActions` id so agents know to use a fresher `snapshot -i`, a visible `@ref`, or a more specific selector instead of trusting hidden tab content. If the probe still leaves multiple visible candidates, do not keep reading the broad selector; switch to a current visible `@ref`, add a narrower selector such as a known panel/container id, or use a targeted `eval --stdin` expression that filters for visible elements and returns the intended index/text.
 
 ### Run a multi-step flow in one browser invocation
 
@@ -243,7 +243,7 @@ Use `batch --bail` when later steps should stop after the first failed command.
 
 For short constrained flows, use top-level `job` instead of hand-writing `batch` stdin. Supported job steps are `open`, `click`, `fill`, `type`, `select`, `wait`, `assertText`, `assertUrl`, `waitForDownload`, `snapshot`, and `screenshot`. `open` can include `loadState: "domcontentloaded" | "load" | "networkidle"` to insert a `wait --load …` row immediately after navigation before the next click/read step. `click` and `fill` accept either a stable `selector` or the same semantic locator fields as top-level `semanticAction` (`locator`, plus `role`/`name` or `value` as appropriate) and compile locator steps to upstream `find` argv. `type` focuses an optional selector, sends text through upstream keyboard typing, can insert `wait` rows via `delayMs` for human-paced input, and can append a final `press` key such as `Enter`; delayed typing is capped at 200 characters per step, and generated per-character rows are compacted in model-visible batch text while remaining available in `details.batchSteps`. `select` requires `selector` plus `value` or `values`, and compiles to upstream `select <selector> <value...>`. By default the wrapper compiles steps to upstream `batch --bail` so a failed setup/fill/assertion step stops later mutating clicks; set `failFast: false` only when you explicitly need continue-after-error diagnostics. The wrapper records `details.compiledJob.steps[]` plus `details.compiledJob.failFast`. There is still no separate first-class catalog of reusable named browser recipes above `job`, the `qa` preset, and raw `batch`; see [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet) for the closed `RQ-0068` decision and revisit bar.
 
-**Job navigation is explicit.** A `click` step (or other navigation-prone interaction) does not prove the next page loaded. The wrapper does not auto-insert `assertUrl` or `assertText` after clicks inside `job`; add those steps yourself with the exact URL, a `*` / `**` glob-style URL pattern, or on-page text you expect, especially after forms, checkout, tabs, or submit buttons, before screenshots or later steps. Exact and glob-style `assertUrl` values compile to `wait --url` unchanged, including query strings and literal `?`; upstream `agent-browser 0.30.1` matches `*` / `**` patterns against the full active URL. Do not put a whole dynamic checkout into one long job: split around login, sorting/cart mutations, checkout navigation, and final evidence capture so refs and app state can be rechecked between phases.
+**Job navigation is explicit.** A `click` step (or other navigation-prone interaction) does not prove the next page loaded. The wrapper does not auto-insert `assertUrl` or `assertText` after clicks inside `job`; add those steps yourself with the exact URL, a `*` / `**` glob-style URL pattern, or on-page text you expect, especially after forms, checkout, tabs, or submit buttons, before screenshots or later steps. Exact and glob-style `assertUrl` values compile to `wait --url` unchanged, including query strings and literal `?`; upstream `agent-browser 0.31.0` matches `*` / `**` patterns against the full active URL. Do not put a whole dynamic checkout into one long job: split around login, sorting/cart mutations, checkout navigation, and final evidence capture so refs and app state can be rechecked between phases.
 
 ```json
 {
@@ -353,7 +353,7 @@ For local app debugging, top-level `sourceLookup` can gather candidate component
 { "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
 ```
 
-Top-level `networkSourceLookup` does the same for failed browser requests. When `requestId` is set it adds `network request <requestId>`; when `filter` or `url` is set it also adds `network requests --filter …`, using `url` as the filter pattern when `filter` is omitted. Add `session` when the generated batch should target an explicit upstream session. With `requestId` only, the compiled batch is just that request step; failed-request detection still walks the returned batch JSON and treats HTTP status ≥ 400, `failed: true`, or an `error` field as failure. When `filter` or `url` is present, the same heuristics apply but requests are correlated only if their URL matches that substring (either direction). Workspace URL literal search under the Pi session cwd reuses the `sourceLookup` scan rules (`maxWorkspaceFiles` defaults to 2000, hard cap 5000, at most ten `workspace-search` rows, up to eight URL/path needles from the query plus failed request URLs). It reports `details.networkSourceLookup.status` as `failed-requests-found`, `no-failed-requests`, or `no-candidates` and never assigns definitive blame. Request-detail URLs are diagnostic evidence, not active-tab evidence: standalone `network request …` and generated `networkSourceLookup` batches preserve the previous app page target and latest same-page `refSnapshot`.
+Top-level `networkSourceLookup` does the same for failed browser requests. When `requestId` is set it adds `network request <requestId>`; when `filter` or `url` is set it also adds `network requests --filter …`, using `url` as the filter pattern when `filter` is omitted. Add `namespace` / `session` when the generated batch should target an explicit upstream namespace/session. With `requestId` only, the compiled batch is just that request step; failed-request detection still walks the returned batch JSON and treats HTTP status ≥ 400, `failed: true`, or an `error` field as failure. When `filter` or `url` is present, the same heuristics apply but requests are correlated only if their URL matches that substring (either direction). Workspace URL literal search under the Pi session cwd reuses the `sourceLookup` scan rules (`maxWorkspaceFiles` defaults to 2000, hard cap 5000, at most ten `workspace-search` rows, up to eight URL/path needles from the query plus failed request URLs). It reports `details.networkSourceLookup.status` as `failed-requests-found`, `no-failed-requests`, or `no-candidates` and never assigns definitive blame. Request-detail URLs are diagnostic evidence, not active-tab evidence: standalone `network request …` and generated `networkSourceLookup` batches preserve the previous app page target and latest same-page `refSnapshot`.
 
 ```json
 { "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }
@@ -369,7 +369,7 @@ Top-level `networkSourceLookup` does the same for failed browser requests. When 
 
 Do not omit the load state value; use `wait --load <state>` with `load`, `domcontentloaded`, or `networkidle`.
 
-For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream `agent-browser 0.30.1` supports `wait --url` glob forms such as `**/dashboard` against the full active URL. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a successful fixed-wait payload such as `"waited":"timeout"` as elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
+For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream `agent-browser 0.31.0` supports `wait --url` glob forms such as `**/dashboard` against the full active URL. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a successful fixed-wait payload such as `"waited":"timeout"` as elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
 
 Use `wait --download [path]` after an earlier action has already started a browser download, such as a dashboard export button that responds asynchronously:
 
@@ -563,7 +563,7 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 | `tap <selector>` | Touch-oriented tap alias for iOS/provider workflows. |
 | `swipe <direction> [distance]` | Touch-oriented swipe for iOS/provider workflows. |
 
-On dashboards and other apps with nested scroll containers, `scroll <dir> [px]` may report a successful wheel action while the viewport appears unchanged because the page-level scroller was not the one containing the content. For top-level `scroll` calls without startup-scoped launch flags, the wrapper samples viewport and prominent scroll-container positions before and after the command; when nothing changes it prepends `Scroll completed with no observed movement`, appends `Scroll diagnostic: no observed scroll movement`, exposes `details.scrollNoop`, marks `details.data.scrolled: false`, and adds exact `details.nextActions` for a fresh `snapshot -i` and screenshot. For explicit CSS containers, the wrapper handles `scroll <selector> <up|down|left|right> [px|percent]` itself with a bounded in-page scroll probe before falling back to page scroll, returning `details.scrollContainer` evidence. The wrapper also handles `scroll to end` / `scroll to top` directly against `document.scrollingElement` and reports `details.scrollPage` before falling back to upstream page scroll. Use those before repeating page scrolls; when you need a specific element, prefer `scrollintoview <@ref>` or target the actual scrollable region.
+On dashboards and other apps with nested scroll containers, `scroll <dir> [px]` may report a successful wheel action while the viewport appears unchanged because the page-level scroller was not the one containing the content. For large top-level `scroll` calls on an existing or fresh managed session without startup-scoped launch flags, the wrapper samples viewport and prominent scroll-container positions before and after the command; when nothing changes it prepends `Scroll completed with no observed movement`, appends `Scroll diagnostic: no observed scroll movement`, exposes `details.scrollNoop`, marks `details.data.scrolled: false`, and adds exact `details.nextActions` for a fresh `snapshot -i` and screenshot. For explicit CSS containers, the wrapper handles `scroll <selector> <up|down|left|right> [px|percent]` itself with a bounded in-page scroll probe before falling back to page scroll, returning `details.scrollContainer` evidence. The wrapper also handles `scroll to end` / `scroll to top` directly against `document.scrollingElement` and reports `details.scrollPage` before falling back to upstream page scroll. Use those before repeating page scrolls; when you need a specific element, prefer `scrollintoview <@ref>` or target the actual scrollable region.
 
 Comboboxes vary by app. For native `<select>` controls, prefer raw `select <selector> <value...>`, `semanticAction: { action: "select", selector, value|values }`, or a `job` `select` step instead of clicking option refs; native option refs can be non-boxed in CDP and fail before a real selection. A `click` or `semanticAction` role/name click may focus a searchable custom combobox without opening its option list. For explicit combobox-targeted actions such as `semanticAction` role `combobox`, the wrapper checks whether a combobox-like element is focused, has explicit `aria-expanded` state, and has no visible listbox/options open; this still applies when the semantic action first resolves to a current visible `@ref` before execution. When that happens it appends `Combobox diagnostic: focused combobox did not expose visible options`, exposes `details.comboboxFocus`, and adds exact `details.nextActions` for a fresh `snapshot -i`, `press ArrowDown`, and `press Enter`. Use those instead of assuming click alone expanded the control; reserve visible option refs for custom comboboxes after a fresh snapshot shows the intended option.
 
@@ -587,6 +587,8 @@ Comboboxes vary by app. For native `<select>` controls, prefer raw `select <sele
 | `state show <filename>` | Show saved-state metadata without dumping secrets. |
 | `state rename <old-name> <new-name>` | Rename a saved state file. |
 | `state clear [session-name] [--all]` | Clear saved states for one name or all names; `state clear -a` is the upstream short alias for clearing all names. |
+| `session id --scope worktree --prefix <name>` | Generate a stable session id for agent/worktree-scoped browser state. |
+| `session info --json` | Inspect daemon, launch, and restore status for a session. |
 | `state clean --older-than <days>` | Delete expired saved-state files. |
 | `frame <selector|main>` | Switch iframe context by selector/ref/name/URL, or return to the main frame. |
 | `dialog accept [text]` | Accept an alert, confirm, or prompt dialog, optionally supplying prompt text. |
@@ -664,7 +666,7 @@ For dense pages, the wrapper also accepts `snapshot -i --search <text>` and `sna
 | `wait --download [path]` | Wait for a download started by a previous action and optionally save it to `path`; successful wrapper results include upstream-reported `savedFilePath`/`savedFile`, while `details.artifacts[].exists` is the wrapper's on-disk verification signal. |
 | `wait --download [path] --timeout <ms>` | Set download-start timeout in milliseconds. The native Pi wrapper forwards explicit wait timeouts and extends the subprocess watchdog unless the caller supplies top-level `timeoutMs`. |
 
-Current upstream 0.30.1 still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
+Current upstream still does not parse `wait <selector> --state hidden` / `wait <selector> --state detached` as distinct wait modes even though upstream help mentions those examples. Use `wait --fn "!document.querySelector('#spinner')"` or another explicit JavaScript predicate for disappearance/detach checks until upstream parser support exists.
 
 ### Diff, debug, and streaming
 
@@ -734,7 +736,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `mcp` | Start a local MCP stdio server for external MCP clients; bare native-tool calls are rejected before spawn. |
 | `profiles` | List available Chrome profiles. |
 
-When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. Local inspection/setup calls (`auth save/list/show/delete/remove`, `dashboard start/stop`, `device list`, `doctor`, `install`, `upgrade`, `profiles`, `session list`, `plugin add/list/show/run`, `state list/show/rename`, `state clean --older-than <days>`, `state clear --all`, `state clear -a`, and `state clear <session-name>`) are sessionless unless you explicitly pass `--session`; bare `mcp` server calls are blocked except help. Context-dependent calls such as root `session`, untargeted `state clear`, `auth login`, `chat`, and `state save/load` keep normal session behavior. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. If the same session has active wrapper-observed network routes, failed/pending/CORS-looking matched request rows add `details.networkRouteDiagnostics` and executable route-mock next actions before the generic request actions. `data:image` artifact rows are omitted from compact request previews but remain in raw `details.data.requests`. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Clipboard failures that mention `NotAllowedError` or permission denial are usually browser/OS capability limits, not proof that a read, paste, or page mutation happened; prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct typing (`keyboard inserttext` / `keyboard type`) when the workflow allows it, and retry true clipboard flows only from an allowed profile/session on a normal `http(s)` page. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; low-risk primitive storage values may remain visible, while command echoes still redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, `clipboard write` text, cookie/storage set values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
+When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. Local inspection/setup calls (`auth save/list/show/delete/remove`, `dashboard start/stop`, `device list`, `doctor`, `install`, `upgrade`, `profiles`, `session id`, `session info`, `session list`, `plugin add/list/show/run`, `state list/show/rename`, `state clean --older-than <days>`, `state clear --all`, `state clear -a`, and `state clear <session-name>`) are sessionless unless you explicitly pass `--session`; bare `mcp` server calls are blocked except help. Context-dependent calls such as root `session`, untargeted `state clear`, `auth login`, `chat`, and `state save/load` keep normal session behavior. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. If the same session has active wrapper-observed network routes, failed/pending/CORS-looking matched request rows add `details.networkRouteDiagnostics` and executable route-mock next actions before the generic request actions. `data:image` artifact rows are omitted from compact request previews but remain in raw `details.data.requests`. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Clipboard failures that mention `NotAllowedError` or permission denial are usually browser/OS capability limits, not proof that a read, paste, or page mutation happened; prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct typing (`keyboard inserttext` / `keyboard type`) when the workflow allows it, and retry true clipboard flows only from an allowed profile/session on a normal `http(s)` page. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; low-risk primitive storage values may remain visible, while command echoes still redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, `clipboard write` text, cookie/storage set values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
 
 ## Optional package config and companion web search
 
@@ -811,7 +813,11 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 
 - `--profile <name|path>`: reuse Chrome profile login state by directory name from `profiles`, or use a persistent custom profile/profile-directory path when upstream accepts it. Environment: `AGENT_BROWSER_PROFILE`.
 - `--session <name>`: use an isolated session. Environment: `AGENT_BROWSER_SESSION`.
-- `--session-name <name>`: auto-save/restore cookies and local storage by name. Environment: `AGENT_BROWSER_SESSION_NAME`.
+- `--restore [name]`: auto-save/restore cookies and local storage; bare `--restore` uses `--session` as the key. Environment: `AGENT_BROWSER_RESTORE`.
+- `--restore-save <policy>` (`auto`, `always`, or `never`): restore auto-save policy. Environment: `AGENT_BROWSER_RESTORE_SAVE`.
+- `--restore-check-url <glob>`, `--restore-check-text <txt>`, `--restore-check-fn <js>`: validate restored state before auto-save. Environments: `AGENT_BROWSER_RESTORE_CHECK_URL`, `AGENT_BROWSER_RESTORE_CHECK_TEXT`, `AGENT_BROWSER_RESTORE_CHECK_FN`.
+- `--namespace <name>`: isolate daemon sockets and restore-state directories. Environment: `AGENT_BROWSER_NAMESPACE`.
+- `--session-name <name>`: legacy alias for restore persistence key. Environment: `AGENT_BROWSER_SESSION_NAME`.
 - `--state <path>`: load saved auth state from JSON. Environment: `AGENT_BROWSER_STATE`.
 - `--auto-connect`: connect to a running Chrome to reuse auth state. Environment: `AGENT_BROWSER_AUTO_CONNECT`.
 - `--headers <json>`: apply HTTP headers scoped to the opened URL's origin.
@@ -875,11 +881,11 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 ## Wrapper-specific behavior worth knowing
 
 - The extension may keep following one implicit managed session across later tool calls.
-- If launch-scoped flags like `--profile`, `--executable-path`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
+- If launch-scoped flags like `--profile`, `--executable-path`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
 - If a `sessionMode: "fresh"` call fails (including upstream failure, timeout, missing binary, or **`qa`** reclassification after a nominally successful batch), read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current. When the failure reason is not the fresh launch itself—for example `failureCategory: "qa-failure"`—`status`/`summary` may still describe the managed-session transition while `succeeded` on this object matches the final tool outcome.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
-- After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
+- After launch-scoped open/goto/navigate calls that can restore existing tabs (for example --profile, --restore, --session-name, or --state), agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch.
 - After the wrapper observes tab-drift risk for a session (for example profile restore correction, overlapping stale opens, or resumed session state), later active-tab commands best-effort pin that tab inside the same upstream invocation. Routine same-session commands are not preflighted with tab list just because a target tab is known.
 - For sessions with observed tab-drift risk, after a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes. Routine same-session commands skip this post-command tab-list probe.
 - If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.
@@ -893,14 +899,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.30.1</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.31.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `7379f7dbea76ad8dbf47f177349c4c3ce9263dcb`
-- upstream package version: `0.30.1`
+- upstream HEAD: `5acf7f9dc153cd51dcc6c79e1aebb09c83b2261d`
+- upstream package version: `0.31.0`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -975,10 +981,10 @@ This generated block is review data for maintainers. The human-authored referenc
 #### Inventory sections
 - Built-in skills: 15 human-doc token(s), 15 upstream token(s)
 - Core page, element, navigation, and extraction commands: 74 human-doc token(s), 74 upstream token(s)
-- Sessions, state, tabs, frames, dialogs, and windows: 20 human-doc token(s), 16 upstream token(s)
+- Sessions, state, tabs, frames, dialogs, and windows: 24 human-doc token(s), 20 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 43 human-doc token(s), 53 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 31 human-doc token(s), 35 upstream token(s)
-- Global flags, config, providers, policy, and environment: 121 human-doc token(s), 91 upstream token(s)
+- Global flags, config, providers, policy, and environment: 133 human-doc token(s), 103 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1076,6 +1082,10 @@ This generated block is review data for maintainers. The human-authored referenc
 
 ##### Sessions, state, tabs, frames, dialogs, and windows
 - `session`
+- `session id`
+- `session id --scope worktree --prefix <name>`
+- `session info`
+- `session info --json`
 - `session list`
 - `state save <path>`
 - `state load <path>`
@@ -1179,6 +1189,18 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_PROFILE`
 - `--session <name>`
 - `AGENT_BROWSER_SESSION`
+- `--namespace <name>`
+- `AGENT_BROWSER_NAMESPACE`
+- `--restore [name]`
+- `AGENT_BROWSER_RESTORE`
+- `--restore-save <policy>`
+- `AGENT_BROWSER_RESTORE_SAVE`
+- `--restore-check-url <glob>`
+- `AGENT_BROWSER_RESTORE_CHECK_URL`
+- `--restore-check-text <txt>`
+- `AGENT_BROWSER_RESTORE_CHECK_TEXT`
+- `--restore-check-fn <js>`
+- `AGENT_BROWSER_RESTORE_CHECK_FN`
 - `--session-name <name>`
 - `AGENT_BROWSER_SESSION_NAME`
 - `--state <path>`
@@ -1313,7 +1335,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - vercel sandbox skill full: `installSystemDependencies: false`
 - core skill full: `agent-browser frame @e3`
 - core skill full: `agent-browser dialog accept`
-- core skill full: `agent-browser state save ./auth.json`
+- core skill full: `agent-browser --session "$SESSION" --restore open https://app.example.com`
 
 ##### Core page, element, navigation, and extraction commands
 - open help: `open [url]`
@@ -1393,6 +1415,10 @@ This generated block is review data for maintainers. The human-authored referenc
 
 ##### Sessions, state, tabs, frames, dialogs, and windows
 - root help: `session list`
+- session help: `id`
+- session help: `info`
+- session help: `--scope worktree`
+- session help: `--namespace <name>`
 - state help: `save <path>`
 - state help: `load <path>`
 - state help: `list`
@@ -1506,6 +1532,18 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_PROFILE`
 - root help: `--session <name>`
 - root help: `AGENT_BROWSER_SESSION`
+- root help: `--namespace <name>`
+- root help: `AGENT_BROWSER_NAMESPACE`
+- root help: `--restore [name]`
+- root help: `AGENT_BROWSER_RESTORE`
+- root help: `--restore-save <policy>`
+- root help: `AGENT_BROWSER_RESTORE_SAVE`
+- root help: `--restore-check-url <glob>`
+- root help: `AGENT_BROWSER_RESTORE_CHECK_URL`
+- root help: `--restore-check-text <txt>`
+- root help: `AGENT_BROWSER_RESTORE_CHECK_TEXT`
+- root help: `--restore-check-fn <js>`
+- root help: `AGENT_BROWSER_RESTORE_CHECK_FN`
 - root help: `--session-name <name>`
 - root help: `AGENT_BROWSER_SESSION_NAME`
 - root help: `--state <path>`

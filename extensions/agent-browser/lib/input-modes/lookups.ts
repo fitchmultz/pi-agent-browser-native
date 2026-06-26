@@ -280,10 +280,12 @@ export function compileAgentBrowserNetworkSourceLookup(input: unknown): { compil
 	if (!isRecord(input)) return { error: "networkSourceLookup must be an object." };
 	const filter = input.filter;
 	const requestId = input.requestId;
+	const namespace = input.namespace;
 	const session = input.session;
 	const url = input.url;
 	if (filter !== undefined && (typeof filter !== "string" || filter.trim().length === 0)) return { error: "networkSourceLookup.filter must be a non-empty string when provided." };
 	if (requestId !== undefined && (typeof requestId !== "string" || requestId.trim().length === 0)) return { error: "networkSourceLookup.requestId must be a non-empty string when provided." };
+	if (namespace !== undefined && (typeof namespace !== "string" || namespace.trim().length === 0)) return { error: "networkSourceLookup.namespace must be a non-empty string when provided." };
 	if (session !== undefined && (typeof session !== "string" || session.trim().length === 0)) return { error: "networkSourceLookup.session must be a non-empty string when provided." };
 	if (url !== undefined && (typeof url !== "string" || url.trim().length === 0)) return { error: "networkSourceLookup.url must be a non-empty string when provided." };
 	if (filter === undefined && requestId === undefined && url === undefined) return { error: "networkSourceLookup requires requestId, filter, or url." };
@@ -297,8 +299,8 @@ export function compileAgentBrowserNetworkSourceLookup(input: unknown): { compil
 	if (effectiveFilter) {
 		steps.push({ action: "network", args: ["network", "requests", "--filter", effectiveFilter] });
 	}
-	const args = typeof session === "string" ? ["--session", session, "batch"] : ["batch"];
-	return { compiled: { args, query: { filter, maxWorkspaceFiles: maxWorkspaceFiles.value as number, requestId, session, url }, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
+	const args = [...(typeof namespace === "string" ? ["--namespace", namespace] : []), ...(typeof session === "string" ? ["--session", session] : []), "batch"];
+	return { compiled: { args, query: { filter, maxWorkspaceFiles: maxWorkspaceFiles.value as number, namespace, requestId, session, url }, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
 }
 
 function getResultPayload(item: Record<string, unknown>): unknown {

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.2.62 - 2026-06-26
+
+### Changed
+
+- Rebaselined upstream capability metadata, command reference, support docs, playbook guidance, and real-upstream output-shape metadata for `agent-browser` `0.31.0` / vercel-labs/agent-browser@5acf7f9.
+- Added upstream `--namespace`, `--restore`, restore-check flags, and `session id` / `session info` support to wrapper parsing, session policy, launch-scoped flag handling, and docs.
+
+### Fixed
+
+- Made wrapper-managed browser state namespace-aware across tab/ref tracking, allowed-domain policy, trace/profiler ownership, branch restore, cleanup, nextActions, and fresh-launch recovery.
+- Reduced post-click diagnostic fragility for upstream `agent-browser 0.31.0`: CSS selector clicks without upstream href/navigation fields now skip immediate helper probes, while ref/href clicks keep navigation summaries and overlay diagnostics.
+- Preserved namespace context for managed-session failure recovery and missing-binary nextActions.
+
+### Validation
+
+- Ran `npm run verify`, `npm run docs -- command-reference check`, `npm run typecheck`, focused runtime/diagnostic/passthrough tests, `npm run verify -- real-upstream`, `npm run verify -- dogfood`, `npm run verify -- lifecycle`, `npm run smoke:platform:doctor`, `npm run smoke:platform:all`, `npm publish --dry-run`, and `git diff --check`.
+- Ran the required reviewer subagent loop until it returned `no findings`.
+
 ## 0.2.61 - 2026-06-24
 
 ### Changed

@@ -716,7 +716,7 @@ let staleNetwork = true;
 let staleConsole = true;
 let staleErrors = true;
 const statePath = path.join(${JSON.stringify(tempDir)}, "fake-session-state.json");
-const valueFlags = new Set(["--session", "--profile", "--state", "--session-name", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
+const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
 function getSessionKey() {
   const index = args.indexOf("--session");
   return index >= 0 ? args[index + 1] : "default";
@@ -1079,7 +1079,7 @@ const path = require("node:path");
 const args = process.argv.slice(2);
 let stdin = "";
 const statePath = path.join(${JSON.stringify(tempDir)}, "fake-session-state.json");
-const valueFlags = new Set(["--session", "--profile", "--state", "--session-name", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
+const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
 function getSessionKey() {
   const index = args.indexOf("--session");
   return index >= 0 ? args[index + 1] : "default";
@@ -1170,7 +1170,7 @@ const path = require("node:path");
 const args = process.argv.slice(2);
 let stdin = "";
 const statePath = path.join(${JSON.stringify(tempDir)}, "fake-session-state.json");
-const valueFlags = new Set(["--session", "--profile", "--state", "--session-name", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
+const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
 function getSessionKey() {
   const index = args.indexOf("--session");
   return index >= 0 ? args[index + 1] : "default";

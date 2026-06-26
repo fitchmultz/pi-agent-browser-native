@@ -343,18 +343,19 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const firstResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://previous.test"] });
+			const firstResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "previous", "open", "https://previous.test"] });
 			assert.equal(firstResult.isError, false);
 			const previousSessionName = firstResult.details?.sessionName as string;
 			assert.ok(previousSessionName);
 
-			const failedFreshResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://fail.test"], sessionMode: "fresh" });
+			const failedFreshResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "next", "open", "https://fail.test"], sessionMode: "fresh" });
 			assert.equal(failedFreshResult.isError, true);
-			const preservedOutcome = failedFreshResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; attemptedSessionName?: string; currentSessionName?: string; previousSessionName?: string; sessionMode?: string; status?: string; succeeded?: boolean; summary?: string } | undefined;
+			const preservedOutcome = failedFreshResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; attemptedSessionName?: string; currentSessionName?: string; currentSessionNamespace?: string; previousSessionName?: string; sessionMode?: string; status?: string; succeeded?: boolean; summary?: string } | undefined;
 			assert.equal(preservedOutcome?.status, "preserved");
 			assert.equal(preservedOutcome?.activeBefore, true);
 			assert.equal(preservedOutcome?.activeAfter, true);
 			assert.equal(preservedOutcome?.currentSessionName, previousSessionName);
+			assert.equal(preservedOutcome?.currentSessionNamespace, "previous");
 			assert.equal(preservedOutcome?.previousSessionName, previousSessionName);
 			assert.equal(preservedOutcome?.sessionMode, "fresh");
 			assert.match(preservedOutcome?.attemptedSessionName ?? "", /-fresh-/);
@@ -362,24 +363,33 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			assert.match((failedFreshResult.content[0] as { text: string }).text, /Managed session outcome: Fresh launch failed; your previous browser session is still active\./);
 			assert.match((failedFreshResult.content[0] as { text: string }).text, /Recovery:/);
 			assert.match((failedFreshResult.content[0] as { text: string }).text, /details\.managedSessionOutcome/);
-			const preservedNextActions = failedFreshResult.details?.nextActions as Array<{ id?: string }> | undefined;
+			const preservedNextActions = failedFreshResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
 			assert.ok(preservedNextActions?.some((action) => action.id === "run-agent-browser-doctor"));
-			assert.ok(preservedNextActions?.some((action) => action.id === "verify-current-managed-session"));
+			assert.ok(preservedNextActions?.some((action) => action.id === "verify-current-managed-session" && action.params?.args?.join(" ") === `--namespace previous --session ${previousSessionName} get url`));
 
 			await withPatchedEnv({ PATH: missingBinaryDir }, async () => {
-				const missingBinaryResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://missing-binary.test"], sessionMode: "fresh" });
+				const missingBinaryResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "next", "open", "https://missing-binary.test"], sessionMode: "fresh" });
 				assert.equal(missingBinaryResult.isError, true);
 				assert.equal(missingBinaryResult.details?.failureCategory, "missing-binary");
-				const missingBinaryOutcome = missingBinaryResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; currentSessionName?: string; previousSessionName?: string; sessionMode?: string; status?: string } | undefined;
+				const missingBinaryOutcome = missingBinaryResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; currentSessionName?: string; currentSessionNamespace?: string; previousSessionName?: string; sessionMode?: string; status?: string } | undefined;
 				assert.equal(missingBinaryOutcome?.status, "preserved");
 				assert.equal(missingBinaryOutcome?.activeBefore, true);
 				assert.equal(missingBinaryOutcome?.activeAfter, true);
 				assert.equal(missingBinaryOutcome?.currentSessionName, previousSessionName);
+				assert.equal(missingBinaryOutcome?.currentSessionNamespace, "previous");
 				assert.equal(missingBinaryOutcome?.previousSessionName, previousSessionName);
 				assert.equal(missingBinaryOutcome?.sessionMode, "fresh");
 				assert.match((missingBinaryResult.content[0] as { text: string }).text, /Managed session outcome: Fresh launch failed; your previous browser session is still active\./);
-				const missingBinaryNextActions = missingBinaryResult.details?.nextActions as Array<{ id?: string }> | undefined;
+				const missingBinaryNextActions = missingBinaryResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
 				assert.ok(missingBinaryNextActions?.some((action) => action.id === "run-agent-browser-doctor"));
+				assert.ok(missingBinaryNextActions?.some((action) => action.id === "verify-current-managed-session" && action.params?.args?.join(" ") === `--namespace previous --session ${previousSessionName} get url`));
+
+				const abandonedMissingBinaryHarness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(abandonedMissingBinaryHarness.handlers, "session_start", { reason: "new" }, abandonedMissingBinaryHarness.ctx);
+				const abandonedMissingBinary = await executeRegisteredTool(abandonedMissingBinaryHarness.tool, abandonedMissingBinaryHarness.ctx, { args: ["--namespace", "next", "open", "https://missing-binary.test"], sessionMode: "fresh" });
+				assert.equal(abandonedMissingBinary.isError, true);
+				const abandonedMissingBinaryNextActions = abandonedMissingBinary.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
+				assert.ok(abandonedMissingBinaryNextActions?.some((action) => action.id === "retry-fresh-managed-session" && action.params?.args?.join(" ") === "--namespace next open about:blank"));
 			});
 
 			const followupResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });

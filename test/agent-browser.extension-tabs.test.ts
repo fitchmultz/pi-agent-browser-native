@@ -233,6 +233,10 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: true, href: "https://example.com/docs" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Destination Docs" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/docs" } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Destination Docs", url: "https://example.com/docs" } } }));
 } else {
@@ -264,10 +268,10 @@ if (args.includes("click")) {
 			);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 2);
+			assert.equal(invocations.length, 3);
 			assert.equal(invocations[0]?.args.includes("click"), true);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "eval", "--stdin"]);
-			assert.equal(invocations[1]?.stdin, "({ title: document.title, url: location.href })");
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "get", "title"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -290,6 +294,10 @@ if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://example.com/", refs: { e1: { role: "link", name: "Docs" } }, snapshot: '- link "Docs" [ref=e1]' } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e1" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Docs" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/docs" } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Docs", url: "https://example.com/docs" } } }));
 } else {
@@ -319,7 +327,8 @@ if (args.includes("open")) {
 				"snapshot -i",
 				"snapshot -i",
 				"click @e1",
-				"eval --stdin",
+				"get url",
+				"get title",
 			]);
 			assert.equal(invocations.some((entry) => entry.args.includes("tab") && entry.args.includes("list")), false);
 		});

@@ -15,6 +15,10 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "attaches to an already-running browser at launch time instead of reusing an existing named session",
 	},
 	{
+		flag: "--namespace",
+		reason: "selects the upstream daemon/socket and restore-state namespace before session lookup",
+	},
+	{
 		flag: "--cdp",
 		reason: "selects the browser/CDP endpoint used when an upstream session is launched",
 	},
@@ -51,6 +55,26 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "selects upstream saved auth/session state for the launch",
 	},
 	{
+		flag: "--restore",
+		reason: "selects upstream saved auth/session restore state for the launch",
+	},
+	{
+		flag: "--restore-save",
+		reason: "configures upstream restore auto-save policy for the launched session",
+	},
+	{
+		flag: "--restore-check-url",
+		reason: "configures restore validation before the launched session can auto-save",
+	},
+	{
+		flag: "--restore-check-text",
+		reason: "configures restore validation before the launched session can auto-save",
+	},
+	{
+		flag: "--restore-check-fn",
+		reason: "configures restore validation before the launched session can auto-save",
+	},
+	{
 		flag: "--state",
 		reason: "loads persisted upstream browser/auth state at launch time",
 	},
@@ -64,4 +88,4 @@ export const LAUNCH_SCOPED_FLAG_LABEL = LAUNCH_SCOPED_FLAGS.join(", ");
  * and are plausible wrong-active-tab sources after a fresh launch. These trigger post-open
  * tab-correction (the `tab list` + re-select cycle).
  */
-export const LAUNCH_SCOPED_TAB_CORRECTION_FLAGS = new Set(["--profile", "--session-name", "--state"] as const);
+export const LAUNCH_SCOPED_TAB_CORRECTION_FLAGS = new Set(["--profile", "--session-name", "--restore", "--state"] as const);

@@ -83,15 +83,16 @@ export async function tryNetworkRequestsPageFilter(options: {
 	effectiveArgs: string[];
 	redactedArgs: string[];
 	sessionMode: "auto" | "fresh";
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 	usedImplicitSession: boolean;
 }): Promise<AgentBrowserToolResult | undefined> {
 	const request = parseNetworkRequestsPageFilterRequest(options.commandTokens);
 	if (!request || !options.sessionName) return undefined;
-	const currentUrl = extractCurrentUrl(await runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal }));
+	const currentUrl = extractCurrentUrl(await runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }));
 	if (!currentUrl) return undefined;
-	const networkData = await runSessionCommandData({ args: request.cleanArgs, cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const networkData = await runSessionCommandData({ args: request.cleanArgs, cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	const filtered = filterNetworkRequestsData(networkData, currentUrl, request);
 	if (!filtered) return undefined;
 	const summary = `Network requests filtered to current ${request.mode === "origin" ? "origin" : "URL"}: ${filtered.matchedRows}/${filtered.totalRows} rows matched.`;
@@ -108,7 +109,7 @@ export async function tryNetworkRequestsPageFilter(options: {
 			networkRequestsPageFilter: { cleanArgs: request.cleanArgs, currentUrl: redactSensitiveText(currentUrl), matchedRows: filtered.matchedRows, mode: request.mode, totalRows: filtered.totalRows },
 			sessionMode: options.sessionMode,
 			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "network", succeeded: true }),
-			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
+			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession, options.namespace),
 			summary,
 		},
 		isError: false,

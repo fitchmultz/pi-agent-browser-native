@@ -41,6 +41,7 @@ export async function tryDirectAnchorDownload(options: {
 	effectiveArgs: string[];
 	redactedArgs: string[];
 	sessionMode: "auto" | "fresh";
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 	usedImplicitSession: boolean;
@@ -51,6 +52,7 @@ export async function tryDirectAnchorDownload(options: {
 		const probeData = await runSessionCommandData({
 			args: ["eval", "--stdin"],
 			cwd: options.cwd,
+			namespace: options.namespace,
 			sessionName: options.sessionName,
 			signal: options.signal,
 			stdin: buildAnchorDownloadProbe(request.selector),
@@ -146,7 +148,7 @@ export async function tryDirectAnchorDownload(options: {
 					savedFilePath: absolutePath,
 					sessionMode: options.sessionMode,
 					...buildAgentBrowserResultCategoryDetails({ artifacts: [artifact], args: options.effectiveArgs, command: "download", savedFile, succeeded: true }),
-					...buildSessionDetailFields(options.sessionName, options.usedImplicitSession),
+					...buildSessionDetailFields(options.sessionName, options.usedImplicitSession, options.namespace),
 					summary: `Download completed: ${absolutePath}`,
 				},
 				isError: false,

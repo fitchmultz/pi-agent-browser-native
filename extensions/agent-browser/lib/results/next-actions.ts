@@ -19,6 +19,7 @@ export interface AgentBrowserNextAction {
 		};
 		networkSourceLookup?: {
 			filter?: string;
+			namespace?: string;
 			requestId?: string;
 			session?: string;
 			url?: string;
@@ -31,8 +32,24 @@ export interface AgentBrowserNextAction {
 	tool: "agent_browser";
 }
 
+export function withOptionalNamespaceArgs(namespace: string | undefined, args: string[]): string[] {
+	return namespace && args[0] !== "--namespace" ? ["--namespace", namespace, ...args] : args;
+}
+
 export function withOptionalSessionArgs(sessionName: string | undefined, args: string[]): string[] {
-	return sessionName && args[0] !== "--session" ? ["--session", sessionName, ...args] : args;
+	if (!sessionName || args[0] === "--session") return args;
+	if (args[0] === "--namespace" && args[1] && args[2] !== "--session") return [args[0], args[1], "--session", sessionName, ...args.slice(2)];
+	return ["--session", sessionName, ...args];
+}
+
+export function applyNamespaceToNextActions(actions: AgentBrowserNextAction[] | undefined, namespace: string | undefined): AgentBrowserNextAction[] | undefined {
+	if (!namespace || !actions) return actions;
+	return actions.map((action) => {
+		const args = action.params?.args;
+		if (args) return { ...action, params: { ...action.params, args: withOptionalNamespaceArgs(namespace, args) } };
+		const networkSourceLookup = action.params?.networkSourceLookup;
+		return networkSourceLookup ? { ...action, params: { ...action.params, networkSourceLookup: { ...networkSourceLookup, namespace } } } : action;
+	});
 }
 
 export function buildNextToolAction(options: {

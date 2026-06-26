@@ -292,7 +292,7 @@ test("agentBrowserExtension rejects unsupported public schema fields", () => {
 	assert.equal(Check(schema, { args: ["open", "https://example.test/"], timeoutMs: 0 }), false);
 	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "role", role: "button", name: "Open" } }), true);
 	assert.equal(Check(schema, { sourceLookup: { selector: "main" } }), true);
-	assert.equal(Check(schema, { networkSourceLookup: { url: "https://example.test/api" } }), true);
+	assert.equal(Check(schema, { networkSourceLookup: { namespace: "review", url: "https://example.test/api" } }), true);
 	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }] } }), true);
 });
 
@@ -328,7 +328,7 @@ test("agentBrowserExtension reports no-op scroll diagnostics with recovery next 
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const valueFlags = new Set(["--session", "--profile", "--state", "--session-name", "--cdp", "--provider", "-p", "--device"]);
+const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device"]);
 let commandIndex = -1;
 for (let i = 0; i < args.length; i += 1) {
   const token = args[i];
@@ -714,11 +714,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "requests", "--current-page"] });
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "review", "network", "requests", "--current-page"] });
 			assert.equal(result.isError, false, JSON.stringify(result));
 			assert.match(result.content[0]?.text ?? "", /2\/3 rows matched/);
 			assert.match(result.content[0]?.text ?? "", /shop\.example\/app\.js/);
 			assert.doesNotMatch(result.content[0]?.text ?? "", /cdn\.example/);
+			assert.equal(result.details?.namespace, "review");
 			const filter = result.details?.networkRequestsPageFilter as { matchedRows?: number; totalRows?: number } | undefined;
 			assert.equal(filter?.matchedRows, 2);
 			assert.equal(filter?.totalRows, 3);
@@ -726,6 +727,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 			assert.deepEqual(data?.requests?.map((request) => request.url), ["https://shop.example/app.js", "https://shop.example/api/cart"]);
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.some((entry) => entry.args.includes("--current-page")), false);
+			assert.ok(invocations.every((entry) => entry.args.includes("--namespace") && entry.args.includes("review")));
 			assert.ok(invocations.some((entry) => entry.args.includes("network") && entry.args.includes("requests")));
 		});
 	} finally {

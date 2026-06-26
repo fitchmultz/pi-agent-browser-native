@@ -21,6 +21,7 @@ import {
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	hasLaunchScopedTabCorrectionFlag,
+	parseArgvDescriptor,
 	redactInvocationArgs,
 	redactSensitiveText,
 	redactSensitiveValue,
@@ -126,6 +127,29 @@ test("resolveManagedSessionState only adopts successful managed sessions and ide
 		}),
 		{ active: false, sessionName: "piab-demo-123-fresh" },
 	);
+	assert.deepEqual(
+		resolveManagedSessionState({
+			command: "close",
+			managedSessionName: "piab-demo-123-fresh",
+			managedSessionNamespace: undefined,
+			priorActive: true,
+			priorNamespace: "review",
+			priorSessionName: "piab-demo-123-fresh",
+			succeeded: true,
+		}),
+		{ active: true, namespace: "review", sessionName: "piab-demo-123-fresh" },
+	);
+	assert.deepEqual(
+		resolveManagedSessionState({
+			command: "open",
+			managedSessionName: "piab-demo-123-fresh",
+			managedSessionNamespace: "review",
+			priorActive: true,
+			priorSessionName: "piab-demo-123",
+			succeeded: true,
+		}),
+		{ active: true, namespace: "review", sessionName: "piab-demo-123-fresh", replacedSessionName: "piab-demo-123" },
+	);
 });
 
 test("restoreManagedSessionStateFromBranch ignores inspection entries and reconstructs the latest managed session", () => {
@@ -180,6 +204,69 @@ test("restoreManagedSessionStateFromBranch ignores inspection entries and recons
 		replacedSessionName: undefined,
 		sessionName: "piab-demo-123-fresh-aaa",
 	});
+});
+
+test("restoreManagedSessionStateFromBranch preserves managed session namespace", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["--namespace", "review", "open", "https://example.com"],
+					command: "open",
+					exitCode: 0,
+					namespace: "review",
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["snapshot", "-i"],
+					command: "snapshot",
+					exitCode: 0,
+					namespace: "review",
+					sessionMode: "auto",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.namespace, "review");
+	assert.equal(restored.sessionName, "piab-demo-123-fresh-aaa");
+
+	const afterDefaultNamespaceClose = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["--namespace", "review", "open", "https://example.com"],
+					command: "open",
+					exitCode: 0,
+					namespace: "review",
+					sessionMode: "fresh",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--session", "piab-demo-123-fresh-aaa", "close"],
+					command: "close",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123-fresh-aaa",
+					usedImplicitSession: false,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+	assert.equal(afterDefaultNamespaceClose.active, true);
+	assert.equal(afterDefaultNamespaceClose.namespace, "review");
 });
 
 test("restoreManagedSessionStateFromBranch honors managedSessionOutcome replacement on wrapper-level failures", () => {
@@ -653,6 +740,15 @@ test("buildExecutionPlan injects --json and the implicit session when needed", (
 	assert.equal(plan.sessionName, "piab-demo-123");
 	assert.equal(plan.usedImplicitSession, true);
 	assert.equal(plan.validationError, undefined);
+
+	const namespaced = buildExecutionPlan(["--namespace", "review", "open", "https://example.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.deepEqual(namespaced.effectiveArgs, ["--json", "--namespace", "review", "--session", "piab-demo-123", "open", "https://example.com"]);
+	assert.equal(namespaced.namespace, "review");
 });
 
 test("buildExecutionPlan treats upstream close aliases as managed-session closes", () => {
@@ -683,6 +779,42 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	assert.equal(plan.managedSessionName, undefined);
 	assert.equal(plan.sessionName, "custom");
 	assert.equal(plan.usedImplicitSession, false);
+
+	const namespaced = buildExecutionPlan(["--session", "custom", "--namespace", "review", "snapshot", "-i"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.deepEqual(namespaced.effectiveArgs, ["--json", "--namespace", "review", "--session", "custom", "snapshot", "-i"]);
+	assert.equal(namespaced.sessionName, "custom");
+	assert.equal(namespaced.namespace, "review");
+
+	const sameNamespace = buildExecutionPlan(["--namespace", "review", "snapshot", "-i"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		managedSessionNamespace: "review",
+		sessionMode: "auto",
+	});
+	assert.deepEqual(sameNamespace.effectiveArgs, ["--json", "--namespace", "review", "--session", "piab-demo-123", "snapshot", "-i"]);
+	assert.equal(sameNamespace.validationError, undefined);
+});
+
+test("buildExecutionPlan preserves stored namespace for implicit managed sessions", () => {
+	const plan = buildExecutionPlan(["snapshot", "-i"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123-fresh-aaa",
+		managedSessionNamespace: "review",
+		sessionMode: "auto",
+	});
+
+	assert.deepEqual(plan.effectiveArgs, ["--json", "--namespace", "review", "--session", "piab-demo-123-fresh-aaa", "snapshot", "-i"]);
+	assert.equal(plan.namespace, "review");
+	assert.equal(plan.managedSessionName, "piab-demo-123-fresh-aaa");
+	assert.equal(plan.sessionName, "piab-demo-123-fresh-aaa");
+	assert.equal(plan.usedImplicitSession, true);
 });
 
 test("buildExecutionPlan keeps inspection commands stateless", () => {
@@ -725,6 +857,13 @@ test("buildExecutionPlan keeps sessionless commands free of implicit managed ses
 		["install", "-d"],
 		["upgrade"],
 		["profiles", "--json"],
+		["session", "id"],
+		["session", "id", "--scope", "worktree", "--prefix", "demo"],
+		["session", "id", "--json"],
+		["session", "info"],
+		["session", "info", "--json"],
+		["--namespace", "review", "session", "info"],
+		["session", "info", "--namespace", "review"],
 		["session", "list"],
 		["session", "list", "--json"],
 		["state", "list"],
@@ -812,7 +951,7 @@ test("buildExecutionPlan limits sessionless allowlists to documented subcommands
 });
 
 test("buildExecutionPlan rejects missing values for global value-taking flags before launching upstream", () => {
-	for (const args of [["--session"], ["--profile"], ["--executable-path"], ["--session-name"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
+	for (const args of [["--session"], ["--namespace"], ["--profile"], ["--executable-path"], ["--session-name"], ["--restore-save"], ["--restore-check-url"], ["--restore-check-text"], ["--restore-check-fn"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -894,6 +1033,22 @@ test("buildExecutionPlan allows optional wait download path to be omitted", () =
 	assert.deepEqual(plan.effectiveArgs.slice(-4), ["wait", "--download", "--timeout", "25000"]);
 });
 
+test("buildExecutionPlan parses restore and namespace globals before command discovery", () => {
+	for (const { args, command, subcommand } of [
+		{ args: ["--namespace", "review", "session", "info"], command: "session", subcommand: "info" },
+		{ args: ["--session", "work", "--restore", "open", "https://example.com"], command: "open", subcommand: "https://example.com" },
+		{ args: ["--session", "work", "--restore", "authstate", "open", "https://example.com"], command: "open", subcommand: "https://example.com" },
+		{ args: ["--restore=auth", "open", "https://example.com"], command: "open", subcommand: "https://example.com" },
+		{ args: ["--restore", "snapshot", "-i"], command: "snapshot", subcommand: "-i" },
+		{ args: ["--restore", "wait", "--url", "**/dashboard"], command: "wait", subcommand: "--url" },
+		{ args: ["--restore-save", "never", "open", "https://example.com"], command: "open", subcommand: "https://example.com" },
+	] as const) {
+		const descriptor = parseArgvDescriptor([...args]);
+		assert.equal(descriptor.commandInfo.command, command, args.join(" "));
+		assert.equal(descriptor.commandInfo.subcommand, subcommand, args.join(" "));
+	}
+});
+
 test("buildExecutionPlan allows dash-starting --args values", () => {
 	const plan = buildExecutionPlan(["--args", "--disable-gpu,--lang=en-US", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -924,7 +1079,14 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 	for (const { args, flag } of [
 		{ args: ["--profile", "Default", "open", "https://example.com"], flag: "--profile" },
 		{ args: ["--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "open", "https://example.com"], flag: "--executable-path" },
+		{ args: ["--namespace", "review", "open", "https://example.com"], flag: "--namespace" },
 		{ args: ["--session-name", "saved-auth", "open", "https://example.com"], flag: "--session-name" },
+		{ args: ["--restore", "open", "https://example.com"], flag: "--restore" },
+		{ args: ["--restore=auth", "open", "https://example.com"], flag: "--restore" },
+		{ args: ["--restore-save", "never", "open", "https://example.com"], flag: "--restore-save" },
+		{ args: ["--restore-check-url", "**/dashboard", "open", "https://example.com"], flag: "--restore-check-url" },
+		{ args: ["--restore-check-text", "Dashboard", "open", "https://example.com"], flag: "--restore-check-text" },
+		{ args: ["--restore-check-fn", "!!localStorage.length", "open", "https://example.com"], flag: "--restore-check-fn" },
 		{ args: ["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"], flag: "--cdp" },
 		{ args: ["--state", "/tmp/auth.json", "open", "https://example.com"], flag: "--state" },
 		{ args: ["--auto-connect", "open", "https://example.com"], flag: "--auto-connect" },
@@ -977,11 +1139,13 @@ test("buildExecutionPlan allows disabled auto-connect after an active implicit s
 	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
 });
 
-test("hasLaunchScopedTabCorrectionFlag detects profile, session-name, and state but not executable, cdp, provider, or auto-connect", () => {
+test("hasLaunchScopedTabCorrectionFlag detects profile, restore, session-name, and state but not executable, cdp, provider, or auto-connect", () => {
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile", "Default", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile=Default", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name", "saved", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name=saved", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--restore", "open", "https://example.com"]), true);
+	assert.equal(hasLaunchScopedTabCorrectionFlag(["--restore=auth", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state", "/tmp/auth.json", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state=/tmp/auth.json", "open", "https://example.com"]), true);
 	assert.equal(hasLaunchScopedTabCorrectionFlag(["--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "open", "https://example.com"]), false);
@@ -1011,7 +1175,7 @@ test("buildExecutionPlan treats provider and iOS device flags as launch-scoped",
 });
 
 test("buildExecutionPlan assigns a new managed session for fresh session mode", () => {
-	const args = ["--profile", "Default", "open", "https://example.com/profile"];
+	const args = ["--namespace", "review", "--profile", "Default", "open", "https://example.com/profile"];
 	const freshSessionName = createFreshSessionName("piab-demo-123", "seed", 1);
 	const plan = buildExecutionPlan(args, {
 		freshSessionName,
@@ -1023,7 +1187,8 @@ test("buildExecutionPlan assigns a new managed session for fresh session mode", 
 	assert.equal(plan.validationError, undefined);
 	assert.equal(plan.usedImplicitSession, false);
 	assert.equal(plan.managedSessionName, freshSessionName);
-	assert.deepEqual(plan.effectiveArgs, ["--json", "--session", freshSessionName, ...args]);
+	assert.deepEqual(plan.effectiveArgs, ["--json", "--namespace", "review", "--session", freshSessionName, "--profile", "Default", "open", "https://example.com/profile"]);
+	assert.equal(plan.namespace, "review");
 	assert.equal(plan.recoveryHint, undefined);
 });
 

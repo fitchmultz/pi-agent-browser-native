@@ -54,12 +54,17 @@ export function sleepMs(ms: number): Promise<void> {
 
 export async function collectNavigationSummary(options: {
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<NavigationSummary | undefined> {
+	const url = extractStringResultField(await runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }), "url");
+	const title = extractStringResultField(await runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }), "title");
+	if (url && /^[a-z][a-z0-9+.-]*:/i.test(url)) return { title, url };
 	return extractNavigationSummaryFromData(await runSessionCommandData({
 		args: ["eval", "--stdin"],
 		cwd: options.cwd,
+		namespace: options.namespace,
 		sessionName: options.sessionName,
 		signal: options.signal,
 		stdin: `({ title: document.title, url: location.href })`,
@@ -112,8 +117,8 @@ const SCROLL_POSITION_EVAL = `(() => {
   return { ...viewport, containerCount: containers.length, containers };
 })()`;
 
-export async function collectScrollPositionSnapshot(options: { cwd: string; sessionName?: string; signal?: AbortSignal }): Promise<ScrollPositionSnapshot | undefined> {
-	return extractScrollPositionSnapshot(await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: SCROLL_POSITION_EVAL }));
+export async function collectScrollPositionSnapshot(options: { cwd: string; namespace?: string; sessionName?: string; signal?: AbortSignal }): Promise<ScrollPositionSnapshot | undefined> {
+	return extractScrollPositionSnapshot(await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: SCROLL_POSITION_EVAL }));
 }
 
 function sameScrollPositionSnapshot(left: ScrollPositionSnapshot, right: ScrollPositionSnapshot): boolean {
@@ -210,9 +215,9 @@ function isComboboxFocusDiagnosticSemanticAction(compiled: CompiledAgentBrowserS
 	return /^(?:combobox|listbox)$/i.test(getCompiledSemanticActionRoleValue(compiled) ?? "");
 }
 
-export async function collectComboboxFocusDiagnostic(options: { command?: string; commandTokens: string[]; cwd: string; semanticAction?: CompiledAgentBrowserSemanticAction; sessionName?: string; signal?: AbortSignal }): Promise<ComboboxFocusDiagnostic | undefined> {
+export async function collectComboboxFocusDiagnostic(options: { command?: string; commandTokens: string[]; cwd: string; namespace?: string; semanticAction?: CompiledAgentBrowserSemanticAction; sessionName?: string; signal?: AbortSignal }): Promise<ComboboxFocusDiagnostic | undefined> {
 	if (!isComboboxFocusDiagnosticCommand(options.command, options.commandTokens) && !isComboboxFocusDiagnosticSemanticAction(options.semanticAction)) return undefined;
-	return extractComboboxFocusDiagnostic(await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: COMBOBOX_FOCUS_EVAL }));
+	return extractComboboxFocusDiagnostic(await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: COMBOBOX_FOCUS_EVAL }));
 }
 
 export function buildComboboxFocusNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
@@ -291,12 +296,13 @@ export function collectSnapshotOverlayBlockerDiagnostic(data: unknown): OverlayB
 	return { candidates, snapshot, summary: "Snapshot contains dialog/modal context plus likely close or dismiss controls; treat covered controls as potentially obstructed until the overlay state is resolved." };
 }
 
-export async function collectOverlayBlockerDiagnostic(options: { command?: string; cwd: string; data: unknown; navigationSummary?: NavigationSummary; priorTarget?: SessionTabTarget; sessionName?: string; signal?: AbortSignal }): Promise<OverlayBlockerDiagnostic | undefined> {
+export async function collectOverlayBlockerDiagnostic(options: { command?: string; cwd: string; data: unknown; namespace?: string; navigationSummary?: NavigationSummary; priorTarget?: SessionTabTarget; sessionName?: string; signal?: AbortSignal }): Promise<OverlayBlockerDiagnostic | undefined> {
 	if (options.command !== "click" || !isRecord(options.data) || typeof options.data.clicked !== "string") return undefined;
+	if (!options.data.clicked.startsWith("@") && !options.data.clicked.startsWith("ref=")) return undefined;
 	const priorUrl = normalizeComparableUrl(options.priorTarget?.url);
 	const currentUrl = normalizeComparableUrl(options.navigationSummary?.url);
-	if (!priorUrl || !currentUrl || priorUrl !== currentUrl) return undefined;
-	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	if (!priorUrl || !currentUrl || currentUrl !== priorUrl) return undefined;
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	const diagnostic = collectSnapshotOverlayBlockerDiagnostic(snapshotData);
 	if (!diagnostic) return undefined;
 	return { ...diagnostic, summary: `Click completed but the page stayed on ${currentUrl}; a fresh snapshot contains likely overlay close/dismiss controls.` };
@@ -342,10 +348,10 @@ function selectorMayExposeSensitiveLiteral(selector: string): boolean {
 	return redactSensitiveText(selector) !== selector || /\[[^\]]*[~|^$*]?=\s*(?:"[^"]*"|'[^']*'|[^\]\s]+)\s*(?:[is]\s*)?\]/.test(selector);
 }
 
-async function collectSelectorTextVisibilityDiagnosticForSelector(options: { cwd: string; selector: string | undefined; sessionName?: string; signal?: AbortSignal }): Promise<SelectorTextVisibilityDiagnostic | undefined> {
+async function collectSelectorTextVisibilityDiagnosticForSelector(options: { cwd: string; namespace?: string; selector: string | undefined; sessionName?: string; signal?: AbortSignal }): Promise<SelectorTextVisibilityDiagnostic | undefined> {
 	const { selector } = options;
-	if (!selector || /^@e\d+$/.test(selector) || selectorMayExposeSensitiveLiteral(selector)) return undefined;
-	const probe = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildVisibleTextProbeScript(selector) });
+	if (!selector || /^@e\d+$/.test(selector) || /^#[A-Za-z_][\w-]*$/.test(selector) || selectorMayExposeSensitiveLiteral(selector)) return undefined;
+	const probe = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildVisibleTextProbeScript(selector) });
 	const parsed = parseSelectorTextVisibilityProbe(probe, selector);
 	if (!parsed || parsed.matchCount <= 1 && parsed.firstMatchVisible !== false) return undefined;
 	if (parsed.visibleCount === 0) return undefined;
@@ -372,11 +378,11 @@ function getSuccessfulGetTextSelectors(options: { commandInfo: CommandInfo; comm
 		: options.commandInfo.command === "batch" ? getBatchGetTextSelectors(options.data) : [];
 }
 
-export async function collectSelectorTextVisibilityDiagnostics(options: { commandInfo: CommandInfo; commandTokens: string[]; cwd: string; data: unknown; sessionName?: string; signal?: AbortSignal }): Promise<SelectorTextVisibilityDiagnostic[]> {
+export async function collectSelectorTextVisibilityDiagnostics(options: { commandInfo: CommandInfo; commandTokens: string[]; cwd: string; data: unknown; namespace?: string; sessionName?: string; signal?: AbortSignal }): Promise<SelectorTextVisibilityDiagnostic[]> {
 	const selectors = getSuccessfulGetTextSelectors(options);
 	const diagnostics: SelectorTextVisibilityDiagnostic[] = [];
 	for (const selector of selectors) {
-		const diagnostic = await collectSelectorTextVisibilityDiagnosticForSelector({ cwd: options.cwd, selector, sessionName: options.sessionName, signal: options.signal });
+		const diagnostic = await collectSelectorTextVisibilityDiagnosticForSelector({ cwd: options.cwd, namespace: options.namespace, selector, sessionName: options.sessionName, signal: options.signal });
 		if (diagnostic) diagnostics.push(diagnostic);
 	}
 	return diagnostics.sort((left, right) => Number(right.firstMatchVisible === false) - Number(left.firstMatchVisible === false));
@@ -518,14 +524,15 @@ export function formatArtifactCleanupGuidanceText(guidance: ArtifactCleanupGuida
 	return `Artifact lifecycle: ${explicitSummary} Browser close does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; use host file tools for cleanup.`;
 }
 
-async function collectManagedSessionCommandData(options: { args: string[]; cwd: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ data?: unknown; error?: string }> {
+async function collectManagedSessionCommandData(options: { args: string[]; cwd: string; namespace?: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ data?: unknown; error?: string }> {
 	try { return { data: await runSessionCommandData(options) }; } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
 }
 
-async function collectElectronManagedSessionUrl(options: { cwd: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ error?: string; url?: string }> {
+async function collectElectronManagedSessionUrl(options: { cwd: string; namespace?: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ error?: string; url?: string }> {
 	const urlResult = await collectManagedSessionCommandData({
 		args: ["get", "url"],
 		cwd: options.cwd,
+		namespace: options.namespace,
 		sessionName: options.sessionName,
 		signal: options.signal,
 		timeoutMs: options.timeoutMs,
@@ -534,11 +541,11 @@ async function collectElectronManagedSessionUrl(options: { cwd: string; sessionN
 	return urlResult.error ? { error: urlResult.error } : { url };
 }
 
-export async function collectElectronManagedSessionTarget(options: { cwd: string; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<ElectronManagedSessionTarget | undefined> {
+export async function collectElectronManagedSessionTarget(options: { cwd: string; namespace?: string; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<ElectronManagedSessionTarget | undefined> {
 	if (!options.sessionName) return undefined;
 	const [titleResult, urlResult] = await Promise.all([
-		collectManagedSessionCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
-		collectManagedSessionCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
+		collectManagedSessionCommandData({ args: ["get", "title"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
+		collectManagedSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
 	]);
 	const title = boundElectronProbeString(extractStringResultField(titleResult.data, "result") ?? extractStringResultField(titleResult.data, "title"), 160);
 	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);
@@ -546,10 +553,10 @@ export async function collectElectronManagedSessionTarget(options: { cwd: string
 	return { sessionName: options.sessionName, title, url, ...(errors.length > 0 ? { error: errors.join("; ") } : {}) };
 }
 
-export async function collectQaAttachedTarget(options: { currentTarget?: SessionTabTarget; cwd: string; sessionName?: string; signal?: AbortSignal }): Promise<QaAttachedTarget | undefined> {
+export async function collectQaAttachedTarget(options: { currentTarget?: SessionTabTarget; cwd: string; namespace?: string; sessionName?: string; signal?: AbortSignal }): Promise<QaAttachedTarget | undefined> {
 	if (!options.sessionName) return undefined;
 	if (options.currentTarget?.title || options.currentTarget?.url) return { sessionName: options.sessionName, title: options.currentTarget.title, url: options.currentTarget.url };
-	return collectElectronManagedSessionTarget({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	return collectElectronManagedSessionTarget({ cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 }
 
 export function formatQaAttachedTargetText(target: QaAttachedTarget | undefined): string | undefined {
@@ -577,6 +584,7 @@ export function buildQaAttachedRecoveryNextActions(sessionName: string | undefin
 
 export async function validateQaAttachedPrecondition(options: {
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<QaAttachedPreconditionFailure | undefined> {
@@ -586,7 +594,7 @@ export async function validateQaAttachedPrecondition(options: {
 			nextActions: buildQaAttachedRecoveryNextActions(options.sessionName),
 		};
 	}
-	const urlProbe = await collectElectronManagedSessionUrl({ cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const urlProbe = await collectElectronManagedSessionUrl({ cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	if (urlProbe.error) {
 		return {
 			error: `qa.attached could not read the attached session URL: ${urlProbe.error}. Run tab list or snapshot -i before retrying qa.attached.`,
@@ -639,14 +647,14 @@ function extractFillVerificationValue(data: unknown): string | undefined {
 	return undefined;
 }
 
-export async function collectFillVerificationDiagnostic(options: { commandTokens: string[]; cwd: string; forceValueVerification?: boolean; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<FillVerificationDiagnostic | undefined> {
+export async function collectFillVerificationDiagnostic(options: { commandTokens: string[]; cwd: string; forceValueVerification?: boolean; namespace?: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<FillVerificationDiagnostic | undefined> {
 	const fill = getTopLevelFillInvocation(options.commandTokens);
 	if (!fill || !options.sessionName) return undefined;
 	const contenteditable = shouldVerifyContenteditableFill(fill, options.refSnapshot);
 	if (!contenteditable && !options.forceValueVerification) return undefined;
 	const method = contenteditable ? "text" : "value";
 	let valueData: unknown | undefined;
-	try { valueData = await runSessionCommandData({ args: ["get", method, fill.selector], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: ELECTRON_FILL_VERIFICATION_TIMEOUT_MS }); } catch { return undefined; }
+	try { valueData = await runSessionCommandData({ args: ["get", method, fill.selector], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: ELECTRON_FILL_VERIFICATION_TIMEOUT_MS }); } catch { return undefined; }
 	const actual = extractFillVerificationValue(valueData);
 	if (actual === undefined || actual === fill.expected) return undefined;
 	const reason = contenteditable ? "contenteditable-fill-mismatch" : "value-fill-mismatch";
@@ -665,25 +673,25 @@ export function formatFillVerificationText(diagnostic: FillVerificationDiagnosti
 	return `${diagnostic.summary}\nExpected: "${diagnostic.expected}"; ${actual}.\nNext: ${recovery}`;
 }
 
-export async function collectVisibleRefFallbackDiagnostic(options: { commandTokens: string[]; compiledSemanticAction?: CompiledAgentBrowserSemanticAction; cwd: string; sessionName?: string; signal?: AbortSignal }): Promise<VisibleRefFallbackDiagnostic | undefined> {
+export async function collectVisibleRefFallbackDiagnostic(options: { commandTokens: string[]; compiledSemanticAction?: CompiledAgentBrowserSemanticAction; cwd: string; namespace?: string; sessionName?: string; signal?: AbortSignal }): Promise<VisibleRefFallbackDiagnostic | undefined> {
 	if (!options.sessionName) return undefined;
 	const target = getVisibleRefFallbackTarget({ commandTokens: options.commandTokens, compiledSemanticAction: options.compiledSemanticAction });
 	if (!target) return undefined;
-	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	return buildVisibleRefFallbackDiagnosticFromSnapshot({ snapshotData, target });
 }
 
-export async function collectElectronHandoff(options: { cwd: string; handoff: "connect" | "snapshot" | "tabs"; sessionName?: string; signal?: AbortSignal }): Promise<ElectronHandoffSummary> {
+export async function collectElectronHandoff(options: { cwd: string; handoff: "connect" | "snapshot" | "tabs"; namespace?: string; sessionName?: string; signal?: AbortSignal }): Promise<ElectronHandoffSummary> {
 	if (options.handoff === "connect") return { handoff: "connect" };
-	const tabs = await runSessionCommandData({ args: ["tab", "list"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	const tabs = await runSessionCommandData({ args: ["tab", "list"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	if (options.handoff === "tabs") return { handoff: "tabs", tabs };
-	let snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+	let snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	let refSnapshot = extractRefSnapshotFromData(snapshot);
 	let snapshotRetryCount = 0;
 	while ((!refSnapshot || refSnapshot.refIds.length === 0) && snapshotRetryCount < 2) {
 		snapshotRetryCount += 1;
 		await sleepMs(250);
-		snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal });
+		snapshot = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 		refSnapshot = extractRefSnapshotFromData(snapshot);
 	}
 	return { handoff: "snapshot", refSnapshot, snapshot, ...(snapshotRetryCount > 0 ? { snapshotRetryCount } : {}), tabs };
@@ -855,10 +863,10 @@ function buildTimeoutProgressSteps(options: {
 	};
 }
 
-export async function collectTimeoutPartialProgress(options: { command?: string; compiledJob?: CompiledAgentBrowserJob; cwd: string; sessionName?: string; stdin?: string }): Promise<TimeoutPartialProgress | undefined> {
+export async function collectTimeoutPartialProgress(options: { command?: string; compiledJob?: CompiledAgentBrowserJob; cwd: string; namespace?: string; sessionName?: string; stdin?: string }): Promise<TimeoutPartialProgress | undefined> {
 	const rawSteps = getTimeoutProgressSteps(options.compiledJob, options.command, options.stdin);
 	const artifacts = await collectTimeoutArtifactEvidence(options.cwd, rawSteps);
-	const [urlData, titleData] = await Promise.all([runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName }), runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName })]);
+	const [urlData, titleData] = await Promise.all([runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName }), runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName })]);
 	const recoveredUrl = extractStringResultField(urlData, "result") ?? extractStringResultField(urlData, "url");
 	const title = extractStringResultField(titleData, "result") ?? extractStringResultField(titleData, "title");
 	const plannedUrl = recoveredUrl ? undefined : getPlannedCurrentPageUrl(rawSteps);

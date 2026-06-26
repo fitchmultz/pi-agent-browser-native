@@ -44,7 +44,7 @@ function getClickDispatchProbeTarget(commandTokens: string[], refSnapshot?: Sess
 		return { ...(duplicateIndex === undefined ? {} : { duplicateIndex }), kind: "accessible", name: ref.name, refId, role: ref.role };
 	}
 	if (selector.startsWith("xpath=")) return { kind: "xpath", selector: selector.slice("xpath=".length) };
-	return { kind: "selector", selector };
+	return undefined;
 }
 
 function getEvalResultRecord(data: unknown): Record<string, unknown> | undefined {
@@ -221,12 +221,12 @@ export function buildClickDispatchNextActions(options: { commandTokens: string[]
 	return actions;
 }
 
-export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchProbe | undefined> {
+export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; namespace?: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchProbe | undefined> {
 	if (!options.sessionName || options.commandTokens[0] !== "click" || options.commandTokens.includes("--new-tab")) return undefined;
 	const target = getClickDispatchProbeTarget(options.commandTokens, options.refSnapshot);
 	if (!target) return undefined;
 	const probe: ClickDispatchProbe = { marker: `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`, target };
-	const installData = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeInstallScript(probe) });
+	const installData = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeInstallScript(probe) });
 	const installResult = getEvalResultRecord(installData);
 	return installResult?.status === "installed" ? probe : undefined;
 }
@@ -245,9 +245,9 @@ function getClickDispatchScrollContainerDiagnostic(result: Record<string, unknow
 	return { selector, summary, targetOutsideContainer, targetOutsideViewport };
 }
 
-export async function collectClickDispatchDiagnostic(options: { cwd: string; probe?: ClickDispatchProbe; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchDiagnostic | undefined> {
+export async function collectClickDispatchDiagnostic(options: { cwd: string; namespace?: string; probe?: ClickDispatchProbe; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchDiagnostic | undefined> {
 	if (!options.probe || !options.sessionName) return undefined;
-	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeCheckScript(options.probe) });
+	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeCheckScript(options.probe) });
 	const result = getEvalResultRecord(data);
 	if (!result) return undefined;
 	const status = typeof result.status === "string" ? result.status : undefined;
@@ -268,11 +268,12 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; pro
 	};
 }
 
-export async function cleanupClickDispatchProbe(options: { cwd: string; probe?: ClickDispatchProbe; sessionName?: string }): Promise<void> {
+export async function cleanupClickDispatchProbe(options: { cwd: string; namespace?: string; probe?: ClickDispatchProbe; sessionName?: string }): Promise<void> {
 	if (!options.probe || !options.sessionName) return;
 	await runSessionCommandData({
 		args: ["eval", "--stdin"],
 		cwd: options.cwd,
+		namespace: options.namespace,
 		sessionName: options.sessionName,
 		stdin: buildClickDispatchProbeCleanupScript(options.probe),
 		timeoutMs: CLICK_DISPATCH_CLEANUP_TIMEOUT_MS,
