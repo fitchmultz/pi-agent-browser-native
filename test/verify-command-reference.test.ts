@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
@@ -76,6 +77,15 @@ test("stripGeneratedCapabilityBaselineBlocks removes generated content before hu
   ].join("\n");
 
   assert.equal(stripGeneratedCapabilityBaselineBlocks(content).includes(generatedOnlyToken), false);
+});
+
+test("command reference clarifies get selector requirements", () => {
+  const doc = stripGeneratedCapabilityBaselineBlocks(readFileSync("docs/COMMAND_REFERENCE.md", "utf8"));
+
+  assert.match(doc, /selector is not optional for DOM getters/);
+  assert.match(doc, /`get text\/html\/value\/count <selector>`/);
+  assert.match(doc, /`get attr <selector> <name>`/);
+  assert.doesNotMatch(doc, /`get <what> \[selector\]` \| `text`, `html`, `value`/);
 });
 
 test("verifyCommandReference passes for matching fake upstream and doc content", async () => {

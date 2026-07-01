@@ -123,7 +123,10 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.match(guidelineText, /sessionMode=fresh/);
 		assert.match(guidelineText, /exact user paths/);
 		assert.match(guidelineText, /requested\/configured profiles only/);
-		assert.match(guidelineText, /three-plus known reads/);
+		assert.match(guidelineText, /Batch 3\+ reads/);
+		assert.match(guidelineText, /get text\/html\/value\/count <selector>/);
+		assert.match(guidelineText, /get attr <selector> <name>/);
+		assert.doesNotMatch(guidelineText, /get title\/url\/text\/html\/value\/attr\/count/);
 		assert.match(guidelineText, /never pass --json/);
 		assert.match(harness.tool.description, /Input choice:/);
 		assert.match(guidelineText, /record stop needs ffmpeg/);
@@ -135,6 +138,14 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			SHARED_BROWSER_PLAYBOOK_GUIDELINES.some((line) => line.includes("evidence-only screenshots")),
 			true,
 		);
+		const fullPlaybookText = [...QUICK_START_GUIDELINES, ...SHARED_BROWSER_PLAYBOOK_GUIDELINES].join("\n");
+		assert.match(fullPlaybookText, /react inspect <fiberId>/);
+		assert.doesNotMatch(fullPlaybookText, /react tree\/inspect\/renders\/suspense/);
+		assert.match(fullPlaybookText, /network route <url>/);
+		assert.match(fullPlaybookText, /diff screenshot --baseline <file>/);
+		assert.doesNotMatch(fullPlaybookText, /diff snapshot\/screenshot\/url/);
+		assert.match(fullPlaybookText, /clipboard write <text>/);
+		assert.doesNotMatch(fullPlaybookText, /clipboard read\/write\/copy\/paste/);
 		assert.ok(harness.tool.promptGuidelines.length <= 10, "promptGuidelines should stay bounded");
 		const normalizedGuidelineText = guidelineText.split(process.cwd()).join("<cwd>");
 		assert.ok(

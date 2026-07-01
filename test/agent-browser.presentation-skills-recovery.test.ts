@@ -292,6 +292,18 @@ test("buildToolPresentation suggests grouped getter commands for common unknown 
 	});
 	assert.match((textFailure.content[0] as { text: string }).text, /`get text <selector>`/);
 	assert.equal(textFailure.nextActions, undefined);
+
+	const htmlFailure = await buildToolPresentation({
+		args: ["html"],
+		commandInfo: { command: "html" },
+		cwd: process.cwd(),
+		errorText: "Unknown command: html",
+	});
+	const htmlText = (htmlFailure.content[0] as { text: string }).text;
+	assert.match(htmlText, /`get html <selector>`/);
+	assert.match(htmlText, /`get html body`/);
+	assert.doesNotMatch(htmlText, /`get html` for the page/);
+	assert.equal(htmlFailure.nextActions, undefined);
 });
 
 test("buildToolPresentation explains unsupported keyboard press commands", async () => {

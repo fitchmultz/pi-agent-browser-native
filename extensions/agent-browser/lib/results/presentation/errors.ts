@@ -118,7 +118,7 @@ interface CommandSuggestion {
 const UNKNOWN_COMMAND_SUGGESTIONS: Record<string, CommandSuggestion[]> = {
 	attr: [{ description: "Use `get attr <selector> <name>` to read an attribute from a selector or current `@ref`." }],
 	count: [{ description: "Use `get count <selector>` to count matching elements." }],
-	html: [{ description: "Use `get html <selector>` to read element HTML, or `get html` for the page when upstream supports it." }],
+	html: [{ description: "Use `get html <selector>` to read element HTML from a selector or current `@ref`; use `get html body` when you need whole-page body HTML." }],
 	text: [{ description: "Use `get text <selector>` to read text from a selector or current `@ref`; run `snapshot -i` first when you need a safe `@ref`." }],
 	title: [{ args: ["get", "title"], description: "Use `get title` to read the current page title.", id: "use-get-title" }],
 	url: [{ args: ["get", "url"], description: "Use `get url` to read the current page URL.", id: "use-get-url" }],

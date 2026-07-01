@@ -616,7 +616,9 @@ These calls return plain text and stay stateless: the extension does not inject 
 
 | Family | Surface |
 | --- | --- |
-| `get <what> [selector]` | `text`, `html`, `value`, `attr <name>`, `title`, `url`, `count`, `get box <selector>`, `get styles <selector>`, and `get cdp-url`. |
+| `get title`, `get url`, `get cdp-url` | Read page/browser metadata without a selector. Upstream root help summarizes this family as `get <what> [selector]`, but the selector is not optional for DOM getters. |
+| `get text/html/value/count <selector>` | Read matched elements; use `get text body` for whole-page text. |
+| `get attr <selector> <name>`, `get box <selector>`, `get styles <selector>` | Read an attribute, bounding box, or computed styles from matched elements. |
 | `is <what> <selector>` | Check `visible`, `enabled`, or `checked`. |
 | `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, and `testid`; selector helpers include `find first <sel>`, `find last <sel>`, and `find nth <n> <sel>`. Role/text filters include `find role <role> --name <name>` and `find ... --exact`. |
 | `mouse <action> [args]` | `move <x> <y>`, `down [btn]`, `up [btn]`, `wheel <dy> [dx]`. |

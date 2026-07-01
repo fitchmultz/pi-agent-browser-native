@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.64 - 2026-07-01
+
+### Fixed
+
+- Clarified `agent_browser` prompt, command-reference, and error-hint guidance so selector-required getters such as `get text/html/value/count <selector>` and `get attr <selector> <name>` are no longer grouped with selector-less `get title/url`.
+- Expanded adjacent shorthand command guidance for React, network, diff, trace/profiler/record, and clipboard families so prompts do not imply missing arguments are valid.
+
+### Validation
+
+- Ran `npm run verify`, focused prompt/error/doc tests, `git diff --check`, and a reviewer subagent loop until both reviewers returned `GREEN`.
+
 ## 0.2.63 - 2026-06-26
 
 ### Changed
