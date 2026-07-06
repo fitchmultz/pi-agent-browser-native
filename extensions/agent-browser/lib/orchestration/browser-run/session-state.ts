@@ -494,6 +494,12 @@ export function shouldCorrectSessionTabAfterCommand(options: { command?: string;
 	);
 }
 
+function getTabSelection(tab: { index?: number; label?: string; tabId?: string }): Pick<OpenResultTabCorrection, "selectedTab" | "selectionKind"> | undefined {
+	if (typeof tab.tabId === "string" && tab.tabId.trim().length > 0) return { selectedTab: tab.tabId.trim(), selectionKind: "tabId" };
+	if (typeof tab.label === "string" && tab.label.trim().length > 0) return { selectedTab: tab.label.trim(), selectionKind: "label" };
+	return typeof tab.index === "number" ? { selectedTab: String(tab.index), selectionKind: "index" } : undefined;
+}
+
 function selectSessionTargetTab(options: {
 	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }>;
 	target: SessionTabTarget;
@@ -503,6 +509,19 @@ function selectSessionTargetTab(options: {
 		targetTitle: options.target.title,
 		targetUrl: options.target.url,
 	});
+}
+
+function selectAnySessionTargetTab(options: {
+	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }>;
+	target: SessionTabTarget;
+}): OpenResultTabCorrection | undefined {
+	const targetUrl = typeof options.target.url === "string" ? normalizeComparableUrl(options.target.url) : undefined;
+	if (!targetUrl) return undefined;
+	const matchingTabs = options.tabs.filter((tab) => normalizeComparableUrl(tab.url ?? "") === targetUrl);
+	const targetTitle = options.target.title?.trim() ?? "";
+	const selectedTab = (targetTitle ? matchingTabs.find((tab) => tab.title?.trim() === targetTitle) : undefined) ?? matchingTabs[0];
+	const selection = selectedTab ? getTabSelection(selectedTab) : undefined;
+	return selection ? { ...selection, ...(targetTitle ? { targetTitle } : {}), targetUrl } : undefined;
 }
 
 export function unwrapPinnedSessionBatchEnvelope(options: {
@@ -623,6 +642,18 @@ export async function collectOpenResultTabCorrection(options: {
 	return chooseOpenResultTabCorrection({ tabs, targetTitle, targetUrl });
 }
 
+function mapTabData(tabData: unknown): Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }> | undefined {
+	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) return undefined;
+	return tabData.tabs.filter(isRecord).map((tab, index) => ({
+		active: tab.active === true,
+		index: typeof tab.index === "number" ? tab.index : index,
+		label: typeof tab.label === "string" ? tab.label : undefined,
+		tabId: typeof tab.tabId === "string" ? tab.tabId : undefined,
+		title: typeof tab.title === "string" ? tab.title : undefined,
+		url: typeof tab.url === "string" ? tab.url : undefined,
+	}));
+}
+
 export async function collectSessionTabSelection(options: {
 	cwd: string;
 	namespace?: string;
@@ -632,18 +663,21 @@ export async function collectSessionTabSelection(options: {
 }): Promise<OpenResultTabCorrection | undefined> {
 	const { cwd, namespace, sessionName, signal, target } = options;
 	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, namespace, sessionName, signal });
-	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) {
-		return undefined;
-	}
-	const tabs = tabData.tabs.filter(isRecord).map((tab, index) => ({
-		active: tab.active === true,
-		index: typeof tab.index === "number" ? tab.index : index,
-		label: typeof tab.label === "string" ? tab.label : undefined,
-		tabId: typeof tab.tabId === "string" ? tab.tabId : undefined,
-		title: typeof tab.title === "string" ? tab.title : undefined,
-		url: typeof tab.url === "string" ? tab.url : undefined,
-	}));
-	return selectSessionTargetTab({ tabs, target });
+	const tabs = mapTabData(tabData);
+	return tabs ? selectSessionTargetTab({ tabs, target }) : undefined;
+}
+
+export async function collectAnySessionTabSelection(options: {
+	cwd: string;
+	namespace?: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+	target: SessionTabTarget;
+}): Promise<OpenResultTabCorrection | undefined> {
+	const { cwd, namespace, sessionName, signal, target } = options;
+	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, namespace, sessionName, signal });
+	const tabs = mapTabData(tabData);
+	return tabs ? selectAnySessionTargetTab({ tabs, target }) : undefined;
 }
 
 export async function applyOpenResultTabCorrection(options: {

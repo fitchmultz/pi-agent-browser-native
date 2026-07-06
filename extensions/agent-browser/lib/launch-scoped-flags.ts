@@ -83,9 +83,4 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 export const LAUNCH_SCOPED_FLAGS = LAUNCH_SCOPED_FLAG_DEFINITIONS.map((definition) => definition.flag);
 export const LAUNCH_SCOPED_FLAG_LABEL = LAUNCH_SCOPED_FLAGS.join(", ");
 
-/**
- * The subset of launch-scoped flags that can restore browser/auth state with pre-existing tabs
- * and are plausible wrong-active-tab sources after a fresh launch. These trigger post-open
- * tab-correction (the `tab list` + re-select cycle).
- */
-export const LAUNCH_SCOPED_TAB_CORRECTION_FLAGS = new Set(["--profile", "--session-name", "--restore", "--state"] as const);
+export const OPEN_RESULT_TAB_CORRECTION_FLAGS = new Set<string>(["--profile", "--restore", "--session-name", "--state"]);

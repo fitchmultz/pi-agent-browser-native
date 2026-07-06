@@ -20,7 +20,6 @@ import {
 	createImplicitSessionName,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
-	hasLaunchScopedTabCorrectionFlag,
 	parseArgvDescriptor,
 	redactInvocationArgs,
 	redactSensitiveText,
@@ -1137,23 +1136,6 @@ test("buildExecutionPlan allows disabled auto-connect after an active implicit s
 	assert.deepEqual(plan.startupScopedFlags, []);
 	assert.equal(plan.usedImplicitSession, true);
 	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
-});
-
-test("hasLaunchScopedTabCorrectionFlag detects profile, restore, session-name, and state but not executable, cdp, provider, or auto-connect", () => {
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile", "Default", "open", "https://example.com"]), true);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--profile=Default", "open", "https://example.com"]), true);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name", "saved", "open", "https://example.com"]), true);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--session-name=saved", "open", "https://example.com"]), true);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--restore", "open", "https://example.com"]), true);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--restore=auth", "open", "https://example.com"]), true);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state", "/tmp/auth.json", "open", "https://example.com"]), true);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--state=/tmp/auth.json", "open", "https://example.com"]), true);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "open", "https://example.com"]), false);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"]), false);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["-p", "ios", "open", "https://example.com"]), false);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--provider", "browserbase", "open", "https://example.com"]), false);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["--auto-connect", "open", "https://example.com"]), false);
-	assert.equal(hasLaunchScopedTabCorrectionFlag(["open", "https://example.com"]), false);
 });
 
 test("buildExecutionPlan treats provider and iOS device flags as launch-scoped", () => {

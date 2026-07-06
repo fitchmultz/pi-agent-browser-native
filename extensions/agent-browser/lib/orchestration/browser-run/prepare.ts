@@ -30,6 +30,7 @@ import {
 	buildSessionDetailFields,
 	buildStaleRefPreflight,
 	getSessionContextKey,
+	collectAnySessionTabSelection,
 	collectSessionTabSelection,
 	getGuardedRefUsage,
 	getTraceOwnerGuardMessage,
@@ -339,6 +340,17 @@ export function validateStdinCommandContract(options: { command?: string; comman
 	return `agent_browser stdin is only supported for \`batch\`, \`eval --stdin\`, and \`auth save --password-stdin\`; remove stdin from ${commandLabel} or use one of those command forms.`;
 }
 
+function canResolveSemanticVisibleRef(compiled: CompiledAgentBrowserSemanticAction | undefined): compiled is CompiledAgentBrowserSemanticAction {
+	return compiled !== undefined && compiled.locator === "role" && ["check", "click", "fill"].includes(compiled.action);
+}
+
+function resolveSemanticActionVisibleRefArgsFromSnapshot(compiled: CompiledAgentBrowserSemanticAction | undefined, snapshotData: unknown): SemanticActionVisibleRefResolution | undefined {
+	if (!canResolveSemanticVisibleRef(compiled)) return undefined;
+	const resolution = resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction: compiled, snapshotData });
+	if (!resolution) return undefined;
+	return { args: [...getCompiledSemanticActionSessionPrefix(compiled), ...resolution.args], snapshot: resolution.snapshot };
+}
+
 export async function resolveSemanticActionVisibleRefArgs(options: {
 	compiled: CompiledAgentBrowserSemanticAction | undefined;
 	cwd: string;
@@ -346,11 +358,9 @@ export async function resolveSemanticActionVisibleRefArgs(options: {
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<SemanticActionVisibleRefResolution | undefined> {
-	if (!options.compiled || !options.sessionName || options.compiled.locator !== "role" || !["check", "click", "fill"].includes(options.compiled.action)) return undefined;
+	if (!options.compiled || !options.sessionName) return undefined;
 	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
-	const resolution = resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction: options.compiled, snapshotData });
-	if (!resolution) return undefined;
-	return { args: [...getCompiledSemanticActionSessionPrefix(options.compiled), ...resolution.args], snapshot: resolution.snapshot };
+	return resolveSemanticActionVisibleRefArgsFromSnapshot(options.compiled, snapshotData);
 }
 
 export async function prepareBrowserRun(options: BrowserRunOptions): Promise<PrepareBrowserRunResult> {
@@ -414,8 +424,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		managedSessionNamespace: state.managedSessionNamespace,
 		sessionMode,
 	});
+	const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
+	const priorSessionPageState = sessionPageState.get(sessionStateKey);
+	const priorSessionTabTarget = priorSessionPageState.tabTarget;
+	const sessionTabPinningReason = priorSessionPageState.pinningReason;
+	const priorRefSnapshotState = priorSessionPageState.refSnapshot;
+	const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
 	let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
-	if (!executionPlan.validationError && executionPlan.managedSessionName !== freshSessionName) {
+	if (!executionPlan.validationError && executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction)) {
 		semanticActionVisibleRefResolution = await resolveSemanticActionVisibleRefArgs({
 			compiled: compiledSemanticAction,
 			cwd,
@@ -423,15 +439,15 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			sessionName: executionPlan.sessionName,
 			signal,
 		});
-		if (semanticActionVisibleRefResolution) {
-			executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {
-				freshSessionName,
-				managedSessionActive: state.managedSessionActive,
-				managedSessionName: state.managedSessionName,
-				managedSessionNamespace: state.managedSessionNamespace,
-				sessionMode,
-			});
-		}
+	}
+	if (semanticActionVisibleRefResolution) {
+		executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {
+			freshSessionName,
+			managedSessionActive: state.managedSessionActive,
+			managedSessionName: state.managedSessionName,
+			managedSessionNamespace: state.managedSessionNamespace,
+			sessionMode,
+		});
 	}
 	const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
 	const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
@@ -470,7 +486,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		commandTokens,
 		stdin: runtimeToolStdin,
 	});
-	const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const traceOwnerGuardMessage = getTraceOwnerGuardMessage({
 		command: executionPlan.commandInfo.command,
 		sessionName: sessionStateKey,
@@ -514,11 +529,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			isError: true,
 		} };
 	}
-	const priorSessionPageState = sessionPageState.get(sessionStateKey);
-	const priorSessionTabTarget = priorSessionPageState.tabTarget;
-	const sessionTabPinningReason = priorSessionPageState.pinningReason;
-	const priorRefSnapshotState = priorSessionPageState.refSnapshot;
-	const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
 	const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
 		? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
 		: undefined;
@@ -716,7 +726,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			stdin: runtimeToolStdin,
 		})
 	) {
-		const plannedSessionTabSelection = await collectSessionTabSelection({
+		const collectTabSelection = promptRefSnapshot && getGuardedRefUsage(commandTokens, runtimeToolStdin).length > 0 ? collectAnySessionTabSelection : collectSessionTabSelection;
+		const plannedSessionTabSelection = await collectTabSelection({
 			cwd,
 			namespace: executionPlan.namespace,
 			sessionName: executionPlan.sessionName,

@@ -7,9 +7,11 @@
  */
 
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { Theme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
@@ -153,7 +155,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			"promptGuidelines should point to docs instead of carrying the full command reference/playbook",
 		);
 		assert.equal(
-			WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) => line.includes("For sessions with observed tab-drift risk")),
+			WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) => line.includes("target tab or ref snapshot")),
 			true,
 		);
 
@@ -177,6 +179,24 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.equal(browserTurn?.systemPrompt.includes("Quick start:"), false);
 		assert.equal(browserTurn?.systemPrompt.includes("Browser operating playbook:"), false);
 	});
+});
+
+test("built extension prompt doc pointers resolve to package-root docs", { skip: !existsSync(resolve("dist/extensions/agent-browser/index.js")) }, async () => {
+	const extension = await import(pathToFileURL(resolve("dist/extensions/agent-browser/index.js")).href);
+	const tools: Array<{ name: string; promptGuidelines: string[] }> = [];
+	const pi = {
+		on: (..._args: unknown[]) => undefined,
+		registerTool: (tool: { name: string; promptGuidelines?: string[] }) => tools.push({ name: tool.name, promptGuidelines: tool.promptGuidelines ?? [] }),
+	};
+	(extension.default as (api: typeof pi) => void)(pi);
+
+	const guideline = tools.find((tool) => tool.name === "agent_browser")?.promptGuidelines.find((line) => line.includes("COMMAND_REFERENCE.md"));
+	assert.ok(guideline);
+	assert.doesNotMatch(guideline, /\/dist\/docs\//);
+	for (const docsPath of [resolve("README.md"), resolve("docs/COMMAND_REFERENCE.md"), resolve("docs/TOOL_CONTRACT.md")]) {
+		assert.match(guideline, new RegExp(docsPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.equal(existsSync(docsPath), true, `missing docs path ${docsPath}`);
+	}
 });
 
 test("agentBrowserExtension includes configured browser executable guidance", async () => {

@@ -514,6 +514,58 @@ if (args.includes("open")) {
 	}
 });
 
+test("agentBrowserExtension resolves semantic role fills after stored snapshot misses", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-fill-fresh-ref-"));
+	const logPath = join(tempDir, "invocations.log");
+	const snapshotCountPath = join(tempDir, "snapshot-count.txt");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Docs", url: "https://docs.example.test/" } }));
+} else if (args.includes("snapshot")) {
+  const statePath = ${JSON.stringify(snapshotCountPath)};
+  const count = fs.existsSync(statePath) ? Number(fs.readFileSync(statePath, "utf8")) : 0;
+  fs.writeFileSync(statePath, String(count + 1));
+  const refs = count === 0
+    ? { e2: { role: "textbox", name: "Old Search Documentation" } }
+    : { e17: { role: "textbox", name: "Search Documentation" } };
+  const snapshot = count === 0
+    ? '- textbox "Old Search Documentation" [ref=e2]'
+    : '- textbox "Search Documentation" [ref=e17]';
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://docs.example.test/", refs, snapshot } }));
+} else if (args.includes("fill")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { filled: "@e17" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://docs.example.test/"] })).isError, false);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] })).isError, false);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "fill", locator: "role", role: "textbox", name: "Search Documentation", text: "query" },
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-3), ["fill", "@e17", "query"]);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
+			assert.ok(invocations.some((entry) => entry.args.at(-3) === "fill" && entry.args.at(-2) === "@e17" && entry.args.at(-1) === "query"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension compiles constrained jobs to upstream batch commands", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-"));
 	const logPath = join(tempDir, "invocations.log");

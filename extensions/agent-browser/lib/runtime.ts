@@ -25,7 +25,7 @@ import {
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
-import { LAUNCH_SCOPED_FLAG_DEFINITIONS, LAUNCH_SCOPED_FLAG_LABEL, LAUNCH_SCOPED_TAB_CORRECTION_FLAGS } from "./launch-scoped-flags.js";
+import { LAUNCH_SCOPED_FLAG_DEFINITIONS, LAUNCH_SCOPED_FLAG_LABEL } from "./launch-scoped-flags.js";
 
 export type { CommandInfo } from "./argv-descriptor.js";
 export { extractCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo } from "./argv-descriptor.js";
@@ -921,15 +921,6 @@ export function getStartupScopedFlags(args: string[]): string[] {
 	return LAUNCH_SCOPED_FLAG_DEFINITIONS
 		.map((definition) => definition.flag)
 		.filter((flag) => hasLaunchScopedFlagToken(args, flag));
-}
-
-export function hasLaunchScopedTabCorrectionFlag(args: string[]): boolean {
-	return args.some((token) => {
-		for (const flag of LAUNCH_SCOPED_TAB_CORRECTION_FLAGS) {
-			if (token === flag || token.startsWith(`${flag}=`)) return true;
-		}
-		return false;
-	});
 }
 
 export function buildExecutionPlan(

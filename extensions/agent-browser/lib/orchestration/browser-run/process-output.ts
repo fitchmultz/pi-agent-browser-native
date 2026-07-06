@@ -1,6 +1,7 @@
 import { readFile, rm } from "node:fs/promises";
 
 import { isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand } from "../../command-taxonomy.js";
+import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import { getAllowedDomainsViolation, parseAllowedDomainsPolicyFromArgs } from "../../navigation-policy.js";
@@ -44,7 +45,7 @@ import {
 import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore } from "../../temp.js";
 import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../../temp.js";
 import { isRecord } from "../../parsing.js";
-import { createFreshSessionName, extractCommandTokens, hasLaunchScopedTabCorrectionFlag, resolveManagedSessionState } from "../../runtime.js";
+import { createFreshSessionName, extractCommandTokens, resolveManagedSessionState } from "../../runtime.js";
 import {
 	applyOpenResultTabCorrection,
 	buildAboutBlankRecoveryHint,
@@ -299,7 +300,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let overlayBlockerDiagnostic: Awaited<ReturnType<typeof collectOverlayBlockerDiagnostic>>;
 
 		let openResultTabCorrection: Awaited<ReturnType<typeof collectOpenResultTabCorrection>>;
-		if (succeeded && prepared.executionPlan.sessionName && hasLaunchScopedTabCorrectionFlag(prepared.runtimeToolArgs) && isOpenNavigationCommand(prepared.executionPlan.commandInfo.command)) {
+		if (succeeded && prepared.executionPlan.sessionName && prepared.executionPlan.startupScopedFlags.some((flag) => OPEN_RESULT_TAB_CORRECTION_FLAGS.has(flag)) && isOpenNavigationCommand(prepared.executionPlan.commandInfo.command) && !commandExplicitlyTargetsAboutBlank(prepared.commandTokens)) {
 			const targetTitle = extractStringResultField(presentationEnvelope?.data, "title");
 			const targetUrl = extractStringResultField(presentationEnvelope?.data, "url");
 			const plannedTabCorrection = await collectOpenResultTabCorrection({ cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal, targetTitle, targetUrl });

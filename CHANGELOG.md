@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2.65 - 2026-07-06
+
+### Fixed
+
+- Fixed installed-package prompt guidance so the compiled `dist/` entrypoint points agents at package-root `README.md`, `docs/COMMAND_REFERENCE.md`, and `docs/TOOL_CONTRACT.md` instead of nonexistent `dist/docs/...` paths.
+- Tightened managed-session tab recovery so snapshot-scoped `@e...` follow-up commands can re-select the snapshot page after about:blank/tab drift without adding routine tab-list probes to ordinary same-session commands.
+- Resolved semantic role `click` / `fill` shortcuts from a fresh visible snapshot when exact current refs exist, avoiding stale cached-ref reuse after tab or page drift.
+
+### Validation
+
+- Ran `npm run verify`, focused extension-validation tests, `npm run docs`, `npm run typecheck`, `git diff --check`, and a thermo-nuclear reviewer subagent loop until it returned no material findings.
+
 ## 0.2.64 - 2026-07-01
 
 ### Fixed

@@ -7,6 +7,7 @@
  */
 
 import type { ChildProcess } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,7 +38,6 @@ import {
 	extractExplicitNamespace,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
-	hasLaunchScopedTabCorrectionFlag,
 	extractExplicitSessionName,
 	restoreManagedSessionStateFromBranch,
 	resolveManagedSessionState,
@@ -596,8 +596,22 @@ class AsyncExecutionQueue {
 	}
 }
 
+function findPackageRoot(startDir: string): string {
+	let currentDir = startDir;
+	while (true) {
+		const packageJsonPath = join(currentDir, "package.json");
+		if (existsSync(packageJsonPath)) {
+			const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { name?: unknown };
+			if (packageJson.name === "pi-agent-browser-native") return currentDir;
+		}
+		const parentDir = dirname(currentDir);
+		if (parentDir === currentDir) return startDir;
+		currentDir = parentDir;
+	}
+}
+
 function getInstalledDocsPaths(): { readmePath: string; commandReferencePath: string; toolContractPath: string } {
-	const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+	const packageRoot = findPackageRoot(dirname(fileURLToPath(import.meta.url)));
 	return {
 		readmePath: join(packageRoot, "README.md"),
 		commandReferencePath: join(packageRoot, "docs", "COMMAND_REFERENCE.md"),
