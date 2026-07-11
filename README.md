@@ -89,7 +89,7 @@ The result is optimized for agent work:
 
 ## Fastest way to try it
 
-Use Pi 0.80.1 or newer. This package keeps Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, and `pi-agent-browser-doctor` fails setup when `pi --version` is below the enforced runtime floor. The current release is audited and validated against the Pi 0.80.1 extension/package baseline, including Project Trust.
+Use Pi 0.80.6 or newer. This package keeps Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, and `pi-agent-browser-doctor` fails setup when `pi --version` is below the enforced runtime floor. The current release is audited and validated against the Pi 0.80.6 extension/package baseline, including Project Trust.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 

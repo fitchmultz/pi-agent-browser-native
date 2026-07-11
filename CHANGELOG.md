@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Updated the development and validation baseline to Pi 0.80.6, including the package doctor runtime floor and host-provided Pi peer package checks. Runtime browser behavior is unchanged.
+
 ## 0.2.65 - 2026-07-06
 
 ### Fixed

@@ -49,6 +49,7 @@ const PLAIN_RENDER_FG_COLORS = {
 	text: "#ffffff",
 	thinkingHigh: "#ffffff",
 	thinkingLow: "#ffffff",
+	thinkingMax: "#ffffff",
 	thinkingMedium: "#ffffff",
 	thinkingMinimal: "#ffffff",
 	thinkingOff: "#ffffff",
