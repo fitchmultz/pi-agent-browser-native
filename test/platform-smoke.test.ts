@@ -65,6 +65,8 @@ test("platform smoke config and package scripts require macOS, Ubuntu, and nativ
 	assert.match(packageJson.scripts?.["smoke:platform:all"] ?? "", /smoke:platform:doctor/);
 	assert.match(packageJson.scripts?.["smoke:platform:all"] ?? "", /macos,ubuntu,windows-native/);
 	assert.match(packageJson.scripts?.["smoke:platform:windows-native"] ?? "", /windows-native/);
+	const linuxImage = readFileSync("scripts/platform-smoke/linux-image/Dockerfile", "utf8");
+	for (const dependency of ["libvulkan1", "mesa-vulkan-drivers", "xvfb"]) assert.match(linuxImage, new RegExp(`\\b${dependency}\\b`));
 
 	const code = String.raw`
 import config from "./platform-smoke.config.mjs";

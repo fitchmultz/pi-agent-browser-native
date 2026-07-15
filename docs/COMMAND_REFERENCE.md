@@ -18,12 +18,22 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.31.1` command/help surface, audited against vercel-labs/agent-browser@ed2e10598c9064aecfaeb7cf21b540684db4be2c. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.31.2` command/help surface, audited against vercel-labs/agent-browser@dcbe3522f931d24f85a786ba6ba7f343d86f7294. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
+
+### Upstream 0.31.2 rebaseline
+
+The 0.31.2 rebaseline adds a WebGPU launch preset and periodic restore-state autosaves:
+
+- `--webgpu` (also `AGENT_BROWSER_WEBGPU` or `"webgpu": true` in `agent-browser.json`) enables the upstream platform preset. It uses Metal on macOS, D3D on Windows, and SwiftShader software Vulkan on Linux. The native Pi wrapper passes it through as a launch-scoped optional boolean, so use `sessionMode: "fresh"` after an implicit session exists; `--webgpu false` explicitly disables a config/environment default.
+- WebGPU requires a local browser launch. Upstream rejects enabled WebGPU with `--cdp`, `--auto-connect`, or `-p` / `--provider`. Use `doctor --webgpu` to pixel-check rendering and screenshot capture; use `doctor --webgpu --headed` when validating the headed capture path.
+- Headless WebGPU screenshots work on macOS. Upstream documents black headless WebGPU canvas captures on Windows and Linux even when in-page rendering succeeds; Windows needs a logged-in headed desktop, while Linux can use `--headed` with automatic Xvfb unless `AGENT_BROWSER_NO_XVFB=1`. Linux software rendering also needs `libvulkan1` and `mesa-vulkan-drivers`.
+- Restore-enabled sessions now save periodically while the browser remains open, including idle page-driven cookie/storage changes. `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` defaults to `30000`; `0` disables periodic saves but keeps save-on-close. The existing `--restore-save` policy still controls whether automatic saves are allowed.
+- Upstream MCP `open` and `doctor` tools now expose typed WebGPU fields. This Pi extension keeps `args` as the thin CLI-parity path; `mcp --help` remains sessionless, while bare long-running MCP server startup is intentionally rejected in a one-shot Pi tool call.
 
 ### Upstream 0.31.1 rebaseline
 
@@ -114,7 +124,7 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 - `timeoutMs`: optional per-call wrapper subprocess watchdog override in milliseconds for browser CLI modes. Use it for known-slow opens/captures rather than relying on repeated retries.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
-  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags (`--auto-connect`, `--cdp`, `--enable`, `--executable-path`, `--init-script`, `--device`, `--namespace`, `--profile`, `--provider`, `-p`, `--restore`, `--restore-save`, `--restore-check-url`, `--restore-check-text`, `--restore-check-fn`, `--session-name`, `--state`) apply.
+  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags (`--auto-connect`, `--cdp`, `--enable`, `--executable-path`, `--webgpu`, `--init-script`, `--device`, `--namespace`, `--profile`, `--provider`, `-p`, `--restore`, `--restore-save`, `--restore-check-url`, `--restore-check-text`, `--restore-check-fn`, `--session-name`, `--state`) apply.
   - If a fresh launch fails or times out, read `details.managedSessionOutcome` for `preserved` vs `abandoned` (and related fields). A model-visible `Managed session outcome: …` line is appended only for failing calls that used `sessionMode: "fresh"`; `"auto"` failures can still populate the struct without that extra line. If you explicitly close the current wrapper-managed session with `--session <name> close`, later default auto calls rotate to a new wrapper-generated session instead of reusing the closed name; repeated closes and branch restores keep those generated names monotonic.
 
 ### Debug, diff, stream, dashboard, and chat families
@@ -134,7 +144,7 @@ Keep routine browser work simple: open a page, inspect it with `snapshot -i`, in
 { "args": ["snapshot", "-i"] }
 ```
 
-### Headed demo and local-page checks
+### Headed demo, WebGPU, and local-page checks
 
 Use upstream's global `--headed` flag on the first launch when the user needs to watch the browser. Because headed/headless state belongs to the browser launch, use `sessionMode: "fresh"` when a managed session may already exist or when changing from a previous headless run.
 
@@ -142,6 +152,15 @@ Use upstream's global `--headed` flag on the first launch when the user needs to
 { "args": ["--headed", "open", "https://example.com"], "sessionMode": "fresh" }
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
+
+For a WebGPU page, enable the launch preset before the first navigation. Treat it as local-launch-only and use a fresh managed session when changing an existing browser:
+
+```json
+{ "args": ["--webgpu", "open", "https://webgpu.github.io/webgpu-samples/?sample=helloTriangle"], "sessionMode": "fresh" }
+{ "args": ["screenshot", "/tmp/webgpu.png"] }
+```
+
+Run `{ "args": ["doctor", "--webgpu"] }` before trusting a black or blank WebGPU capture. On Linux/Windows capture paths, use `doctor --webgpu --headed` and follow upstream's platform requirements; do not combine enabled WebGPU with `--cdp`, `--auto-connect`, or provider launches.
 
 Treat headed success as browser-context success, not proof that a window is visible on the user's display. Remote shells, containers, virtual framebuffers, or upstream/provider-owned browser hosts can still put the visible window somewhere the user cannot see. If a user reports no window, gather evidence with `screenshot`, `tab list`, `get url`, or `snapshot -i`; then relaunch with the right display/profile/provider setup rather than assuming the user missed it.
 
@@ -820,7 +839,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--profile <name|path>`: reuse Chrome profile login state by directory name from `profiles`, or use a persistent custom profile/profile-directory path when upstream accepts it. Environment: `AGENT_BROWSER_PROFILE`.
 - `--session <name>`: use an isolated session. Environment: `AGENT_BROWSER_SESSION`.
 - `--restore [name]`: auto-save/restore cookies and local storage; bare `--restore` uses `--session` as the key. Environment: `AGENT_BROWSER_RESTORE`.
-- `--restore-save <policy>` (`auto`, `always`, or `never`): restore auto-save policy. Environment: `AGENT_BROWSER_RESTORE_SAVE`.
+- `--restore-save <policy>` (`auto`, `always`, or `never`): restore auto-save policy. Environment: `AGENT_BROWSER_RESTORE_SAVE`. Restore-enabled sessions also save periodically while open; `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` sets the minimum interval in milliseconds (`30000` by default, `0` disables periodic saves but not save-on-close).
 - `--restore-check-url <glob>`, `--restore-check-text <txt>`, `--restore-check-fn <js>`: validate restored state before auto-save. Environments: `AGENT_BROWSER_RESTORE_CHECK_URL`, `AGENT_BROWSER_RESTORE_CHECK_TEXT`, `AGENT_BROWSER_RESTORE_CHECK_FN`.
 - `--namespace <name>`: isolate daemon sockets and restore-state directories. Environment: `AGENT_BROWSER_NAMESPACE`.
 - `--session-name <name>`: legacy alias for restore persistence key. Environment: `AGENT_BROWSER_SESSION_NAME`.
@@ -841,6 +860,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--ignore-https-errors`: ignore HTTPS certificate errors. Environment: `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`.
 - `--allow-file-access`: allow `file://` URLs to access local files. Environment: `AGENT_BROWSER_ALLOW_FILE_ACCESS`.
 - `--headed`: ask upstream to show the browser window. Environment: `AGENT_BROWSER_HEADED`. Use it on the first launch, normally with `sessionMode: "fresh"` when changing an existing managed session; verify visibility with screenshot/tab evidence because the wrapper cannot yet prove the OS window is visible to the user.
+- `--webgpu`: enable upstream's platform-specific WebGPU launch preset. Environment: `AGENT_BROWSER_WEBGPU`; config: `"webgpu": true`. Use it on a fresh local launch. It is incompatible while enabled with `--cdp`, `--auto-connect`, and provider launches. `AGENT_BROWSER_NO_XVFB=1` disables upstream's automatic Xvfb for displayless headed Linux sessions.
 - `--cdp <port>`: connect through Chrome DevTools Protocol.
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
@@ -880,14 +900,14 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 3. Environment variables, including `AGENT_BROWSER_CONFIG`.
 4. CLI flags.
 
-Use `--config <path>` to load a specific config file. Boolean flags accept optional `true` or `false` values, such as `--headed false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
+Use `--config <path>` to load a specific config file. Boolean flags accept optional `true` or `false` values, such as `--headed false` or `--webgpu false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
 
-Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, `AI_GATEWAY_API_KEY`, provider credential names, and AWS credential names when using AgentCore. The upstream child receives the parent environment plus wrapper overrides such as the managed socket directory and clamped default operation timeout (`buildAgentBrowserProcessEnv` in `extensions/agent-browser/lib/process.ts`). Model-facing output still redacts recognized secret values.
+Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, `AI_GATEWAY_API_KEY`, provider credential names, and AWS credential names when using AgentCore. The upstream child receives the parent environment plus wrapper overrides such as the managed socket directory and clamped default operation timeout (`buildAgentBrowserProcessEnv` in `extensions/agent-browser/lib/process.ts`). Model-facing output still redacts recognized secret values.
 
 ## Wrapper-specific behavior worth knowing
 
 - The extension may keep following one implicit managed session across later tool calls.
-- If launch-scoped flags like `--profile`, `--executable-path`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
+- If launch-scoped flags like `--profile`, `--executable-path`, `--webgpu`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would be ignored because that implicit session is already active, retry with `sessionMode: "fresh"`.
 - If a `sessionMode: "fresh"` call fails (including upstream failure, timeout, missing binary, or **`qa`** reclassification after a nominally successful batch), read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current. When the failure reason is not the fresh launch itself—for example `failureCategory: "qa-failure"`—`status`/`summary` may still describe the managed-session transition while `succeeded` on this object matches the final tool outcome.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
@@ -905,14 +925,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.31.1</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.31.2</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `ed2e10598c9064aecfaeb7cf21b540684db4be2c`
-- upstream package version: `0.31.1`
+- upstream HEAD: `dcbe3522f931d24f85a786ba6ba7f343d86f7294`
+- upstream package version: `0.31.2`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -923,6 +943,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `agent-browser.schema.json`
 - inspected: `cli/src/commands.rs`
 - inspected: `cli/src/flags.rs`
+- inspected: `cli/src/doctor/webgpu.rs`
+- inspected: `cli/src/native/daemon.rs`
+- inspected: `docs/src/app/webgpu/page.mdx`
 - inspected: `packages/@agent-browser/sandbox/README.md`
 - inspected: `packages/@agent-browser/sandbox/src/shared.ts`
 - inspected: `packages/@agent-browser/sandbox/src/vercel.ts`
@@ -989,8 +1012,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - Core page, element, navigation, and extraction commands: 74 human-doc token(s), 74 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 24 human-doc token(s), 20 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 43 human-doc token(s), 53 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 31 human-doc token(s), 35 upstream token(s)
-- Global flags, config, providers, policy, and environment: 133 human-doc token(s), 103 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 33 human-doc token(s), 37 upstream token(s)
+- Global flags, config, providers, policy, and environment: 138 human-doc token(s), 106 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1181,6 +1204,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - `upgrade`
 - `doctor [--fix]`
 - `doctor --offline --quick`
+- `doctor --webgpu`
+- `doctor --webgpu --headed`
 - `doctor --json`
 - `mcp`
 - `plugin add <ref>`
@@ -1240,6 +1265,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_ALLOW_FILE_ACCESS`
 - `--headed`
 - `AGENT_BROWSER_HEADED`
+- `--webgpu`
+- `AGENT_BROWSER_WEBGPU`
+- `AGENT_BROWSER_NO_XVFB`
+- `"webgpu": true`
 - `--cdp <port>`
 - `--color-scheme <scheme>`
 - `AGENT_BROWSER_COLOR_SCHEME`
@@ -1293,6 +1322,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_CONFIG`
 - `AGENT_BROWSER_DEFAULT_TIMEOUT`
 - `--idle-timeout <ms>`
+- `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`
 - `AGENT_BROWSER_STREAM_PORT`
 - `AGENT_BROWSER_IDLE_TIMEOUT_MS`
 - `AGENT_BROWSER_ENCRYPTION_KEY`
@@ -1521,6 +1551,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - dashboard help: `dashboard [start|stop] [options]`
 - chat help: `chat <message>`
 - doctor help: `--offline`
+- doctor help: `--webgpu`
+- doctor help: `--headed`
 - doctor help: `--json`
 - root help: `Start an MCP stdio server`
 - root help: `plugin add <ref>`
@@ -1582,6 +1614,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_ALLOW_FILE_ACCESS`
 - root help: `--headed`
 - root help: `AGENT_BROWSER_HEADED`
+- root help: `--webgpu`
+- root help: `AGENT_BROWSER_WEBGPU`
 - root help: `--cdp <port>`
 - root help: `--color-scheme <scheme>`
 - root help: `AGENT_BROWSER_COLOR_SCHEME`
@@ -1630,6 +1664,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `--config <path>`
 - root help: `AGENT_BROWSER_CONFIG`
 - root help: `AGENT_BROWSER_DEFAULT_TIMEOUT`
+- root help: `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`
 - root help: `AGENT_BROWSER_STREAM_PORT`
 - root help: `AGENT_BROWSER_IDLE_TIMEOUT_MS`
 - root help: `AGENT_BROWSER_ENCRYPTION_KEY`

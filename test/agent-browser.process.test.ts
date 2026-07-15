@@ -604,6 +604,7 @@ const envelope = {
   success: true,
   data: {
     agentBrowserActionPolicy: readEnv("AGENT_BROWSER_ACTION_POLICY"),
+    agentBrowserAutosaveInterval: readEnv("AGENT_BROWSER_AUTOSAVE_INTERVAL_MS"),
     agentBrowserConfig: readEnv("AGENT_BROWSER_CONFIG"),
     agentBrowserConfirmActions: readEnv("AGENT_BROWSER_CONFIRM_ACTIONS"),
     agentBrowserDefaultTimeout: readEnv("AGENT_BROWSER_DEFAULT_TIMEOUT"),
@@ -612,7 +613,9 @@ const envelope = {
     agentBrowserSession: readEnv("AGENT_BROWSER_SESSION"),
     agentBrowserIosDevice: readEnv("AGENT_BROWSER_IOS_DEVICE"),
     agentBrowserIosUdid: readEnv("AGENT_BROWSER_IOS_UDID"),
+    agentBrowserNoXvfb: readEnv("AGENT_BROWSER_NO_XVFB"),
     agentBrowserSessionName: readEnv("AGENT_BROWSER_SESSION_NAME"),
+    agentBrowserWebgpu: readEnv("AGENT_BROWSER_WEBGPU"),
     agentcoreApiKey: readEnv("AGENTCORE_API_KEY"),
     agentcoreRegion: readEnv("AGENTCORE_REGION"),
     aiGatewayApiKey: readEnv("AI_GATEWAY_API_KEY"),
@@ -644,6 +647,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 		await withPatchedEnv(
 			{
 				AGENT_BROWSER_ACTION_POLICY: "/tmp/action-policy.json",
+				AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000",
 				AGENT_BROWSER_CONFIG: "/tmp/agent-browser.json",
 				AGENT_BROWSER_CONFIRM_ACTIONS: "1",
 				AGENT_BROWSER_DEFAULT_TIMEOUT: "45000",
@@ -652,7 +656,9 @@ process.stdout.write(JSON.stringify(envelope));`,
 				AGENT_BROWSER_SESSION: "from-parent-session",
 				AGENT_BROWSER_IOS_DEVICE: "iPhone 15 Pro",
 				AGENT_BROWSER_IOS_UDID: "ios-udid-123",
+				AGENT_BROWSER_NO_XVFB: "1",
 				AGENT_BROWSER_SESSION_NAME: "from-parent-session-name",
+				AGENT_BROWSER_WEBGPU: "true",
 				AGENT_BROWSER_SOCKET_DIR: "/tmp/from-parent-should-not-leak",
 				AGENTCORE_API_KEY: "agentcore-key",
 				AGENTCORE_REGION: "us-west-2",
@@ -689,6 +695,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(parsed.parseError, undefined);
 				const data = parsed.envelope?.data as {
 					agentBrowserActionPolicy: string | null;
+					agentBrowserAutosaveInterval: string | null;
 					agentBrowserConfig: string | null;
 					agentBrowserConfirmActions: string | null;
 					agentBrowserDefaultTimeout: string | null;
@@ -696,8 +703,10 @@ process.stdout.write(JSON.stringify(envelope));`,
 					agentBrowserScreenshotDir: string | null;
 					agentBrowserIosDevice: string | null;
 					agentBrowserIosUdid: string | null;
+					agentBrowserNoXvfb: string | null;
 					agentBrowserSession: string | null;
 					agentBrowserSessionName: string | null;
+					agentBrowserWebgpu: string | null;
 					agentcoreApiKey: string | null;
 					agentcoreRegion: string | null;
 					aiGatewayApiKey: string | null;
@@ -722,6 +731,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 					unrelatedApiKey: string | null;
 				};
 				assert.equal(data.agentBrowserActionPolicy, "/tmp/action-policy.json");
+				assert.equal(data.agentBrowserAutosaveInterval, "1000");
 				assert.equal(data.agentBrowserConfig, "/tmp/agent-browser.json");
 				assert.equal(data.agentBrowserConfirmActions, "1");
 				assert.equal(data.agentBrowserDefaultTimeout, "25000");
@@ -729,8 +739,10 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.agentBrowserScreenshotDir, "/tmp/agent-browser-screenshots");
 				assert.equal(data.agentBrowserIosDevice, "iPhone 15 Pro");
 				assert.equal(data.agentBrowserIosUdid, "ios-udid-123");
+				assert.equal(data.agentBrowserNoXvfb, "1");
 				assert.equal(data.agentBrowserSession, "from-parent-session");
 				assert.equal(data.agentBrowserSessionName, "from-parent-session-name");
+				assert.equal(data.agentBrowserWebgpu, "true");
 				assert.equal(data.agentcoreApiKey, "agentcore-key");
 				assert.equal(data.agentcoreRegion, "us-west-2");
 				assert.equal(data.aiGatewayApiKey, "ai-gateway-key");

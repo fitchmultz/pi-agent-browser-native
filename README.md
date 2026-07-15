@@ -268,6 +268,15 @@ Watch a browser window during a demo or QA run by adding upstream's global `--he
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
+Render a WebGPU page by enabling upstream's 0.31.2 launch preset on a fresh local browser:
+
+```json
+{ "args": ["--webgpu", "open", "https://webgpu.github.io/webgpu-samples/?sample=helloTriangle"], "sessionMode": "fresh" }
+{ "args": ["screenshot", "/tmp/webgpu.png"] }
+```
+
+`--webgpu` is also available as `AGENT_BROWSER_WEBGPU` or `"webgpu": true` in upstream `agent-browser.json`; `--webgpu false` overrides an enabled default. It cannot be combined while enabled with `--cdp`, `--auto-connect`, or provider launches. Run `{ "args": ["doctor", "--webgpu"] }` to pixel-check rendering and capture. macOS supports headless WebGPU screenshots; upstream requires a logged-in headed desktop on Windows and `--headed` plus Vulkan loader/Mesa packages on Linux (automatic Xvfb unless `AGENT_BROWSER_NO_XVFB=1`).
+
 On `https://example.com/`, the main link label is **Learn more**—use exact visible text from your snapshot, not guessed copy such as `More information...`.
 
 Click a visible ref, then refresh refs after navigation or a DOM update:
@@ -481,9 +490,9 @@ Use these rules:
 - Use public/temp profiles for tests and examples.
 - Do not assume `--profile Default` is correct. Ask the agent to run `profiles` to list Chrome profile directory names, then `doctor` if profile/user-data-dir resolution still fails.
 - For non-Chrome Chromium browsers such as Brave, Edge, Arc, or Vivaldi, use `--executable-path <path>` when upstream can launch that executable. If you need that browser's existing login state, use the browser's real profile/user-data directory path when upstream accepts it, or attach with `--auto-connect` / `connect` to a debug-enabled running browser when appropriate.
-- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--executable-path`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
+- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--executable-path`, `--webgpu`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
 - Use `--session` when you want to manage a live upstream session name yourself.
-- Do not treat `--session` alone as persisted auth or tab restore after `close`, `quit`, or `exit`; use `--session <id> --restore`, `--profile`, or `--state` for persistence.
+- Do not treat `--session` alone as persisted auth or tab restore after `close`, `quit`, or `exit`; use `--session <id> --restore`, `--profile`, or `--state` for persistence. Upstream 0.31.2 periodically saves restore-enabled cookies/localStorage while the browser is open, including idle page-driven changes; `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` defaults to `30000`, `0` disables periodic saves but keeps save-on-close, and the `never` value for `--restore-save` disables automatic saves for that restore session.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.
 - Prefer `auth save --password-stdin` over putting passwords in `args`; the wrapper only accepts caller `stdin` for `batch`, `eval --stdin`, and `auth save --password-stdin` (top-level `job` and `qa` compile to `batch` and supply their own stdin).
 - Use `state save <path>` / `state load <path>` for portable test state. `state save` is reported as a file artifact with verification metadata; if an upstream-successful artifact command reports a non-pending file path that the wrapper cannot find on disk, the tool fails with `failureCategory: "artifact-missing"` instead of treating the path as durable. `state load` may mention a path but is not treated as a newly saved artifact.

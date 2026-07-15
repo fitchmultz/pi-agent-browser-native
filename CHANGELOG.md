@@ -2,9 +2,24 @@
 
 ## Unreleased
 
+## 0.2.67 - 2026-07-14
+
 ### Changed
 
+- Rebaselined upstream capability metadata, command reference, support docs, prompt guidance, and real-upstream output-shape metadata for `agent-browser` `0.31.2` / vercel-labs/agent-browser@dcbe3522f931d24f85a786ba6ba7f343d86f7294.
+- Added upstream WebGPU launch support across optional-boolean argv parsing, launch-scoped session policy, browser guidance, and `doctor --webgpu` handling. Documented macOS/Windows/Linux rendering requirements, `AGENT_BROWSER_WEBGPU`, `AGENT_BROWSER_NO_XVFB`, config overrides, and incompatible remote/provider launch modes.
+- Documented upstream's periodic restore-state autosaves and `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` without duplicating upstream persistence or claiming its files as wrapper artifacts.
+- Added Vulkan, Mesa, and Xvfb packages to the project-owned Ubuntu smoke image so the upstream headed WebGPU capture path is testable in the release environment.
 - Refreshed the development lock, fleet marker, and local validation baseline to Pi 0.80.7. The enforced runtime floor remains Pi 0.80.6 because no 0.80.7-only runtime API is required.
+
+### Fixed
+
+- Kept both `doctor --webgpu` and `doctor --webgpu --headed` sessionless while preserving `--webgpu` as a launch-scoped flag for real browser commands.
+
+### Validation
+
+- Passed `npm run verify` (583 tests passed, 2 opt-in skips), live command-reference verification, `npm run verify -- real-upstream`, `npm run verify -- dogfood`, and `npm run verify -- release`, including lifecycle, packaged Pi smoke, and macOS/Ubuntu/native-Windows Crabbox suites against `agent-browser 0.31.2`.
+- Passed live WebGPU render/readback and pixel-capture probes on macOS Metal and Linux SwiftShader/Xvfb, verified a real Hello Triangle screenshot, and confirmed periodic restore autosave captured an idle page-driven localStorage change before close. Windows package/browser smokes passed; headed WebGPU screenshot proof is not claimed from the non-interactive SSH validation context.
 
 ## 0.2.66 - 2026-07-11
 

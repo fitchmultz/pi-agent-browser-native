@@ -31,6 +31,10 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "selects the browser executable used for the upstream launch",
 	},
 	{
+		flag: "--webgpu",
+		reason: "selects the platform-specific WebGPU browser launch preset",
+	},
+	{
 		flag: "--init-script",
 		reason: "registers page init scripts before the upstream browser session is launched",
 	},

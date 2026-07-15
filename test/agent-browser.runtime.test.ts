@@ -852,6 +852,8 @@ test("buildExecutionPlan keeps sessionless commands free of implicit managed ses
 		["dashboard", "stop"],
 		["dashboard", "stop", "--json"],
 		["doctor", "--offline", "--quick"],
+		["doctor", "--webgpu"],
+		["doctor", "--webgpu", "--headed"],
 		["install", "--with-deps"],
 		["install", "-d"],
 		["upgrade"],
@@ -1090,6 +1092,8 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		{ args: ["--state", "/tmp/auth.json", "open", "https://example.com"], flag: "--state" },
 		{ args: ["--auto-connect", "open", "https://example.com"], flag: "--auto-connect" },
 		{ args: ["--auto-connect", "true", "open", "https://example.com"], flag: "--auto-connect" },
+		{ args: ["--webgpu", "open", "https://example.com"], flag: "--webgpu" },
+		{ args: ["--webgpu", "false", "open", "https://example.com"], flag: "--webgpu" },
 		{ args: ["open", "--enable", "react-devtools", "https://example.com"], flag: "--enable" },
 		{ args: ["open", "--init-script", "/tmp/setup.js", "https://example.com"], flag: "--init-script" },
 	] as const) {

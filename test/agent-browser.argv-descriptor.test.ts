@@ -56,4 +56,8 @@ test("parseCommandInfo skips optional boolean flag values before commands", () =
 		command: "tab",
 		subcommand: "list",
 	});
+	assert.deepEqual(parseCommandInfo(["--webgpu", "false", "open", "https://example.com"]), {
+		command: "open",
+		subcommand: "https://example.com",
+	});
 });

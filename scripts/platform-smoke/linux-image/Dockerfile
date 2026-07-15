@@ -8,7 +8,7 @@ ARG AGENT_BROWSER_VERSION
 
 USER root
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates chromium fonts-liberation git openssh-client tar \
+	&& apt-get install -y --no-install-recommends ca-certificates chromium fonts-liberation git libvulkan1 mesa-vulkan-drivers openssh-client tar xvfb \
 	&& npm install -g "agent-browser@${AGENT_BROWSER_VERSION}" \
 	&& groupadd -g 1002 circleci \
 	&& useradd -m -u 1001 -g 1002 -s /bin/bash circleci \
