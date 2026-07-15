@@ -51,7 +51,7 @@ Current summary:
 
 ## Verification evidence
 
-Re-run the gates below before each release; this table records what the closure audit exercised. The Pi 0.80.6 refresh passed on 2026-07-11 against the current `agent-browser 0.31.1` baseline; older rows remain as prior release evidence.
+Re-run the gates below before each release; this table records what the closure audit exercised. The Pi 0.80.7 refresh on 2026-07-14 passed the full `pre-pr` gate against an isolated `agent-browser 0.31.1` binary, including build/typecheck, generated-doc checks, the unit/fake suite (583 passed, 2 skipped), live command-reference validation, package-content checks, `npm pack --dry-run`, and a direct Pi extension load smoke. The maintainer's separately installed `agent-browser 0.31.2` remains unreviewed upstream drift, so this refresh makes no 0.31.2 support claim. The prior Pi 0.80.6 refresh passed the full listed gates on 2026-07-11 against `agent-browser 0.31.1`; older rows remain as prior release evidence.
 
 | Gate | Evidence | Status |
 | --- | --- | --- |

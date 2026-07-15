@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Refreshed the development lock, fleet marker, and local validation baseline to Pi 0.80.7. The enforced runtime floor remains Pi 0.80.6 because no 0.80.7-only runtime API is required.
+
 ## 0.2.66 - 2026-07-11
 
 ### Changed
