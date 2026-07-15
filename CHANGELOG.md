@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Validation
+
+- Added post-release Windows interactive-desktop WebGPU evidence on a disposable Parallels clone: the `agent-browser 0.31.2` headed doctor render/readback and screenshot subchecks passed (`rgb(255,0,0)`), and a console capture showed Edge rendering the WebGPU triangle. The overall doctor result remained nonzero only because the image has Edge but no separately installed Chrome binary.
+
 ## 0.2.67 - 2026-07-14
 
 ### Changed
