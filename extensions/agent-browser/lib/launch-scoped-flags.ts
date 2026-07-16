@@ -15,6 +15,10 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "attaches to an already-running browser at launch time instead of reusing an existing named session",
 	},
 	{
+		flag: "--allowed-domains",
+		reason: "installs upstream network and WebRTC containment on a fresh controllable browser context",
+	},
+	{
 		flag: "--namespace",
 		reason: "selects the upstream daemon/socket and restore-state namespace before session lookup",
 	},

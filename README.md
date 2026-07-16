@@ -89,7 +89,7 @@ The result is optimized for agent work:
 
 ## Fastest way to try it
 
-Use Pi 0.80.6 or newer. This package keeps Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, and `pi-agent-browser-doctor` fails setup when `pi --version` is below the enforced runtime floor. The current source tree's Pi compatibility is audited and validated against the Pi 0.80.7 extension/package baseline, including Project Trust; the runtime floor remains 0.80.6 because this refresh requires no newer runtime API.
+Use Pi 0.80.6 or newer. This package keeps Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, and `pi-agent-browser-doctor` fails setup when `pi --version` is below the enforced runtime floor. The current source tree's Pi compatibility is audited and validated against the Pi 0.80.9 extension/package baseline, including Project Trust; the runtime floor remains 0.80.6 because this refresh requires no newer runtime API.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -268,7 +268,7 @@ Watch a browser window during a demo or QA run by adding upstream's global `--he
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
-Render a WebGPU page by enabling upstream's 0.31.2 launch preset on a fresh local browser:
+Render a WebGPU page by enabling upstream's WebGPU launch preset on a fresh local browser:
 
 ```json
 { "args": ["--webgpu", "open", "https://webgpu.github.io/webgpu-samples/?sample=helloTriangle"], "sessionMode": "fresh" }
@@ -276,6 +276,14 @@ Render a WebGPU page by enabling upstream's 0.31.2 launch preset on a fresh loca
 ```
 
 `--webgpu` is also available as `AGENT_BROWSER_WEBGPU` or `"webgpu": true` in upstream `agent-browser.json`; `--webgpu false` overrides an enabled default. It cannot be combined while enabled with `--cdp`, `--auto-connect`, or provider launches. Run `{ "args": ["doctor", "--webgpu"] }` to pixel-check rendering and capture. macOS supports headless WebGPU screenshots; upstream requires a logged-in headed desktop on Windows and `--headed` plus Vulkan loader/Mesa packages on Linux (automatic Xvfb unless `AGENT_BROWSER_NO_XVFB=1`).
+
+Restrict browser and `read` traffic with upstream's domain containment on a fresh local Chrome context:
+
+```json
+{ "args": ["--allowed-domains", "example.com,*.example.org", "open", "https://example.com"], "sessionMode": "fresh" }
+```
+
+In `agent-browser 0.32.0`, the allowlist also covers workers and popups and disables Chromium `RTCPeerConnection` while active. Upstream rejects `--allowed-domains` with CDP/auto-connect, profiles, restore/state replay, direct-page providers, iOS/Safari, and startup/profile Chrome args because those paths cannot guarantee containment. The wrapper's final-URL check remains defense in depth and reports escapes as `failureCategory: "policy-blocked"`.
 
 On `https://example.com/`, the main link label is **Learn more**—use exact visible text from your snapshot, not guessed copy such as `More information...`.
 
@@ -490,7 +498,7 @@ Use these rules:
 - Use public/temp profiles for tests and examples.
 - Do not assume `--profile Default` is correct. Ask the agent to run `profiles` to list Chrome profile directory names, then `doctor` if profile/user-data-dir resolution still fails.
 - For non-Chrome Chromium browsers such as Brave, Edge, Arc, or Vivaldi, use `--executable-path <path>` when upstream can launch that executable. If you need that browser's existing login state, use the browser's real profile/user-data directory path when upstream accepts it, or attach with `--auto-connect` / `connect` to a debug-enabled running browser when appropriate.
-- Use `sessionMode: "fresh"` when switching from public browsing to `--profile`, `--executable-path`, `--webgpu`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
+- Use `sessionMode: "fresh"` when switching from public browsing to `--allowed-domains`, `--profile`, `--executable-path`, `--webgpu`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `-p` / `--provider`, or iOS `--device`.
 - Use `--session` when you want to manage a live upstream session name yourself.
 - Do not treat `--session` alone as persisted auth or tab restore after `close`, `quit`, or `exit`; use `--session <id> --restore`, `--profile`, or `--state` for persistence. Upstream 0.31.2 periodically saves restore-enabled cookies/localStorage while the browser is open, including idle page-driven changes; `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` defaults to `30000`, `0` disables periodic saves but keeps save-on-close, and the `never` value for `--restore-save` disables automatic saves for that restore session.
 - Prefer page actions and storage checks over cookie dumps. `cookies get` can expose real profile cookies.

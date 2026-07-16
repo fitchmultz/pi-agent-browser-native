@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.68 - 2026-07-16
+
+### Changed
+
+- Migrated the real Pi SDK pipeline test from removed `AuthStorage`/`ModelRegistry` session options to an isolated async `ModelRuntime` with an in-memory pi-ai credential store.
+- Refreshed the Pi development lock and fleet validation marker to 0.80.9 while preserving wildcard runtime peers and the existing 0.80.6 runtime floor.
+- Rebaselined upstream capability metadata, command reference, prompt guidance, and support docs to `agent-browser 0.32.0` / vercel-labs/agent-browser@1bda76fa675e2b2dd9936123f6f2f1556d76e960.
+- Made argv-supplied `--allowed-domains` launch-scoped and documented upstream's request/worker/popup/WebRTC containment, incompatible launch modes, completed-page wait fix, and separate `@agent-browser/eve` integration package.
 
 ### Validation
 

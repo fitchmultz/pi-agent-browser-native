@@ -18,12 +18,21 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.31.2` command/help surface, audited against vercel-labs/agent-browser@dcbe3522f931d24f85a786ba6ba7f343d86f7294. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.32.0` command/help surface, audited against vercel-labs/agent-browser@1bda76fa675e2b2dd9936123f6f2f1556d76e960. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
+
+### Upstream 0.32.0 rebaseline
+
+The 0.32.0 rebaseline hardens domain containment and fixes completed-page waits without adding a new native Pi input mode:
+
+- `--allowed-domains <list>` now contains request traffic across pages, iframes, workers, service workers, shared workers, and popups. Chromium `RTCPeerConnection` is disabled while containment is active to prevent WebRTC bypasses.
+- The wrapper treats argv-supplied `--allowed-domains` as launch-scoped. Use `sessionMode: "fresh"` for a fresh local Chrome context; upstream rejects CDP/auto-connect, profiles, restore/state replay, direct-page providers, iOS/Safari, and startup/profile Chrome args because those launch paths cannot guarantee containment. The wrapper's final observed-URL check remains defense in depth.
+- `wait --load load` and `wait --load domcontentloaded` now resolve immediately when the current document already reached the requested state instead of waiting for a future lifecycle event. The wrapper still treats `waited:timeout` as inconclusive rather than success.
+- Upstream also publishes `@agent-browser/eve`, a separate Eve extension with namespaced browser tools and sandbox helpers. It is not bundled by this Pi extension and does not change the native `agent_browser` schema.
 
 ### Upstream 0.31.2 rebaseline
 
@@ -877,7 +886,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--screenshot-format <fmt>`: `png` or `jpeg`. Environment: `AGENT_BROWSER_SCREENSHOT_FORMAT`.
 - `--content-boundaries`: wrap page output in boundary markers. Environment: `AGENT_BROWSER_CONTENT_BOUNDARIES`.
 - `--max-output <chars>`: truncate page output to N characters. Environment: `AGENT_BROWSER_MAX_OUTPUT`.
-- `--allowed-domains <list>`: restrict navigation domains. Environment: `AGENT_BROWSER_ALLOWED_DOMAINS`. The wrapper also remembers argv-supplied allowed domains for the managed session and fails a successful-looking browser command with `failureCategory: "policy-blocked"` when the final observed `http(s)` URL host is outside that allowlist, including click/navigation escapes after the initial page load.
+- `--allowed-domains <list>`: restrict browser and `read` traffic to exact or `*.` wildcard domain patterns. Environment: `AGENT_BROWSER_ALLOWED_DOMAINS`. Use a fresh local Chrome context; upstream 0.32.0 rejects containment-unsafe launch modes/state and disables Chromium `RTCPeerConnection` while active. The wrapper also remembers argv-supplied allowed domains for the managed session and fails a successful-looking browser command with `failureCategory: "policy-blocked"` when the final observed `http(s)` URL host is outside that allowlist, including click/navigation escapes after the initial page load.
 - `--action-policy <path>`: action policy JSON file. Environment: `AGENT_BROWSER_ACTION_POLICY`.
 - `--confirm-actions <list>`: action categories requiring confirmation. Environment: `AGENT_BROWSER_CONFIRM_ACTIONS`.
 - `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
@@ -925,14 +934,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.31.2</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.32.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `dcbe3522f931d24f85a786ba6ba7f343d86f7294`
-- upstream package version: `0.31.2`
+- upstream HEAD: `1bda76fa675e2b2dd9936123f6f2f1556d76e960`
+- upstream package version: `0.32.0`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -944,8 +953,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/commands.rs`
 - inspected: `cli/src/flags.rs`
 - inspected: `cli/src/doctor/webgpu.rs`
+- inspected: `cli/src/native/actions.rs`
 - inspected: `cli/src/native/daemon.rs`
 - inspected: `docs/src/app/webgpu/page.mdx`
+- inspected: `packages/@agent-browser/eve/README.md`
 - inspected: `packages/@agent-browser/sandbox/README.md`
 - inspected: `packages/@agent-browser/sandbox/src/shared.ts`
 - inspected: `packages/@agent-browser/sandbox/src/vercel.ts`

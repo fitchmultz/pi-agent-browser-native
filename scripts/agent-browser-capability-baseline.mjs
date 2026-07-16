@@ -14,8 +14,8 @@ export const COMMAND_REFERENCE_BASELINE_BLOCK_IDS = Object.freeze(["upstream-bas
 
 const sourceEvidence = Object.freeze({
   repository: "vercel-labs/agent-browser",
-  upstreamHead: "dcbe3522f931d24f85a786ba6ba7f343d86f7294",
-  upstreamPackageVersion: "0.31.2",
+  upstreamHead: "1bda76fa675e2b2dd9936123f6f2f1556d76e960",
+  upstreamPackageVersion: "0.32.0",
   inspectedSources: Object.freeze([
     "agent-browser --version",
     "agent-browser --help",
@@ -28,8 +28,10 @@ const sourceEvidence = Object.freeze({
     "cli/src/commands.rs",
     "cli/src/flags.rs",
     "cli/src/doctor/webgpu.rs",
+    "cli/src/native/actions.rs",
     "cli/src/native/daemon.rs",
     "docs/src/app/webgpu/page.mdx",
+    "packages/@agent-browser/eve/README.md",
     "packages/@agent-browser/sandbox/README.md",
     "packages/@agent-browser/sandbox/src/shared.ts",
     "packages/@agent-browser/sandbox/src/vercel.ts",
@@ -789,7 +791,7 @@ const inventorySections = Object.freeze([
 ]);
 
 export const CAPABILITY_BASELINE = Object.freeze({
-  targetVersion: "0.31.2",
+  targetVersion: "0.32.0",
   sourceEvidence,
   helpCommands,
   inventorySections,

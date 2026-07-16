@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
 	createAssistantMessageEventStream,
 	type AssistantMessage,
@@ -19,10 +20,9 @@ import {
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai/compat";
 import {
-	AuthStorage,
 	createAgentSession,
 	DefaultResourceLoader,
-	ModelRegistry,
+	ModelRuntime,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
@@ -148,8 +148,8 @@ async function readPersistedAgentBrowserResult(sessionDir: string): Promise<{ re
 	return { result, sessionFile };
 }
 
-function registerPipelineProvider(modelRegistry: ModelRegistry, toolArguments: Record<string, unknown>): Model<any> {
-	modelRegistry.registerProvider(PIPELINE_PROVIDER, {
+function registerPipelineProvider(modelRuntime: ModelRuntime, toolArguments: Record<string, unknown>): Model<any> {
+	modelRuntime.registerProvider(PIPELINE_PROVIDER, {
 		api: "openai-completions",
 		apiKey: "piab-pipeline-key",
 		baseUrl: "https://pipeline.example.test/v1",
@@ -164,7 +164,7 @@ function registerPipelineProvider(modelRegistry: ModelRegistry, toolArguments: R
 		}],
 		streamSimple: createToolCallingStream(toolArguments),
 	});
-	const model = modelRegistry.find(PIPELINE_PROVIDER, PIPELINE_MODEL_ID);
+	const model = modelRuntime.getModel(PIPELINE_PROVIDER, PIPELINE_MODEL_ID);
 	assert.ok(model, "pipeline test model should be registered");
 	return model;
 }
@@ -181,9 +181,12 @@ async function runPipelinePrompt(options: { fakeScript: string; toolArguments: R
 
 	try {
 		return await withPatchedEnv<PipelinePromptResult>({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const authStorage = AuthStorage.inMemory({ [PIPELINE_PROVIDER]: { key: "piab-pipeline-key", type: "api_key" } });
-			const modelRegistry = ModelRegistry.inMemory(authStorage);
-			const model = registerPipelineProvider(modelRegistry, options.toolArguments);
+			const modelRuntime = await ModelRuntime.create({
+				allowModelNetwork: false,
+				credentials: new InMemoryCredentialStore(),
+				modelsPath: null,
+			});
+			const model = registerPipelineProvider(modelRuntime, options.toolArguments);
 			const resourceLoader = new DefaultResourceLoader({
 				agentDir: tempDir,
 				cwd: tempDir,
@@ -196,10 +199,9 @@ async function runPipelinePrompt(options: { fakeScript: string; toolArguments: R
 			});
 			await resourceLoader.reload();
 			const { session } = await createAgentSession({
-				authStorage,
 				cwd: tempDir,
 				model,
-				modelRegistry,
+				modelRuntime,
 				noTools: "builtin",
 				resourceLoader,
 				sessionManager: SessionManager.create(tempDir, sessionDir, { id: "piab-pipeline-session" }),

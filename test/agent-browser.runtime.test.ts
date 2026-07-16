@@ -952,7 +952,7 @@ test("buildExecutionPlan limits sessionless allowlists to documented subcommands
 });
 
 test("buildExecutionPlan rejects missing values for global value-taking flags before launching upstream", () => {
-	for (const args of [["--session"], ["--namespace"], ["--profile"], ["--executable-path"], ["--session-name"], ["--restore-save"], ["--restore-check-url"], ["--restore-check-text"], ["--restore-check-fn"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
+	for (const args of [["--session"], ["--namespace"], ["--allowed-domains"], ["--profile"], ["--executable-path"], ["--session-name"], ["--restore-save"], ["--restore-check-url"], ["--restore-check-text"], ["--restore-check-fn"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -1079,6 +1079,7 @@ test("launch-scoped flag metadata is reflected in playbook and command reference
 test("buildExecutionPlan blocks startup-scoped flags from silently reusing an active implicit session", () => {
 	for (const { args, flag } of [
 		{ args: ["--profile", "Default", "open", "https://example.com"], flag: "--profile" },
+		{ args: ["--allowed-domains", "example.com", "open", "https://example.com"], flag: "--allowed-domains" },
 		{ args: ["--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "open", "https://example.com"], flag: "--executable-path" },
 		{ args: ["--namespace", "review", "open", "https://example.com"], flag: "--namespace" },
 		{ args: ["--session-name", "saved-auth", "open", "https://example.com"], flag: "--session-name" },
