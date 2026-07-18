@@ -82,6 +82,59 @@ if (args.includes("--version")) {
 	}
 });
 
+test("agentBrowserExtension rejects per-call idle timeout changes that would restart the browser", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-idle-timeout-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: "https://example.com/" } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS: "1234" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const mismatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--idle-timeout", "5000", "open", "https://example.com/"],
+				sessionMode: "fresh",
+			});
+			assert.equal(mismatch.isError, true);
+			assert.match(String(mismatch.details?.validationError), /conflicts with this Pi process's managed-session idle timeout/);
+			assert.match(String(mismatch.details?.validationError), /PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=5000/);
+			assert.deepEqual(await readInvocationLog(logPath), []);
+
+			const duplicateMismatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--idle-timeout", "1234", "--idle-timeout=5000", "open", "https://example.com/"],
+				sessionMode: "fresh",
+			});
+			assert.equal(duplicateMismatch.isError, true);
+			assert.match(String(duplicateMismatch.details?.validationError), /PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=5000/);
+			assert.deepEqual(await readInvocationLog(logPath), []);
+
+			const aligned = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--idle-timeout=1234", "open", "https://example.com/"],
+				sessionMode: "fresh",
+			});
+			assert.equal(aligned.isError, false);
+
+			const activeSessionMismatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--idle-timeout", "5000", "open", "https://example.com/next"],
+			});
+			assert.equal(activeSessionMismatch.isError, true);
+			assert.match(String(activeSessionMismatch.details?.validationError), /PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=5000/);
+			assert.equal(activeSessionMismatch.details?.sessionRecoveryHint, undefined);
+			assert.deepEqual((await readInvocationLog(logPath)).map((entry) => entry.idleTimeout), ["1234"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension passes through plugin list/show and blocks bare mcp one-shots", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-plugin-mcp-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -367,7 +420,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["removeinitscript", "init-1"],
 		["download", "#direct-download", downloadPath],
 		["tab", "new"],
-		["tab", "0"],
+		["tab", "t1"],
 		["tab", "close"],
 		["close"],
 		["open", "https://example.test/reopened"],
@@ -392,7 +445,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin"));
 			const expectedInvocations = commands.flatMap((args) => {
 				const command = args[0];
-				if (command === "click") return [[...args], ["get", "url"], ["get", "title"]];
+				if (command === "click" || (command === "tab" && args[1] === "close")) return [[...args], ["get", "url"], ["get", "title"]];
 				return command === "back" || command === "forward" || command === "reload" || command === "dblclick"
 					? [[...args], ["get", "url"], ["get", "title"]]
 					: [[...args]];

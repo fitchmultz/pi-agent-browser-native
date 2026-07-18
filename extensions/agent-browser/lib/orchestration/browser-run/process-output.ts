@@ -289,7 +289,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			!navigationSummary &&
 			(shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data) ||
 				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data) ||
-				shouldCaptureAllowedDomainNavigationSummary)
+				shouldCaptureAllowedDomainNavigationSummary ||
+				(prepared.executionPlan.commandInfo.command === "tab" && prepared.executionPlan.commandInfo.subcommand === "close"))
 		) {
 			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal });
 		}

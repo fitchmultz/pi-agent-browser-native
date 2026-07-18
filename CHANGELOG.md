@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.71 - 2026-07-18
+
+### Fixed
+
+- Applied the same managed-session `AGENT_BROWSER_IDLE_TIMEOUT_MS` to top-level commands and every wrapper helper subprocess. With upstream 0.32.2, missing the value on hidden snapshots, tab lists, navigation summaries, and diagnostics could restart the background browser, replace the active page with `about:blank`, and make a freshly captured `@ref` fail on the next click or select.
+- Refreshed the remaining active tab URL/title after `tab close` so subsequent snapshots, ref guards, and interactions no longer inherit the closed tab's target.
+- Made ordinary document `scroll <direction> [amount]` deterministic before upstream wheel fallback, including pages such as Artificial Analysis whose smooth-scroll CSS previously left large scroll commands at offset zero.
+
+### Changed
+
+- Extended the real-upstream contract with snapshot-ref native selection and stable-id/label tab lifecycle coverage, and corrected fake/docs tab examples from unsupported positional `tab 0` to stable `tab t1`.
+
+### Validation
+
+- Passed `npm run verify` (590 tests passed, 2 opt-in skips), live command-reference verification, the expanded 2/2 real-upstream contract, deterministic dogfood, benchmark, packaged Pi smoke, and three-sample startup profiling (50.1 ms maximum against the 250 ms budget).
+- Passed isolated checkout-loaded Pi dogfood on Artificial Analysis, React, GitHub, and a deterministic select/tab fixture. Artificial Analysis document scroll moved from offset 0 to 700; snapshot-ref select/click, stable-id/label tab switching, post-close target refresh, and post-close interaction completed with no background restarts, `about:blank` resets, or spurious stale-ref failures.
+- Passed `npm run verify -- release`, including configured-source reload/relaunch lifecycle, packaged Pi smoke, and macOS/Ubuntu/native-Windows Crabbox `platform-build` plus `browser-dogfood-smoke`; all provider leases and browser sessions were cleaned.
+
 ## 0.2.70 - 2026-07-18
 
 ### Changed

@@ -337,6 +337,56 @@ if (args.includes("open")) {
 	}
 });
 
+test("agentBrowserExtension refreshes the active tab target after closing a tab", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tab-close-target-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Regression Fixture A", url: "https://fixture.example/" } }));
+} else if (args.includes("new")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "React", url: "https://react.dev/" } }));
+} else if (args.includes("close")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true, label: "docs" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://fixture.example/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Regression Fixture A" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: {} }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://fixture.example/"],
+				sessionMode: "fresh",
+			})).isError, false);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["tab", "new", "https://react.dev/", "--label", "docs"] })).isError, false);
+
+			const closeTab = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["tab", "close"] });
+			assert.equal(closeTab.isError, false);
+			assert.deepEqual(closeTab.details?.sessionTabTarget, { title: "Regression Fixture A", url: "https://fixture.example/" });
+			assert.deepEqual((await readInvocationLog(logPath)).map((entry) => entry.args.slice(-2).join(" ")), [
+				"open https://fixture.example/",
+				"--label docs",
+				"tab close",
+				"get url",
+				"get title",
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not treat arbitrary batch eval title/url results as session navigation", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-eval-target-"));
 	const logPath = join(tempDir, "invocations.log");

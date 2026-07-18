@@ -2060,7 +2060,7 @@ test("agentBrowserExtension rejects refs after same-page rerender changes curren
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null }) + "\\n");
 const statePath = ${JSON.stringify(statePath)};
 let count = 0;
 try { count = JSON.parse(fs.readFileSync(statePath, "utf8")).snapshots || 0; } catch {}
@@ -2081,7 +2081,7 @@ if (args.includes("snapshot")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS: "1234" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -2098,6 +2098,7 @@ if (args.includes("snapshot")) {
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
 			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
+			assert.deepEqual(invocations.map((entry) => entry.idleTimeout), ["1234", "1234"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

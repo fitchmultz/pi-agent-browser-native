@@ -311,6 +311,17 @@ async function collectSamePageRefFreshnessPreflight(options: {
 	return { message: mismatch.message, refIds: mismatch.refIds, snapshot: snapshotWithTarget };
 }
 
+function getIdleTimeoutMismatch(args: string[], configuredValue: string): string | undefined {
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index];
+		if (token !== "--idle-timeout" && !token.startsWith("--idle-timeout=")) continue;
+		const requestedToken = token.includes("=") ? token.slice(token.indexOf("=") + 1) : args[++index];
+		if (!requestedToken || !/^\d+$/.test(requestedToken) || Number(requestedToken) === Number(configuredValue)) continue;
+		return `--idle-timeout ${requestedToken} conflicts with this Pi process's managed-session idle timeout (${configuredValue} ms). Restart Pi with PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=${requestedToken} and omit --idle-timeout; changing the launch value for one call can restart the upstream browser and discard the active tab.`;
+	}
+	return undefined;
+}
+
 function isPasswordStdinAuthSave(options: { command?: string; commandTokens: string[] }): boolean {
 	return options.command === "auth" && options.commandTokens[1] === "save" && options.commandTokens.includes("--password-stdin");
 }
@@ -423,6 +434,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		managedSessionNamespace: state.managedSessionNamespace,
 		sessionMode,
 	});
+	const idleTimeoutMismatch = getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs);
+	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
 	const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const priorSessionPageState = sessionPageState.get(sessionStateKey);
 	const priorSessionTabTarget = priorSessionPageState.tabTarget;
@@ -668,32 +681,34 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	if (networkRequestsPageFilter) return { kind: "early-result", statePatch, result: networkRequestsPageFilter };
 
-	const containerScroll = await tryContainerScroll({
-		commandTokens,
-		compatibilityWorkaround,
-		cwd,
-		effectiveArgs: redactedEffectiveArgs,
-		redactedArgs,
-		sessionMode,
-		namespace: executionPlan.namespace,
-		sessionName: executionPlan.sessionName,
-		signal,
-		usedImplicitSession: executionPlan.usedImplicitSession,
-	});
-	if (containerScroll) return { kind: "early-result", statePatch, result: containerScroll };
-	const pageScrollTo = await tryPageScrollTo({
-		commandTokens,
-		compatibilityWorkaround,
-		cwd,
-		effectiveArgs: redactedEffectiveArgs,
-		redactedArgs,
-		sessionMode,
-		namespace: executionPlan.namespace,
-		sessionName: executionPlan.sessionName,
-		signal,
-		usedImplicitSession: executionPlan.usedImplicitSession,
-	});
-	if (pageScrollTo) return { kind: "early-result", statePatch, result: pageScrollTo };
+	if (executionPlan.startupScopedFlags.length === 0) {
+		const containerScroll = await tryContainerScroll({
+			commandTokens,
+			compatibilityWorkaround,
+			cwd,
+			effectiveArgs: redactedEffectiveArgs,
+			redactedArgs,
+			sessionMode,
+			namespace: executionPlan.namespace,
+			sessionName: executionPlan.sessionName,
+			signal,
+			usedImplicitSession: executionPlan.usedImplicitSession,
+		});
+		if (containerScroll) return { kind: "early-result", statePatch, result: containerScroll };
+		const pageScrollTo = await tryPageScrollTo({
+			commandTokens,
+			compatibilityWorkaround,
+			cwd,
+			effectiveArgs: redactedEffectiveArgs,
+			redactedArgs,
+			sessionMode,
+			namespace: executionPlan.namespace,
+			sessionName: executionPlan.sessionName,
+			signal,
+			usedImplicitSession: executionPlan.usedImplicitSession,
+		});
+		if (pageScrollTo) return { kind: "early-result", statePatch, result: pageScrollTo };
+	}
 
 	const directAnchorDownload = await tryDirectAnchorDownload({
 		artifactManifest: state.artifactManifest,

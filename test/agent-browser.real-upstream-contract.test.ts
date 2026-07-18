@@ -223,6 +223,14 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(snapshotDetails.sessionName, managedSessionName);
 					assert.equal(snapshotDetails.usedImplicitSession, true);
 					assertJsonIncludes(snapshotDetails.data, ["Agent Browser Contract Fixture"], "snapshot data");
+					const flavorRef = Object.entries((snapshotDetails.data as { refs?: Record<string, { name?: string; role?: string }> }).refs ?? {})
+						.find(([, ref]) => ref.role === "combobox" && ref.name === "Flavor")?.[0];
+					assert.ok(flavorRef, "snapshot should expose the Flavor combobox ref");
+					await runCoreCommand(harness, ["select", `@${flavorRef}`, "chocolate"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(
+						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
+						"chocolate",
+					);
 
 					const readResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl] });
 					const readDetails = assertSuccessfulResult(readResult, shapes.commands.read, "read URL");
@@ -374,7 +382,17 @@ if (!REAL_UPSTREAM_ENABLED) {
 					await runCoreCommand(harness, ["forward"], shapes.commands.coreCommand, managedSessionName);
 					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Next Contract Fixture");
 					await runCoreCommand(harness, ["reload"], shapes.commands.coreCommand, managedSessionName);
-					await runCoreCommand(harness, ["tab", "list"], shapes.commands.coreSubcommand, managedSessionName);
+					const initialTabs = (await runCoreCommand(harness, ["tab", "list"], shapes.commands.coreSubcommand, managedSessionName)).data as {
+						tabs?: Array<{ active?: boolean; tabId?: string }>;
+					};
+					const initialTabId = initialTabs.tabs?.find((tab) => tab.active)?.tabId;
+					assert.ok(initialTabId, "tab list should expose the active tab id");
+					await runCoreCommand(harness, ["tab", "new", "--label", "contract-copy", contractUrl], shapes.commands.coreSubcommand, managedSessionName);
+					await runCoreCommand(harness, ["tab", initialTabId], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Next Contract Fixture");
+					await runCoreCommand(harness, ["tab", "contract-copy"], shapes.commands.coreSubcommand, managedSessionName);
+					const tabCloseDetails = await runCoreCommand(harness, ["tab", "close"], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal((tabCloseDetails.sessionTabTarget as { url?: string } | undefined)?.url, `${fixtureServer?.baseUrl}/next`);
 					await runCoreCommand(harness, ["open", contractUrl], shapes.commands.open, managedSessionName);
 
 					const batch = await executeRegisteredTool(harness.tool, harness.ctx, {

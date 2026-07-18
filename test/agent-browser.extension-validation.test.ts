@@ -560,6 +560,64 @@ process.stdin.on("end", () => {
 	}
 });
 
+test("agentBrowserExtension scrolls the document directly before upstream wheel fallback", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-page-scroll-direction-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { stdin += chunk; });
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("eval") && stdin.includes('direction = "down"')) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: {
+      status: "scrolled",
+      direction: "down",
+      amount: "700",
+      before: { scrollTop: 0, scrollLeft: 0, scrollHeight: 5000, clientHeight: 500, scrollWidth: 800, clientWidth: 800 },
+      after: { scrollTop: 700, scrollLeft: 0, scrollHeight: 5000, clientHeight: 500, scrollWidth: 800, clientWidth: 800 }
+    } } }));
+    return;
+  }
+  if (args.includes("scroll")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { scrolled: "unexpected-page-scroll" } }));
+    return;
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+});`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "down", "700"] });
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match(result.content[0]?.text ?? "", /Scrolled page down by 700/);
+			assert.equal((result.details?.data as { status?: string } | undefined)?.status, "scrolled");
+			assert.equal(result.details?.exitCode, 0);
+			assert.equal((result.details?.scrollPage as { request?: { direction?: string } } | undefined)?.request?.direction, "down");
+
+			const selectorScroll = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "down", "250", "--selector", "#panel"] });
+			assert.equal(selectorScroll.isError, false);
+			assert.equal((selectorScroll.details?.data as { scrolled?: string } | undefined)?.scrolled, "unexpected-page-scroll");
+			const trailingTokenScroll = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "down", "250", "unexpected"] });
+			assert.equal(trailingTokenScroll.isError, false);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("scroll")).length, 2);
+			assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension filters snapshot refs with wrapper search and role flags", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-snapshot-filter-"));
 	const logPath = join(tempDir, "invocations.log");

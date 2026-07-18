@@ -43,6 +43,10 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "registers page init scripts before the upstream browser session is launched",
 	},
 	{
+		flag: "--idle-timeout",
+		reason: "configures background browser lifecycle for the launched session",
+	},
+	{
 		flag: "--device",
 		reason: "selects the provider device for the upstream launch",
 	},

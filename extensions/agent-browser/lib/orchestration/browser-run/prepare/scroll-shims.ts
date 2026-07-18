@@ -70,6 +70,7 @@ function buildScrollResult(options: {
 			compatibilityWorkaround: options.compatibilityWorkaround,
 			data: options.result,
 			effectiveArgs: options.effectiveArgs,
+			exitCode: options.succeeded ? 0 : 1,
 			nextActions: options.succeeded ? undefined : applyNamespaceToNextActions(buildScrollNoopNextActions(options.sessionName), options.namespace),
 			[options.scrollField]: options.scrollValue,
 			sessionMode: options.sessionMode,
@@ -106,25 +107,55 @@ export async function tryContainerScroll(options: {
 	return buildScrollResult({ ...options, command: "scroll", message, result, scrollField: "scrollContainer", scrollValue: { request, result }, succeeded });
 }
 
-function getPageScrollToRequest(commandTokens: string[]): { target: "end" | "top" } | undefined {
-	if (commandTokens[0] !== "scroll" || commandTokens[1]?.toLowerCase() !== "to") return undefined;
-	const target = commandTokens[2]?.toLowerCase();
-	return target === "end" || target === "top" ? { target } : undefined;
+type PageScrollRequest =
+	| { target: "end" | "top" }
+	| { amount?: string; direction: "down" | "left" | "right" | "up" };
+
+function getPageScrollToRequest(commandTokens: string[]): PageScrollRequest | undefined {
+	if (commandTokens[0] !== "scroll") return undefined;
+	if (commandTokens[1]?.toLowerCase() === "to") {
+		const target = commandTokens[2]?.toLowerCase();
+		return target === "end" || target === "top" ? { target } : undefined;
+	}
+	const direction = commandTokens[1]?.toLowerCase();
+	if (!SCROLL_CONTAINER_DIRECTIONS.has(direction) || commandTokens.length > 3) return undefined;
+	const amount = commandTokens[2];
+	if (amount && (!/^\d+(?:\.\d+)?(?:px|%)?$/.test(amount) || Number(amount.replace(/(?:px|%)$/, "")) <= 0)) return undefined;
+	return { amount, direction: direction as "down" | "left" | "right" | "up" };
 }
 
-function buildPageScrollToScript(request: { target: "end" | "top" }): string {
+function buildPageScrollToScript(request: PageScrollRequest): string {
 	return `(() => {
-  const target = ${JSON.stringify(request.target)};
+  const target = ${JSON.stringify("target" in request ? request.target : undefined)};
+  const direction = ${JSON.stringify("direction" in request ? request.direction : undefined)};
+  const amountToken = ${JSON.stringify("amount" in request ? request.amount ?? "" : "")};
+  const request = target ? { target } : { direction, amount: amountToken || undefined };
   const scroller = document.scrollingElement || document.documentElement || document.body;
-  if (!scroller) return { status: "no-scroller", target };
+  if (!scroller) return { status: "no-scroller", ...request };
   const before = { scrollLeft: scroller.scrollLeft, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, scrollWidth: scroller.scrollWidth, clientHeight: scroller.clientHeight, clientWidth: scroller.clientWidth };
-  const nextTop = target === "top" ? 0 : Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-  const nextLeft = scroller.scrollLeft;
-  scroller.scrollTop = nextTop;
+  const axis = direction === "left" || direction === "right" ? "x" : "y";
+  const extent = axis === "x" ? scroller.clientWidth : scroller.clientHeight;
+  const parseAmount = () => {
+    if (!amountToken) return Math.max(1, Math.floor(extent * 0.8));
+    if (amountToken.endsWith("%")) {
+      const value = Number(amountToken.slice(0, -1));
+      return Number.isFinite(value) ? Math.max(1, Math.floor(extent * value / 100)) : Math.max(1, Math.floor(extent * 0.8));
+    }
+    const pixels = Number(amountToken.replace(/px$/, ""));
+    return Number.isFinite(pixels) && pixels > 0 ? Math.floor(pixels) : Math.max(1, Math.floor(extent * 0.8));
+  };
+  const delta = parseAmount() * (direction === "up" || direction === "left" ? -1 : 1);
+  const nextTop = target === "top" ? 0 : target === "end" ? Math.max(0, scroller.scrollHeight - scroller.clientHeight) : axis === "y" ? scroller.scrollTop + delta : scroller.scrollTop;
+  const nextLeft = axis === "x" ? scroller.scrollLeft + delta : scroller.scrollLeft;
+  const priorBehavior = scroller.style.scrollBehavior;
+  scroller.style.scrollBehavior = "auto";
   window.scrollTo(nextLeft, nextTop);
+  scroller.scrollLeft = nextLeft;
+  scroller.scrollTop = nextTop;
   const after = { scrollLeft: scroller.scrollLeft, scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, scrollWidth: scroller.scrollWidth, clientHeight: scroller.clientHeight, clientWidth: scroller.clientWidth };
+  scroller.style.scrollBehavior = priorBehavior;
   const moved = before.scrollLeft !== after.scrollLeft || before.scrollTop !== after.scrollTop;
-  return { status: moved ? "scrolled" : "no-movement", target, before, after };
+  return { status: moved ? "scrolled" : "no-movement", ...request, before, after };
 })()`;
 }
 
@@ -146,6 +177,8 @@ export async function tryPageScrollTo(options: {
 	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
 	if (!isRecord(result) || typeof result.status !== "string") return undefined;
 	const succeeded = result.status === "scrolled";
-	const message = succeeded ? `Scrolled page to ${request.target}.` : `Scroll to ${request.target} completed with no observed movement (${result.status}).`;
+	if (!succeeded && "direction" in request) return undefined;
+	const description = "target" in request ? `to ${request.target}` : `${request.direction}${request.amount ? ` by ${request.amount}` : ""}`;
+	const message = succeeded ? `Scrolled page ${description}.` : `Scroll ${description} completed with no observed movement (${result.status}).`;
 	return buildScrollResult({ ...options, command: "scroll", message, result, scrollField: "scrollPage", scrollValue: { request, result }, succeeded });
 }

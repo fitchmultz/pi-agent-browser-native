@@ -11,6 +11,7 @@ import { chmod, mkdir } from "node:fs/promises";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
+import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
 const MAX_BUFFERED_STDOUT_BYTES = 512 * 1_024;
@@ -19,6 +20,7 @@ const MAX_BUFFERED_STDOUT_TAIL_CHARS = 32_000;
 const PROCESS_STDOUT_SPILL_FILE_PREFIX = "process-stdout";
 const AGENT_BROWSER_SOCKET_DIR_ENV = "AGENT_BROWSER_SOCKET_DIR";
 const AGENT_BROWSER_DEFAULT_TIMEOUT_ENV = "AGENT_BROWSER_DEFAULT_TIMEOUT";
+const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS";
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
 export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
@@ -245,11 +247,15 @@ export async function runAgentBrowserProcess(options: {
 }): Promise<ProcessRunResult> {
 	const { args, cwd, env, signal, stdin } = options;
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
-	const explicitSocketDir = env?.[AGENT_BROWSER_SOCKET_DIR_ENV];
-	let effectiveEnv = explicitSocketDir === undefined ? { ...env, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : env;
+	const processOverrides: NodeJS.ProcessEnv = {
+		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
+		...env,
+	};
+	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
+	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
 	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir && (await ensureAgentBrowserSocketDir(requestedSocketDir))) {
-		effectiveEnv = { ...env, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };
+		effectiveEnv = { ...effectiveEnv, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };
 	}
 
 	return await new Promise<ProcessRunResult>((resolve) => {
