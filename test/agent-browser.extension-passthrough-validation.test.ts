@@ -1,68 +1,25 @@
 /**
  * Purpose: Verify extension pass-through, artifact-path normalization, JSON, missing-binary, and trace/profiler validation contracts.
- * Responsibilities: Assert metadata, prompt injection, bash blocking, CLI validation, missing binary, malformed envelope, fallback error, and oversized parse-failure behavior.
+ * Responsibilities: Assert pass-through argv, artifact paths, JSON output, missing binaries, and trace/profiler validation.
  * Scope: Integration-style Node test-runner coverage around the extension harness before result presentation and tab lifecycle suites.
- * Usage: Run with `npx tsx --test test/agent-browser.extension-validation.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.extension-passthrough-validation.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests use fake agent-browser binaries and isolated env/temp directories to avoid relying on upstream browser behavior.
  */
 
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
-import { Theme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
-import { Check } from "typebox/value";
-
 import {
-	WEB_SEARCH_PROMPT_GUIDELINE,
-	QUICK_START_GUIDELINES,
-	buildInstalledDocsGuideline,
-	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-	TOOL_PROMPT_GUIDELINES_PREFIX,
-	TOOL_PROMPT_GUIDELINES_SUFFIX,
-	WRAPPER_TAB_RECOVERY_BEHAVIOR,
-} from "../extensions/agent-browser/lib/playbook.js";
-import {
-	discoverElectronApps,
-	ELECTRON_DISCOVERY_MAX_RESULTS,
-	type ElectronAppDiscovery,
-} from "../extensions/agent-browser/lib/electron/discovery.js";
-import {
-	cleanupElectronLaunchResources,
-} from "../extensions/agent-browser/lib/electron/cleanup.js";
-import {
-	cleanupSecureTempArtifacts,
-	createSecureTempDirectory,
-} from "../extensions/agent-browser/lib/temp.js";
-import {
-	TEST_SESSION_ID,
 	createExtensionHarness,
-	createToolBranchEntry,
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
-	runExtensionEventResults,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
-	type AgentBrowserToolParams,
-	type AgentBrowserToolRenderContext,
 } from "./helpers/agent-browser-harness.js";
-
-import {
-	PLAIN_RENDER_THEME,
-	createRenderContext,
-	electronAppNames,
-	fakeAgentBrowserLifecycleScript,
-	isTestPidAlive,
-	readOptionalFakeElectronLaunchLog,
-	stopTestPid,
-	waitForTestPidExit,
-	writeFakeLaunchableElectronApp,
-	writeFakeLinuxElectronBinary,
-	writeFakeMacElectronApp,
-} from "./helpers/extension-validation-fixtures.js";
 
 const stripWrapperPrefix = (args: string[]) => {
 	const stripped = [...args];

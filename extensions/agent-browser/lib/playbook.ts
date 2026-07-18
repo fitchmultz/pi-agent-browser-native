@@ -93,14 +93,6 @@ export const WRAPPER_TAB_RECOVERY_BEHAVIOR = [
 	"If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.",
 ] as const;
 
-export function buildSharedBrowserPlaybookGuidelines(options: { includeWebSearch: boolean }): string[] {
-	return [
-		SHARED_BROWSER_PLAYBOOK_GUIDELINES[0],
-		...(options.includeWebSearch ? [WEB_SEARCH_PROMPT_GUIDELINE] : []),
-		...SHARED_BROWSER_PLAYBOOK_GUIDELINES.slice(1),
-	];
-}
-
 /** Tier A: always-on tool promptGuidelines (keep small; Tier B lives in SHARED_BROWSER_PLAYBOOK_GUIDELINES and docs). */
 export const RUNTIME_PROMPT_GUIDELINES = [
 	"Use agent_browser with one input mode: args, semanticAction, job, qa, sourceLookup/networkSourceLookup, or electron. stdin only for batch/eval/auth/wrapper batch; electron rejects stdin; never pass --json.",

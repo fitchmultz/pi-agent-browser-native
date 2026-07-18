@@ -8,7 +8,7 @@
 
 import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
@@ -23,14 +23,8 @@ import {
 	buildBrowserExecutablePathGuideline,
 	buildToolPromptGuidelines,
 } from "./lib/playbook.js";
-import {
-	buildToolPresentation,
-	type AgentBrowserEnvelope,
-	type AgentBrowserPageChangeSummary,
-} from "./lib/results.js";
 import { SessionPageState } from "./lib/session-page-state.js";
 import {
-	buildExecutionPlan,
 	createEphemeralSessionSeed,
 	createFreshSessionName,
 	createImplicitSessionName,
@@ -40,49 +34,18 @@ import {
 	getImplicitSessionIdleTimeoutMs,
 	extractExplicitSessionName,
 	restoreManagedSessionStateFromBranch,
-	resolveManagedSessionState,
 	validateToolArgs,
-	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
 import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
 import { isCloseCommand } from "./lib/command-taxonomy.js";
-import {
-	cleanupSecureTempArtifacts,
-	type PersistentSessionArtifactEviction,
-	type PersistentSessionArtifactStore,
-	writePersistentSessionArtifactFile,
-	writeSecureTempFile,
-} from "./lib/temp.js";
+import { cleanupSecureTempArtifacts } from "./lib/temp.js";
 import {
 	AGENT_BROWSER_PARAMS,
-	analyzeNetworkSourceLookupResults,
-	analyzeQaPresetResults,
-	analyzeSourceLookupResults,
-	compileAgentBrowserElectron,
-	compileAgentBrowserJob,
-	compileAgentBrowserNetworkSourceLookup,
-	compileAgentBrowserQaPreset,
-	compileAgentBrowserSemanticAction,
-	compileAgentBrowserSourceLookup,
-	getCompiledSemanticActionCommandIndex,
-	getCompiledSemanticActionSessionPrefix,
-	isCompiledSemanticActionFindCommand,
-	redactNetworkSourceLookupAnalysis,
-	redactNetworkSourceLookupSurface,
-	type AgentBrowserNetworkSourceLookupAnalysis,
-	type AgentBrowserQaPresetAnalysis,
-	type AgentBrowserSourceLookupAnalysis,
-	type AgentBrowserSourceLookupElectronContext,
 	type CompiledAgentBrowserElectron,
-	type CompiledAgentBrowserJob,
-	type CompiledAgentBrowserNetworkSourceLookup,
-	type CompiledAgentBrowserQaPreset,
-	type CompiledAgentBrowserSemanticAction,
-	type CompiledAgentBrowserSourceLookup,
 } from "./lib/input-modes.js";
 import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
-import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run.js";
+import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
 import {
@@ -97,26 +60,7 @@ import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrows
 import { applyAgentBrowserOutputPath } from "./lib/orchestration/output-file.js";
 import type { NetworkRouteRecord } from "./lib/results/contracts.js";
 import type { SessionArtifactManifest } from "./lib/results/contracts.js";
-import {
-	buildEvictedSessionArtifactEntries,
-	formatSessionArtifactRetentionSummary,
-	isSessionArtifactManifest,
-	mergeSessionArtifactManifest,
-} from "./lib/results/artifact-manifest.js";
-import {
-	buildRichInputRecoveryDiagnostic,
-	buildRichInputRecoveryNextActions,
-	buildVisibleRefFallbackDiagnosticFromSnapshot,
-	buildVisibleRefFallbackNextActions,
-	formatRichInputRecoveryText,
-	formatVisibleRefFallbackText,
-	getVisibleRefFallbackTarget,
-	resolveVisibleRefActionFromSnapshot,
-	sanitizeVisibleRefFallbackDiagnostic,
-	type RichInputRecoveryDiagnostic,
-	type VisibleRefFallbackDiagnostic,
-} from "./lib/results/selector-recovery.js";
-import { withOptionalSessionArgs } from "./lib/results/next-actions.js";
+import { isSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
 import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
 import { createAgentBrowserWebSearchTool } from "./lib/web-search.js";
 import {
@@ -130,8 +74,6 @@ import {
 	formatAgentBrowserRenderCall,
 	formatAgentBrowserRenderResult,
 } from "./lib/pi-tool-rendering.js";
-
-const DEFAULT_SESSION_MODE = "auto" as const;
 
 type BashToolCallLike = {
 	input: { command: string };

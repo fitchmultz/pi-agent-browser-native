@@ -63,10 +63,3 @@ export function getEditableRefEvidence(options: {
 	if (textEvidence === true) hasPositiveEvidence = true;
 	return hasPositiveEvidence ? true : undefined;
 }
-
-export function hasPositiveEditableRefEvidence(options: {
-	ref?: Record<string, unknown>;
-	text?: string;
-}): boolean {
-	return getEditableRefEvidence(options) === true;
-}

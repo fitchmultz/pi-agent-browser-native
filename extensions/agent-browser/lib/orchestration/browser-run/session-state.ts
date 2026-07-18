@@ -6,7 +6,6 @@ import { runAgentBrowserProcess } from "../../process.js";
 import { buildAgentBrowserNextActions, getAgentBrowserErrorText, parseAgentBrowserEnvelope, type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results.js";
 import { buildNextToolAction, withOptionalNamespaceArgs, withOptionalSessionArgs } from "../../results/next-actions.js";
 import {
-	extractRefSnapshotFromData,
 	getSessionPageStateKey,
 	isAboutBlankUrl,
 	normalizeComparableUrl,

@@ -28,7 +28,6 @@ const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const npmExecOptions = process.platform === "win32" ? { shell: true } : {};
 const tarCommand = process.platform === "win32" ? "tar.exe" : "tar";
 const SUPPORTED_ARGS = new Set(["--list-files", "--smoke-pi"]);
-const BUILD_SCRIPT = "scripts/build.mjs";
 const PACKAGED_AGENT_BROWSER_SMOKE_ARGS = ["--version"];
 const PACKAGED_AGENT_BROWSER_SMOKE_TOOL_CALL_ID = "verify-package-agent-browser-smoke";
 const FAKE_AGENT_BROWSER_VERSION = "agent-browser 0.0.0-packaged-smoke";
@@ -127,13 +126,6 @@ function parseSinglePackResult(stdout, stderr) {
 	}
 
 	return parsed[0];
-}
-
-async function buildPackageRuntime(cwd = process.cwd()) {
-	await execFile(process.execPath, [BUILD_SCRIPT], {
-		cwd,
-		maxBuffer: 10 * 1024 * 1024,
-	});
 }
 
 async function getDryRunPackResult(cwd = process.cwd()) {
@@ -437,7 +429,9 @@ export function evaluatePackResult(options) {
 	const { forbiddenRepoFiles, missingRepoFiles, packResult, publishContract } = options;
 	const packedPaths = collectPackedPaths(Array.isArray(packResult.files) ? packResult.files : []);
 	const missingPackedFiles = publishContract.requiredPackedFiles.filter((path) => !packedPaths.has(path));
-	const forbiddenPackedFiles = publishContract.forbiddenPackedFiles.filter((path) => packedPaths.has(path));
+	const forbiddenPackedFiles = publishContract.forbiddenPackedFiles.filter((path) =>
+		path.endsWith("/") ? [...packedPaths].some((packedPath) => packedPath.startsWith(path)) : packedPaths.has(path),
+	);
 	const failures = collectVerificationFailures({
 		forbiddenPackedFiles,
 		forbiddenRepoFiles,
@@ -501,11 +495,10 @@ function printPiSmokeReport(report) {
 
 export async function verifyPackageRelease(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
-	if (options.build !== false) await buildPackageRuntime(cwd);
+	const packResult = await getDryRunPackResult(cwd);
 	const publishContract = await loadPublishContract({ cwd });
 	const missingRepoFiles = await collectMissingPaths(publishContract.requiredRepoFiles, cwd);
 	const forbiddenRepoFiles = await collectPresentPaths(publishContract.forbiddenRepoFiles, cwd);
-	const packResult = await getDryRunPackResult(cwd);
 	const report = evaluatePackResult({ forbiddenRepoFiles, missingRepoFiles, packResult, publishContract });
 	const packedMarkdownLinkFailures = await collectPackedMarkdownLinkFailures({ cwd, packedPaths: report.packedPaths });
 	return {
@@ -517,7 +510,6 @@ export async function verifyPackageRelease(options = {}) {
 
 export async function verifyPackagedPiLoad(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
-	if (options.build !== false) await buildPackageRuntime(cwd);
 	const { cleanup, packageDir, packResult } = await packToTemporaryPackageDir(cwd);
 	let session;
 	let tempAgentDir;

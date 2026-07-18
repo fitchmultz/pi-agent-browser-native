@@ -173,8 +173,8 @@ Maintainer constraints for evolving scenarios and version bumps are summarized u
 - no repo-local `.pi/extensions/agent-browser.ts` autoload shim is present
 - `LICENSE` exists in the repo and the packed tarball
 - canonical published docs are present
-- `npm pack --json --dry-run` runs the `prepack` build and packs the compiled `dist/extensions/agent-browser/index.js` entrypoint
-- GitHub/source installs run the package `prepare` build; when Pi installs with `npm install --omit=dev`, `scripts/prepare.mjs` installs source-build dev dependencies with lifecycle scripts disabled before building so Pi can load the ignored compiled `dist/extensions/agent-browser/index.js` entrypoint from a fresh clone
+- `npm pack --json --dry-run` runs the package `prepare` build once and packs the compiled `dist/extensions/agent-browser/index.js` entrypoint
+- GitHub/source installs use the same `prepare` build; when Pi installs with `npm install --omit=dev`, `scripts/prepare.mjs` installs source-build dev dependencies with lifecycle scripts disabled before building so Pi can load the ignored compiled entrypoint from a fresh clone
 - the package-level doctor command and capability baseline are present
 - compiled extension runtime files are present, including the split result-rendering modules required by the published facade
 - source-only, agent-only, and superseded docs are absent from the tarball
@@ -192,7 +192,7 @@ The packaged execution smoke intentionally uses a temporary fake `agent-browser`
 Current forbidden packed files include:
 
 - `AGENTS.md`
-- archived planning drafts under `docs/archive/`
+- internal planning docs under `docs/plans/`
 - `.pi/extensions/agent-browser.ts`
 - TypeScript extension source and other test/repo-only maintenance files
 

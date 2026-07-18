@@ -20,7 +20,6 @@ import {
 	createFreshSessionName,
 	extractCommandTokens,
 	redactInvocationArgs,
-	redactSensitiveText,
 	type CompatibilityWorkaround,
 } from "../../runtime.js";
 import {
@@ -38,7 +37,7 @@ import {
 	runSessionCommandData,
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
-import { parseBatchStdinJsonArray, parseValidBatchStepEntries } from "../batch-stdin.js";
+import { parseBatchStdinJsonArray } from "../batch-stdin.js";
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
 import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
@@ -46,7 +45,6 @@ import { getScreenshotPathTokenIndex } from "./artifact-paths.js";
 import { findRequestedArtifactCloseViolation } from "./prompt-guards.js";
 
 import type {
-	AgentBrowserToolResult,
 	BrowserRunInputFields,
 	BrowserRunOptions,
 	BrowserRunStatePatch,
@@ -365,7 +363,7 @@ export async function resolveSemanticActionVisibleRefArgs(options: {
 }
 
 export async function prepareBrowserRun(options: BrowserRunOptions): Promise<PrepareBrowserRunResult> {
-	const { cwd, implicitSessionIdleTimeoutMs, onUpdate, params, signal, state } = options;
+	const { cwd, onUpdate, params, signal, state } = options;
 	const { sessionPageState, traceOwners, managedSessionBaseName, ephemeralSessionSeed } = state;
 	let freshSessionOrdinal = state.freshSessionOrdinal;
 	const {

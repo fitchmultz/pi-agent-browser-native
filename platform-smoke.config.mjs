@@ -3,15 +3,14 @@
 
 import { CAPABILITY_BASELINE } from "./scripts/agent-browser-capability-baseline.mjs";
 
-export const PLATFORM_SMOKE_AGENT_BROWSER_VERSION = CAPABILITY_BASELINE.targetVersion;
-export const PLATFORM_SMOKE_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${PLATFORM_SMOKE_AGENT_BROWSER_VERSION}`;
+const PLATFORM_SMOKE_AGENT_BROWSER_VERSION = CAPABILITY_BASELINE.targetVersion;
+const PLATFORM_SMOKE_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${PLATFORM_SMOKE_AGENT_BROWSER_VERSION}`;
 
 export default {
 	packageName: "pi-agent-browser-native",
 	artifactRoot: ".artifacts/platform-smoke",
 	requiredTargets: ["macos", "ubuntu", "windows-native"],
 	requiredSuites: ["platform-build", "browser-dogfood-smoke"],
-	supportedTargets: ["macos", "ubuntu", "windows-native"],
 	requiredCrabbox: {
 		install: "Homebrew package or PLATFORM_SMOKE_CRABBOX override",
 		minVersion: "0.26.0",

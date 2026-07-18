@@ -31,7 +31,6 @@ import { applySnapshotArtifactManifest, writeSnapshotSpillFile, type SnapshotSpi
 import {
 	enrichSnapshotRefEntries,
 	getSnapshotRefEntries,
-	type SnapshotLineRefInfo,
 	type SnapshotRefEntry,
 } from "./snapshot-refs.js";
 import { compareRefIds, countLines, truncateText } from "./text.js";

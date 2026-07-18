@@ -19,7 +19,6 @@ import {
 	extractNavigationSummaryFromData,
 	extractStringResultField,
 	findElectronLaunchRecordForSession,
-	getGuardedRefUsage,
 	runSessionCommandData,
 } from "./session-state.js";
 import { parseValidBatchStepEntries } from "../batch-stdin.js";

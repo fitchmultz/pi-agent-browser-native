@@ -79,6 +79,7 @@ const verifyPackageModule = (await import(verifyPackageModulePath)) as {
 		};
 	}) => Promise<{ failures: string[]; invocation?: unknown }>;
 	parseCliArgs: (argv?: string[]) => { listFiles: boolean; showHelp: boolean; smokePi: boolean };
+	verifyPackageRelease: (options?: { cwd?: string }) => Promise<{ failures: string[] }>;
 };
 before(async () => {
 	await execFile(process.execPath, ["scripts/build.mjs"], { maxBuffer: 10 * 1024 * 1024 });
@@ -95,6 +96,7 @@ const {
 	loadPublishContract,
 	packToTemporaryPackageDir,
 	parseCliArgs,
+	verifyPackageRelease,
 } = verifyPackageModule;
 
 test("parseCliArgs supports help, list-files, and smoke-pi modes", () => {
@@ -246,8 +248,9 @@ test("package metadata keeps Pi core packages host-provided peers and git instal
 	assert.equal(
 		packageJson.scripts?.prepare,
 		"node ./scripts/prepare.mjs",
-		"GitHub/source installs must build the ignored dist entrypoint before Pi loads it, even when Pi installs with --omit=dev",
+		"Packed and GitHub/source installs must build the ignored dist entrypoint before Pi loads it, even when Pi installs with --omit=dev",
 	);
+	assert.equal(packageJson.scripts?.prepack, undefined, "npm pack must not duplicate the prepare-owned build");
 });
 
 test("publish contract derives required packed files from package.json", async () => {
@@ -255,11 +258,10 @@ test("publish contract derives required packed files from package.json", async (
 
 	assert.equal(FORBIDDEN_REPO_FILES.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(FORBIDDEN_PACKED_FILES.includes(".pi/extensions/agent-browser.ts"), true);
-	assert.equal(FORBIDDEN_PACKED_FILES.includes("docs/archive/v1-tool-contract.md"), true);
+	assert.equal(FORBIDDEN_PACKED_FILES.includes("docs/plans/"), true);
 	assert.equal(FORBIDDEN_PACKED_FILES.includes("extensions/agent-browser/index.ts"), true);
 	assert.equal(publishContract.forbiddenRepoFiles.includes(".pi/extensions/agent-browser.ts"), true);
 	assert.equal(publishContract.forbiddenPackedFiles.includes(".pi/extensions/agent-browser.ts"), true);
-	assert.equal(publishContract.forbiddenPackedFiles.includes("docs/archive/v1-tool-contract.md"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("package.json"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/doctor.mjs"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/prepare.mjs"), true);
@@ -321,6 +323,40 @@ test("evaluatePackResult uses the shared publish contract", async () => {
 	assert.deepEqual(report.failures, []);
 	assert.deepEqual(report.missingPackedFiles, []);
 	assert.deepEqual(report.forbiddenPackedFiles, []);
+});
+
+test("evaluatePackResult rejects forbidden directory prefixes", () => {
+	const report = evaluatePackResult({
+		forbiddenRepoFiles: [],
+		missingRepoFiles: [],
+		packResult: {
+			entryCount: 2,
+			filename: "fixture.tgz",
+			files: [{ path: "package.json" }, { path: "docs/plans/internal.md" }],
+			size: 123,
+			unpackedSize: 456,
+		},
+		publishContract: { forbiddenPackedFiles: ["docs/plans/"], requiredPackedFiles: ["package.json"] },
+	});
+
+	assert.deepEqual(report.forbiddenPackedFiles, ["docs/plans/"]);
+	assert.deepEqual(report.failures, ["Forbidden packed file present: docs/plans/"]);
+});
+
+test("verifyPackageRelease lets prepare create a missing dist directory", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-build-owner-"));
+	try {
+		await writeFile(join(tempDir, "LICENSE"), "fixture\n", "utf8");
+		await writeFile(join(tempDir, "build.mjs"), 'import { mkdirSync, writeFileSync } from "node:fs"; mkdirSync("dist", { recursive: true }); writeFileSync("dist/index.js", "export {};\\n");\n', "utf8");
+		await writeFile(join(tempDir, "package.json"), `${JSON.stringify({ name: "pi-agent-browser-package-build-owner-fixture", version: "1.0.0", type: "module", files: ["dist"], scripts: { prepare: "node build.mjs" } }, null, 2)}\n`, "utf8");
+
+		await assert.rejects(access(join(tempDir, "dist")));
+		const report = await verifyPackageRelease({ cwd: tempDir });
+		assert.deepEqual(report.failures, []);
+		await access(join(tempDir, "dist", "index.js"));
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
 });
 
 test("packToTemporaryPackageDir writes a tarball even under npm publish dry-run env", async () => {

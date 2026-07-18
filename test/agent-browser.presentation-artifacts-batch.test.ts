@@ -2,7 +2,7 @@
  * Purpose: Verify artifact, manifest, image, and batch presentation for agent-browser results.
  * Responsibilities: Assert saved-file summaries, artifact verification/manifests, large generic compaction, inline image handling, and batch rendering.
  * Scope: Unit-style Node test-runner coverage for `buildToolPresentation`; extension lifecycle presentation integration lives in focused extension suites.
- * Usage: Run with `npx tsx --test test/agent-browser.presentation.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.presentation-artifacts-batch.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests isolate temp artifacts and preserve existing cleanup for secure temp roots.
  */
 

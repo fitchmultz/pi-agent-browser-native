@@ -123,6 +123,7 @@ test("captures browser defaults with conservative profile policy and executable 
 		browser: {
 			defaultProfile: { name: "Default" },
 			executablePath: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+			defaultLaunchArgs: ["--headed"],
 		},
 	});
 	const state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env: fixture.env });
@@ -134,6 +135,8 @@ test("captures browser defaults with conservative profile policy and executable 
 	assert.equal(state.trustedBrowserDefaultProfileScope, "global");
 	assert.equal(state.trustedBrowserExecutablePath, "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser");
 	assert.equal(state.trustedBrowserExecutablePathScope, "global");
+	assert.equal("defaultLaunchArgs" in (state.config.browser ?? {}), false);
+	assert.deepEqual(state.warnings, []);
 });
 
 test("records project-local browser guidance scope and uses it for prompt injection", async () => {

@@ -76,18 +76,14 @@ import {
 	buildManagedSessionOutcome,
 	buildSessionDetailFields,
 	getSessionContextKey,
-	formatElectronPostCommandHealthText,
 	formatElectronRefFreshnessText,
-	formatElectronSessionMismatchText,
 	formatManagedSessionOutcomeText,
 } from "./session-state.js";
 import type {
 	AboutBlankSessionMismatch,
 	AgentBrowserExecutionPlan,
-	AgentBrowserResultCategoryDetails,
 	AgentBrowserToolPresentation,
 	AgentBrowserToolResult,
-	ArtifactCleanupGuidance,
 	FinalRecoveryState,
 	FinalResultInput,
 	ManagedSessionOutcome,

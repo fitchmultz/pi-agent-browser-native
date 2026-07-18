@@ -8,13 +8,13 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
-import { Theme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
@@ -29,21 +29,7 @@ import {
 	WRAPPER_TAB_RECOVERY_BEHAVIOR,
 } from "../extensions/agent-browser/lib/playbook.js";
 import {
-	discoverElectronApps,
-	ELECTRON_DISCOVERY_MAX_RESULTS,
-	type ElectronAppDiscovery,
-} from "../extensions/agent-browser/lib/electron/discovery.js";
-import {
-	cleanupElectronLaunchResources,
-} from "../extensions/agent-browser/lib/electron/cleanup.js";
-import {
-	cleanupSecureTempArtifacts,
-	createSecureTempDirectory,
-} from "../extensions/agent-browser/lib/temp.js";
-import {
-	TEST_SESSION_ID,
 	createExtensionHarness,
-	createToolBranchEntry,
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
@@ -51,21 +37,11 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 	type AgentBrowserToolParams,
-	type AgentBrowserToolRenderContext,
 } from "./helpers/agent-browser-harness.js";
 
 import {
 	PLAIN_RENDER_THEME,
 	createRenderContext,
-	electronAppNames,
-	fakeAgentBrowserLifecycleScript,
-	isTestPidAlive,
-	readOptionalFakeElectronLaunchLog,
-	stopTestPid,
-	waitForTestPidExit,
-	writeFakeLaunchableElectronApp,
-	writeFakeLinuxElectronBinary,
-	writeFakeMacElectronApp,
 } from "./helpers/extension-validation-fixtures.js";
 
 test("agentBrowserExtension names its tools in every prompt guideline", () => {

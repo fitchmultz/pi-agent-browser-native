@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.2.69",
+  "version": "0.2.70",
   "description": "pi extension that exposes agent-browser as a native tool for browser automation",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
@@ -94,7 +94,6 @@
     "prepublishOnly": "npm run verify -- release && npm pack --dry-run",
     "build": "node ./scripts/build.mjs",
     "startup-profile": "node ./scripts/profile-startup.mjs",
-    "prepack": "npm run build",
     "prepare": "node ./scripts/prepare.mjs"
   },
   "packageManager": "npm@11.14.0",

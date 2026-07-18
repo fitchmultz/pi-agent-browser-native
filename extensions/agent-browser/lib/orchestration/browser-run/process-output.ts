@@ -105,10 +105,7 @@ import {
 } from "./final-result.js";
 import type {
 	AboutBlankSessionMismatch,
-	AgentBrowserToolResult,
 	BrowserProcessOutputResult,
-	BrowserRunContext,
-	BrowserRunOptions,
 	BrowserRunStatePatch,
 	ParseFailureOutput,
 	ProcessBrowserOutputInput,

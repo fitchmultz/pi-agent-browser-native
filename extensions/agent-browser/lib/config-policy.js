@@ -18,7 +18,7 @@ import { join, resolve } from "node:path";
 /** @typedef {{ provider: WebSearchProvider; apiKeyEnv: string; configKey: WebSearchProviderConfigKey; label: string }} WebSearchProviderDescriptor */
 /** @typedef {{ name: string; policy?: BrowserDefaultProfilePolicy }} BrowserDefaultProfileConfig */
 /** @typedef {{ enabled?: boolean; preferredProvider?: WebSearchProvider; braveApiKey?: string; exaApiKey?: string }} WebSearchConfig */
-/** @typedef {{ defaultProfile?: BrowserDefaultProfileConfig; executablePath?: string; defaultLaunchArgs?: string[] }} BrowserConfig */
+/** @typedef {{ defaultProfile?: BrowserDefaultProfileConfig; executablePath?: string }} BrowserConfig */
 /** @typedef {{ version?: 1; webSearch?: WebSearchConfig; browser?: BrowserConfig }} AgentBrowserConfig */
 /** @typedef {{ config: AgentBrowserConfig; path: string; scope: ConfigLayerScope }} ConfigLayer */
 /** @typedef {{ kind: CredentialSourceKind; provider?: WebSearchProvider; rawValue: string; scope: AgentBrowserConfigScope }} CredentialSource */
@@ -174,21 +174,6 @@ function validateString(value, path, errors) {
  * @param {unknown} value
  * @param {string} path
  * @param {string[]} errors
- * @returns {string[] | undefined}
- */
-function validateStringArray(value, path, errors) {
-	if (value === undefined) return undefined;
-	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-		errors.push(`${path} must be an array of strings.`);
-		return undefined;
-	}
-	return value;
-}
-
-/**
- * @param {unknown} value
- * @param {string} path
- * @param {string[]} errors
  */
 function validateBoolean(value, path, errors) {
 	if (value === undefined) return undefined;
@@ -260,12 +245,11 @@ export function isProjectSafeCredentialValueForProvider(rawValue, provider) {
 /**
  * @param {unknown} value
  * @param {string} path
- * @param {ConfigLayerScope} scope
  * @param {string[]} errors
  * @param {string[]} warnings
  * @returns {AgentBrowserConfig | undefined}
  */
-export function validateAgentBrowserConfig(value, path, scope, errors, warnings) {
+export function validateAgentBrowserConfig(value, path, errors, warnings) {
 	if (!isRecord(value)) {
 		errors.push(`${path} must contain a JSON object.`);
 		return undefined;
@@ -310,11 +294,6 @@ export function validateAgentBrowserConfig(value, path, scope, errors, warnings)
 			if (executablePath) {
 				config.browser.executablePath = executablePath;
 			}
-			const defaultLaunchArgs = validateStringArray(value.browser.defaultLaunchArgs, `${path}.browser.defaultLaunchArgs`, errors);
-			if (defaultLaunchArgs) {
-				config.browser.defaultLaunchArgs = defaultLaunchArgs;
-				warnings.push(`${path}.browser.defaultLaunchArgs is recorded for future use; current releases do not auto-inject default launch args.`);
-			}
 		}
 	}
 
@@ -342,7 +321,7 @@ export function parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings)
 		errors.push(`Could not parse ${scope} config ${path}: ${error instanceof Error ? error.message : String(error)}`);
 		return undefined;
 	}
-	const config = validateAgentBrowserConfig(parsed, path, scope, errors, warnings);
+	const config = validateAgentBrowserConfig(parsed, path, errors, warnings);
 	return config ? { config, path, scope } : undefined;
 }
 

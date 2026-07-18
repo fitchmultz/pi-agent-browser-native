@@ -12,7 +12,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
 import {
-	extractCommandTokens,
 	findCommandStartIndex,
 	parseArgvDescriptor,
 	parseCommandInfo,
@@ -938,7 +937,6 @@ export function buildExecutionPlan(
 	const startupScopedFlags = getStartupScopedFlags(args).filter((flag) => !(flag === "--namespace" && explicitNamespace === options.managedSessionNamespace));
 	const plainTextInspection = isPlainTextInspectionArgs(args);
 	const argvDescriptor = parseArgvDescriptor(args);
-	const commandTokens = argvDescriptor.commandTokens;
 	const commandInfo = argvDescriptor.commandInfo;
 	const commandNeedsManagedSession = !plainTextInspection && needsManagedSession(argvDescriptor);
 	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];

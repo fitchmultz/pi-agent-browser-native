@@ -334,17 +334,17 @@ export function verifySteps(options) {
 				localToolStep("tsx", ["--test", "test/agent-browser.efficiency-benchmark.test.ts"]),
 			];
 		case "startup-profile":
-			return [buildStep(), scriptStep(["./scripts/profile-startup.mjs", ...options.passthrough])];
+			return [scriptStep(["./scripts/profile-startup.mjs", ...options.passthrough])];
 		case "real-upstream":
 			return [localToolStep("tsx", ["--test", "test/agent-browser.real-upstream-contract.test.ts"], { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" })];
 		case "dogfood":
 			return [localToolStep("tsx", ["./scripts/verify-agent-browser-dogfood.ts", ...options.passthrough])];
 		case "package":
-			return [buildStep(), scriptStep(["./scripts/verify-package.mjs", ...options.passthrough])];
+			return [scriptStep(["./scripts/verify-package.mjs", ...options.passthrough])];
 		case "package-pi":
-			return [buildStep(), scriptStep(["./scripts/verify-package.mjs", "--smoke-pi", ...options.passthrough])];
+			return [scriptStep(["./scripts/verify-package.mjs", "--smoke-pi", ...options.passthrough])];
 		case "lifecycle":
-			return [buildStep(), scriptStep(["./scripts/verify-lifecycle.mjs", ...options.passthrough])];
+			return [scriptStep(["./scripts/verify-lifecycle.mjs", ...options.passthrough])];
 		case "platform-target":
 			return [
 				...docsSteps({ mode: "check", target: "all" }),

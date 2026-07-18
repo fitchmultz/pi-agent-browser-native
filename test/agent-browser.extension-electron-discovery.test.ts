@@ -1,8 +1,8 @@
 /**
  * Purpose: Verify Electron handoff variants, cleanup failure paths, restored records, schema rejection, and discovery contracts.
- * Responsibilities: Assert metadata, prompt injection, bash blocking, CLI validation, missing binary, malformed envelope, fallback error, and oversized parse-failure behavior.
+ * Responsibilities: Assert Electron handoff modes, cleanup failure paths, restored records, schema rejection, and discovery contracts.
  * Scope: Integration-style Node test-runner coverage around the extension harness before result presentation and tab lifecycle suites.
- * Usage: Run with `npx tsx --test test/agent-browser.extension-validation.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.extension-electron-discovery.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests use fake agent-browser binaries and isolated env/temp directories to avoid relying on upstream browser behavior.
  */
 
@@ -12,22 +12,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { Theme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
-import { Check } from "typebox/value";
-
-import {
-	WEB_SEARCH_PROMPT_GUIDELINE,
-	QUICK_START_GUIDELINES,
-	buildInstalledDocsGuideline,
-	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-	TOOL_PROMPT_GUIDELINES_PREFIX,
-	TOOL_PROMPT_GUIDELINES_SUFFIX,
-	WRAPPER_TAB_RECOVERY_BEHAVIOR,
-} from "../extensions/agent-browser/lib/playbook.js";
 import {
 	discoverElectronApps,
 	ELECTRON_DISCOVERY_MAX_RESULTS,
-	type ElectronAppDiscovery,
 } from "../extensions/agent-browser/lib/electron/discovery.js";
 import {
 	cleanupElectronLaunchResources,
@@ -37,22 +24,17 @@ import {
 	createSecureTempDirectory,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
-	TEST_SESSION_ID,
 	createExtensionHarness,
 	createToolBranchEntry,
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
-	runExtensionEventResults,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 	type AgentBrowserToolParams,
-	type AgentBrowserToolRenderContext,
 } from "./helpers/agent-browser-harness.js";
 
 import {
-	PLAIN_RENDER_THEME,
-	createRenderContext,
 	electronAppNames,
 	fakeAgentBrowserLifecycleScript,
 	isTestPidAlive,

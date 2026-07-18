@@ -126,8 +126,7 @@ export async function main(argv = process.argv.slice(2)) {
 		const { runTargetSuites } = await import("./platform-smoke/targets.mjs");
 		const targets = args.target ? args.target.split(",").map((name) => name.trim()).filter(Boolean) : config.requiredTargets;
 		const suites = args.suite ? [args.suite] : config.requiredSuites;
-		const supportedTargets = config.supportedTargets ?? config.requiredTargets;
-		validateNames("target", targets, supportedTargets);
+		validateNames("target", targets, config.requiredTargets);
 		validateNames("suite", suites, config.requiredSuites);
 		const runs = targets.map(async (targetName) => {
 			console.log(`\n=== Target: ${targetName} ===`);

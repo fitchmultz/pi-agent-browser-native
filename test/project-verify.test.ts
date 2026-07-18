@@ -22,8 +22,9 @@ function labels(steps: Array<{ args: string[]; env?: Record<string, string> }>):
 }
 
 test("typecheck gate covers shared JavaScript config policy implementation", () => {
-	const tsconfig = JSON.parse(readFileSync("tsconfig.json", "utf8")) as { compilerOptions?: { allowJs?: boolean }; include?: string[] };
+	const tsconfig = JSON.parse(readFileSync("tsconfig.json", "utf8")) as { compilerOptions?: { allowJs?: boolean; noUnusedLocals?: boolean }; include?: string[] };
 	assert.equal(tsconfig.compilerOptions?.allowJs, true);
+	assert.equal(tsconfig.compilerOptions?.noUnusedLocals, true);
 	assert.ok(tsconfig.include?.includes("extensions/agent-browser/lib/config-policy.js"));
 	assert.equal(existsSync("extensions/agent-browser/lib/config-policy.d.ts"), false);
 });
@@ -51,14 +52,13 @@ test("verify facade pre-pr mode composes default verification with package-conte
 		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
-		"./scripts/build.mjs",
 		"./scripts/verify-package.mjs",
 	]);
 });
 
 test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, package-pi, platform-target, and platform smoke gates explicit", () => {
 	const startupProfile = verifySteps({ mode: "startup-profile", passthrough: ["--samples", "3", "--json"], showHelp: false });
-	assert.deepEqual(labels(startupProfile), ["./scripts/build.mjs", "./scripts/profile-startup.mjs --samples 3 --json"]);
+	assert.deepEqual(labels(startupProfile), ["./scripts/profile-startup.mjs --samples 3 --json"]);
 
 	const realUpstream = verifySteps({ mode: "real-upstream", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(realUpstream), ["--test test/agent-browser.real-upstream-contract.test.ts"]);
@@ -68,7 +68,7 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 	assert.deepEqual(labels(dogfood), ["./scripts/verify-agent-browser-dogfood.ts --keep-artifacts"]);
 
 	const packagePi = verifySteps({ mode: "package-pi", passthrough: [], showHelp: false });
-	assert.deepEqual(labels(packagePi), ["./scripts/build.mjs", "./scripts/verify-package.mjs --smoke-pi"]);
+	assert.deepEqual(labels(packagePi), ["./scripts/verify-package.mjs --smoke-pi"]);
 
 	const platformTarget = verifySteps({ mode: "platform-target", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(platformTarget), [
@@ -92,9 +92,7 @@ test("verify facade release gate composes default verification, lifecycle, packa
 		"--test --test-concurrency=1 test/**/*.test.ts",
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/verify-command-reference.mjs",
-		"./scripts/build.mjs",
 		"./scripts/verify-lifecycle.mjs",
-		"./scripts/build.mjs",
 		"./scripts/verify-package.mjs --smoke-pi",
 		"./scripts/platform-smoke.mjs doctor",
 		"./scripts/platform-smoke.mjs run --target macos,ubuntu,windows-native",
@@ -147,7 +145,6 @@ test("verify facade lifecycle mode passes --model and other allowed flags throug
 		showHelp: false,
 	});
 	assert.deepEqual(labels(steps), [
-		"./scripts/build.mjs",
 		"./scripts/verify-lifecycle.mjs --model openai-codex/gpt-5.5:minimal --keep-artifacts --verbose --timeout-ms 600000",
 	]);
 });

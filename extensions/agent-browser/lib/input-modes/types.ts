@@ -80,18 +80,6 @@ export type CompiledAgentBrowserElectron =
 		timeoutMs?: number;
 	};
 
-export interface AgentBrowserSemanticActionInput {
-	action: AgentBrowserSemanticActionName;
-	locator?: AgentBrowserSemanticLocator;
-	value?: string;
-	values?: string[];
-	selector?: string;
-	text?: string;
-	role?: string;
-	name?: string;
-	session?: string;
-}
-
 export interface CompiledAgentBrowserSemanticAction {
 	action: AgentBrowserSemanticActionName;
 	locator?: AgentBrowserSemanticLocator;

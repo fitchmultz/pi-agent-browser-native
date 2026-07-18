@@ -69,13 +69,13 @@ test("platform smoke config and package scripts require macOS, Ubuntu, and nativ
 	for (const dependency of ["libvulkan1", "mesa-vulkan-drivers", "xvfb"]) assert.match(linuxImage, new RegExp(`\\b${dependency}\\b`));
 
 	const code = String.raw`
-import config from "./platform-smoke.config.mjs";
+import config, * as configModule from "./platform-smoke.config.mjs";
 const result = {
   agentBrowserVersion: config.agentBrowserVersion,
   crabboxMinVersion: config.requiredCrabbox.minVersion,
   nodeValidationMajor: config.nodeValidationMajor,
   packageName: config.packageName,
-  supportedTargets: config.supportedTargets,
+  privateConstantsExported: "PLATFORM_SMOKE_AGENT_BROWSER_VERSION" in configModule || "PLATFORM_SMOKE_UBUNTU_IMAGE" in configModule,
   ubuntuContainerImage: config.ubuntuContainerImage,
   windowsSourceVm: config.windowsParallels.sourceVm,
   windowsSnapshot: config.windowsParallels.snapshot,
@@ -83,7 +83,7 @@ const result = {
   targets: config.requiredTargets,
 };
 console.log(JSON.stringify(result));
-if (result.packageName !== "pi-agent-browser-native") process.exit(1);
+if (result.packageName !== "pi-agent-browser-native" || result.privateConstantsExported) process.exit(1);
 if (result.crabboxMinVersion !== "0.26.0") process.exit(1);
 if (result.nodeValidationMajor !== 22) process.exit(1);
 if (!result.ubuntuContainerImage.includes("agent-browser" + result.agentBrowserVersion)) process.exit(1);
@@ -91,7 +91,6 @@ if (result.windowsSourceVm !== "pi-extension-windows-template" || result.windows
 if (!/^\d+\.\d+\.\d+$/.test(result.agentBrowserVersion)) process.exit(1);
 if (result.suites.join(",") !== "platform-build,browser-dogfood-smoke") process.exit(1);
 if (result.targets.join(",") !== "macos,ubuntu,windows-native") process.exit(1);
-if (result.supportedTargets.join(",") !== "macos,ubuntu,windows-native") process.exit(1);
 `;
 	const result = run(process.execPath, ["--input-type=module", "-e", code]);
 	assert.equal(result.status, 0, result.stderr);

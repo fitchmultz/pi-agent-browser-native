@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.70 - 2026-07-18
+
+### Changed
+
+- Removed unused TypeScript imports, locals, exports, declaration sidecars, compatibility barrels, inert `browser.defaultLaunchArgs` config handling, and duplicated platform/build orchestration while preserving the browser runtime contract.
+- Condensed completed plans and the historical support ledger into current ADR/decision indexes, removed obsolete archive material, and enabled `noUnusedLocals` for ongoing enforcement.
+- Kept one guaranteed build owner before every `dist/` consumer; package verification now lets `prepare` create a missing `dist/` before expanding the publish contract and forbids internal `docs/plans/` content by prefix.
+
+### Compatibility
+
+- Undocumented deep imports through `lib/results/shared.js` or `lib/orchestration/browser-run.js`, the inert `browser.defaultLaunchArgs` config field, unused named platform-config exports, and the redundant default-export `supportedTargets` platform-smoke property are no longer supported. Native `agent_browser` behavior and documented package entrypoints are unchanged.
+
+### Validation
+
+- Passed `npm run verify -- release` (587 tests passed, 2 opt-in skips), configured-source lifecycle, packaged Pi smoke, live command-reference verification, and macOS/Ubuntu/native-Windows Crabbox `platform-build` plus `browser-dogfood-smoke` suites.
+- Passed opt-in real-upstream, deterministic dogfood, benchmark, and startup-profile gates; the three-sample startup maximum was 51.9 ms against the 250 ms budget.
+- Passed a checkout-loaded Pi 0.80.10 tmux smoke on `example.com` and `react.dev`, including QA, fresh-session snapshot/link navigation, verified screenshot evidence, recovery from stale selector attempts, and zero active browser sessions after cleanup.
+
 ## 0.2.69 - 2026-07-17
 
 ### Changed

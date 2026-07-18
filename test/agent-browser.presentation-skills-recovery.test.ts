@@ -2,31 +2,16 @@
  * Purpose: Verify skills adaptation and recovery hint presentation for agent-browser results.
  * Responsibilities: Assert native-tool skill guidance, getter shortcuts, selector/stale-ref hints, and related next actions.
  * Scope: Unit-style Node test-runner coverage for `buildToolPresentation`; extension lifecycle presentation integration lives in focused extension suites.
- * Usage: Run with `npx tsx --test test/agent-browser.presentation.test.ts` or via `npm run verify`.
+ * Usage: Run with `npx tsx --test test/agent-browser.presentation-skills-recovery.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests isolate temp artifacts and preserve existing cleanup for secure temp roots.
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 
-import {
-	buildToolPresentation
-} from "../extensions/agent-browser/lib/results.js";
-import type {
-	SessionArtifactManifest,
-	SessionArtifactManifestEntry,
-} from "../extensions/agent-browser/lib/results/contracts.js";
-import {
-	DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-	getSessionArtifactManifestMaxEntries,
-	mergeSessionArtifactManifest,
-} from "../extensions/agent-browser/lib/results/artifact-manifest.js";
-import {
-	withPatchedEnv
-} from "./helpers/agent-browser-harness.js";
+import { buildToolPresentation } from "../extensions/agent-browser/lib/results.js";
+import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 
 test("buildToolPresentation renders agent-browser skills as native-tool guidance", async () => {
 	const listPresentation = await buildToolPresentation({

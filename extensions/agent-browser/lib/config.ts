@@ -23,13 +23,9 @@ import {
 import type {
 	AgentBrowserConfig,
 	AgentBrowserConfigLoadOptions,
-	AgentBrowserConfigScope,
 	AgentBrowserConfigState,
-	BrowserDefaultProfileConfig,
-	BrowserDefaultProfilePolicy,
 	ConfigLayer,
 	CredentialSource,
-	CredentialSourceKind,
 	WebSearchProvider,
 } from "./config-policy.js";
 
@@ -194,18 +190,4 @@ export async function resolvePreferredWebSearchCredential(
 		if (credential) return { provider, credential };
 	}
 	return undefined;
-}
-
-export async function hasResolvableCredentialSource(
-	state: AgentBrowserConfigState,
-	options: { env?: NodeJS.ProcessEnv } = {},
-): Promise<boolean> {
-	if (!state.webSearchEnabled || state.errors.length > 0) return false;
-	for (const provider of getWebSearchProviderOrder(state)) {
-		const source = getWebSearchCredentialSource(state, provider);
-		if (!source) continue;
-		if (source.kind === "command") return true;
-		if ((await resolveCredentialSource(source, options))?.value) return true;
-	}
-	return false;
 }

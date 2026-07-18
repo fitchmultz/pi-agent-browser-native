@@ -52,21 +52,11 @@ export interface VisibleRefFallbackDiagnostic {
 	};
 }
 
-export interface PublicVisibleRefFallbackCandidate {
-	action: SelectorRecoveryActionName;
-	args?: string[];
-	name: string;
-	reason: string;
-	ref: string;
-	role: string;
-}
+export type PublicVisibleRefFallbackCandidate = Omit<VisibleRefFallbackCandidate, "editableEvidence">;
 
-export interface PublicVisibleRefFallbackDiagnostic {
+export type PublicVisibleRefFallbackDiagnostic = Omit<VisibleRefFallbackDiagnostic, "candidates"> & {
 	candidates: PublicVisibleRefFallbackCandidate[];
-	snapshot: SessionRefSnapshot;
-	summary: string;
-	target: VisibleRefFallbackDiagnostic["target"];
-}
+};
 
 export interface VisibleRefFallbackTarget {
 	action: SelectorRecoveryActionName;

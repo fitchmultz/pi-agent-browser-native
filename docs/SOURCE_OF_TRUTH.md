@@ -19,9 +19,9 @@ This map keeps the active documentation set navigable. When changing behavior, u
 | Upstream command workflows and examples for agents | [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md) | Generated baseline blocks are bounded by HTML comments; regenerate with `npm run docs -- command-reference write`. |
 | Native tool input schema, `details` fields, result categories, and machine-readable contracts | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md) | Keep this as the API contract; avoid release-history prose unless it explains an active field. |
 | Electron-specific lifecycle and troubleshooting | [`ELECTRON.md`](ELECTRON.md) | Public desktop app guide; link to contracts instead of duplicating schemas. |
-| Targeted upstream support, release gates, and live verification status | [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) | Active checklist only. Implementation-deep closure notes live in [`support-notes.md`](support-notes.md). |
+| Targeted upstream support, release gates, and live verification status | [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) | Active checklist; closed requirement decisions link to the compact [`support-notes.md`](support-notes.md) index. |
 | Maintainer release process and smoke-test procedures | [`RELEASE.md`](RELEASE.md) and [`../AGENTS.md`](../AGENTS.md) | `AGENTS.md` is agent-specific operational guidance; release evidence belongs in `RELEASE.md` or CueLoop. |
-| Historical plans and detailed closure notes | [`docs/plans/`](plans/), [`docs/archive/`](archive/), and [`support-notes.md`](support-notes.md) | Not the first place to read current behavior; use when investigating why a decision was made. |
+| Durable design decisions | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`support-notes.md`](support-notes.md), and focused ADRs under [`plans/`](plans/) | Keep only current rationale and evidence links; delete completed execution logs. |
 
 ## Update rules
 

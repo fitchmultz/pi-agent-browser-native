@@ -15,7 +15,6 @@ import test from "node:test";
 
 import {
 	cleanupSecureTempArtifacts,
-	createSecureTempDirectory,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
 	TEST_SESSION_ID,

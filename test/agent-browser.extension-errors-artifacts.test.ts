@@ -12,15 +12,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
 import {
 	collectTimeoutPartialProgress,
 	formatTimeoutPartialProgressText,
 } from "../extensions/agent-browser/lib/orchestration/browser-run/diagnostics.js";
-import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
-import {
-	cleanupSecureTempArtifacts,
-	createSecureTempDirectory,
-} from "../extensions/agent-browser/lib/temp.js";
 import {
 	createExtensionHarness,
 	createToolBranchEntry,
