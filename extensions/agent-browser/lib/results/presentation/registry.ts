@@ -110,6 +110,10 @@ const COMMAND_PRESENTERS: Record<string, CommandPresenter> = {
 		summary: (_commandInfo, data) => Array.isArray(data) ? `Chrome profiles: ${data.length}` : undefined,
 		text: (_commandInfo, data) => Array.isArray(data) ? formatProfilesText(data, "Chrome profiles") : undefined,
 	},
+	read: {
+		summary: (_commandInfo, data) => isRecord(data) && typeof (data.finalUrl ?? data.url) === "string" ? `Read: ${data.finalUrl ?? data.url}` : undefined,
+		text: (_commandInfo, data) => isRecord(data) && typeof data.content === "string" ? redactModelFacingText(data.content) : undefined,
+	},
 	screenshot: {
 		summary: (_commandInfo, data) => isRecord(data) && typeof data.path === "string" ? `Screenshot saved: ${data.path}` : undefined,
 		text: (_commandInfo, data) => isRecord(data) ? getScreenshotSummary(data) : undefined,

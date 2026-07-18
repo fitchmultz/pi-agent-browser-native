@@ -224,6 +224,13 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(snapshotDetails.usedImplicitSession, true);
 					assertJsonIncludes(snapshotDetails.data, ["Agent Browser Contract Fixture"], "snapshot data");
 
+					const readResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl] });
+					const readDetails = assertSuccessfulResult(readResult, shapes.commands.read, "read URL");
+					assert.equal(readDetails.sessionName, managedSessionName);
+					assert.equal(readDetails.usedImplicitSession, true);
+					assert.match(readResult.content[0]?.text ?? "", /Agent Browser Contract Fixture/);
+					assert.match((readDetails.data as { content?: string }).content ?? "", /Ready for real upstream contract validation/);
+
 					const uploadPath = join(tempDir, "upload-fixture.txt");
 					const screenshotPath = join(tempDir, "contract.png");
 					const pdfPath = join(tempDir, "contract.pdf");

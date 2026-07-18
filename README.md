@@ -302,6 +302,15 @@ Run a multi-step flow in one tool call:
 
 If the same `batch` stdin later uses `@e…` on interaction commands after a step that can navigate or mutate the page (`open`, non-form `click`, `reload`, and similar), insert a `snapshot` step whose first argv token is `snapshot` (for example `["snapshot","-i"]`) between those phases. Multiple same-snapshot `fill @e…` steps and native form-control steps (`check`/`uncheck` on checkbox or radio refs, checkbox/radio `click`/`tap` refs, and `select` on combobox refs) may be batched before a final click/submit step. Dynamic or autosubmit forms should still use stable locators or split with a fresh snapshot. The wrapper rejects unsafe ordering with `failureCategory: "stale-ref"` before upstream runs; full rules are under `refSnapshot` in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md#details).
 
+Read documentation or other unstructured text without launching Chrome, or omit the URL to read the rendered DOM of the current tab:
+
+```json
+{ "args": ["read", "https://example.com/docs", "--filter", "authentication"] }
+{ "args": ["read"] }
+```
+
+Explicit URL reads prefer `text/markdown`, then try a `.md` path and nearby `llms.txt` links before falling back to readable HTML text. Use `--outline`, `--llms index|full`, `--require-md`, `--raw`, or `--timeout <ms>` when needed. The wrapper renders upstream `data.content` first, preserves metadata in `details.data`, keeps fetched URLs from replacing the active browser tab target, and budgets explicit long read timeouts across upstream's `.md` and ancestor-`llms.txt` request fallbacks.
+
 Evaluate page JavaScript through stdin. Put the script in the top-level `stdin` field, not as an extra `args` token after `--stdin`. Return the value you want as an expression; `eval --stdin` may warn with `details.evalStdinHint` when a function-shaped snippet serializes to `{}` instead of being invoked:
 
 ```json

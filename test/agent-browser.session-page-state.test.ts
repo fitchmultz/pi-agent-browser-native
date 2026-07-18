@@ -14,6 +14,7 @@ import {
 	buildNoActivePageRefSnapshotInvalidation,
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
+	extractSessionTabTargetFromCommandData,
 } from "../extensions/agent-browser/lib/session-page-state.js";
 
 function toolEntry(details: Record<string, unknown>, isError = false): unknown {
@@ -125,6 +126,16 @@ test("extractRefSnapshotFromData preserves editable evidence from snapshot text"
 
 	assert.deepEqual(snapshot?.refs?.e1, { isContentEditable: true, isEditable: true, name: "Editor", role: "textbox" });
 	assert.deepEqual(snapshot?.refs?.e2, { isEditable: false, name: "Disabled", role: "generic" });
+});
+
+test("read fetch metadata does not replace the active browser tab target", () => {
+	assert.equal(
+		extractSessionTabTargetFromCommandData(["read", "https://docs.example.com"], {
+			finalUrl: "https://docs.example.com/index.md",
+			url: "https://docs.example.com",
+		}),
+		undefined,
+	);
 });
 
 test("SessionPageState invalidation replaces snapshots and later snapshots clear invalidations", () => {

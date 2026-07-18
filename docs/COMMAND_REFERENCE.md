@@ -18,12 +18,22 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.32.0` command/help surface, audited against vercel-labs/agent-browser@1bda76fa675e2b2dd9936123f6f2f1556d76e960. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.32.2` command/help surface, audited against vercel-labs/agent-browser@6ede7a9470ac4b681cabf838af8668b9aa99e957. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
+
+### Upstream 0.32.2 rebaseline
+
+The 0.32.1 and 0.32.2 releases only update the separate `@agent-browser/eve` integration; the CLI/help/schema surface is unchanged:
+
+- 0.32.1 standardized lowercase eve branding and widened compatibility beyond the original pinned peer range.
+- 0.32.2 targets eve 0.25.1+, adopts eve's source/dist extension manifest, updates its example to stable AI SDK packages, and aligns tests with eve's scoped config registry.
+- This Pi extension still does not bundle `@agent-browser/eve` or add an eve-specific input mode.
+
+The current audit also closes a command-reference/presentation gap for upstream `read [url]`, which has existed since 0.30.0: the capability baseline now samples `read --help`, native results render `data.content` instead of only the fetched URL, explicit fetch metadata cannot replace the active browser tab target, and `read --timeout <ms>` extends the wrapper subprocess budget across upstream's per-request `.md` and ancestor-`llms.txt` fallback sequence.
 
 ### Upstream 0.32.0 rebaseline
 
@@ -247,11 +257,15 @@ Successful `snapshot -i` results can also surface `Possible overlay blockers` wh
 ### Extract page data
 
 ```json
+{ "args": ["read", "https://example.com/docs", "--filter", "authentication"] }
+{ "args": ["read"] }
 { "args": ["get", "title"] }
 { "args": ["get", "url"] }
 { "args": ["get", "text", "main"] }
 { "args": ["eval", "--stdin"], "stdin": "document.title" }
 ```
+
+Use `read [url]` for documentation and other unstructured text. `read <url> --raw` preserves the response body, `read <url> --require-md` requires `text/markdown`, `read <url> --llms <index|full>` reads the nearest ancestor llms index/full file, `read <url> --outline` emits headings, `read <url> --filter <text>` narrows matching sections/headings/links, and `read <url> --timeout <ms>` changes the request timeout. Explicit URL reads prefer markdown, try a `.md` path and nearby `llms.txt` links, then fall back to readable HTML without launching Chrome. Omit the URL to read rendered active-tab DOM, including current browser auth and client-side state; `--llms` / `--require-md` without a URL instead fetch from the active tab URL. The wrapper renders `data.content` first, retains source/content-type/status/final-URL metadata in `details.data`, keeps fetched URLs from replacing the active browser tab target, and extends its subprocess watchdog for explicit long read timeouts.
 
 When you already know several visible refs or selectors, extract them in one `batch` call instead of many serial getter calls:
 
@@ -561,6 +575,7 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 | --- | --- |
 | `open [url]` | Launch the browser and optionally navigate. URL-less `open` stays on `about:blank` so agents can stage routes, cookies, or init scripts before first navigation. |
 | `open <url>` | Navigate to a URL; `goto <url>` and `navigate <url>` are equivalent navigation aliases when a URL is present. |
+| `read [url]` | Fetch agent-readable text from an explicit URL without launching Chrome, or omit the URL to read rendered active-tab DOM. Supports `--raw`, `--require-md`, `--llms <index|full>`, `--outline`, `--filter <text>`, and `--timeout <ms>`. |
 | `click <sel>` | Click an element or `@ref`. |
 | `click <sel> --new-tab` | Click a link/control while requesting a new tab. |
 | `dblclick <sel>` | Double-click an element. |
@@ -934,14 +949,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.32.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.32.2</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `1bda76fa675e2b2dd9936123f6f2f1556d76e960`
-- upstream package version: `0.32.0`
+- upstream HEAD: `6ede7a9470ac4b681cabf838af8668b9aa99e957`
+- upstream package version: `0.32.2`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -952,11 +967,14 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `agent-browser.schema.json`
 - inspected: `cli/src/commands.rs`
 - inspected: `cli/src/flags.rs`
+- inspected: `cli/src/read.rs`
 - inspected: `cli/src/doctor/webgpu.rs`
 - inspected: `cli/src/native/actions.rs`
 - inspected: `cli/src/native/daemon.rs`
 - inspected: `docs/src/app/webgpu/page.mdx`
 - inspected: `packages/@agent-browser/eve/README.md`
+- inspected: `packages/@agent-browser/eve/package.json`
+- inspected: `packages/@agent-browser/eve/test/extension.test.mjs`
 - inspected: `packages/@agent-browser/sandbox/README.md`
 - inspected: `packages/@agent-browser/sandbox/src/shared.ts`
 - inspected: `packages/@agent-browser/sandbox/src/vercel.ts`
@@ -969,6 +987,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - core skill full: `agent-browser skills get core --full`
 - vercel sandbox skill full: `agent-browser skills get vercel-sandbox --full`
 - open help: `agent-browser open --help`
+- read help: `agent-browser read --help`
 - click help: `agent-browser click --help`
 - key help: `agent-browser key --help`
 - scroll help: `agent-browser scroll --help`
@@ -1020,7 +1039,7 @@ This generated block is review data for maintainers. The human-authored referenc
 
 #### Inventory sections
 - Built-in skills: 15 human-doc token(s), 15 upstream token(s)
-- Core page, element, navigation, and extraction commands: 74 human-doc token(s), 74 upstream token(s)
+- Core page, element, navigation, and extraction commands: 81 human-doc token(s), 82 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 24 human-doc token(s), 20 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 43 human-doc token(s), 53 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 33 human-doc token(s), 37 upstream token(s)
@@ -1049,6 +1068,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - `open <url>`
 - `goto <url>`
 - `navigate <url>`
+- `read [url]`
+- `read <url> --raw`
+- `read <url> --require-md`
+- `read <url> --llms <index|full>`
+- `read <url> --outline`
+- `read <url> --filter <text>`
+- `read <url> --timeout <ms>`
 - `click <sel>`
 - `click <sel> --new-tab`
 - `dblclick <sel>`
@@ -1388,6 +1414,14 @@ This generated block is review data for maintainers. The human-authored referenc
 - open help: `open [url]`
 - open help: `aliases still require a URL.`
 - root help: `open <url>`
+- root help: `read [url]`
+- read help: `read [url]`
+- read help: `--raw`
+- read help: `--require-md`
+- read help: `--llms <index|full>`
+- read help: `--outline`
+- read help: `--filter <text>`
+- read help: `--timeout <ms>`
 - root help: `click <sel>`
 - click help: `--new-tab`
 - root help: `dblclick <sel>`

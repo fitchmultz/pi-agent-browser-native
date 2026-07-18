@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.69 - 2026-07-17
+
+### Changed
+
+- Rebaselined the command/help inventory, source evidence, real-upstream output-shape fixture, and package docs to `agent-browser 0.32.2` / vercel-labs/agent-browser@6ede7a9470ac4b681cabf838af8668b9aa99e957.
+- Documented the 0.32.1–0.32.2 eve compatibility, packaging, stable AI SDK, and scoped-config updates without adding an eve-specific Pi runtime or dependency.
+- Added the previously missing upstream `read [url]` surface to the local capability inventory and prompt guidance, including markdown/llms/outline/filter options and explicit long-timeout budgeting across upstream's per-request fallback sequence.
+
+### Fixed
+
+- Rendered successful `read` results from upstream `data.content` instead of collapsing them to the fetched URL.
+- Kept explicit `read <url>` metadata from replacing the active browser tab target used by later ref and tab recovery.
+
+### Validation
+
+- Passed `npm run verify` (585 tests passed, 2 opt-in skips), live command-reference verification, and `npm run verify -- real-upstream` (2/2 tests) against installed `agent-browser 0.32.2`.
+- Passed a checkout-loaded Pi 0.80.10 tmux smoke: `read https://example.com` rendered the full `Example Domain` body and the managed session closed cleanly.
+
 ## 0.2.68 - 2026-07-16
 
 ### Changed

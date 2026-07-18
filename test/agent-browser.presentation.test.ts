@@ -51,6 +51,29 @@ test("buildToolPresentation formats snapshot output for the model", async () => 
 	assert.match(presentation.summary, /Snapshot: 2 refs/);
 });
 
+test("buildToolPresentation renders agent-readable content before read metadata", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "read", subcommand: "https://example.com/docs" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: {
+				content: "# Docs\n\nUse the current API.",
+				contentType: "text/markdown",
+				finalUrl: "https://example.com/docs.md",
+				source: "path-markdown",
+				status: 200,
+				url: "https://example.com/docs",
+			},
+		},
+	});
+
+	assert.equal(presentation.content[0]?.type, "text");
+	assert.equal((presentation.content[0] as { text: string }).text, "# Docs\n\nUse the current API.");
+	assert.equal(presentation.summary, "Read: https://example.com/docs.md");
+	assert.equal(presentation.pageChangeSummary, undefined);
+});
+
 test("buildToolPresentation omits page-change summaries for read-only inspection results", async () => {
 	const snapshot = await buildToolPresentation({
 		commandInfo: { command: "snapshot", subcommand: "-i" },

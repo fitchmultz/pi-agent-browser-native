@@ -8,7 +8,7 @@ import { tryDirectAnchorDownload } from "./prepare/direct-anchor-download.js";
 import { tryNetworkRequestsPageFilter } from "./prepare/network-page-filter.js";
 import { tryContainerScroll, tryPageScrollTo } from "./prepare/scroll-shims.js";
 import { trySnapshotFilter } from "./prepare/snapshot-filter.js";
-import { getWaitAwareProcessTimeoutMs } from "./prepare/wait-timeouts.js";
+import { commandTimeoutNeedsActivePageUrl, getCommandAwareProcessTimeoutMs } from "./prepare/wait-timeouts.js";
 import { getPersistentSessionArtifactStore } from "./session-artifacts.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { applyNamespaceToNextActions } from "../../results/next-actions.js";
@@ -30,6 +30,7 @@ import {
 	buildSessionDetailFields,
 	buildStaleRefPreflight,
 	getSessionContextKey,
+	extractStringResultField,
 	collectAnySessionTabSelection,
 	collectSessionTabSelection,
 	getGuardedRefUsage,
@@ -813,7 +814,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
 		? await prepareClickDispatchProbe({ commandTokens, cwd, namespace: executionPlan.namespace, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
 		: undefined;
-	const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ?? getWaitAwareProcessTimeoutMs(commandTokens, processStdin);
+	let readTimeoutPageUrl = priorSessionTabTarget?.url;
+	if (options.params.timeoutMs === undefined && readTimeoutPageUrl === undefined && executionPlan.sessionName && commandTimeoutNeedsActivePageUrl(commandTokens, processStdin)) {
+		try {
+			const data = await runSessionCommandData({ args: ["get", "url"], cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal });
+			readTimeoutPageUrl = extractStringResultField(data, "result") ?? extractStringResultField(data, "url");
+		} catch {}
+	}
+	const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ?? getCommandAwareProcessTimeoutMs(commandTokens, processStdin, readTimeoutPageUrl);
 	const redactedProcessArgs = redactInvocationArgs(processArgs);
 	const scrollAmount = Number(commandTokens.find((token) => /^\d+(?:\.\d+)?$/.test(token)));
 	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0 && (state.managedSessionActive || sessionMode === "fresh") && (!Number.isFinite(scrollAmount) || scrollAmount >= 500);

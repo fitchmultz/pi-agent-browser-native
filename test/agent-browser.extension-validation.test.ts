@@ -125,7 +125,8 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.match(guidelineText, /sessionMode=fresh/);
 		assert.match(guidelineText, /exact user paths/);
 		assert.match(guidelineText, /requested\/configured profiles only/);
-		assert.match(guidelineText, /Batch 3\+ reads/);
+		assert.match(guidelineText, /read <url> for docs\/text/);
+		assert.match(guidelineText, /Batch 3\+ getters/);
 		assert.match(guidelineText, /get text\/html\/value\/count <selector>/);
 		assert.match(guidelineText, /get attr <selector> <name>/);
 		assert.doesNotMatch(guidelineText, /get title\/url\/text\/html\/value\/attr\/count/);
