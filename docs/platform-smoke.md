@@ -62,7 +62,7 @@ PLATFORM_SMOKE_MAC_PORT=22
 PLATFORM_SMOKE_UBUNTU_IMAGE="pi-agent-browser-native-platform:node24-agent-browser<baseline-version>"
 
 PLATFORM_SMOKE_WINDOWS_VM="pi-extension-windows-template"
-PLATFORM_SMOKE_WINDOWS_SNAPSHOT="crabbox-ready"
+PLATFORM_SMOKE_WINDOWS_SNAPSHOT="crabbox-ready-ab-0.33.0"
 PLATFORM_SMOKE_WINDOWS_USER="<windows-ssh-user>"
 PLATFORM_SMOKE_WINDOWS_WORK_ROOT="C:\\crabbox\\pi-agent-browser-native"
 
@@ -80,11 +80,11 @@ Crabbox does not install project runtime tools. The macOS host, Ubuntu image, an
 
 - Node/npm at or above the configured Node major baseline in [`platform-smoke.config.mjs`](../platform-smoke.config.mjs).
 - Git and `tar`.
-- Upstream `agent-browser` matching this wrapper’s capability baseline. The Ubuntu target gets it from [`scripts/platform-smoke/linux-image/Dockerfile`](../scripts/platform-smoke/linux-image/Dockerfile); the Windows template gets it from the shared `pi-extension-windows-template` / `crabbox-ready` snapshot.
+- Upstream `agent-browser` matching this wrapper’s capability baseline. The Ubuntu target gets it from [`scripts/platform-smoke/linux-image/Dockerfile`](../scripts/platform-smoke/linux-image/Dockerfile); the Windows template gets it from the shared `pi-extension-windows-template` snapshot named in [`platform-smoke.config.mjs`](../platform-smoke.config.mjs) (currently `crabbox-ready-ab-0.33.0`, a child of the shared `crabbox-ready` base used by other projects' linked clones).
 - Browser/runtime dependencies needed by upstream `agent-browser`.
 - Native PowerShell and OpenSSH Server on Windows.
 
-For Windows, reuse `pi-extension-windows-template` with the shared canonical `crabbox-ready` power-off snapshot configured in [`platform-smoke.config.mjs`](../platform-smoke.config.mjs). Do not create one-off project VMs or run tests directly on the source VM. If a reusable tool is missing, update the shared template, verify from a fresh SSH session, remove caches/secrets/checkouts, shut down cleanly, and promote a known-good power-off snapshot.
+For Windows, reuse `pi-extension-windows-template` with the power-off snapshot configured in [`platform-smoke.config.mjs`](../platform-smoke.config.mjs). Do not create one-off project VMs or run tests directly on the source VM. If a reusable tool is missing, update the shared template from the current base snapshot, verify from a fresh SSH session, remove caches/secrets/checkouts, shut down cleanly, and promote a known-good power-off snapshot (a child snapshot is fine when other projects still hold linked clones of an older base).
 
 ## What the suites prove
 

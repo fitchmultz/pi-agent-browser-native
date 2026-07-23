@@ -632,6 +632,44 @@ function formatConsoleText(data: Record<string, unknown>, commandInfo: CommandIn
 	return shown.join("\n");
 }
 
+function formatA11yText(data: Record<string, unknown>): string | undefined {
+	const counts = isRecord(data.counts) ? data.counts : undefined;
+	const violations = getArrayField(data, "violations") ?? [];
+	const incomplete = getArrayField(data, "incomplete") ?? [];
+	if (!counts && violations.length === 0 && incomplete.length === 0) return undefined;
+	const lines: string[] = [];
+	const axeVersion = getStringField(data, "axeVersion");
+	if (axeVersion) lines.push(`axe-core ${redactModelFacingText(axeVersion)}`);
+	const url = getStringField(data, "url");
+	if (url) lines.push(`URL: ${redactModelFacingText(url)}`);
+	const violationCount = typeof counts?.violations === "number" ? counts.violations : violations.length;
+	const incompleteCount = typeof counts?.incomplete === "number" ? counts.incomplete : incomplete.length;
+	const passCount = typeof counts?.passes === "number" ? counts.passes : undefined;
+	const inapplicableCount = typeof counts?.inapplicable === "number" ? counts.inapplicable : undefined;
+	const countParts = [`${violationCount} violation${violationCount === 1 ? "" : "s"}`, `${incompleteCount} incomplete`];
+	if (passCount !== undefined) countParts.push(`${passCount} passes`);
+	if (inapplicableCount !== undefined) countParts.push(`${inapplicableCount} inapplicable`);
+	lines.push(`A11y audit: ${countParts.join(", ")}.`);
+	const previewLimit = Math.min(10, DIAGNOSTIC_LOG_PREVIEW_LIMIT);
+	const preview = violations.slice(0, previewLimit).map((item, index) => {
+		if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
+		const id = redactModelFacingText(getStringField(item, "id") ?? "rule");
+		const impact = redactModelFacingText(getStringField(item, "impact") ?? "unknown");
+		const help = firstLine(redactModelFacingText(getStringField(item, "help") ?? "").replace(/\s+/g, " ").trim(), 160);
+		const nodeCount = typeof item.nodeCount === "number" ? item.nodeCount : getArrayField(item, "nodes")?.length;
+		const nodePart = typeof nodeCount === "number" ? `, ${nodeCount} node${nodeCount === 1 ? "" : "s"}` : "";
+		return `${index + 1}. [${impact}] ${id}${nodePart}${help ? ` — ${help}` : ""}`;
+	});
+	lines.push(...preview);
+	if (violations.length > preview.length) {
+		lines.push(`... (${violations.length - preview.length} additional violations omitted from preview)`);
+	}
+	if (incompleteCount > 0) {
+		lines.push(`${incompleteCount} incomplete check${incompleteCount === 1 ? "" : "s"} need manual review (see details.data.incomplete).`);
+	}
+	return lines.join("\n");
+}
+
 function formatErrorsText(data: Record<string, unknown>, commandInfo: CommandInfo): string | undefined {
 	const errors = getArrayField(data, "errors");
 	if (!errors) return undefined;
@@ -930,6 +968,7 @@ export function formatDiagnosticText(commandInfo: CommandInfo, data: Record<stri
 	if (commandInfo.command === "chat") return formatChatText(data);
 	if (commandInfo.command === "console") return formatConsoleText(data, commandInfo);
 	if (commandInfo.command === "errors") return formatErrorsText(data, commandInfo);
+	if (commandInfo.command === "a11y") return formatA11yText(data);
 	if (commandInfo.command === "dashboard") return formatDashboardText(data);
 	if (commandInfo.command === "doctor") return formatDoctorText(data);
 	return undefined;

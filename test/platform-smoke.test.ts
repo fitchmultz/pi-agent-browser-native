@@ -87,7 +87,7 @@ if (result.packageName !== "pi-agent-browser-native" || result.privateConstantsE
 if (result.crabboxMinVersion !== "0.26.0") process.exit(1);
 if (result.nodeValidationMajor !== 22) process.exit(1);
 if (!result.ubuntuContainerImage.includes("agent-browser" + result.agentBrowserVersion)) process.exit(1);
-if (result.windowsSourceVm !== "pi-extension-windows-template" || result.windowsSnapshot !== "crabbox-ready") process.exit(1);
+if (result.windowsSourceVm !== "pi-extension-windows-template" || !String(result.windowsSnapshot || "").startsWith("crabbox-ready")) process.exit(1);
 if (!/^\d+\.\d+\.\d+$/.test(result.agentBrowserVersion)) process.exit(1);
 if (result.suites.join(",") !== "platform-build,browser-dogfood-smoke") process.exit(1);
 if (result.targets.join(",") !== "macos,ubuntu,windows-native") process.exit(1);

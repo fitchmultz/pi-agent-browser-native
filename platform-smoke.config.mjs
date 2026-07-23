@@ -22,7 +22,9 @@ export default {
 	ubuntuContainerImage: PLATFORM_SMOKE_UBUNTU_IMAGE,
 	windowsParallels: {
 		sourceVm: "pi-extension-windows-template",
-		snapshot: "crabbox-ready",
+		// Shared template snapshot with agent-browser 0.33.0 (+ Chrome 151 for the SSH user).
+		// Parent crabbox-ready remains for other projects' linked clones.
+		snapshot: "crabbox-ready-ab-0.33.0",
 	},
 	nodeValidationMajor: 22,
 	agentBrowserVersion: PLATFORM_SMOKE_AGENT_BROWSER_VERSION,

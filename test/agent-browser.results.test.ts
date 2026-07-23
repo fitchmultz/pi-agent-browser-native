@@ -130,6 +130,72 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Unable to find selector text=Close", command: "find" }), "selector-unsupported");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Element not found", command: "find" }), "selector-not-found");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "No elements found for selector .missing" }), "selector-not-found");
+	assert.equal(
+		classifyAgentBrowserFailureCategory({
+			command: "find",
+			errorText: '1 element has role "button", but none match name "Nope". Names seen: "Submit"',
+			args: ["find", "role", "button", "click", "--name", "Nope"],
+		}),
+		"selector-not-found",
+	);
+	assert.equal(
+		classifyAgentBrowserFailureCategory({
+			command: "find",
+			errorText:
+				"No element found: getByRole('dialog', { name: 'X' }). Verify the selector, role, or name is correct and the element exists in the DOM.",
+			args: ["find", "role", "dialog", "click", "--name", "X"],
+		}),
+		"selector-not-found",
+	);
+	assert.equal(
+		classifyAgentBrowserFailureCategory({
+			command: "click",
+			errorText: "Element not found: text=Nope. Verify the selector, role, or name is correct and the element exists in the DOM.",
+			args: ["click", "text=Nope"],
+		}),
+		"selector-not-found",
+	);
+	assert.equal(
+		classifyAgentBrowserFailureCategory({
+			command: "find",
+			errorText: '1 element has role "button", but none match name "timeout missing". Names seen: "Save timeout report"',
+			args: ["find", "role", "button", "click", "--name", "timeout missing"],
+		}),
+		"selector-not-found",
+	);
+	assert.equal(
+		classifyAgentBrowserFailureCategory({
+			command: "find",
+			errorText: '1 element has role "button", but none match name "Operation timed out". Names seen: "Submit"',
+			args: ["find", "role", "button", "click", "--name", "Operation timed out"],
+		}),
+		"selector-not-found",
+	);
+	assert.equal(
+		classifyAgentBrowserFailureCategory({
+			command: "eval",
+			errorText: 'debug dump Names seen: "not a locator miss"',
+		}),
+		"upstream-error",
+	);
+	assert.equal(
+		classifyAgentBrowserFailureCategory({
+			command: "find",
+			errorText: '1 element has role "button", but none match name "Confirmation required". Names seen: "Submit"',
+			args: ["find", "role", "button", "click", "--name", "Confirmation required"],
+		}),
+		"selector-not-found",
+	);
+	assert.equal(classifyAgentBrowserFailureCategory({ confirmationRequired: true, errorText: "ok" }), "confirmation-required");
+	assert.equal(
+		classifyAgentBrowserFailureCategory({
+			confirmationRequired: true,
+			command: "find",
+			errorText: '1 element has role "button", but none match name "Nope". Names seen: "Submit"',
+			args: ["find", "role", "button", "click", "--name", "Nope"],
+		}),
+		"confirmation-required",
+	);
 	assert.equal(classifyAgentBrowserFailureCategory({ timedOut: true }), "timeout");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Download not verified: file missing", command: "download" }), "download-not-verified");
 	assert.equal(buildAgentBrowserResultCategoryDetails({ failureCategory: "artifact-missing", succeeded: false }).failureCategory, "artifact-missing");

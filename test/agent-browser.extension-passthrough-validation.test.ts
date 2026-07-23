@@ -287,6 +287,7 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 		["skills", "get", "dogfood"],
 		["skills", "get", "vercel-sandbox"],
 		["skills", "get", "agentcore"],
+		["skills", "get", "derive-client"],
 	] as const;
 
 	try {
@@ -597,6 +598,7 @@ if (command === "trace") { data = subcommand === "stop" ? { path: args[commandIn
 if (command === "profiler") { data = subcommand === "stop" ? { path: args[commandIndex + 2] || ${JSON.stringify(profilePath)}, state: "stopped" } : { state: "started" }; if (data.path) ensureFile(data.path, "profile"); }
 if (command === "record") { data = subcommand === "start" ? { path: args[commandIndex + 2] || ${JSON.stringify(recordingPath)} } : { path: ${JSON.stringify(recordingPath)} }; if (subcommand === "stop") ensureFile(data.path, "video"); }
 if (command === "console") data = { messages: [{ text: "hello", type: "log" }] };
+if (command === "a11y") data = { axeVersion: "4.12.1", counts: { violations: 1, incomplete: 0, passes: 2, inapplicable: 0 }, violations: [{ id: "image-alt", impact: "critical", help: "Images must have alternative text", nodeCount: 1, nodes: [{ target: ["img"], html: "<img>" }] }], incomplete: [] };
 if (command === "errors") data = { errors: [{ text: "boom", url: "https://example.test/app.js", line: 1 }] };
 if (command === "highlight") data = { highlighted: subcommand };
 if (command === "inspect") data = { opened: true };
@@ -615,6 +617,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["network", "requests", "--filter", "example"],
 		["network", "request", "n1"],
 		["network", "har", "start"],
+		["network", "har", "start", "--content", "all"],
 		["network", "har", "stop", harPath],
 		["diff", "snapshot"],
 		["diff", "screenshot", "--baseline", join(tempDir, "baseline.png")],
@@ -627,6 +630,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["record", "stop"],
 		["console"],
 		["console", "--clear"],
+		["a11y"],
+		["a11y", "--tags", "wcag2a,wcag2aa"],
+		["a11y", "--selector", "#main"],
 		["errors"],
 		["errors", "--clear"],
 		["highlight", "#target"],

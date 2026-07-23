@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.72 - 2026-07-23
+
+### Changed
+
+- Rebaselined the command/help inventory, source evidence, prompt guidance, and package docs to `agent-browser 0.33.0` / vercel-labs/agent-browser@1ed371f3af472cc0d6cd8fdaea75d1a085ff7534 (includes 0.32.3–0.32.4 HAR/`find`/`derive-client` surfaces).
+- Documented HAR response-body capture modes (`network har start --content text|all|none`), `skills get derive-client`, and the new `a11y [url]` axe-core accessibility audit (`--tags`, `--selector`).
+- Documented upstream 0.32.4 `find role` implicit ARIA / accessible-name matching, locator-detail miss text, and the aligned `find` action list (`click, fill, check, hover, text`).
+- Added compact model-facing presentation for `a11y` violation/incomplete summaries.
+
+### Fixed
+
+- Classified upstream 0.32.4+ locator-detail misses (`Names seen:`, `No element found: getByRole(...)`, `Element not found: … Verify the selector, role, or name`) as `failureCategory: "selector-not-found"` so snapshot-ref recovery still runs, without treating bare accessible-name text containing `timeout` or `Confirmation required` as unrelated categories.
+- Treated command-scoped `--content` and `--tags` as value-taking flags during argv planning so `network har start --content all` and `a11y --tags wcag2a,wcag2aa` keep mode/tag tokens with their flags.
+
+### Validation
+
+- Passed `npm run verify` (590 tests passed, 2 opt-in skips), live command-reference verification, and `npm run verify -- real-upstream` (2/2 tests) against installed `agent-browser 0.33.0`.
+- Passed `npm run verify -- release`, including configured-source lifecycle, packaged Pi smoke, and macOS/Ubuntu/native-Windows Crabbox `platform-build` plus `browser-dogfood-smoke` on `agent-browser 0.33.0` (Windows snapshot `crabbox-ready-ab-0.33.0`, Ubuntu image `node24-agent-browser0.33.0`).
+
 ## 0.2.71 - 2026-07-18
 
 ### Fixed

@@ -24,7 +24,7 @@ interface CommandCapabilityEntry extends Partial<Record<CommandCapabilityFlag, t
 }
 
 const ADDITIONAL_COMMAND_TOKENS = [
-	"auth", "chat", "clipboard", "confirm", "connect", "dashboard", "deny", "device", "dialog", "diff", "doctor", "errors", "eval", "find", "frame", "get", "highlight", "inspect", "install", "is", "mcp", "plugin", "plugins", "profiles", "profiler", "react", "record", "removeinitscript", "session", "set", "skills", "snapshot", "state", "stream", "trace", "upgrade", "vitals", "wait", "web-vitals", "window",
+	"a11y", "auth", "chat", "clipboard", "confirm", "connect", "dashboard", "deny", "device", "dialog", "diff", "doctor", "errors", "eval", "find", "frame", "get", "highlight", "inspect", "install", "is", "mcp", "plugin", "plugins", "profiles", "profiler", "react", "record", "removeinitscript", "session", "set", "skills", "snapshot", "state", "stream", "trace", "upgrade", "vitals", "wait", "web-vitals", "window",
 ] as const;
 
 const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [

@@ -18,12 +18,22 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.32.2` command/help surface, audited against vercel-labs/agent-browser@6ede7a9470ac4b681cabf838af8668b9aa99e957. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.33.0` command/help surface, audited against vercel-labs/agent-browser@1ed371f3af472cc0d6cd8fdaea75d1a085ff7534. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
+
+### Upstream 0.33.0 rebaseline
+
+The 0.32.3–0.33.0 releases add HAR body capture, fix semantic locators, and ship accessibility audits:
+
+- 0.32.3 embeds text response bodies in HAR captures by default and adds `network har start --content <mode>` with `text` (default), `all`, and `none`. It also ships the `derive-client` skill for recording traffic and generating a standalone API client from HAR data.
+- 0.32.4 makes `find role` match implicit ARIA roles and browser-computed accessible names (for example `find role heading text --name` against `<h2>`, lists, and banners), keeps case-insensitive substring name matching by default, preserves locator detail in element-not-found errors (`Names seen: …`), and aligns advertised `find` actions to `click, fill, check, hover, text`.
+- 0.33.0 adds `a11y [url]` axe-core accessibility audits (`--tags`, `--selector`, structured JSON) with an embedded offline engine, plus a native fix that revives discarded tabs on tab switch instead of hanging the daemon.
+
+This wrapper classifies 0.32.4+ locator-detail misses as `selector-not-found`, treats HAR `--content` and a11y `--tags` as command-scoped value flags, renders compact `a11y` summaries, and documents the skill/HAR/a11y surfaces. No Eve-specific Pi runtime is added.
 
 ### Upstream 0.32.2 rebaseline
 
@@ -62,7 +72,7 @@ The 0.31.1 rebaseline is a React bugfix release: `react tree`, `react inspect <i
 
 The 0.31.0 rebaseline adds restore workflow and namespace/session lifecycle surfaces: `--restore [name]`, `--restore-save <policy>`, restore check flags, `--namespace <name>`, `session id`, and `session info`. The wrapper parses those globals, keeps `--namespace` before `--session`, carries namespace context through managed-session probes and state, and keeps `session id` / `session info` sessionless. Use `agent_browser` with `args: ["session", "id", "--scope", "worktree", "--prefix", "my-skill"]` to derive reusable session ids from inside Pi; use `--restore=<key>` when passing an explicit key that could be confused with a command word.
 
-Runtime probes retain the 0.30.1 `wait --url` fix: `wait --url "**/dashboard"` succeeds after a `pushstate /dashboard`, so `job.assertUrl` delegates exact and glob patterns to upstream `wait --url`. Two old caveats still stand: `find ... uncheck` and `wait <selector> --state hidden|detached` remain advertised by help but fail at runtime. Keep the wrapper's direct `uncheck` passthrough and `wait --fn` disappearance guidance.
+Runtime probes retain the 0.30.1 `wait --url` fix: `wait --url "**/dashboard"` succeeds after a `pushstate /dashboard`, so `job.assertUrl` delegates exact and glob patterns to upstream `wait --url`. Upstream 0.32.4 aligns advertised `find` actions with the dispatcher: `click, fill, check, hover, text` only—use top-level `uncheck <selector-or-ref>` (and `type` / `focus`) instead of `find ... uncheck|type|focus`. One older caveat still stands: `wait <selector> --state hidden|detached` remains advertised by some help paths but fails at runtime, so keep `wait --fn` disappearance guidance.
 
 ### Upstream 0.29.1 rebaseline
 
@@ -148,7 +158,7 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 
 ### Debug, diff, stream, dashboard, and chat families
 
-Upstream also exposes non-core families (`network`, `diff`, `trace` / `profiler` / `record`, `console` / `errors` / `highlight` / `inspect` / `clipboard`, `stream`, `dashboard`, `chat`, and related subcommands). The wrapper still owns argv planning, `--json`, managed sessions where applicable, artifact metadata, and model-facing presentation: structured results are compacted and scrubbed in `extensions/agent-browser/lib/results/presentation.ts`, and echoed argv uses the same `redactInvocationArgs` rules as core commands (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details) for the field contract). Deterministic fake-upstream coverage for representative JSON shapes and redaction lives in `test/agent-browser.extension-validation.test.ts` under `agentBrowserExtension passes through non-core network debug diff stream dashboard and chat families`.
+Upstream also exposes non-core families (`network`, `diff`, `trace` / `profiler` / `record`, `console` / `errors` / `a11y` / `highlight` / `inspect` / `clipboard`, `stream`, `dashboard`, `chat`, and related subcommands). The wrapper still owns argv planning, `--json`, managed sessions where applicable, artifact metadata, and model-facing presentation: structured results are compacted and scrubbed in `extensions/agent-browser/lib/results/presentation.ts`, and echoed argv uses the same `redactInvocationArgs` rules as core commands (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details) for the field contract). Deterministic fake-upstream coverage for representative JSON shapes and redaction lives in `test/agent-browser.extension-validation.test.ts` under `agentBrowserExtension passes through non-core network debug diff stream dashboard and chat families`.
 
 ## Recommended workflow
 
@@ -242,7 +252,7 @@ Examples:
 { "args": ["snapshot", "-i"] }
 ```
 
-The optional native `semanticAction` object is only a thin schema for common locator-based actions, direct selector/ref click/check/fill, and native dropdown selection; it compiles locator actions to existing upstream `find` commands, direct selector/ref actions to `click` / `check` / `fill`, compiles `action: "select"` to upstream `select <selector> <value...>`, and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). For `locator: "role"`, pass either `value: "button"` or `role: "button"`; if both are present they must match. It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron`, not a nested shape inside `batch` stdin arrays. Add `session` inside `semanticAction` when the shorthand should target a named upstream browser session; the compiled argv prepends `--session <name>` before `find`, direct selector/ref commands, or `select`, and fallback candidate actions preserve that prefix. For active sessions, role/name click/check/fill shorthands may resolve through the current `snapshot -i` refs before execution so hidden duplicate matches do not steal the action; fill only resolves when there is one exact editable current ref match. Inspect `details.effectiveArgs` when you need the exact executed argv. `semanticAction` does not expose `uncheck` while upstream `find ... uncheck` is not runtime-supported; use raw `uncheck <selector-or-ref>` after choosing a stable selector or current snapshot ref. `select` shorthand intentionally requires a stable selector or current `@ref` plus `value`/`values`; upstream `find` does not expose a verified `select` action, so role/name/label dropdown resolution stays a snapshot/selector decision instead of hidden wrapper magic. If a raw `find` or semantic action misses with `selector-not-found`, the wrapper may take one fresh snapshot and append `Current snapshot ref fallback` when that snapshot has exact visible role/name matches for the failed target. Non-fill matches can include direct `try-current-visible-ref*` next actions. Semantic click misses may also include `Agent-browser candidate fallbacks`; `details.nextActions` first recommends a fresh `snapshot -i` and may include bounded role/name retries such as `button`/`link` for a missed `text` click, each as a `try-*-candidate` entry carrying redacted `find role …` argv.
+The optional native `semanticAction` object is only a thin schema for common locator-based actions, direct selector/ref click/check/fill, and native dropdown selection; it compiles locator actions to existing upstream `find` commands, direct selector/ref actions to `click` / `check` / `fill`, compiles `action: "select"` to upstream `select <selector> <value...>`, and reports the compiled argv in `details.compiledSemanticAction` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#semanticaction) for the full field rules). For `locator: "role"`, pass either `value: "button"` or `role: "button"`; if both are present they must match. It is a top-level alternative to `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron`, not a nested shape inside `batch` stdin arrays. Add `session` inside `semanticAction` when the shorthand should target a named upstream browser session; the compiled argv prepends `--session <name>` before `find`, direct selector/ref commands, or `select`, and fallback candidate actions preserve that prefix. For active sessions, role/name click/check/fill shorthands may resolve through the current `snapshot -i` refs before execution so hidden duplicate matches do not steal the action; fill only resolves when there is one exact editable current ref match. Inspect `details.effectiveArgs` when you need the exact executed argv. `semanticAction` does not expose `uncheck` because upstream `find` actions are only `click, fill, check, hover, text`; use raw `uncheck <selector-or-ref>` after choosing a stable selector or current snapshot ref. `select` shorthand intentionally requires a stable selector or current `@ref` plus `value`/`values`; upstream `find` does not expose a verified `select` action, so role/name/label dropdown resolution stays a snapshot/selector decision instead of hidden wrapper magic. If a raw `find` or semantic action misses with `selector-not-found`, the wrapper may take one fresh snapshot and append `Current snapshot ref fallback` when that snapshot has exact visible role/name matches for the failed target. Non-fill matches can include direct `try-current-visible-ref*` next actions. Semantic click misses may also include `Agent-browser candidate fallbacks`; `details.nextActions` first recommends a fresh `snapshot -i` and may include bounded role/name retries such as `button`/`link` for a missed `text` click, each as a `try-*-candidate` entry carrying redacted `find role …` argv.
 
 For desktop, contenteditable, or host-controlled rich inputs, treat a semantic `fill` miss or mismatch differently. Active-session role/name fills can execute through one exact current editable `combobox`, `searchbox`, or `textbox` ref before upstream `find` runs. If a later selector miss still finds an exact current editable ref (`searchbox` or `textbox`), `details.richInputRecovery` and visible `Rich input recovery` describe the candidate and append `focus-current-editable-ref*` / `click-current-editable-ref*` next actions. Those actions deliberately do **not** copy the fill text and never press `Enter` or submit. Direct `fill @ref <text>` on contenteditable refs may also append/prepend instead of replacing; when the latest snapshot proves the target is contenteditable, the wrapper verifies `get text` after a successful fill and appends `details.fillVerification` plus `inspect-after-fill-verification` / `verify-filled-value` if the visible text does not match. Use the safe ladder instead: refresh refs, choose the current editable `@ref`, focus or click it, then send the intended text with `keyboard inserttext` or `keyboard type` in a separate call. Do not auto-submit unless the user flow explicitly calls for it.
 
@@ -562,7 +572,7 @@ Session note: `skills list`, `skills get …`, and `skills path …` are **state
 | `skills list` | List available CLI-bundled skills. |
 | `skills get core` | Print the core usage guide. |
 | `skills get core --full` | Print the full version-matched core command reference and templates. |
-| `skills get <name>` | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, and `skills get agentcore`. |
+| `skills get <name>` | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, `skills get agentcore`, and `skills get derive-client` (HAR-to-API-client workflow). |
 | `skills get <name> --full` | Include a skill's supplementary references/templates when present. |
 | `skills get --all` | Print all visible bundled skills for broad audit/debug work. |
 | `skills path [name]` | Print a skill directory path. |
@@ -663,10 +673,10 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `get text/html/value/count <selector>` | Read matched elements; use `get text body` for whole-page text. |
 | `get attr <selector> <name>`, `get box <selector>`, `get styles <selector>` | Read an attribute, bounding box, or computed styles from matched elements. |
 | `is <what> <selector>` | Check `visible`, `enabled`, or `checked`. |
-| `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, and `testid`; selector helpers include `find first <sel>`, `find last <sel>`, and `find nth <n> <sel>`. Role/text filters include `find role <role> --name <name>` and `find ... --exact`. |
+| `find <locator> <value> <action> [text]` | Locator types include `role`, `text`, `label`, `placeholder`, `alt`, `title`, and `testid`; selector helpers include `find first <sel>`, `find last <sel>`, and `find nth <n> <sel>`. Role/text filters include `find role <role> --name <name>` and `find ... --exact`. Actions are `click, fill, check, hover, text` only. Prefer `find role` for semantic elements: implicit roles work (`find role heading text --name` for `<h2>`, list/banner landmarks, and similar). Default name matching is a case-insensitive substring; `--exact` makes the accessible name case-sensitive. On misses, upstream 0.32.4+ keeps locator detail such as `Names seen: …` or `No element found: getByRole(...)` instead of a generic flatten. |
 | `mouse <action> [args]` | `move <x> <y>`, `down [btn]`, `up [btn]`, `wheel <dy> [dx]`. |
 | `set <setting> [value]` | `viewport <w> <h>`, `device <name>`, `geo <lat> <lng>`, `offline [on|off]`, `headers <json>`, `credentials <user> <pass>`, and `set media <features>` (`dark`, `light`, and/or `reduced-motion`). |
-| `network <action>` | `network route <url> [--abort|--body <json>] [--resource-type <csv>]`, `network unroute [url]`, `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`, `network request <requestId>`, `network har start`, and `network har stop [path]`. `--resource-type` filters intercepted requests by CDP resource type, such as `script`, `image`, `font`, `xhr`, or `fetch`; request listing filters accept resource types (`xhr,fetch`), methods (`POST`), and statuses (`2xx`, `400-499`). |
+| `network <action>` | `network route <url> [--abort|--body <json>] [--resource-type <csv>]`, `network unroute [url]`, `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`, `network request <requestId>`, `network har start`, `network har start --content text` (default; embeds text bodies), `network har start --content all`, `network har start --content none`, and `network har stop [path]`. `--resource-type` filters intercepted requests by CDP resource type, such as `script`, `image`, `font`, `xhr`, or `fetch`; request listing filters accept resource types (`xhr,fetch`), methods (`POST`), and statuses (`2xx`, `400-499`). HAR files can include auth headers and bodies—do not share them unredacted. For turning a recording into a reusable API client, load `skills get derive-client`. |
 | `cookies [get|set|clear]` | Manage cookies. Full set form: `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>`; also supports `cookies set --curl <file>` for JSON, cURL, or bare Cookie-header bulk imports. |
 | `storage <local|session>` | Manage web storage. |
 
@@ -742,6 +752,7 @@ Current upstream still does not parse `wait <selector> --state hidden` / `wait <
 | `react renders start` | Start recording React render activity. |
 | `react renders stop [--json]` | Stop render recording and print mount/re-render counts and changed details. |
 | `react suspense [--only-dynamic] [--json]` | Classify Suspense boundaries with grouped root-cause recommendations. |
+| `a11y [url]` | Run an embedded axe-core accessibility audit on the current page, or navigate to `url` first. Options: `a11y --tags wcag2a,wcag2aa`, `a11y --selector "#main"`. CDP browsers only (not Safari/iOS WebDriver). Model-facing text summarizes violation/incomplete counts and top rules; full node targets stay in `details.data`. |
 | `vitals [url] [--json]` | Report Core Web Vitals: LCP, CLS, TTFB, FCP, INP, plus React hydration timing when available. `web-vitals [url] [--json]` is the upstream alias. |
 | `pushstate <url>` | Perform SPA client-side navigation; detects Next.js router pushes and falls back to history navigation events. |
 | `removeinitscript <id>` | Remove an init script registered through upstream init-script mechanisms. |
@@ -949,19 +960,23 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.32.2</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.33.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `6ede7a9470ac4b681cabf838af8668b9aa99e957`
-- upstream package version: `0.32.2`
+- upstream HEAD: `1ed371f3af472cc0d6cd8fdaea75d1a085ff7534`
+- upstream package version: `0.33.0`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
+- inspected: `agent-browser a11y --help`
 - inspected: `agent-browser mcp --help`
 - inspected: `agent-browser plugin --help`
+- inspected: `agent-browser skills list`
+- inspected: `agent-browser skills get core --full`
+- inspected: `agent-browser skills get derive-client --full`
 - inspected: `README.md`
 - inspected: `CHANGELOG.md`
 - inspected: `agent-browser.schema.json`
@@ -970,8 +985,17 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/read.rs`
 - inspected: `cli/src/doctor/webgpu.rs`
 - inspected: `cli/src/native/actions.rs`
+- inspected: `cli/src/native/a11y/mod.rs`
+- inspected: `cli/src/native/browser.rs`
 - inspected: `cli/src/native/daemon.rs`
+- inspected: `cli/src/output.rs`
 - inspected: `docs/src/app/webgpu/page.mdx`
+- inspected: `docs/src/app/network/page.mdx`
+- inspected: `docs/src/app/selectors/page.mdx`
+- inspected: `docs/src/app/skills/page.mdx`
+- inspected: `docs/src/app/commands/page.mdx`
+- inspected: `skill-data/derive-client/SKILL.md`
+- inspected: `skill-data/core/SKILL.md`
 - inspected: `packages/@agent-browser/eve/README.md`
 - inspected: `packages/@agent-browser/eve/package.json`
 - inspected: `packages/@agent-browser/eve/test/extension.test.mjs`
@@ -1027,6 +1051,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - record help: `agent-browser record --help`
 - console help: `agent-browser console --help`
 - errors help: `agent-browser errors --help`
+- a11y help: `agent-browser a11y --help`
 - clipboard help: `agent-browser clipboard --help`
 - tap help: `agent-browser tap --help`
 - swipe help: `agent-browser swipe --help`
@@ -1038,10 +1063,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - plugin help: `agent-browser plugin --help`
 
 #### Inventory sections
-- Built-in skills: 15 human-doc token(s), 15 upstream token(s)
-- Core page, element, navigation, and extraction commands: 81 human-doc token(s), 82 upstream token(s)
+- Built-in skills: 16 human-doc token(s), 18 upstream token(s)
+- Core page, element, navigation, and extraction commands: 82 human-doc token(s), 84 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 24 human-doc token(s), 20 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 43 human-doc token(s), 53 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 49 human-doc token(s), 60 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 33 human-doc token(s), 37 upstream token(s)
 - Global flags, config, providers, policy, and environment: 138 human-doc token(s), 106 upstream token(s)
 
@@ -1058,6 +1083,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `skills get dogfood`
 - `skills get vercel-sandbox`
 - `skills get agentcore`
+- `skills get derive-client`
 - `@agent-browser/sandbox`
 - `installSystemDependencies: false`
 - `skills path [name]`
@@ -1139,6 +1165,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `find last <sel>`
 - `find nth <n> <sel>`
 - `find role <role> --name <name>`
+- `find role heading text --name`
 - `find ... --exact`
 - `mouse <action> [args]`
 - `set <setting> [value]`
@@ -1179,6 +1206,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`
 - `network request <requestId>`
 - `network har start`
+- `network har start --content all`
+- `network har start --content none`
+- `network har start --content text`
 - `network har stop [path]`
 - `cookies [get|set|clear]`
 - `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>`
@@ -1215,6 +1245,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `react suspense [--only-dynamic] [--json]`
 - `vitals [url] [--json]`
 - `web-vitals [url] [--json]`
+- `a11y [url]`
+- `a11y --tags wcag2a,wcag2aa`
+- `a11y --selector "#main"`
 - `removeinitscript <id>`
 
 ##### Batch, auth, confirmations, setup, dashboard, devices, and AI commands
@@ -1404,11 +1437,14 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills list: `dogfood`
 - skills list: `vercel-sandbox`
 - skills list: `agentcore`
+- skills list: `derive-client`
 - vercel sandbox skill full: `@agent-browser/sandbox`
 - vercel sandbox skill full: `installSystemDependencies: false`
 - core skill full: `agent-browser frame @e3`
 - core skill full: `agent-browser dialog accept`
 - core skill full: `agent-browser --session "$SESSION" --restore open https://app.example.com`
+- core skill full: `network har start --content all`
+- core skill full: `implicit roles work`
 
 ##### Core page, element, navigation, and extraction commands
 - open help: `open [url]`
@@ -1482,6 +1518,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - find help: `nth <index> <selector>`
 - find help: `--name <name>`
 - find help: `--exact`
+- find help: `case-insensitive`
+- find help: `click, fill, check, hover, text`
 - root help: `Mouse:  agent-browser mouse <action> [args]`
 - root help: `Browser Settings:  agent-browser set <setting> [value]`
 - set help: `media [dark|light]`
@@ -1521,6 +1559,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `--resource-type <csv>`
 - network help: `unroute [url]`
 - network help: `network har start`
+- network help: `network har start --content all`
+- network help: `--content <mode>`
 - network help: `network har stop ./capture.har`
 - root help: `cookies [get|set|clear]`
 - root help: `cookies set --curl <file>`
@@ -1550,6 +1590,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `react renders stop [--json]`
 - root help: `react suspense [--only-dynamic] [--json]`
 - root help: `vitals [url] [--json]`
+- root help: `a11y [url] [--tags <t1,t2>] [--selector <css>] [--json]`
+- a11y help: `a11y [url]`
+- a11y help: `--tags <tag1,tag2>`
+- a11y help: `-s, --selector <css>`
+- core skill full: `agent-browser a11y`
 - root help: `removeinitscript <id>`
 - network help: `requests [options]`
 - network help: `--type <types>`

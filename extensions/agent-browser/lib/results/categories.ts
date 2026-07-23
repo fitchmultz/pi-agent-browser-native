@@ -45,8 +45,29 @@ export function classifyAgentBrowserFailureCategory(options: {
 	const text = [options.errorText, options.validationError, options.parseError, options.spawnError, options.stderr].filter(Boolean).join("\n");
 	const command = options.command ?? "";
 	const usedRef = options.args?.some((arg) => /^@e\d+\b/.test(arg)) ?? false;
-	if (options.confirmationRequired || /confirmation required|pending confirmation|requires confirmation/i.test(text)) return "confirmation-required";
-	if (options.timedOut || /timeout|timed out|watchdog|IPC read timeout|must stay under its 30s IPC read timeout/i.test(text)) return "timeout";
+	// Explicit confirmation flag wins. Text-derived confirmation phrases come after locator-miss detection so a
+	// missed control named "Confirmation required" still gets selector recovery.
+	if (options.confirmationRequired) return "confirmation-required";
+	// Upstream 0.32.4+ locator misses keep detail and may echo getByRole/getByText or Names seen lists.
+	// Evaluate before text-derived timeout/confirmation so accessible-name substrings cannot suppress recovery.
+	const isUpstreamLocatorMiss =
+		/\bNo element found:\s*(?:getBy[A-Za-z]+|role=|text=|label=|placeholder=|alt=|title=|testid=)/i.test(text) ||
+		// No trailing \b after ":" — colon is non-word, so "Element not found: text=…" would not match.
+		(/\bElement not found:/i.test(text) && /\bVerify the selector, role, or name\b/i.test(text)) ||
+		/\bnone match name\b/i.test(text) ||
+		// Scope Names seen to role/name miss context (or find) so unrelated prose cannot trip selector-not-found.
+		(/\bNames seen:/i.test(text) && (command === "find" || /\belement has role\b|\bnone match name\b|\bgetByRole\b/i.test(text))) ||
+		/\belement has role\b[\s\S]*\bnone match\b/i.test(text);
+	if (isUpstreamLocatorMiss) return "selector-not-found";
+	if (/confirmation required|pending confirmation|requires confirmation/i.test(text)) return "confirmation-required";
+	// Match real timeout phrasing only. Do not treat bare "timeout" as a hit — accessible names can include that word,
+	// and `timed?\s*out` would also match the substring "timeout" as time+out.
+	if (
+		options.timedOut ||
+		/\b(?:timed\s+out|timeout exceeded|watchdog|IPC read timeout)\b|must stay under its 30s IPC read timeout|Operation timed out/i.test(text)
+	) {
+		return "timeout";
+	}
 	if (/ENOENT|not found on PATH|could not find.*agent-browser|agent-browser is required but was not found/i.test(text)) return "missing-binary";
 	if (options.parseError || /invalid JSON|missing boolean success|success field must be boolean|returned no JSON output/i.test(text)) return "parse-failure";
 	if (/aborted/i.test(text)) return "aborted";
