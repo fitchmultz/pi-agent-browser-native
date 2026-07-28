@@ -37,7 +37,7 @@ import {
 } from "./lib/runtime.js";
 import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
-import { isCloseCommand } from "./lib/command-taxonomy.js";
+import { isCloseCommand, isOpenNavigationCommand } from "./lib/command-taxonomy.js";
 import { cleanupSecureTempArtifacts } from "./lib/temp.js";
 import {
 	AGENT_BROWSER_PARAMS,
@@ -223,13 +223,19 @@ function untrackOwnedManagedSessionFromBranchClose(
 	sessions.delete(sessionName);
 }
 
-function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSession>, result: AgentBrowserToolResult, cwd: string): void {
+function syncOwnedManagedSessionsFromResult(
+	sessions: Map<string, OwnedManagedSession>,
+	explicitCleanupSessions: Map<string, OwnedManagedSession>,
+	result: AgentBrowserToolResult,
+	cwd: string,
+): void {
 	const details = isRecord(result.details) ? result.details : undefined;
 	const outcome = isRecord(details?.managedSessionOutcome) ? details.managedSessionOutcome : undefined;
 	const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
 	const sessionName = typeof details?.sessionName === "string" ? details.sessionName : undefined;
 	const command = typeof details?.command === "string" ? details.command : extractCommandTokens(getToolResultArgs(details ?? {})).at(0);
 	const toolSucceeded = result.isError !== true && details?.resultCategory !== "failure";
+	const usedImplicitSession = details?.usedImplicitSession === true;
 	if (outcome) {
 		const succeeded = outcome.succeeded === true;
 		const status = typeof outcome.status === "string" ? outcome.status : undefined;
@@ -240,15 +246,17 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 		}
 		if (succeeded && status === "closed") {
 			untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName, namespace);
+			untrackOwnedManagedSession(explicitCleanupSessions, attemptedSessionName ?? currentSessionName, namespace);
 		}
 	}
-	// Track explicit --session names opened through this tool so quit closes them too (#89).
+	// Explicit sessions: only track successful open/navigation launches for quit cleanup; never put them in the managed serialize set.
 	if (toolSucceeded && sessionName && isCloseCommand(command)) {
 		untrackOwnedManagedSession(sessions, sessionName, namespace);
+		untrackOwnedManagedSession(explicitCleanupSessions, sessionName, namespace);
 		return;
 	}
-	if (toolSucceeded && sessionName) {
-		trackOwnedManagedSession(sessions, sessionName, cwd, { namespace });
+	if (toolSucceeded && sessionName && !usedImplicitSession && isOpenNavigationCommand(command)) {
+		trackOwnedManagedSession(explicitCleanupSessions, sessionName, cwd, { namespace });
 	}
 }
 
@@ -613,6 +621,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let branchOwnedElectronLaunchIds = new Set<string>();
 	let electronChildProcesses = new Map<string, ChildProcess>();
 	const ownedManagedSessions = new Map<string, OwnedManagedSession>();
+	const ownedExplicitCleanupSessions = new Map<string, OwnedManagedSession>();
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 	let branchStateGeneration = 0;
 
@@ -662,6 +671,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(branch);
 		if (options.resetRuntimeOwnership) {
 			ownedManagedSessions.clear();
+			ownedExplicitCleanupSessions.clear();
 			ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 			branchOwnedElectronLaunchIds = new Set<string>();
 		} else {
@@ -720,9 +730,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async (event, ctx) => {
 		let preservedElectronProfileDirs: string[] = [];
+		const quitting = event?.reason === "quit";
 		await managedSessionExecutionQueue.run(async () => {
 			const shutdownCwd = ctx?.cwd ?? managedSessionCwd;
-			const quitting = event?.reason === "quit";
 			preservedElectronProfileDirs = quitting
 				? []
 				: getActiveElectronRecords(electronLaunchRecords).map((record) => record.userDataDir);
@@ -740,8 +750,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				...getCleanupResultsPreservedUserDataDirs(electronCleanupResults),
 			])];
 			syncElectronCleanupManagedSessions(ownedManagedSessions, electronCleanupResults);
+			syncElectronCleanupManagedSessions(ownedExplicitCleanupSessions, electronCleanupResults);
 			if (quitting) {
 				await closeOwnedManagedSessions(ownedManagedSessions, implicitSessionCloseTimeoutMs);
+				await closeOwnedManagedSessions(ownedExplicitCleanupSessions, implicitSessionCloseTimeoutMs);
 			} else {
 				await closeOwnedManagedSessionsExcept(
 					ownedManagedSessions,
@@ -749,6 +761,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					implicitSessionCloseTimeoutMs,
 					managedSessionActive ? managedSessionNamespace : undefined,
 				);
+				// Keep explicit cleanup ownership across reload; only quit closes those daemons.
 			}
 		});
 		managedSessionActive = false;
@@ -763,6 +776,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		branchOwnedElectronLaunchIds = new Set<string>();
 		electronChildProcesses = new Map<string, ChildProcess>();
 		ownedManagedSessions.clear();
+		if (quitting) ownedExplicitCleanupSessions.clear();
 		await cleanupSecureTempArtifacts({ preservePaths: preservedElectronProfileDirs });
 	});
 
@@ -954,8 +968,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					managedSessionNamespace = browserRunState.managedSessionNamespace;
 					for (const closedSessionName of browserRunState.closedManagedSessionNames) {
 						untrackOwnedManagedSession(ownedManagedSessions, closedSessionName);
+						untrackOwnedManagedSession(ownedExplicitCleanupSessions, closedSessionName);
 					}
-					syncOwnedManagedSessionsFromResult(ownedManagedSessions, result, browserRunState.managedSessionCwd);
+					syncOwnedManagedSessionsFromResult(ownedManagedSessions, ownedExplicitCleanupSessions, result, browserRunState.managedSessionCwd);
 					mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords, {
 						branchOwnedLaunchIds: branchOwnedElectronLaunchIds,
 						touchedLaunchIds: !result.isError

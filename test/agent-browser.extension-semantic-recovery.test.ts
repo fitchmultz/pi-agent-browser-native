@@ -201,6 +201,13 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match((selectLocatorNeedsSession.content[0] as { text: string }).text, /select with locator requires an active browser session|could not resolve to exactly one current visible/);
 			assert.equal(selectLocatorNeedsSession.details?.failureCategory, "validation-error");
 
+			const selectButtonRoleRejected = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "role", role: "button", name: "Delete", value: "danger" },
+			});
+			assert.equal(selectButtonRoleRejected.isError, true);
+			assert.match((selectButtonRoleRejected.content[0] as { text: string }).text, /role must be combobox or listbox for select/);
+			assert.equal(selectButtonRoleRejected.details?.failureCategory, "validation-error");
+
 			const invocations = await readInvocationLog(logPath).catch(() => []);
 			assert.deepEqual(invocations.filter((entry) => entry.args.includes("find")), []);
 		});

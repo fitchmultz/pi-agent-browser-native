@@ -24,7 +24,7 @@ export function getCompiledSemanticActionSessionPrefix(compiled: CompiledAgentBr
 }
 
 export function isCompiledSemanticActionFindCommand(compiled: CompiledAgentBrowserSemanticAction | undefined): boolean {
-	if (!compiled) return false;
+	if (!compiled || compiled.action === "select") return false;
 	return compiled.args[getCompiledSemanticActionCommandIndex(compiled)] === "find";
 }
 
@@ -63,59 +63,51 @@ export function compileAgentBrowserSemanticAction(input: unknown): { compiled?: 
 		if (selector !== undefined) {
 			return { error: "semanticAction.selector must be a non-empty string when provided." };
 		}
-		if (typeof locator !== "string" || !AGENT_BROWSER_SEMANTIC_LOCATORS.includes(locator as AgentBrowserSemanticLocator)) {
+		// Locator select only supports role=combobox|listbox + name, or label + values; resolved to select @ref upstream.
+		if (locator === undefined) {
 			return { error: "semanticAction.selector or semanticAction.locator is required for select." };
 		}
-		if (value !== undefined && (typeof value !== "string" || value.trim().length === 0)) {
-			return { error: "semanticAction.value must be a non-empty string when provided." };
+		if (locator !== "role" && locator !== "label") {
+			return { error: "semanticAction select locator must be role or label; use selector plus value/values for other targets." };
 		}
-		if (role !== undefined && (typeof role !== "string" || role.trim().length === 0)) {
-			return { error: "semanticAction.role must be a non-empty string when provided." };
-		}
-		if (role !== undefined && locator !== "role") {
-			return { error: "semanticAction.role is only supported for locator=role." };
-		}
-		if (name !== undefined && (locator !== "role" || typeof name !== "string" || name.length === 0)) {
-			return { error: "semanticAction.name is only supported as a non-empty string for locator=role." };
-		}
-		let locatorValue: string | undefined;
-		let selectedValues: string[] | undefined;
 		if (locator === "role") {
-			if (typeof role === "string") {
-				locatorValue = role;
-				if (Array.isArray(values)) {
-					const parsed = getSelectValues({ values }, "semanticAction");
-					if (parsed.error) return { error: parsed.error };
-					selectedValues = parsed.values;
-				} else if (typeof value === "string" && value.trim().length > 0 && value !== role) {
-					selectedValues = [value];
-				} else if (typeof value === "string" && value === role) {
-					return { error: "semanticAction.values is required for locator=role select when value matches role; put the option in values." };
-				} else {
-					return { error: "semanticAction.value or semanticAction.values is required for select." };
-				}
-			} else if (typeof value === "string" && value.trim().length > 0) {
-				locatorValue = value;
-				const parsed = getSelectValues({ values }, "semanticAction");
-				if (parsed.error) return { error: parsed.error.replace("value or semanticAction.values", "values (option values; value is the role)") };
-				selectedValues = parsed.values;
-			} else {
-				return { error: "semanticAction.value or semanticAction.role must be a non-empty string for locator=role." };
+			const roleValue = typeof role === "string" ? role : undefined;
+			if (!roleValue || roleValue.trim().length === 0) {
+				return { error: "semanticAction.role must be combobox or listbox for locator=role select." };
 			}
-		} else {
-			if (typeof value !== "string" || value.trim().length === 0) {
-				return { error: "semanticAction.value must be a non-empty string." };
+			if (!/^(?:combobox|listbox)$/i.test(roleValue)) {
+				return { error: "semanticAction.role must be combobox or listbox for select." };
 			}
-			locatorValue = value;
-			const parsed = getSelectValues({ values }, "semanticAction");
-			if (parsed.error) return { error: parsed.error.replace("value or semanticAction.values", "values (option values; value is the locator text)") };
-			selectedValues = parsed.values;
+			if (typeof name !== "string" || name.length === 0) {
+				return { error: "semanticAction.name is required for locator=role select." };
+			}
+			const optionValues = Array.isArray(values)
+				? getSelectValues({ values }, "semanticAction")
+				: typeof value === "string" && value.trim().length > 0
+					? { values: [value] as string[] }
+					: { error: "semanticAction.value or semanticAction.values is required for select." };
+			if (optionValues.error) return { error: optionValues.error };
+			const args = typeof session === "string"
+				? ["--session", session, "find", "role", roleValue, "select", ...(optionValues.values as string[]), "--name", name]
+				: ["find", "role", roleValue, "select", ...(optionValues.values as string[]), "--name", name];
+			return { compiled: { action: "select", locator: "role", values: optionValues.values, args } };
+		}
+		if (typeof value !== "string" || value.trim().length === 0) {
+			return { error: "semanticAction.value must be the accessible label text for locator=label select." };
+		}
+		if (role !== undefined || name !== undefined) {
+			return { error: "semanticAction.role and name are only supported for locator=role select." };
+		}
+		const optionValues = getSelectValues({ values }, "semanticAction");
+		if (optionValues.error) {
+			return { error: optionValues.error.includes("required")
+				? "semanticAction.values is required for locator=label select (value is the label text)."
+				: optionValues.error };
 		}
 		const args = typeof session === "string"
-			? ["--session", session, "find", locator, locatorValue, "select", ...(selectedValues as string[])]
-			: ["find", locator, locatorValue, "select", ...(selectedValues as string[])];
-		if (locator === "role" && typeof name === "string") args.push("--name", name);
-		return { compiled: { action: "select", locator: locator as AgentBrowserSemanticLocator, values: selectedValues, args } };
+			? ["--session", session, "find", "label", value, "select", ...(optionValues.values as string[])]
+			: ["find", "label", value, "select", ...(optionValues.values as string[])];
+		return { compiled: { action: "select", locator: "label", values: optionValues.values, args } };
 	}
 	if (values !== undefined) {
 		return { error: "semanticAction.values is only supported for select actions." };

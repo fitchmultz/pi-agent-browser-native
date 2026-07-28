@@ -279,10 +279,11 @@ test("doctor warns about live agent-browser daemon pid sidecars without failing"
 	});
 	const text = formatDoctorReport(report);
 	assert.equal(report.failures.length, 0);
-	assert.match(text, /Found 1 live agent-browser daemon pid sidecar/);
+	assert.match(text, /Found 1 live pid sidecar\(s\) under \/tmp\/piab\*/);
 	assert.match(text, /pid 4242 session=authmeta/);
+	assert.match(text, /unverified process identity/);
 	assert.match(text, /Doctor passed/);
-	assert.equal(report.warnings.some((warning) => /live agent-browser daemon/.test(warning)), true);
+	assert.equal(report.warnings.length, 0);
 });
 
 test("parseCliArgs supports help, paths, repeated settings, and skip-source-check", () => {

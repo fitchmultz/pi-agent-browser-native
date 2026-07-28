@@ -341,7 +341,7 @@ Download a file from a known link or control:
 
 ### Locator shorthand (`semanticAction`)
 
-For supported upstream `find` flows, direct selector/ref `click` / `check` / `fill`, and native dropdown selection you can omit hand-built `args` and pass a top-level `semanticAction` object instead. The wrapper compiles locator actions to the same `find` argv upstream already understands, direct selector/ref actions to matching upstream commands, or `action: "select"` to upstream `select <selector> <value...>`; compiled argv is echoed as `details.compiledSemanticAction` when the unified result includes that field. Full field rules live in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction).
+For supported upstream `find` flows, direct selector/ref `click` / `check` / `fill`, and native dropdown selection you can omit hand-built `args` and pass a top-level `semanticAction` object instead. The wrapper compiles locator actions to the same `find` argv upstream already understands, direct selector/ref actions to matching upstream commands, `action: "select"` with `selector` to upstream `select <selector> <value...>`, or locator select (`role` combobox/listbox + `name`, or `label` + `values`) to a current `@ref` select on an active session; compiled argv is echoed as `details.compiledSemanticAction` when the unified result includes that field. Full field rules live in [`docs/TOOL_CONTRACT.md#semanticaction`](docs/TOOL_CONTRACT.md#semanticaction).
 
 ```json
 { "semanticAction": { "action": "click", "locator": "text", "value": "Submit" } }
@@ -350,6 +350,7 @@ For supported upstream `find` flows, direct selector/ref `click` / `check` / `fi
 { "semanticAction": { "action": "fill", "selector": "@e1", "text": "prompt text" } }
 { "semanticAction": { "action": "click", "selector": "#submit" } }
 { "semanticAction": { "action": "select", "selector": "#flavor", "value": "chocolate" } }
+{ "semanticAction": { "action": "select", "locator": "role", "role": "combobox", "name": "Flavor", "value": "chocolate" } }
 { "semanticAction": { "action": "click", "locator": "text", "value": "Close", "session": "named-browser" } }
 ```
 

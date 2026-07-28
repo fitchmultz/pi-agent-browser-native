@@ -123,10 +123,11 @@ function getFindVisibleRefFallbackTarget(args: string[], options: { allowLeading
 		const optionValues = collectFindTrailingValues(args, findIndex + 4);
 		if (optionValues.length === 0) return undefined;
 		if (locator === "role") {
+			if (!/^(?:combobox|listbox)$/i.test(value)) return undefined;
 			const targetName = getFindNameFlagValue(args, findIndex + 4);
-			return targetName ? { action, optionValues, roles: [value], targetName } : undefined;
+			return targetName ? { action, optionValues, roles: [value.toLowerCase()], targetName } : undefined;
 		}
-		if (locator === "label" || locator === "placeholder" || locator === "text" || locator === "testid" || locator === "title" || locator === "alt") {
+		if (locator === "label") {
 			return { action, optionValues, roles: ["combobox", "listbox"], targetName: value };
 		}
 		return undefined;

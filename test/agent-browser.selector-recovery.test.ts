@@ -103,6 +103,8 @@ test("selector recovery parses locator select targets and still requires exact n
 		roles: ["combobox"],
 		targetName: "Flavor",
 	});
+	assert.equal(getVisibleRefFallbackTarget({ commandTokens: ["find", "role", "button", "select", "danger", "--name", "Delete"] }), undefined);
+	assert.equal(getVisibleRefFallbackTarget({ commandTokens: ["find", "placeholder", "Flavor", "select", "chocolate"] }), undefined);
 	const target = getVisibleRefFallbackTarget({ commandTokens: ["find", "label", "Email address", "fill", "value"] });
 	assert.ok(target);
 	assert.equal(buildVisibleRefFallbackDiagnosticFromSnapshot({ snapshotData, target: target! }), undefined);

@@ -63,7 +63,7 @@ export function createAgentBrowserParamsSchema(
 			values: Type.Optional(Type.Array(Type.String({ description: "Option value for select actions." }), { description: "One or more option values for select actions. Required for select+locator when value is the control locator text.", minItems: 1 })),
 			selector: Type.Optional(Type.String({ description: "Selector or @ref for direct click/check/fill actions, or for select actions compiled to select <selector> <value...>. Do not combine with locator for select." })),
 			text: Type.Optional(Type.String({ description: "Text/value argument for fill actions." })),
-			role: Type.Optional(Type.String({ description: "Role locator value for locator=role. May be used instead of value; when both are set they must match." })),
+			role: Type.Optional(Type.String({ description: "Role locator value for locator=role. For click/check/fill may be used instead of value and must match value when both are set. For select, must be combobox or listbox and name is required; option values use value/values." })),
 			name: Type.Optional(Type.String({ description: "Accessible name filter for locator=role; compiles to --name <name>." })),
 			session: Type.Optional(Type.String({ description: "Optional upstream session name; prepends --session <name> before the compiled command." })),
 		}, { additionalProperties: false }),

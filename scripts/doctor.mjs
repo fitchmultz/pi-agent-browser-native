@@ -484,12 +484,13 @@ async function checkOrphanAgentBrowserDaemons({ listLiveDaemons }) {
 	}
 	return {
 		status: "warn",
-		title: `Found ${daemons.length} live agent-browser daemon pid sidecar(s).`,
+		title: `Found ${daemons.length} live pid sidecar(s) under /tmp/piab* (unverified process identity).`,
 		lines: [
 			...daemons.slice(0, 8).map((daemon) => `- pid ${daemon.pid} session=${daemon.session} (${daemon.pidPath})`),
 			daemons.length > 8 ? `- …and ${daemons.length - 8} more` : undefined,
-			"Wrapper quit closes tracked managed and explicit sessions opened through agent_browser; leftover daemons usually mean a hard kill, older package, or a direct CLI session outside Pi.",
-			"Only kill automation leftovers you own (for example pkill -f agent-browser-darwin / agent-browser-chrome-). Do not target your interactive Chrome/Brave profile.",
+			"Sidecar liveness only means that PID is alive; the process is not command-line verified as agent-browser.",
+			"Wrapper quit closes tracked managed sessions and explicit sessions this process opened via open/goto/navigate; leftover daemons usually mean a hard kill, older package, or a direct CLI session outside Pi.",
+			"Inspect with ps before killing. Only stop automation leftovers you own. Do not target interactive Chrome/Brave profiles.",
 		].filter(Boolean),
 	};
 }
@@ -525,7 +526,6 @@ export async function evaluateDoctor(options = {}) {
 	const orphanCheck = await checkOrphanAgentBrowserDaemons({ listLiveDaemons });
 	checks.push(orphanCheck);
 	if (orphanCheck.status === "fail") failures.push(orphanCheck);
-	if (orphanCheck.status === "warn") warnings.push(orphanCheck.title);
 
 	return { checks, failures, warnings };
 }
