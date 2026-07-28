@@ -208,6 +208,13 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match((selectButtonRoleRejected.content[0] as { text: string }).text, /role must be combobox or listbox for select/);
 			assert.equal(selectButtonRoleRejected.details?.failureCategory, "validation-error");
 
+			const selectValueAndValuesRejected = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate", values: ["vanilla"] },
+			});
+			assert.equal(selectValueAndValuesRejected.isError, true);
+			assert.match((selectValueAndValuesRejected.content[0] as { text: string }).text, /value and .*values cannot both be provided/);
+			assert.equal(selectValueAndValuesRejected.details?.failureCategory, "validation-error");
+
 			const invocations = await readInvocationLog(logPath).catch(() => []);
 			assert.deepEqual(invocations.filter((entry) => entry.args.includes("find")), []);
 		});

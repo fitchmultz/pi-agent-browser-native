@@ -222,13 +222,49 @@ process.stdout.write(JSON.stringify(envelope));`,
 			assert.equal(open.isError, false, JSON.stringify(open));
 			assert.equal(open.details?.sessionName, "authmeta");
 
-			// Reload-style start must not drop process-owned explicit cleanup.
-			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "reload" }, harness.ctx);
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 
 			const invocations = await readInvocationLog(logPath);
 			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", "authmeta", "close"].join("\0")), JSON.stringify(invocations));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension closes tracked explicit sessions on reload shutdown of the owning instance", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-reload-cleanup-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: "Example Domain", url: args[args.length - 1] } };
+process.stdout.write(JSON.stringify(envelope));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const first = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(first.handlers, "session_start", { reason: "new" }, first.ctx);
+			const open = await executeRegisteredTool(first.tool, first.ctx, {
+				args: ["--session", "oauthapps", "open", "https://example.com/explicit-reload"],
+			});
+			assert.equal(open.isError, false, JSON.stringify(open));
+
+			// Real /reload shuts down the old instance before a new one starts.
+			await runExtensionEvent(first.handlers, "session_shutdown", { reason: "reload" }, first.ctx);
+			const second = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(second.handlers, "session_start", { reason: "reload" }, second.ctx);
+			await runExtensionEvent(second.handlers, "session_shutdown", { reason: "quit" }, second.ctx);
+
+			const invocations = await readInvocationLog(logPath);
+			const closes = invocations.filter((entry) => entry.args.join("\0") === ["--session", "oauthapps", "close"].join("\0"));
+			assert.equal(closes.length, 1, JSON.stringify(invocations));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

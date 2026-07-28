@@ -261,7 +261,8 @@ function syncExplicitCleanupSessionsFromResult(sessions: Map<string, OwnedManage
 		untrackOwnedManagedSession(sessions, sessionName, namespace);
 		return;
 	}
-	if (toolSucceeded && sessionName && !usedImplicitSession && isOpenNavigationCommand(command)) {
+	// Skip wrapper-managed fresh/implicit sessions (they already use managed cleanup).
+	if (toolSucceeded && sessionName && !usedImplicitSession && !outcome && isOpenNavigationCommand(command)) {
 		trackOwnedManagedSession(sessions, sessionName, cwd, { namespace });
 	}
 }
@@ -759,7 +760,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			syncElectronCleanupManagedSessions(ownedExplicitCleanupSessions, electronCleanupResults);
 			if (quitting) {
 				await closeOwnedManagedSessions(ownedManagedSessions, implicitSessionCloseTimeoutMs);
-				await closeOwnedManagedSessions(ownedExplicitCleanupSessions, implicitSessionCloseTimeoutMs);
 			} else {
 				await closeOwnedManagedSessionsExcept(
 					ownedManagedSessions,
@@ -767,8 +767,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					implicitSessionCloseTimeoutMs,
 					managedSessionActive ? managedSessionNamespace : undefined,
 				);
-				// Keep explicit cleanup ownership across reload; only quit closes those daemons.
 			}
+			// Explicit cleanup is process-local only; close on every shutdown because /reload starts a new extension instance.
+			await closeOwnedManagedSessions(ownedExplicitCleanupSessions, implicitSessionCloseTimeoutMs);
 		});
 		managedSessionActive = false;
 		managedSessionNamespace = undefined;
@@ -782,7 +783,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		branchOwnedElectronLaunchIds = new Set<string>();
 		electronChildProcesses = new Map<string, ChildProcess>();
 		ownedManagedSessions.clear();
-		if (quitting) ownedExplicitCleanupSessions.clear();
+		ownedExplicitCleanupSessions.clear();
 		await cleanupSecureTempArtifacts({ preservePaths: preservedElectronProfileDirs });
 	});
 

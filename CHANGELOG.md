@@ -5,7 +5,7 @@
 ### Fixed
 
 - `semanticAction` select accepts narrow locator forms (`role` combobox/listbox + `name`, or `label` + `values`) and resolves them to exactly one current combobox/listbox `@ref` on an active session (for example `{ action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate" }`), instead of a hard validation rejection that looked like a schema mismatch (#90). Non-select roles and unsupported locators are rejected; select never offers a raw `find … select` stale-ref retry.
-- Quit cleanup tracks explicit `--session` names this process successfully opened via open/goto/navigate (separate from the managed serialize set), so Pi exit best-effort closes those daemons too without serializing unrelated explicit sessions (#89).
+- Extension shutdown closes explicit `--session` names this process successfully opened via open/goto/navigate (separate from the managed serialize set), including `/reload` because reload starts a new extension instance (#89).
 - `pi-agent-browser-doctor` warns when live `/tmp/piab*.pid` sidecars exist (unverified PID identity; read-only) (#89).
 
 ### Notes
