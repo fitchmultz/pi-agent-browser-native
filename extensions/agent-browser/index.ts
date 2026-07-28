@@ -223,40 +223,46 @@ function untrackOwnedManagedSessionFromBranchClose(
 	sessions.delete(sessionName);
 }
 
-function syncOwnedManagedSessionsFromResult(
-	sessions: Map<string, OwnedManagedSession>,
-	explicitCleanupSessions: Map<string, OwnedManagedSession>,
-	result: AgentBrowserToolResult,
-	cwd: string,
-): void {
+function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSession>, result: AgentBrowserToolResult, cwd: string): void {
 	const details = isRecord(result.details) ? result.details : undefined;
 	const outcome = isRecord(details?.managedSessionOutcome) ? details.managedSessionOutcome : undefined;
+	if (!outcome) return;
+	const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
+	const succeeded = outcome.succeeded === true;
+	const status = typeof outcome.status === "string" ? outcome.status : undefined;
+	const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
+	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
+	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
+		trackOwnedManagedSession(sessions, currentSessionName, cwd, { namespace });
+	}
+	if (succeeded && status === "closed") {
+		untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName, namespace);
+	}
+}
+
+// Process-owned quit cleanup for explicit --session opens. Not branch-visible and not on the managed serialize path.
+function syncExplicitCleanupSessionsFromResult(sessions: Map<string, OwnedManagedSession>, result: AgentBrowserToolResult, cwd: string): void {
+	const details = isRecord(result.details) ? result.details : undefined;
 	const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
 	const sessionName = typeof details?.sessionName === "string" ? details.sessionName : undefined;
 	const command = typeof details?.command === "string" ? details.command : extractCommandTokens(getToolResultArgs(details ?? {})).at(0);
 	const toolSucceeded = result.isError !== true && details?.resultCategory !== "failure";
 	const usedImplicitSession = details?.usedImplicitSession === true;
-	if (outcome) {
-		const succeeded = outcome.succeeded === true;
-		const status = typeof outcome.status === "string" ? outcome.status : undefined;
-		const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
-		const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
-		if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
-			trackOwnedManagedSession(sessions, currentSessionName, cwd, { namespace });
-		}
-		if (succeeded && status === "closed") {
-			untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName, namespace);
-			untrackOwnedManagedSession(explicitCleanupSessions, attemptedSessionName ?? currentSessionName, namespace);
-		}
+	const outcome = isRecord(details?.managedSessionOutcome) ? details.managedSessionOutcome : undefined;
+	if (outcome?.succeeded === true && outcome.status === "closed") {
+		const closedName = typeof outcome.attemptedSessionName === "string"
+			? outcome.attemptedSessionName
+			: typeof outcome.currentSessionName === "string"
+				? outcome.currentSessionName
+				: undefined;
+		untrackOwnedManagedSession(sessions, closedName, namespace);
 	}
-	// Explicit sessions: only track successful open/navigation launches for quit cleanup; never put them in the managed serialize set.
 	if (toolSucceeded && sessionName && isCloseCommand(command)) {
 		untrackOwnedManagedSession(sessions, sessionName, namespace);
-		untrackOwnedManagedSession(explicitCleanupSessions, sessionName, namespace);
 		return;
 	}
 	if (toolSucceeded && sessionName && !usedImplicitSession && isOpenNavigationCommand(command)) {
-		trackOwnedManagedSession(explicitCleanupSessions, sessionName, cwd, { namespace });
+		trackOwnedManagedSession(sessions, sessionName, cwd, { namespace });
 	}
 }
 
@@ -671,7 +677,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(branch);
 		if (options.resetRuntimeOwnership) {
 			ownedManagedSessions.clear();
-			ownedExplicitCleanupSessions.clear();
+			// Keep process-owned explicit cleanup across reload/session_start; only quit clears it.
 			ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 			branchOwnedElectronLaunchIds = new Set<string>();
 		} else {
@@ -957,6 +963,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					state: browserRunState,
 				});
 				const branchStateStillCurrent = generationAtStart === branchStateGeneration;
+				// Process-owned explicit cleanup always tracks, even when branch-visible state is stale after session_tree.
+				syncExplicitCleanupSessionsFromResult(ownedExplicitCleanupSessions, result, browserRunState.managedSessionCwd);
 				if (serializeBrowserCommand || branchStateStillCurrent) {
 					allowedDomainsBySession = browserRunState.allowedDomainsBySession;
 					networkRoutesBySession = browserRunState.networkRoutesBySession;
@@ -970,7 +978,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						untrackOwnedManagedSession(ownedManagedSessions, closedSessionName);
 						untrackOwnedManagedSession(ownedExplicitCleanupSessions, closedSessionName);
 					}
-					syncOwnedManagedSessionsFromResult(ownedManagedSessions, ownedExplicitCleanupSessions, result, browserRunState.managedSessionCwd);
+					syncOwnedManagedSessionsFromResult(ownedManagedSessions, result, browserRunState.managedSessionCwd);
 					mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords, {
 						branchOwnedLaunchIds: branchOwnedElectronLaunchIds,
 						touchedLaunchIds: !result.isError

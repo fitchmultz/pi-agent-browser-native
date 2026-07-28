@@ -222,10 +222,62 @@ process.stdout.write(JSON.stringify(envelope));`,
 			assert.equal(open.isError, false, JSON.stringify(open));
 			assert.equal(open.details?.sessionName, "authmeta");
 
+			// Reload-style start must not drop process-owned explicit cleanup.
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "reload" }, harness.ctx);
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 
 			const invocations = await readInvocationLog(logPath);
 			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", "authmeta", "close"].join("\0")), JSON.stringify(invocations));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension tracks explicit opens that finish after session_tree", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-tree-cleanup-"));
+	const logPath = join(tempDir, "invocations.log");
+	const gatePath = join(tempDir, "open-gate");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("open")) {
+  const gate = ${JSON.stringify(gatePath)};
+  const start = Date.now();
+  while (!fs.existsSync(gate) && Date.now() - start < 5000) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: args[args.length - 1] } }));
+  return;
+}
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: "Example Domain", url: args[args.length - 1] } };
+process.stdout.write(JSON.stringify(envelope));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const openPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "horizonmeta", "open", "https://example.com/tree-race"],
+			});
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: null, oldLeafId: "branch-a" }, harness.ctx);
+			await writeFile(gatePath, "go");
+			const open = await openPromise;
+			assert.equal(open.isError, false, JSON.stringify(open));
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", "horizonmeta", "close"].join("\0")), JSON.stringify(invocations));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

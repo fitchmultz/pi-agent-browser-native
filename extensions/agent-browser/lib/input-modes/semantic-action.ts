@@ -78,14 +78,13 @@ export function compileAgentBrowserSemanticAction(input: unknown): { compiled?: 
 			if (!/^(?:combobox|listbox)$/i.test(roleValue)) {
 				return { error: "semanticAction.role must be combobox or listbox for select." };
 			}
-			if (typeof name !== "string" || name.length === 0) {
+			if (typeof name !== "string" || name.trim().length === 0) {
 				return { error: "semanticAction.name is required for locator=role select." };
 			}
-			const optionValues = Array.isArray(values)
-				? getSelectValues({ values }, "semanticAction")
-				: typeof value === "string" && value.trim().length > 0
-					? { values: [value] as string[] }
-					: { error: "semanticAction.value or semanticAction.values is required for select." };
+			const optionValues = getSelectValues(
+				Array.isArray(values) ? { values } : { value },
+				"semanticAction",
+			);
 			if (optionValues.error) return { error: optionValues.error };
 			const args = typeof session === "string"
 				? ["--session", session, "find", "role", roleValue, "select", ...(optionValues.values as string[]), "--name", name]
