@@ -351,7 +351,13 @@ export function validateStdinCommandContract(options: { command?: string; comman
 }
 
 function canResolveSemanticVisibleRef(compiled: CompiledAgentBrowserSemanticAction | undefined): compiled is CompiledAgentBrowserSemanticAction {
-	return compiled !== undefined && compiled.locator === "role" && ["check", "click", "fill"].includes(compiled.action);
+	if (!compiled?.locator) return false;
+	if (compiled.action === "select") return true;
+	return compiled.locator === "role" && ["check", "click", "fill"].includes(compiled.action);
+}
+
+function requiresResolvedSemanticVisibleRef(compiled: CompiledAgentBrowserSemanticAction | undefined): boolean {
+	return compiled?.action === "select" && compiled.locator !== undefined;
 }
 
 function resolveSemanticActionVisibleRefArgsFromSnapshot(compiled: CompiledAgentBrowserSemanticAction | undefined, snapshotData: unknown): SemanticActionVisibleRefResolution | undefined {
@@ -451,6 +457,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			sessionName: executionPlan.sessionName,
 			signal,
 		});
+	}
+	if (!executionPlan.validationError && requiresResolvedSemanticVisibleRef(compiledSemanticAction) && !semanticActionVisibleRefResolution) {
+		executionPlan = {
+			...executionPlan,
+			validationError: executionPlan.sessionName
+				? "semanticAction select with locator could not resolve to exactly one current visible combobox/listbox ref. Run snapshot -i and retry with selector or a more specific role/name."
+				: "semanticAction select with locator requires an active browser session so the wrapper can resolve a current @ref; open a page first or pass selector plus value/values.",
+		};
 	}
 	if (semanticActionVisibleRefResolution) {
 		executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {

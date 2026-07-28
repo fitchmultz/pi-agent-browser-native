@@ -9,9 +9,9 @@
 
 import { execFile as execFileCallback } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { access, readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, resolve, sep } from "node:path";
+import { access, readdir, readFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -72,6 +72,7 @@ Checks:
   2. agent-browser --version matches the package capability baseline.
   3. pi --version is at least the minimum Pi runtime version for this release.
   4. Pi settings and repo-local autoload locations do not point at multiple active pi-agent-browser-native sources.
+  5. Live agent-browser daemon pid sidecars under /tmp/piab* (warn-only orphan signal).
 
 Examples:
   pi-agent-browser-doctor
@@ -417,6 +418,82 @@ async function checkPiSources({ cwd, agentDir, settingsPaths, readText, pathExis
 	};
 }
 
+function isProcessAlive(pid) {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export async function listLiveAgentBrowserDaemonSidecars(options = {}) {
+	const rootDirs = options.rootDirs ?? [`/tmp/piab-${typeof process.getuid === "function" ? process.getuid() : ""}`.replace(/-$/, ""), "/tmp/piab"].filter(Boolean);
+	const chromeTempGlobRoot = options.chromeTempRoot ?? tmpdir();
+	const readDir = options.readDir ?? readdir;
+	const readText = options.readText ?? ((path) => readFile(path, "utf8"));
+	const isAlive = options.isProcessAlive ?? isProcessAlive;
+	const live = [];
+	for (const rootDir of [...new Set(rootDirs.map((dir) => resolve(dir)))]) {
+		let entries = [];
+		try {
+			entries = await readDir(rootDir);
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			if (!entry.endsWith(".pid")) continue;
+			const pidPath = join(rootDir, entry);
+			let raw;
+			try {
+				raw = await readText(pidPath);
+			} catch {
+				continue;
+			}
+			const pid = Number.parseInt(String(raw ?? "").trim(), 10);
+			if (!isAlive(pid)) continue;
+			live.push({ pid, session: basename(entry, ".pid"), pidPath });
+		}
+	}
+	let chromeProfiles = 0;
+	try {
+		const tempEntries = await readDir(chromeTempGlobRoot);
+		chromeProfiles = tempEntries.filter((entry) => entry.startsWith("agent-browser-chrome-")).length;
+	} catch {
+		chromeProfiles = 0;
+	}
+	return { chromeProfiles, daemons: live };
+}
+
+async function checkOrphanAgentBrowserDaemons({ listLiveDaemons }) {
+	const snapshot = await listLiveDaemons();
+	const daemons = snapshot.daemons ?? [];
+	if (daemons.length === 0) {
+		return {
+			status: "pass",
+			title: snapshot.chromeProfiles > 0
+				? `No live agent-browser daemon pid sidecars; ${snapshot.chromeProfiles} leftover agent-browser-chrome-* temp profile dir(s) may remain.`
+				: "No live orphaned agent-browser daemon pid sidecars detected.",
+			lines: snapshot.chromeProfiles > 0
+				? [
+					"Stale temp profile directories alone are not proof of a live browser. Prefer agent_browser close/quit during work; idle timeout (default 15m) is the crash backstop.",
+				]
+				: [],
+		};
+	}
+	return {
+		status: "warn",
+		title: `Found ${daemons.length} live agent-browser daemon pid sidecar(s).`,
+		lines: [
+			...daemons.slice(0, 8).map((daemon) => `- pid ${daemon.pid} session=${daemon.session} (${daemon.pidPath})`),
+			daemons.length > 8 ? `- …and ${daemons.length - 8} more` : undefined,
+			"Wrapper quit closes tracked managed and explicit sessions opened through agent_browser; leftover daemons usually mean a hard kill, older package, or a direct CLI session outside Pi.",
+			"Only kill automation leftovers you own (for example pkill -f agent-browser-darwin / agent-browser-chrome-). Do not target your interactive Chrome/Brave profile.",
+		].filter(Boolean),
+	};
+}
+
 export async function evaluateDoctor(options = {}) {
 	const cwd = resolve(options.cwd ?? process.cwd());
 	const agentDir = resolve(options.agentDir ?? DEFAULT_AGENT_DIR);
@@ -425,6 +502,7 @@ export async function evaluateDoctor(options = {}) {
 	const pathExists = options.pathExists ?? defaultPathExists;
 	const runAgentBrowser = options.runAgentBrowser ?? defaultRunAgentBrowser;
 	const runPi = options.runPi ?? defaultRunPi;
+	const listLiveDaemons = options.listLiveDaemons ?? (() => listLiveAgentBrowserDaemonSidecars({ readText }));
 	const checks = [];
 	const failures = [];
 	const warnings = [];
@@ -443,6 +521,11 @@ export async function evaluateDoctor(options = {}) {
 		if (sourceCheck.status === "fail") failures.push(sourceCheck);
 		warnings.push(...(sourceCheck.warnings ?? []));
 	}
+
+	const orphanCheck = await checkOrphanAgentBrowserDaemons({ listLiveDaemons });
+	checks.push(orphanCheck);
+	if (orphanCheck.status === "fail") failures.push(orphanCheck);
+	if (orphanCheck.status === "warn") warnings.push(orphanCheck.title);
 
 	return { checks, failures, warnings };
 }

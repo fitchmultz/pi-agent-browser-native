@@ -12,7 +12,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
-	AgentToolResult,
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -45,7 +44,7 @@ import {
 	type CompiledAgentBrowserElectron,
 } from "./lib/input-modes.js";
 import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
-import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
+import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
 import {
@@ -224,20 +223,32 @@ function untrackOwnedManagedSessionFromBranchClose(
 	sessions.delete(sessionName);
 }
 
-function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSession>, result: AgentToolResult<unknown>, cwd: string): void {
+function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSession>, result: AgentBrowserToolResult, cwd: string): void {
 	const details = isRecord(result.details) ? result.details : undefined;
 	const outcome = isRecord(details?.managedSessionOutcome) ? details.managedSessionOutcome : undefined;
-	if (!outcome) return;
-	const succeeded = outcome.succeeded === true;
-	const status = typeof outcome.status === "string" ? outcome.status : undefined;
-	const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
-	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
-	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
-		const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
-		trackOwnedManagedSession(sessions, currentSessionName, cwd, { namespace });
+	const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
+	const sessionName = typeof details?.sessionName === "string" ? details.sessionName : undefined;
+	const command = typeof details?.command === "string" ? details.command : extractCommandTokens(getToolResultArgs(details ?? {})).at(0);
+	const toolSucceeded = result.isError !== true && details?.resultCategory !== "failure";
+	if (outcome) {
+		const succeeded = outcome.succeeded === true;
+		const status = typeof outcome.status === "string" ? outcome.status : undefined;
+		const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
+		const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
+		if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
+			trackOwnedManagedSession(sessions, currentSessionName, cwd, { namespace });
+		}
+		if (succeeded && status === "closed") {
+			untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName, namespace);
+		}
 	}
-	if (succeeded && status === "closed") {
-		untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName);
+	// Track explicit --session names opened through this tool so quit closes them too (#89).
+	if (toolSucceeded && sessionName && isCloseCommand(command)) {
+		untrackOwnedManagedSession(sessions, sessionName, namespace);
+		return;
+	}
+	if (toolSucceeded && sessionName) {
+		trackOwnedManagedSession(sessions, sessionName, cwd, { namespace });
 	}
 }
 

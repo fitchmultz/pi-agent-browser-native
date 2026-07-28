@@ -60,6 +60,7 @@ export type PublicVisibleRefFallbackDiagnostic = Omit<VisibleRefFallbackDiagnost
 
 export interface VisibleRefFallbackTarget {
 	action: SelectorRecoveryActionName;
+	optionValues?: string[];
 	roles: string[];
 	text?: string;
 	targetName: string;
@@ -101,13 +102,35 @@ function getFindNameFlagValue(args: string[], startIndex: number): string | unde
 	return name && !name.startsWith("-") ? name : undefined;
 }
 
+function collectFindTrailingValues(args: string[], startIndex: number): string[] {
+	const values: string[] = [];
+	for (let index = startIndex; index < args.length; index += 1) {
+		const token = args[index];
+		if (!token || token.startsWith("-")) break;
+		values.push(token);
+	}
+	return values;
+}
+
 function getFindVisibleRefFallbackTarget(args: string[], options: { allowLeadingDashFillText?: boolean } = {}): VisibleRefFallbackTarget | undefined {
 	const findIndex = args[0] === "--session" ? 2 : 0;
 	if (args[findIndex] !== "find") return undefined;
 	const locator = args[findIndex + 1];
 	const value = args[findIndex + 2];
 	const action = args[findIndex + 3];
-	if (!locator || !value || !isSelectorRecoveryActionName(action) || action === "select") return undefined;
+	if (!locator || !value || !isSelectorRecoveryActionName(action)) return undefined;
+	if (action === "select") {
+		const optionValues = collectFindTrailingValues(args, findIndex + 4);
+		if (optionValues.length === 0) return undefined;
+		if (locator === "role") {
+			const targetName = getFindNameFlagValue(args, findIndex + 4);
+			return targetName ? { action, optionValues, roles: [value], targetName } : undefined;
+		}
+		if (locator === "label" || locator === "placeholder" || locator === "text" || locator === "testid" || locator === "title" || locator === "alt") {
+			return { action, optionValues, roles: ["combobox", "listbox"], targetName: value };
+		}
+		return undefined;
+	}
 	const text = action === "fill" ? args[findIndex + 4] : undefined;
 	if (action === "fill" && (!text || (!options.allowLeadingDashFillText && text.startsWith("-")))) return undefined;
 	if (locator === "role") {
@@ -150,7 +173,13 @@ function getVisibleRefFallbackCandidates(target: VisibleRefFallbackTarget, snaps
 		const name = typeof entry.name === "string" ? entry.name : undefined;
 		if (!role || !name || !roleOrder.includes(role.toLowerCase()) || normalizeSemanticActionAccessibleName(name) !== targetName) return [];
 		if (target.action === "fill" && editableEvidence === false && EDITABLE_CONTROL_ROLES.has(role.toLowerCase())) return [];
-		const directRefArgs = target.action === "fill" ? undefined : [target.action, `@${ref}`];
+		const directRefArgs = target.action === "fill"
+			? undefined
+			: target.action === "select" && target.optionValues && target.optionValues.length > 0
+				? ["select", `@${ref}`, ...target.optionValues]
+				: target.action === "select"
+					? undefined
+					: [target.action, `@${ref}`];
 		return [{
 			action: target.action,
 			...(directRefArgs ? { args: directRefArgs } : {}),
@@ -194,7 +223,7 @@ export function resolveVisibleRefActionFromSnapshot(options: {
 	snapshotData: unknown;
 }): VisibleRefActionResolution | undefined {
 	const target = getFindVisibleRefFallbackTarget(options.compiledAction.args, { allowLeadingDashFillText: true });
-	if (!target || target.action === "select") return undefined;
+	if (!target) return undefined;
 	const snapshot = extractRefSnapshotFromData(options.snapshotData);
 	if (!snapshot) return undefined;
 	const candidates = getVisibleRefFallbackCandidates(target, options.snapshotData);
@@ -203,6 +232,12 @@ export function resolveVisibleRefActionFromSnapshot(options: {
 		const [candidate] = candidates;
 		if (!candidate || candidate.editableEvidence === false || !EDITABLE_CONTROL_ROLES.has(candidate.role.toLowerCase())) return undefined;
 		return { args: ["fill", candidate.ref, target.text], snapshot };
+	}
+	if (target.action === "select") {
+		if (candidates.length !== 1 || !target.optionValues || target.optionValues.length === 0) return undefined;
+		const [candidate] = candidates;
+		if (!candidate?.args) return undefined;
+		return { args: candidate.args, snapshot };
 	}
 	const candidate = candidates.find((item) => item.args !== undefined);
 	if (!candidate?.args) return undefined;

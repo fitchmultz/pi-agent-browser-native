@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `semanticAction` select now accepts locator/role/name forms and resolves them to a current combobox/listbox `@ref` on an active session (for example `{ action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate" }`), instead of a hard validation rejection that looked like a schema mismatch (#90).
+- Quit cleanup tracks explicit `--session` names opened through `agent_browser`, not only managed `piab-…` sessions, so Pi exit best-effort closes those daemons too (#89).
+- `pi-agent-browser-doctor` warns when live `/tmp/piab*.pid` daemon sidecars are present (read-only orphan signal) (#89).
+
+### Notes
+
+- #87 (`about:blank` between snapshot and action) was already addressed in 0.2.71 via consistent managed-session idle-timeout env on helper subprocesses plus tab recovery.
+- #88 (`dist/docs` path) was already addressed earlier: installed docs guidance resolves package-root `docs/…` via `findPackageRoot`.
+
 ## 0.2.72 - 2026-07-23
 
 ### Changed
