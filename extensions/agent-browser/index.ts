@@ -223,7 +223,12 @@ function untrackOwnedManagedSessionFromBranchClose(
 	sessions.delete(sessionName);
 }
 
-function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSession>, result: AgentBrowserToolResult, cwd: string): void {
+function syncOwnedManagedSessionsFromResult(
+	sessions: Map<string, OwnedManagedSession>,
+	explicitCleanupSessions: Map<string, OwnedManagedSession>,
+	result: AgentBrowserToolResult,
+	cwd: string,
+): void {
 	const details = isRecord(result.details) ? result.details : undefined;
 	const outcome = isRecord(details?.managedSessionOutcome) ? details.managedSessionOutcome : undefined;
 	if (!outcome) return;
@@ -234,14 +239,22 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
 	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
 		trackOwnedManagedSession(sessions, currentSessionName, cwd, { namespace });
+		// Managed ownership wins; keep the two registries disjoint.
+		untrackOwnedManagedSession(explicitCleanupSessions, currentSessionName, namespace);
 	}
 	if (succeeded && status === "closed") {
 		untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName, namespace);
 	}
 }
 
-// Process-owned quit cleanup for explicit --session opens. Not branch-visible and not on the managed serialize path.
-function syncExplicitCleanupSessionsFromResult(sessions: Map<string, OwnedManagedSession>, result: AgentBrowserToolResult, cwd: string): void {
+// Process-owned cleanup for caller explicit --session opens. Not on the managed serialize path.
+// Closed on every extension shutdown (quit/reload) because reload starts a new instance.
+function syncExplicitCleanupSessionsFromResult(
+	sessions: Map<string, OwnedManagedSession>,
+	managedSessions: Map<string, OwnedManagedSession>,
+	result: AgentBrowserToolResult,
+	cwd: string,
+): void {
 	const details = isRecord(result.details) ? result.details : undefined;
 	const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
 	const sessionName = typeof details?.sessionName === "string" ? details.sessionName : undefined;
@@ -261,10 +274,11 @@ function syncExplicitCleanupSessionsFromResult(sessions: Map<string, OwnedManage
 		untrackOwnedManagedSession(sessions, sessionName, namespace);
 		return;
 	}
-	// Skip wrapper-managed fresh/implicit sessions (they already use managed cleanup).
-	if (toolSucceeded && sessionName && !usedImplicitSession && !outcome && isOpenNavigationCommand(command)) {
-		trackOwnedManagedSession(sessions, sessionName, cwd, { namespace });
-	}
+	if (!toolSucceeded || !sessionName || usedImplicitSession || !isOpenNavigationCommand(command)) return;
+	const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
+	// Never dual-own a managed session name (implicit or fresh).
+	if (managedSessions.has(key) || outcome) return;
+	trackOwnedManagedSession(sessions, sessionName, cwd, { namespace });
 }
 
 function getTouchedElectronLaunchIds(sessionName: string | undefined, records: Map<string, ElectronLaunchRecord>): Set<string> | undefined {
@@ -678,7 +692,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(branch);
 		if (options.resetRuntimeOwnership) {
 			ownedManagedSessions.clear();
-			// Keep process-owned explicit cleanup across reload/session_start; only quit clears it.
+			// Explicit cleanup is closed on the prior instance shutdown; do not clear here on start.
 			ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 			branchOwnedElectronLaunchIds = new Set<string>();
 		} else {
@@ -965,7 +979,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				});
 				const branchStateStillCurrent = generationAtStart === branchStateGeneration;
 				// Process-owned explicit cleanup always tracks, even when branch-visible state is stale after session_tree.
-				syncExplicitCleanupSessionsFromResult(ownedExplicitCleanupSessions, result, browserRunState.managedSessionCwd);
+				syncExplicitCleanupSessionsFromResult(ownedExplicitCleanupSessions, ownedManagedSessions, result, browserRunState.managedSessionCwd);
 				if (serializeBrowserCommand || branchStateStillCurrent) {
 					allowedDomainsBySession = browserRunState.allowedDomainsBySession;
 					networkRoutesBySession = browserRunState.networkRoutesBySession;
@@ -979,7 +993,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						untrackOwnedManagedSession(ownedManagedSessions, closedSessionName);
 						untrackOwnedManagedSession(ownedExplicitCleanupSessions, closedSessionName);
 					}
-					syncOwnedManagedSessionsFromResult(ownedManagedSessions, result, browserRunState.managedSessionCwd);
+					syncOwnedManagedSessionsFromResult(ownedManagedSessions, ownedExplicitCleanupSessions, result, browserRunState.managedSessionCwd);
 					mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords, {
 						branchOwnedLaunchIds: branchOwnedElectronLaunchIds,
 						touchedLaunchIds: !result.isError

@@ -271,6 +271,47 @@ process.stdout.write(JSON.stringify(envelope));`,
 	}
 });
 
+test("agentBrowserExtension does not dual-own managed session names in explicit cleanup", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-explicit-disjoint-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const envelope = args.includes("close")
+  ? { success: true, data: { closed: true } }
+  : { success: true, data: { title: "Example Domain", url: args[args.length - 1] } };
+process.stdout.write(JSON.stringify(envelope));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const managedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/managed-first"],
+			});
+			assert.equal(managedOpen.isError, false, JSON.stringify(managedOpen));
+			const sessionName = String(managedOpen.details?.sessionName);
+			assert.ok(sessionName.length > 0);
+
+			const explicitReopen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", sessionName, "open", "https://example.com/managed-reopen"],
+			});
+			assert.equal(explicitReopen.isError, false, JSON.stringify(explicitReopen));
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+			const invocations = await readInvocationLog(logPath);
+			const closes = invocations.filter((entry) => entry.args.includes("close") && entry.args.includes(sessionName));
+			assert.equal(closes.length, 0, `managed session must stay open across reload; got ${JSON.stringify(closes)}`);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension tracks explicit opens that finish after session_tree", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-tree-cleanup-"));
 	const logPath = join(tempDir, "invocations.log");
