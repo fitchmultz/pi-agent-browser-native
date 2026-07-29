@@ -133,7 +133,7 @@ The tool should also expose a first-class `sessionMode: "fresh"` escape hatch so
 V1 ownership rule:
 - implicit auto-generated sessions are extension-managed convenience sessions
 - unnamed `sessionMode: "fresh"` launches rotate that extension-managed session to a new upstream browser
-- explicit/user-managed sessions are not the default managed session, but successful open/goto/navigate launches through the tool are tracked for best-effort quit close
+- explicit/user-managed sessions are not the default managed session, but successful open/goto/navigate launches through the tool are tracked for best-effort close on every extension shutdown (quit or reload)
 - extension-managed sessions should be reusable during an active `pi` session and across `/reload`, exact-session relaunch, `/resume`, and Pi branch-tree transitions, while still being cleaned up predictably
 
 Practical policy:
