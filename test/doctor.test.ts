@@ -16,6 +16,7 @@ const doctorModule = (await import(doctorModulePath)) as {
 	evaluateDoctor: (options?: {
 		agentDir?: string;
 		cwd?: string;
+		listLiveDaemons?: () => Promise<{ chromeProfiles: number; daemons: Array<{ pid: number; pidPath: string; session: string }> }>;
 		pathExists?: (path: string) => Promise<boolean>;
 		readText?: (path: string) => Promise<string | undefined>;
 		runAgentBrowser?: (args: string[]) => Promise<string>;
@@ -40,7 +41,11 @@ function passingPiVersion() {
 }
 
 function evaluateDoctorWithPi(options: Parameters<typeof evaluateDoctor>[0] = {}) {
-	return evaluateDoctor({ runPi: async () => passingPiVersion(), ...options });
+	return evaluateDoctor({
+		listLiveDaemons: async () => ({ chromeProfiles: 0, daemons: [] }),
+		runPi: async () => passingPiVersion(),
+		...options,
+	});
 }
 
 test("normalizeAgentBrowserVersion strips the upstream binary label", () => {
@@ -261,6 +266,24 @@ test("isDirectRun resolves npm bin symlinks before comparing the entrypoint", ()
 	assert.equal(isDirectRun(metaUrl, "/tmp/node_modules/.bin/pi-agent-browser-doctor", resolveRealPath), true);
 	assert.equal(isDirectRun(metaUrl, "/other/script.mjs", resolveRealPath), false);
 	assert.equal(isDirectRun(metaUrl, undefined, resolveRealPath), false);
+});
+
+test("doctor warns about live agent-browser daemon pid sidecars without failing", async () => {
+	const report = await evaluateDoctorWithPi({
+		listLiveDaemons: async () => ({
+			chromeProfiles: 2,
+			daemons: [{ pid: 4242, pidPath: "/tmp/piab-501/authmeta.pid", session: "authmeta" }],
+		}),
+		runAgentBrowser: async () => passingVersion(),
+		skipSourceCheck: true,
+	});
+	const text = formatDoctorReport(report);
+	assert.equal(report.failures.length, 0);
+	assert.match(text, /Found 1 live pid sidecar\(s\) under \/tmp\/piab\*/);
+	assert.match(text, /pid 4242 session=authmeta/);
+	assert.match(text, /unverified process identity/);
+	assert.match(text, /Doctor passed/);
+	assert.equal(report.warnings.length, 0);
 });
 
 test("parseCliArgs supports help, paths, repeated settings, and skip-source-check", () => {

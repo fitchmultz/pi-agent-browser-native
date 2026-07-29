@@ -90,8 +90,21 @@ test("visible ref fallback builds direct current-ref actions for non-fill text c
 	]);
 });
 
-test("selector recovery excludes select actions and non-exact names", () => {
-	assert.equal(getVisibleRefFallbackTarget({ commandTokens: ["find", "text", "Email", "select", "value"] }), undefined);
+test("selector recovery parses locator select targets and still requires exact names", () => {
+	assert.deepEqual(getVisibleRefFallbackTarget({ commandTokens: ["find", "label", "Flavor", "select", "chocolate"] }), {
+		action: "select",
+		optionValues: ["chocolate"],
+		roles: ["combobox", "listbox"],
+		targetName: "Flavor",
+	});
+	assert.deepEqual(getVisibleRefFallbackTarget({ commandTokens: ["find", "role", "combobox", "select", "chocolate", "--name", "Flavor"] }), {
+		action: "select",
+		optionValues: ["chocolate"],
+		roles: ["combobox"],
+		targetName: "Flavor",
+	});
+	assert.equal(getVisibleRefFallbackTarget({ commandTokens: ["find", "role", "button", "select", "danger", "--name", "Delete"] }), undefined);
+	assert.equal(getVisibleRefFallbackTarget({ commandTokens: ["find", "placeholder", "Flavor", "select", "chocolate"] }), undefined);
 	const target = getVisibleRefFallbackTarget({ commandTokens: ["find", "label", "Email address", "fill", "value"] });
 	assert.ok(target);
 	assert.equal(buildVisibleRefFallbackDiagnosticFromSnapshot({ snapshotData, target: target! }), undefined);

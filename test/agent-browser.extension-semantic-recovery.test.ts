@@ -177,7 +177,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				semanticAction: { action: "select", value: "chocolate" },
 			});
 			assert.equal(selectWithoutSelector.isError, true);
-			assert.match((selectWithoutSelector.content[0] as { text: string }).text, /semanticAction\.selector is required for select/);
+			assert.match((selectWithoutSelector.content[0] as { text: string }).text, /semanticAction\.selector or semanticAction\.locator is required for select/);
 			assert.equal(selectWithoutSelector.details?.failureCategory, "validation-error");
 
 			const selectWithoutValue = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -187,12 +187,35 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.match((selectWithoutValue.content[0] as { text: string }).text, /semanticAction\.value or semanticAction\.values is required for select/);
 			assert.equal(selectWithoutValue.details?.failureCategory, "validation-error");
 
-			const selectWithLocator = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const selectWithLocatorAndSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "select", locator: "placeholder", selector: "#flavor", value: "chocolate" },
 			});
-			assert.equal(selectWithLocator.isError, true);
-			assert.match((selectWithLocator.content[0] as { text: string }).text, /locator, role, and name are not supported for select/);
-			assert.equal(selectWithLocator.details?.failureCategory, "validation-error");
+			assert.equal(selectWithLocatorAndSelector.isError, true);
+			assert.match((selectWithLocatorAndSelector.content[0] as { text: string }).text, /selector cannot be combined with locator, role, or name for select/);
+			assert.equal(selectWithLocatorAndSelector.details?.failureCategory, "validation-error");
+
+			const selectLocatorNeedsSession = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "label", value: "Flavor", values: ["chocolate"] },
+			});
+			assert.equal(selectLocatorNeedsSession.isError, true);
+			assert.match((selectLocatorNeedsSession.content[0] as { text: string }).text, /select with locator requires an active browser session/);
+			assert.equal(selectLocatorNeedsSession.details?.failureCategory, "validation-error");
+			const coldSelectInvocations = await readInvocationLog(logPath).catch(() => []);
+			assert.deepEqual(coldSelectInvocations, [], "cold locator select must not spawn agent-browser (including snapshot probes)");
+
+			const selectButtonRoleRejected = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "role", role: "button", name: "Delete", value: "danger" },
+			});
+			assert.equal(selectButtonRoleRejected.isError, true);
+			assert.match((selectButtonRoleRejected.content[0] as { text: string }).text, /role must be combobox or listbox for select/);
+			assert.equal(selectButtonRoleRejected.details?.failureCategory, "validation-error");
+
+			const selectValueAndValuesRejected = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate", values: ["vanilla"] },
+			});
+			assert.equal(selectValueAndValuesRejected.isError, true);
+			assert.match((selectValueAndValuesRejected.content[0] as { text: string }).text, /value and .*values cannot both be provided/);
+			assert.equal(selectValueAndValuesRejected.details?.failureCategory, "validation-error");
 
 			const invocations = await readInvocationLog(logPath).catch(() => []);
 			assert.deepEqual(invocations.filter((entry) => entry.args.includes("find")), []);

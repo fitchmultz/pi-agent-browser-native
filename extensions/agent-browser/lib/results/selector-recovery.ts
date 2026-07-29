@@ -60,6 +60,7 @@ export type PublicVisibleRefFallbackDiagnostic = Omit<VisibleRefFallbackDiagnost
 
 export interface VisibleRefFallbackTarget {
 	action: SelectorRecoveryActionName;
+	optionValues?: string[];
 	roles: string[];
 	text?: string;
 	targetName: string;
@@ -98,7 +99,17 @@ function isSelectorRecoveryActionName(action: string): action is SelectorRecover
 function getFindNameFlagValue(args: string[], startIndex: number): string | undefined {
 	const nameFlagIndex = args.indexOf("--name", startIndex);
 	const name = nameFlagIndex >= 0 ? args[nameFlagIndex + 1] : undefined;
-	return name && !name.startsWith("-") ? name : undefined;
+	return typeof name === "string" && name.length > 0 ? name : undefined;
+}
+
+function collectFindTrailingValues(args: string[], startIndex: number): string[] {
+	const values: string[] = [];
+	for (let index = startIndex; index < args.length; index += 1) {
+		const token = args[index];
+		if (!token || token.startsWith("-")) break;
+		values.push(token);
+	}
+	return values;
 }
 
 function getFindVisibleRefFallbackTarget(args: string[], options: { allowLeadingDashFillText?: boolean } = {}): VisibleRefFallbackTarget | undefined {
@@ -107,7 +118,20 @@ function getFindVisibleRefFallbackTarget(args: string[], options: { allowLeading
 	const locator = args[findIndex + 1];
 	const value = args[findIndex + 2];
 	const action = args[findIndex + 3];
-	if (!locator || !value || !isSelectorRecoveryActionName(action) || action === "select") return undefined;
+	if (!locator || !value || !isSelectorRecoveryActionName(action)) return undefined;
+	if (action === "select") {
+		// Argv option tokens may be empty when values are dash-prefixed (for example "-1"); callers supply structured values.
+		const optionValues = collectFindTrailingValues(args, findIndex + 4);
+		if (locator === "role") {
+			if (!/^(?:combobox|listbox)$/i.test(value)) return undefined;
+			const targetName = getFindNameFlagValue(args, findIndex + 4);
+			return targetName ? { action, optionValues, roles: [value.toLowerCase()], targetName } : undefined;
+		}
+		if (locator === "label") {
+			return { action, optionValues, roles: ["combobox", "listbox"], targetName: value };
+		}
+		return undefined;
+	}
 	const text = action === "fill" ? args[findIndex + 4] : undefined;
 	if (action === "fill" && (!text || (!options.allowLeadingDashFillText && text.startsWith("-")))) return undefined;
 	if (locator === "role") {
@@ -150,7 +174,13 @@ function getVisibleRefFallbackCandidates(target: VisibleRefFallbackTarget, snaps
 		const name = typeof entry.name === "string" ? entry.name : undefined;
 		if (!role || !name || !roleOrder.includes(role.toLowerCase()) || normalizeSemanticActionAccessibleName(name) !== targetName) return [];
 		if (target.action === "fill" && editableEvidence === false && EDITABLE_CONTROL_ROLES.has(role.toLowerCase())) return [];
-		const directRefArgs = target.action === "fill" ? undefined : [target.action, `@${ref}`];
+		const directRefArgs = target.action === "fill"
+			? undefined
+			: target.action === "select" && target.optionValues && target.optionValues.length > 0
+				? ["select", `@${ref}`, ...target.optionValues]
+				: target.action === "select"
+					? undefined
+					: [target.action, `@${ref}`];
 		return [{
 			action: target.action,
 			...(directRefArgs ? { args: directRefArgs } : {}),
@@ -194,15 +224,28 @@ export function resolveVisibleRefActionFromSnapshot(options: {
 	snapshotData: unknown;
 }): VisibleRefActionResolution | undefined {
 	const target = getFindVisibleRefFallbackTarget(options.compiledAction.args, { allowLeadingDashFillText: true });
-	if (!target || target.action === "select") return undefined;
+	if (!target) return undefined;
 	const snapshot = extractRefSnapshotFromData(options.snapshotData);
 	if (!snapshot) return undefined;
-	const candidates = getVisibleRefFallbackCandidates(target, options.snapshotData);
-	if (target.action === "fill") {
-		if (!options.allowFill || candidates.length !== 1 || target.text === undefined) return undefined;
+	// Prefer structured select option values; argv reparsing drops dash-prefixed tokens such as "-1".
+	const selectOptionValues = options.compiledAction.values && options.compiledAction.values.length > 0
+		? options.compiledAction.values
+		: target.optionValues;
+	const effectiveTarget = target.action === "select" && selectOptionValues
+		? { ...target, optionValues: selectOptionValues }
+		: target;
+	const candidates = getVisibleRefFallbackCandidates(effectiveTarget, options.snapshotData);
+	if (effectiveTarget.action === "fill") {
+		if (!options.allowFill || candidates.length !== 1 || effectiveTarget.text === undefined) return undefined;
 		const [candidate] = candidates;
 		if (!candidate || candidate.editableEvidence === false || !EDITABLE_CONTROL_ROLES.has(candidate.role.toLowerCase())) return undefined;
-		return { args: ["fill", candidate.ref, target.text], snapshot };
+		return { args: ["fill", candidate.ref, effectiveTarget.text], snapshot };
+	}
+	if (effectiveTarget.action === "select") {
+		if (candidates.length !== 1 || !selectOptionValues || selectOptionValues.length === 0) return undefined;
+		const [candidate] = candidates;
+		if (!candidate) return undefined;
+		return { args: ["select", candidate.ref, ...selectOptionValues], snapshot };
 	}
 	const candidate = candidates.find((item) => item.args !== undefined);
 	if (!candidate?.args) return undefined;

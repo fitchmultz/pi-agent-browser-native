@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `semanticAction` select accepts narrow locator forms (`role` combobox/listbox + `name`, or `label` + `values`) and resolves them to exactly one current combobox/listbox `@ref` on an active session (for example `{ action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate" }`), instead of a hard validation rejection that looked like a schema mismatch (#90). Non-select roles and unsupported locators are rejected; select never offers a raw `find … select` stale-ref retry.
+- Extension shutdown closes explicit `--session` names this process successfully opened via open/goto/navigate (separate from the managed serialize set), including `/reload` because reload starts a new extension instance (#89).
+- `pi-agent-browser-doctor` warns when live `/tmp/piab*.pid` sidecars exist (unverified PID identity; read-only) (#89).
+
+### Notes
+
+- #87 (`about:blank` between snapshot and action) was already addressed in 0.2.71 via consistent managed-session idle-timeout env on helper subprocesses plus tab recovery.
+- #88 (`dist/docs` path) was already addressed earlier: installed docs guidance resolves package-root `docs/…` via `findPackageRoot`.
+
 ## 0.2.72 - 2026-07-23
 
 ### Changed
