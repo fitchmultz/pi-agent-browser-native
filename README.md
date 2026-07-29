@@ -163,6 +163,7 @@ The doctor checks:
 - the installed upstream version matches this wrapper's command-reference baseline
 - `pi --version` meets the minimum Pi runtime floor for this release; older Pi versions are setup failures
 - Pi settings do not point at multiple active `pi-agent-browser-native` sources
+- live `/tmp/piab*.pid` sidecars (warn-only; PID identity is not command-line verified as agent-browser)
 
 It does **not** edit Pi settings and does **not** run upstream `agent-browser doctor --fix`.
 

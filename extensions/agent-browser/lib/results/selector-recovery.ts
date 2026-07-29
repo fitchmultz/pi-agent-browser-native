@@ -99,7 +99,7 @@ function isSelectorRecoveryActionName(action: string): action is SelectorRecover
 function getFindNameFlagValue(args: string[], startIndex: number): string | undefined {
 	const nameFlagIndex = args.indexOf("--name", startIndex);
 	const name = nameFlagIndex >= 0 ? args[nameFlagIndex + 1] : undefined;
-	return name && !name.startsWith("-") ? name : undefined;
+	return typeof name === "string" && name.length > 0 ? name : undefined;
 }
 
 function collectFindTrailingValues(args: string[], startIndex: number): string[] {
@@ -120,8 +120,8 @@ function getFindVisibleRefFallbackTarget(args: string[], options: { allowLeading
 	const action = args[findIndex + 3];
 	if (!locator || !value || !isSelectorRecoveryActionName(action)) return undefined;
 	if (action === "select") {
+		// Argv option tokens may be empty when values are dash-prefixed (for example "-1"); callers supply structured values.
 		const optionValues = collectFindTrailingValues(args, findIndex + 4);
-		if (optionValues.length === 0) return undefined;
 		if (locator === "role") {
 			if (!/^(?:combobox|listbox)$/i.test(value)) return undefined;
 			const targetName = getFindNameFlagValue(args, findIndex + 4);
@@ -227,18 +227,25 @@ export function resolveVisibleRefActionFromSnapshot(options: {
 	if (!target) return undefined;
 	const snapshot = extractRefSnapshotFromData(options.snapshotData);
 	if (!snapshot) return undefined;
-	const candidates = getVisibleRefFallbackCandidates(target, options.snapshotData);
-	if (target.action === "fill") {
-		if (!options.allowFill || candidates.length !== 1 || target.text === undefined) return undefined;
+	// Prefer structured select option values; argv reparsing drops dash-prefixed tokens such as "-1".
+	const selectOptionValues = options.compiledAction.values && options.compiledAction.values.length > 0
+		? options.compiledAction.values
+		: target.optionValues;
+	const effectiveTarget = target.action === "select" && selectOptionValues
+		? { ...target, optionValues: selectOptionValues }
+		: target;
+	const candidates = getVisibleRefFallbackCandidates(effectiveTarget, options.snapshotData);
+	if (effectiveTarget.action === "fill") {
+		if (!options.allowFill || candidates.length !== 1 || effectiveTarget.text === undefined) return undefined;
 		const [candidate] = candidates;
 		if (!candidate || candidate.editableEvidence === false || !EDITABLE_CONTROL_ROLES.has(candidate.role.toLowerCase())) return undefined;
-		return { args: ["fill", candidate.ref, target.text], snapshot };
+		return { args: ["fill", candidate.ref, effectiveTarget.text], snapshot };
 	}
-	if (target.action === "select") {
-		if (candidates.length !== 1 || !target.optionValues || target.optionValues.length === 0) return undefined;
+	if (effectiveTarget.action === "select") {
+		if (candidates.length !== 1 || !selectOptionValues || selectOptionValues.length === 0) return undefined;
 		const [candidate] = candidates;
-		if (!candidate?.args) return undefined;
-		return { args: candidate.args, snapshot };
+		if (!candidate) return undefined;
+		return { args: ["select", candidate.ref, ...selectOptionValues], snapshot };
 	}
 	const candidate = candidates.find((item) => item.args !== undefined);
 	if (!candidate?.args) return undefined;

@@ -555,8 +555,14 @@ if (args.includes("open")) {
 				args: ["find", "role", "combobox", "select", "chocolate", "--name", "Flavor"],
 			});
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-3), ["select", "@e4", "chocolate"]);
+			const dashOption = await executeRegisteredTool(harness.tool, harness.ctx, {
+				semanticAction: { action: "select", locator: "role", role: "combobox", name: "Flavor", value: "-1" },
+			});
+			assert.equal(dashOption.isError, false, JSON.stringify(dashOption));
+			assert.deepEqual((dashOption.details?.effectiveArgs as string[] | undefined)?.slice(-3), ["select", "@e4", "-1"]);
 			const invocations = await readInvocationLog(logPath);
 			assert.ok(invocations.some((entry) => entry.args.at(-3) === "select" && entry.args.at(-2) === "@e4" && entry.args.at(-1) === "chocolate"));
+			assert.ok(invocations.some((entry) => entry.args.at(-3) === "select" && entry.args.at(-2) === "@e4" && entry.args.at(-1) === "-1"));
 			assert.equal(invocations.some((entry) => entry.args.includes("find")), false);
 		});
 	} finally {
