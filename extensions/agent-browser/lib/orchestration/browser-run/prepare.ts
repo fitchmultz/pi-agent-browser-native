@@ -14,7 +14,7 @@ import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { applyNamespaceToNextActions } from "../../results/next-actions.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
 import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-recovery.js";
-import { extractRefSnapshotFromData, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
+import { extractRefSnapshotFromData, isAboutBlankSessionTabTarget, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import {
 	buildExecutionPlan,
 	createFreshSessionName,
@@ -449,7 +449,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const priorRefSnapshotState = priorSessionPageState.refSnapshot;
 	const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
 	let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
-	if (!executionPlan.validationError && executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction)) {
+	// Never snapshot-probe against a cold planned session name: that would launch a daemon only to fail validation.
+	const mayResolveAgainstLiveSession = Boolean(priorSessionTabTarget?.url) && !isAboutBlankSessionTabTarget(priorSessionTabTarget);
+	if (!executionPlan.validationError && executionPlan.managedSessionName !== freshSessionName && mayResolveAgainstLiveSession && canResolveSemanticVisibleRef(compiledSemanticAction)) {
 		semanticActionVisibleRefResolution = await resolveSemanticActionVisibleRefArgs({
 			compiled: compiledSemanticAction,
 			cwd,
@@ -461,7 +463,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	if (!executionPlan.validationError && requiresResolvedSemanticVisibleRef(compiledSemanticAction) && !semanticActionVisibleRefResolution) {
 		executionPlan = {
 			...executionPlan,
-			validationError: executionPlan.sessionName
+			validationError: mayResolveAgainstLiveSession
 				? "semanticAction select with locator could not resolve to exactly one current visible combobox/listbox ref. Run snapshot -i and retry with selector or a more specific role/name."
 				: "semanticAction select with locator requires an active browser session so the wrapper can resolve a current @ref; open a page first or pass selector plus value/values.",
 		};

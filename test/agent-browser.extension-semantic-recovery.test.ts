@@ -198,8 +198,10 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				semanticAction: { action: "select", locator: "label", value: "Flavor", values: ["chocolate"] },
 			});
 			assert.equal(selectLocatorNeedsSession.isError, true);
-			assert.match((selectLocatorNeedsSession.content[0] as { text: string }).text, /select with locator requires an active browser session|could not resolve to exactly one current visible/);
+			assert.match((selectLocatorNeedsSession.content[0] as { text: string }).text, /select with locator requires an active browser session/);
 			assert.equal(selectLocatorNeedsSession.details?.failureCategory, "validation-error");
+			const coldSelectInvocations = await readInvocationLog(logPath).catch(() => []);
+			assert.deepEqual(coldSelectInvocations, [], "cold locator select must not spawn agent-browser (including snapshot probes)");
 
 			const selectButtonRoleRejected = await executeRegisteredTool(harness.tool, harness.ctx, {
 				semanticAction: { action: "select", locator: "role", role: "button", name: "Delete", value: "danger" },
