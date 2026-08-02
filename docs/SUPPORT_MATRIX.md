@@ -62,7 +62,7 @@ Re-run the gates below before each release; this table records what the closure 
 
 | Gate | Evidence | Status |
 | --- | --- | --- |
-| Default local gate | `npm run verify` checks generated playbook drift, clean-builds generated `dist/`, runs `tsc --noEmit`, unit/fake tests, generated command-reference blocks, and live command-reference sampling. | **Current for 0.33.2:** pass on 2026-08-02 (593 passed, 2 opt-in skips; live command-reference verification passed). |
+| Default local gate | `npm run verify` checks generated playbook drift, clean-builds generated `dist/`, runs `tsc --noEmit`, unit/fake tests, generated command-reference blocks, and live command-reference sampling. | **Current for 0.33.2:** pass on 2026-08-02 (594+ passed, 2 opt-in skips; live command-reference verification passed). |
 | Pre-PR local gate | `npm run verify -- pre-pr` composes the default gate with package-content verification. Use before larger local handoffs or PR-ready claims when lifecycle/platform/live dogfood cost is not warranted. | **Current for 0.33.2:** orchestration locked by `test/project-verify.test.ts`; full pre-pr not required for this branch handoff. |
 | Real upstream contract | `npm run verify -- real-upstream` runs the localhost fixture matrix against the real installed `agent-browser` matching the baseline. | **Current for 0.33.2:** pass on 2026-08-02 (2/2 real-upstream tests). |
 | Packaged Pi smoke | `npm run verify -- package-pi` validates package contents, loads the packaged `agent_browser` tool without requiring optional Brave config, and executes fake-upstream `--version`. | **Current for package 0.2.72:** pass on 2026-07-23 inside `npm run verify -- release`. |

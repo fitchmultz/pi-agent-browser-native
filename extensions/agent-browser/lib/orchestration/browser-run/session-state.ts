@@ -25,6 +25,7 @@ import {
 	isSessionTabPostCommandCorrectionExcludedCommand,
 } from "../../command-taxonomy.js";
 import {
+	buildOwnedManagedSessionEnv,
 	chooseOpenResultTabCorrection,
 	isManagedSessionRestoreDisabled,
 	redactInvocationArgs,
@@ -608,6 +609,7 @@ export async function runSessionCommandData(options: {
 	const processResult = await runAgentBrowserProcess({
 		args: ["--json", ...(namespace ? ["--namespace", namespace] : []), "--session", sessionName, ...args],
 		cwd,
+		env: buildOwnedManagedSessionEnv(),
 		signal,
 		stdin,
 		timeoutMs,
@@ -903,6 +905,7 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 		const processResult = await runAgentBrowserProcess({
 			args: closeArgs,
 			cwd: options.cwd,
+			env: buildOwnedManagedSessionEnv(),
 			signal: controller.signal,
 		});
 		stdoutSpillPath = processResult.stdoutSpillPath;

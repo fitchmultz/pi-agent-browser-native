@@ -44,15 +44,19 @@ const AGENT_BROWSER_SESSION_NAME_ENV = "AGENT_BROWSER_SESSION_NAME";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
 const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE";
+export const OWNED_MANAGED_SESSION_ENV = "PI_AGENT_BROWSER_OWNED_MANAGED_SESSION";
+const AGENT_BROWSER_PROVIDER_ENV = "AGENT_BROWSER_PROVIDER";
 const DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
 const MANAGED_SESSION_NAME_PREFIX = "piab-";
+const MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH = 32;
 const MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS = [
 	AGENT_BROWSER_ALLOWED_DOMAINS_ENV,
 	AGENT_BROWSER_PROFILE_ENV,
 	AGENT_BROWSER_STATE_ENV,
 	AGENT_BROWSER_CDP_ENV,
 	AGENT_BROWSER_SESSION_NAME_ENV,
+	AGENT_BROWSER_PROVIDER_ENV,
 ] as const;
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
@@ -462,7 +466,8 @@ function hasNonEmptyEnvValue(env: NodeJS.ProcessEnv | undefined, name: string): 
 
 /** Cwd-stable restore key so SSO browser storage survives across Pi chats in the same project. */
 export function createManagedSessionRestoreKey(cwd: string): string {
-	return `${MANAGED_SESSION_NAME_PREFIX}r-${createCwdHash(cwd)}`;
+	const digest = createHash("sha256").update(`restore:${cwd}`).digest("hex").slice(0, MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH);
+	return `${MANAGED_SESSION_NAME_PREFIX}r-${digest}`;
 }
 
 /** Sessions launched with profile/cdp/state/etc must never gain wrapper restore on later bare follow-ups. */
@@ -499,10 +504,12 @@ export function getManagedSessionRestoreEnv(options: {
 	const parentEnv = options.parentEnv ?? process.env;
 	const args = options.args;
 	const sessionName = extractExplicitSessionName(args);
-	const isManagedSession = typeof sessionName === "string" && sessionName.startsWith(MANAGED_SESSION_NAME_PREFIX);
+	const ownedManagedSession =
+		isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]) || isEnabledEnvFlag(parentEnv[OWNED_MANAGED_SESSION_ENV]);
 
+	if (!ownedManagedSession) return {};
 	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV]) || isDisabledEnvFlag(options.env?.[MANAGED_SESSION_RESTORE_ENV])) return {};
-	if (isManagedSession && isManagedSessionRestoreDisabled(sessionName)) return {};
+	if (isManagedSessionRestoreDisabled(sessionName)) return {};
 	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) {
 		disableManagedSessionRestore(sessionName);
 		return {};
@@ -519,20 +526,25 @@ export function getManagedSessionRestoreEnv(options: {
 		return {};
 	}
 
-	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name"] as const) {
+	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name", "--provider", "-p"] as const) {
 		if (hasLaunchScopedFlagToken(args, flag)) {
 			disableManagedSessionRestore(sessionName);
 			return {};
 		}
 	}
 
-	if (!isManagedSession) return {};
 	if (parseCommandInfo(args).command === "connect") {
 		disableManagedSessionRestore(sessionName);
 		return {};
 	}
+	if (!sessionName) return {};
 
 	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
+}
+
+/** Env marker set only for wrapper-owned managed-session subprocesses. */
+export function buildOwnedManagedSessionEnv(): NodeJS.ProcessEnv {
+	return { [OWNED_MANAGED_SESSION_ENV]: "1" };
 }
 
 export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {

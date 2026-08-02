@@ -37,42 +37,61 @@ test("createManagedSessionRestoreKey is cwd-stable across pi session ids", () =>
 	clearManagedSessionRestoreDisabled();
 	const cwd = "/Users/example/Projects/work-app";
 	assert.equal(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(cwd));
-	assert.match(createManagedSessionRestoreKey(cwd), /^piab-r-[a-f0-9]{8}$/);
+	assert.match(createManagedSessionRestoreKey(cwd), /^piab-r-[a-f0-9]{32}$/);
 	assert.notEqual(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(`${cwd}-other`));
+	assert.notEqual(
+		createManagedSessionRestoreKey("/tmp/piab-collision-20970"),
+		createManagedSessionRestoreKey("/tmp/piab-collision-22987"),
+	);
 });
 
 test("getManagedSessionRestoreEnv enables restore for managed piab sessions", () => {
 	clearManagedSessionRestoreDisabled();
 	const cwd = "/Users/example/Projects/work-app";
 	const key = createManagedSessionRestoreKey(cwd);
+	const owned = { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" };
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
+			parentEnv: {},
+		}),
+		{ AGENT_BROWSER_RESTORE: key },
+	);
+	// caller-owned explicit session, even with piab- prefix, must not get restore without ownership marker
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-caller-owned", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: {},
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "custom", "open", "https://app.example.com"],
+			cwd,
+			env: owned,
 			parentEnv: {},
 		}),
 		{ AGENT_BROWSER_RESTORE: key },
 	);
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "custom", "open", "https://app.example.com"],
-			cwd,
-			parentEnv: {},
-		}),
-		{},
-	);
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "--allowed-domains", "example.com", "open", "https://example.com"],
 			cwd,
+			env: owned,
 			parentEnv: {},
 		}),
 		{},
 	);
+	clearManagedSessionRestoreDisabled();
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
 			parentEnv: { PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" },
 		}),
 		{},
@@ -81,55 +100,78 @@ test("getManagedSessionRestoreEnv enables restore for managed piab sessions", ()
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "connect", "9222"],
 			cwd,
+			env: owned,
 			parentEnv: {},
 		}),
 		{},
 	);
+	clearManagedSessionRestoreDisabled();
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
 			parentEnv: { AGENT_BROWSER_ALLOWED_DOMAINS: "example.com" },
 		}),
 		{},
 	);
+	clearManagedSessionRestoreDisabled();
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
 			parentEnv: { AGENT_BROWSER_PROFILE: "Default" },
 		}),
 		{},
 	);
+	clearManagedSessionRestoreDisabled();
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
 			parentEnv: { AGENT_BROWSER_AUTO_CONNECT: "1" },
 		}),
 		{},
 	);
+	clearManagedSessionRestoreDisabled();
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "--session-name", "legacy", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
 			parentEnv: {},
 		}),
 		{},
 	);
+	clearManagedSessionRestoreDisabled();
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
 			parentEnv: { AGENT_BROWSER_SESSION_NAME: "legacy-restore" },
 		}),
 		{},
 	);
+	clearManagedSessionRestoreDisabled();
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
 			parentEnv: { AGENT_BROWSER_CDP: "9222" },
+		}),
+		{},
+	);
+	clearManagedSessionRestoreDisabled();
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "-p", "browserbase", "open", "https://app.example.com"],
+			cwd,
+			env: owned,
+			parentEnv: {},
 		}),
 		{},
 	);
@@ -139,6 +181,7 @@ test("getManagedSessionRestoreEnv enables restore for managed piab sessions", ()
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "wait", "@e1", "--state", "hidden"],
 			cwd,
+			env: owned,
 			parentEnv: {},
 		}),
 		{ AGENT_BROWSER_RESTORE: key },
@@ -149,10 +192,12 @@ test("getManagedSessionRestoreEnv sticky-disables restore after an incompatible 
 	clearManagedSessionRestoreDisabled();
 	const cwd = "/Users/example/Projects/work-app";
 	const session = "piab-work-abc12345-deadbeef";
+	const owned = { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" };
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", session, "--profile", "Default", "open", "https://app.example.com"],
 			cwd,
+			env: owned,
 			parentEnv: {},
 		}),
 		{},
@@ -161,6 +206,7 @@ test("getManagedSessionRestoreEnv sticky-disables restore after an incompatible 
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", session, "snapshot", "-i"],
 			cwd,
+			env: owned,
 			parentEnv: {},
 		}),
 		{},
@@ -170,6 +216,7 @@ test("getManagedSessionRestoreEnv sticky-disables restore after an incompatible 
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", session, "snapshot", "-i"],
 			cwd,
+			env: owned,
 			parentEnv: {},
 		}),
 		{ AGENT_BROWSER_RESTORE: createManagedSessionRestoreKey(cwd) },

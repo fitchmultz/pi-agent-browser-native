@@ -1,4 +1,5 @@
 import { runAgentBrowserProcess } from "../../process.js";
+import { buildOwnedManagedSessionEnv } from "../../runtime.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
 import { applyBrowserRunStatePatch } from "./session-state.js";
 import { buildMissingBinaryFailureResult } from "./final-result.js";
@@ -21,7 +22,12 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 		const processResult = await runAgentBrowserProcess({
 			args: prepared.processArgs,
 			cwd: options.cwd,
-			env: prepared.executionPlan.managedSessionName ? { AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs } : undefined,
+			env: prepared.executionPlan.managedSessionName
+				? {
+					AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs,
+					...buildOwnedManagedSessionEnv(),
+				}
+				: undefined,
 			signal: options.signal,
 			stdin: prepared.processStdin,
 			timeoutMs: prepared.processTimeoutMs,
