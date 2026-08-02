@@ -604,8 +604,11 @@ export function getManagedSessionRestoreEnv(options: {
 	const ownedManagedSession = ownedFromEnv || ownedContext !== undefined;
 
 	if (!ownedManagedSession) return {};
-	// Call-scoped plan suppression for ALS-only helper probes. Owned main/close spawns set options.env and must fall through to sticky-disable.
-	if (!ownedFromEnv && ownedContext?.restoreSuppressed) return {};
+	// Plan-level suppression (from original main argv) must outlive prepare rewrites such as pinned-batch.
+	if (ownedContext?.restoreSuppressed) {
+		if (ownedFromEnv) disableManagedSessionRestore(sessionName, namespace);
+		return {};
+	}
 
 	const incompatible = isManagedSessionRestoreIncompatible({ args, env: options.env, parentEnv });
 	if (incompatible) {

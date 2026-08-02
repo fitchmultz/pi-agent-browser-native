@@ -373,6 +373,31 @@ test("main-plan restore policy suppresses helpers without sticky-disabling on pr
 	);
 });
 
+test("plan-suppressed owned main spawn sticky-disables even when process argv is rewritten", async () => {
+	clearManagedSessionRestoreDisabled();
+	const cwd = "/Users/example/Projects/work-app";
+	const managed = "piab-work-abc12345-deadbeef";
+	const owned = applyManagedSessionRestorePlanPolicy({
+		args: ["--json", "--session", managed, "--profile", "Default", "click", "@e1"],
+		cwd,
+		owned: { sessionName: managed },
+	});
+	assert.equal(owned?.restoreSuppressed, true);
+	await withOwnedManagedSessionContext(owned, async () => {
+		// prepare may rewrite processArgs to plain batch while plan suppression remains
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--session", managed, "batch"],
+				cwd,
+				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+				parentEnv: {},
+			}),
+			{},
+		);
+		assert.equal(isManagedSessionRestoreDisabled(managed), true);
+	});
+});
+
 test("restoreManagedSessionStateFromBranch reapplies sticky disable from explicit managed-session rows", () => {
 	clearManagedSessionRestoreDisabled();
 	const managed = "piab-project-abc12345-deadbeef";
