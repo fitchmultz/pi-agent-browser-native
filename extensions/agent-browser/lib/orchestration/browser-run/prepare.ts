@@ -439,17 +439,16 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	const idleTimeoutMismatch = getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs);
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
-	const ownedManagedSession = resolveOwnedManagedSessionContext({
-		currentManagedSessionName: state.managedSessionName,
-		currentManagedSessionNamespace: state.managedSessionNamespace,
-		managedSessionName: executionPlan.managedSessionName,
-		namespace: executionPlan.namespace,
-		sessionName: executionPlan.sessionName,
-	});
-	applyManagedSessionRestorePlanPolicy({
+	const ownedManagedSession = applyManagedSessionRestorePlanPolicy({
 		args: executionPlan.effectiveArgs,
 		cwd,
-		owned: ownedManagedSession,
+		owned: resolveOwnedManagedSessionContext({
+			currentManagedSessionName: state.managedSessionName,
+			currentManagedSessionNamespace: state.managedSessionNamespace,
+			managedSessionName: executionPlan.managedSessionName,
+			namespace: executionPlan.namespace,
+			sessionName: executionPlan.sessionName,
+		}),
 	});
 	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 	const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);

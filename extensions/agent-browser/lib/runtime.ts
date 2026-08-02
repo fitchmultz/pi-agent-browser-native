@@ -476,6 +476,8 @@ const managedSessionsWithRestoreDisabled = new Set<string>();
 
 export type OwnedManagedSessionContext = {
 	namespace?: string;
+	/** Call-scoped only: suppress restore for helper probes without sticky-disabling the session. */
+	restoreSuppressed?: boolean;
 	sessionName: string;
 };
 
@@ -555,10 +557,29 @@ function countExplicitSessionFlags(args: string[]): number {
 	return count;
 }
 
-function ownedContextMatches(sessionName: string | undefined, namespace: string | undefined): boolean {
+function ownedContextMatches(sessionName: string | undefined, namespace: string | undefined): OwnedManagedSessionContext | undefined {
 	const owned = ownedManagedSessionStorage.getStore();
-	if (!owned || !sessionName) return false;
-	return owned.sessionName === sessionName && (owned.namespace ?? undefined) === (namespace ?? undefined);
+	if (!owned || !sessionName) return undefined;
+	if (owned.sessionName !== sessionName || (owned.namespace ?? undefined) !== (namespace ?? undefined)) return undefined;
+	return owned;
+}
+
+function isManagedSessionRestoreIncompatible(options: {
+	args: string[];
+	env?: NodeJS.ProcessEnv;
+	parentEnv?: NodeJS.ProcessEnv;
+}): boolean {
+	const parentEnv = options.parentEnv ?? process.env;
+	const args = options.args;
+	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) return true;
+	for (const name of MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS) {
+		if (hasNonEmptyEnvValue(parentEnv, name) || hasNonEmptyEnvValue(options.env, name)) return true;
+	}
+	if (isEnabledEnvFlag(parentEnv[AGENT_BROWSER_AUTO_CONNECT_ENV]) || isEnabledEnvFlag(options.env?.[AGENT_BROWSER_AUTO_CONNECT_ENV])) return true;
+	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name", "--provider", "-p"] as const) {
+		if (hasLaunchScopedFlagToken(args, flag)) return true;
+	}
+	return parseCommandInfo(args).command === "connect";
 }
 
 /**
@@ -578,36 +599,19 @@ export function getManagedSessionRestoreEnv(options: {
 	const namespace = extractExplicitNamespace(args);
 	// Ownership comes only from wrapper-set options.env or the in-call owned-session ALS context.
 	// Do not trust parent process env for PI_AGENT_BROWSER_OWNED_MANAGED_SESSION.
-	const ownedManagedSession =
-		isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]) || ownedContextMatches(sessionName, namespace);
+	const ownedFromEnv = isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]);
+	const ownedContext = ownedContextMatches(sessionName, namespace);
+	const ownedManagedSession = ownedFromEnv || ownedContext !== undefined;
 
 	if (!ownedManagedSession) return {};
-	// Record incompatible launches even when inject is opted out, so later bare calls stay disabled.
-	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) {
-		disableManagedSessionRestore(sessionName, namespace);
-		return {};
-	}
+	// Call-scoped plan suppression for helpers: do not sticky-disable until an incompatible spawn actually runs.
+	if (ownedContext?.restoreSuppressed) return {};
 
-	for (const name of MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS) {
-		if (hasNonEmptyEnvValue(parentEnv, name) || hasNonEmptyEnvValue(options.env, name)) {
-			disableManagedSessionRestore(sessionName, namespace);
-			return {};
-		}
-	}
-	if (isEnabledEnvFlag(parentEnv[AGENT_BROWSER_AUTO_CONNECT_ENV]) || isEnabledEnvFlag(options.env?.[AGENT_BROWSER_AUTO_CONNECT_ENV])) {
-		disableManagedSessionRestore(sessionName, namespace);
-		return {};
-	}
-
-	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name", "--provider", "-p"] as const) {
-		if (hasLaunchScopedFlagToken(args, flag)) {
-			disableManagedSessionRestore(sessionName, namespace);
-			return {};
-		}
-	}
-
-	if (parseCommandInfo(args).command === "connect") {
-		disableManagedSessionRestore(sessionName, namespace);
+	const incompatible = isManagedSessionRestoreIncompatible({ args, env: options.env, parentEnv });
+	if (incompatible) {
+		// Sticky-disable only when this spawn itself is wrapper-owned via options.env (main/close path),
+		// not merely via inherited ALS context on a bare helper probe.
+		if (ownedFromEnv) disableManagedSessionRestore(sessionName, namespace);
 		return {};
 	}
 	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV]) || isDisabledEnvFlag(options.env?.[MANAGED_SESSION_RESTORE_ENV])) return {};
@@ -617,18 +621,26 @@ export function getManagedSessionRestoreEnv(options: {
 	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
 }
 
-/** Evaluate main-plan argv restore policy before helper probes so incompatible launches sticky-disable first. */
+/** Mark call-scoped helper suppression from main-plan argv without sticky-disabling until spawn. */
+export function planManagedSessionRestoreSuppressed(options: {
+	args: string[];
+	env?: NodeJS.ProcessEnv;
+	parentEnv?: NodeJS.ProcessEnv;
+}): boolean {
+	return isManagedSessionRestoreIncompatible(options);
+}
+
+/** @deprecated Prefer planManagedSessionRestoreSuppressed + owned context restoreSuppressed. */
 export function applyManagedSessionRestorePlanPolicy(options: {
 	args: string[];
 	cwd: string;
 	owned?: OwnedManagedSessionContext;
-}): void {
-	if (!options.owned) return;
-	getManagedSessionRestoreEnv({
-		args: options.args,
-		cwd: options.cwd,
-		env: buildOwnedManagedSessionEnv(),
-	});
+}): OwnedManagedSessionContext | undefined {
+	if (!options.owned) return undefined;
+	return {
+		...options.owned,
+		restoreSuppressed: planManagedSessionRestoreSuppressed({ args: options.args }),
+	};
 }
 
 /** Env marker set only for wrapper-owned managed-session subprocesses. */
@@ -780,6 +792,11 @@ export function restoreManagedSessionStateFromBranch(
 		const explicitCloseSessionName = commandClosesSession && explicitSessionName && restorableDetailSessionName === explicitSessionName
 			? restorableDetailSessionName
 			: undefined;
+		// Sticky restore policy is session-identity state and must apply even for explicit
+		// `--session <current-managed>` rows that are not used for managed-session lifecycle replay.
+		if (details.managedSessionRestoreDisabled === true && typeof sessionName === "string") {
+			markManagedSessionRestoreDisabled(sessionName, namespace);
+		}
 		const managedSessionName =
 			!explicitSessionName &&
 			restorableDetailSessionName &&
@@ -807,9 +824,6 @@ export function restoreManagedSessionStateFromBranch(
 		const outcomeActiveAfter = outcome?.activeAfter === true;
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
-		if (details.managedSessionRestoreDisabled === true) {
-			markManagedSessionRestoreDisabled(managedSessionName, namespace);
-		}
 		if (commandClosesSession) {
 			if (succeeded) {
 				clearManagedSessionRestoreDisabled(managedSessionName, namespace);

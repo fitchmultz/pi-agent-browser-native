@@ -23,18 +23,16 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 	}
 
 	const { prepared } = preparedResult;
-	const ownedManagedSession = resolveOwnedManagedSessionContext({
-		currentManagedSessionName: options.state.managedSessionName,
-		currentManagedSessionNamespace: options.state.managedSessionNamespace,
-		managedSessionName: prepared.executionPlan.managedSessionName,
-		namespace: prepared.executionPlan.namespace,
-		sessionName: prepared.executionPlan.sessionName,
-	});
-	// Re-apply after prepare so sticky policy stays aligned if plan args changed.
-	applyManagedSessionRestorePlanPolicy({
+	const ownedManagedSession = applyManagedSessionRestorePlanPolicy({
 		args: prepared.executionPlan.effectiveArgs,
 		cwd: options.cwd,
-		owned: ownedManagedSession,
+		owned: resolveOwnedManagedSessionContext({
+			currentManagedSessionName: options.state.managedSessionName,
+			currentManagedSessionNamespace: options.state.managedSessionNamespace,
+			managedSessionName: prepared.executionPlan.managedSessionName,
+			namespace: prepared.executionPlan.namespace,
+			sessionName: prepared.executionPlan.sessionName,
+		}),
 	});
 	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		try {

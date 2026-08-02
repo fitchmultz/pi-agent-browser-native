@@ -23,6 +23,7 @@ import {
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	getManagedSessionRestoreEnv,
+	isManagedSessionRestoreDisabled,
 	parseArgvDescriptor,
 	redactInvocationArgs,
 	redactSensitiveText,
@@ -301,24 +302,80 @@ test("owned managed session context enables restore for matching helper probes o
 	);
 });
 
-test("main-plan restore policy sticky-disables helpers before bare probes", () => {
+test("main-plan restore policy suppresses helpers without sticky-disabling on preflight-only plans", async () => {
 	clearManagedSessionRestoreDisabled();
 	const cwd = "/Users/example/Projects/work-app";
 	const managed = "piab-work-abc12345-deadbeef";
-	applyManagedSessionRestorePlanPolicy({
+	const key = createManagedSessionRestoreKey(cwd);
+	const owned = applyManagedSessionRestorePlanPolicy({
 		args: ["--json", "--session", managed, "--profile", "Default", "click", "xpath=//button"],
 		cwd,
 		owned: { sessionName: managed },
 	});
+	assert.equal(owned?.restoreSuppressed, true);
+	await withOwnedManagedSessionContext(owned, async () => {
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--session", managed, "eval", "--stdin"],
+				cwd,
+				parentEnv: {},
+			}),
+			{},
+		);
+	});
+	// preflight-only plan must not sticky-disable later bare owned spawns
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", managed, "eval", "--stdin"],
+			args: ["--json", "--session", managed, "snapshot", "-i"],
+			cwd,
+			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+			parentEnv: {},
+		}),
+		{ AGENT_BROWSER_RESTORE: key },
+	);
+	// actual incompatible owned spawn still sticky-disables
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", managed, "--profile", "Default", "open", "https://app.example.com"],
 			cwd,
 			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
 			parentEnv: {},
 		}),
 		{},
 	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", managed, "snapshot", "-i"],
+			cwd,
+			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+			parentEnv: {},
+		}),
+		{},
+	);
+});
+
+test("restoreManagedSessionStateFromBranch reapplies sticky disable from explicit managed-session rows", () => {
+	clearManagedSessionRestoreDisabled();
+	const managed = "piab-project-abc12345-deadbeef";
+	restoreManagedSessionStateFromBranch(
+		[
+			{
+				type: "message",
+				message: {
+					toolName: "agent_browser",
+					details: {
+						args: ["--session", managed, "--profile", "Default", "open", "https://app.example.com"],
+						sessionName: managed,
+						usedImplicitSession: false,
+						managedSessionRestoreDisabled: true,
+						exitCode: 0,
+					},
+				},
+			},
+		],
+		managed,
+	);
+	assert.equal(isManagedSessionRestoreDisabled(managed), true);
 });
 
 test("incompatible launches sticky-disable even when managed restore is opted out", () => {
