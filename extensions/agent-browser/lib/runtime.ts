@@ -39,6 +39,7 @@ const AGENT_BROWSER_ALLOWED_DOMAINS_ENV = "AGENT_BROWSER_ALLOWED_DOMAINS";
 const AGENT_BROWSER_PROFILE_ENV = "AGENT_BROWSER_PROFILE";
 const AGENT_BROWSER_STATE_ENV = "AGENT_BROWSER_STATE";
 const AGENT_BROWSER_AUTO_CONNECT_ENV = "AGENT_BROWSER_AUTO_CONNECT";
+const AGENT_BROWSER_SESSION_NAME_ENV = "AGENT_BROWSER_SESSION_NAME";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
 const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE";
@@ -49,6 +50,7 @@ const MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS = [
 	AGENT_BROWSER_ALLOWED_DOMAINS_ENV,
 	AGENT_BROWSER_PROFILE_ENV,
 	AGENT_BROWSER_STATE_ENV,
+	AGENT_BROWSER_SESSION_NAME_ENV,
 ] as const;
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
@@ -456,13 +458,13 @@ function hasNonEmptyEnvValue(env: NodeJS.ProcessEnv | undefined, name: string): 
 	return typeof value === "string" && value.trim().length > 0;
 }
 
-/** Cwd-stable restore key so SSO cookies survive across Pi chats in the same project. */
+/** Cwd-stable restore key so SSO browser storage survives across Pi chats in the same project. */
 export function createManagedSessionRestoreKey(cwd: string): string {
 	return `${MANAGED_SESSION_NAME_PREFIX}r-${createCwdHash(cwd)}`;
 }
 
 /**
- * Enable upstream cookie/localStorage restore for extension-managed sessions without argv launch flags.
+ * Enable upstream restore (cookies, localStorage, and sessionStorage) for extension-managed sessions without argv launch flags.
  * Skip when the caller already owns auth persistence, when restore is incompatible, or when disabled.
  */
 export function getManagedSessionRestoreEnv(options: {
@@ -481,7 +483,7 @@ export function getManagedSessionRestoreEnv(options: {
 	if (isEnabledEnvFlag(parentEnv[AGENT_BROWSER_AUTO_CONNECT_ENV]) || isEnabledEnvFlag(options.env?.[AGENT_BROWSER_AUTO_CONNECT_ENV])) return {};
 
 	const args = options.args;
-	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect"] as const) {
+	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name"] as const) {
 		if (hasLaunchScopedFlagToken(args, flag)) return {};
 	}
 

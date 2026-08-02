@@ -5,7 +5,7 @@
 ### Changed
 
 - Rebaselined the command/help inventory and package docs to `agent-browser 0.33.2` / vercel-labs/agent-browser@93cdda5709e8861c0c26b0b955d8d746e9fda0d7 (0.33.1 daemon idle timeout + tab recovery; 0.33.2 stream quality/size envs and latest-wins streaming).
-- Extension-managed `piab-*` sessions now set a cwd-stable `AGENT_BROWSER_RESTORE` key so SSO cookies/localStorage survive browser relaunches across Pi chats in the same project. Disable with `PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE=0`.
+- Extension-managed `piab-*` sessions now set a cwd-stable `AGENT_BROWSER_RESTORE` key so SSO cookies/localStorage/sessionStorage survive browser relaunches across Pi chats in the same project. Disable with `PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE=0`. Upstream restore files remain plaintext unless `AGENT_BROWSER_ENCRYPTION_KEY` is set.
 
 ## 0.2.73 - 2026-08-02
 

@@ -106,6 +106,22 @@ test("getManagedSessionRestoreEnv enables restore for managed piab sessions", ()
 		}),
 		{},
 	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "--session-name", "legacy", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: {},
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: { AGENT_BROWSER_SESSION_NAME: "legacy-restore" },
+		}),
+		{},
+	);
 });
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
