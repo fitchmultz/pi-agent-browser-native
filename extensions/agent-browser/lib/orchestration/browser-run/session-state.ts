@@ -24,7 +24,12 @@ import {
 	isSessionTabPinningExcludedCommand,
 	isSessionTabPostCommandCorrectionExcludedCommand,
 } from "../../command-taxonomy.js";
-import { chooseOpenResultTabCorrection, redactInvocationArgs, type OpenResultTabCorrection } from "../../runtime.js";
+import {
+	chooseOpenResultTabCorrection,
+	isManagedSessionRestoreDisabled,
+	redactInvocationArgs,
+	type OpenResultTabCorrection,
+} from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { parseUserBatchStdin } from "../batch-stdin.js";
 import type {
@@ -63,7 +68,16 @@ export function applyBrowserRunStatePatch(state: BrowserRunState, patch: Browser
 export const getSessionContextKey = getSessionPageStateKey;
 
 export function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean, namespace?: string): Record<string, unknown> {
-	return { ...(namespace ? { namespace } : {}), ...(sessionName ? { sessionName, usedImplicitSession } : {}) };
+	return {
+		...(namespace ? { namespace } : {}),
+		...(sessionName
+			? {
+				sessionName,
+				usedImplicitSession,
+				...(isManagedSessionRestoreDisabled(sessionName) ? { managedSessionRestoreDisabled: true } : {}),
+			}
+			: {}),
+	};
 }
 
 export function buildManagedSessionOutcome(options: {

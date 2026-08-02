@@ -465,9 +465,30 @@ export function createManagedSessionRestoreKey(cwd: string): string {
 	return `${MANAGED_SESSION_NAME_PREFIX}r-${createCwdHash(cwd)}`;
 }
 
+/** Sessions launched with profile/cdp/state/etc must never gain wrapper restore on later bare follow-ups. */
+const managedSessionsWithRestoreDisabled = new Set<string>();
+
+export function markManagedSessionRestoreDisabled(sessionName: string): void {
+	if (sessionName.startsWith(MANAGED_SESSION_NAME_PREFIX)) managedSessionsWithRestoreDisabled.add(sessionName);
+}
+
+export function clearManagedSessionRestoreDisabled(sessionName?: string): void {
+	if (sessionName) managedSessionsWithRestoreDisabled.delete(sessionName);
+	else managedSessionsWithRestoreDisabled.clear();
+}
+
+export function isManagedSessionRestoreDisabled(sessionName: string | undefined): boolean {
+	return typeof sessionName === "string" && managedSessionsWithRestoreDisabled.has(sessionName);
+}
+
+function disableManagedSessionRestore(sessionName: string | undefined): void {
+	if (sessionName) markManagedSessionRestoreDisabled(sessionName);
+}
+
 /**
  * Enable upstream restore (cookies, localStorage, and sessionStorage) for extension-managed sessions without argv launch flags.
  * Skip when the caller already owns auth persistence, when restore is incompatible, or when disabled.
+ * Incompatible launches sticky-disable restore for that managed session name so later bare follow-ups cannot inject it.
  */
 export function getManagedSessionRestoreEnv(options: {
 	args: string[];
@@ -476,22 +497,40 @@ export function getManagedSessionRestoreEnv(options: {
 	parentEnv?: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
 	const parentEnv = options.parentEnv ?? process.env;
-	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV])) return {};
-	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) return {};
+	const args = options.args;
+	const sessionName = extractExplicitSessionName(args);
+	const isManagedSession = typeof sessionName === "string" && sessionName.startsWith(MANAGED_SESSION_NAME_PREFIX);
+
+	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV]) || isDisabledEnvFlag(options.env?.[MANAGED_SESSION_RESTORE_ENV])) return {};
+	if (isManagedSession && isManagedSessionRestoreDisabled(sessionName)) return {};
+	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) {
+		disableManagedSessionRestore(sessionName);
+		return {};
+	}
 
 	for (const name of MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS) {
-		if (hasNonEmptyEnvValue(parentEnv, name) || hasNonEmptyEnvValue(options.env, name)) return {};
+		if (hasNonEmptyEnvValue(parentEnv, name) || hasNonEmptyEnvValue(options.env, name)) {
+			disableManagedSessionRestore(sessionName);
+			return {};
+		}
 	}
-	if (isEnabledEnvFlag(parentEnv[AGENT_BROWSER_AUTO_CONNECT_ENV]) || isEnabledEnvFlag(options.env?.[AGENT_BROWSER_AUTO_CONNECT_ENV])) return {};
+	if (isEnabledEnvFlag(parentEnv[AGENT_BROWSER_AUTO_CONNECT_ENV]) || isEnabledEnvFlag(options.env?.[AGENT_BROWSER_AUTO_CONNECT_ENV])) {
+		disableManagedSessionRestore(sessionName);
+		return {};
+	}
 
-	const args = options.args;
 	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name"] as const) {
-		if (hasLaunchScopedFlagToken(args, flag)) return {};
+		if (hasLaunchScopedFlagToken(args, flag)) {
+			disableManagedSessionRestore(sessionName);
+			return {};
+		}
 	}
 
-	const sessionName = extractExplicitSessionName(args);
-	if (!sessionName?.startsWith(MANAGED_SESSION_NAME_PREFIX)) return {};
-	if (parseCommandInfo(args).command === "connect") return {};
+	if (!isManagedSession) return {};
+	if (parseCommandInfo(args).command === "connect") {
+		disableManagedSessionRestore(sessionName);
+		return {};
+	}
 
 	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
 }
@@ -667,8 +706,14 @@ export function restoreManagedSessionStateFromBranch(
 		const outcomeActiveAfter = outcome?.activeAfter === true;
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
+		if (details.managedSessionRestoreDisabled === true) {
+			markManagedSessionRestoreDisabled(managedSessionName);
+		}
 		if (commandClosesSession) {
-			if (succeeded) applyManagedClose(managedSessionName, namespace);
+			if (succeeded) {
+				clearManagedSessionRestoreDisabled(managedSessionName);
+				applyManagedClose(managedSessionName, namespace);
+			}
 			continue;
 		}
 		const staleCompletion = succeeded && restoreRank < activeRestoreRank;
@@ -720,14 +765,14 @@ export function createImplicitSessionName(
 	const cwdHash = createCwdHash(cwd);
 	const stableSessionId = sessionId?.replace(/-/g, "").slice(0, SESSION_NAME_SESSION_ID_LENGTH);
 	if (stableSessionId && stableSessionId.length > 0) {
-		return `piab-${slug}-${stableSessionId}-${cwdHash}`;
+		return `${MANAGED_SESSION_NAME_PREFIX}${slug}-${stableSessionId}-${cwdHash}`;
 	}
 
 	const digest = createHash("sha256")
 		.update(`ephemeral:${cwd}:${ephemeralSeed}`)
 		.digest("hex")
 		.slice(0, SESSION_NAME_SESSION_ID_LENGTH);
-	return `piab-${slug}-${digest}-${cwdHash}`;
+	return `${MANAGED_SESSION_NAME_PREFIX}${slug}-${digest}-${cwdHash}`;
 }
 
 export function createFreshSessionName(baseSessionName: string, ephemeralSeed: string, ordinal: number): string {

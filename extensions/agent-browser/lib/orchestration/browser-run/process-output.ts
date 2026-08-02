@@ -45,7 +45,7 @@ import {
 import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore } from "../../temp.js";
 import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../../temp.js";
 import { isRecord } from "../../parsing.js";
-import { createFreshSessionName, extractCommandTokens, resolveManagedSessionState } from "../../runtime.js";
+import { clearManagedSessionRestoreDisabled, createFreshSessionName, extractCommandTokens, resolveManagedSessionState } from "../../runtime.js";
 import {
 	applyOpenResultTabCorrection,
 	buildAboutBlankRecoveryHint,
@@ -431,6 +431,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		managedSessionName = managedSessionState.sessionName;
 		managedSessionNamespace = managedSessionState.namespace;
 		if (commandClosesSession && succeeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
+			clearManagedSessionRestoreDisabled(managedCloseSessionName);
 			freshSessionOrdinal += 1;
 			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, freshSessionOrdinal);
 			managedSessionNamespace = undefined;

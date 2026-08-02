@@ -16,6 +16,7 @@ import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT
 import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildExecutionPlan,
+	clearManagedSessionRestoreDisabled,
 	createFreshSessionName,
 	createImplicitSessionName,
 	createManagedSessionRestoreKey,
@@ -33,6 +34,7 @@ import {
 import { createToolBranchEntry } from "./helpers/agent-browser-harness.js";
 
 test("createManagedSessionRestoreKey is cwd-stable across pi session ids", () => {
+	clearManagedSessionRestoreDisabled();
 	const cwd = "/Users/example/Projects/work-app";
 	assert.equal(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(cwd));
 	assert.match(createManagedSessionRestoreKey(cwd), /^piab-r-[a-f0-9]{8}$/);
@@ -40,6 +42,7 @@ test("createManagedSessionRestoreKey is cwd-stable across pi session ids", () =>
 });
 
 test("getManagedSessionRestoreEnv enables restore for managed piab sessions", () => {
+	clearManagedSessionRestoreDisabled();
 	const cwd = "/Users/example/Projects/work-app";
 	const key = createManagedSessionRestoreKey(cwd);
 	assert.deepEqual(
@@ -129,6 +132,47 @@ test("getManagedSessionRestoreEnv enables restore for managed piab sessions", ()
 			parentEnv: { AGENT_BROWSER_CDP: "9222" },
 		}),
 		{},
+	);
+	// wait --state is a wait predicate, not launch state; restore must stay enabled
+	clearManagedSessionRestoreDisabled();
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "wait", "@e1", "--state", "hidden"],
+			cwd,
+			parentEnv: {},
+		}),
+		{ AGENT_BROWSER_RESTORE: key },
+	);
+});
+
+test("getManagedSessionRestoreEnv sticky-disables restore after an incompatible launch", () => {
+	clearManagedSessionRestoreDisabled();
+	const cwd = "/Users/example/Projects/work-app";
+	const session = "piab-work-abc12345-deadbeef";
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", session, "--profile", "Default", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: {},
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", session, "snapshot", "-i"],
+			cwd,
+			parentEnv: {},
+		}),
+		{},
+	);
+	clearManagedSessionRestoreDisabled(session);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", session, "snapshot", "-i"],
+			cwd,
+			parentEnv: {},
+		}),
+		{ AGENT_BROWSER_RESTORE: createManagedSessionRestoreKey(cwd) },
 	);
 });
 
