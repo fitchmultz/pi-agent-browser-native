@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.73 - 2026-08-02
+
+### Changed
+
+- Shrunk the model-facing `agent_browser` parameter schema by trimming redundant field descriptions while keeping every input mode (`args`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, `electron`) and the same validation constraints.
+- Updated schema/extension validation coverage, including a compact schema size budget check.
+
+### Validation
+
+- Passed `npm run verify` (591 tests passed, 2 opt-in skips) and live command-reference verification against `agent-browser 0.33.0`. Platform/cloud release smoke was not run for this GitHub-only prep.
+
 ## 0.2.72 - 2026-07-23
 
 ### Changed
