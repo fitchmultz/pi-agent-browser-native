@@ -7,7 +7,9 @@
  */
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
@@ -371,6 +373,67 @@ test("main-plan restore policy suppresses helpers without sticky-disabling on pr
 		}),
 		{ AGENT_BROWSER_RESTORE: key },
 	);
+});
+
+
+test("agent-browser config blocks managed restore", () => {
+	clearManagedSessionRestoreDisabled();
+	const cwd = mkdtempSync(join(tmpdir(), "piab-config-"));
+	const home = mkdtempSync(join(tmpdir(), "piab-home-"));
+	const managed = "piab-work-abc12345-deadbeef";
+	try {
+		writeFileSync(join(cwd, "agent-browser.json"), JSON.stringify({ provider: "browserbase" }));
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--session", managed, "open", "https://app.example.com"],
+				cwd,
+				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+				parentEnv: { HOME: home },
+			}),
+			{},
+		);
+		assert.equal(isManagedSessionRestoreDisabled(managed), true);
+
+		clearManagedSessionRestoreDisabled();
+		rmSync(join(cwd, "agent-browser.json"));
+		writeFileSync(join(cwd, "custom.json"), JSON.stringify({ cdp: "9222" }));
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--config", "custom.json", "--session", managed, "open", "https://app.example.com"],
+				cwd,
+				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+				parentEnv: { HOME: home },
+			}),
+			{},
+		);
+		assert.equal(isManagedSessionRestoreDisabled(managed), true);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("managed restore secures its plaintext state parent directory", { skip: process.platform === "win32" }, () => {
+	clearManagedSessionRestoreDisabled();
+	const cwd = mkdtempSync(join(tmpdir(), "piab-cwd-"));
+	const home = mkdtempSync(join(tmpdir(), "piab-home-"));
+	const managed = "piab-work-abc12345-deadbeef";
+	try {
+		chmodSync(home, 0o755);
+		assert.match(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--session", managed, "open", "https://app.example.com"],
+				cwd,
+				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+				parentEnv: { HOME: home },
+			}).AGENT_BROWSER_RESTORE ?? "",
+			/^piab-r-/,
+		);
+		assert.equal(statSync(join(home, ".agent-browser")).mode & 0o077, 0);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+		rmSync(home, { recursive: true, force: true });
+	}
 });
 
 test("plan-suppressed owned main spawn sticky-disables even when process argv is rewritten", async () => {

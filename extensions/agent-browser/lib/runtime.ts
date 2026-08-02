@@ -1,7 +1,7 @@
 /**
  * Purpose: Build safe, deterministic agent-browser invocations and persisted session state for the pi-agent-browser extension.
  * Responsibilities: Validate raw tool arguments, derive extension-managed session names from the pi session identity, restore managed-session state from persisted tool details, redact sensitive invocation text, classify browser-oriented prompts, and build the effective CLI argument list passed to the upstream agent-browser binary.
- * Scope: Pure runtime-planning helpers only; no subprocess execution or filesystem access lives here.
+ * Scope: Runtime-planning helpers only; no subprocess execution. Managed-restore policy may read upstream agent-browser config files for fail-closed incompatibility checks.
  * Usage: Imported by the extension entrypoint and unit tests before spawning the upstream CLI.
  * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, keeps plain-text inspection stateless,
  * and only injects wrapper-owned flags: `--json`, an extension-managed `--session` when appropriate, the narrow
@@ -11,7 +11,9 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
 
 import {
 	findCommandStartIndex,
@@ -564,8 +566,96 @@ function ownedContextMatches(sessionName: string | undefined, namespace: string 
 	return owned;
 }
 
+const MANAGED_SESSION_RESTORE_INCOMPATIBLE_CONFIG_KEYS = [
+	"allowedDomains",
+	"allowed_domains",
+	"autoConnect",
+	"auto_connect",
+	"cdp",
+	"profile",
+	"provider",
+	"restore",
+	"sessionName",
+	"session_name",
+	"state",
+] as const;
+
+function configValueIsSet(value: unknown): boolean {
+	if (value === undefined || value === null || value === false) return false;
+	if (typeof value === "string") return value.trim().length > 0;
+	if (Array.isArray(value)) return value.length > 0;
+	return true;
+}
+
+function agentBrowserConfigObjectIncompatible(value: unknown): boolean {
+	if (!isRecord(value)) return false;
+	for (const key of MANAGED_SESSION_RESTORE_INCOMPATIBLE_CONFIG_KEYS) {
+		if (configValueIsSet(value[key])) return true;
+	}
+	return false;
+}
+
+function agentBrowserConfigFileIncompatible(path: string, failClosed = false): boolean {
+	try {
+		const raw = readFileSync(path, "utf8");
+		return agentBrowserConfigObjectIncompatible(JSON.parse(raw) as unknown);
+	} catch {
+		return failClosed;
+	}
+}
+
+function getExplicitConfigPaths(args: string[], cwd: string): string[] {
+	const paths: string[] = [];
+	const commandStart = findCommandStartIndex(args) ?? args.length;
+	for (let index = 0; index < commandStart; index += 1) {
+		const token = args[index];
+		if (token === "--config") {
+			const value = args[index + 1];
+			if (value) paths.push(isAbsolute(value) ? value : join(cwd, value));
+			index += 1;
+		} else if (token.startsWith("--config=")) {
+			const value = token.slice("--config=".length);
+			if (value) paths.push(isAbsolute(value) ? value : join(cwd, value));
+		}
+	}
+	return paths;
+}
+
+/** Fail closed when upstream config would attach profile/cdp/provider/state/containment defaults. */
+export function agentBrowserConfigBlocksManagedRestore(
+	cwd: string,
+	parentEnv: NodeJS.ProcessEnv = process.env,
+	args: string[] = [],
+): boolean {
+	const explicitCandidates = getExplicitConfigPaths(args, cwd);
+	const envConfig = parentEnv.AGENT_BROWSER_CONFIG?.trim();
+	if (envConfig) explicitCandidates.push(isAbsolute(envConfig) ? envConfig : join(cwd, envConfig));
+	if (explicitCandidates.some((path) => agentBrowserConfigFileIncompatible(path, true))) return true;
+	const home = parentEnv.HOME?.trim() || parentEnv.USERPROFILE?.trim() || homedir();
+	return [join(cwd, "agent-browser.json"), join(home, ".agent-browser", "config.json")]
+		.some((path) => agentBrowserConfigFileIncompatible(path));
+}
+
+/** Ensure plaintext upstream state is protected by an owner-only parent directory. */
+export function managedSessionRestoreStorageIsSecure(parentEnv: NodeJS.ProcessEnv = process.env): boolean {
+	if (hasNonEmptyEnvValue(parentEnv, "AGENT_BROWSER_ENCRYPTION_KEY")) return true;
+	// Windows user-profile ACLs are not represented by POSIX mode bits; require encryption there.
+	if (process.platform === "win32") return false;
+	const home = parentEnv.HOME?.trim() || parentEnv.USERPROFILE?.trim() || homedir();
+	if (!home) return false;
+	const root = join(home, ".agent-browser");
+	try {
+		mkdirSync(root, { recursive: true, mode: 0o700 });
+		chmodSync(root, 0o700);
+		return (statSync(root).mode & 0o077) === 0;
+	} catch {
+		return false;
+	}
+}
+
 function isManagedSessionRestoreIncompatible(options: {
 	args: string[];
+	cwd?: string;
 	env?: NodeJS.ProcessEnv;
 	parentEnv?: NodeJS.ProcessEnv;
 }): boolean {
@@ -579,7 +669,11 @@ function isManagedSessionRestoreIncompatible(options: {
 	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name", "--provider", "-p"] as const) {
 		if (hasLaunchScopedFlagToken(args, flag)) return true;
 	}
-	return parseCommandInfo(args).command === "connect";
+	if (parseCommandInfo(args).command === "connect") return true;
+	const effectiveEnv = { ...parentEnv, ...options.env };
+	if (options.cwd && agentBrowserConfigBlocksManagedRestore(options.cwd, effectiveEnv, args)) return true;
+	if (!managedSessionRestoreStorageIsSecure(effectiveEnv)) return true;
+	return false;
 }
 
 /**
@@ -610,7 +704,7 @@ export function getManagedSessionRestoreEnv(options: {
 		return {};
 	}
 
-	const incompatible = isManagedSessionRestoreIncompatible({ args, env: options.env, parentEnv });
+	const incompatible = isManagedSessionRestoreIncompatible({ args, cwd: options.cwd, env: options.env, parentEnv });
 	if (incompatible) {
 		// Sticky-disable only when this spawn itself is wrapper-owned via options.env (main/close path),
 		// not merely via inherited ALS context on a bare helper probe.
@@ -627,6 +721,7 @@ export function getManagedSessionRestoreEnv(options: {
 /** Mark call-scoped helper suppression from main-plan argv without sticky-disabling until spawn. */
 export function planManagedSessionRestoreSuppressed(options: {
 	args: string[];
+	cwd?: string;
 	env?: NodeJS.ProcessEnv;
 	parentEnv?: NodeJS.ProcessEnv;
 }): boolean {
@@ -642,7 +737,7 @@ export function applyManagedSessionRestorePlanPolicy(options: {
 	if (!options.owned) return undefined;
 	return {
 		...options.owned,
-		restoreSuppressed: planManagedSessionRestoreSuppressed({ args: options.args }),
+		restoreSuppressed: planManagedSessionRestoreSuppressed({ args: options.args, cwd: options.cwd }),
 	};
 }
 
