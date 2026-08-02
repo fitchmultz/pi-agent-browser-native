@@ -1,7 +1,8 @@
 import { runAgentBrowserProcess } from "../../process.js";
 import {
+	applyManagedSessionRestorePlanPolicy,
 	buildOwnedManagedSessionEnv,
-	resolveOwnedManagedSessionName,
+	resolveOwnedManagedSessionContext,
 	withOwnedManagedSessionContext,
 } from "../../runtime.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
@@ -22,17 +23,25 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 	}
 
 	const { prepared } = preparedResult;
-	const ownedManagedSessionName = resolveOwnedManagedSessionName({
+	const ownedManagedSession = resolveOwnedManagedSessionContext({
 		currentManagedSessionName: options.state.managedSessionName,
+		currentManagedSessionNamespace: options.state.managedSessionNamespace,
 		managedSessionName: prepared.executionPlan.managedSessionName,
+		namespace: prepared.executionPlan.namespace,
 		sessionName: prepared.executionPlan.sessionName,
 	});
-	return await withOwnedManagedSessionContext(ownedManagedSessionName, async () => {
+	// Re-apply after prepare so sticky policy stays aligned if plan args changed.
+	applyManagedSessionRestorePlanPolicy({
+		args: prepared.executionPlan.effectiveArgs,
+		cwd: options.cwd,
+		owned: ownedManagedSession,
+	});
+	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		try {
 			const processResult = await runAgentBrowserProcess({
 				args: prepared.processArgs,
 				cwd: options.cwd,
-				env: ownedManagedSessionName
+				env: ownedManagedSession
 					? {
 							AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs,
 							...buildOwnedManagedSessionEnv(),

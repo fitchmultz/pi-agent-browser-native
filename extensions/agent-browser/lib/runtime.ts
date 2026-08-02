@@ -9,6 +9,7 @@
  * `AGENT_BROWSER_RESTORE` key for extension-managed `piab-*` sessions so SSO cookies survive browser relaunches.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
@@ -473,63 +474,97 @@ export function createManagedSessionRestoreKey(cwd: string): string {
 /** Sessions launched with profile/cdp/state/etc must never gain wrapper restore on later bare follow-ups. */
 const managedSessionsWithRestoreDisabled = new Set<string>();
 
-export function markManagedSessionRestoreDisabled(sessionName: string): void {
-	if (sessionName.trim().length > 0) managedSessionsWithRestoreDisabled.add(sessionName);
+export type OwnedManagedSessionContext = {
+	namespace?: string;
+	sessionName: string;
+};
+
+function managedSessionIdentityKey(sessionName: string, namespace?: string): string {
+	return namespace ? `${namespace}\0${sessionName}` : sessionName;
 }
 
-/** Active wrapper-owned managed session for nested helper probes in the same tool call. */
-let ownedManagedSessionContext: string | undefined;
-
-export function getOwnedManagedSessionContext(): string | undefined {
-	return ownedManagedSessionContext;
+export function markManagedSessionRestoreDisabled(sessionName: string, namespace?: string): void {
+	if (sessionName.trim().length > 0) managedSessionsWithRestoreDisabled.add(managedSessionIdentityKey(sessionName, namespace));
 }
+
+const ownedManagedSessionStorage = new AsyncLocalStorage<OwnedManagedSessionContext | undefined>();
 
 export async function withOwnedManagedSessionContext<T>(
-	sessionName: string | undefined,
+	context: OwnedManagedSessionContext | undefined,
 	run: () => Promise<T>,
 ): Promise<T> {
-	const previous = ownedManagedSessionContext;
-	ownedManagedSessionContext = sessionName;
-	try {
-		return await run();
-	} finally {
-		ownedManagedSessionContext = previous;
-	}
+	return await ownedManagedSessionStorage.run(context, run);
 }
 
-export function resolveOwnedManagedSessionName(options: {
+export function resolveOwnedManagedSessionContext(options: {
 	currentManagedSessionName?: string;
+	currentManagedSessionNamespace?: string;
 	managedSessionName?: string;
+	namespace?: string;
 	sessionName?: string;
-}): string | undefined {
-	if (options.managedSessionName) return options.managedSessionName;
+}): OwnedManagedSessionContext | undefined {
+	if (options.managedSessionName) {
+		return { namespace: options.namespace, sessionName: options.managedSessionName };
+	}
 	if (
 		options.sessionName &&
 		options.currentManagedSessionName &&
-		options.sessionName === options.currentManagedSessionName
+		options.sessionName === options.currentManagedSessionName &&
+		(options.namespace ?? undefined) === (options.currentManagedSessionNamespace ?? undefined)
 	) {
-		return options.sessionName;
+		return { namespace: options.namespace, sessionName: options.sessionName };
 	}
 	return undefined;
 }
 
-export function clearManagedSessionRestoreDisabled(sessionName?: string): void {
-	if (sessionName) managedSessionsWithRestoreDisabled.delete(sessionName);
+/** @deprecated Use resolveOwnedManagedSessionContext */
+export function resolveOwnedManagedSessionName(options: {
+	currentManagedSessionName?: string;
+	currentManagedSessionNamespace?: string;
+	managedSessionName?: string;
+	namespace?: string;
+	sessionName?: string;
+}): string | undefined {
+	return resolveOwnedManagedSessionContext(options)?.sessionName;
+}
+
+export function clearManagedSessionRestoreDisabled(sessionName?: string, namespace?: string): void {
+	if (sessionName) managedSessionsWithRestoreDisabled.delete(managedSessionIdentityKey(sessionName, namespace));
 	else managedSessionsWithRestoreDisabled.clear();
 }
 
-export function isManagedSessionRestoreDisabled(sessionName: string | undefined): boolean {
-	return typeof sessionName === "string" && managedSessionsWithRestoreDisabled.has(sessionName);
+export function isManagedSessionRestoreDisabled(sessionName: string | undefined, namespace?: string): boolean {
+	return typeof sessionName === "string" && managedSessionsWithRestoreDisabled.has(managedSessionIdentityKey(sessionName, namespace));
 }
 
-function disableManagedSessionRestore(sessionName: string | undefined): void {
-	if (sessionName) markManagedSessionRestoreDisabled(sessionName);
+function disableManagedSessionRestore(sessionName: string | undefined, namespace?: string): void {
+	if (sessionName) markManagedSessionRestoreDisabled(sessionName, namespace);
+}
+
+function countExplicitSessionFlags(args: string[]): number {
+	let count = 0;
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index];
+		if (token === "--session") {
+			count += 1;
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("--session=")) count += 1;
+	}
+	return count;
+}
+
+function ownedContextMatches(sessionName: string | undefined, namespace: string | undefined): boolean {
+	const owned = ownedManagedSessionStorage.getStore();
+	if (!owned || !sessionName) return false;
+	return owned.sessionName === sessionName && (owned.namespace ?? undefined) === (namespace ?? undefined);
 }
 
 /**
  * Enable upstream restore (cookies, localStorage, and sessionStorage) for extension-managed sessions without argv launch flags.
  * Skip when the caller already owns auth persistence, when restore is incompatible, or when disabled.
- * Incompatible launches sticky-disable restore for that managed session name so later bare follow-ups cannot inject it.
+ * Incompatible launches sticky-disable restore for that managed session identity so later bare follow-ups cannot inject it.
  */
 export function getManagedSessionRestoreEnv(options: {
 	args: string[];
@@ -540,45 +575,59 @@ export function getManagedSessionRestoreEnv(options: {
 	const parentEnv = options.parentEnv ?? process.env;
 	const args = options.args;
 	const sessionName = extractExplicitSessionName(args);
-	// Ownership comes only from wrapper-set options.env or the in-call owned-session context.
+	const namespace = extractExplicitNamespace(args);
+	// Ownership comes only from wrapper-set options.env or the in-call owned-session ALS context.
 	// Do not trust parent process env for PI_AGENT_BROWSER_OWNED_MANAGED_SESSION.
 	const ownedManagedSession =
-		isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]) ||
-		(typeof sessionName === "string" && sessionName.length > 0 && sessionName === ownedManagedSessionContext);
+		isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]) || ownedContextMatches(sessionName, namespace);
 
 	if (!ownedManagedSession) return {};
 	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV]) || isDisabledEnvFlag(options.env?.[MANAGED_SESSION_RESTORE_ENV])) return {};
-	if (isManagedSessionRestoreDisabled(sessionName)) return {};
+	if (isManagedSessionRestoreDisabled(sessionName, namespace)) return {};
 	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) {
-		disableManagedSessionRestore(sessionName);
+		disableManagedSessionRestore(sessionName, namespace);
 		return {};
 	}
 
 	for (const name of MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS) {
 		if (hasNonEmptyEnvValue(parentEnv, name) || hasNonEmptyEnvValue(options.env, name)) {
-			disableManagedSessionRestore(sessionName);
+			disableManagedSessionRestore(sessionName, namespace);
 			return {};
 		}
 	}
 	if (isEnabledEnvFlag(parentEnv[AGENT_BROWSER_AUTO_CONNECT_ENV]) || isEnabledEnvFlag(options.env?.[AGENT_BROWSER_AUTO_CONNECT_ENV])) {
-		disableManagedSessionRestore(sessionName);
+		disableManagedSessionRestore(sessionName, namespace);
 		return {};
 	}
 
 	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name", "--provider", "-p"] as const) {
 		if (hasLaunchScopedFlagToken(args, flag)) {
-			disableManagedSessionRestore(sessionName);
+			disableManagedSessionRestore(sessionName, namespace);
 			return {};
 		}
 	}
 
 	if (parseCommandInfo(args).command === "connect") {
-		disableManagedSessionRestore(sessionName);
+		disableManagedSessionRestore(sessionName, namespace);
 		return {};
 	}
 	if (!sessionName) return {};
 
 	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
+}
+
+/** Evaluate main-plan argv restore policy before helper probes so incompatible launches sticky-disable first. */
+export function applyManagedSessionRestorePlanPolicy(options: {
+	args: string[];
+	cwd: string;
+	owned?: OwnedManagedSessionContext;
+}): void {
+	if (!options.owned) return;
+	getManagedSessionRestoreEnv({
+		args: options.args,
+		cwd: options.cwd,
+		env: buildOwnedManagedSessionEnv(),
+	});
 }
 
 /** Env marker set only for wrapper-owned managed-session subprocesses. */
@@ -758,11 +807,11 @@ export function restoreManagedSessionStateFromBranch(
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
 		if (details.managedSessionRestoreDisabled === true) {
-			markManagedSessionRestoreDisabled(managedSessionName);
+			markManagedSessionRestoreDisabled(managedSessionName, namespace);
 		}
 		if (commandClosesSession) {
 			if (succeeded) {
-				clearManagedSessionRestoreDisabled(managedSessionName);
+				clearManagedSessionRestoreDisabled(managedSessionName, namespace);
 				applyManagedClose(managedSessionName, namespace);
 			}
 			continue;
@@ -1117,6 +1166,18 @@ export function buildExecutionPlan(
 			startupScopedFlags: [],
 			usedImplicitSession: false,
 			validationError: formatInvalidValueFlagError(invalidValueFlag),
+		};
+	}
+
+	if (countExplicitSessionFlags(args) > 1) {
+		return {
+			commandInfo: {},
+			effectiveArgs,
+			plainTextInspection: false,
+			startupScopedFlags: [],
+			usedImplicitSession: false,
+			validationError:
+				"Multiple --session flags are not supported. Pass a single --session value; upstream uses the last occurrence while this wrapper would otherwise mis-attribute managed-session ownership.",
 		};
 	}
 

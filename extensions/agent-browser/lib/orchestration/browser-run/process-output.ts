@@ -431,7 +431,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		managedSessionName = managedSessionState.sessionName;
 		managedSessionNamespace = managedSessionState.namespace;
 		if (commandClosesSession && succeeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
-			clearManagedSessionRestoreDisabled(managedCloseSessionName);
+			clearManagedSessionRestoreDisabled(managedCloseSessionName, priorManagedSessionNamespace);
 			freshSessionOrdinal += 1;
 			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, freshSessionOrdinal);
 			managedSessionNamespace = undefined;

@@ -28,6 +28,8 @@ import {
 	redactSensitiveText,
 	redactSensitiveValue,
 	resolveManagedSessionState,
+	applyManagedSessionRestorePlanPolicy,
+	resolveOwnedManagedSessionContext,
 	resolveOwnedManagedSessionName,
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
@@ -248,13 +250,22 @@ test("owned managed session context enables restore for matching helper probes o
 		managed,
 	);
 	assert.equal(
+		resolveOwnedManagedSessionContext({
+			currentManagedSessionName: managed,
+			currentManagedSessionNamespace: undefined,
+			namespace: "caller",
+			sessionName: managed,
+		}),
+		undefined,
+	);
+	assert.equal(
 		resolveOwnedManagedSessionName({
 			currentManagedSessionName: managed,
 			sessionName: "caller-owned",
 		}),
 		undefined,
 	);
-	await withOwnedManagedSessionContext(managed, async () => {
+	await withOwnedManagedSessionContext({ sessionName: managed }, async () => {
 		assert.deepEqual(
 			getManagedSessionRestoreEnv({
 				args: ["--json", "--session", managed, "snapshot", "-i"],
@@ -271,6 +282,14 @@ test("owned managed session context enables restore for matching helper probes o
 			}),
 			{},
 		);
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--namespace", "caller", "--session", managed, "snapshot", "-i"],
+				cwd,
+				parentEnv: {},
+			}),
+			{},
+		);
 	});
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
@@ -280,6 +299,70 @@ test("owned managed session context enables restore for matching helper probes o
 		}),
 		{},
 	);
+});
+
+test("main-plan restore policy sticky-disables helpers before bare probes", () => {
+	clearManagedSessionRestoreDisabled();
+	const cwd = "/Users/example/Projects/work-app";
+	const managed = "piab-work-abc12345-deadbeef";
+	applyManagedSessionRestorePlanPolicy({
+		args: ["--json", "--session", managed, "--profile", "Default", "click", "xpath=//button"],
+		cwd,
+		owned: { sessionName: managed },
+	});
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", managed, "eval", "--stdin"],
+			cwd,
+			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+			parentEnv: {},
+		}),
+		{},
+	);
+});
+
+test("buildExecutionPlan rejects multiple --session flags", () => {
+	const plan = buildExecutionPlan(
+		["--session", "piab-managed", "--session", "caller-owned", "open", "https://example.com"],
+		{
+			freshSessionName: "piab-fresh",
+			managedSessionActive: true,
+			managedSessionName: "piab-managed",
+			sessionMode: "auto",
+		},
+	);
+	assert.match(plan.validationError ?? "", /Multiple --session flags/);
+});
+
+test("owned managed session ALS context is isolated across concurrent calls", async () => {
+	clearManagedSessionRestoreDisabled();
+	const cwd = "/Users/example/Projects/work-app";
+	const managed = "piab-work-abc12345-deadbeef";
+	const key = createManagedSessionRestoreKey(cwd);
+	let ownedProbeSawRestore = false;
+	let foreignProbeSawRestore = false;
+	await Promise.all([
+		withOwnedManagedSessionContext({ sessionName: managed }, async () => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			ownedProbeSawRestore =
+				getManagedSessionRestoreEnv({
+					args: ["--json", "--session", managed, "snapshot", "-i"],
+					cwd,
+					parentEnv: {},
+				}).AGENT_BROWSER_RESTORE === key;
+		}),
+		withOwnedManagedSessionContext(undefined, async () => {
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			foreignProbeSawRestore =
+				getManagedSessionRestoreEnv({
+					args: ["--json", "--session", managed, "snapshot", "-i"],
+					cwd,
+					parentEnv: {},
+				}).AGENT_BROWSER_RESTORE === key;
+		}),
+	]);
+	assert.equal(ownedProbeSawRestore, true);
+	assert.equal(foreignProbeSawRestore, false);
 });
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {

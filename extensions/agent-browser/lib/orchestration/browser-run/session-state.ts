@@ -75,7 +75,7 @@ export function buildSessionDetailFields(sessionName: string | undefined, usedIm
 			? {
 				sessionName,
 				usedImplicitSession,
-				...(isManagedSessionRestoreDisabled(sessionName) ? { managedSessionRestoreDisabled: true } : {}),
+				...(isManagedSessionRestoreDisabled(sessionName, namespace) ? { managedSessionRestoreDisabled: true } : {}),
 			}
 			: {}),
 	};
