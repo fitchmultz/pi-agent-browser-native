@@ -314,6 +314,44 @@ test("main-plan restore policy suppresses helpers without sticky-disabling on pr
 	});
 	assert.equal(owned?.restoreSuppressed, true);
 	await withOwnedManagedSessionContext(owned, async () => {
+		// helper probe: ALS-only, suppressed
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--session", managed, "eval", "--stdin"],
+				cwd,
+				parentEnv: {},
+			}),
+			{},
+		);
+		// production main spawn: owned env inside suppressed context still sticky-disables
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--session", managed, "--profile", "Default", "open", "https://app.example.com"],
+				cwd,
+				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+				parentEnv: {},
+			}),
+			{},
+		);
+		assert.equal(isManagedSessionRestoreDisabled(managed), true);
+	});
+	// later bare owned follow-up stays disabled after the real main spawn path
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", managed, "snapshot", "-i"],
+			cwd,
+			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+			parentEnv: {},
+		}),
+		{},
+	);
+	clearManagedSessionRestoreDisabled();
+	const preflightOnly = applyManagedSessionRestorePlanPolicy({
+		args: ["--json", "--session", managed, "--profile", "Default", "click", "xpath=//button"],
+		cwd,
+		owned: { sessionName: managed },
+	});
+	await withOwnedManagedSessionContext(preflightOnly, async () => {
 		assert.deepEqual(
 			getManagedSessionRestoreEnv({
 				args: ["--json", "--session", managed, "eval", "--stdin"],
@@ -323,7 +361,7 @@ test("main-plan restore policy suppresses helpers without sticky-disabling on pr
 			{},
 		);
 	});
-	// preflight-only plan must not sticky-disable later bare owned spawns
+	// preflight-only (no owned incompatible spawn) must not sticky-disable later bare calls
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", managed, "snapshot", "-i"],
@@ -332,25 +370,6 @@ test("main-plan restore policy suppresses helpers without sticky-disabling on pr
 			parentEnv: {},
 		}),
 		{ AGENT_BROWSER_RESTORE: key },
-	);
-	// actual incompatible owned spawn still sticky-disables
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", managed, "--profile", "Default", "open", "https://app.example.com"],
-			cwd,
-			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-			parentEnv: {},
-		}),
-		{},
-	);
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", managed, "snapshot", "-i"],
-			cwd,
-			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-			parentEnv: {},
-		}),
-		{},
 	);
 });
 

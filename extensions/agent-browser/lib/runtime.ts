@@ -604,8 +604,8 @@ export function getManagedSessionRestoreEnv(options: {
 	const ownedManagedSession = ownedFromEnv || ownedContext !== undefined;
 
 	if (!ownedManagedSession) return {};
-	// Call-scoped plan suppression for helpers: do not sticky-disable until an incompatible spawn actually runs.
-	if (ownedContext?.restoreSuppressed) return {};
+	// Call-scoped plan suppression for ALS-only helper probes. Owned main/close spawns set options.env and must fall through to sticky-disable.
+	if (!ownedFromEnv && ownedContext?.restoreSuppressed) return {};
 
 	const incompatible = isManagedSessionRestoreIncompatible({ args, env: options.env, parentEnv });
 	if (incompatible) {
