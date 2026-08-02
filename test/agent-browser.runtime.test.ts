@@ -122,6 +122,14 @@ test("getManagedSessionRestoreEnv enables restore for managed piab sessions", ()
 		}),
 		{},
 	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: { AGENT_BROWSER_CDP: "9222" },
+		}),
+		{},
+	);
 });
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {

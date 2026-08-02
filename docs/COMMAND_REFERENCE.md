@@ -881,7 +881,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 
 - `--profile <name|path>`: reuse Chrome profile login state by directory name from `profiles`, or use a persistent custom profile/profile-directory path when upstream accepts it. Environment: `AGENT_BROWSER_PROFILE`.
 - `--session <name>`: use an isolated session. Environment: `AGENT_BROWSER_SESSION`.
-- `--restore [name]`: auto-save/restore cookies and local storage; bare `--restore` uses `--session` as the key. Environment: `AGENT_BROWSER_RESTORE`.
+- `--restore [name]`: auto-save/restore cookies, local storage, and session storage; bare `--restore` uses `--session` as the key. Environment: `AGENT_BROWSER_RESTORE`. Extension-managed `piab-*` sessions set a cwd-stable restore key automatically unless disabled with `PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE=0`. Upstream restore files under `~/.agent-browser/` are plaintext unless `AGENT_BROWSER_ENCRYPTION_KEY` is set; use `state clear` / `state clean` for cleanup.
 - `--restore-save <policy>` (`auto`, `always`, or `never`): restore auto-save policy. Environment: `AGENT_BROWSER_RESTORE_SAVE`. Restore-enabled sessions also save periodically while open; `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` sets the minimum interval in milliseconds (`30000` by default, `0` disables periodic saves but not save-on-close).
 - `--restore-check-url <glob>`, `--restore-check-text <txt>`, `--restore-check-fn <js>`: validate restored state before auto-save. Environments: `AGENT_BROWSER_RESTORE_CHECK_URL`, `AGENT_BROWSER_RESTORE_CHECK_TEXT`, `AGENT_BROWSER_RESTORE_CHECK_FN`.
 - `--namespace <name>`: isolate daemon sockets and restore-state directories. Environment: `AGENT_BROWSER_NAMESPACE`.
