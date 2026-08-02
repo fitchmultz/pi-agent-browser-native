@@ -27,6 +27,7 @@ import {
 import {
 	buildOwnedManagedSessionEnv,
 	chooseOpenResultTabCorrection,
+	clearManagedSessionRestoreDisabled,
 	isManagedSessionRestoreDisabled,
 	redactInvocationArgs,
 	type OpenResultTabCorrection,
@@ -910,6 +911,9 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 		});
 		// close always targets a wrapper-owned managed session
 		stdoutSpillPath = processResult.stdoutSpillPath;
+		if (!processResult.aborted && !processResult.spawnError && processResult.exitCode === 0) {
+			clearManagedSessionRestoreDisabled(options.sessionName, options.namespace);
+		}
 		return getAgentBrowserErrorText({
 			aborted: processResult.aborted,
 			command: "close",

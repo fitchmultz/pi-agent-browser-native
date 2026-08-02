@@ -582,8 +582,7 @@ export function getManagedSessionRestoreEnv(options: {
 		isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]) || ownedContextMatches(sessionName, namespace);
 
 	if (!ownedManagedSession) return {};
-	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV]) || isDisabledEnvFlag(options.env?.[MANAGED_SESSION_RESTORE_ENV])) return {};
-	if (isManagedSessionRestoreDisabled(sessionName, namespace)) return {};
+	// Record incompatible launches even when inject is opted out, so later bare calls stay disabled.
 	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) {
 		disableManagedSessionRestore(sessionName, namespace);
 		return {};
@@ -611,6 +610,8 @@ export function getManagedSessionRestoreEnv(options: {
 		disableManagedSessionRestore(sessionName, namespace);
 		return {};
 	}
+	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV]) || isDisabledEnvFlag(options.env?.[MANAGED_SESSION_RESTORE_ENV])) return {};
+	if (isManagedSessionRestoreDisabled(sessionName, namespace)) return {};
 	if (!sessionName) return {};
 
 	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };

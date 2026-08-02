@@ -321,6 +321,31 @@ test("main-plan restore policy sticky-disables helpers before bare probes", () =
 	);
 });
 
+test("incompatible launches sticky-disable even when managed restore is opted out", () => {
+	clearManagedSessionRestoreDisabled();
+	const cwd = "/Users/example/Projects/work-app";
+	const managed = "piab-work-abc12345-deadbeef";
+	const owned = { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" };
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", managed, "--profile", "Default", "open", "https://app.example.com"],
+			cwd,
+			env: owned,
+			parentEnv: { PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" },
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", managed, "snapshot", "-i"],
+			cwd,
+			env: owned,
+			parentEnv: {},
+		}),
+		{},
+	);
+});
+
 test("buildExecutionPlan rejects multiple --session flags", () => {
 	const plan = buildExecutionPlan(
 		["--session", "piab-managed", "--session", "caller-owned", "open", "https://example.com"],

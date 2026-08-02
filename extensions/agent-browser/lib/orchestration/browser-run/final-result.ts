@@ -463,7 +463,7 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		refSnapshot: options.currentRefSnapshot,
 		refSnapshotInvalidation: options.currentRefSnapshotInvalidation,
 		namespace: options.executionPlan.namespace,
-		...buildSessionDetailFields(options.executionPlan.sessionName, options.executionPlan.usedImplicitSession),
+		...buildSessionDetailFields(options.executionPlan.sessionName, options.executionPlan.usedImplicitSession, options.executionPlan.namespace),
 		sessionRecoveryHint: options.redactedRecoveryHint,
 		startupScopedFlags: options.executionPlan.startupScopedFlags,
 		stderr: options.processResult.stderr,
