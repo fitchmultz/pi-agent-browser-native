@@ -455,18 +455,13 @@ export function getManagedSessionRestoreEnv(options: {
 	if (parentEnv[AGENT_BROWSER_RESTORE_ENV] || options.env?.[AGENT_BROWSER_RESTORE_ENV]) return {};
 
 	const args = options.args;
-	if (hasLaunchScopedFlagToken(args, "--restore")) return {};
-	if (hasLaunchScopedFlagToken(args, "--allowed-domains")) return {};
-	if (hasLaunchScopedFlagToken(args, "--profile")) return {};
-	if (hasLaunchScopedFlagToken(args, "--state")) return {};
-	if (hasLaunchScopedFlagToken(args, "--cdp")) return {};
-	if (hasLaunchScopedFlagToken(args, "--auto-connect")) return {};
+	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect"] as const) {
+		if (hasLaunchScopedFlagToken(args, flag)) return {};
+	}
 
 	const sessionName = extractExplicitSessionName(args);
 	if (!sessionName?.startsWith(MANAGED_SESSION_NAME_PREFIX)) return {};
-
-	const command = parseCommandInfo(args).command;
-	if (command === "connect") return {};
+	if (parseCommandInfo(args).command === "connect") return {};
 
 	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
 }
@@ -677,7 +672,7 @@ export function createEphemeralSessionSeed(): string {
 	return randomUUID();
 }
 
-export function createCwdHash(cwd: string): string {
+function createCwdHash(cwd: string): string {
 	return createHash("sha256").update(`cwd:${cwd}`).digest("hex").slice(0, SESSION_NAME_CWD_HASH_LENGTH);
 }
 
