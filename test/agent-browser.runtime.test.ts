@@ -18,8 +18,10 @@ import {
 	buildExecutionPlan,
 	createFreshSessionName,
 	createImplicitSessionName,
+	createManagedSessionRestoreKey,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
+	getManagedSessionRestoreEnv,
 	parseArgvDescriptor,
 	redactInvocationArgs,
 	redactSensitiveText,
@@ -29,6 +31,58 @@ import {
 	validateToolArgs,
 } from "../extensions/agent-browser/lib/runtime.js";
 import { createToolBranchEntry } from "./helpers/agent-browser-harness.js";
+
+test("createManagedSessionRestoreKey is cwd-stable across pi session ids", () => {
+	const cwd = "/Users/example/Projects/work-app";
+	assert.equal(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(cwd));
+	assert.match(createManagedSessionRestoreKey(cwd), /^piab-r-[a-f0-9]{8}$/);
+	assert.notEqual(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(`${cwd}-other`));
+});
+
+test("getManagedSessionRestoreEnv enables restore for managed piab sessions", () => {
+	const cwd = "/Users/example/Projects/work-app";
+	const key = createManagedSessionRestoreKey(cwd);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: {},
+		}),
+		{ AGENT_BROWSER_RESTORE: key },
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "custom", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: {},
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "--allowed-domains", "example.com", "open", "https://example.com"],
+			cwd,
+			parentEnv: {},
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: { PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" },
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "connect", "9222"],
+			cwd,
+			parentEnv: {},
+		}),
+		{},
+	);
+});
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const sessionId = "12345678-1234-5678-9abc-def012345678";

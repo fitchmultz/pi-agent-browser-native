@@ -18,12 +18,20 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.33.0` command/help surface, audited against vercel-labs/agent-browser@1ed371f3af472cc0d6cd8fdaea75d1a085ff7534. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.33.2` command/help surface, audited against vercel-labs/agent-browser@93cdda5709e8861c0c26b0b955d8d746e9fda0d7. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
+
+### Upstream 0.33.2 rebaseline
+
+The 0.33.1–0.33.2 releases harden daemon lifecycle and live streaming without new core page commands:
+
+- 0.33.1 ships a default daemon idle timeout of 1 hour (`AGENT_BROWSER_IDLE_TIMEOUT_MS`, default `3600000`; `0` disables). Sessions without a restore key discard transient cookies/tabs on idle shutdown. Headed, Safari/iOS WebDriver, and user-attached browsers are exempt from that default. Tab recovery also revives Memory Saver-discarded tabs on connect/switch/close and reports recovery fields such as `revived` / `dialogBlocked` / `activeTabRevived`.
+- 0.33.2 makes stream frame delivery latest-wins, prioritizes input over frame writes, adds per-client `maxFps` / ack pacing, and adds `AGENT_BROWSER_STREAM_QUALITY`, `AGENT_BROWSER_STREAM_MAX_WIDTH`, and `AGENT_BROWSER_STREAM_MAX_HEIGHT` for screencast bandwidth control.
+- This wrapper keeps its managed-session idle override (default 15 minutes via `PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS` / `AGENT_BROWSER_IDLE_TIMEOUT_MS`) and enables cwd-stable `AGENT_BROWSER_RESTORE` for extension-managed `piab-*` sessions so SSO cookies survive browser relaunches. Set `PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE=0` to disable that restore inject. No Eve-specific Pi runtime is added.
 
 ### Upstream 0.33.0 rebaseline
 
@@ -937,7 +945,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 
 Use `--config <path>` to load a specific config file. Boolean flags accept optional `true` or `false` values, such as `--headed false` or `--webgpu false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
 
-Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, `AI_GATEWAY_API_KEY`, provider credential names, and AWS credential names when using AgentCore. The upstream child receives the parent environment plus wrapper overrides such as the managed socket directory and clamped default operation timeout (`buildAgentBrowserProcessEnv` in `extensions/agent-browser/lib/process.ts`). Model-facing output still redacts recognized secret values.
+Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_STREAM_QUALITY`, `AGENT_BROWSER_STREAM_MAX_WIDTH`, `AGENT_BROWSER_STREAM_MAX_HEIGHT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, `AI_GATEWAY_API_KEY`, provider credential names, and AWS credential names when using AgentCore. The upstream child receives the parent environment plus wrapper overrides such as the managed socket directory, clamped default operation timeout, and cwd-stable `AGENT_BROWSER_RESTORE` for extension-managed `piab-*` sessions (`buildAgentBrowserProcessEnv` in `extensions/agent-browser/lib/process.ts`). Model-facing output still redacts recognized secret values.
 
 ## Wrapper-specific behavior worth knowing
 
@@ -960,14 +968,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.33.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.33.2</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `1ed371f3af472cc0d6cd8fdaea75d1a085ff7534`
-- upstream package version: `0.33.0`
+- upstream HEAD: `93cdda5709e8861c0c26b0b955d8d746e9fda0d7`
+- upstream package version: `0.33.2`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1068,7 +1076,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - Sessions, state, tabs, frames, dialogs, and windows: 24 human-doc token(s), 20 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 49 human-doc token(s), 60 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 33 human-doc token(s), 37 upstream token(s)
-- Global flags, config, providers, policy, and environment: 138 human-doc token(s), 106 upstream token(s)
+- Global flags, config, providers, policy, and environment: 141 human-doc token(s), 109 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1394,6 +1402,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `--idle-timeout <ms>`
 - `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`
 - `AGENT_BROWSER_STREAM_PORT`
+- `AGENT_BROWSER_STREAM_QUALITY`
+- `AGENT_BROWSER_STREAM_MAX_WIDTH`
+- `AGENT_BROWSER_STREAM_MAX_HEIGHT`
 - `AGENT_BROWSER_IDLE_TIMEOUT_MS`
 - `AGENT_BROWSER_ENCRYPTION_KEY`
 - `AGENT_BROWSER_STATE_EXPIRE_DAYS`
@@ -1756,6 +1767,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_DEFAULT_TIMEOUT`
 - root help: `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`
 - root help: `AGENT_BROWSER_STREAM_PORT`
+- root help: `AGENT_BROWSER_STREAM_QUALITY`
+- root help: `AGENT_BROWSER_STREAM_MAX_WIDTH`
+- root help: `AGENT_BROWSER_STREAM_MAX_HEIGHT`
 - root help: `AGENT_BROWSER_IDLE_TIMEOUT_MS`
 - root help: `AGENT_BROWSER_ENCRYPTION_KEY`
 - root help: `AGENT_BROWSER_STATE_EXPIRE_DAYS`

@@ -74,7 +74,7 @@ export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 ] as const;
 
 export const TOOL_PROMPT_GUIDELINES_SUFFIX = [
-	"Prefer agent_browser over bash, osascript, AppleScript, or generic browser-driving shell for sites, docs, clicking, filling, screenshots, eval, and batch workflows.",
+	"Prefer agent_browser over bash, osascript, AppleScript, or generic browser shell for sites, docs, clicks, fills, screenshots, eval, and batch.",
 	"Pass exact agent-browser CLI arguments in agent_browser args when you are not using semanticAction, job, or qa, excluding the binary name and --json (agent_browser injects --json automatically).",
 	"Use agent_browser stdin only for eval --stdin, batch, auth save --password-stdin, or wrapper-generated job/qa batches instead of shell heredocs or password args; other command/stdin combinations are rejected before launch.",
 	`Let the agent_browser extension-managed session handle the common path unless you explicitly need a fresh launch for launch-scoped flags (${LAUNCH_SCOPED_FLAG_LABEL}).`,
@@ -97,9 +97,9 @@ export const WRAPPER_TAB_RECOVERY_BEHAVIOR = [
 export const RUNTIME_PROMPT_GUIDELINES = [
 	"Use agent_browser with one input mode: args, semanticAction, job, qa, sourceLookup/networkSourceLookup, or electron. stdin only for batch/eval/auth/wrapper batch; electron rejects stdin; never pass --json.",
 	"For agent_browser, use open → snapshot -i → current @refs or semanticAction → re-snapshot after navigation/scroll/rerender. Batch same-snapshot forms; split before navigation/submits. Stop before order/post/purchase/submit.",
-	"Use agent_browser sessionMode=fresh for launch-scoped flags, including --allowed-domains; never put --session-mode in args. Use requested/configured profiles only; on profile failures run profiles/doctor. Profile content is model-visible.",
+	"Use agent_browser sessionMode=fresh for launch-scoped flags incl. --allowed-domains; never put --session-mode in args. Use requested/configured profiles only; on profile failures run profiles/doctor. Profile content is model-visible. Restores project cookies; SSO may need --headed once.",
 	"For agent_browser artifacts, use exact user paths and verify details.artifactVerification/details.artifacts before claiming success. Save details.promptGuard-required artifacts before close; record stop needs ffmpeg; close keeps files; waited:timeout is not proof.",
-	"When agent_browser details.nextActions exists, use exact payloads over guessed selectors/prose. Dense snapshots: check Omitted high-value controls/highValueControlRefIds. Dashboards: verify scroll with screenshot/snapshot.",
+	"When agent_browser details.nextActions exists, use exact payloads over guessed selectors/prose. Dense snapshots: check Omitted high-value controls. Dashboards: verify scroll with screenshot/snapshot.",
 	"For agent_browser extraction: read <url> for docs/text; read for active-tab DOM; get title/url; get text/html/value/count <selector>; get attr <selector> <name>; eval --stdin for targeted state. Batch 3+ getters; heed visibility warnings.",
 ] as const;
 

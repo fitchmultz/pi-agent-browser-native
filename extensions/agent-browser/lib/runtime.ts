@@ -4,8 +4,9 @@
  * Scope: Pure runtime-planning helpers only; no subprocess execution or filesystem access lives here.
  * Usage: Imported by the extension entrypoint and unit tests before spawning the upstream CLI.
  * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, keeps plain-text inspection stateless,
- * and only injects wrapper-owned flags: `--json`, an extension-managed `--session` when appropriate, and the narrow
- * OpenAI/ChatGPT headless compatibility `--user-agent` when that workaround applies.
+ * and only injects wrapper-owned flags: `--json`, an extension-managed `--session` when appropriate, the narrow
+ * OpenAI/ChatGPT headless compatibility `--user-agent` when that workaround applies, and a cwd-stable
+ * `AGENT_BROWSER_RESTORE` key for extension-managed `piab-*` sessions so SSO cookies survive browser relaunches.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -33,10 +34,13 @@ import { isRecord } from "./parsing.js";
 
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
+const AGENT_BROWSER_RESTORE_ENV = "AGENT_BROWSER_RESTORE";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
+const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE";
 const DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
+const MANAGED_SESSION_NAME_PREFIX = "piab-";
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
 const SENSITIVE_QUERY_PARAM_PATTERN =
@@ -425,6 +429,48 @@ export function getImplicitSessionIdleTimeoutMs(env: NodeJS.ProcessEnv = process
 		DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS;
 }
 
+function isDisabledEnvFlag(value: string | undefined): boolean {
+	if (value === undefined) return false;
+	const normalized = value.trim().toLowerCase();
+	return normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off";
+}
+
+/** Cwd-stable restore key so SSO cookies survive across Pi chats in the same project. */
+export function createManagedSessionRestoreKey(cwd: string): string {
+	return `${MANAGED_SESSION_NAME_PREFIX}r-${createCwdHash(cwd)}`;
+}
+
+/**
+ * Enable upstream cookie/localStorage restore for extension-managed sessions without argv launch flags.
+ * Skip when the caller already owns auth persistence, when restore is incompatible, or when disabled.
+ */
+export function getManagedSessionRestoreEnv(options: {
+	args: string[];
+	cwd: string;
+	env?: NodeJS.ProcessEnv;
+	parentEnv?: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+	const parentEnv = options.parentEnv ?? process.env;
+	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV])) return {};
+	if (parentEnv[AGENT_BROWSER_RESTORE_ENV] || options.env?.[AGENT_BROWSER_RESTORE_ENV]) return {};
+
+	const args = options.args;
+	if (hasLaunchScopedFlagToken(args, "--restore")) return {};
+	if (hasLaunchScopedFlagToken(args, "--allowed-domains")) return {};
+	if (hasLaunchScopedFlagToken(args, "--profile")) return {};
+	if (hasLaunchScopedFlagToken(args, "--state")) return {};
+	if (hasLaunchScopedFlagToken(args, "--cdp")) return {};
+	if (hasLaunchScopedFlagToken(args, "--auto-connect")) return {};
+
+	const sessionName = extractExplicitSessionName(args);
+	if (!sessionName?.startsWith(MANAGED_SESSION_NAME_PREFIX)) return {};
+
+	const command = parseCommandInfo(args).command;
+	if (command === "connect") return {};
+
+	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
+}
+
 export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
 	return parseTimeoutMs(env[IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV], 0) ?? DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS;
 }
@@ -631,7 +677,7 @@ export function createEphemeralSessionSeed(): string {
 	return randomUUID();
 }
 
-function createCwdHash(cwd: string): string {
+export function createCwdHash(cwd: string): string {
 	return createHash("sha256").update(`cwd:${cwd}`).digest("hex").slice(0, SESSION_NAME_CWD_HASH_LENGTH);
 }
 

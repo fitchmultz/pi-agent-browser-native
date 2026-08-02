@@ -11,7 +11,7 @@ import { chmod, mkdir } from "node:fs/promises";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
-import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
+import { getImplicitSessionIdleTimeoutMs, getManagedSessionRestoreEnv } from "./runtime.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
 const MAX_BUFFERED_STDOUT_BYTES = 512 * 1_024;
@@ -249,6 +249,7 @@ export async function runAgentBrowserProcess(options: {
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
+		...getManagedSessionRestoreEnv({ args, cwd, env }),
 		...env,
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
