@@ -609,7 +609,7 @@ export async function runSessionCommandData(options: {
 	const processResult = await runAgentBrowserProcess({
 		args: ["--json", ...(namespace ? ["--namespace", namespace] : []), "--session", sessionName, ...args],
 		cwd,
-		env: buildOwnedManagedSessionEnv(),
+		// Ownership is decided by withOwnedManagedSessionContext / main-path owned env, not every probe.
 		signal,
 		stdin,
 		timeoutMs,
@@ -908,6 +908,7 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 			env: buildOwnedManagedSessionEnv(),
 			signal: controller.signal,
 		});
+		// close always targets a wrapper-owned managed session
 		stdoutSpillPath = processResult.stdoutSpillPath;
 		return getAgentBrowserErrorText({
 			aborted: processResult.aborted,

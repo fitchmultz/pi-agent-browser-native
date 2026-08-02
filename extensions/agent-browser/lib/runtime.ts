@@ -474,7 +474,43 @@ export function createManagedSessionRestoreKey(cwd: string): string {
 const managedSessionsWithRestoreDisabled = new Set<string>();
 
 export function markManagedSessionRestoreDisabled(sessionName: string): void {
-	if (sessionName.startsWith(MANAGED_SESSION_NAME_PREFIX)) managedSessionsWithRestoreDisabled.add(sessionName);
+	if (sessionName.trim().length > 0) managedSessionsWithRestoreDisabled.add(sessionName);
+}
+
+/** Active wrapper-owned managed session for nested helper probes in the same tool call. */
+let ownedManagedSessionContext: string | undefined;
+
+export function getOwnedManagedSessionContext(): string | undefined {
+	return ownedManagedSessionContext;
+}
+
+export async function withOwnedManagedSessionContext<T>(
+	sessionName: string | undefined,
+	run: () => Promise<T>,
+): Promise<T> {
+	const previous = ownedManagedSessionContext;
+	ownedManagedSessionContext = sessionName;
+	try {
+		return await run();
+	} finally {
+		ownedManagedSessionContext = previous;
+	}
+}
+
+export function resolveOwnedManagedSessionName(options: {
+	currentManagedSessionName?: string;
+	managedSessionName?: string;
+	sessionName?: string;
+}): string | undefined {
+	if (options.managedSessionName) return options.managedSessionName;
+	if (
+		options.sessionName &&
+		options.currentManagedSessionName &&
+		options.sessionName === options.currentManagedSessionName
+	) {
+		return options.sessionName;
+	}
+	return undefined;
 }
 
 export function clearManagedSessionRestoreDisabled(sessionName?: string): void {
@@ -504,8 +540,11 @@ export function getManagedSessionRestoreEnv(options: {
 	const parentEnv = options.parentEnv ?? process.env;
 	const args = options.args;
 	const sessionName = extractExplicitSessionName(args);
+	// Ownership comes only from wrapper-set options.env or the in-call owned-session context.
+	// Do not trust parent process env for PI_AGENT_BROWSER_OWNED_MANAGED_SESSION.
 	const ownedManagedSession =
-		isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]) || isEnabledEnvFlag(parentEnv[OWNED_MANAGED_SESSION_ENV]);
+		isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]) ||
+		(typeof sessionName === "string" && sessionName.length > 0 && sessionName === ownedManagedSessionContext);
 
 	if (!ownedManagedSession) return {};
 	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV]) || isDisabledEnvFlag(options.env?.[MANAGED_SESSION_RESTORE_ENV])) return {};

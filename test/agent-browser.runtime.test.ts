@@ -28,8 +28,10 @@ import {
 	redactSensitiveText,
 	redactSensitiveValue,
 	resolveManagedSessionState,
+	resolveOwnedManagedSessionName,
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
+	withOwnedManagedSessionContext,
 } from "../extensions/agent-browser/lib/runtime.js";
 import { createToolBranchEntry } from "./helpers/agent-browser-harness.js";
 
@@ -68,6 +70,16 @@ test("getManagedSessionRestoreEnv enables restore for managed piab sessions", ()
 		}),
 		{},
 	);
+	// parent-process owned marker must not elevate caller sessions
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-caller-owned", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
+		}),
+		{},
+	);
+	// owned env on a spawn is wrapper authority for that spawn only
 	assert.deepEqual(
 		getManagedSessionRestoreEnv({
 			args: ["--json", "--session", "custom", "open", "https://app.example.com"],
@@ -220,6 +232,53 @@ test("getManagedSessionRestoreEnv sticky-disables restore after an incompatible 
 			parentEnv: {},
 		}),
 		{ AGENT_BROWSER_RESTORE: createManagedSessionRestoreKey(cwd) },
+	);
+});
+
+test("owned managed session context enables restore for matching helper probes only", async () => {
+	clearManagedSessionRestoreDisabled();
+	const cwd = "/Users/example/Projects/work-app";
+	const managed = "piab-work-abc12345-deadbeef";
+	const key = createManagedSessionRestoreKey(cwd);
+	assert.equal(
+		resolveOwnedManagedSessionName({
+			currentManagedSessionName: managed,
+			sessionName: managed,
+		}),
+		managed,
+	);
+	assert.equal(
+		resolveOwnedManagedSessionName({
+			currentManagedSessionName: managed,
+			sessionName: "caller-owned",
+		}),
+		undefined,
+	);
+	await withOwnedManagedSessionContext(managed, async () => {
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--session", managed, "snapshot", "-i"],
+				cwd,
+				parentEnv: {},
+			}),
+			{ AGENT_BROWSER_RESTORE: key },
+		);
+		assert.deepEqual(
+			getManagedSessionRestoreEnv({
+				args: ["--json", "--session", "caller-owned", "snapshot", "-i"],
+				cwd,
+				parentEnv: {},
+			}),
+			{},
+		);
+	});
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", managed, "snapshot", "-i"],
+			cwd,
+			parentEnv: {},
+		}),
+		{},
 	);
 });
 

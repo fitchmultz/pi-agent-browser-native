@@ -20,6 +20,8 @@ import {
 	createFreshSessionName,
 	extractCommandTokens,
 	redactInvocationArgs,
+	resolveOwnedManagedSessionName,
+	withOwnedManagedSessionContext,
 	type CompatibilityWorkaround,
 } from "../../runtime.js";
 import {
@@ -436,6 +438,12 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	const idleTimeoutMismatch = getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs);
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
+	const ownedManagedSessionName = resolveOwnedManagedSessionName({
+		currentManagedSessionName: state.managedSessionName,
+		managedSessionName: executionPlan.managedSessionName,
+		sessionName: executionPlan.sessionName,
+	});
+	return await withOwnedManagedSessionContext(ownedManagedSessionName, async () => {
 	const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const priorSessionPageState = sessionPageState.get(sessionStateKey);
 	const priorSessionTabTarget = priorSessionPageState.tabTarget;
@@ -895,4 +903,5 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		statePatch,
 		userRequestedJson,
 	} };
+	});
 }
