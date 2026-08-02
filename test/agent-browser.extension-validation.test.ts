@@ -66,8 +66,9 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.equal(harness.tool.name, "agent_browser");
 		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
-		const parameterSchema = harness.tool.parameters as { properties?: { args?: { description?: string } } };
-		assert.match(parameterSchema.properties?.args?.description ?? "", /networkSourceLookup, or electron/);
+		const parameterSchema = harness.tool.parameters as { description?: string; properties?: { args?: { description?: string } } };
+		assert.match(parameterSchema.description ?? "", /sourceLookup, networkSourceLookup, or electron/);
+		assert.match(parameterSchema.properties?.args?.description ?? "", /snapshot -i/);
 
 		const docsGuideline = buildInstalledDocsGuideline({
 			readmePath: join(process.cwd(), "README.md"),

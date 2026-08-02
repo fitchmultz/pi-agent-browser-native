@@ -22,6 +22,15 @@ function stableJson(value: unknown): string {
 	});
 }
 
+test("agent_browser keeps every input mode in a compact model-facing schema", () => {
+	const schema = createAgentBrowserParamsSchema() as { properties?: Record<string, unknown> };
+	for (const mode of ["args", "semanticAction", "job", "qa", "sourceLookup", "networkSourceLookup", "electron"]) {
+		assert.ok(schema.properties?.[mode], `missing ${mode} input mode`);
+	}
+	const bytes = Buffer.byteLength(JSON.stringify(schema));
+	assert.ok(bytes <= 10 * 1024, `agent_browser parameter schema is ${bytes} bytes; budget is 10 KiB`);
+});
+
 test("production JSON-schema builder matches TypeBox shape for public tool schemas", () => {
 	const typeBox = Type as unknown as JsonSchemaBuilder;
 	const typeBoxStringEnum = StringEnum as unknown as StringEnumBuilder;
