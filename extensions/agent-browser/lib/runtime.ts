@@ -35,12 +35,21 @@ import { isRecord } from "./parsing.js";
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const AGENT_BROWSER_RESTORE_ENV = "AGENT_BROWSER_RESTORE";
+const AGENT_BROWSER_ALLOWED_DOMAINS_ENV = "AGENT_BROWSER_ALLOWED_DOMAINS";
+const AGENT_BROWSER_PROFILE_ENV = "AGENT_BROWSER_PROFILE";
+const AGENT_BROWSER_STATE_ENV = "AGENT_BROWSER_STATE";
+const AGENT_BROWSER_AUTO_CONNECT_ENV = "AGENT_BROWSER_AUTO_CONNECT";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
 const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE";
 const DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
 const MANAGED_SESSION_NAME_PREFIX = "piab-";
+const MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS = [
+	AGENT_BROWSER_ALLOWED_DOMAINS_ENV,
+	AGENT_BROWSER_PROFILE_ENV,
+	AGENT_BROWSER_STATE_ENV,
+] as const;
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
 const SENSITIVE_QUERY_PARAM_PATTERN =
@@ -435,6 +444,18 @@ function isDisabledEnvFlag(value: string | undefined): boolean {
 	return normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off";
 }
 
+function isEnabledEnvFlag(value: string | undefined): boolean {
+	if (value === undefined) return false;
+	const normalized = value.trim().toLowerCase();
+	if (normalized.length === 0) return false;
+	return !isDisabledEnvFlag(normalized);
+}
+
+function hasNonEmptyEnvValue(env: NodeJS.ProcessEnv | undefined, name: string): boolean {
+	const value = env?.[name];
+	return typeof value === "string" && value.trim().length > 0;
+}
+
 /** Cwd-stable restore key so SSO cookies survive across Pi chats in the same project. */
 export function createManagedSessionRestoreKey(cwd: string): string {
 	return `${MANAGED_SESSION_NAME_PREFIX}r-${createCwdHash(cwd)}`;
@@ -452,7 +473,12 @@ export function getManagedSessionRestoreEnv(options: {
 }): NodeJS.ProcessEnv {
 	const parentEnv = options.parentEnv ?? process.env;
 	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV])) return {};
-	if (parentEnv[AGENT_BROWSER_RESTORE_ENV] || options.env?.[AGENT_BROWSER_RESTORE_ENV]) return {};
+	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) return {};
+
+	for (const name of MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS) {
+		if (hasNonEmptyEnvValue(parentEnv, name) || hasNonEmptyEnvValue(options.env, name)) return {};
+	}
+	if (isEnabledEnvFlag(parentEnv[AGENT_BROWSER_AUTO_CONNECT_ENV]) || isEnabledEnvFlag(options.env?.[AGENT_BROWSER_AUTO_CONNECT_ENV])) return {};
 
 	const args = options.args;
 	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect"] as const) {

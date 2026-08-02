@@ -82,6 +82,30 @@ test("getManagedSessionRestoreEnv enables restore for managed piab sessions", ()
 		}),
 		{},
 	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: { AGENT_BROWSER_ALLOWED_DOMAINS: "example.com" },
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: { AGENT_BROWSER_PROFILE: "Default" },
+		}),
+		{},
+	);
+	assert.deepEqual(
+		getManagedSessionRestoreEnv({
+			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
+			cwd,
+			parentEnv: { AGENT_BROWSER_AUTO_CONNECT: "1" },
+		}),
+		{},
+	);
 });
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
