@@ -46,8 +46,11 @@ function hasUpstreamEnvValue(env: NodeJS.ProcessEnv | undefined, name: string): 
 	return env?.[name] !== undefined;
 }
 
-function resolveManagedSessionRestoreHome(parentEnv: NodeJS.ProcessEnv): string | undefined {
-	const configuredHome = parentEnv.HOME ?? parentEnv.USERPROFILE;
+function resolveManagedSessionRestoreHome(
+	parentEnv: NodeJS.ProcessEnv,
+	platform: NodeJS.Platform = process.platform,
+): string | undefined {
+	const configuredHome = platform === "win32" ? parentEnv.USERPROFILE : parentEnv.HOME;
 	if (configuredHome !== undefined) return configuredHome.length > 0 && configuredHome.trim() === configuredHome ? configuredHome : undefined;
 	const fallback = homedir();
 	return fallback.length > 0 && fallback.trim() === fallback ? fallback : undefined;
@@ -133,11 +136,6 @@ export function resolveOwnedManagedSessionContext(options: {
 	return undefined;
 }
 
-/** Read sticky state only from the current owned-session context; no process-global restore state exists. */
-export function isManagedSessionRestoreDisabled(sessionName: string | undefined, namespace?: string): boolean {
-	return ownedManagedSessionStorage.getStore()?.restoreState.isDisabled(sessionName, namespace) ?? false;
-}
-
 function ownedContextMatches(sessionName: string | undefined, namespace: string | undefined): OwnedManagedSessionContext | undefined {
 	const owned = ownedManagedSessionStorage.getStore();
 	if (!owned || !sessionName) return undefined;
@@ -163,9 +161,10 @@ export function agentBrowserConfigBlocksManagedRestore(
 	cwd: string,
 	parentEnv: NodeJS.ProcessEnv = process.env,
 	args: string[] = [],
+	platform: NodeJS.Platform = process.platform,
 ): boolean {
 	if (hasExplicitConfigArg(args) || hasUpstreamEnvValue(parentEnv, "AGENT_BROWSER_CONFIG")) return true;
-	const home = resolveManagedSessionRestoreHome(parentEnv);
+	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
 	if (!home) return true;
 	return [join(cwd, "agent-browser.json"), join(home, ".agent-browser", "config.json")]
 		.some(configPathExistsOrIsUnreadable);
@@ -184,7 +183,7 @@ export function ensureManagedSessionRestoreStorageIsSecure(
 	const encryptionKey = parentEnv.AGENT_BROWSER_ENCRYPTION_KEY;
 	if (encryptionKey !== undefined && !hasValidEncryptionKey(parentEnv)) return false;
 	if (platform === "win32") return hasValidEncryptionKey(parentEnv);
-	const home = resolveManagedSessionRestoreHome(parentEnv);
+	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
 	if (!home) return false;
 	const root = join(home, ".agent-browser");
 	try {
@@ -241,52 +240,53 @@ function isManagedSessionRestoreIncompatible(options: ManagedSessionRestorePolic
 	return !ensureManagedSessionRestoreStorageIsSecure(effectiveEnv);
 }
 
-/** Build env for an upstream managed-session subprocess without exposing caller-owned sessions. */
-export function getManagedSessionRestoreEnv(options: {
+export interface ManagedSessionRestoreEnvOptions {
 	args: string[];
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
 	ownedManagedSession?: boolean;
 	parentEnv?: NodeJS.ProcessEnv;
 	restoreState?: ManagedSessionRestoreState;
-}): NodeJS.ProcessEnv {
+}
+
+function resolveManagedSessionRestorePolicy(options: ManagedSessionRestoreEnvOptions) {
 	const parentEnv = options.parentEnv ?? process.env;
 	const sessionName = extractExplicitSessionName(options.args);
 	const namespace = extractExplicitNamespace(options.args);
 	const ownedContext = ownedContextMatches(sessionName, namespace);
 	const restoreState = ownedContext?.restoreState ?? options.restoreState;
-	if ((!options.ownedManagedSession && !ownedContext) || !restoreState) return {};
+	const owned = (options.ownedManagedSession || ownedContext !== undefined) && restoreState !== undefined;
+	return { namespace, owned, ownedContext, parentEnv, restoreState, sessionName };
+}
 
+/** Build env for an upstream managed-session subprocess without exposing caller-owned sessions or mutating sticky state. */
+export function getManagedSessionRestoreEnv(options: ManagedSessionRestoreEnvOptions): NodeJS.ProcessEnv {
+	const { namespace, owned, ownedContext, parentEnv, restoreState, sessionName } = resolveManagedSessionRestorePolicy(options);
+	if (!owned || !restoreState) return {};
 	if (ownedContext?.restoreDecision) {
-		if (ownedContext.restoreDecision === "opted-out") {
-			if (options.ownedManagedSession && ownedContext.restoreLaunchConflict) restoreState.disable(sessionName, namespace);
-			return {};
-		}
-		if (ownedContext.restoreDecision === "incompatible") {
-			if (options.ownedManagedSession) restoreState.disable(sessionName, namespace);
-			return {};
-		}
+		if (ownedContext.restoreDecision !== "enabled") return {};
 		if (restoreState.isDisabled(sessionName, namespace) || !sessionName || !ownedContext.restoreKey) return {};
 		return { [AGENT_BROWSER_RESTORE_ENV]: ownedContext.restoreKey };
 	}
 
 	const policyOptions = { ...options, parentEnv };
-	if (managedSessionRestoreOptedOut(policyOptions)) {
-		if (options.ownedManagedSession && (ownedContext?.restoreLaunchConflict || hasManagedSessionRestoreLaunchConflict(policyOptions))) {
-			restoreState.disable(sessionName, namespace);
-		}
-		return {};
-	}
-	if (ownedContext?.restoreSuppressed) {
-		if (options.ownedManagedSession) restoreState.disable(sessionName, namespace);
-		return {};
-	}
-	if (isManagedSessionRestoreIncompatible(policyOptions)) {
-		if (options.ownedManagedSession) restoreState.disable(sessionName, namespace);
-		return {};
-	}
+	if (managedSessionRestoreOptedOut(policyOptions) || ownedContext?.restoreSuppressed || isManagedSessionRestoreIncompatible(policyOptions)) return {};
 	if (restoreState.isDisabled(sessionName, namespace) || !sessionName) return {};
 	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
+}
+
+/** Commit sticky suppression only after an owned-context subprocess has actually spawned. */
+export function commitManagedSessionRestoreSuppression(options: ManagedSessionRestoreEnvOptions): void {
+	const { namespace, owned, ownedContext, parentEnv, restoreState, sessionName } = resolveManagedSessionRestorePolicy(options);
+	if (!owned || !restoreState) return;
+	if (ownedContext?.restoreDecision) {
+		if (ownedContext.restoreDecision !== "enabled") restoreState.disable(sessionName, namespace);
+		return;
+	}
+	const policyOptions = { ...options, parentEnv };
+	if (managedSessionRestoreOptedOut(policyOptions) || ownedContext?.restoreSuppressed || isManagedSessionRestoreIncompatible(policyOptions)) {
+		restoreState.disable(sessionName, namespace);
+	}
 }
 
 /** Build call-scoped restore suppression from the original main-plan argv. */
@@ -360,7 +360,7 @@ export function pruneOwnedManagedSessionRestoreSnapshots(
 	parentEnv: NodeJS.ProcessEnv = process.env,
 	platform: NodeJS.Platform = process.platform,
 ): number {
-	const home = resolveManagedSessionRestoreHome(parentEnv);
+	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
 	if (!home) return 0;
 	const root = join(home, ".agent-browser");
 	const encryptionKey = parentEnv.AGENT_BROWSER_ENCRYPTION_KEY;

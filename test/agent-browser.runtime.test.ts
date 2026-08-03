@@ -1101,6 +1101,29 @@ test("buildExecutionPlan parses restore and namespace globals before command dis
 	}
 });
 
+test("buildExecutionPlan only relocates namespace occurrences recognized by upstream global parsing", () => {
+	const plan = buildExecutionPlan([
+		"--session", "caller",
+		"--args", "--namespace",
+		"--namespace", "team",
+		"open", "https://example.com",
+	], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+
+	assert.equal(plan.validationError, undefined);
+	assert.equal(plan.namespace, "team");
+	assert.deepEqual(plan.effectiveArgs, [
+		"--json", "--namespace", "team",
+		"--session", "caller",
+		"--args", "--namespace",
+		"open", "https://example.com",
+	]);
+});
+
 test("buildExecutionPlan allows dash-starting --args values", () => {
 	const plan = buildExecutionPlan(["--args", "--disable-gpu,--lang=en-US", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -1181,7 +1204,7 @@ test("buildExecutionPlan treats wait --state as command-scoped after the command
 	assert.deepEqual(plan.effectiveArgs.slice(-4), ["wait", "@button", "--state", "hidden"]);
 });
 
-test("buildExecutionPlan allows disabled auto-connect after an active implicit session", () => {
+test("buildExecutionPlan only treats exact lowercase auto-connect false as disabled", () => {
 	const plan = buildExecutionPlan(["--auto-connect", "false", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: true,
@@ -1193,6 +1216,14 @@ test("buildExecutionPlan allows disabled auto-connect after an active implicit s
 	assert.deepEqual(plan.startupScopedFlags, []);
 	assert.equal(plan.usedImplicitSession, true);
 	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
+
+	const uppercaseFalse = buildExecutionPlan(["--auto-connect", "FALSE", "open", "https://example.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.match(uppercaseFalse.validationError ?? "", /launch-scoped flags.*--auto-connect/i);
 });
 
 test("buildExecutionPlan treats provider and iOS device flags as launch-scoped", () => {

@@ -21,6 +21,7 @@ import {
 	extractExplicitNamespace,
 	extractExplicitSessionName,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
+	isBooleanFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
 	scanUpstreamGlobalFlagOccurrences,
 } from "./argv-grammar.js";
@@ -804,22 +805,6 @@ function getFlagValue(args: string[], flag: string): string | undefined {
 	return undefined;
 }
 
-function isBooleanFlagEnabled(args: string[], flag: string): boolean {
-	for (const [index, token] of args.entries()) {
-		if (token === flag) {
-			const nextToken = args[index + 1]?.trim().toLowerCase();
-			if (nextToken === "false") {
-				return false;
-			}
-			return true;
-		}
-		if (token.startsWith(`${flag}=`)) {
-			return token.slice(flag.length + 1).trim().toLowerCase() !== "false";
-		}
-	}
-	return false;
-}
-
 function normalizeComparableUrl(url: string): string | undefined {
 	const normalizedUrl = url.trim();
 	if (normalizedUrl.length === 0) {
@@ -903,17 +888,12 @@ function getCompatibilityWorkaround(args: string[], commandInfo: CommandInfo): C
 }
 
 function stripExplicitNamespaceArgs(args: string[]): string[] {
-	const stripped: string[] = [];
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
-		if (token === "--namespace") {
-			index += 1;
-			continue;
-		}
-		if (token.startsWith("--namespace=")) continue;
-		stripped.push(token);
+	const namespaceTokenIndexes = new Set<number>();
+	for (const occurrence of scanUpstreamGlobalFlagOccurrences(args, "--namespace")) {
+		namespaceTokenIndexes.add(occurrence.index);
+		namespaceTokenIndexes.add(occurrence.index + 1);
 	}
-	return stripped;
+	return args.filter((_token, index) => !namespaceTokenIndexes.has(index));
 }
 
 export function getStartupScopedFlags(args: string[]): string[] {

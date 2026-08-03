@@ -25,7 +25,6 @@ import {
 	isSessionTabPostCommandCorrectionExcludedCommand,
 } from "../../command-taxonomy.js";
 import {
-	isManagedSessionRestoreDisabled,
 	type ManagedSessionRestoreState,
 	pruneOwnedManagedSessionRestoreSnapshots,
 } from "../../managed-session-restore.js";
@@ -67,14 +66,19 @@ export function applyBrowserRunStatePatch(state: BrowserRunState, patch: Browser
 
 export const getSessionContextKey = getSessionPageStateKey;
 
-export function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean, namespace?: string): Record<string, unknown> {
+export function buildSessionDetailFields(
+	sessionName: string | undefined,
+	usedImplicitSession: boolean,
+	namespace?: string,
+	managedSessionRestoreDisabled = false,
+): Record<string, unknown> {
 	return {
 		...(namespace ? { namespace } : {}),
 		...(sessionName
 			? {
 				sessionName,
 				usedImplicitSession,
-				...(isManagedSessionRestoreDisabled(sessionName, namespace) ? { managedSessionRestoreDisabled: true } : {}),
+				...(managedSessionRestoreDisabled ? { managedSessionRestoreDisabled: true } : {}),
 			}
 			: {}),
 	};

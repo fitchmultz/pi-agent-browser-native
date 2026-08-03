@@ -5,7 +5,7 @@
  */
 
 import { findCommandStartIndex } from "./argv-descriptor.js";
-import { optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
+import { isBooleanFlagEnabled, optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
 
 export interface LaunchScopedFlagDefinition {
 	flag: string;
@@ -125,6 +125,7 @@ export const MANAGED_RESTORE_INCOMPATIBLE_FLAGS = [
 	"--proxy-bypass",
 	"--ignore-https-errors",
 	"--allow-file-access",
+	"--webgpu",
 	"--device",
 	"--engine",
 ] as const;
@@ -168,15 +169,8 @@ export const MANAGED_RESTORE_INCOMPATIBLE_BOOLEAN_ENVS = [
 	"AGENT_BROWSER_AUTO_CONNECT",
 	"AGENT_BROWSER_IGNORE_HTTPS_ERRORS",
 	"AGENT_BROWSER_ALLOW_FILE_ACCESS",
+	"AGENT_BROWSER_WEBGPU",
 ] as const;
-
-function isBooleanFlagEnabled(args: string[], flag: string): boolean {
-	for (const [index, token] of args.entries()) {
-		if (token === flag) return args[index + 1] !== "false";
-		if (token.startsWith(`${flag}=`)) return token.slice(flag.length + 1) !== "false";
-	}
-	return false;
-}
 
 export function hasLaunchScopedFlagToken(args: string[], flag: string): boolean {
 	const commandStartIndex = findCommandStartIndex(args);

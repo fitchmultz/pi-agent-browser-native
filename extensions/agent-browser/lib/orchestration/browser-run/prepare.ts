@@ -453,6 +453,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround?.id === "chatgpt-headless-user-agent",
 	});
 	const reusesCurrentManagedRestoreDaemon = state.managedSessionActive &&
+		!state.managedSessionRestoreState.isDisabled(state.managedSessionName, state.managedSessionNamespace) &&
 		ownedManagedSession?.restoreSuppressed === true &&
 		ownedManagedSession.sessionName === state.managedSessionName &&
 		(ownedManagedSession.namespace ?? "") === (state.managedSessionNamespace ?? "") &&
@@ -468,6 +469,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		};
 	}
 	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
+		const managedSessionRestoreDisabled = () => state.managedSessionRestoreState.isDisabled(executionPlan.sessionName, executionPlan.namespace);
 		const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 		const priorSessionPageState = sessionPageState.get(sessionStateKey);
 		const priorSessionTabTarget = priorSessionPageState.tabTarget;
@@ -547,7 +549,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					sessionMode,
 					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: traceOwnerGuardMessage, succeeded: false, validationError: traceOwnerGuardMessage }),
 					validationError: traceOwnerGuardMessage,
-					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 				},
 				isError: true,
 			} };
@@ -568,7 +570,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					sessionMode,
 					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: stdinValidationError, succeeded: false, validationError: stdinValidationError }),
 					validationError: stdinValidationError,
-					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 				},
 				isError: true,
 			} };
@@ -590,7 +592,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					sessionMode,
 					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: requestedArtifactCloseViolation.message, failureCategory: "policy-blocked", succeeded: false, validationError: requestedArtifactCloseViolation.message }),
 					validationError: requestedArtifactCloseViolation.message,
-					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 				},
 				isError: true,
 			} };
@@ -616,7 +618,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					refSnapshotInvalidation: staleRefPreflight.snapshotInvalidation,
 					sessionMode,
 					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: staleRefPreflight.message, failureCategory: "stale-ref", succeeded: false }),
-					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 				},
 				isError: true,
 			} };
@@ -646,7 +648,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					refSnapshot: samePageRefFreshnessPreflight.snapshot,
 					sessionMode,
 					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: samePageRefFreshnessPreflight.message, failureCategory: "stale-ref", succeeded: false }),
-					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 				},
 				isError: true,
 			} };
@@ -671,7 +673,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 						sessionMode,
 						...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: qaAttachedPrecondition.error, succeeded: false, validationError: qaAttachedPrecondition.error }),
 						validationError: qaAttachedPrecondition.error,
-						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 					},
 					isError: true,
 				} };
@@ -685,6 +687,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			compatibilityWorkaround,
 			cwd,
 			effectiveArgs: redactedEffectiveArgs,
+			managedSessionRestoreDisabled,
 			persistentArtifactStore,
 			previousRefSnapshot: priorRefSnapshotState,
 			redactedArgs,
@@ -704,6 +707,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			compatibilityWorkaround,
 			cwd,
 			effectiveArgs: redactedEffectiveArgs,
+			managedSessionRestoreDisabled,
 			redactedArgs,
 			sessionMode,
 			namespace: executionPlan.namespace,
@@ -719,6 +723,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				compatibilityWorkaround,
 				cwd,
 				effectiveArgs: redactedEffectiveArgs,
+				managedSessionRestoreDisabled,
 				redactedArgs,
 				sessionMode,
 				namespace: executionPlan.namespace,
@@ -732,6 +737,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				compatibilityWorkaround,
 				cwd,
 				effectiveArgs: redactedEffectiveArgs,
+				managedSessionRestoreDisabled,
 				redactedArgs,
 				sessionMode,
 				namespace: executionPlan.namespace,
@@ -748,6 +754,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			compatibilityWorkaround,
 			cwd,
 			effectiveArgs: redactedEffectiveArgs,
+			managedSessionRestoreDisabled,
 			redactedArgs,
 			sessionMode,
 			namespace: executionPlan.namespace,
@@ -809,7 +816,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 									target: priorSessionTabTarget,
 								}), executionPlan.namespace),
 								validationError: error,
-								...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+								...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 							},
 							isError: true,
 						} };
@@ -841,7 +848,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 									target: priorSessionTabTarget,
 								}), executionPlan.namespace),
 								validationError: pinnedBatchPlan.error,
-								...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+								...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 							},
 							isError: true,
 						} };
@@ -881,7 +888,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				effectiveArgs: redactedProcessArgs,
 				sessionMode,
 				sessionTabCorrection,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
 			},
 		});
 

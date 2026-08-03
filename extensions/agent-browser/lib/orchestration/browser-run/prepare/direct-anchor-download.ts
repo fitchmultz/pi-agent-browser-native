@@ -39,6 +39,7 @@ export async function tryDirectAnchorDownload(options: {
 	compatibilityWorkaround?: CompatibilityWorkaround;
 	cwd: string;
 	effectiveArgs: string[];
+	managedSessionRestoreDisabled: () => boolean;
 	redactedArgs: string[];
 	sessionMode: "auto" | "fresh";
 	namespace?: string;
@@ -148,7 +149,7 @@ export async function tryDirectAnchorDownload(options: {
 					savedFilePath: absolutePath,
 					sessionMode: options.sessionMode,
 					...buildAgentBrowserResultCategoryDetails({ artifacts: [artifact], args: options.effectiveArgs, command: "download", savedFile, succeeded: true }),
-					...buildSessionDetailFields(options.sessionName, options.usedImplicitSession, options.namespace),
+					...buildSessionDetailFields(options.sessionName, options.usedImplicitSession, options.namespace, options.managedSessionRestoreDisabled()),
 					summary: `Download completed: ${absolutePath}`,
 				},
 				isError: false,

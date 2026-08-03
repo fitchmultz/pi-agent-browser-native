@@ -110,6 +110,15 @@ export interface UpstreamGlobalFlagOccurrence {
 	value?: string;
 }
 
+/** Match upstream's case-sensitive boolean semantics; only the exact value `false` disables a present flag. */
+export function isBooleanFlagEnabled(args: string[], flag: string): boolean {
+	for (const [index, token] of args.entries()) {
+		if (token === flag) return args[index + 1] !== "false";
+		if (token.startsWith(`${flag}=`)) return token.slice(flag.length + 1) !== "false";
+	}
+	return false;
+}
+
 /** Mirror upstream 0.33.2 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
 export function scanUpstreamGlobalFlagOccurrences(args: string[], targetFlag: string): UpstreamGlobalFlagOccurrence[] {
 	const occurrences: UpstreamGlobalFlagOccurrence[] = [];

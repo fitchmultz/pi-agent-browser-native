@@ -9,7 +9,7 @@
 
 ### Validation
 
-- Passed `npm run verify -- pre-pr` (610 tests passed, 2 opt-in skips), real-upstream contract, dogfood, packaged Pi, startup-profile, configured-source lifecycle, and local platform-target verification. The remote Crabbox macOS/Ubuntu/native-Windows matrix was unavailable and explicitly bypassed for this GitHub-only release.
+- Passed `npm run verify -- pre-pr` (616 tests passed, 2 opt-in skips), real-upstream contract, dogfood, packaged Pi, startup-profile, configured-source lifecycle, and local platform-target verification. The remote Crabbox macOS/Ubuntu/native-Windows matrix was unavailable and explicitly waived for this release.
 
 ## 0.2.73 - 2026-08-02
 

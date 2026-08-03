@@ -134,6 +134,106 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", u
 	}
 });
 
+for (const testCase of [
+	{
+		name: "documented restore opt-out",
+		env: { PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" },
+	},
+	{
+		name: "proxy environment",
+		env: { HTTPS_PROXY: "http://127.0.0.1:8080" },
+	},
+] as const) {
+	test(`agentBrowserExtension reuses restore-disabled managed sessions with ${testCase.name}`, { concurrency: false }, async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restore-disabled-reuse-"));
+		const logPath = join(tempDir, "invocations.log");
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, restore: process.env.AGENT_BROWSER_RESTORE }) + "\\n");
+const command = args.find((arg) => ["get", "open"].includes(arg));
+process.stdout.write(JSON.stringify({ success: true, data: command === "get" ? "https://example.com/" : { title: "Example", url: "https://example.com/" } }));`,
+		);
+
+		try {
+			await withPatchedEnv({
+				AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64),
+				ALL_PROXY: undefined,
+				HTTP_PROXY: undefined,
+				HTTPS_PROXY: undefined,
+				PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
+				all_proxy: undefined,
+				http_proxy: undefined,
+				https_proxy: undefined,
+				...testCase.env,
+				HOME: tempDir,
+				PATH: `${tempDir}:${basePath}`,
+			}, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"] });
+				assert.equal(opened.isError, false, JSON.stringify(opened));
+				assert.equal(opened.details?.managedSessionRestoreDisabled, true);
+				const sessionName = opened.details?.sessionName;
+
+				const followedUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+				assert.equal(followedUp.isError, false, JSON.stringify(followedUp));
+				assert.equal(followedUp.details?.sessionName, sessionName);
+				assert.equal(followedUp.details?.managedSessionRestoreDisabled, true);
+				const invocations = await readInvocationLog(logPath);
+				assert.ok(invocations.length >= 2);
+				assert.equal((invocations.at(-1) as { restore?: string } | undefined)?.restore, undefined);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	});
+}
+
+test("agentBrowserExtension does not sticky-disable restore when a suppressed spawn fails", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restore-spawn-failure-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	try {
+		await withPatchedEnv({
+			ALL_PROXY: undefined,
+			HTTP_PROXY: undefined,
+			HTTPS_PROXY: "http://127.0.0.1:8080",
+			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
+			all_proxy: undefined,
+			http_proxy: undefined,
+			https_proxy: undefined,
+			HOME: tempDir,
+			PATH: "",
+		}, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const failed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"] });
+			assert.equal(failed.isError, true);
+			assert.notEqual(failed.details?.managedSessionRestoreDisabled, true);
+
+			delete process.env.HTTPS_PROXY;
+			process.env.PATH = `${tempDir}:${basePath}`;
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), restore: process.env.AGENT_BROWSER_RESTORE }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.com/" } }));`,
+			);
+
+			const retried = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"] });
+			assert.equal(retried.isError, false, JSON.stringify(retried));
+			assert.notEqual(retried.details?.managedSessionRestoreDisabled, true);
+			const [invocation] = await readInvocationLog(logPath);
+			assert.equal((invocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 const MISSING_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: missing boolean success field.";
 
 test("agentBrowserExtension rejects malformed JSON envelopes that omit success", { concurrency: false }, async () => {

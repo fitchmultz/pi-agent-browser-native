@@ -531,6 +531,7 @@ export interface FinalResultInput {
 	fillVerificationDiagnostic?: FillVerificationDiagnostic;
 	inspectionText?: string;
 	managedSessionOutcome?: ManagedSessionOutcome;
+	managedSessionRestoreDisabled: boolean;
 	navigationSummary?: NavigationSummary;
 	networkSourceLookup?: AgentBrowserNetworkSourceLookupAnalysis;
 	noActivePageSnapshotFailure: boolean;

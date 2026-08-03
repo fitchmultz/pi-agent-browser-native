@@ -2,7 +2,7 @@ import { runAgentBrowserProcess } from "../../process.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
 import { applyBrowserRunStatePatch } from "./session-state.js";
-import { buildMissingBinaryFailureResult, isMissingAgentBrowserBinary } from "./final-result.js";
+import { buildMissingBinaryFailureResult } from "./final-result.js";
 import { prepareBrowserRun } from "./prepare.js";
 import { processBrowserOutput } from "./process-output.js";
 import type { AgentBrowserToolResult, BrowserRunOptions } from "./types.js";
@@ -34,13 +34,6 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 				timeoutMs: prepared.processTimeoutMs,
 			});
 
-			const missingBinary = isMissingAgentBrowserBinary(processResult);
-			if (missingBinary && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName) {
-				options.state.managedSessionRestoreState.clear(
-					prepared.executionPlan.managedSessionName,
-					prepared.executionPlan.namespace,
-				);
-			}
 			const missingBinaryResult = await buildMissingBinaryFailureResult({
 				compatibilityWorkaround: prepared.compatibilityWorkaround,
 				electronLaunch: prepared.electronLaunch,
