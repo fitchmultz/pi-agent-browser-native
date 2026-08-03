@@ -154,9 +154,13 @@ export function canonicalizeAgentBrowserNamespace(value: string | undefined): st
 	return normalized.replace(/[-_]+$/u, "") || undefined;
 }
 
-export function getAgentBrowserSessionIdentityKey(sessionName: string, namespace?: string): string {
+export function getAgentBrowserSessionIdentityKey(sessionName: string, namespace?: string, platform: NodeJS.Platform = process.platform): string {
 	const canonicalNamespace = canonicalizeAgentBrowserNamespace(namespace);
-	return canonicalNamespace ? `${canonicalNamespace}\0${sessionName}` : sessionName;
+	// APFS aliases include full Unicode folds such as ß/SS and ς/Σ, not just ASCII case.
+	const canonicalSessionName = platform === "darwin" || platform === "win32"
+		? sessionName.normalize("NFC").toLowerCase().toUpperCase().toLowerCase().normalize("NFC")
+		: sessionName;
+	return canonicalNamespace ? `${canonicalNamespace}\0${canonicalSessionName}` : canonicalSessionName;
 }
 
 /** Mirror upstream 0.33.2 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */

@@ -59,7 +59,7 @@ import {
 import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.js";
 import { applyAgentBrowserOutputPath, getAgentBrowserOutputPathValidationError } from "./lib/orchestration/output-file.js";
 import type { NetworkRouteRecord, SessionArtifactManifest } from "./lib/results/contracts.js";
-import { getSessionArtifactManifestEntryKey, isSessionArtifactManifest, mergeSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
+import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isSessionArtifactManifest, mergeSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
 import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
 import { createAgentBrowserWebSearchTool } from "./lib/web-search.js";
 import {
@@ -130,7 +130,7 @@ function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactMa
 		const message = isRecord(entry.message) ? entry.message : undefined;
 		if (!message || message.toolName !== "agent_browser") continue;
 		const details = isRecord(message.details) ? message.details : undefined;
-		if (isSessionArtifactManifest(details?.artifactManifest)) {
+		if (isSessionArtifactManifest(details?.artifactManifest) && (!restoredManifest || details.artifactManifest.updatedAtMs >= restoredManifest.updatedAtMs)) {
 			restoredManifest = details.artifactManifest;
 		}
 	}
@@ -575,7 +575,11 @@ function mergeBrowserRunArtifactManifest(
 	const changedEntries = updated.entries.filter((entry) => initialEntries.get(getSessionArtifactManifestEntryKey(entry)) !== entry);
 	return changedEntries.length === 0
 		? current
-		: mergeSessionArtifactManifest({ base: current, entries: changedEntries, nowMs: Math.max(current?.updatedAtMs ?? 0, updated.updatedAtMs) });
+		: mergeSessionArtifactManifest({
+			base: current,
+			entries: changedEntries,
+			nowMs: Math.max(Date.now(), (current?.updatedAtMs ?? 0) + 1, updated.updatedAtMs),
+		});
 }
 
 function findPackageRoot(startDir: string): string {
@@ -645,16 +649,20 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ownedManagedSessions = new Map<string, OwnedManagedSession>();
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 	const callerOwnedSessionExecutionQueues = new KeyedAsyncExecutionQueue();
+	let branchRestoreGeneration = 0;
 	let branchStateGeneration = 0;
 
 	const clearSessionScopedBrowserState = (sessionName: string, namespace?: string): void => {
 		const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
+		allowedDomainsBySession = new Map(allowedDomainsBySession);
 		allowedDomainsBySession.delete(key);
+		networkRoutesBySession = new Map(networkRoutesBySession);
 		networkRoutesBySession.delete(key);
 		sessionPageState.clearSession(key);
 	};
 
 	const restoreBranchBackedState = (ctx: ExtensionContext, options: { resetRuntimeOwnership: boolean }): void => {
+		branchRestoreGeneration += 1;
 		branchStateGeneration += 1;
 		const previousManagedSessionActive = managedSessionActive;
 		const previousManagedSessionName = managedSessionName;
@@ -753,6 +761,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		branchRestoreGeneration += 1;
+		branchStateGeneration += 1;
 		let preservedElectronProfileDirs: string[] = [];
 		await managedSessionExecutionQueue.run(async () => {
 			const shutdownCwd = ctx?.cwd ?? managedSessionCwd;
@@ -954,6 +964,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				? getSessionContextKey(explicitSessionName, resolveAgentBrowserNamespace(toolArgs, process.env.AGENT_BROWSER_NAMESPACE)) ?? explicitSessionName
 				: undefined;
 			const runBrowserCommand = async () => {
+				const branchRestoreGenerationAtStart = branchRestoreGeneration;
 				const generationAtStart = branchStateGeneration;
 				const sessionPageStateUpdate = sessionPageState.beginUpdate();
 				const browserRunState: BrowserRunState = {
@@ -978,7 +989,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				const initialAllowedDomainsBySession = browserRunState.allowedDomainsBySession;
 				const initialArtifactManifest = browserRunState.artifactManifest;
 				const initialNetworkRoutesBySession = browserRunState.networkRoutesBySession;
-				const result = await runAgentBrowserTool({
+				let result = await runAgentBrowserTool({
 					ctx,
 					cwd: ctx.cwd,
 					electronPostCommandStatusSettleMs: ELECTRON_POST_COMMAND_STATUS_SETTLE_MS,
@@ -993,11 +1004,24 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					signal,
 					state: browserRunState,
 				});
-				const branchStateStillCurrent = generationAtStart === branchStateGeneration;
-				if (serializeBrowserCommand || branchStateStillCurrent) {
+				const branchRestoreStillCurrent = branchRestoreGenerationAtStart === branchRestoreGeneration;
+				if (branchRestoreStillCurrent) {
 					allowedDomainsBySession = mergeBrowserRunMap(allowedDomainsBySession, initialAllowedDomainsBySession, browserRunState.allowedDomainsBySession);
 					networkRoutesBySession = mergeBrowserRunMap(networkRoutesBySession, initialNetworkRoutesBySession, browserRunState.networkRoutesBySession);
 					artifactManifest = mergeBrowserRunArtifactManifest(artifactManifest, initialArtifactManifest, browserRunState.artifactManifest);
+					if (artifactManifest) {
+						result = {
+							...result,
+							details: {
+								...(isRecord(result.details) ? result.details : {}),
+								artifactManifest,
+								artifactRetentionSummary: formatSessionArtifactRetentionSummary(artifactManifest),
+							},
+						};
+					}
+				}
+				const branchStateStillCurrent = generationAtStart === branchStateGeneration;
+				if (serializeBrowserCommand || branchStateStillCurrent) {
 					freshSessionOrdinal = Math.max(freshSessionOrdinal, browserRunState.freshSessionOrdinal);
 					managedSessionActive = browserRunState.managedSessionActive;
 					managedSessionCwd = browserRunState.managedSessionCwd;

@@ -94,6 +94,7 @@ if (args.includes("open")) {
 test("agentBrowserExtension preserves policies from overlapping caller-owned sessions", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-allowed-domains-concurrent-"));
 	const startedPath = join(tempDir, "slow-started");
+	const generationStartedPath = join(tempDir, "generation-started");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -106,9 +107,9 @@ const statePath = path.join(${JSON.stringify(tempDir)}, "state-" + session + ".j
 const readState = () => { try { return JSON.parse(fs.readFileSync(statePath, "utf8")); } catch { return { title: "", url: "about:blank" }; } };
 const writeState = (state) => fs.writeFileSync(statePath, JSON.stringify(state));
 if (args.includes("open")) {
-  if (session === "slow") {
-    fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  if (session === "slow" || session === "generation") {
+    fs.writeFileSync(session === "slow" ? ${JSON.stringify(startedPath)} : ${JSON.stringify(generationStartedPath)}, "started");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, session === "slow" ? 100 : 500);
   }
   const url = args.at(-1);
   const state = { title: session, url };
@@ -153,6 +154,22 @@ if (args.includes("open")) {
 				assert.equal(escaped.isError, true, JSON.stringify(escaped));
 				assert.equal(escaped.details?.failureCategory, "policy-blocked");
 			}
+
+			const generationOpen = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "generation", "--allowed-domains", "example.com", "open", "https://example.com/"],
+			});
+			for (let attempt = 0; attempt < 3_000; attempt += 1) {
+				try { await access(generationStartedPath); break; } catch {
+					if (attempt === 2_999) assert.fail("generation caller-owned open did not start");
+					await new Promise((resolve) => setTimeout(resolve, 5));
+				}
+			}
+			const managedOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://managed.test/"] });
+			assert.equal(managedOpen.isError, false, JSON.stringify(managedOpen));
+			assert.equal((await generationOpen).isError, false);
+			const generationEscape = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "generation", "click", "a"] });
+			assert.equal(generationEscape.isError, true, JSON.stringify(generationEscape));
+			assert.equal(generationEscape.details?.failureCategory, "policy-blocked");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

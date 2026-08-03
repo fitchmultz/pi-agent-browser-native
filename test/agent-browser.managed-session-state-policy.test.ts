@@ -35,6 +35,22 @@ test("managed session targets require typed ownership", () => {
 	}
 });
 
+test("non-bail batch page-state branching is bounded", () => {
+	const stdin = JSON.stringify([
+		...Array.from({ length: 10 }, (_value, index) => ["pushstate", `step-${index}/`]),
+		["get", "html", "body"],
+	]);
+	const options = {
+		args: ["--session", "external", "batch"],
+		currentPageUrl: "https://initial.example/start/",
+		cwd: tmpdir(),
+		parentEnv: {},
+		stdin,
+	};
+	assert.match(getManagedSessionStateAccessValidationError(options) ?? "", /--bail/);
+	assert.equal(getManagedSessionStateAccessValidationError({ ...options, args: ["--session", "external", "batch", "--bail"] }), undefined);
+});
+
 test("managed state policy allows only the current checkout restore capability", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-state-policy-"));
 	initializeGitProject(tempDir);

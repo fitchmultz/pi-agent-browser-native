@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
 import {
 	SessionPageState,
 	buildNoActivePageRefSnapshotInvalidation,
@@ -32,6 +33,11 @@ function toolEntry(details: Record<string, unknown>, isError = false): unknown {
 
 test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidations, and restore pinning", () => {
 	assert.equal(getSessionPageStateKey("session", "Team"), getSessionPageStateKey("session", "team"));
+	assert.equal(getAgentBrowserSessionIdentityKey("Session", undefined, "darwin"), getAgentBrowserSessionIdentityKey("session", undefined, "darwin"));
+	assert.equal(getAgentBrowserSessionIdentityKey("Straße", undefined, "darwin"), getAgentBrowserSessionIdentityKey("STRASSE", undefined, "darwin"));
+	assert.equal(getAgentBrowserSessionIdentityKey("Σ", undefined, "darwin"), getAgentBrowserSessionIdentityKey("ς", undefined, "darwin"));
+	assert.equal(getAgentBrowserSessionIdentityKey("Session", undefined, "win32"), getAgentBrowserSessionIdentityKey("session", undefined, "win32"));
+	assert.notEqual(getAgentBrowserSessionIdentityKey("Session", undefined, "linux"), getAgentBrowserSessionIdentityKey("session", undefined, "linux"));
 	const state = SessionPageState.fromBranch([
 		toolEntry({
 			command: "snapshot",

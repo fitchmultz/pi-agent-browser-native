@@ -647,6 +647,55 @@ if (args.includes("https://example.com/slow")) {
 	}
 });
 
+test("agentBrowserExtension serializes case-alias sessions on case-insensitive hosts", {
+	concurrency: false,
+	skip: process.platform === "darwin" || process.platform === "win32" ? false : "session socket paths are case-sensitive on this host",
+}, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-session-case-alias-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "shared-session-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+let state = { url: "about:blank" };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+if (args.includes("open")) {
+  state = { url: args.at(-1) };
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Page", url: state.url } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url } }));
+} else if (args.includes("snapshot")) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+  try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: ["snapshot-finished"] }) + "\\n");
+  process.stdout.write(JSON.stringify({ success: true, data: { snapshot: state.url.startsWith("file:") ? "SECRET LOCAL CONTENT" : "SAFE CONTENT" } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "Foo", "open", "https://example.com/"] });
+			assert.equal(opened.isError, false, JSON.stringify(opened));
+
+			const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "Foo", "snapshot", "-i"] });
+			await waitForInvocation(logPath, (entry) => entry.args.includes("snapshot"));
+			const localOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "foo", "open", "file:///tmp/secret.html"] });
+			const [snapshot, localOpen] = await Promise.all([snapshotPromise, localOpenPromise]);
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.doesNotMatch(JSON.stringify(snapshot), /SECRET LOCAL CONTENT/);
+			assert.equal(localOpen.isError, false, JSON.stringify(localOpen));
+
+			const invocations = await readInvocationLog(logPath);
+			const snapshotFinishedIndex = invocations.findIndex((entry) => entry.args[0] === "snapshot-finished");
+			const localOpenIndex = invocations.findIndex((entry) => entry.args.includes("file:///tmp/secret.html"));
+			assert.ok(snapshotFinishedIndex >= 0 && localOpenIndex > snapshotFinishedIndex, JSON.stringify(invocations));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
 
 test("agentBrowserExtension propagates caller aborts during live page verification", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-live-page-abort-"));

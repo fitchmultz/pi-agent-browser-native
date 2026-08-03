@@ -814,7 +814,7 @@ if (args.includes("get") && args.includes("url")) {
 }`);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "2" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const slowScreenshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "slow", "screenshot", slowPath] });
@@ -827,11 +827,25 @@ if (args.includes("get") && args.includes("url")) {
 			const fastScreenshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "fast", "screenshot", fastPath] });
 			const concurrentResults = await Promise.all([slowScreenshot, fastScreenshot]);
 			assert.equal(concurrentResults.every((result) => result.isError === false), true, JSON.stringify(concurrentResults));
+			const aggregateEntries = (concurrentResults[0]?.details?.artifactManifest as { entries?: Array<{ absolutePath?: string; path: string }> } | undefined)?.entries ?? [];
+			assert.deepEqual(new Set(aggregateEntries.map((entry) => entry.absolutePath ?? entry.path)), new Set([slowPath, fastPath]));
+
+			harness.setBranch([concurrentResults[0], concurrentResults[1]].map((result) => ({
+				type: "message",
+				message: { details: result?.details, isError: result?.isError, toolName: "agent_browser" },
+			})));
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "artifact-branch", oldLeafId: null }, harness.ctx);
+			const restored = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "restored", "get", "title"] });
+			const restoredEntries = (restored.details?.artifactManifest as { entries?: Array<{ absolutePath?: string; path: string }> } | undefined)?.entries ?? [];
+			assert.deepEqual(new Set(restoredEntries.map((entry) => entry.absolutePath ?? entry.path)), new Set([slowPath, fastPath]));
 
 			const finalScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "final", "screenshot", finalPath] });
 			assert.equal(finalScreenshot.isError, false, JSON.stringify(finalScreenshot));
 			const entries = (finalScreenshot.details?.artifactManifest as { entries?: Array<{ absolutePath?: string; path: string }> } | undefined)?.entries ?? [];
-			assert.deepEqual(new Set(entries.map((entry) => entry.absolutePath ?? entry.path)), new Set([slowPath, fastPath, finalPath]));
+			const retainedPaths = new Set(entries.map((entry) => entry.absolutePath ?? entry.path));
+			assert.equal(retainedPaths.size, 2);
+			assert.equal(retainedPaths.has(finalPath), true);
+			assert.equal(retainedPaths.has(slowPath) || retainedPaths.has(fastPath), true);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

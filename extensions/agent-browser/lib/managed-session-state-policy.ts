@@ -30,6 +30,7 @@ const UNVERIFIED_PAGE_MESSAGE = "The active page became unverified after a tab, 
 const UNSAFE_BATCH_ARGUMENT_MESSAGE = "Batch command arguments could not be safely inspected. Use batch stdin JSON command arrays instead.";
 const NESTED_BATCH_ARGUMENT_MESSAGE = "Nested batch commands are blocked by the wrapper's page-state safety policy. Flatten the batch steps instead.";
 const NON_BAIL_BATCH_NAVIGATION_MESSAGE = "Batches that navigate before page-content access must use exact batch --bail so a failed navigation cannot expose the prior page.";
+const MAX_NON_BAIL_BATCH_PAGE_STATES = 64;
 const EXPLICIT_NAVIGATION_COMMANDS = new Set(["a11y", "goto", "navigate", "open", "pushstate", "visit", "vitals", "web-vitals"]);
 const FILE_PATH_GLOBAL_FLAGS = ["--action-policy", "--config", "--download-path", "--executable-path", "--extension", "--init-script", "--profile", "--screenshot-dir", "--state"] as const;
 const FILE_PATH_ENV_VARIABLES = [
@@ -541,11 +542,13 @@ export function getManagedSessionStateAccessValidationError(options: {
 					pageUrlUnknown: state.pageUrlUnknown,
 					trustedBatchTabSelection,
 				});
+				if (nextStates.length >= MAX_NON_BAIL_BATCH_PAGE_STATES) return NON_BAIL_BATCH_NAVIGATION_MESSAGE;
 				nextStates.push({
 					...successState,
 					retainedAfterFailedNavigation: mayChangePageTarget ? false : state.retainedAfterFailedNavigation,
 				});
 				if (!bailOnFirstError && mayChangePageTarget) {
+					if (nextStates.length >= MAX_NON_BAIL_BATCH_PAGE_STATES) return NON_BAIL_BATCH_NAVIGATION_MESSAGE;
 					nextStates.push({ ...state, retainedAfterFailedNavigation: true });
 				}
 			}
