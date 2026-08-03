@@ -413,7 +413,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const sessionMode = compiledElectron?.action === "launch" ? "fresh" : params.sessionMode ?? "auto";
 	const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
 	if (compiledElectron?.action === "launch") {
-		const launchResult = await launchElectronApp(compiledElectron);
+		const launchResult = await launchElectronApp({ ...compiledElectron, signal });
 		if (!launchResult.ok) {
 			const managedSessionOutcome = buildManagedSessionOutcome({
 				activeAfter: state.managedSessionActive,
@@ -453,9 +453,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	const idleTimeoutMismatch = getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs);
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
-	const managedStateAccessError = getManagedSessionStateAccessValidationError({ args: executionPlan.effectiveArgs, cwd, stdin: runtimeToolStdin });
-	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
 	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
+	const managedStateAccessError = getManagedSessionStateAccessValidationError({
+		args: executionPlan.effectiveArgs,
+		currentPageUrl: sessionPageState.get(ownedSessionKey).tabTarget?.url,
+		cwd,
+		stdin: runtimeToolStdin,
+	});
+	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
 	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,

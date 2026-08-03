@@ -11,6 +11,7 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
 	discoverElectronApps,
@@ -122,6 +123,45 @@ process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }
 			await assert.rejects(stat(launchDetails.electron.launch.userDataDir));
 			assert.equal(isTestPidAlive(launchDetails.electron.launch.pid), false);
 		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension aborts Electron launch before and during app startup", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-abort-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.AbortElectron", launchLogPath, mode: "no-port-file", name: "Abort Electron" });
+		const harness = createExtensionHarness({ cwd: tempDir });
+		await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+		const alreadyAborted = new AbortController();
+		alreadyAborted.abort();
+		const preLaunchResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } }, alreadyAborted.signal);
+		assert.equal(preLaunchResult.isError, true);
+		assert.equal(preLaunchResult.details?.failureCategory, "aborted");
+		assert.deepEqual(await readOptionalFakeElectronLaunchLog(launchLogPath), []);
+
+		const midLaunch = new AbortController();
+		const pendingResult = executeRegisteredTool(harness.tool, harness.ctx, {
+			electron: { action: "launch", appPath: app.appPath, timeoutMs: 10_000 },
+		}, midLaunch.signal);
+		let [launch] = await readOptionalFakeElectronLaunchLog(launchLogPath);
+		for (let attempt = 0; !launch && attempt < 100; attempt += 1) {
+			await delay(20);
+			[launch] = await readOptionalFakeElectronLaunchLog(launchLogPath);
+		}
+		assert.ok(launch, "fake Electron app should start before mid-launch abort");
+		midLaunch.abort();
+		const midLaunchResult = await pendingResult;
+		assert.equal(midLaunchResult.isError, true);
+		assert.equal(midLaunchResult.details?.failureCategory, "aborted");
+		assert.doesNotMatch(midLaunchResult.content[0]?.text ?? "", /increase electron\.timeoutMs/);
+		await assert.rejects(stat(launch.userDataDir));
+		assert.equal(isTestPidAlive(launch.pid), false);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

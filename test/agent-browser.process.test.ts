@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { getEventListeners } from "node:events";
-import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, win32 } from "node:path";
 import test from "node:test";
@@ -24,6 +24,7 @@ import { buildProcessStartIdentityCommand, buildProcessStartIdentityCommands, no
 import {
 	buildAgentBrowserProcessEnv,
 	buildAgentBrowserSpawnCommand,
+	ensureAgentBrowserSocketDir,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
 	isWindowsAgentBrowserCommandMissing,
@@ -231,6 +232,50 @@ test("process helpers clamp the upstream default operation timeout to the docume
 	const env = buildAgentBrowserProcessEnv({ OPENAI_API_KEY: "openai-secret", UNRELATED_API_KEY: "unrelated-secret" });
 	assert.equal(env.OPENAI_API_KEY, "openai-secret");
 	assert.equal(env.UNRELATED_API_KEY, "unrelated-secret");
+});
+
+test("agent-browser socket storage rejects symlinks and foreign ownership", async (context) => {
+	const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+	if (uid === undefined) return context.skip("POSIX ownership metadata is unavailable");
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-socket-security-"));
+	try {
+		const secureDir = join(tempDir, "secure");
+		await mkdir(secureDir, { mode: 0o777 });
+		assert.equal(await ensureAgentBrowserSocketDir(secureDir, uid), true);
+		assert.equal((await stat(secureDir)).mode & 0o777, 0o700);
+
+		const symlinkTarget = join(tempDir, "target");
+		const symlinkPath = join(tempDir, "link");
+		await mkdir(symlinkTarget, { mode: 0o700 });
+		await symlink(symlinkTarget, symlinkPath, "dir");
+		assert.equal(await ensureAgentBrowserSocketDir(symlinkPath, uid), false);
+
+		const foreignDir = join(tempDir, "foreign");
+		await mkdir(foreignDir, { mode: 0o700 });
+		assert.equal(await ensureAgentBrowserSocketDir(foreignDir, uid + 1), false);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess fails before spawn for unsafe socket storage", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-socket-preflight-"));
+	const markerPath = join(tempDir, "spawned.txt");
+	const targetPath = join(tempDir, "target");
+	const socketPath = join(tempDir, "socket-link");
+	try {
+		await mkdir(targetPath, { mode: 0o700 });
+		await symlink(targetPath, socketPath, "dir");
+		await writeFakeAgentBrowserBinary(tempDir, `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "spawned");`);
+		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` }, async () => {
+			const result = await runAgentBrowserProcess({ args: ["--version"], cwd: tempDir, env: { AGENT_BROWSER_SOCKET_DIR: socketPath } });
+			assert.equal(result.agentBrowserStarted, false);
+			assert.match(result.spawnError?.message ?? "", /socket storage.*mode 0700/i);
+			await assert.rejects(readFile(markerPath, "utf8"));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
 });
 
 test("runAgentBrowserProcess does not spawn already-aborted calls", async () => {

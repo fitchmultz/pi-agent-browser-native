@@ -3,7 +3,7 @@
  * Responsibilities: Resolve Electron targets, enforce caller-owned allow/deny policy, create isolated userDataDir profiles, launch with remote debugging on an OS-chosen port, poll DevToolsActivePort, and read bounded CDP version/target metadata.
  * Scope: Host-side Electron lifecycle setup only; upstream agent-browser attach/presentation stays in the extension entrypoint.
  * Usage: Called by the agent_browser electron.launch shorthand before routing through upstream `connect`.
- * Invariants/Assumptions: The wrapper only launches targets with Electron framework evidence, always uses an isolated temp profile, and never accepts a caller-supplied remote debugging port.
+ * Invariants/Assumptions: The wrapper only launches targets with Electron framework evidence, always uses an isolated temp profile, never accepts a caller-supplied remote debugging port, and cleans any spawned process/profile when cancellation interrupts readiness.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -60,6 +60,7 @@ export interface ElectronLaunchFailureDiagnostics {
 
 export type ElectronLaunchCleanupState = "active" | "cleaned" | "dead" | "failed" | "partial";
 export type ElectronLaunchFailureReason =
+	| "aborted"
 	| "non-electron-target"
 	| "policy-blocked"
 	| "port-not-found"
@@ -130,8 +131,17 @@ function normalizeTimeoutMs(timeoutMs: number | undefined): number {
 	return Math.min(timeoutMs as number, ELECTRON_LAUNCH_MAX_TIMEOUT_MS);
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) return Promise.resolve();
+	return new Promise((resolve) => {
+		const timer = setTimeout(done, ms);
+		function done() {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", done);
+			resolve();
+		}
+		signal?.addEventListener("abort", done, { once: true });
+	});
 }
 
 function normalizeIdentifier(value: string | undefined): string | undefined {
@@ -231,10 +241,12 @@ async function pollDevToolsActivePort(options: {
 	deadlineMs: number;
 	getChildExit: () => { code: number | null; signal: NodeJS.Signals | null };
 	getSpawnError: () => Error | undefined;
+	signal?: AbortSignal;
 	userDataDir: string;
 }): Promise<{ devToolsActivePort?: ElectronDevToolsActivePortRead; failure?: ElectronLaunchFailureReason; port?: number; spawnError?: Error }> {
 	let devToolsActivePort: ElectronDevToolsActivePortRead | undefined;
 	while (Date.now() <= options.deadlineMs) {
+		if (options.signal?.aborted) return { devToolsActivePort, failure: "aborted" };
 		const spawnError = options.getSpawnError();
 		if (spawnError) return { devToolsActivePort, failure: "spawn-error", spawnError };
 		devToolsActivePort = await readDevToolsActivePort(options.userDataDir);
@@ -243,21 +255,23 @@ async function pollDevToolsActivePort(options: {
 		if (exit.code !== null || exit.signal !== null) {
 			return { devToolsActivePort, failure: exit.code === 0 ? "single-instance-conflict" : "spawn-error" };
 		}
-		await sleep(ELECTRON_DEVTOOLS_POLL_INTERVAL_MS);
+		await sleep(ELECTRON_DEVTOOLS_POLL_INTERVAL_MS, options.signal);
 	}
 	return { devToolsActivePort, failure: "timeout" };
 }
 
-async function pollCdpMetadata(port: number, deadlineMs: number): Promise<{ targets: ElectronCdpTarget[]; version: ElectronCdpVersion } | undefined> {
+async function pollCdpMetadata(port: number, deadlineMs: number, signal?: AbortSignal): Promise<{ aborted: boolean; metadata?: { targets: ElectronCdpTarget[]; version: ElectronCdpVersion } }> {
 	while (Date.now() <= deadlineMs) {
-		const version = parseCdpVersion(await fetchCdpJson(`http://127.0.0.1:${port}/json/version`));
+		if (signal?.aborted) return { aborted: true };
+		const version = parseCdpVersion(await fetchCdpJson(`http://127.0.0.1:${port}/json/version`, signal));
+		if (signal?.aborted) return { aborted: true };
 		if (version) {
-			const targets = parseCdpTargets(await fetchCdpJson(`http://127.0.0.1:${port}/json/list`));
-			return { targets, version };
+			const targets = parseCdpTargets(await fetchCdpJson(`http://127.0.0.1:${port}/json/list`, signal));
+			return signal?.aborted ? { aborted: true } : { aborted: false, metadata: { targets, version } };
 		}
-		await sleep(ELECTRON_DEVTOOLS_POLL_INTERVAL_MS);
+		await sleep(ELECTRON_DEVTOOLS_POLL_INTERVAL_MS, signal);
 	}
-	return undefined;
+	return { aborted: false };
 }
 
 function buildLaunchArgs(userDataDir: string, appArgs: string[]): string[] {
@@ -339,6 +353,8 @@ function buildLaunchRecord(options: {
 function launchFailureMessage(reason: ElectronLaunchFailureReason, target: ElectronAppDiscovery | undefined, detail?: string): string {
 	const label = target ? `${target.name} (${target.appPath ?? target.executablePath})` : "target";
 	switch (reason) {
+		case "aborted":
+			return `Electron launch was aborted${target ? ` before ${label} finished starting` : " before the app started"}.`;
 		case "non-electron-target":
 			return `Electron launch rejected: ${label} does not have Electron framework evidence.`;
 		case "policy-blocked":
@@ -364,9 +380,12 @@ export async function launchElectronApp(options: {
 	executablePath?: string;
 	targetType?: "any" | "page" | "webview";
 	timeoutMs?: number;
+	signal?: AbortSignal;
 }): Promise<ElectronLaunchResult> {
 	const appArgs = options.appArgs ?? [];
+	if (options.signal?.aborted) return { ok: false, failure: { appArgs, error: launchFailureMessage("aborted", undefined), reason: "aborted" } };
 	const target = await resolveElectronLaunchTarget(options);
+	if (options.signal?.aborted) return { ok: false, failure: { appArgs, error: launchFailureMessage("aborted", target), reason: "aborted", target } };
 	if (!target) {
 		return {
 			ok: false,
@@ -396,6 +415,15 @@ export async function launchElectronApp(options: {
 	const startedAtMs = Date.now();
 	const deadlineMs = startedAtMs + timeoutMs;
 	const userDataDir = await createSecureTempDirectory(ELECTRON_PROFILE_DIR_PREFIX);
+	if (options.signal?.aborted) {
+		let cleanupError: string | undefined;
+		try {
+			await rm(userDataDir, { force: true, recursive: true });
+		} catch (error) {
+			cleanupError = error instanceof Error ? error.message : String(error);
+		}
+		return { ok: false, failure: { appArgs, cleanupError, error: launchFailureMessage("aborted", target), reason: "aborted", target, userDataDir } };
+	}
 	let cleanupError: string | undefined;
 	let spawnError: Error | undefined;
 	let exitCode: number | null = null;
@@ -460,15 +488,18 @@ export async function launchElectronApp(options: {
 		deadlineMs,
 		getChildExit: () => ({ code: exitCode, signal: exitSignal }),
 		getSpawnError: () => spawnError,
+		signal: options.signal,
 		userDataDir,
 	});
 	if (!portResult.port) {
 		return fail(portResult.failure ?? "timeout", portResult.spawnError?.message, { devToolsActivePort: portResult.devToolsActivePort });
 	}
-	const metadata = await pollCdpMetadata(portResult.port, deadlineMs);
-	if (!metadata) {
+	const metadataResult = await pollCdpMetadata(portResult.port, deadlineMs, options.signal);
+	if (metadataResult.aborted) return fail("aborted", undefined, { devToolsActivePort: portResult.devToolsActivePort, port: portResult.port });
+	if (!metadataResult.metadata) {
 		return fail("port-not-found", undefined, { cdpVersionReached: false, devToolsActivePort: portResult.devToolsActivePort, port: portResult.port });
 	}
+	const metadata = metadataResult.metadata;
 	const record = buildLaunchRecord({
 		createdAtMs: Date.now(),
 		pid: child.pid,

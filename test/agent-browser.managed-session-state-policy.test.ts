@@ -2,10 +2,11 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import {
 	getManagedSessionStateAccessValidationError,
@@ -17,8 +18,8 @@ function initializeGitProject(path: string): void {
 	execFileSync("git", ["init", "-q", path], { stdio: "ignore" });
 }
 
-function validate(cwd: string, args: string[], env?: NodeJS.ProcessEnv, stdin?: string): string | undefined {
-	return getManagedSessionStateAccessValidationError({ args, cwd, env, parentEnv: {}, stdin });
+function validate(cwd: string, args: string[], env?: NodeJS.ProcessEnv, stdin?: string, currentPageUrl?: string): string | undefined {
+	return getManagedSessionStateAccessValidationError({ args, currentPageUrl, cwd, env, parentEnv: {}, stdin });
 }
 
 test("managed session targets require typed ownership", () => {
@@ -48,6 +49,46 @@ test("managed state policy allows only the current checkout restore capability",
 			await symlink(foreignState, alias);
 			assert.match(validate(tempDir, ["state", "load", alias]) ?? "", /outside the current checkout/);
 		}
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("managed state policy blocks browser navigation into local agent-browser storage", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-file-state-policy-"));
+	try {
+		const localDirectoryUrl = pathToFileURL(`${tempDir}/`).href;
+		const protectedUrl = pathToFileURL(join(tempDir, ".agent-browser", "sessions", "snapshot.json")).href;
+		const encodedProtectedUrl = protectedUrl.replace(".agent-browser", "%25252Eagent-browser");
+		for (const args of [
+			["open", protectedUrl],
+			["read", encodedProtectedUrl],
+			["open", join(tempDir, ".agent-browser", "sessions")],
+		]) {
+			assert.match(validate(tempDir, args) ?? "", /authenticated cookies and storage/, args.join(" "));
+		}
+		if (process.platform !== "win32") {
+			const protectedPath = join(tempDir, ".agent-browser", "sessions", "snapshot.json");
+			const aliasPath = join(tempDir, "state-alias.json");
+			await mkdir(join(tempDir, ".agent-browser", "sessions"), { recursive: true });
+			await writeFile(protectedPath, "{}");
+			await symlink(protectedPath, aliasPath);
+			assert.match(validate(tempDir, ["open", pathToFileURL(aliasPath).href]) ?? "", /authenticated cookies and storage/);
+		}
+		for (const stdin of [
+			JSON.stringify([["open", localDirectoryUrl], ["snapshot", "-i"], ["click", "@e1"]]),
+			JSON.stringify([["tab", "new", "--label", "files", localDirectoryUrl], ["mouse", "down"]]),
+		]) {
+			assert.match(validate(tempDir, ["batch"], undefined, stdin) ?? "", /authenticated cookies and storage/);
+		}
+		for (const args of [["click", "@e1"], ["download", "@e1", join(tempDir, "copied.json")]]) {
+			assert.match(validate(tempDir, args, undefined, undefined, localDirectoryUrl) ?? "", /authenticated cookies and storage/);
+		}
+		assert.match(validate(tempDir, ["screenshot"], undefined, undefined, protectedUrl) ?? "", /authenticated cookies and storage/);
+		assert.match(validate(tempDir, ["eval", "--stdin"], undefined, `location.href = "${protectedUrl}"`, localDirectoryUrl) ?? "", /authenticated cookies and storage/);
+		assert.equal(validate(tempDir, ["screenshot"], undefined, undefined, localDirectoryUrl), undefined);
+		assert.equal(validate(tempDir, ["open", "https://example.com"], undefined, undefined, protectedUrl), undefined);
+		assert.equal(validate(tempDir, ["close"], undefined, undefined, protectedUrl), undefined);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

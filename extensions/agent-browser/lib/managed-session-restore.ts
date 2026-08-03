@@ -92,6 +92,10 @@ export class ManagedSessionRestoreState {
 		return typeof sessionName === "string" && this.#daemonRestoreKeys.has(getAgentBrowserSessionIdentityKey(sessionName, namespace));
 	}
 
+	forgetDaemonRestoreKey(sessionName: string | undefined, namespace?: string): void {
+		if (sessionName) this.#daemonRestoreKeys.delete(getAgentBrowserSessionIdentityKey(sessionName, namespace));
+	}
+
 	isDisabled(sessionName: string | undefined, namespace?: string): boolean {
 		return typeof sessionName === "string" && this.#disabled.has(getAgentBrowserSessionIdentityKey(sessionName, namespace));
 	}
@@ -389,7 +393,11 @@ export function commitManagedSessionRestoreSuppression(options: ManagedSessionRe
 	if (ownedContext?.restoreDecision) {
 		const alreadyDisabled = restoreState.isDisabled(sessionName, namespace);
 		if (ownedContext.restoreDecision === "enabled") {
-			if (options.ownedManagedSession && !alreadyDisabled && ownedContext.restoreKey) restoreState.recordDaemonRestoreKey(sessionName, namespace, ownedContext.restoreKey);
+			if (options.ownedManagedSession && !alreadyDisabled && ownedContext.restoreKey) {
+				restoreState.recordDaemonRestoreKey(sessionName, namespace, ownedContext.restoreKey);
+			} else if (options.ownedManagedSession && alreadyDisabled && !restoreState.hasDaemonRestoreKey(sessionName, namespace)) {
+				restoreState.recordDaemonRestoreKey(sessionName, namespace, null);
+			}
 		} else {
 			if (options.ownedManagedSession) restoreState.recordDaemonRestoreKey(sessionName, namespace, ownedContext.expectedDaemonRestoreKey ?? null);
 			restoreState.disable(sessionName, namespace);

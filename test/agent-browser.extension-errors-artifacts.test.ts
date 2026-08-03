@@ -12,6 +12,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
 
@@ -109,6 +110,53 @@ process.stdout.write(JSON.stringify({ success: true, data: { files: [
 				assert.match(blocked.content[0]?.text ?? "", /outside the current checkout/);
 			}
 			assert.equal((await readInvocationLog(logPath)).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension blocks managed state file navigation, refs, and later capture", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-file-access-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const localDirectoryUrl = pathToFileURL(`${tempDir}/`).href;
+	const protectedUrl = pathToFileURL(join(tempDir, ".agent-browser", "sessions", "snapshot.json")).href;
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: false } }));
+} else {
+  const target = args.find((arg) => arg.startsWith("file:") || arg.startsWith("https:"));
+  const url = target === "https://redirect.example" ? ${JSON.stringify(protectedUrl)} : target;
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Local", url } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const directBlocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", protectedUrl.replace(".agent-browser", "%2Eagent-browser")] });
+			assert.equal(directBlocked.isError, true);
+			assert.match(directBlocked.content[0]?.text ?? "", /authenticated cookies and storage/);
+			assert.deepEqual(await readInvocationLog(logPath), []);
+
+			const openedLocalDirectory = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", localDirectoryUrl] });
+			assert.equal(openedLocalDirectory.isError, false, JSON.stringify(openedLocalDirectory));
+			const afterOpenCount = (await readInvocationLog(logPath)).length;
+			const refBlocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(refBlocked.isError, true);
+			assert.match(refBlocked.content[0]?.text ?? "", /authenticated cookies and storage/);
+			assert.equal((await readInvocationLog(logPath)).length, afterOpenCount);
+
+			const redirected = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://redirect.example"] });
+			assert.equal(redirected.isError, false, JSON.stringify(redirected));
+			const afterRedirectCount = (await readInvocationLog(logPath)).length;
+			const captureBlocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot"] });
+			assert.equal(captureBlocked.isError, true);
+			assert.match(captureBlocked.content[0]?.text ?? "", /authenticated cookies and storage/);
+			assert.equal((await readInvocationLog(logPath)).length, afterRedirectCount);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -239,7 +287,7 @@ if (args.includes("session") && args.includes("info")) {
 			}
 			const callerState = join(sessionsDir, "caller-owned.json");
 			await writeFile(callerState, "{}");
-			await writeFile(join(tempDir, "daemon-state.json"), JSON.stringify({ active: true }));
+			await writeFile(join(tempDir, "daemon-state.json"), JSON.stringify({ active: true, restoreKey }));
 
 			const orphanHarness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(orphanHarness.handlers, "session_start", { reason: "new" }, orphanHarness.ctx);
@@ -577,12 +625,13 @@ for (const testCase of [
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restore-disabled-reuse-"));
 		initializeGitProject(tempDir);
 		const logPath = join(tempDir, "invocations.log");
+		const daemonStatePath = join(tempDir, "daemon-state.json");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
 			`const fs = require("node:fs");
 const args = process.argv.slice(2);
-const statePath = ${JSON.stringify(join(tempDir, "daemon-state.json"))};
+const statePath = ${JSON.stringify(daemonStatePath)};
 let state = { active: false, restoreKey: null };
 try { state = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {}
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, restore: process.env.AGENT_BROWSER_RESTORE }) + "\\n");
@@ -641,6 +690,13 @@ if (args.includes("session") && args.includes("info")) {
 					const blockedAfterReload = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["get", "url"] });
 					assert.equal(blockedAfterReload.isError, true, JSON.stringify(blockedAfterReload));
 					assert.match(String(blockedAfterReload.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+
+					await writeFile(daemonStatePath, JSON.stringify({ active: false, restoreKey: null }));
+					const restartedAfterIdle = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["open", "https://example.com/"] });
+					assert.equal(restartedAfterIdle.isError, false, JSON.stringify(restartedAfterIdle));
+					const reusedAfterIdleRestart = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["get", "url"] });
+					assert.equal(reusedAfterIdleRestart.isError, false, JSON.stringify(reusedAfterIdleRestart));
+					assert.equal(reusedAfterIdleRestart.details?.managedSessionRestoreDisabled, true);
 				}
 			});
 		} finally {

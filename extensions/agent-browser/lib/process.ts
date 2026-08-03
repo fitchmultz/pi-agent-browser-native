@@ -1,13 +1,14 @@
 /**
  * Purpose: Execute the upstream agent-browser binary for the pi-agent-browser extension.
- * Responsibilities: Spawn the agent-browser subprocess, forward parent environment variables plus wrapper overrides, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
+ * Responsibilities: Validate POSIX socket storage, spawn the agent-browser subprocess, forward parent environment variables plus wrapper overrides, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
  * Scope: Process execution only; argument planning, output formatting, and pi tool registration live elsewhere.
  * Usage: Called by the extension tool after argument validation and session planning are complete.
  * Invariants/Assumptions: The binary name is always `agent-browser`; Windows routes through PowerShell to invoke npm launchers with escaped argv; callers handle semantic success/error interpretation.
  */
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { chmod, mkdir } from "node:fs/promises";
+import { chmod, lstat, mkdir } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { isKnownCommandToken } from "./command-taxonomy.js";
@@ -275,11 +276,21 @@ export function getAgentBrowserSocketDir(
 	return `${DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX}${typeof uid === "number" ? `-${uid}` : ""}`;
 }
 
-async function ensureAgentBrowserSocketDir(socketDir: string): Promise<boolean> {
+export async function ensureAgentBrowserSocketDir(
+	socketDir: string,
+	uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
+): Promise<boolean> {
+	if (!isAbsolute(socketDir) || typeof uid !== "number") return false;
 	try {
 		await mkdir(socketDir, { recursive: true, mode: 0o700 });
-		await chmod(socketDir, 0o700).catch(() => undefined);
-		return true;
+		let metadata = await lstat(socketDir);
+		if (!metadata.isDirectory() || metadata.isSymbolicLink() || metadata.uid !== uid) return false;
+		await chmod(socketDir, 0o700);
+		metadata = await lstat(socketDir);
+		return metadata.isDirectory()
+			&& !metadata.isSymbolicLink()
+			&& metadata.uid === uid
+			&& (metadata.mode & 0o777) === 0o700;
 	} catch {
 		return false;
 	}
@@ -395,7 +406,22 @@ export async function runAgentBrowserProcess(options: {
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
 	if (ownedManagedSessionClose) effectiveEnv = { ...effectiveEnv, AGENT_BROWSER_RESTORE: undefined };
 	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
-	if (requestedSocketDir && (await ensureAgentBrowserSocketDir(requestedSocketDir))) {
+	if (requestedSocketDir !== undefined) {
+		const socketDirIsSecure = requestedSocketDir.length > 0 && await ensureAgentBrowserSocketDir(requestedSocketDir);
+		if (signal?.aborted) {
+			return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+		}
+		if (!socketDirIsSecure) {
+			return {
+				aborted: false,
+				agentBrowserStarted: false,
+				exitCode: 1,
+				spawnError: new Error("Agent-browser socket storage must be an absolute, non-symlink directory owned by the current user with mode 0700."),
+				stderr: "",
+				stdout: "",
+				timedOut: false,
+			};
+		}
 		effectiveEnv = { ...effectiveEnv, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };
 	}
 	if (signal?.aborted) {

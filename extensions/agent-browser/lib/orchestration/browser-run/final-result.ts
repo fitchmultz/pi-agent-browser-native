@@ -173,7 +173,8 @@ export function buildJsonVisibleContent(options: {
 	return [{ type: "text", text: JSON.stringify(payload, null, 2) }, ...images];
 }
 
-export function getElectronLaunchFailureCategory(failure: ElectronLaunchFailure): "policy-blocked" | "timeout" | "upstream-error" | "validation-error" {
+export function getElectronLaunchFailureCategory(failure: ElectronLaunchFailure): "aborted" | "policy-blocked" | "timeout" | "upstream-error" | "validation-error" {
+	if (failure.reason === "aborted") return "aborted";
 	if (failure.reason === "policy-blocked") return "policy-blocked";
 	if (failure.reason === "timeout") return "timeout";
 	if (failure.reason === "non-electron-target") return "validation-error";
@@ -198,14 +199,14 @@ function formatElectronLaunchFailureDiagnostics(failure: ElectronLaunchFailure |
 	if (diagnostics.cdpVersionReached === false) lines.push("- CDP /json/version: did not return a valid payload before timeout.");
 	if (diagnostics.timeoutMs !== undefined || diagnostics.elapsedMs !== undefined) lines.push(`- Timing: ${diagnostics.elapsedMs ?? "unknown"}ms elapsed${diagnostics.timeoutMs !== undefined ? ` of ${diagnostics.timeoutMs}ms timeout` : ""}.`);
 	if (diagnostics.outputCaptured === false) lines.push("- App stdout/stderr: not captured by this wrapper launch path.");
-	lines.push("Retry guidance: increase electron.timeoutMs, try targetType:'any', pass an explicit appPath/executablePath, quit any already-running singleton instance, then retry launch.");
+	if (failure?.reason !== "aborted") lines.push("Retry guidance: increase electron.timeoutMs, try targetType:'any', pass an explicit appPath/executablePath, quit any already-running singleton instance, then retry launch.");
 	return lines.join("\n");
 }
 
 export function buildElectronHostFailureResult(options: {
 	compiledElectron: CompiledAgentBrowserElectron;
 	errorText: string;
-	failureCategory?: "cleanup-failed" | "policy-blocked" | "timeout" | "upstream-error" | "validation-error";
+	failureCategory?: "aborted" | "cleanup-failed" | "policy-blocked" | "timeout" | "upstream-error" | "validation-error";
 	launchFailure?: ElectronLaunchFailure;
 	managedSessionOutcome?: ManagedSessionOutcome;
 	status?: string;

@@ -482,6 +482,8 @@ function getElectronProbeSummary(probe: Omit<ElectronProbeResult, "summary">): s
 	return parts.length > 0 ? `Electron probe collected ${parts.join(", ")}.` : "Electron probe did not return current session state.";
 }
 
+class ElectronManagedSessionPolicyError extends Error {}
+
 async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	args: string[];
 	cwd: string;
@@ -491,17 +493,22 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	signal?: AbortSignal;
 }, run: () => Promise<T>): Promise<T> {
 	const context = buildOwnedManagedSessionRestoreContext({
-		args: ["--session", options.sessionName, ...options.args],
+		args: ["--namespace", options.namespace ?? "", "--session", options.sessionName, ...options.args],
 		cwd: options.cwd,
 		managedSessionName: options.sessionName,
 		namespace: options.namespace,
 		restoreState: options.restoreState,
 	});
-	if (!context) throw new Error("Electron helper could not establish wrapper ownership for its managed session.");
-	const policy = await acquireOwnedManagedSessionDaemonPolicy({ context, signal: options.signal });
+	if (!context) throw new ElectronManagedSessionPolicyError("Electron helper could not establish wrapper ownership for its managed session.");
+	let policy: Awaited<ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>>;
 	try {
-		if (policy.error) throw new Error(policy.error);
-		if (!policy.lock) throw new Error(options.signal?.aborted ? "Electron helper was aborted." : "Electron helper could not acquire managed-session policy coordination.");
+		policy = await acquireOwnedManagedSessionDaemonPolicy({ context, signal: options.signal });
+	} catch (error) {
+		throw new ElectronManagedSessionPolicyError(error instanceof Error ? error.message : String(error), { cause: error });
+	}
+	try {
+		if (policy.error) throw new ElectronManagedSessionPolicyError(policy.error);
+		if (!policy.lock) throw new ElectronManagedSessionPolicyError(options.signal?.aborted ? "Electron helper was aborted." : "Electron helper could not acquire managed-session policy coordination.");
 		return await withOwnedManagedSessionContext(context, run);
 	} finally {
 		await policy.lock?.release();
@@ -860,11 +867,9 @@ export async function handleElectronHostInput(options: {
 				failureCategory: "validation-error",
 			});
 		}
-		let probeFailureCategory: "upstream-error" | "validation-error" = "upstream-error";
 		try {
 			const status = launchRecord ? await inspectElectronLaunchStatus(launchRecord) : undefined;
 			const probeNamespace = compiledElectron.launchId ? undefined : managedSessionNamespace;
-			probeFailureCategory = "validation-error";
 			const probe = await withOwnedElectronManagedSessionPolicy(
 				{
 					args: ["snapshot", "-i"],
@@ -876,7 +881,6 @@ export async function handleElectronHostInput(options: {
 				},
 				async () => await collectElectronProbe({ cwd, namespace: probeNamespace, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs }),
 			);
-			probeFailureCategory = "upstream-error";
 			const managedSession: ElectronManagedSessionTarget = {
 				sessionName: probe.sessionName,
 				title: probe.title ?? probe.activeTab?.title,
@@ -928,7 +932,7 @@ export async function handleElectronHostInput(options: {
 			return buildElectronHostFailureResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,
 				errorText: `Electron probe failed: ${errorText}`,
-				failureCategory: probeFailureCategory,
+				failureCategory: error instanceof ElectronManagedSessionPolicyError ? "validation-error" : "upstream-error",
 			});
 		}
 	}

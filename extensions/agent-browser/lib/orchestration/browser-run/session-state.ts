@@ -600,6 +600,8 @@ export function unwrapPinnedSessionBatchEnvelope(options: {
 	};
 }
 
+const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 5_000;
+
 export type ManagedSessionDaemonInspection =
 	| { restoreKey: string | null; status: "active" }
 	| { status: "inactive" | "missing-binary" | "unknown" };
@@ -617,7 +619,7 @@ export async function inspectManagedSessionDaemon(options: {
 		args: ["--json", "--namespace", options.namespace ?? "", "--session", options.sessionName, "session", "info"],
 		cwd: options.cwd,
 		signal: options.signal,
-		timeoutMs: options.timeoutMs,
+		timeoutMs: options.timeoutMs ?? MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS,
 	});
 	try {
 		if ((processResult.spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return { status: "missing-binary" };
@@ -662,6 +664,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 			sessionName: context.sessionName,
 			signal,
 		});
+		if (daemon.status === "inactive") context.restoreState.forgetDaemonRestoreKey(context.sessionName, context.namespace);
 		if (options.mode === "close") {
 			if (daemon.status === "active") {
 				context.restoreState.recordDaemonRestoreKey(context.sessionName, context.namespace, daemon.restoreKey);
@@ -675,6 +678,12 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 		const requestedDaemonRestoreKey = context.restoreDecision === "enabled" && stickyDisabled
 			? knownDaemonRestoreKey ?? null
 			: context.expectedDaemonRestoreKey;
+		if (daemon.status === "unknown") {
+			return {
+				error: "The wrapper could not verify this managed session's live daemon restore policy. Retry, close that session, or use sessionMode: \"fresh\".",
+				lock,
+			};
+		}
 		const restoreDisabledPolicyNeedsProvenance = stickyDisabled || context.restoreDecision !== "enabled";
 		const activePolicyMatches = daemon.status === "active"
 			&& (!restoreDisabledPolicyNeedsProvenance || hasKnownDaemonRestoreKey)
