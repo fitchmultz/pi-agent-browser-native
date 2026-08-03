@@ -287,7 +287,7 @@ function commandTokens() {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") continue;
-    if (arg === "--namespace" || arg === "--session") { index += 1; continue; }
+    if (["--allow-file-access", "--args", "--namespace", "--session"].includes(arg)) { index += 1; continue; }
     tokens.push(arg);
   }
   return tokens;

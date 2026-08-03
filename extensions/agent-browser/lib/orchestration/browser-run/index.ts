@@ -7,7 +7,8 @@ import { prepareBrowserRun } from "./prepare.js";
 import { processBrowserOutput } from "./process-output.js";
 import type { AgentBrowserToolResult, BrowserRunOptions } from "./types.js";
 
-export { closeManagedSession, getSessionContextKey } from "./session-state.js";
+export { closeManagedSession } from "./managed-session-daemon-policy.js";
+export { getSessionContextKey } from "./session-state.js";
 export type { AgentBrowserToolResult, BrowserRunOptions, BrowserRunState, TraceOwner } from "./types.js";
 
 export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
@@ -28,10 +29,13 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 					? { AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs }
 					: undefined,
 				managedSessionRestoreState: options.state.managedSessionRestoreState,
+				managedStateCurrentPageUrl: prepared.priorSessionTabTarget?.url,
+				managedStatePageUrlUnknown: prepared.priorSessionTabTargetUnknown === true,
 				ownedManagedSession: ownedManagedSession !== undefined,
 				signal: options.signal,
 				stdin: prepared.processStdin,
 				timeoutMs: prepared.processTimeoutMs,
+				trustedFirstBatchTabSelection: prepared.pinnedBatchUnwrapMode !== undefined,
 			});
 
 			const missingBinaryResult = await buildMissingBinaryFailureResult({

@@ -38,7 +38,7 @@ if (args.includes("eval")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "unexpected" } } }));
   }
 } else if (args.includes("snapshot")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { origin: "file:///tmp/fixture.html", refs: { e1: { role: "button", name: "Save" } }, snapshot: '- button "Save" [ref=e1]' } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://fixture.invalid/", refs: { e1: { role: "button", name: "Save" } }, snapshot: '- button "Save" [ref=e1]' } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: false, error: "click failed" }));
   process.exit(2);
@@ -90,7 +90,7 @@ if (args.includes("eval")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "unexpected" } } }));
   }
 } else if (args.includes("snapshot")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { origin: "file:///tmp/fixture.html", refs: { e1: { role: "button", name: "Save" } }, snapshot: '- button "Save" [ref=e1]' } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://fixture.invalid/", refs: { e1: { role: "button", name: "Save" } }, snapshot: '- button "Save" [ref=e1]' } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
 } else {
@@ -131,7 +131,7 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: {
-    origin: "file:///tmp/fixture.html",
+    origin: "https://fixture.invalid/",
     refs: { e4: { role: "button", name: "RPS (3)" } },
     snapshot: '- button "RPS (3)" [ref=e4]'
   } }));
@@ -143,7 +143,7 @@ if (args.includes("snapshot")) {
   } else if (stdin.includes("no-native-event-observed")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "no-native-event-observed", nativeEventCount: 0 } } }));
   } else {
-    process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Fixture", url: "file:///tmp/fixture.html" } } }));
+    process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Fixture", url: "https://fixture.invalid/" } } }));
   }
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: "ok" }));

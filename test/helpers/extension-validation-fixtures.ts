@@ -320,6 +320,7 @@ const command = args[commandIndex];
 const subcommand = args[commandIndex + 1];
 let data = { ok: true };
 if (command === "connect") data = { connected: true, endpoint: subcommand };
+else if (["goto", "navigate", "open", "visit"].includes(command)) data = { title: "Opened", url: subcommand };
 else if (command === "get" && subcommand === "title") data = { result: ${JSON.stringify(sessionTitle)}, title: ${JSON.stringify(sessionTitle)} };
 else if (command === "get" && subcommand === "url") data = { result: ${JSON.stringify(sessionUrl)}, url: ${JSON.stringify(sessionUrl)} };
 else if (command === "eval") data = { result: { focusedElement: { id: "run-button", name: "Run", role: "button", tagName: "button" } } };

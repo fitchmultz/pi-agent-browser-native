@@ -102,6 +102,12 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		readOnlyDiagnosticSessionTarget: true,
 	},
 	{
+		command: "eval",
+		invalidatesBatchRefs: true,
+		navigationObservable: true,
+		triggersPostMutationSnapshot: true,
+	},
+	{
 		command: "fill",
 		eligibleForElectronHealthProbe: true,
 		eligibleForPageChangeSummary: true,
@@ -339,6 +345,12 @@ export function isElectronPostCommandHealthCommand(command: string | undefined):
 
 export function isNavigationObservableCommandName(command: string | undefined): boolean {
 	return hasCommandCapability(command, "navigationObservable");
+}
+
+export function isUnverifiedPageTransitionCommand(command: string | undefined, subcommand?: string): boolean {
+	return ["back", "connect", "eval", "forward", "reload"].includes(command ?? "")
+		|| (command === "state" && subcommand === "load")
+		|| (command === "tab" && subcommand !== undefined && !["list", "new"].includes(subcommand));
 }
 
 export function isPageMutationCommand(command: string | undefined): boolean {

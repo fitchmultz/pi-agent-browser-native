@@ -104,7 +104,7 @@ test("createImplicitSessionName includes cwd isolation for same-named checkouts"
 });
 
 test("getAgentBrowserSocketDir uses a short user-specific unix socket directory and skips windows", () => {
-	assert.equal(getAgentBrowserSocketDir("darwin", 501), "/tmp/piab-501");
+	assert.equal(getAgentBrowserSocketDir("darwin", 501), "/private/tmp/piab-501");
 	assert.equal(getAgentBrowserSocketDir("linux", 1000), "/tmp/piab-1000");
 	assert.equal(getAgentBrowserSocketDir("win32", undefined), undefined);
 });

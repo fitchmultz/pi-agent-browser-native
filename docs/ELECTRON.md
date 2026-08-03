@@ -95,7 +95,7 @@ Then attach and choose a ready target before using refs:
 { "qa": { "attached": true, "expectedText": "Channels" } }
 ```
 
-A successful `connect` means the CDP endpoint accepted the session; it does **not** prove the app has an active rendered page yet. Prefer `details.nextActions` when present: `list-connected-session-tabs` inspects the attached session targets. After that read-only list, select or confirm a stable `t<N>` target and run `snapshot -i` explicitly before trusting refs. If the first `snapshot -i` says `No active page`, follow `list-tabs-after-no-active-page`. If it returns no useful refs without that error, manually run `tab list`, select a stable `t<N>` id for the app surface, then retry a condition wait or `snapshot -i` on that selected target.
+A successful `connect` means the CDP endpoint accepted the session; it does **not** prove the app has an active rendered page yet. Prefer `details.nextActions` when present: `verify-connected-session-url` performs the only page read allowed while the attached target is unverified, and `list-connected-session-tabs` inspects attached targets. A verified non-file target clears the guard; otherwise navigate explicitly to a safe URL. After the read-only list, select or confirm a stable `t<N>` target, verify it with `get url`, and run `snapshot -i` explicitly before trusting refs. If the first `snapshot -i` says `No active page`, follow `list-tabs-after-no-active-page`. If it returns no useful refs without that error, manually run `tab list`, select a stable `t<N>` id for the app surface, then retry a condition wait or `snapshot -i` on that selected target.
 
 If the app is already running without a debug port, ask before relaunching it — relaunching may lose unsaved state and Electron's single-instance behavior will silently drop a second invocation's `--remote-debugging-port` flag.
 
@@ -147,15 +147,15 @@ Handoff selection (`handoff` field):
 
 | Value | Behavior | When to use |
 |---|---|---|
-| `"snapshot"` (default) | Attach, list targets, capture `snapshot -i` in one call | You need interactive refs immediately for clicks/fills |
-| `"tabs"` | Attach and list targets only | Safer diagnostic start when you only need target discovery |
+| `"snapshot"` (default) | Attach, verify `get url`, list targets, capture `snapshot -i` in one call | You need interactive refs immediately for clicks/fills |
+| `"tabs"` | Attach, verify `get url`, and list targets only | Safer diagnostic start when you only need target discovery |
 | `"connect"` | Attach and stop | You will run your own follow-up commands |
 
 `targetType` defaults to `"page"`; use `"webview"` or `"any"` for apps whose useful UI is exposed as a webview target.
 
-Optional `timeoutMs` on `electron.launch` bounds host-side CDP readiness (waiting for `DevToolsActivePort` and attach). When omitted, the default is **15 seconds** with a hard maximum of **120 seconds**, matching `ELECTRON_LAUNCH_DEFAULT_TIMEOUT_MS` and `ELECTRON_LAUNCH_MAX_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/launch.ts`. Pi cancellation is separate: an already-cancelled call never launches the app, while cancellation during readiness polling stops the tracked process, removes its isolated profile, and returns `failureCategory: "aborted"` without waiting for the launch timeout.
+Optional `timeoutMs` on `electron.launch` bounds host-side CDP readiness (waiting for `DevToolsActivePort` and attach). When omitted, the default is **15 seconds** with a hard maximum of **120 seconds**, matching `ELECTRON_LAUNCH_DEFAULT_TIMEOUT_MS` and `ELECTRON_LAUNCH_MAX_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/launch.ts`. Pi cancellation is separate: an already-cancelled call never launches the app, while cancellation during readiness polling or URL/tab/snapshot handoff closes the managed session, stops the tracked process, removes its isolated profile, and returns `failureCategory: "aborted"` without waiting for the launch timeout.
 
-Wrapper-owned launches **always** use an isolated temp profile and an OS-chosen port. If wrapper validation or managed-session policy fails after the host app starts but before upstream attach, the wrapper immediately stops that process and removes the isolated profile; it retains a partial tracked record only when cleanup itself cannot finish. `--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and bare `--` in `appArgs` are rejected. There is no caller-supplied port and no way to make `electron.launch` reuse the app's normal signed-in profile or attach to an already-running app — by design. Use the manual path described above when those are the actual requirements.
+Wrapper-owned launches **always** use an isolated temp profile and an OS-chosen port. If wrapper validation, managed-session policy, or the post-attach live-URL handoff guard fails after the host app starts, the wrapper immediately stops that process and removes the isolated profile; it retains a partial tracked record only when cleanup itself cannot finish. `--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and bare `--` in `appArgs` are rejected. There is no caller-supplied port and no way to make `electron.launch` reuse the app's normal signed-in profile or attach to an already-running app — by design. Use the manual path described above when those are the actual requirements.
 
 ### `electron.status` — liveness and targets
 
@@ -171,14 +171,14 @@ Reports `cleanupState`, debug-port and PID liveness, and bounded CDP target meta
 
 ### `electron.probe` — compact state read
 
-`probe` collapses what would otherwise be separate `get title` / `get url` / focused-element `eval` / `tab list` / `snapshot -i` calls into one bounded result. Use it instead of chaining those reads when you just need a quick "where are we?" check. The wrapper holds the managed-session daemon-policy lock for the probe and runs every underlying read with the session's owned restore decision, so probing cannot restart the daemon under a different restore key.
+`probe` collapses what would otherwise be separate `get url` / `get title` / focused-element `eval` / `tab list` / `snapshot -i` calls into one bounded result. Use it instead of chaining those reads when you just need a quick "where are we?" check. The wrapper holds the managed-session daemon-policy lock for the probe and runs every underlying read with the session's owned restore decision, so probing cannot restart the daemon under a different restore key.
 
 ```json
 { "electron": { "action": "probe" } }
 { "electron": { "action": "probe", "launchId": "electron-…", "timeoutMs": 5000 } }
 ```
 
-Output appears under `details.electron.probe`: `title`, `url`, `focusedElement`, `activeTab`, `tabs`, compact `snapshot` metadata (`refCount`, `refIds`, optional text preview and omission counts), and `errors`. A current-managed probe also persists top-level `details.namespace`, `sessionTabTarget`, and `refSnapshot` so Pi reload/branch replay keeps the same namespaced page identity. When `launchId` is given, the probe is tied to that tracked launch and will surface mismatch guidance if the wrapper sees a session or target drift; visible output also includes debug-port/pid liveness so a stale `about:blank` against a dead launch is unmistakable.
+Output appears under `details.electron.probe`: `title`, `url`, `focusedElement`, `activeTab`, `tabs`, compact `snapshot` metadata (`refCount`, `refIds`, optional text preview and omission counts), and `errors`. If every underlying read fails, the tool fails with `failureCategory: "upstream-error"`; it does not report a successful empty partial probe. Probes reject a persisted local/unverified target before helper reads, then verify the live URL again before title, eval, tab, or snapshot helpers so external target drift cannot expose local-page content. A current-managed probe also persists top-level `details.namespace`, `sessionTabTarget`, and `refSnapshot` so Pi reload/branch replay keeps the same namespaced page identity; unverified transitions persist as `details.sessionTabTargetUnknown: true` until a safe explicit navigation establishes a trustworthy target. When `launchId` is given, the probe is tied to that tracked launch and will surface mismatch guidance if the wrapper sees a session or target drift; visible output also includes debug-port/pid liveness so a stale `about:blank` against a dead launch is unmistakable.
 
 `timeoutMs` bounds each underlying read subprocess. Use it for dense desktop apps when the default budget is too short, or to fail fast when you suspect the app process is wedged.
 
@@ -209,9 +209,9 @@ On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On
 | Action | What `timeoutMs` covers when set | Typical default when omitted |
 | --- | --- | --- |
 | `launch` | Host-side wait for `DevToolsActivePort` and CDP readiness | **15 s**, hard-capped at **120 s** (`normalizeTimeoutMs` in `extensions/agent-browser/lib/electron/launch.ts`) |
-| `status` | Optional managed-session `get title` / `get url` reads used for mismatch diagnostics | Normal tool subprocess budget from `runAgentBrowserProcess` / `AGENT_BROWSER_DEFAULT_TIMEOUT`; localhost CDP HTTP probes keep a short fixed budget (`ELECTRON_STATUS_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cleanup.ts`) |
+| `status` | Optional managed-session `get url`, then `get title` reads used for mismatch diagnostics | Normal tool subprocess budget from `runAgentBrowserProcess` / `AGENT_BROWSER_DEFAULT_TIMEOUT`; localhost CDP HTTP probes keep a short fixed budget (`ELECTRON_STATUS_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cleanup.ts`) |
 | `cleanup` | One combined budget for managed-session `close`, tracked process exit, debug-port verification, and temp profile removal | `PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS` when set, else **5000 ms** (`getImplicitSessionCloseTimeoutMs` in `extensions/agent-browser/lib/runtime.ts`, passed through `cleanupTrackedElectronHostLaunches` in `extensions/agent-browser/lib/orchestration/electron-host/index.ts`) |
-| `probe` | **Each** upstream read in the probe chain (`get title`, `get url`, focused `eval --stdin`, `tab list`, `snapshot -i`) | Same default as other tool calls (typically **28 s** per subprocess unless `AGENT_BROWSER_DEFAULT_TIMEOUT` / `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides `runAgentBrowserProcess` in `extensions/agent-browser/lib/process.ts`) |
+| `probe` | **Each** upstream read in the probe chain (`get url`, then `get title`, focused `eval --stdin`, `tab list`, `snapshot -i`) | Same default as other tool calls (typically **28 s** per subprocess unless `AGENT_BROWSER_DEFAULT_TIMEOUT` / `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides `runAgentBrowserProcess` in `extensions/agent-browser/lib/process.ts`) |
 
 ## `qa.attached` — current-session smoke check
 

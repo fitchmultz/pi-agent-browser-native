@@ -35,6 +35,15 @@ import {
 	writeFakeMacElectronApp,
 } from "./helpers/extension-validation-fixtures.js";
 
+async function waitForLoggedCommand(logPath: string, command: string, timeoutMs = 5_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if ((await readInvocationLog(logPath)).some((entry) => entry.args.includes(command))) return;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error(`Timed out waiting for ${command} invocation.`);
+}
+
 test("agentBrowserExtension accepts action-specific electron schema and routes list without upstream spawn", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-schema-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -215,6 +224,86 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
+test("agentBrowserExtension blocks protected Electron snapshot handoff before tab or snapshot reads", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-protected-handoff-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const protectedUrl = `file://${join(tempDir, ".agent-browser", "sessions", "auth.html")}`;
+	const basePath = process.env.PATH ?? "";
+	let launchPid: number | undefined;
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.ProtectedHandoff", launchLogPath, name: "Protected Handoff" });
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath, { sessionUrl: protectedUrl, snapshotTitle: "SECRET LOCAL CONTENT", snapshotUrl: protectedUrl }));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } });
+			assert.equal(result.isError, true, JSON.stringify(result));
+			assert.equal(result.details?.failureCategory, "validation-error");
+			assert.match(result.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
+			assert.doesNotMatch(JSON.stringify(result), /SECRET LOCAL CONTENT/);
+			const invocations = await readInvocationLog(upstreamLogPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("snapshot") || entry.args.includes("tab")), false);
+			const launch = JSON.parse((await readFile(launchLogPath, "utf8")).trim()) as { pid: number; userDataDir: string };
+			launchPid = launch.pid;
+			assert.equal(await waitForTestPidExit(launch.pid), true);
+			await assert.rejects(stat(launch.userDataDir));
+		});
+	} finally {
+		if (launchPid) await stopTestPid(launchPid);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+
+test("agentBrowserExtension cleans an Electron launch canceled during snapshot handoff", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-canceled-handoff-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	let launchPid: number | undefined;
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.CanceledHandoff", launchLogPath, name: "Canceled Handoff" });
+		await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(upstreamLogPath)}, JSON.stringify({ args }) + "\\n");
+const commandIndex = args.findIndex((arg) => ["close", "connect", "get", "snapshot", "tab"].includes(arg));
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+if (command === "snapshot") setInterval(() => {}, 1000);
+else {
+  const data = command === "get" && subcommand === "url"
+    ? { result: "app://safe", url: "app://safe" }
+    : command === "tab" ? { tabs: [{ active: true, tabId: "t1", url: "app://safe" }] }
+      : command === "connect" ? { connected: true } : { closed: true };
+  process.stdout.write(JSON.stringify({ success: true, data }));
+}`);
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const controller = new AbortController();
+			const resultPromise = executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } }, controller.signal);
+			await waitForLoggedCommand(upstreamLogPath, "snapshot");
+			controller.abort();
+			const result = await resultPromise;
+			assert.equal(result.isError, true, JSON.stringify(result));
+			assert.equal(result.details?.failureCategory, "aborted");
+			const launch = JSON.parse((await readFile(launchLogPath, "utf8")).trim()) as { pid: number; userDataDir: string };
+			launchPid = launch.pid;
+			assert.equal(await waitForTestPidExit(launch.pid), true);
+			await assert.rejects(stat(launch.userDataDir));
+		});
+	} finally {
+		if (launchPid) await stopTestPid(launchPid);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+
 test("agentBrowserExtension launches Electron with isolated profile, snapshot handoff, status, and cleanup", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-launch-"));
 	const applicationsDir = join(tempDir, "Applications");
@@ -269,7 +358,8 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			await stat(launchDetails.electron.launch.userDataDir);
 
 			const invocationsAfterLaunch = await readInvocationLog(upstreamLogPath);
-			assert.deepEqual(invocationsAfterLaunch.map((entry) => entry.args.at(-2)), ["connect", "tab", "snapshot"]);
+			assert.deepEqual(invocationsAfterLaunch.map((entry) => entry.args.at(-2)), ["connect", "get", "tab", "snapshot"]);
+			assert.equal(invocationsAfterLaunch[1]?.args.at(-1), "url");
 			assert.equal(invocationsAfterLaunch[0]?.args.includes("--session"), true);
 
 			await rm(upstreamLogPath, { force: true });
@@ -284,6 +374,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.equal(((statusResult.details?.electron as { targets?: unknown[] } | undefined)?.targets ?? []).length, 1);
 			const statusInvocations = await readInvocationLog(upstreamLogPath);
 			assert.equal(statusInvocations.length, 2);
+			assert.deepEqual(statusInvocations.map((entry) => entry.args.at(-1)), ["url", "title"]);
 			assert.equal(statusInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
 			assert.equal(statusInvocations.every((entry) => (entry as { restore?: string | null }).restore === null), true);
 
@@ -314,6 +405,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(probeDetails.sessionTabTarget, { title: "Demo Electron", url: "app://demo" });
 			const probeInvocations = await readInvocationLog(upstreamLogPath);
 			assert.deepEqual(probeInvocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
+			assert.deepEqual(probeInvocations.slice(0, 2).map((entry) => entry.args.at(-1)), ["url", "title"]);
 			assert.equal(probeInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
 			assert.equal(probeInvocations.every((entry) => (entry as { restore?: string | null }).restore === null), true);
 
@@ -379,13 +471,25 @@ test("agentBrowserExtension applies managed restore policy to every current-sess
 			const invocations = await readInvocationLog(upstreamLogPath) as Array<{ args: string[]; restore?: string | null }>;
 			assert.deepEqual(invocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
 			assert.equal(invocations.every((entry) => entry.restore === createManagedSessionRestoreKey(tempDir)), true);
+
+			await writeFakeAgentBrowserBinary(tempDir, `const args = process.argv.slice(2);
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: true, runtime: { restoreKey: process.env.AGENT_BROWSER_RESTORE } } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: false, error: "probe failed" }));
+  process.exitCode = 2;
+}`);
+			const failedProbe = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe" } });
+			assert.equal(failedProbe.isError, true, JSON.stringify(failedProbe));
+			assert.equal(failedProbe.details?.failureCategory, "upstream-error");
+			assert.match(failedProbe.content[0]?.text ?? "", /Electron probe failed/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 
-test("agentBrowserExtension does not show Electron broad-selector warning on normal file pages", { concurrency: false }, async () => {
+test("agentBrowserExtension blocks follow-up inspection on local file pages", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-normal-file-text-scope-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -410,16 +514,57 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(openResult.isError, false);
 
 			const textResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "body"] });
-			assert.equal(textResult.isError, false);
-			assert.doesNotMatch(textResult.content[0]?.text ?? "", /Broad Electron get text selector warning/);
-			assert.equal((textResult.details as { electronGetTextScopeWarning?: unknown }).electronGetTextScopeWarning, undefined);
-			const nextActionIds = ((textResult.details as { nextActions?: Array<{ id?: string }> }).nextActions ?? []).map((action) => action.id);
-			assert.equal(nextActionIds.includes("snapshot-for-electron-text-scope"), false);
+			assert.equal(textResult.isError, true);
+			assert.match(textResult.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
+			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe" } });
+			assert.equal(probeResult.isError, true);
+			assert.equal(probeResult.details?.failureCategory, "validation-error");
+			assert.match(probeResult.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
+
+test("agentBrowserExtension verifies the live Electron probe URL before content helpers", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-local-drift-"));
+	const logPath = join(tempDir, "agent-browser.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const commandIndex = args.findIndex((arg) => ["close", "get", "open"].includes(arg));
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ command, subcommand }) + "\\n");
+const data = command === "open"
+  ? { title: "Safe page", url: "https://fixture.invalid/" }
+  : command === "get" && subcommand === "url"
+    ? { result: "file:///tmp/drifted-local-page.html", url: "file:///tmp/drifted-local-page.html" }
+    : command === "get" && subcommand === "title"
+      ? { result: "SECRET LOCAL TITLE", title: "SECRET LOCAL TITLE" }
+      : { closed: true };
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const openResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://fixture.invalid/"] });
+			assert.equal(openResult.isError, false, JSON.stringify(openResult));
+			await rm(logPath, { force: true });
+
+			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe" } });
+			assert.equal(probeResult.isError, true, JSON.stringify(probeResult));
+			assert.equal(probeResult.details?.failureCategory, "validation-error");
+			assert.match(probeResult.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
+			assert.doesNotMatch(JSON.stringify(probeResult), /SECRET LOCAL TITLE/);
+			const invocations = await readInvocationLog(logPath) as Array<{ command?: string; subcommand?: string }>;
+			assert.deepEqual(invocations.map((entry) => [entry.command, entry.subcommand]), [["get", "url"]]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 
 test("agentBrowserExtension reports Electron session mismatch and launchId-aware probe", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-mismatch-"));
@@ -661,6 +806,10 @@ if (command === "connect") {
 	process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
 	return;
 }
+if (command === "open") {
+	process.stdout.write(JSON.stringify({ success: true, data: { title: "Safe", url: "https://safe.example/" } }));
+	return;
+}
 setTimeout(() => {
 	process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
 }, 200);`,
@@ -675,16 +824,20 @@ setTimeout(() => {
 			const connectNextActions = connectResult.details?.nextActions as Array<{ id: string; params?: { args?: string[] } }> | undefined;
 			const connectedSessionName = connectResult.details?.sessionName as string | undefined;
 			assert.ok(connectedSessionName);
-			assert.deepEqual(connectNextActions?.map((action) => action.id), ["list-connected-session-tabs"]);
+			assert.deepEqual(connectNextActions?.map((action) => action.id), ["verify-connected-session-url", "list-connected-session-tabs"]);
 			assert.deepEqual(connectNextActions?.map((action) => action.params?.args), [
+				["--session", connectedSessionName, "get", "url"],
 				["--session", connectedSessionName, "tab", "list"],
 			]);
+			const safeOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example/"] });
+			assert.equal(safeOpen.isError, false, JSON.stringify(safeOpen));
 
 			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 25 } });
-			assert.equal(probeResult.isError, false, JSON.stringify(probeResult));
+			assert.equal(probeResult.isError, true, JSON.stringify(probeResult));
 			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 25 });
-			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "partial");
-			assert.match(probeResult.content[0]?.text ?? "", /Some probe commands did not return data/);
+			assert.equal(probeResult.details?.failureCategory, "upstream-error");
+			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "failed");
+			assert.match(probeResult.content[0]?.text ?? "", /Electron probe failed/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -721,6 +874,8 @@ function nextSnapshotCount() {
 }
 if (command === "connect") {
   process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
+} else if (command === "get" && args[commandIndex + 1] === "url") {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://active.example/" } }));
 } else if (command === "snapshot") {
   const snapshotCount = nextSnapshotCount();
   if (snapshotCount === 1) {
@@ -755,6 +910,8 @@ if (command === "connect") {
 			assert.equal(connectResult.isError, false);
 			const sessionName = connectResult.details?.sessionName as string | undefined;
 			assert.ok(sessionName);
+			const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
 
 			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
@@ -845,6 +1002,8 @@ const recoveredPath = ${JSON.stringify(join(tempDir, "recovered.flag"))};
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, command, stdin }) + "\\n");
 if (command === "connect") {
 	process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
+} else if (command === "get" && args[commandIndex + 1] === "url") {
+	process.stdout.write(JSON.stringify({ success: true, data: { result: "https://active.example/" } }));
 } else if (command === "snapshot") {
 	const recovered = fs.existsSync(recoveredPath);
 	process.stdout.write(JSON.stringify({ success: true, data: recovered ? {
@@ -888,6 +1047,8 @@ if (command === "connect") {
 			assert.equal(connectResult.isError, false);
 			const sessionName = connectResult.details?.sessionName as string | undefined;
 			assert.ok(sessionName);
+			const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
 
 			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));

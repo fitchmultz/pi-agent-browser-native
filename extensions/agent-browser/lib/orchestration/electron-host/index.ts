@@ -16,6 +16,7 @@ import {
 	type ManagedSessionRestoreState,
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
+import { getManagedSessionStateAccessValidationError } from "../../managed-session-state-policy.js";
 import { isRecord } from "../../parsing.js";
 import { buildAgentBrowserNextActions, buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { appendUniqueAgentBrowserNextActions } from "../../results/next-actions.js";
@@ -23,12 +24,11 @@ import { extractRefSnapshotFromData, getSessionPageStateKey, isAboutBlankUrl, no
 import { redactSensitiveText } from "../../runtime.js";
 import { collectElectronManagedSessionTarget } from "../browser-run/diagnostics.js";
 import { buildElectronHostFailureResult, formatElectronTargetLines, redactToolDetails } from "../browser-run/final-result.js";
+import { acquireOwnedManagedSessionDaemonPolicy, closeManagedSession } from "../browser-run/managed-session-daemon-policy.js";
 import {
-	acquireOwnedManagedSessionDaemonPolicy,
 	buildElectronIdentifiers,
 	buildElectronMismatchNextActions,
 	buildElectronSessionMismatch,
-	closeManagedSession,
 	extractStringResultField,
 	findElectronLaunchRecordForSession,
 	formatElectronSessionMismatchText,
@@ -550,7 +550,7 @@ async function runElectronProbeCommandData(options: {
 	timeoutMs?: number;
 }): Promise<{ data?: unknown; error?: string }> {
 	try {
-		return { data: await runSessionCommandData({ ...options, allowManagedSessionTarget: true, pinNamespace: true }) };
+		return { data: await runSessionCommandData({ ...options, allowManagedSessionTarget: true, pinNamespace: true, throwOnFailure: true }) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -564,23 +564,29 @@ async function collectElectronProbe(options: {
 	timeoutMs?: number;
 }): Promise<ElectronProbeResult> {
 	const commandContext = { cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs };
-	const titleResult = await runElectronProbeCommandData({ ...commandContext, args: ["get", "title"] });
 	const urlResult = await runElectronProbeCommandData({ ...commandContext, args: ["get", "url"] });
+	if (urlResult.error) throw new Error(`get url: ${urlResult.error}`);
+	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);
+	if (!url) throw new Error("get url returned no active page URL.");
+	const fileAccessError = getManagedSessionStateAccessValidationError({ args: ["snapshot", "-i"], currentPageUrl: url, cwd: options.cwd });
+	if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
+	const titleResult = await runElectronProbeCommandData({ ...commandContext, args: ["get", "title"] });
 	const focusedResult = await runElectronProbeCommandData({ ...commandContext, args: ["eval", "--stdin"], stdin: ELECTRON_FOCUSED_ELEMENT_EVAL });
 	const tabsResult = await runElectronProbeCommandData({ ...commandContext, args: ["tab", "list"] });
 	const snapshotResult = await runElectronProbeCommandData({ ...commandContext, args: ["snapshot", "-i"] });
 	const errors = [
 		titleResult.error ? `get title: ${titleResult.error}` : undefined,
-		urlResult.error ? `get url: ${urlResult.error}` : undefined,
 		focusedResult.error ? `focused element: ${focusedResult.error}` : undefined,
 		tabsResult.error ? `tab list: ${tabsResult.error}` : undefined,
 		snapshotResult.error ? `snapshot: ${snapshotResult.error}` : undefined,
 	].filter((item): item is string => item !== undefined).map((error) => boundElectronProbeString(error, 240) ?? "probe command failed");
 	const title = boundElectronProbeString(extractStringResultField(titleResult.data, "result") ?? extractStringResultField(titleResult.data, "title"), 160);
-	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);
 	const focusedElement = extractElectronFocusedElement(focusedResult.data);
 	const { activeTab, tabs } = extractElectronProbeTabs(tabsResult.data);
 	const { refSnapshot, snapshot } = summarizeElectronProbeSnapshot(snapshotResult.data);
+	if (errors.length > 0 && !(title || url || focusedElement || tabs || snapshot)) {
+		throw new Error(errors.join("; "));
+	}
 	const probeWithoutSummary = {
 		activeTab,
 		focusedElement,
@@ -870,6 +876,15 @@ export async function handleElectronHostInput(options: {
 		try {
 			const status = launchRecord ? await inspectElectronLaunchStatus(launchRecord) : undefined;
 			const probeNamespace = compiledElectron.launchId ? undefined : managedSessionNamespace;
+			const pageStateKey = getSessionPageStateKey(probeSessionName, probeNamespace) ?? probeSessionName;
+			const currentPageState = sessionPageState.get(pageStateKey);
+			const fileAccessError = getManagedSessionStateAccessValidationError({
+				args: ["snapshot", "-i"],
+				currentPageUrl: currentPageState.tabTarget?.url,
+				cwd,
+				pageUrlUnknown: currentPageState.tabTargetUnknown === true,
+			});
+			if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
 			const probe = await withOwnedElectronManagedSessionPolicy(
 				{
 					args: ["snapshot", "-i"],
@@ -905,14 +920,14 @@ export async function handleElectronHostInput(options: {
 				url: probe.url ?? probe.activeTab?.url ?? probe.refSnapshot?.target?.url,
 			});
 			const pageStateUpdate = sessionPageState.beginUpdate();
-			const pageStateKey = getSessionPageStateKey(probe.sessionName, probeNamespace) ?? probe.sessionName;
+			const probePageStateKey = getSessionPageStateKey(probe.sessionName, probeNamespace) ?? probe.sessionName;
 			if (sessionTabTarget) {
-				sessionPageState.applyTabTarget({ sessionName: pageStateKey, target: sessionTabTarget, update: pageStateUpdate });
+				sessionPageState.applyTabTarget({ sessionName: probePageStateKey, target: sessionTabTarget, update: pageStateUpdate });
 			}
 			if (probe.refSnapshot) {
 				sessionPageState.applyRefSnapshot({
 					fallbackTarget: sessionTabTarget,
-					sessionName: pageStateKey,
+					sessionName: probePageStateKey,
 					snapshot: probe.refSnapshot,
 					update: pageStateUpdate,
 				});

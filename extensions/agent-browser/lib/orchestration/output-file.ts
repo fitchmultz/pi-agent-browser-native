@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 
+import { getAgentBrowserStoragePathValidationError } from "../managed-session-state-policy.js";
 import { isRecord } from "../parsing.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
 
@@ -13,7 +14,7 @@ export interface AgentBrowserOutputFileDetails {
 	status: "failed" | "saved";
 }
 
-function normalizeRequestedOutputPath(path: string): string {
+export function normalizeRequestedOutputPath(path: string): string {
 	return path.startsWith("@") ? path.slice(1) : path;
 }
 
@@ -43,6 +44,10 @@ function appendOutputFileNotice(result: AgentBrowserToolResult, message: string)
 	return [{ type: "text", text: message }, ...content];
 }
 
+export function getAgentBrowserOutputPathValidationError(outputPath: string | undefined, cwd: string): string | undefined {
+	return outputPath ? getAgentBrowserStoragePathValidationError(normalizeRequestedOutputPath(outputPath), cwd) : undefined;
+}
+
 export async function applyAgentBrowserOutputPath(options: {
 	cwd: string;
 	outputPath?: string;
@@ -50,6 +55,14 @@ export async function applyAgentBrowserOutputPath(options: {
 	result: AgentBrowserToolResult;
 }): Promise<AgentBrowserToolResult> {
 	if (!options.outputPath) return options.result;
+	const validationError = getAgentBrowserOutputPathValidationError(options.outputPath, options.cwd);
+	if (validationError) {
+		return {
+			content: [{ type: "text", text: validationError }],
+			details: { failureCategory: "validation-error", resultCategory: "failure", validationError },
+			isError: true,
+		};
+	}
 	if (options.result.isError || (isRecord(options.result.details) && options.result.details.resultCategory === "failure")) return options.result;
 	const requestedPath = normalizeRequestedOutputPath(options.outputPath);
 	const absolutePath = isAbsolute(requestedPath) ? requestedPath : resolve(options.cwd, requestedPath);

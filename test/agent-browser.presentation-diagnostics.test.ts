@@ -100,6 +100,7 @@ test("buildToolPresentation formats session status and session list", async () =
 			data: {
 				sessions: [
 					{ active: true, name: "piab-foreign", title: "Private", url: "https://private.example" },
+					{ active: true, name: "PIAB-case-alias", title: "Private Alias", url: "https://alias.private.example" },
 					{ active: true, name: "work", title: "Example", url: "https://example.com" },
 				],
 			},
@@ -107,7 +108,7 @@ test("buildToolPresentation formats session status and session list", async () =
 	});
 	assert.equal(list.summary, "Sessions: 1");
 	assert.equal((list.content[0] as { text: string }).text, "1. name=work *active*; active=true; title=Example; url=https://example.com");
-	assert.doesNotMatch(JSON.stringify(list.data), /piab-foreign|private\.example/);
+	assert.doesNotMatch(JSON.stringify(list.data), /piab-foreign|PIAB-case-alias|private\.example/);
 });
 
 test("buildToolPresentation formats Chrome profile arrays", async () => {

@@ -183,6 +183,19 @@ function closesBrowserSession(args: string[]): boolean {
 	return ["close", "exit", "quit"].includes(parseCommandInfo(args).command ?? "");
 }
 
+export function agentBrowserConfigIsPresent(
+	cwd: string,
+	parentEnv: NodeJS.ProcessEnv = process.env,
+	args: string[] = [],
+	platform: NodeJS.Platform = process.platform,
+): boolean {
+	if (hasExplicitConfigArg(args) || hasUpstreamEnvValue(parentEnv, AGENT_BROWSER_CONFIG_ENV)) return true;
+	const paths = [join(cwd, "agent-browser.json")];
+	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
+	if (home) paths.push(join(home, ".agent-browser", "config.json"));
+	return paths.some(pathExistsOrIsUnreadable);
+}
+
 /** Any upstream config disables automatic restore; content inspection would add parser and resource-exhaustion gaps. */
 export function agentBrowserConfigBlocksManagedRestore(
 	cwd: string,
@@ -190,10 +203,7 @@ export function agentBrowserConfigBlocksManagedRestore(
 	args: string[] = [],
 	platform: NodeJS.Platform = process.platform,
 ): boolean {
-	if (hasExplicitConfigArg(args) || hasUpstreamEnvValue(parentEnv, AGENT_BROWSER_CONFIG_ENV)) return true;
-	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
-	if (!home) return true;
-	return [join(cwd, "agent-browser.json"), join(home, ".agent-browser", "config.json")].some(pathExistsOrIsUnreadable);
+	return !resolveManagedSessionRestoreHome(parentEnv, platform) || agentBrowserConfigIsPresent(cwd, parentEnv, args, platform);
 }
 
 function omitWrapperInjectedUserAgent(args: string[], enabled: boolean | undefined): string[] {

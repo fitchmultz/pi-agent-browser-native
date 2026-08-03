@@ -4,7 +4,6 @@
  * Scope: Diagnostic/result-state command presentation only; core orchestration stays in presentation.ts.
  */
 
-import { containsManagedSessionRestoreKey, isWrapperManagedSessionName } from "../../managed-session-capabilities.js";
 import { isRecord } from "../../parsing.js";
 import { isSensitiveFieldName, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
@@ -21,6 +20,12 @@ import {
 	redactModelFacingTextIfSensitive,
 	stringifyModelFacing,
 } from "./common.js";
+import {
+	filterCallerOwnedSessionListItems,
+	filterCallerOwnedStateListItems,
+	filterManagedSessionListRows,
+	filterManagedStateListRows,
+} from "./managed-list-filter.js";
 
 const DIAGNOSTIC_REQUEST_PREVIEW_LIMIT = 40;
 
@@ -149,7 +154,7 @@ function isClearDiagnosticCommand(commandInfo: CommandInfo): boolean {
 export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
 	if (commandInfo.command === "session") {
 		const sessions = getArrayField(data, "sessions");
-		if (sessions) return `Sessions: ${sessions.filter((item) => !isWrapperManagedSessionListItem(item)).length}`;
+		if (sessions) return `Sessions: ${filterCallerOwnedSessionListItems(sessions).length}`;
 		const session = getStringField(data, "session");
 		if (session) return `Session: ${session}`;
 	}
@@ -199,9 +204,7 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 	if (commandInfo.command === "state") {
 		const states = getArrayField(data, "states") ?? getArrayField(data, "files");
 		if (states) {
-			const visibleStates = commandInfo.subcommand === "list"
-				? states.filter((item) => !containsManagedStateCapability(item))
-				: states;
+			const visibleStates = commandInfo.subcommand === "list" ? filterCallerOwnedStateListItems(states) : states;
 			return `States: ${visibleStates.length}`;
 		}
 		if (commandInfo.subcommand === "load") return undefined;
@@ -282,21 +285,10 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 	return undefined;
 }
 
-function isWrapperManagedSessionListItem(item: unknown): boolean {
-	if (typeof item === "string") return isWrapperManagedSessionName(item);
-	if (!isRecord(item)) return false;
-	return ["name", "session", "id"].some((key) => isWrapperManagedSessionName(getStringField(item, key)));
-}
-
-function filterManagedSessionListRows(data: unknown): unknown {
-	if (!isRecord(data) || !Array.isArray(data.sessions)) return data;
-	return { ...data, sessions: data.sessions.filter((item) => !isWrapperManagedSessionListItem(item)) };
-}
-
 function formatSessionText(data: Record<string, unknown>): string | undefined {
 	const sessions = getArrayField(data, "sessions");
 	if (sessions) {
-		const visibleSessions = sessions.filter((item) => !isWrapperManagedSessionListItem(item));
+		const visibleSessions = filterCallerOwnedSessionListItems(sessions);
 		if (visibleSessions.length === 0) return sessions.length === 0 ? "No active sessions." : "No caller-owned active sessions.";
 		return visibleSessions
 			.map((item, index) => {
@@ -909,22 +901,6 @@ function formatFrameText(data: Record<string, unknown>): string | undefined {
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
-function containsManagedStateCapability(value: unknown): boolean {
-	if (typeof value === "string") return containsManagedSessionRestoreKey(value);
-	if (Array.isArray(value)) return value.some(containsManagedStateCapability);
-	return isRecord(value) && Object.values(value).some(containsManagedStateCapability);
-}
-
-function filterManagedStateListRows(data: unknown): unknown {
-	if (!isRecord(data)) return data;
-	return Object.fromEntries(Object.entries(data).map(([key, value]) => [
-		key,
-		(key === "states" || key === "files") && Array.isArray(value)
-			? value.filter((item) => !containsManagedStateCapability(item))
-			: value,
-	]));
-}
-
 function formatStateText(data: Record<string, unknown>, subcommand?: string): string | undefined {
 	if (subcommand === "show") {
 		const filename = getStringField(data, "filename") ?? getStringField(data, "name") ?? "saved state";
@@ -937,7 +913,7 @@ function formatStateText(data: Record<string, unknown>, subcommand?: string): st
 	}
 	const states = getArrayField(data, "states") ?? getArrayField(data, "files");
 	if (states) {
-		const visibleStates = states.filter((item) => !containsManagedStateCapability(item));
+		const visibleStates = filterCallerOwnedStateListItems(states);
 		if (visibleStates.length === 0) return "No caller-owned saved states.";
 		return visibleStates
 			.map((item, index) => {

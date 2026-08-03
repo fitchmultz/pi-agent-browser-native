@@ -366,6 +366,7 @@ export interface AboutBlankSessionMismatch {
 
 export interface ElectronHandoffSummary {
 	error?: string;
+	failureCategory?: "aborted" | "upstream-error" | "validation-error";
 	handoff: "connect" | "snapshot" | "tabs";
 	refSnapshot?: SessionRefSnapshot;
 	snapshot?: unknown;
@@ -452,6 +453,7 @@ export interface PreparedBrowserRun {
 	preparedArgs: PreparedAgentBrowserArgs;
 	priorRefSnapshotState?: SessionRefSnapshot;
 	priorSessionTabTarget?: SessionTabTarget;
+	priorSessionTabTargetUnknown?: true;
 	processArgs: string[];
 	processStdin?: string;
 	processTimeoutMs?: number;
@@ -522,6 +524,7 @@ export interface FinalResultInput {
 	currentRefSnapshot?: SessionRefSnapshot;
 	currentRefSnapshotInvalidation?: SessionRefSnapshotInvalidation;
 	currentSessionTabTarget?: SessionTabTarget;
+	currentSessionTabTargetUnknown?: true;
 	electronBroadGetTextScopeDiagnostics: ElectronBroadGetTextScopeDiagnostic[];
 	electronFailedConnectCleanup?: ElectronCleanupResult;
 	electronHandoff?: ElectronHandoffSummary;

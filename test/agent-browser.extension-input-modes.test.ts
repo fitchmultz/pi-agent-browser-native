@@ -1194,6 +1194,8 @@ process.stdin.on("end", () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
+			const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
 			const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: { attached: true, expectedText: "Welcome" },
 			});
@@ -1286,6 +1288,8 @@ process.stdin.on("end", () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
+			const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
 			const attachedBlankResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: { attached: true, expectedText: "Welcome" },
 			});

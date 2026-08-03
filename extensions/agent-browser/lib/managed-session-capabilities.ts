@@ -6,7 +6,7 @@ const MANAGED_SESSION_RESTORE_KEY_EXACT_PATTERN = /^piab-r2-[a-f\d]{32}$/i;
 const WRAPPER_MANAGED_SESSION_PREFIX = "piab-";
 
 export function isWrapperManagedSessionName(value: string | null | undefined): value is string {
-	return typeof value === "string" && value.startsWith(WRAPPER_MANAGED_SESSION_PREFIX);
+	return typeof value === "string" && value.toLowerCase().startsWith(WRAPPER_MANAGED_SESSION_PREFIX);
 }
 
 export function isManagedSessionRestoreKey(value: string | null | undefined): value is string {

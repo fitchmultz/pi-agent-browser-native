@@ -44,6 +44,12 @@ if (args.includes("open")) {
   const state = ref === "@e3" ? { title: "Example Same", url: "https://example.com/same" } : { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: ref } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else if (args.includes("close")) {
@@ -105,6 +111,12 @@ if (args.includes("open")) {
   const state = { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else if (args.includes("close")) {
@@ -168,6 +180,12 @@ if (args.includes("open")) {
   const state = { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else {
@@ -243,6 +261,12 @@ process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
   if (args.includes("batch")) {
     process.stdout.write(JSON.stringify(JSON.parse(stdin).map(runCommand)));
+  } else if (args.includes("get") && args.includes("url")) {
+    const state = readState();
+    process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+  } else if (args.includes("get") && args.includes("title")) {
+    const state = readState();
+    process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
   } else if (args.includes("eval")) {
     process.stdout.write(JSON.stringify({ success: true, data: readState() }));
   } else {
@@ -311,6 +335,12 @@ if (args.includes("open")) {
   const state = { title: "Example Same", url: "https://example.com/same" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else if (args.includes("close")) {

@@ -462,6 +462,7 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		sessionMode: options.sessionMode,
 		sessionTabCorrection: options.sessionTabCorrection,
 		sessionTabTarget: options.currentSessionTabTarget,
+		sessionTabTargetUnknown: options.currentSessionTabTargetUnknown,
 		refSnapshot: options.currentRefSnapshot,
 		refSnapshotInvalidation: options.currentRefSnapshotInvalidation,
 		namespace: options.executionPlan.namespace,

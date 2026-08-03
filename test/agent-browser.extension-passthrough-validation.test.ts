@@ -23,6 +23,7 @@ import {
 
 const stripWrapperPrefix = (args: string[]) => {
 	const stripped = [...args];
+	if (stripped[0] === "--allow-file-access") stripped.splice(0, 2);
 	if (stripped[0] === "--json") stripped.shift();
 	if (stripped[0] === "--namespace") stripped.splice(0, 2);
 	if (stripped[0] === "--session") stripped.splice(0, 2);
@@ -308,12 +309,12 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 
 				for (const args of providerCommands) {
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args], sessionMode: "fresh" });
-					assert.equal(result.isError, false, args.join(" "));
+					assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 					assert.doesNotMatch(JSON.stringify(result.details), /agentcore-key|browserbase-key|browserless-key|browser-use-key|kernel-key/);
 				}
 				for (const args of skillCommands) {
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
-					assert.equal(result.isError, false, args.join(" "));
+					assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 					assert.equal(result.details?.sessionName, undefined, args.join(" "));
 					assert.equal(result.details?.usedImplicitSession, undefined, args.join(" "));
 				}
@@ -352,15 +353,26 @@ test("agentBrowserExtension passes through core command coverage fallback matrix
 const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-let commandIndex = args[0] === "--json" ? 1 : 0;
-if (args[commandIndex] === "--session") commandIndex += 2;
+const valueFlags = new Set(["--allow-file-access", "--namespace", "--session"]);
+let commandIndex = -1;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--json") continue;
+  if (valueFlags.has(args[index])) { index += 1; continue; }
+  if (args[index].startsWith("--")) continue;
+  commandIndex = index;
+  break;
+}
 const command = args[commandIndex] || "unknown";
+const subcommand = args[commandIndex + 1];
 const artifactPath = command === "download" || command === "screenshot" || command === "pdf" || (command === "wait" && args.includes("--download")) ? args[args.length - 1] : undefined;
 if (artifactPath) {
   fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
   fs.writeFileSync(artifactPath, "artifact");
 }
-const data = artifactPath ? { path: artifactPath } : { ok: true, command };
+const data = artifactPath ? { path: artifactPath }
+  : command === "get" && subcommand === "url" ? { result: "https://example.test/current", url: "https://example.test/current" }
+  : command === "get" && subcommand === "title" ? { result: "Example", title: "Example" }
+  : { ok: true, command };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
@@ -438,7 +450,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
-				assert.equal(result.isError, false, args.join(" "));
+				assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 			}
 
 			const invocations = await readInvocationLog(logPath);
@@ -450,7 +462,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				const command = normalizedArgs[0];
 				if (["close", "exit", "quit"].includes(command ?? "")) return [["close"]];
 				if (command === "click" || (command === "tab" && normalizedArgs[1] === "close")) return [normalizedArgs, ["get", "url"], ["get", "title"]];
-				return command === "back" || command === "forward" || command === "reload" || command === "dblclick"
+				return command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval"
 					? [normalizedArgs, ["get", "url"], ["get", "title"]]
 					: [normalizedArgs];
 			});
@@ -472,11 +484,20 @@ test("agentBrowserExtension passes through stateful browser-context workflow com
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const commandIndex = args.findIndex((arg) => !arg.startsWith("--") && args[args.indexOf("--session") + 1] !== arg);
+const valueFlags = new Set(["--allow-file-access", "--namespace", "--session"]);
+let commandIndex = -1;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--json") continue;
+  if (valueFlags.has(args[index])) { index += 1; continue; }
+  if (args[index].startsWith("--")) continue;
+  commandIndex = index;
+  break;
+}
 const command = args[commandIndex];
 const subcommand = args[commandIndex + 1];
 if (command === "state" && subcommand === "save") fs.writeFileSync(args[commandIndex + 2], "{}");
-const data = command === "auth" && subcommand === "list" ? { profiles: [{ name: "demo" }] }
+const data = command === "get" && subcommand === "url" ? { result: "https://example.test/current", url: "https://example.test/current" }
+  : command === "auth" && subcommand === "list" ? { profiles: [{ name: "demo" }] }
   : command === "auth" && subcommand === "show" ? { name: "demo", url: "https://example.test", username: "user@example.test" }
   : command === "cookies" && (subcommand === undefined || subcommand === "get") ? { cookies: [{ name: "sid", domain: "example.test", path: "/", value: "cookie-get-secret" }] }
   : command === "cookies" && subcommand === "set" ? { name: args[commandIndex + 2], value: args[commandIndex + 3], domain: "example.test" }
@@ -498,6 +519,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["auth", "remove", "demo"],
 		["state", "save", statePath],
 		["state", "load", statePath],
+		["get", "url"],
 		["state", "list"],
 		["state", "clear", "caller-owned"],
 		["cookies", "get"],
@@ -523,7 +545,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			let storageSetResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
-				assert.equal(result.isError, false, args.join(" "));
+				assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 				assert.doesNotMatch(result.content[0]?.text ?? "", /cookie-secret|cookie-get-secret|storage-secret/);
 				assert.doesNotMatch(JSON.stringify(result.details), /cookie-secret|cookie-get-secret|storage-secret/);
 				if (args[0] === "storage" && args[1] === "local" && args[2] === "set") storageSetResult = result;
@@ -571,7 +593,7 @@ test("agentBrowserExtension passes through non-core network debug diff stream da
 const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, model: process.env.AI_GATEWAY_MODEL || null, apiKey: process.env.AI_GATEWAY_API_KEY || null }) + "\\n");
-const valueFlags = new Set(["--session", "--model", "--port", "--body", "--resource-type", "--baseline"]);
+const valueFlags = new Set(["--allow-file-access", "--session", "--model", "--port", "--body", "--resource-type", "--baseline"]);
 let commandIndex = -1;
 for (let i = 0; i < args.length; i += 1) {
   const token = args[i];
@@ -667,7 +689,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			let networkRequestsResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
-				assert.equal(result.isError, false, args.join(" "));
+				assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 				assert.doesNotMatch(result.content[0]?.text ?? "", /route-secret|clipboard-secret|chat-secret/);
 				assert.doesNotMatch(JSON.stringify(result.details), /route-secret|clipboard-secret|chat-secret/);
 				if (args[0] === "network" && args[1] === "requests") networkRequestsResult = result;

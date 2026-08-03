@@ -524,10 +524,13 @@ if (!REAL_UPSTREAM_ENABLED) {
 					await runCoreCommand(harness, ["click", "#next-link"], shapes.commands.coreCommand, managedSessionName);
 					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Next Contract Fixture");
 					await runCoreCommand(harness, ["back"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "url"], shapes.commands.coreSubcommand, managedSessionName), ["url"]), contractUrl);
 					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Agent Browser Contract Fixture");
 					await runCoreCommand(harness, ["forward"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "url"], shapes.commands.coreSubcommand, managedSessionName), ["url"]), `${fixtureServer?.baseUrl}/next`);
 					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Next Contract Fixture");
 					await runCoreCommand(harness, ["reload"], shapes.commands.coreCommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "url"], shapes.commands.coreSubcommand, managedSessionName), ["url"]), `${fixtureServer?.baseUrl}/next`);
 					const initialTabs = (await runCoreCommand(harness, ["tab", "list"], shapes.commands.coreSubcommand, managedSessionName)).data as {
 						tabs?: Array<{ active?: boolean; tabId?: string }>;
 					};
@@ -535,6 +538,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.ok(initialTabId, "tab list should expose the active tab id");
 					await runCoreCommand(harness, ["tab", "new", "--label", "contract-copy", contractUrl], shapes.commands.coreSubcommand, managedSessionName);
 					await runCoreCommand(harness, ["tab", initialTabId], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "url"], shapes.commands.coreSubcommand, managedSessionName), ["url"]), `${fixtureServer?.baseUrl}/next`);
 					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "title"], shapes.commands.coreSubcommand, managedSessionName), ["title"]), "Next Contract Fixture");
 					await runCoreCommand(harness, ["tab", "contract-copy"], shapes.commands.coreSubcommand, managedSessionName);
 					const tabCloseDetails = await runCoreCommand(harness, ["tab", "close"], shapes.commands.coreSubcommand, managedSessionName);
@@ -543,7 +547,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 
 					const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["batch"],
-						stdin: JSON.stringify([["eval", "document.getElementById('status').textContent"], ["get", "title"]]),
+						stdin: JSON.stringify([["get", "text", "#status"], ["get", "title"]]),
 					});
 					const batchDetails = assertSuccessfulResult(batch, shapes.commands.batch, "batch via stdin");
 					assert.equal(batchDetails.sessionName, managedSessionName);
@@ -625,7 +629,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 						const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
 						assert.equal(blockedBatch.isError, true);
 						assert.equal(blockedBatch.details?.failureCategory, "validation-error", JSON.stringify(blockedBatch.details));
-						assert.match(String(blockedBatch.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+						assert.match(String(blockedBatch.details?.validationError ?? ""), /does not match the requested managed-restore policy|active page became unverified/);
 						assert.equal(blockedBatch.details?.exitCode, undefined, "nested batch attachment must fail before upstream spawn");
 					}
 					const lateConfigPath = join(tempDir, "agent-browser.json");

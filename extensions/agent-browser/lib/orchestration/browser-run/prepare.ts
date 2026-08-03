@@ -34,8 +34,8 @@ import {
 	getManagedSessionStateAccessValidationError,
 	getManagedSessionTargetAccessValidationError,
 } from "../../managed-session-state-policy.js";
+import { acquireOwnedManagedSessionDaemonPolicy } from "./managed-session-daemon-policy.js";
 import {
-	acquireOwnedManagedSessionDaemonPolicy,
 	applyOpenResultTabCorrection,
 	buildManagedSessionOutcome,
 	buildPinnedBatchPlan,
@@ -412,6 +412,26 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	let electronLaunch: ElectronLaunchSuccess | undefined;
 	const sessionMode = compiledElectron?.action === "launch" ? "fresh" : params.sessionMode ?? "auto";
 	const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
+	const rawManagedStateAccessError = getManagedSessionStateAccessValidationError({
+		args: runtimeToolArgs,
+		cwd,
+		stdin: runtimeToolStdin,
+		trustedFirstBatchTabSelection: true,
+	});
+	if (rawManagedStateAccessError) {
+		return {
+			kind: "early-result",
+			result: {
+				content: [{ type: "text", text: rawManagedStateAccessError }],
+				details: {
+					args: redactedArgs,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, errorText: rawManagedStateAccessError, succeeded: false, validationError: rawManagedStateAccessError }),
+					validationError: rawManagedStateAccessError,
+				},
+				isError: true,
+			},
+		};
+	}
 	if (compiledElectron?.action === "launch") {
 		const launchResult = await launchElectronApp({ ...compiledElectron, signal });
 		if (!launchResult.ok) {
@@ -454,9 +474,11 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const idleTimeoutMismatch = getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs);
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
 	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
+	const plannedSessionPageState = sessionPageState.get(ownedSessionKey);
 	const managedStateAccessError = getManagedSessionStateAccessValidationError({
 		args: executionPlan.effectiveArgs,
-		currentPageUrl: sessionPageState.get(ownedSessionKey).tabTarget?.url,
+		currentPageUrl: plannedSessionPageState.tabTarget?.url,
+		pageUrlUnknown: plannedSessionPageState.tabTargetUnknown === true,
 		cwd,
 		stdin: runtimeToolStdin,
 	});
@@ -951,6 +973,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				preparedArgs,
 				priorRefSnapshotState,
 				priorSessionTabTarget,
+				priorSessionTabTargetUnknown: priorSessionPageState.tabTargetUnknown,
 				processArgs,
 				processStdin,
 				processTimeoutMs,

@@ -121,6 +121,10 @@ process.stdin.on("end", () => {
 	process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
 	return;
 	}
+	if (command === "get" && subcommand === "url") {
+	process.stdout.write(JSON.stringify({ success: true, data: { result: "app://packaged", url: "app://packaged" } }));
+	return;
+	}
 	if (command === "tab" && subcommand === "list") {
 	process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ active: true, title: "Packaged Electron", type: "page", url: "app://packaged" }] } }));
 	return;
@@ -192,7 +196,7 @@ process.stdin.on("end", () => {
 	}
 });
 
-test("agentBrowserExtension does not add packaged Electron sourceLookup guidance for plain file pages", { concurrency: false }, async () => {
+test("agentBrowserExtension blocks sourceLookup after local-file URL verification", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-source-lookup-file-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -215,6 +219,10 @@ process.stdin.on("end", () => {
 		break;
 	}
 	const command = args[commandIndex];
+	if (command === "get" && args[commandIndex + 1] === "url") {
+		process.stdout.write(JSON.stringify({ success: true, data: { result: ${JSON.stringify(fileUrl)}, url: ${JSON.stringify(fileUrl)} } }));
+		return;
+	}
 	if (command === "snapshot") {
 		process.stdout.write(JSON.stringify({ success: true, data: { origin: ${JSON.stringify(fileUrl)}, title: "Plain file", url: ${JSON.stringify(fileUrl)}, refs: { e1: { role: "button", name: "Save" } }, snapshot: "- button \\\"Save\\\" [ref=e1]" } }));
 		return;
@@ -233,22 +241,17 @@ process.stdin.on("end", () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const snapshotResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"], sessionMode: "fresh" });
-			assert.equal(snapshotResult.isError, false);
-			assert.equal((snapshotResult.details?.refSnapshot as { target?: { url?: string } } | undefined)?.target?.url, fileUrl);
+			const urlResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"], sessionMode: "fresh" });
+			assert.equal(urlResult.isError, false, JSON.stringify(urlResult));
+			assert.equal((urlResult.details?.sessionTabTarget as { url?: string } | undefined)?.url, fileUrl);
 
 			const lookupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				sourceLookup: { componentName: "MissingLocalComponent", selector: "#save" },
 			});
-			assert.equal(lookupResult.isError, false);
-			assert.match(lookupResult.content[0]?.text ?? "", /Source lookup found no candidate locations\./);
-			assert.doesNotMatch(lookupResult.content[0]?.text ?? "", /packaged Electron|app\.asar|workspace scan was limited/);
-			const sourceLookup = lookupResult.details?.sourceLookup as { electronContext?: unknown; status?: string; workspaceRoot?: string } | undefined;
-			assert.equal(sourceLookup?.status, "no-candidates");
-			assert.equal(sourceLookup?.electronContext, undefined);
-			assert.equal(sourceLookup?.workspaceRoot, undefined);
-			const nextActions = lookupResult.details?.nextActions as Array<{ id: string }> | undefined;
-			assert.equal(nextActions?.some((action) => ["snapshot-electron-session", "probe-electron-launch", "list-electron-tabs"].includes(action.id)) ?? false, false);
+			assert.equal(lookupResult.isError, true);
+			assert.match(lookupResult.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
+			assert.equal(lookupResult.details?.failureCategory, "validation-error");
+			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.args.includes("batch")), false);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

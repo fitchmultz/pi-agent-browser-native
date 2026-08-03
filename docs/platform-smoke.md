@@ -72,7 +72,7 @@ PLATFORM_SMOKE_AUTH_ENV=""
 
 The Ubuntu target image is derived from `node:24-bookworm`, installs the `agent-browser` version from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs), installs Debian Chromium plus the upstream Linux WebGPU/Xvfb runtime packages (`libvulkan1`, `mesa-vulkan-drivers`, and `xvfb`) through apt, creates a non-root `circleci` user, and sets `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium`. Rebuild it after upstream rebaselining, or override `PLATFORM_SMOKE_UBUNTU_IMAGE` with an equivalent prepared local image. Do not install `agent-browser` ad hoc inside the Ubuntu smoke command; a missing tool is image/template drift.
 
-The configured upstream `agent-browser` baseline is imported from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs). Target-local browser suites verify that exact `agent-browser` version before running. Bake the exact upstream CLI and browser runtime into the Windows template/snapshot for speed and reproducibility; missing or stale Windows `agent-browser` / browser readiness is a blocked setup, not something the smoke command repairs. The Windows browser suite checks the preinstalled browser cache and prewarms one short local file URL before the extension harness runs.
+The configured upstream `agent-browser` baseline is imported from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs). Target-local browser suites verify that exact `agent-browser` version before running. Bake the exact upstream CLI and browser runtime into the Windows template/snapshot for speed and reproducibility; missing or stale Windows `agent-browser` / browser readiness is a blocked setup, not something the smoke command repairs. The Windows browser suite checks the preinstalled browser cache and prewarms one short loopback HTTP URL before the extension harness runs.
 
 ## Target setup expectations
 
@@ -106,7 +106,7 @@ Each required target runs `platform-build` and `browser-dogfood-smoke` on one Cr
 
 1. Run `npm ci` in the synced checkout if needed.
 2. Run the deterministic model-free browser smoke through `scripts/verify-agent-browser-dogfood.ts`.
-3. Exercise native wrapper surfaces against the deterministic local file fixture from `scripts/verify-agent-browser-dogfood.ts`: top-level `qa`, `semanticAction`, constrained `job`, screenshot artifact verification, and session close.
+3. Exercise native wrapper surfaces against the deterministic loopback HTTP fixture from `scripts/verify-agent-browser-dogfood.ts`: top-level `qa`, `semanticAction`, constrained `job`, screenshot artifact verification, and session close.
 4. Persist the dogfood JSON report and stdout/stderr evidence.
 5. Fail on missing browser artifacts, failed tool calls, leaked secrets, or unclosed sessions.
 

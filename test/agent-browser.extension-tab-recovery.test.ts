@@ -595,6 +595,8 @@ if (args.includes("https://example.com/slow-first")) {
 			await writeFile(releaseSlowOpenPath, "1", "utf8");
 			const slowOpen = await slowOpenPromise;
 			assert.equal(slowOpen.isError, false, JSON.stringify(slowOpen));
+			assert.deepEqual(slowOpen.details?.sessionTabTarget, { title: "Fast Second", url: "https://example.com/fast-second" });
+			assert.equal(slowOpen.details?.sessionTabTargetUnknown, undefined);
 
 			const clickedSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "named", "click", "@e9"],
@@ -640,6 +642,52 @@ if (args.includes("https://example.com/slow-first")) {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
+
+test("agentBrowserExtension serializes a newer unverified target after a stale navigation completes", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-unverified-target-"));
+	const logPath = join(tempDir, "invocations.log");
+	const releasePath = join(tempDir, "release-slow-open");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("https://example.com/slow")) {
+  const deadline = Date.now() + 5000;
+  while (!fs.existsSync(${JSON.stringify(releasePath)}) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Stale", url: "https://example.com/slow" } }));
+} else if (args.includes("connect")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { snapshot: "SECRET UNVERIFIED CONTENT" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const slowOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "open", "https://example.com/slow"] });
+			await waitForInvocation(logPath, (entry) => entry.args.includes("https://example.com/slow"));
+			const connected = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "connect", "9222"] });
+			assert.equal(connected.isError, false, JSON.stringify(connected));
+			assert.equal(connected.details?.sessionTabTargetUnknown, true);
+			await writeFile(releasePath, "1", "utf8");
+			const staleOpen = await slowOpenPromise;
+			assert.equal(staleOpen.isError, false, JSON.stringify(staleOpen));
+			assert.equal(staleOpen.details?.sessionTabTarget, undefined);
+			assert.equal(staleOpen.details?.sessionTabTargetUnknown, true);
+			const invocationCount = (await readInvocationLog(logPath)).length;
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "snapshot", "-i"] });
+			assert.equal(snapshot.isError, true, JSON.stringify(snapshot));
+			assert.match(snapshot.content[0]?.text ?? "", /active page became unverified/);
+			assert.doesNotMatch(JSON.stringify(snapshot), /SECRET UNVERIFIED CONTENT/);
+			assert.equal((await readInvocationLog(logPath)).length, invocationCount);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 
 test("agentBrowserExtension re-selects the intended tab after a successful command when focus drifts afterward", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));

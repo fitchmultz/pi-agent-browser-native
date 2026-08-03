@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -129,18 +129,33 @@ if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: false } }));
 } else {
   const target = args.find((arg) => arg.startsWith("file:") || arg.startsWith("https:"));
-  const url = target === "https://redirect.example" ? ${JSON.stringify(protectedUrl)} : target;
-  process.stdout.write(JSON.stringify({ success: true, data: { title: "Local", url } }));
+  const verifiesSelectedTab = args.includes("get") && args.includes("url");
+  const url = target === "https://redirect.example" ? ${JSON.stringify(protectedUrl)} : target ?? (verifiesSelectedTab ? "https://selected.example/" : undefined);
+  process.stdout.write(JSON.stringify({ success: true, data: { title: url === ${JSON.stringify(protectedUrl)} ? "SECRET RESTORE TITLE" : "Local", url } }));
 }`);
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
+			const fileAccessBlocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--allow-file-access", "open", localDirectoryUrl] });
+			assert.equal(fileAccessBlocked.isError, true);
+			assert.match(fileAccessBlocked.content[0]?.text ?? "", /exfiltrate authenticated/);
 			const directBlocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", protectedUrl.replace(".agent-browser", "%2Eagent-browser")] });
 			assert.equal(directBlocked.isError, true);
 			assert.match(directBlocked.content[0]?.text ?? "", /authenticated cookies and storage/);
+			const artifactBlocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", join(tempDir, ".agent-browser", "new", "capture.png")] });
+			assert.equal(artifactBlocked.isError, true);
+			assert.match(artifactBlocked.content[0]?.text ?? "", /authenticated cookies and storage/);
+			const qualityArtifactBlocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "--screenshot-quality", "90", join(tempDir, ".agent-browser", "quality", "capture.jpg")] });
+			assert.equal(qualityArtifactBlocked.isError, true, JSON.stringify(qualityArtifactBlocked));
+			const batchArtifactBlocked = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "--screenshot-format", "png", join(tempDir, ".agent-browser", "batch", "capture.png")]]),
+			});
+			assert.equal(batchArtifactBlocked.isError, true, JSON.stringify(batchArtifactBlocked));
 			assert.deepEqual(await readInvocationLog(logPath), []);
+			for (const directory of ["new", "quality", "batch"]) await assert.rejects(stat(join(tempDir, ".agent-browser", directory)), /ENOENT/);
 
 			const openedLocalDirectory = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", localDirectoryUrl] });
 			assert.equal(openedLocalDirectory.isError, false, JSON.stringify(openedLocalDirectory));
@@ -151,12 +166,147 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal((await readInvocationLog(logPath)).length, afterOpenCount);
 
 			const redirected = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://redirect.example"] });
-			assert.equal(redirected.isError, false, JSON.stringify(redirected));
+			assert.equal(redirected.isError, true, JSON.stringify(redirected));
+			assert.equal(redirected.details?.failureCategory, "validation-error");
+			assert.doesNotMatch(JSON.stringify(redirected), /SECRET RESTORE TITLE/);
 			const afterRedirectCount = (await readInvocationLog(logPath)).length;
 			const captureBlocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot"] });
 			assert.equal(captureBlocked.isError, true);
 			assert.match(captureBlocked.content[0]?.text ?? "", /authenticated cookies and storage/);
 			assert.equal((await readInvocationLog(logPath)).length, afterRedirectCount);
+
+			for (const transition of [["connect", "9222"], ["state", "load", "caller-owned"], ["tab", "t2"]]) {
+				const safeOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example"] });
+				assert.equal(safeOpen.isError, false, JSON.stringify(safeOpen));
+				const transitionResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: transition });
+				assert.equal(transitionResult.isError, false, JSON.stringify(transitionResult));
+				assert.equal(transitionResult.details?.sessionTabTargetUnknown, true);
+				const afterTransitionCount = (await readInvocationLog(logPath)).length;
+				const unverifiedCapture = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+				assert.equal(unverifiedCapture.isError, true);
+				assert.match(unverifiedCapture.content[0]?.text ?? "", /active page became unverified/);
+				assert.equal((await readInvocationLog(logPath)).length, afterTransitionCount);
+			}
+
+			const safeOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example"] });
+			assert.equal(safeOpen.isError, false, JSON.stringify(safeOpen));
+			const attachedBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["connect", "9222"]]),
+			});
+			assert.equal(attachedBatch.isError, false, JSON.stringify(attachedBatch));
+			assert.equal(attachedBatch.details?.sessionTabTargetUnknown, true);
+			const afterAttachedBatchCount = (await readInvocationLog(logPath)).length;
+			const unverifiedBatchCapture = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(unverifiedBatchCapture.isError, true, JSON.stringify(unverifiedBatchCapture));
+			assert.equal((await readInvocationLog(logPath)).length, afterAttachedBatchCount);
+			const listedTabs = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["tab", "list"] });
+			assert.equal(listedTabs.isError, false, JSON.stringify(listedTabs));
+			const selectedTab = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["tab", "t2"] });
+			assert.equal(selectedTab.isError, false, JSON.stringify(selectedTab));
+			assert.equal(selectedTab.details?.sessionTabTargetUnknown, true);
+			const verifiedTab = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(verifiedTab.isError, false, JSON.stringify(verifiedTab));
+			assert.equal((verifiedTab.details?.sessionTabTarget as { url?: string } | undefined)?.url, "https://selected.example/");
+			const batchCapture = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(batchCapture.isError, false, JSON.stringify(batchCapture));
+			assert.ok((await readInvocationLog(logPath)).length > afterAttachedBatchCount);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps failed navigation targets unverified", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-failed-navigation-state-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const localUrl = pathToFileURL(join(tempDir, "local.html")).href;
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("pushstate")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "SecurityError: cross-origin pushState" }));
+  process.exitCode = 1;
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: ${JSON.stringify(localUrl)}, snapshot: "SECRET LOCAL CONTENT" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Local", url: ${JSON.stringify(localUrl)} } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", localUrl] });
+			assert.equal(opened.isError, false, JSON.stringify(opened));
+			const failedNavigation = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pushstate", "https://safe.example/"] });
+			assert.equal(failedNavigation.isError, true, JSON.stringify(failedNavigation));
+			assert.equal(failedNavigation.details?.sessionTabTarget, undefined);
+			assert.equal(failedNavigation.details?.sessionTabTargetUnknown, true);
+			const invocationCount = (await readInvocationLog(logPath)).length;
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, true, JSON.stringify(snapshot));
+			assert.match(snapshot.content[0]?.text ?? "", /active page became unverified/);
+			assert.doesNotMatch(JSON.stringify(snapshot), /SECRET LOCAL CONTENT/);
+			assert.equal((await readInvocationLog(logPath)).length, invocationCount);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+
+test("agentBrowserExtension stops navigation helpers before reading a local-page title", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-local-navigation-helper-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "page-state.txt");
+	const basePath = process.env.PATH ?? "";
+	const protectedUrl = pathToFileURL(join(tempDir, ".agent-browser", "sessions", "auth.html")).href;
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("back")) {
+  fs.writeFileSync(${JSON.stringify(statePath)}, "local");
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+} else if (args.includes("eval")) {
+  fs.writeFileSync(${JSON.stringify(statePath)}, "local");
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true, url: "https://spoofed.example/" } }));
+} else if (args.includes("open")) {
+  try { fs.unlinkSync(${JSON.stringify(statePath)}); } catch {}
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Safe", url: "https://safe.example/" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const local = fs.existsSync(${JSON.stringify(statePath)});
+  const url = local ? ${JSON.stringify(protectedUrl)} : "https://safe.example/";
+  process.stdout.write(JSON.stringify({ success: true, data: { result: url, url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "SECRET COOKIE TITLE", title: "SECRET COOKIE TITLE" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Safe", url: "https://safe.example/" } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			for (const transitionArgs of [["back"], ["eval", "location.href='file:///tmp/.agent-browser/auth.html'"]]) {
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example/"] });
+				assert.equal(opened.isError, false, JSON.stringify(opened));
+				const beforeTransition = (await readInvocationLog(logPath)).length;
+				const transitioned = await executeRegisteredTool(harness.tool, harness.ctx, { args: transitionArgs });
+				assert.equal(transitioned.isError, true, JSON.stringify(transitioned));
+				assert.equal(transitioned.details?.failureCategory, "validation-error");
+				assert.match(transitioned.content[0]?.text ?? "", /authenticated cookies and storage/);
+				assert.doesNotMatch(JSON.stringify(transitioned), /SECRET COOKIE TITLE/);
+				const invocations = await readInvocationLog(logPath);
+				const transitionIndex = invocations.findIndex((entry, index) => index >= beforeTransition && entry.args.includes(transitionArgs[0]));
+				assert.ok(transitionIndex >= beforeTransition);
+				assert.equal(invocations.slice(transitionIndex + 1).some((entry) => entry.args.includes("get") && entry.args.includes("url")), true);
+				assert.equal(invocations.slice(transitionIndex + 1).some((entry) => entry.args.includes("get") && entry.args.includes("title")), false);
+
+				const beforeBlockedSnapshot = invocations.length;
+				const blockedSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+				assert.equal(blockedSnapshot.isError, true, JSON.stringify(blockedSnapshot));
+				assert.equal((await readInvocationLog(logPath)).length, beforeBlockedSnapshot);
+			}
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -183,9 +333,11 @@ process.stdout.write(JSON.stringify({ success: true, data: { sessions: [
 			assert.match(listed.content[0]?.text ?? "", /caller-owned/);
 			assert.doesNotMatch(JSON.stringify(listed), /piab-foreign-live|private\.example/);
 
-			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "piab-foreign-live", "snapshot", "-i"] });
-			assert.equal(blocked.isError, true, JSON.stringify(blocked));
-			assert.match(blocked.content[0]?.text ?? "", /reserved for a browser managed by this extension instance/);
+			for (const sessionName of ["piab-foreign-live", "PIAB-foreign-live"]) {
+				const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "snapshot", "-i"] });
+				assert.equal(blocked.isError, true, JSON.stringify(blocked));
+				assert.match(blocked.content[0]?.text ?? "", /reserved for a browser managed by this extension instance/);
+			}
 			assert.equal((await readInvocationLog(logPath)).length, 1);
 		});
 	} finally {
@@ -264,7 +416,7 @@ if (args.includes("session") && args.includes("info")) {
 			]) {
 				const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
 				assert.equal(blockedBatch.isError, true);
-				assert.match(String(blockedBatch.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+				assert.match(String(blockedBatch.details?.validationError ?? ""), /does not match the requested managed-restore policy|active page became unverified/);
 				assert.equal(await userInvocationCount(), invocationCount);
 			}
 
@@ -639,7 +791,7 @@ if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey } : null } }));
 } else {
   const command = args.find((arg) => ["get", "open"].includes(arg));
-  if (command === "open") {
+  if (!state.active) {
     state = { active: true, restoreKey: process.env.AGENT_BROWSER_RESTORE ?? null };
     fs.writeFileSync(statePath, JSON.stringify(state));
   }
@@ -692,7 +844,7 @@ if (args.includes("session") && args.includes("info")) {
 					assert.match(String(blockedAfterReload.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 
 					await writeFile(daemonStatePath, JSON.stringify({ active: false, restoreKey: null }));
-					const restartedAfterIdle = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["open", "https://example.com/"] });
+					const restartedAfterIdle = await executeRegisteredTool(resumed.tool, resumed.ctx, { electron: { action: "probe" } });
 					assert.equal(restartedAfterIdle.isError, false, JSON.stringify(restartedAfterIdle));
 					const reusedAfterIdleRestart = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["get", "url"] });
 					assert.equal(reusedAfterIdleRestart.isError, false, JSON.stringify(reusedAfterIdleRestart));
@@ -841,9 +993,14 @@ test("agentBrowserExtension warns when eval stdin returns an empty object from a
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
+const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 const trimmed = stdin.trim();
-if (trimmed === "(() => [])()") {
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/", url: "https://example.com/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Example Domain", title: "Example Domain" } }));
+} else if (trimmed === "(() => [])()") {
   process.stdout.write(JSON.stringify({ success: true, data: { result: [], origin: "https://example.com/" } }));
 } else if (trimmed === "(() => [1])()") {
   process.stdout.write(JSON.stringify({ success: true, data: { result: [1], origin: "https://example.com/" } }));
@@ -923,7 +1080,7 @@ test("agentBrowserExtension normalizes eval --stdin scripts misplaced in args", 
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { result: stdin.trim() === "document.title" ? "Fixture Title" : null, origin: "file:///tmp/fixture.html" } }));`,
+process.stdout.write(JSON.stringify({ success: true, data: { result: stdin.trim() === "document.title" ? "Fixture Title" : null, origin: "https://fixture.invalid/" } }));`,
 	);
 
 	try {
@@ -946,7 +1103,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: stdin.trim(
 	}
 });
 
-test("agentBrowserExtension warns when eval --stdin returns null on file pages", { concurrency: false }, async () => {
+test("agentBrowserExtension blocks eval on local file pages", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-file-null-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -979,21 +1136,9 @@ if (args.includes("open")) {
 				args: ["eval", "--stdin"],
 				stdin: "document.getElementById('missing')?.textContent",
 			});
-			assert.equal(nullEvalResult.isError, false);
-			assert.match((nullEvalResult.content[0] as { text: string }).text, /Eval result warning:/);
-			assert.match((nullEvalResult.content[0] as { text: string }).text, /file:\/\/ page/);
-			assert.deepEqual(nullEvalResult.details?.evalResultWarning, {
-				reason: "eval --stdin returned null on a file:// page; upstream may not expose full DOM semantics for local fixtures.",
-				suggestion: "Treat this as inconclusive verification. Use snapshot -i, get text on current @refs, screenshot evidence, or a reachable http(s) fixture before concluding DOM state.",
-			});
-
-			const literalNullResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["eval", "--stdin"],
-				stdin: "null",
-			});
-			assert.equal(literalNullResult.isError, false);
-			assert.equal(literalNullResult.details?.evalResultWarning, undefined);
-			assert.doesNotMatch((literalNullResult.content[0] as { text: string }).text, /Eval result warning:/);
+			assert.equal(nullEvalResult.isError, true);
+			assert.match((nullEvalResult.content[0] as { text: string }).text, /Browser access to local \.agent-browser storage is blocked/);
+			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.args.includes("eval")), false);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1147,13 +1292,20 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 
 test("agentBrowserExtension writes eval and get output data to requested files", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-output-file-"));
+	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`const args = process.argv.slice(2);
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + "\\n");
 const command = args.find((arg) => !arg.startsWith("-") && arg !== "piab-test");
 if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Example", rows: [1, 2, 3] } } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/", url: "https://example.com/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Example", title: "Example" } }));
 } else if (args.includes("get")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: "visible terminal text" } }));
 } else if (args.includes("#fail")) {
@@ -1203,6 +1355,17 @@ if (args.includes("eval")) {
 			const savedJsonText = await readFile(join(tempDir, "logs/stream-status.json"), "utf8");
 			assert.doesNotThrow(() => JSON.parse(savedJsonText));
 
+			const beforeProtectedOutput = (await readFile(logPath, "utf8")).trim().split("\n").length;
+			const protectedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["get", "title"],
+				outputPath: ".agent-browser/states/overwrite.json",
+			});
+			assert.equal(protectedOutput.isError, true);
+			assert.equal(protectedOutput.details?.failureCategory, "validation-error");
+			assert.match(protectedOutput.content[0]?.text ?? "", /authenticated cookies and storage/);
+			assert.equal((await readFile(logPath, "utf8")).trim().split("\n").length, beforeProtectedOutput);
+			await assert.rejects(readFile(join(tempDir, ".agent-browser/states/overwrite.json"), "utf8"));
+
 			await writeFile(join(tempDir, "blocked-output-parent"), "not a directory");
 			const writeFailureResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["eval", "--stdin"],
@@ -1250,6 +1413,8 @@ if (args.includes("get") && args.includes("url")) {
     fs.writeFileSync(path.resolve(screenshot), "fake image");
   }
   setInterval(() => {}, 1000);
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.test/" } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
 }`,
@@ -1441,6 +1606,32 @@ if (args.includes("get") && args.includes("url")) {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
+
+test("collectTimeoutPartialProgress does not read a title after a local URL", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-timeout-local-page-"));
+	const logPath = join(tempDir, "agent-browser.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const subcommand = args.at(-1);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const data = subcommand === "url"
+  ? { result: "file:///tmp/local-timeout-page.html" }
+  : { result: "SECRET LOCAL TITLE" };
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const progress = await collectTimeoutPartialProgress({ command: "batch", cwd: tempDir, sessionName: "named", stdin: "[]" });
+			assert.equal(progress?.currentPage?.url, "file:///tmp/local-timeout-page.html");
+			assert.equal(progress?.currentPage?.title, undefined);
+			assert.deepEqual((await readInvocationLog(logPath)).map((entry) => entry.args.at(-1)), ["url"]);
+			assert.doesNotMatch(JSON.stringify(progress), /SECRET LOCAL TITLE/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 
 test("collectTimeoutPartialProgress falls back to the planned page URL when live page recovery is unavailable", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
@@ -1711,6 +1902,10 @@ if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Blocked Search", url: "https://blocked.example/" } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://blocked.example/", url: "https://blocked.example/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Blocked Search", title: "Blocked Search" } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Blocked Search", url: "https://blocked.example/" } } }));
 } else if (args.includes("snapshot")) {
@@ -1771,6 +1966,10 @@ if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Repo", url: "https://repo.example/" } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://repo.example/", url: "https://repo.example/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Repo", title: "Repo" } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Repo", url: "https://repo.example/" } } }));
 } else if (args.includes("snapshot")) {

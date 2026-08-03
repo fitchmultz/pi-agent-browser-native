@@ -57,7 +57,7 @@ import {
 	type ElectronLaunchRecord,
 } from "./lib/orchestration/electron-host/index.js";
 import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.js";
-import { applyAgentBrowserOutputPath } from "./lib/orchestration/output-file.js";
+import { applyAgentBrowserOutputPath, getAgentBrowserOutputPathValidationError } from "./lib/orchestration/output-file.js";
 import type { NetworkRouteRecord } from "./lib/results/contracts.js";
 import type { SessionArtifactManifest } from "./lib/results/contracts.js";
 import { isSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
@@ -835,6 +835,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			});
 			if (resolvedInput.status === "invalid") {
 				return buildValidationFailureResult(resolvedInput);
+			}
+			const outputPathValidationError = getAgentBrowserOutputPathValidationError(outputPath, ctx.cwd);
+			if (outputPathValidationError) {
+				return buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: outputPathValidationError });
 			}
 			const { toolArgs } = resolvedInput;
 			const compiledElectron = resolvedInput.kind === "electron" ? resolvedInput.compiledElectron : undefined;

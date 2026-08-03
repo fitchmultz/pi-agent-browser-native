@@ -1,5 +1,57 @@
 export type BatchCommandStep = [string, ...string[]];
 
+export function parseBatchCommandArgument(command: string): { error?: string; step?: BatchCommandStep } {
+	const tokens: string[] = [];
+	let token = "";
+	let tokenStarted = false;
+	let quote: "'" | '"' | undefined;
+	let escaped = false;
+	const finishToken = () => {
+		if (!tokenStarted) return;
+		tokens.push(token);
+		token = "";
+		tokenStarted = false;
+	};
+	for (const character of command) {
+		if (escaped) {
+			token += character;
+			tokenStarted = true;
+			escaped = false;
+			continue;
+		}
+		if (quote === "'") {
+			if (character === "'") quote = undefined;
+			else token += character;
+			tokenStarted = true;
+			continue;
+		}
+		if (character === "\\") {
+			escaped = true;
+			tokenStarted = true;
+			continue;
+		}
+		if (quote === '"') {
+			if (character === '"') quote = undefined;
+			else token += character;
+			tokenStarted = true;
+			continue;
+		}
+		if (character === "'" || character === '"') {
+			quote = character;
+			tokenStarted = true;
+			continue;
+		}
+		if (/\s/u.test(character)) finishToken();
+		else {
+			token += character;
+			tokenStarted = true;
+		}
+	}
+	if (escaped || quote !== undefined) return { error: "batch command has an unterminated escape or quote" };
+	finishToken();
+	return tokens.length > 0 ? { step: tokens as BatchCommandStep } : { error: "batch command is empty" };
+}
+
 function validateUserBatchStep(step: unknown, index: number): { error: string; ok: false } | { ok: true; step: BatchCommandStep } {
 	if (!Array.isArray(step)) {
 		return {

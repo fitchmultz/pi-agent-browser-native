@@ -1631,11 +1631,13 @@ if (args.includes("tab") && args.includes("list")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 3);
+			assert.equal(invocations.length, 5);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
 			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "t1"]);
 			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "eval", "--stdin"]);
 			assert.equal(invocations[2]?.stdin, "document.title");
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "get", "title"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1792,7 +1794,7 @@ if (args.includes("batch")) {
 	}
 });
 
-test("agentBrowserExtension rejects malformed resumed explicit-session batch stdin before user batch execution", { concurrency: false }, async () => {
+test("agentBrowserExtension rejects malformed resumed explicit-session batch stdin before tab planning or execution", { concurrency: false }, async () => {
 	const scenarios = [
 		{
 			name: "invalid JSON",
@@ -1864,8 +1866,7 @@ if (args.includes("batch")) {
 				assert.match(String(batchResult.details?.validationError ?? ""), scenario.errorPattern, scenario.name);
 
 				const invocations = await readInvocationLog(logPath);
-				assert.equal(invocations.length, 1, scenario.name);
-				assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"], scenario.name);
+				assert.equal(invocations.length, 0, scenario.name);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });

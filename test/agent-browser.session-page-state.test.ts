@@ -12,6 +12,7 @@ import test from "node:test";
 import {
 	SessionPageState,
 	buildNoActivePageRefSnapshotInvalidation,
+	deriveSessionTabTarget,
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
 	extractSessionTabTargetFromCommandData,
@@ -83,6 +84,20 @@ test("SessionPageState.fromBranch clears restored page state on upstream close a
 	}
 });
 
+test("SessionPageState restores unverified page transitions", () => {
+	const restored = SessionPageState.fromBranch([
+		toolEntry({ command: "snapshot", refSnapshot: { refIds: ["e1"] }, sessionName: "s1", sessionTabTarget: { url: "https://example.com/" } }),
+		toolEntry({ command: "connect", refSnapshot: { refIds: ["stale"] }, sessionName: "s1", sessionTabTarget: { url: "https://stale.example/" }, sessionTabTargetUnknown: true }),
+	]);
+	assert.deepEqual(restored.get("s1"), {
+		pinningReason: undefined,
+		refSnapshot: undefined,
+		refSnapshotInvalidation: undefined,
+		tabTargetUnknown: true,
+		tabTarget: undefined,
+	});
+});
+
 test("SessionPageState clears tab targets, refs, invalidations, and pinning together", () => {
 	const state = new SessionPageState();
 	const update = state.beginUpdate();
@@ -117,6 +132,26 @@ test("SessionPageState rejects stale tab and ref updates after a newer token", (
 	assert.equal(staleRefs.stale, true);
 	assert.deepEqual(staleRefs.refSnapshot?.refIds, ["e2"]);
 	assert.equal(staleRefs.refSnapshotInvalidation, undefined);
+	assert.equal(state.markTabTargetUnknown({ sessionName: "s1", update: older }).applied, false);
+	const unknown = state.markTabTargetUnknown({ sessionName: "s1", update: state.beginUpdate() });
+	assert.equal(unknown.applied, true);
+	assert.equal(unknown.tabTarget, undefined);
+	assert.equal(unknown.tabTargetUnknown, true);
+	assert.equal(unknown.refSnapshot, undefined);
+	const observed = state.applyTabTarget({ sessionName: "s1", target: { url: "https://observed.example/" }, update: state.beginUpdate() });
+	assert.equal(observed.tabTargetUnknown, undefined);
+	assert.deepEqual(observed.tabTarget, { url: "https://observed.example/" });
+});
+
+test("deriveSessionTabTarget discards stale targets after unobserved history navigation", () => {
+	const previousTarget = { url: "https://before.example/" };
+	for (const command of ["back", "connect", "forward", "reload"]) {
+		assert.equal(deriveSessionTabTarget({ command, data: {}, previousTarget }), undefined);
+	}
+	assert.equal(deriveSessionTabTarget({ command: "state", data: {}, previousTarget, subcommand: "load" }), undefined);
+	assert.equal(deriveSessionTabTarget({ command: "tab", data: {}, previousTarget, subcommand: "t2" }), undefined);
+	assert.deepEqual(deriveSessionTabTarget({ command: "back", data: {}, navigationSummary: { url: "https://after.example/" }, previousTarget }), { title: undefined, url: "https://after.example/" });
+	assert.deepEqual(deriveSessionTabTarget({ command: "click", data: {}, previousTarget }), previousTarget);
 });
 
 test("extractRefSnapshotFromData preserves editable evidence from snapshot text", () => {
@@ -131,6 +166,7 @@ test("extractRefSnapshotFromData preserves editable evidence from snapshot text"
 });
 
 test("read fetch metadata does not replace the active browser tab target", () => {
+	assert.deepEqual(extractSessionTabTargetFromCommandData(["get", "url"], { result: "https://active.example/" }), { title: undefined, url: "https://active.example/" });
 	assert.equal(
 		extractSessionTabTargetFromCommandData(["read", "https://docs.example.com"], {
 			finalUrl: "https://docs.example.com/index.md",
