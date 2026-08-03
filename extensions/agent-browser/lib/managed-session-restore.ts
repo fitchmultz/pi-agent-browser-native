@@ -100,8 +100,8 @@ export class ManagedSessionRestoreState {
 		if (sessionName) this.#daemonRestoreKeys.set(getAgentBrowserSessionIdentityKey(sessionName, namespace), restoreKey);
 	}
 
-	replace(identities: ManagedSessionRestoreIdentity[]): void {
-		this.#daemonRestoreKeys.clear();
+	replace(identities: ManagedSessionRestoreIdentity[], options: { preserveDaemonRestoreKeys?: boolean } = {}): void {
+		if (!options.preserveDaemonRestoreKeys) this.#daemonRestoreKeys.clear();
 		this.#disabled.clear();
 		for (const identity of identities) this.disable(identity.sessionName, identity.namespace);
 	}

@@ -29,12 +29,13 @@ import {
 	canonicalizeOwnedManagedSessionCloseArgs,
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
-import { acquireManagedSessionPolicyLock, type ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
+import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import {
 	getManagedSessionStateAccessValidationError,
 	getManagedSessionTargetAccessValidationError,
 } from "../../managed-session-state-policy.js";
 import {
+	acquireOwnedManagedSessionDaemonPolicy,
 	applyOpenResultTabCorrection,
 	buildManagedSessionOutcome,
 	buildPinnedBatchPlan,
@@ -46,7 +47,6 @@ import {
 	collectSessionTabSelection,
 	getGuardedRefUsage,
 	getTraceOwnerGuardMessage,
-	inspectManagedSessionDaemon,
 	runSessionCommandData,
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
@@ -473,20 +473,20 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined);
 	if (!executionPlan.validationError && managedSessionTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedSessionTargetError };
 	if (!executionPlan.validationError && ownedManagedSession) {
-		managedSessionPolicyLock = await acquireManagedSessionPolicyLock({
-			namespace: ownedManagedSession.namespace,
-			sessionName: ownedManagedSession.sessionName,
+		const closeCommand = isCloseCommand(executionPlan.commandInfo.command);
+		const policy = await acquireOwnedManagedSessionDaemonPolicy({
+			context: ownedManagedSession,
+			mode: closeCommand ? "close" : "reuse",
 			signal,
 		});
-		if (!managedSessionPolicyLock) {
-			if (!signal?.aborted) {
-				executionPlan = {
-					...executionPlan,
-					recoveryHint: undefined,
-					validationError: "Managed-session policy coordination is unavailable or busy. Retry after the current operation finishes, repair the private policy-lock directory, and on POSIX verify that /bin/ps or /usr/bin/ps is available.",
-				};
-			}
-		} else if (isCloseCommand(executionPlan.commandInfo.command)) {
+		managedSessionPolicyLock = policy.lock;
+		if (policy.error) {
+			executionPlan = {
+				...executionPlan,
+				recoveryHint: undefined,
+				validationError: policy.error,
+			};
+		} else if (closeCommand && managedSessionPolicyLock) {
 			executionPlan = {
 				...executionPlan,
 				effectiveArgs: canonicalizeOwnedManagedSessionCloseArgs({
@@ -496,47 +496,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					restoreState: state.managedSessionRestoreState,
 				}, true),
 			};
-			const daemon = await inspectManagedSessionDaemon({
-				allowManagedSessionTarget: true,
-				cwd: ownedManagedSession.cwd ?? cwd,
-				namespace: ownedManagedSession.namespace,
-				sessionName: ownedManagedSession.sessionName,
-				signal,
-			});
-			if (daemon.status === "active") {
-				state.managedSessionRestoreState.recordDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace, daemon.restoreKey);
-			}
-		} else {
-			const stickyDisabled = state.managedSessionRestoreState.isDisabled(ownedManagedSession.sessionName, ownedManagedSession.namespace);
-			const hasKnownDaemonRestoreKey = state.managedSessionRestoreState.hasDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace);
-			const knownDaemonRestoreKey = state.managedSessionRestoreState.getDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace);
-			const requestedDaemonRestoreKey = ownedManagedSession.restoreDecision === "enabled" && stickyDisabled
-				? knownDaemonRestoreKey ?? null
-				: ownedManagedSession.expectedDaemonRestoreKey;
-			const daemon = await inspectManagedSessionDaemon({
-				allowManagedSessionTarget: true,
-				cwd: ownedManagedSession.cwd ?? cwd,
-				namespace: ownedManagedSession.namespace,
-				sessionName: ownedManagedSession.sessionName,
-				signal,
-			});
-			const restoreDisabledPolicyNeedsProvenance = stickyDisabled || ownedManagedSession.restoreDecision !== "enabled";
-			const activePolicyMatches = daemon.status === "active"
-				&& (!restoreDisabledPolicyNeedsProvenance || hasKnownDaemonRestoreKey)
-				&& daemon.restoreKey === requestedDaemonRestoreKey;
-			if (activePolicyMatches) {
-				state.managedSessionRestoreState.recordDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace, daemon.restoreKey);
-			}
-			if (!["inactive", "missing-binary"].includes(daemon.status) && !activePolicyMatches) {
-				executionPlan = {
-					...executionPlan,
-					recoveryHint: undefined,
-					validationError: [
-						"This wrapper-owned session's live daemon does not match the requested managed-restore policy.",
-						"Close that session first, retry with sessionMode: \"fresh\", or use a distinct explicit --session.",
-					].join(" "),
-				};
-			}
 		}
 	}
 		return await withOwnedManagedSessionContext(ownedManagedSession, async () => {

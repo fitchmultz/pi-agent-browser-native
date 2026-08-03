@@ -252,6 +252,7 @@ test("buildToolPresentation hides managed restore capabilities and state-list ro
 		},
 	});
 	const listSerialized = JSON.stringify(list);
+	assert.equal(list.summary, "States: 1");
 	assert.match((list.content[0] as { text: string }).text, /caller-owned\.json/);
 	assert.doesNotMatch(listSerialized, /piab-r2-|private\.example|managed\.json/);
 

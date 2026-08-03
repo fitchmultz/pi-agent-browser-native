@@ -167,11 +167,11 @@ Read-only inspection of one or more tracked launches. Without `launchId` or `all
 { "electron": { "action": "status", "all": true } }
 ```
 
-Reports `cleanupState`, debug-port and PID liveness, and bounded CDP target metadata under `details.electron.statuses`. Mismatch fields surface when the current managed session or tab no longer matches a live wrapper launch target — typically the cue to follow `reattach-electron-launch` before trusting old refs.
+Reports `cleanupState`, debug-port and PID liveness, and bounded CDP target metadata under `details.electron.statuses`. Its managed-session title/URL reads hold the normal daemon-policy lock and owned restore context. Mismatch fields surface when the current managed session or tab no longer matches a live wrapper launch target — typically the cue to follow `reattach-electron-launch` before trusting old refs.
 
 ### `electron.probe` — compact state read
 
-`probe` collapses what would otherwise be separate `get title` / `get url` / focused-element `eval` / `tab list` / `snapshot -i` calls into one bounded result. Use it instead of chaining those reads when you just need a quick "where are we?" check.
+`probe` collapses what would otherwise be separate `get title` / `get url` / focused-element `eval` / `tab list` / `snapshot -i` calls into one bounded result. Use it instead of chaining those reads when you just need a quick "where are we?" check. The wrapper holds the managed-session daemon-policy lock for the probe and runs every underlying read with the session's owned restore decision, so probing cannot restart the daemon under a different restore key.
 
 ```json
 { "electron": { "action": "probe" } }

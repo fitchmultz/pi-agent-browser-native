@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
-import { acquireManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
+import { acquireManagedSessionPolicyLock, type ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { runAgentBrowserProcess } from "../../process.js";
 import { buildAgentBrowserNextActions, getAgentBrowserErrorText, parseAgentBrowserEnvelope, type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results.js";
@@ -27,6 +27,7 @@ import {
 } from "../../command-taxonomy.js";
 import {
 	type ManagedSessionRestoreState,
+	type OwnedManagedSessionContext,
 	pruneOwnedManagedSessionRestoreSnapshots,
 } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
@@ -630,6 +631,69 @@ export async function inspectManagedSessionDaemon(options: {
 		return data.runtime.restoreKey === null ? { restoreKey: null, status: "active" } : { status: "unknown" };
 	} finally {
 		if (processResult.stdoutSpillPath) await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
+	}
+}
+
+export async function acquireOwnedManagedSessionDaemonPolicy(options: {
+	context: OwnedManagedSessionContext;
+	mode?: "close" | "reuse";
+	signal?: AbortSignal;
+}): Promise<{ error?: string; lock?: ManagedSessionPolicyLock }> {
+	const { context, signal } = options;
+	if (!context.cwd) return { error: "Managed-session policy validation requires the wrapper-owned session cwd." };
+	const lock = await acquireManagedSessionPolicyLock({
+		namespace: context.namespace,
+		sessionName: context.sessionName,
+		signal,
+	});
+	if (!lock) {
+		return signal?.aborted
+			? {}
+			: {
+				error: "Managed-session policy coordination is unavailable or busy. Retry after the current operation finishes, repair the private policy-lock directory, and on POSIX verify that /bin/ps or /usr/bin/ps is available.",
+			};
+	}
+
+	try {
+		const daemon = await inspectManagedSessionDaemon({
+			allowManagedSessionTarget: true,
+			cwd: context.cwd,
+			namespace: context.namespace,
+			sessionName: context.sessionName,
+			signal,
+		});
+		if (options.mode === "close") {
+			if (daemon.status === "active") {
+				context.restoreState.recordDaemonRestoreKey(context.sessionName, context.namespace, daemon.restoreKey);
+			}
+			return { lock };
+		}
+
+		const stickyDisabled = context.restoreState.isDisabled(context.sessionName, context.namespace);
+		const hasKnownDaemonRestoreKey = context.restoreState.hasDaemonRestoreKey(context.sessionName, context.namespace);
+		const knownDaemonRestoreKey = context.restoreState.getDaemonRestoreKey(context.sessionName, context.namespace);
+		const requestedDaemonRestoreKey = context.restoreDecision === "enabled" && stickyDisabled
+			? knownDaemonRestoreKey ?? null
+			: context.expectedDaemonRestoreKey;
+		const restoreDisabledPolicyNeedsProvenance = stickyDisabled || context.restoreDecision !== "enabled";
+		const activePolicyMatches = daemon.status === "active"
+			&& (!restoreDisabledPolicyNeedsProvenance || hasKnownDaemonRestoreKey)
+			&& daemon.restoreKey === requestedDaemonRestoreKey;
+		if (activePolicyMatches) {
+			context.restoreState.recordDaemonRestoreKey(context.sessionName, context.namespace, daemon.restoreKey);
+		}
+		return !["inactive", "missing-binary"].includes(daemon.status) && !activePolicyMatches
+			? {
+				error: [
+					"This wrapper-owned session's live daemon does not match the requested managed-restore policy.",
+					"Close that session first, retry with sessionMode: \"fresh\", or use a distinct explicit --session.",
+				].join(" "),
+				lock,
+			}
+			: { lock };
+	} catch (error) {
+		await lock.release();
+		throw error;
 	}
 }
 

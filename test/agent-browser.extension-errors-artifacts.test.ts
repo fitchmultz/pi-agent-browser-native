@@ -619,6 +619,9 @@ if (args.includes("session") && args.includes("info")) {
 				assert.equal(opened.isError, false, JSON.stringify(opened));
 				assert.equal(opened.details?.managedSessionRestoreDisabled, true);
 				const sessionName = opened.details?.sessionName;
+				const branch = [{ type: "message", message: { details: opened.details, isError: false, toolName: "agent_browser" } }];
+				harness.setBranch(branch);
+				await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "restore-disabled", oldLeafId: null }, harness.ctx);
 
 				const followedUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
 				assert.equal(followedUp.isError, false, JSON.stringify(followedUp));
@@ -630,6 +633,15 @@ if (args.includes("session") && args.includes("info")) {
 					(invocations.at(-1) as { restore?: string } | undefined)?.restore,
 					"AGENT_BROWSER_RESTORE" in testCase.env ? testCase.env.AGENT_BROWSER_RESTORE : undefined,
 				);
+
+				if (testCase.name === "documented restore opt-out") {
+					const resumed = createExtensionHarness({ cwd: tempDir });
+					resumed.setBranch(branch);
+					await runExtensionEvent(resumed.handlers, "session_start", { reason: "resume" }, resumed.ctx);
+					const blockedAfterReload = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["get", "url"] });
+					assert.equal(blockedAfterReload.isError, true, JSON.stringify(blockedAfterReload));
+					assert.match(String(blockedAfterReload.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+				}
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });

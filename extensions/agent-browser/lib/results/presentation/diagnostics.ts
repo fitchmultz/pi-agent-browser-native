@@ -198,7 +198,12 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 
 	if (commandInfo.command === "state") {
 		const states = getArrayField(data, "states") ?? getArrayField(data, "files");
-		if (states) return `States: ${states.length}`;
+		if (states) {
+			const visibleStates = commandInfo.subcommand === "list"
+				? states.filter((item) => !containsManagedStateCapability(item))
+				: states;
+			return `States: ${visibleStates.length}`;
+		}
 		if (commandInfo.subcommand === "load") return undefined;
 		const stateName = getStringField(data, "name") ?? getStringField(data, "file") ?? getStringField(data, "filename") ?? getStringField(data, "path") ?? commandInfo.subcommand;
 		if (stateName) return `State ${commandInfo.subcommand ?? "result"}: ${stateName}`;

@@ -60,6 +60,21 @@ test("managed restore sticky state is isolated per extension instance", () => {
 	assert.equal(first.isDisabled("piab-session", "team"), false);
 });
 
+test("branch restore can preserve current-process daemon provenance without persisting it across reload", () => {
+	const state = new ManagedSessionRestoreState();
+	state.recordDaemonRestoreKey("piab-current", "team", null);
+	state.recordDaemonRestoreKey("piab-off-branch", undefined, "caller-key");
+	state.replace([{ namespace: "team", sessionName: "piab-current" }], { preserveDaemonRestoreKeys: true });
+	assert.equal(state.isDisabled("piab-current", "team"), true);
+	assert.equal(state.hasDaemonRestoreKey("piab-current", "team"), true);
+	assert.equal(state.getDaemonRestoreKey("piab-current", "team"), null);
+	assert.equal(state.getDaemonRestoreKey("piab-off-branch"), "caller-key");
+
+	state.replace([{ namespace: "team", sessionName: "piab-current" }]);
+	assert.equal(state.hasDaemonRestoreKey("piab-current", "team"), false);
+	assert.equal(state.hasDaemonRestoreKey("piab-off-branch"), false);
+});
+
 test("owned managed subprocesses pin canonical and default namespaces", async () => {
 	const restoreState = new ManagedSessionRestoreState();
 	const base = {

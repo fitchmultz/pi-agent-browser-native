@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,7 @@ import test from "node:test";
 
 import { Check } from "typebox/value";
 
+import { createManagedSessionRestoreKey } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getSessionPageStateKey, SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import {
 	createExtensionHarness,
@@ -283,6 +285,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			const statusInvocations = await readInvocationLog(upstreamLogPath);
 			assert.equal(statusInvocations.length, 2);
 			assert.equal(statusInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
+			assert.equal(statusInvocations.every((entry) => (entry as { restore?: string | null }).restore === null), true);
 
 			await rm(upstreamLogPath, { force: true });
 			const probeResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, () =>
@@ -312,6 +315,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			const probeInvocations = await readInvocationLog(upstreamLogPath);
 			assert.deepEqual(probeInvocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
 			assert.equal(probeInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
+			assert.equal(probeInvocations.every((entry) => (entry as { restore?: string | null }).restore === null), true);
 
 			harness.setBranch([{ type: "message", message: { details: { ...launchResult.details, namespace: "team" }, isError: false, toolName: "agent_browser" } }]);
 			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "namespaced", oldLeafId: null }, harness.ctx);
@@ -341,6 +345,40 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			await assert.rejects(stat(launchDetails.electron.launch.userDataDir));
 			const finalInvocations = await readInvocationLog(upstreamLogPath);
 			assert.equal(finalInvocations.some((entry) => entry.args.at(-1) === "close"), true);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension applies managed restore policy to every current-session electron.probe helper", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-restore-"));
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const basePath = process.env.PATH ?? "";
+	execFileSync("git", ["init", "-q", tempDir], { stdio: "ignore" });
+	await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
+	try {
+		await withPatchedEnv({
+			ALL_PROXY: undefined,
+			HTTP_PROXY: undefined,
+			HTTPS_PROXY: undefined,
+			HOME: tempDir,
+			PATH: `${tempDir}:${basePath}`,
+			all_proxy: undefined,
+			http_proxy: undefined,
+			https_proxy: undefined,
+		}, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"] });
+			assert.equal(opened.isError, false, JSON.stringify(opened));
+			await rm(upstreamLogPath, { force: true });
+
+			const probe = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe" } });
+			assert.equal(probe.isError, false, JSON.stringify(probe));
+			const invocations = await readInvocationLog(upstreamLogPath) as Array<{ args: string[]; restore?: string | null }>;
+			assert.deepEqual(invocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
+			assert.equal(invocations.every((entry) => entry.restore === createManagedSessionRestoreKey(tempDir)), true);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -643,7 +681,7 @@ setTimeout(() => {
 			]);
 
 			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 25 } });
-			assert.equal(probeResult.isError, false);
+			assert.equal(probeResult.isError, false, JSON.stringify(probeResult));
 			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 25 });
 			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "partial");
 			assert.match(probeResult.content[0]?.text ?? "", /Some probe commands did not return data/);

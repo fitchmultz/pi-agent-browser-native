@@ -11,7 +11,11 @@ import { discoverElectronApps, type ElectronDiscoveryResult } from "../../electr
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { boundElectronProbeString } from "../../electron/text.js";
 import type { CompiledAgentBrowserElectron } from "../../input-modes.js";
-import type { ManagedSessionRestoreState } from "../../managed-session-restore.js";
+import {
+	buildOwnedManagedSessionRestoreContext,
+	type ManagedSessionRestoreState,
+	withOwnedManagedSessionContext,
+} from "../../managed-session-restore.js";
 import { isRecord } from "../../parsing.js";
 import { buildAgentBrowserNextActions, buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { appendUniqueAgentBrowserNextActions } from "../../results/next-actions.js";
@@ -20,6 +24,7 @@ import { redactSensitiveText } from "../../runtime.js";
 import { collectElectronManagedSessionTarget } from "../browser-run/diagnostics.js";
 import { buildElectronHostFailureResult, formatElectronTargetLines, redactToolDetails } from "../browser-run/final-result.js";
 import {
+	acquireOwnedManagedSessionDaemonPolicy,
 	buildElectronIdentifiers,
 	buildElectronMismatchNextActions,
 	buildElectronSessionMismatch,
@@ -477,6 +482,57 @@ function getElectronProbeSummary(probe: Omit<ElectronProbeResult, "summary">): s
 	return parts.length > 0 ? `Electron probe collected ${parts.join(", ")}.` : "Electron probe did not return current session state.";
 }
 
+async function withOwnedElectronManagedSessionPolicy<T>(options: {
+	args: string[];
+	cwd: string;
+	namespace?: string;
+	restoreState: ManagedSessionRestoreState;
+	sessionName: string;
+	signal?: AbortSignal;
+}, run: () => Promise<T>): Promise<T> {
+	const context = buildOwnedManagedSessionRestoreContext({
+		args: ["--session", options.sessionName, ...options.args],
+		cwd: options.cwd,
+		managedSessionName: options.sessionName,
+		namespace: options.namespace,
+		restoreState: options.restoreState,
+	});
+	if (!context) throw new Error("Electron helper could not establish wrapper ownership for its managed session.");
+	const policy = await acquireOwnedManagedSessionDaemonPolicy({ context, signal: options.signal });
+	try {
+		if (policy.error) throw new Error(policy.error);
+		if (!policy.lock) throw new Error(options.signal?.aborted ? "Electron helper was aborted." : "Electron helper could not acquire managed-session policy coordination.");
+		return await withOwnedManagedSessionContext(context, run);
+	} finally {
+		await policy.lock?.release();
+	}
+}
+
+async function collectOwnedElectronManagedSessionTarget(options: {
+	cwd: string;
+	namespace?: string;
+	restoreState: ManagedSessionRestoreState;
+	sessionName: string;
+	signal?: AbortSignal;
+	timeoutMs?: number;
+}): Promise<ElectronManagedSessionTarget> {
+	try {
+		return await withOwnedElectronManagedSessionPolicy(
+			{ ...options, args: ["get", "url"] },
+			async () => await collectElectronManagedSessionTarget({
+				allowManagedSessionTarget: true,
+				cwd: options.cwd,
+				namespace: options.namespace,
+				sessionName: options.sessionName,
+				signal: options.signal,
+				timeoutMs: options.timeoutMs,
+			}),
+		) ?? { sessionName: options.sessionName };
+	} catch (error) {
+		return { error: error instanceof Error ? error.message : String(error), sessionName: options.sessionName };
+	}
+}
+
 async function runElectronProbeCommandData(options: {
 	args: string[];
 	cwd: string;
@@ -747,13 +803,15 @@ export async function handleElectronHostInput(options: {
 		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
 		const records = selection.records ?? [];
 		const statuses = await Promise.all(records.map((record) => inspectElectronLaunchStatus(record)));
-		const managedSessions = (await Promise.all(records.map((record) => collectElectronManagedSessionTarget({
-			allowManagedSessionTarget: true,
-			cwd,
-			sessionName: record.sessionName,
-			signal,
-			timeoutMs: compiledElectron.timeoutMs,
-		})))).filter((managedSession): managedSession is ElectronManagedSessionTarget => managedSession !== undefined);
+		const managedSessions = await Promise.all(records
+			.filter((record): record is ElectronLaunchRecord & { sessionName: string } => typeof record.sessionName === "string")
+			.map((record) => collectOwnedElectronManagedSessionTarget({
+				cwd,
+				restoreState: managedSessionRestoreState,
+				sessionName: record.sessionName,
+				signal,
+				timeoutMs: compiledElectron.timeoutMs,
+			})));
 		const mismatches = managedSessions
 			.map((managedSession) => {
 				const record = records.find((candidate) => candidate.sessionName === managedSession.sessionName);
@@ -802,10 +860,23 @@ export async function handleElectronHostInput(options: {
 				failureCategory: "validation-error",
 			});
 		}
+		let probeFailureCategory: "upstream-error" | "validation-error" = "upstream-error";
 		try {
 			const status = launchRecord ? await inspectElectronLaunchStatus(launchRecord) : undefined;
 			const probeNamespace = compiledElectron.launchId ? undefined : managedSessionNamespace;
-			const probe = await collectElectronProbe({ cwd, namespace: probeNamespace, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs });
+			probeFailureCategory = "validation-error";
+			const probe = await withOwnedElectronManagedSessionPolicy(
+				{
+					args: ["snapshot", "-i"],
+					cwd,
+					namespace: probeNamespace,
+					restoreState: managedSessionRestoreState,
+					sessionName: probeSessionName,
+					signal,
+				},
+				async () => await collectElectronProbe({ cwd, namespace: probeNamespace, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs }),
+			);
+			probeFailureCategory = "upstream-error";
 			const managedSession: ElectronManagedSessionTarget = {
 				sessionName: probe.sessionName,
 				title: probe.title ?? probe.activeTab?.title,
@@ -857,7 +928,7 @@ export async function handleElectronHostInput(options: {
 			return buildElectronHostFailureResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,
 				errorText: `Electron probe failed: ${errorText}`,
-				failureCategory: "upstream-error",
+				failureCategory: probeFailureCategory,
 			});
 		}
 	}

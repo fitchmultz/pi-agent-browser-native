@@ -622,7 +622,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		const branch = ctx.sessionManager.getBranch();
 		const branchResourceEvents = collectBranchManagedResourceEvents(branch);
 		const restoredState = restoreManagedSessionStateFromBranch(branch, managedSessionBaseName);
-		managedSessionRestoreState.replace(restoredState.managedSessionRestoreDisabledIdentities);
+		managedSessionRestoreState.replace(restoredState.managedSessionRestoreDisabledIdentities, {
+			preserveDaemonRestoreKeys: !options.resetRuntimeOwnership,
+		});
 		managedSessionActive = restoredState.active;
 		const restoredFreshSessionOrdinal = options.resetRuntimeOwnership
 			? restoredState.freshSessionOrdinal
