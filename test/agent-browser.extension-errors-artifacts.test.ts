@@ -786,6 +786,58 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
+test("agentBrowserExtension preserves artifacts from overlapping caller-owned sessions", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-artifact-concurrent-"));
+	const startedPath = join(tempDir, "slow-started");
+	const slowPath = join(tempDir, "slow.png");
+	const fastPath = join(tempDir, "fast.png");
+	const finalPath = join(tempDir, "final.png");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const sessionIndex = args.indexOf("--session");
+const session = sessionIndex >= 0 ? args[sessionIndex + 1] : "default";
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/", url: "https://example.com/" } }));
+} else if (args.includes("screenshot")) {
+  if (session === "slow") {
+    fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+  const outputPath = args.at(-1);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, Buffer.from("89504e470d0a1a0a", "hex"));
+  process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.com/" } }));
+}`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const slowScreenshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "slow", "screenshot", slowPath] });
+			for (let attempt = 0; attempt < 3_000; attempt += 1) {
+				try { await access(startedPath); break; } catch {
+					if (attempt === 2_999) assert.fail("slow caller-owned screenshot did not start");
+					await new Promise((resolve) => setTimeout(resolve, 5));
+				}
+			}
+			const fastScreenshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "fast", "screenshot", fastPath] });
+			const concurrentResults = await Promise.all([slowScreenshot, fastScreenshot]);
+			assert.equal(concurrentResults.every((result) => result.isError === false), true, JSON.stringify(concurrentResults));
+
+			const finalScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "final", "screenshot", finalPath] });
+			assert.equal(finalScreenshot.isError, false, JSON.stringify(finalScreenshot));
+			const entries = (finalScreenshot.details?.artifactManifest as { entries?: Array<{ absolutePath?: string; path: string }> } | undefined)?.entries ?? [];
+			assert.deepEqual(new Set(entries.map((entry) => entry.absolutePath ?? entry.path)), new Set([slowPath, fastPath, finalPath]));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects an externally replaced restore-disabled daemon", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-disabled-restore-restart-"));
 	initializeGitProject(tempDir);

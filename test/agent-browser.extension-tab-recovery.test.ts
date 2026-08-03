@@ -648,6 +648,42 @@ if (args.includes("https://example.com/slow")) {
 });
 
 
+test("agentBrowserExtension propagates caller aborts during live page verification", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-live-page-abort-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("get") && args.includes("url")) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/" } }));
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.com/" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { snapshot: "SHOULD NOT RUN" } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const controller = new AbortController();
+			const snapshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "snapshot", "-i"] }, controller.signal);
+			await waitForInvocation(logPath, (entry) => entry.args.includes("get") && entry.args.includes("url"));
+			controller.abort(new Error("caller cancelled"));
+			await assert.rejects(snapshot, /caller cancelled/);
+
+			const reopened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "open", "https://example.com/"] });
+			assert.equal(reopened.isError, false, JSON.stringify(reopened));
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("snapshot")), false);
+			assert.equal(invocations.some((entry) => entry.args.includes("open")), true);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension re-selects the intended tab after a successful command when focus drifts afterward", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");

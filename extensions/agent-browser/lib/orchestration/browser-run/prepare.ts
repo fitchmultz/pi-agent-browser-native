@@ -553,7 +553,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					throwOnFailure: true,
 				});
 				liveUrl = extractStringResultField(liveUrlData, "result") ?? extractStringResultField(liveUrlData, "url");
-			} catch {}
+			} catch (error) {
+				if (signal?.aborted) throw signal.reason ?? error;
+			}
 			if (liveUrl === undefined) {
 				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: options.requirement };
 				return;

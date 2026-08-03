@@ -58,9 +58,8 @@ import {
 } from "./lib/orchestration/electron-host/index.js";
 import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.js";
 import { applyAgentBrowserOutputPath, getAgentBrowserOutputPathValidationError } from "./lib/orchestration/output-file.js";
-import type { NetworkRouteRecord } from "./lib/results/contracts.js";
-import type { SessionArtifactManifest } from "./lib/results/contracts.js";
-import { isSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
+import type { NetworkRouteRecord, SessionArtifactManifest } from "./lib/results/contracts.js";
+import { getSessionArtifactManifestEntryKey, isSessionArtifactManifest, mergeSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
 import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
 import { createAgentBrowserWebSearchTool } from "./lib/web-search.js";
 import {
@@ -554,6 +553,31 @@ class KeyedAsyncExecutionQueue {
 	}
 }
 
+function mergeBrowserRunMap<K, V>(current: Map<K, V>, initial: Map<K, V>, updated: Map<K, V>): Map<K, V> {
+	if (updated === initial) return current;
+	const merged = new Map(current);
+	for (const [key, value] of updated) {
+		if (!initial.has(key) || initial.get(key) !== value) merged.set(key, value);
+	}
+	for (const key of initial.keys()) {
+		if (!updated.has(key)) merged.delete(key);
+	}
+	return merged;
+}
+
+function mergeBrowserRunArtifactManifest(
+	current: SessionArtifactManifest | undefined,
+	initial: SessionArtifactManifest | undefined,
+	updated: SessionArtifactManifest | undefined,
+): SessionArtifactManifest | undefined {
+	if (!updated || updated === initial) return current;
+	const initialEntries = new Map((initial?.entries ?? []).map((entry) => [getSessionArtifactManifestEntryKey(entry), entry]));
+	const changedEntries = updated.entries.filter((entry) => initialEntries.get(getSessionArtifactManifestEntryKey(entry)) !== entry);
+	return changedEntries.length === 0
+		? current
+		: mergeSessionArtifactManifest({ base: current, entries: changedEntries, nowMs: Math.max(current?.updatedAtMs ?? 0, updated.updatedAtMs) });
+}
+
 function findPackageRoot(startDir: string): string {
 	let currentDir = startDir;
 	while (true) {
@@ -951,6 +975,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					sessionPageState,
 					traceOwners,
 				};
+				const initialAllowedDomainsBySession = browserRunState.allowedDomainsBySession;
+				const initialArtifactManifest = browserRunState.artifactManifest;
+				const initialNetworkRoutesBySession = browserRunState.networkRoutesBySession;
 				const result = await runAgentBrowserTool({
 					ctx,
 					cwd: ctx.cwd,
@@ -968,9 +995,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				});
 				const branchStateStillCurrent = generationAtStart === branchStateGeneration;
 				if (serializeBrowserCommand || branchStateStillCurrent) {
-					allowedDomainsBySession = browserRunState.allowedDomainsBySession;
-					networkRoutesBySession = browserRunState.networkRoutesBySession;
-					artifactManifest = browserRunState.artifactManifest;
+					allowedDomainsBySession = mergeBrowserRunMap(allowedDomainsBySession, initialAllowedDomainsBySession, browserRunState.allowedDomainsBySession);
+					networkRoutesBySession = mergeBrowserRunMap(networkRoutesBySession, initialNetworkRoutesBySession, browserRunState.networkRoutesBySession);
+					artifactManifest = mergeBrowserRunArtifactManifest(artifactManifest, initialArtifactManifest, browserRunState.artifactManifest);
 					freshSessionOrdinal = Math.max(freshSessionOrdinal, browserRunState.freshSessionOrdinal);
 					managedSessionActive = browserRunState.managedSessionActive;
 					managedSessionCwd = browserRunState.managedSessionCwd;
