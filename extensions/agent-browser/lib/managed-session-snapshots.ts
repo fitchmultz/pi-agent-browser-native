@@ -16,6 +16,7 @@ import {
 	getManagedRestoreSessionsDirectory,
 	hasManagedSessionRestoreProjectIdentity,
 	isManagedSessionRestoreKey,
+	resolveManagedSessionRestoreCheckoutRoot,
 	resolveManagedSessionRestoreHome,
 } from "./managed-session-storage.js";
 
@@ -23,6 +24,7 @@ const OWNED_RESTORE_SNAPSHOT_FAMILIES_TO_KEEP = 2;
 const OWNED_RESTORE_SNAPSHOT_MAX_RECORDS = 256;
 const OWNED_RESTORE_SNAPSHOT_RECORD_MAX_BYTES = 16 * 1_024;
 const OWNED_RESTORE_SNAPSHOT_MANIFEST_PREFIX = ".pi-agent-browser-owned-snapshots-v2";
+const OWNED_RESTORE_SNAPSHOT_LINEAGE_DIRECTORY = ".checkout-lineage-v1";
 const OWNED_RESTORE_SNAPSHOT_TEMP_MAX_AGE_MS = 30_000;
 const OWNED_RESTORE_SNAPSHOT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 
@@ -73,6 +75,54 @@ function ensureManifestDirectory(path: string, platform: NodeJS.Platform): boole
 	} catch {
 		return false;
 	}
+}
+
+function getCheckoutLineageHash(cwd: string, platform: NodeJS.Platform): string | undefined {
+	const checkoutRoot = resolveManagedSessionRestoreCheckoutRoot(cwd, platform);
+	if (!checkoutRoot) return undefined;
+	const normalizedRoot = platform === "win32" ? checkoutRoot.toLowerCase() : checkoutRoot;
+	return createHash("sha256").update(`managed-snapshot-lineage-v1:${platform}:${normalizedRoot}`).digest("hex");
+}
+
+function manifestHasLineage(directory: string, lineage: string, platform: NodeJS.Platform): boolean {
+	const lineageDirectory = join(directory, OWNED_RESTORE_SNAPSHOT_LINEAGE_DIRECTORY);
+	try {
+		const directoryEntry = lstatSync(lineageDirectory);
+		if (directoryEntry.isSymbolicLink() || !directoryEntry.isDirectory() || directoryContainsSymlink(lineageDirectory)) return false;
+		if (platform !== "win32") {
+			const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+			if (uid === undefined || directoryEntry.uid !== uid || (directoryEntry.mode & 0o077) !== 0) return false;
+		}
+		const entry = lstatSync(join(lineageDirectory, lineage));
+		if (entry.isSymbolicLink() || !entry.isFile() || entry.size !== 0) return false;
+		return platform === "win32" || (entry.mode & 0o077) === 0;
+	} catch {
+		return false;
+	}
+}
+
+function ensureManifestLineage(directory: string, lineage: string, platform: NodeJS.Platform): boolean {
+	const lineageDirectory = join(directory, OWNED_RESTORE_SNAPSHOT_LINEAGE_DIRECTORY);
+	if (!ensureManifestDirectory(lineageDirectory, platform)) return false;
+	const path = join(lineageDirectory, lineage);
+	try {
+		writeFileSync(path, "", { encoding: "utf8", flag: "wx", mode: 0o600 });
+		if (platform !== "win32") chmodSync(path, 0o600);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+	}
+	return manifestHasLineage(directory, lineage, platform);
+}
+
+function removeManifestLineages(directory: string, platform: NodeJS.Platform): void {
+	const lineageDirectory = join(directory, OWNED_RESTORE_SNAPSHOT_LINEAGE_DIRECTORY);
+	try {
+		if (!ensureManifestDirectory(lineageDirectory, platform)) return;
+		for (const entry of readdirSync(lineageDirectory, { withFileTypes: true })) {
+			if (entry.isFile() && /^[a-f\d]{64}$/.test(entry.name)) unlinkSync(join(lineageDirectory, entry.name));
+		}
+		rmdirSync(lineageDirectory);
+	} catch {}
 }
 
 function getRecordPath(directory: string, snapshotPath: string): string {
@@ -142,6 +192,7 @@ function pruneExpiredOtherRestoreKeys(options: {
 	directory: string;
 	home: string;
 	namespace?: string;
+	lineage: string;
 	platform: NodeJS.Platform;
 	protectedRestoreKey: string;
 	staleBefore: number;
@@ -159,6 +210,7 @@ function pruneExpiredOtherRestoreKeys(options: {
 		if (!isManagedSessionRestoreKey(restoreKey) || restoreKey === options.protectedRestoreKey) continue;
 		const manifestDirectory = join(options.directory, entry.name);
 		if (!ensureManifestDirectory(manifestDirectory, options.platform)) continue;
+		if (!manifestHasLineage(manifestDirectory, options.lineage, options.platform)) continue;
 		let snapshots: ReturnType<typeof scanOwnedSnapshots>;
 		try {
 			snapshots = scanOwnedSnapshots({ home: options.home, manifestDirectory, namespace: options.namespace, platform: options.platform, restoreKey });
@@ -180,6 +232,8 @@ function pruneExpiredOtherRestoreKeys(options: {
 			}
 		}
 		try {
+			const remainingRecords = readdirSync(manifestDirectory).filter((name) => /^[a-f\d]{64}\.json$/.test(name));
+			if (remainingRecords.length === 0) removeManifestLineages(manifestDirectory, options.platform);
 			if (readdirSync(manifestDirectory).length === 0) rmdirSync(manifestDirectory);
 		} catch {}
 	}
@@ -240,6 +294,8 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 	const hasCurrentManifest = pathExistsOrIsUnreadable(manifestDirectory);
 	if (!ensureManagedSessionRestoreStorageIsSecure(parentEnv, platform, options.namespace)) return 0;
 	if ((options.statePath || hasCurrentManifest) && !ensureManifestDirectory(manifestDirectory, platform)) return 0;
+	const lineage = getCheckoutLineageHash(options.cwd, platform);
+	if ((options.statePath || hasCurrentManifest) && (!lineage || !ensureManifestLineage(manifestDirectory, lineage, platform))) return 0;
 	if (options.statePath) {
 		const ownedPath = validateOwnedSnapshotPath({ home, namespace: options.namespace, path: options.statePath, restoreKey });
 		if (ownedPath && !writeRecord(manifestDirectory, ownedPath, platform)) return 0;
@@ -274,9 +330,11 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 	const protectedRestoreKey = hasManagedSessionRestoreProjectIdentity(options.cwd)
 		? createManagedSessionRestoreKey(options.cwd)
 		: restoreKey;
+	if (!lineage) return removed;
 	removed += pruneExpiredOtherRestoreKeys({
 		directory,
 		home,
+		lineage,
 		namespace: options.namespace,
 		platform,
 		protectedRestoreKey,

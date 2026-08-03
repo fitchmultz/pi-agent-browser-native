@@ -468,7 +468,7 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		sessionRecoveryHint: options.redactedRecoveryHint,
 		startupScopedFlags: options.executionPlan.startupScopedFlags,
 		stderr: options.processResult.stderr,
-		stdout: options.plainTextInspection ? options.inspectionText ?? "" : options.parseSucceeded ? undefined : options.processResult.stdout,
+		stdout: options.plainTextInspection ? options.inspectionText ?? "" : undefined,
 		summary: options.presentation.summary,
 		timedOut: options.processResult.timedOut || undefined,
 		timeoutMs: options.processResult.timeoutMs,

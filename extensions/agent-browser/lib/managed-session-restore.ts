@@ -88,6 +88,10 @@ export class ManagedSessionRestoreState {
 		return typeof sessionName === "string" ? this.#daemonRestoreKeys.get(getAgentBrowserSessionIdentityKey(sessionName, namespace)) : undefined;
 	}
 
+	hasDaemonRestoreKey(sessionName: string | undefined, namespace?: string): boolean {
+		return typeof sessionName === "string" && this.#daemonRestoreKeys.has(getAgentBrowserSessionIdentityKey(sessionName, namespace));
+	}
+
 	isDisabled(sessionName: string | undefined, namespace?: string): boolean {
 		return typeof sessionName === "string" && this.#disabled.has(getAgentBrowserSessionIdentityKey(sessionName, namespace));
 	}
@@ -104,6 +108,7 @@ export class ManagedSessionRestoreState {
 }
 
 export type OwnedManagedSessionContext = {
+	cwd?: string;
 	expectedDaemonRestoreKey?: string | null;
 	namespace?: string;
 	protectedStorageEnv?: NodeJS.ProcessEnv;
@@ -126,16 +131,24 @@ export async function withOwnedManagedSessionContext<T>(
 export function resolveOwnedManagedSessionContext(options: {
 	currentManagedSessionName?: string;
 	currentManagedSessionNamespace?: string;
+	cwd?: string;
 	managedSessionName?: string;
 	namespace?: string;
+	recordedOwnedSession?: { cwd: string; namespace?: string; sessionName: string };
 	restoreState: ManagedSessionRestoreState;
 	sessionName?: string;
 }): OwnedManagedSessionContext | undefined {
 	const namespace = canonicalizeAgentBrowserNamespace(options.namespace);
 	const currentNamespace = canonicalizeAgentBrowserNamespace(options.currentManagedSessionNamespace);
-	if (options.managedSessionName) return { namespace, restoreState: options.restoreState, sessionName: options.managedSessionName };
+	const recordedNamespace = canonicalizeAgentBrowserNamespace(options.recordedOwnedSession?.namespace);
+	if (options.recordedOwnedSession
+		&& options.sessionName === options.recordedOwnedSession.sessionName
+		&& namespace === recordedNamespace) {
+		return { cwd: options.recordedOwnedSession.cwd, namespace, restoreState: options.restoreState, sessionName: options.sessionName };
+	}
+	if (options.managedSessionName) return { cwd: options.cwd, namespace, restoreState: options.restoreState, sessionName: options.managedSessionName };
 	if (options.sessionName && options.sessionName === options.currentManagedSessionName && namespace === currentNamespace) {
-		return { namespace, restoreState: options.restoreState, sessionName: options.sessionName };
+		return { cwd: options.cwd, namespace, restoreState: options.restoreState, sessionName: options.sessionName };
 	}
 	return undefined;
 }
@@ -143,6 +156,10 @@ export function resolveOwnedManagedSessionContext(options: {
 function ownedContextMatches(sessionName: string | undefined, namespace: string | undefined): OwnedManagedSessionContext | undefined {
 	const owned = ownedManagedSessionStorage.getStore();
 	return owned && sessionName === owned.sessionName && canonicalizeAgentBrowserNamespace(namespace) === owned.namespace ? owned : undefined;
+}
+
+export function isOwnedManagedSessionTarget(args: string[]): boolean {
+	return ownedContextMatches(extractExplicitSessionName(args), extractExplicitNamespace(args)) !== undefined;
 }
 
 function pathExistsOrIsUnreadable(path: string): boolean {
@@ -338,7 +355,8 @@ export function getManagedSessionRestoreProtectedEnv(
 export function validateManagedSessionRestoreContextForSpawn(options: ManagedSessionRestoreEnvOptions): boolean {
 	const { namespace, ownedContext, parentEnv } = resolveManagedSessionRestorePolicy(options);
 	if (closesBrowserSession(options.args) || ownedContext?.restoreDecision !== "enabled") return true;
-	if (!ownedContext.restoreKey || createManagedSessionRestoreKey(options.cwd) !== ownedContext.restoreKey || !hasManagedSessionRestoreProjectIdentity(options.cwd)) return false;
+	const ownedCwd = ownedContext.cwd ?? options.cwd;
+	if (!ownedContext.restoreKey || createManagedSessionRestoreKey(ownedCwd) !== ownedContext.restoreKey || !hasManagedSessionRestoreProjectIdentity(ownedCwd)) return false;
 	const effectiveEnv = { ...parentEnv, ...options.env };
 	if (isDisabledEnvFlag(effectiveEnv[MANAGED_SESSION_RESTORE_ENV])) return false;
 	if (MANAGED_RESTORE_INCOMPATIBLE_ENVS.some((name) => !MANAGED_SESSION_RESTORE_SPAWN_PINNED_ENVS.has(name) && hasUpstreamEnvValue(effectiveEnv, name))) return false;
@@ -391,6 +409,7 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 	managedSessionName?: string;
 	namespace?: string;
 	parentEnv?: NodeJS.ProcessEnv;
+	recordedOwnedSession?: { cwd: string; namespace?: string; sessionName: string };
 	restoreState: ManagedSessionRestoreState;
 	sessionName?: string;
 	stdin?: string;
@@ -398,20 +417,21 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 }): OwnedManagedSessionContext | undefined {
 	const owned = resolveOwnedManagedSessionContext(options);
 	if (!owned) return undefined;
+	const ownedCwd = owned.cwd ?? options.cwd;
 	const policyOptions = {
 		args: options.args,
-		cwd: options.cwd,
+		cwd: ownedCwd,
 		env: options.env,
 		parentEnv: options.parentEnv,
 		stdin: options.stdin,
 		wrapperInjectedUserAgent: options.wrapperInjectedUserAgent,
 	};
 	const optedOut = managedSessionRestoreOptedOut(policyOptions);
-	const projectIdentityAvailable = !optedOut && hasManagedSessionRestoreProjectIdentity(options.cwd);
+	const projectIdentityAvailable = !optedOut && hasManagedSessionRestoreProjectIdentity(ownedCwd);
 	const incompatible = !optedOut && isManagedSessionRestoreIncompatible(policyOptions);
 	const enabled = !optedOut && !incompatible;
 	const effectiveEnv = { ...(options.parentEnv ?? process.env), ...options.env };
-	const restoreKey = projectIdentityAvailable ? createManagedSessionRestoreKey(options.cwd) : undefined;
+	const restoreKey = projectIdentityAvailable ? createManagedSessionRestoreKey(ownedCwd) : undefined;
 	return {
 		...owned,
 		expectedDaemonRestoreKey: enabled ? restoreKey : extractRequestedRestoreKey(options.args, owned.sessionName, effectiveEnv[AGENT_BROWSER_RESTORE_ENV]),

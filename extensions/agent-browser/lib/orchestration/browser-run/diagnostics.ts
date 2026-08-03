@@ -523,7 +523,7 @@ export function formatArtifactCleanupGuidanceText(guidance: ArtifactCleanupGuida
 	return `Artifact lifecycle: ${explicitSummary} Browser close does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; use host file tools for cleanup.`;
 }
 
-async function collectManagedSessionCommandData(options: { args: string[]; cwd: string; namespace?: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ data?: unknown; error?: string }> {
+async function collectManagedSessionCommandData(options: { allowManagedSessionTarget?: boolean; args: string[]; cwd: string; namespace?: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ data?: unknown; error?: string }> {
 	try { return { data: await runSessionCommandData({ ...options, pinNamespace: true }) }; } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
 }
 
@@ -540,11 +540,11 @@ async function collectElectronManagedSessionUrl(options: { cwd: string; namespac
 	return urlResult.error ? { error: urlResult.error } : { url };
 }
 
-export async function collectElectronManagedSessionTarget(options: { cwd: string; namespace?: string; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<ElectronManagedSessionTarget | undefined> {
+export async function collectElectronManagedSessionTarget(options: { allowManagedSessionTarget?: boolean; cwd: string; namespace?: string; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<ElectronManagedSessionTarget | undefined> {
 	if (!options.sessionName) return undefined;
 	const [titleResult, urlResult] = await Promise.all([
-		collectManagedSessionCommandData({ args: ["get", "title"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
-		collectManagedSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
+		collectManagedSessionCommandData({ allowManagedSessionTarget: options.allowManagedSessionTarget, args: ["get", "title"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
+		collectManagedSessionCommandData({ allowManagedSessionTarget: options.allowManagedSessionTarget, args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs }),
 	]);
 	const title = boundElectronProbeString(extractStringResultField(titleResult.data, "result") ?? extractStringResultField(titleResult.data, "title"), 160);
 	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);

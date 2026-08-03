@@ -921,6 +921,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					managedSessionNamespace,
 					managedSessionRestoreState,
 					networkRoutesBySession,
+					ownedManagedSessions,
 					sessionPageState,
 					traceOwners,
 				};

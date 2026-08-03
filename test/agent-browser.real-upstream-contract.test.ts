@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
-import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
+import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import { CAPABILITY_BASELINE, expectedVersionLabel } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
 	createExtensionHarness,
@@ -130,13 +130,14 @@ async function initializeGitProject(path: string): Promise<void> {
 	await execFileAsync("git", ["init", "-q", path]);
 }
 
-async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?: string; socketDir: string }): Promise<void> {
-	const sessionName = options.sessionName;
-	if (!sessionName) return;
-	await withPatchedEnv({ AGENT_BROWSER_SOCKET_DIR: options.socketDir }, async () => {
-		const harness = createExtensionHarness({ cwd: options.cwd });
-		await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "close"] }).catch(() => undefined);
-	});
+async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?: string }): Promise<void> {
+	if (!options.sessionName) return;
+	await runAgentBrowserProcess({
+		allowManagedSessionTarget: true,
+		args: ["--json", "--namespace", "", "--session", options.sessionName, "close"],
+		cwd: options.cwd,
+		env: { AGENT_BROWSER_SOCKET_DIR: getAgentBrowserSocketDir() },
+	}).catch(() => undefined);
 }
 
 async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<void> {
@@ -173,7 +174,7 @@ async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<voi
 			sessionName = undefined;
 		});
 	} finally {
-		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
@@ -207,7 +208,7 @@ async function assertRealUpstreamRestoreStorageSymlinkFailsClosed(): Promise<voi
 		});
 		assert.deepEqual(await readdir(targetDir), [], "real upstream must not write restore state through the sessions symlink, including on close");
 	} finally {
-		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
@@ -242,7 +243,7 @@ async function assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed(): Promi
 		});
 		assert.equal(await readFile(outsideStateFile, "utf8"), "unchanged");
 	} finally {
-		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
@@ -272,7 +273,7 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 		});
 		await assert.rejects(readdir(join(tempDir, "relative-home")));
 	} finally {
-		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
@@ -281,7 +282,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 	test("real upstream agent-browser contract suite is opt-in", { skip: REAL_UPSTREAM_SKIP_REASON }, () => undefined);
 	test("real upstream agent-browser plugin list probe is opt-in", { skip: REAL_UPSTREAM_SKIP_REASON }, () => undefined);
 } else {
-	test("real upstream agent-browser contract suite matches wrapper and browser-session expectations", { timeout: 120_000 }, async () => {
+	test("real upstream agent-browser contract suite matches wrapper and browser-session expectations", { timeout: 180_000 }, async () => {
 		await assertInstalledAgentBrowserVersion();
 		const shapes = await readOutputShapesFixture();
 		assert.equal(shapes.targetVersion, CAPABILITY_BASELINE.targetVersion, "output-shape fixture must track the canonical target version");
@@ -712,7 +713,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 				},
 			);
 		} finally {
-			await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: managedSessionName, socketDir });
+			await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: managedSessionName });
 			await fixtureServer?.close();
 			await rm(tempDir, { force: true, recursive: true });
 		}

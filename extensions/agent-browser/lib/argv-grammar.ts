@@ -41,7 +41,6 @@ export const GLOBAL_VALUE_FLAGS = [
 	"--confirm-actions",
 	"--max-output",
 	"--model",
-	"--hide-scrollbars",
 	"--idle-timeout",
 ] as const;
 
@@ -96,6 +95,7 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 	"--content-boundaries",
 	"--debug",
 	"--headed",
+	"--hide-scrollbars",
 	"--ignore-https-errors",
 	"--json",
 	"--no-auto-dialog",

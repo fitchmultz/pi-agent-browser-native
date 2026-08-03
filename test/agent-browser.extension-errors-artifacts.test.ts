@@ -115,6 +115,36 @@ process.stdout.write(JSON.stringify({ success: true, data: { files: [
 	}
 });
 
+test("agentBrowserExtension hides and rejects foreign wrapper-managed live sessions", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-access-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { sessions: [
+  { name: "piab-foreign-live", active: true, url: "https://private.example" },
+  { name: "caller-owned", active: false, url: "https://example.com" }
+] } }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const listed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--json", "session", "list"] });
+			assert.equal(listed.isError, false, JSON.stringify(listed));
+			assert.match(listed.content[0]?.text ?? "", /caller-owned/);
+			assert.doesNotMatch(JSON.stringify(listed), /piab-foreign-live|private\.example/);
+
+			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "piab-foreign-live", "snapshot", "-i"] });
+			assert.equal(blocked.isError, true, JSON.stringify(blocked));
+			assert.match(blocked.content[0]?.text ?? "", /reserved for a browser managed by this extension instance/);
+			assert.equal((await readInvocationLog(logPath)).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects incompatible launch reuse of an active restore-enabled managed daemon", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restore-reuse-"));
 	initializeGitProject(tempDir);
@@ -353,7 +383,42 @@ if (args.includes("session") && args.includes("info")) {
 			const restarted = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(restarted.isError, true, JSON.stringify(restarted));
 			assert.match(String(restarted.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+			const retried = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(retried.isError, true, JSON.stringify(retried));
+			assert.match(String(retried.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 			assert.equal((await readFile(mainLogPath, "utf8")).trim().split("\n").length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rejects an unproven restore-disabled daemon", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-unproven-disabled-daemon-"));
+	initializeGitProject(tempDir);
+	const statePath = join(tempDir, "daemon-state.json");
+	const mainLogPath = join(tempDir, "main.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFile(statePath, JSON.stringify({ active: true, restoreKey: null }));
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: state.active, runtime: { restoreKey: state.restoreKey } } }));
+} else {
+  fs.appendFileSync(${JSON.stringify(mainLogPath)}, "spawned\\n");
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "unsafe" } }));
+}`);
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--proxy", "http://127.0.0.1:8080", "open", "https://example.com/unsafe"],
+			});
+			assert.equal(result.isError, true, JSON.stringify(result));
+			assert.match(String(result.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+			await assert.rejects(() => readFile(mainLogPath, "utf8"), /ENOENT/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -412,7 +477,7 @@ if (args.includes("session") && args.includes("info")) {
 			initializeGitProject(tempDir);
 			assert.notEqual(createManagedSessionRestoreKey(tempDir), priorKey);
 			const sameInstanceReplacementBlocked = await executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com"] });
-			assert.equal(sameInstanceReplacementBlocked.isError, true);
+			assert.equal(sameInstanceReplacementBlocked.isError, true, JSON.stringify(sameInstanceReplacementBlocked));
 			assert.match(String(sameInstanceReplacementBlocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 
 			const replacementHarness = createExtensionHarness({ cwd: tempDir });

@@ -154,7 +154,11 @@ function getDirectoryFilesystemIdentity(path: string): string | undefined {
 	}
 }
 
-function resolveProjectGenerationIdentity(cwd: string, platform: NodeJS.Platform = process.platform): string | undefined {
+function resolveManagedSessionRestoreProjectCheckout(cwd: string, platform: NodeJS.Platform): {
+	canonicalCwd: string;
+	gitDirectory: string;
+	worktreeDirectory: string;
+} | undefined {
 	let canonicalCwd: string;
 	try { canonicalCwd = realpathSync(cwd); } catch { return undefined; }
 	if (platform !== "win32" && !isTrustedPosixDirectory(canonicalCwd, false)) return undefined;
@@ -164,6 +168,17 @@ function resolveProjectGenerationIdentity(cwd: string, platform: NodeJS.Platform
 		!isTrustedPosixDirectory(checkout.worktreeDirectory, true)
 		|| !isTrustedPosixDirectory(checkout.gitDirectory, true)
 	)) return undefined;
+	return { canonicalCwd, ...checkout };
+}
+
+export function resolveManagedSessionRestoreCheckoutRoot(cwd: string, platform: NodeJS.Platform = process.platform): string | undefined {
+	return resolveManagedSessionRestoreProjectCheckout(cwd, platform)?.worktreeDirectory;
+}
+
+function resolveProjectGenerationIdentity(cwd: string, platform: NodeJS.Platform = process.platform): string | undefined {
+	const checkout = resolveManagedSessionRestoreProjectCheckout(cwd, platform);
+	if (!checkout) return undefined;
+	const { canonicalCwd } = checkout;
 	const gitFilesystemIdentity = getDirectoryFilesystemIdentity(checkout.gitDirectory);
 	const worktreeFilesystemIdentity = getDirectoryFilesystemIdentity(checkout.worktreeDirectory);
 	if (!gitFilesystemIdentity || !worktreeFilesystemIdentity) return undefined;

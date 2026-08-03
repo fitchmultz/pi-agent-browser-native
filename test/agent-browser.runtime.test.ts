@@ -124,6 +124,8 @@ test("shared parsing helpers preserve boundary parsing semantics", () => {
 	assert.equal(parsePositiveInteger("9007199254740992"), undefined);
 	assert.equal(canonicalizeAgentBrowserNamespace("Next Dev Loop: /Users/me/worktree!"), "next-dev-loop-users-me-worktree");
 	assert.equal(canonicalizeAgentBrowserNamespace(" --Agent__ "), "agent");
+	assert.equal(parseArgvDescriptor(["--hide-scrollbars", "open", "https://example.com"]).commandInfo.command, "open");
+	assert.equal(parseArgvDescriptor(["--hide-scrollbars", "false", "open", "https://example.com"]).commandInfo.command, "open");
 });
 
 test("extractRequestedRestoreKey mirrors optional values and post-command session fallback", () => {

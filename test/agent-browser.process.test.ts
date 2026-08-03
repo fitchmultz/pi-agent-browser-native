@@ -121,21 +121,37 @@ test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", (
 		],
 	);
 	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--json", "--headed", "false", "--download-path=/tmp/downloads", "open", "https://example.com"]),
-		["open", "--json", "--headed", "false", "--download-path=/tmp/downloads", "https://example.com"],
+		reorderWindowsLeadingGlobalArgs(["--json", "--headed", "false", "--download-path", "/tmp/downloads", "open", "https://example.com"]),
+		["open", "--json", "--headed", "false", "--download-path", "/tmp/downloads", "https://example.com"],
 	);
 	assert.deepEqual(
 		reorderWindowsLeadingGlobalArgs(["--restore", "login-state", "open", "https://example.com"]),
-		["open", "--restore", "login-state", "https://example.com"],
+		["open", "--restore=login-state", "https://example.com"],
 	);
 	assert.deepEqual(
 		reorderWindowsLeadingGlobalArgs(["--restore", "open", "https://example.com"]),
 		["open", "--restore", "https://example.com"],
 	);
 	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--restore=login-state", "open", "https://example.com"]),
+		["open", "--restore=login-state", "https://example.com"],
+	);
+	assert.deepEqual(
 		reorderWindowsLeadingGlobalArgs(["--hide-scrollbars", "false", "open", "https://example.com"]),
 		["open", "--hide-scrollbars", "false", "https://example.com"],
 	);
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--hide-scrollbars", "open", "https://example.com"]),
+		["open", "--hide-scrollbars", "https://example.com"],
+	);
+	for (const invalid of [
+		["--json", "--body", "secret", "session", "list"],
+		["--auto-connect", "FALSE", "open", "https://example.com"],
+		["--auto-connect=false", "open", "https://example.com"],
+		["--download-path=/tmp/downloads", "open", "https://example.com"],
+	]) {
+		assert.deepEqual(reorderWindowsLeadingGlobalArgs(invalid), invalid);
+	}
 });
 
 test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
@@ -819,6 +835,19 @@ test("runAgentBrowserProcess blocks foreign managed-state capabilities at the sp
 			});
 			assert.equal(result.agentBrowserStarted, false);
 			assert.match(result.spawnError?.message ?? "", /outside the current checkout/);
+			const foreignSession = await runAgentBrowserProcess({
+				args: ["--session", "piab-foreign", "snapshot", "-i"],
+				cwd: tempDir,
+			});
+			assert.equal(foreignSession.agentBrowserStarted, false);
+			assert.match(foreignSession.spawnError?.message ?? "", /reserved for a browser managed by this extension instance/);
+			const foreignEnvironmentSession = await runAgentBrowserProcess({
+				args: ["session", "info"],
+				cwd: tempDir,
+				env: { AGENT_BROWSER_SESSION: "piab-foreign" },
+			});
+			assert.equal(foreignEnvironmentSession.agentBrowserStarted, false);
+			assert.match(foreignEnvironmentSession.spawnError?.message ?? "", /reserved for a browser managed by this extension instance/);
 			await assert.rejects(stat(startedPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 		});
 	} finally {

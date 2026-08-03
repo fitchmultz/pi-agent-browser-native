@@ -4,7 +4,7 @@
  * Scope: Diagnostic/result-state command presentation only; core orchestration stays in presentation.ts.
  */
 
-import { containsManagedSessionRestoreKey } from "../../managed-session-capabilities.js";
+import { containsManagedSessionRestoreKey, isWrapperManagedSessionName } from "../../managed-session-capabilities.js";
 import { isRecord } from "../../parsing.js";
 import { isSensitiveFieldName, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
@@ -149,7 +149,7 @@ function isClearDiagnosticCommand(commandInfo: CommandInfo): boolean {
 export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
 	if (commandInfo.command === "session") {
 		const sessions = getArrayField(data, "sessions");
-		if (sessions) return `Sessions: ${sessions.length}`;
+		if (sessions) return `Sessions: ${sessions.filter((item) => !isWrapperManagedSessionListItem(item)).length}`;
 		const session = getStringField(data, "session");
 		if (session) return `Session: ${session}`;
 	}
@@ -277,11 +277,23 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 	return undefined;
 }
 
+function isWrapperManagedSessionListItem(item: unknown): boolean {
+	if (typeof item === "string") return isWrapperManagedSessionName(item);
+	if (!isRecord(item)) return false;
+	return ["name", "session", "id"].some((key) => isWrapperManagedSessionName(getStringField(item, key)));
+}
+
+function filterManagedSessionListRows(data: unknown): unknown {
+	if (!isRecord(data) || !Array.isArray(data.sessions)) return data;
+	return { ...data, sessions: data.sessions.filter((item) => !isWrapperManagedSessionListItem(item)) };
+}
+
 function formatSessionText(data: Record<string, unknown>): string | undefined {
 	const sessions = getArrayField(data, "sessions");
 	if (sessions) {
-		if (sessions.length === 0) return "No active sessions.";
-		return sessions
+		const visibleSessions = sessions.filter((item) => !isWrapperManagedSessionListItem(item));
+		if (visibleSessions.length === 0) return sessions.length === 0 ? "No active sessions." : "No caller-owned active sessions.";
+		return visibleSessions
 			.map((item, index) => {
 				if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
 				const name = redactModelFacingText(getStringField(item, "name") ?? getStringField(item, "session") ?? getStringField(item, "id") ?? `(session ${index + 1})`);
@@ -962,6 +974,7 @@ function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unkno
 export function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
 	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
 	if (commandInfo.command === "storage") return redactStorageData(data);
+	if (commandInfo.command === "session" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(filterManagedSessionListRows(data));
 	if (commandInfo.command === "state" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(filterManagedStateListRows(data));
 	if (commandInfo.command === "state" && commandInfo.subcommand === "show") return redactStatefulValues(data, new Set(["value"]));
 	return redactStructuredPresentationValue(data);

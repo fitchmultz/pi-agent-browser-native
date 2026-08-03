@@ -6,12 +6,19 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { parseArgvDescriptor } from "./argv-descriptor.js";
-import { optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
-import { extractManagedSessionRestoreKeys } from "./managed-session-capabilities.js";
+import { extractExplicitSessionName, optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
+import { extractManagedSessionRestoreKeys, isWrapperManagedSessionName } from "./managed-session-capabilities.js";
 import { createManagedSessionRestoreKey, hasManagedSessionRestoreProjectIdentity } from "./managed-session-storage.js";
 
-const WRAPPER_MANAGED_SESSION_PREFIX = "piab-";
 const BLOCKED_GLOBAL_STATE_MESSAGE = "This operation could read or modify wrapper-owned browser state outside the current checkout. Use a caller-owned state name or path instead.";
+const BLOCKED_MANAGED_SESSION_MESSAGE = "This session name is reserved for a browser managed by this extension instance. Use the current managed session or a caller-owned session name instead.";
+
+export function getManagedSessionTargetAccessValidationError(args: string[], ownedManagedSession: boolean, env: NodeJS.ProcessEnv = process.env): string | undefined {
+	const sessionName = extractExplicitSessionName(args) ?? env.AGENT_BROWSER_SESSION;
+	return sessionName && isWrapperManagedSessionName(sessionName) && !ownedManagedSession
+		? BLOCKED_MANAGED_SESSION_MESSAGE
+		: undefined;
+}
 
 function getFlagValues(args: string[], flag: "--restore" | "--state"): string[] {
 	const values: string[] = [];
@@ -81,7 +88,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	if (command === "state" && subcommand === "clean") return BLOCKED_GLOBAL_STATE_MESSAGE;
 	if (command === "state" && subcommand === "clear") {
 		const target = descriptor.commandTokens.slice(2).find((token) => !token.startsWith("-"));
-		if (!target || descriptor.commandTokens.includes("--all") || descriptor.commandTokens.includes("-a") || target.startsWith(WRAPPER_MANAGED_SESSION_PREFIX)) {
+		if (!target || descriptor.commandTokens.includes("--all") || descriptor.commandTokens.includes("-a") || isWrapperManagedSessionName(target)) {
 			return BLOCKED_GLOBAL_STATE_MESSAGE;
 		}
 	}

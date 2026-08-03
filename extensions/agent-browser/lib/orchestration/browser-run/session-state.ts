@@ -605,12 +605,14 @@ export type ManagedSessionDaemonInspection =
 
 export async function inspectManagedSessionDaemon(options: {
 	cwd: string;
+	allowManagedSessionTarget?: boolean;
 	namespace?: string;
 	sessionName: string;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 }): Promise<ManagedSessionDaemonInspection> {
 	const processResult = await runAgentBrowserProcess({
+		allowManagedSessionTarget: options.allowManagedSessionTarget,
 		args: ["--json", "--namespace", options.namespace ?? "", "--session", options.sessionName, "session", "info"],
 		cwd: options.cwd,
 		signal: options.signal,
@@ -634,6 +636,7 @@ export async function inspectManagedSessionDaemon(options: {
 export async function runSessionCommandData(options: {
 	args: string[];
 	cwd: string;
+	allowManagedSessionTarget?: boolean;
 	namespace?: string;
 	pinNamespace?: boolean;
 	sessionName?: string;
@@ -641,13 +644,13 @@ export async function runSessionCommandData(options: {
 	stdin?: string;
 	timeoutMs?: number;
 }): Promise<unknown | undefined> {
-	const { args, cwd, namespace, pinNamespace, sessionName, signal, stdin, timeoutMs } = options;
+	const { allowManagedSessionTarget, args, cwd, namespace, pinNamespace, sessionName, signal, stdin, timeoutMs } = options;
 	if (!sessionName) return undefined;
 
 	const processResult = await runAgentBrowserProcess({
+		allowManagedSessionTarget,
 		args: ["--json", ...(namespace !== undefined || pinNamespace ? ["--namespace", namespace ?? ""] : []), "--session", sessionName, ...args],
 		cwd,
-		// Ownership comes from the call-scoped context or the typed main-path option, not each probe.
 		signal,
 		stdin,
 		timeoutMs,
@@ -951,6 +954,7 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 	}
 	try {
 		const daemon = await inspectManagedSessionDaemon({
+			allowManagedSessionTarget: true,
 			cwd: options.cwd,
 			namespace: options.namespace,
 			sessionName: options.sessionName,

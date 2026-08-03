@@ -960,32 +960,91 @@ test("owned snapshot pruning persists close-proven paths and leaves unrecorded m
 	}
 });
 
-test("owned snapshot pruning expires stale ownership-proven checkout generations", () => {
-	const home = mkdtempSync(join(tmpdir(), "piab-prune-generations-home-"));
-	const retiredProject = mkdtempSync(join(tmpdir(), "piab-prune-retired-project-"));
-	initializeGitProject(retiredProject);
+test("owned snapshot pruning leaves independent checkout generations untouched", () => {
+	const home = mkdtempSync(join(tmpdir(), "piab-prune-independent-home-"));
+	const otherProject = mkdtempSync(join(tmpdir(), "piab-prune-independent-project-"));
+	initializeGitProject(otherProject);
 	const sessions = join(home, ".agent-browser", "sessions");
 	const currentKey = createManagedSessionRestoreKey(isolatedProject);
-	const retiredKey = createManagedSessionRestoreKey(retiredProject);
+	const otherKey = createManagedSessionRestoreKey(otherProject);
+	try {
+		mkdirSync(sessions, { recursive: true, mode: 0o700 });
+		chmodSync(join(home, ".agent-browser"), 0o700);
+		const otherPath = join(sessions, `${otherKey}-other.json`);
+		const currentPath = join(sessions, `${currentKey}-current.json`);
+		for (const path of [otherPath, currentPath]) writeFileSync(path, "{}");
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: otherProject, parentEnv: { HOME: home }, platform: "linux", statePath: otherPath }), 0);
+		const oldSeconds = (Date.now() - 31 * 24 * 60 * 60 * 1_000) / 1_000;
+		utimesSync(otherPath, oldSeconds, oldSeconds);
+
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: isolatedProject, parentEnv: { HOME: home }, platform: "linux", statePath: currentPath }), 0);
+		assert.equal(existsSync(otherPath), true);
+		assert.equal(existsSync(join(sessions, `.pi-agent-browser-owned-snapshots-v2-${otherKey}`)), true);
+		assert.equal(existsSync(currentPath), true);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+		rmSync(otherProject, { recursive: true, force: true });
+	}
+});
+
+test("owned snapshot lineage follows a checkout rename", () => {
+	const home = mkdtempSync(join(tmpdir(), "piab-prune-rename-home-"));
+	const project = mkdtempSync(join(tmpdir(), "piab-prune-rename-project-"));
+	const renamedProject = `${project}-renamed`;
+	initializeGitProject(project);
+	const sessions = join(home, ".agent-browser", "sessions");
+	const key = createManagedSessionRestoreKey(project);
+	try {
+		mkdirSync(sessions, { recursive: true, mode: 0o700 });
+		chmodSync(join(home, ".agent-browser"), 0o700);
+		const paths = ["old", "middle", "new"].map((suffix) => join(sessions, `${key}-${suffix}.json`));
+		for (const path of paths) writeFileSync(path, "{}");
+		const oldSeconds = (Date.now() - 31 * 24 * 60 * 60 * 1_000) / 1_000;
+		utimesSync(paths[0] as string, oldSeconds, oldSeconds);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: project, parentEnv: { HOME: home }, platform: "linux", statePath: paths[0] }), 0);
+
+		renameSync(project, renamedProject);
+		assert.equal(createManagedSessionRestoreKey(renamedProject), key);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: renamedProject, parentEnv: { HOME: home }, platform: "linux", statePath: paths[1] }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: renamedProject, parentEnv: { HOME: home }, platform: "linux", statePath: paths[2] }), 1);
+		assert.equal(existsSync(paths[0] as string), false);
+	} finally {
+		rmSync(project, { recursive: true, force: true });
+		rmSync(renamedProject, { recursive: true, force: true });
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("owned snapshot pruning expires stale generations from the same checkout path", () => {
+	const home = mkdtempSync(join(tmpdir(), "piab-prune-reused-home-"));
+	const reusedProject = mkdtempSync(join(tmpdir(), "piab-prune-reused-project-"));
+	initializeGitProject(reusedProject);
+	const sessions = join(home, ".agent-browser", "sessions");
+	const retiredKey = createManagedSessionRestoreKey(reusedProject);
 	try {
 		mkdirSync(sessions, { recursive: true, mode: 0o700 });
 		chmodSync(join(home, ".agent-browser"), 0o700);
 		const retiredPath = join(sessions, `${retiredKey}-retired.json`);
 		const unrecordedPath = join(sessions, `${retiredKey}-caller.json`);
-		const currentPath = join(sessions, `${currentKey}-current.json`);
-		for (const path of [retiredPath, unrecordedPath, currentPath]) writeFileSync(path, "{}");
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: retiredProject, parentEnv: { HOME: home }, platform: "linux", statePath: retiredPath }), 0);
+		for (const path of [retiredPath, unrecordedPath]) writeFileSync(path, "{}");
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: reusedProject, parentEnv: { HOME: home }, platform: "linux", statePath: retiredPath }), 0);
 		const oldSeconds = (Date.now() - 31 * 24 * 60 * 60 * 1_000) / 1_000;
 		utimesSync(retiredPath, oldSeconds, oldSeconds);
 
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: isolatedProject, parentEnv: { HOME: home }, platform: "linux", statePath: currentPath }), 1);
+		rmSync(join(reusedProject, ".git"), { recursive: true, force: true });
+		initializeGitProject(reusedProject);
+		const currentKey = createManagedSessionRestoreKey(reusedProject);
+		assert.notEqual(currentKey, retiredKey);
+		const currentPath = join(sessions, `${currentKey}-current.json`);
+		writeFileSync(currentPath, "{}");
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: reusedProject, parentEnv: { HOME: home }, platform: "linux", statePath: currentPath }), 1);
 		assert.equal(existsSync(retiredPath), false);
 		assert.equal(existsSync(unrecordedPath), true);
 		assert.equal(existsSync(join(sessions, `.pi-agent-browser-owned-snapshots-v2-${retiredKey}`)), false);
 		assert.equal(existsSync(currentPath), true);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
-		rmSync(retiredProject, { recursive: true, force: true });
+		rmSync(reusedProject, { recursive: true, force: true });
 	}
 });
 

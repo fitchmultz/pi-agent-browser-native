@@ -487,7 +487,7 @@ async function runElectronProbeCommandData(options: {
 	timeoutMs?: number;
 }): Promise<{ data?: unknown; error?: string }> {
 	try {
-		return { data: await runSessionCommandData({ ...options, pinNamespace: true }) };
+		return { data: await runSessionCommandData({ ...options, allowManagedSessionTarget: true, pinNamespace: true }) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -748,6 +748,7 @@ export async function handleElectronHostInput(options: {
 		const records = selection.records ?? [];
 		const statuses = await Promise.all(records.map((record) => inspectElectronLaunchStatus(record)));
 		const managedSessions = (await Promise.all(records.map((record) => collectElectronManagedSessionTarget({
+			allowManagedSessionTarget: true,
 			cwd,
 			sessionName: record.sessionName,
 			signal,

@@ -1,7 +1,6 @@
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 
 import { isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand } from "../../command-taxonomy.js";
-import { redactManagedSessionRestoreKeys } from "../../managed-session-capabilities.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -23,12 +22,7 @@ import {
 	parseAgentBrowserEnvelope,
 	type AgentBrowserEnvelope,
 } from "../../results.js";
-import {
-	buildEvictedSessionArtifactEntries,
-	formatSessionArtifactRetentionSummary,
-	mergeSessionArtifactManifest,
-} from "../../results/artifact-manifest.js";
-import type { NetworkRouteRecord, SessionArtifactManifest } from "../../results/contracts.js";
+import type { NetworkRouteRecord } from "../../results/contracts.js";
 import { getClipboardWritePayloadCandidates, redactClipboardPermissionEcho, redactClipboardPermissionErrorValue } from "../../results/presentation/errors.js";
 import { shouldCaptureSemanticActionNavigationSummary } from "../../results/presentation/semantic-action.js";
 import {
@@ -43,8 +37,6 @@ import {
 	type SessionRefSnapshot,
 	type SessionRefSnapshotInvalidation,
 } from "../../session-page-state.js";
-import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore } from "../../temp.js";
-import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../../temp.js";
 import { isRecord } from "../../parsing.js";
 import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
@@ -104,7 +96,6 @@ import {
 	buildRedactedPresentationContent,
 	buildWrapperRecoveryHint,
 	prepareFinalResultRecoveryState,
-	redactExactSensitiveText,
 	redactExactSensitiveValue,
 } from "./final-result.js";
 import type {
@@ -193,40 +184,6 @@ function applyBatchNetworkRouteState(options: { data: unknown; routesBySession: 
 	return setNetworkRouteState({ routes, routesBySession: options.routesBySession, sessionName: options.sessionName });
 }
 
-export async function preserveParseFailureOutput(options: {
-	artifactManifest?: SessionArtifactManifest;
-	exactSensitiveValues?: string[];
-	persistentArtifactStore?: PersistentSessionArtifactStore;
-	stdoutSpillPath?: string;
-}): Promise<ParseFailureOutput> {
-	if (!options.stdoutSpillPath) return {};
-	try {
-		const rawOutput = redactManagedSessionRestoreKeys(redactExactSensitiveText(await readFile(options.stdoutSpillPath, "utf8"), options.exactSensitiveValues ?? []));
-		const nowMs = Date.now();
-		let evictedArtifacts: PersistentSessionArtifactEviction[] = [];
-		let fullOutputPath: string;
-		let storageScope: "persistent-session" | "process-temp";
-		if (options.persistentArtifactStore) {
-			const result = await writePersistentSessionArtifactFile({ content: rawOutput, prefix: "pi-agent-browser-parse-failure-output", store: options.persistentArtifactStore, suffix: ".txt" });
-			fullOutputPath = result.path;
-			evictedArtifacts = result.evictedArtifacts;
-			storageScope = "persistent-session";
-		} else {
-			fullOutputPath = await writeSecureTempFile({ content: rawOutput, prefix: "pi-agent-browser-parse-failure-output", suffix: ".txt" });
-			storageScope = "process-temp";
-		}
-		const artifactManifest = mergeSessionArtifactManifest({
-			base: options.artifactManifest,
-			entries: [{ command: "agent-browser", createdAtMs: nowMs, kind: "spill", path: fullOutputPath, retentionState: storageScope === "persistent-session" ? "live" : "ephemeral", storageScope }, ...buildEvictedSessionArtifactEntries(evictedArtifacts, nowMs)],
-			nowMs,
-		});
-		return { artifactManifest, artifactRetentionSummary: artifactManifest ? formatSessionArtifactRetentionSummary(artifactManifest) : undefined, fullOutputPath };
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return { fullOutputUnavailable: message };
-	}
-}
-
 export async function processBrowserOutput(input: ProcessBrowserOutputInput): Promise<BrowserProcessOutputResult> {
 	const { ctx, cwd, electronPostCommandStatusSettleMs, implicitSessionCloseTimeoutMs, sessionPageStateUpdate, signal, state } = input;
 	const { prepared, processResult } = input;
@@ -257,8 +214,15 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		presentationEnvelope = repairedBatchScreenshots.envelope;
 		const screenshotArtifactRequest = repairedScreenshot.request;
 		const batchScreenshotArtifactRequests = repairedBatchScreenshots.requests;
+		const rawCloseStatePath = isCloseCommand(prepared.executionPlan.commandInfo.command)
+			&& isRecord(presentationEnvelope?.data)
+			&& typeof presentationEnvelope.data.statePath === "string"
+			? presentationEnvelope.data.statePath
+			: undefined;
 		if (presentationEnvelope && prepared.exactSensitiveValues.length > 0) presentationEnvelope = redactExactSensitiveValue(presentationEnvelope, prepared.exactSensitiveValues) as AgentBrowserEnvelope;
-		const parseFailureOutput = parseError ? await preserveParseFailureOutput({ artifactManifest, exactSensitiveValues: prepared.exactSensitiveValues, persistentArtifactStore, stdoutSpillPath: processResult.stdoutSpillPath }) : {};
+		const parseFailureOutput: ParseFailureOutput = parseError && processResult.stdoutSpillPath
+			? { fullOutputUnavailable: "Malformed upstream output was discarded because it may contain sensitive browser data." }
+			: {};
 		const processSucceeded = !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
 		const plainTextInspection = prepared.executionPlan.plainTextInspection && processSucceeded;
 		const parseSucceeded = plainTextInspection || parseError === undefined;
@@ -463,7 +427,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				cwd,
 				namespace: priorManagedSessionNamespace,
 				restoreKey: ownedRestoreKey,
-				statePath: typeof presentationDataRecord?.statePath === "string" ? presentationDataRecord.statePath : undefined,
+				statePath: rawCloseStatePath,
 			});
 			freshSessionOrdinal += 1;
 			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, freshSessionOrdinal);

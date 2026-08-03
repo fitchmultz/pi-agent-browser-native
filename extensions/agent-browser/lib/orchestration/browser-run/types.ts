@@ -64,6 +64,12 @@ export interface BrowserRunInputFields {
 	toolStdin?: string;
 }
 
+export interface OwnedManagedSessionReference {
+	cwd: string;
+	namespace?: string;
+	sessionName: string;
+}
+
 export interface BrowserRunState {
 	allowedDomainsBySession: Map<string, AllowedDomainsPolicy>;
 	artifactManifest?: SessionArtifactManifest;
@@ -79,6 +85,7 @@ export interface BrowserRunState {
 	managedSessionNamespace?: string;
 	managedSessionRestoreState: ManagedSessionRestoreState;
 	networkRoutesBySession: Map<string, NetworkRouteRecord[]>;
+	ownedManagedSessions: ReadonlyMap<string, OwnedManagedSessionReference>;
 	sessionPageState: SessionPageState;
 	traceOwners: Map<string, TraceOwner>;
 }

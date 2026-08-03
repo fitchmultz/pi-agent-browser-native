@@ -7,7 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { getManagedSessionStateAccessValidationError } from "../extensions/agent-browser/lib/managed-session-state-policy.js";
+import {
+	getManagedSessionStateAccessValidationError,
+	getManagedSessionTargetAccessValidationError,
+} from "../extensions/agent-browser/lib/managed-session-state-policy.js";
 import { createManagedSessionRestoreKey } from "../extensions/agent-browser/lib/managed-session-storage.js";
 
 function initializeGitProject(path: string): void {
@@ -17,6 +20,13 @@ function initializeGitProject(path: string): void {
 function validate(cwd: string, args: string[], env?: NodeJS.ProcessEnv, stdin?: string): string | undefined {
 	return getManagedSessionStateAccessValidationError({ args, cwd, env, parentEnv: {}, stdin });
 }
+
+test("managed session targets require typed ownership", () => {
+	assert.equal(getManagedSessionTargetAccessValidationError(["--session", "caller-owned", "snapshot", "-i"], false), undefined);
+	assert.equal(getManagedSessionTargetAccessValidationError(["--session", "piab-owned", "snapshot", "-i"], true), undefined);
+	assert.match(getManagedSessionTargetAccessValidationError(["--session", "piab-foreign", "snapshot", "-i"], false) ?? "", /reserved/);
+	assert.match(getManagedSessionTargetAccessValidationError(["session", "info"], false, { AGENT_BROWSER_SESSION: "piab-foreign" }) ?? "", /reserved/);
+});
 
 test("managed state policy allows only the current checkout restore capability", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-state-policy-"));

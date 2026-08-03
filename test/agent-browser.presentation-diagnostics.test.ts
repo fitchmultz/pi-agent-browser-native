@@ -98,12 +98,16 @@ test("buildToolPresentation formats session status and session list", async () =
 		envelope: {
 			success: true,
 			data: {
-				sessions: [{ active: true, name: "work", title: "Example", url: "https://example.com" }],
+				sessions: [
+					{ active: true, name: "piab-foreign", title: "Private", url: "https://private.example" },
+					{ active: true, name: "work", title: "Example", url: "https://example.com" },
+				],
 			},
 		},
 	});
 	assert.equal(list.summary, "Sessions: 1");
 	assert.equal((list.content[0] as { text: string }).text, "1. name=work *active*; active=true; title=Example; url=https://example.com");
+	assert.doesNotMatch(JSON.stringify(list.data), /piab-foreign|private\.example/);
 });
 
 test("buildToolPresentation formats Chrome profile arrays", async () => {

@@ -30,7 +30,10 @@ import {
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
 import { acquireManagedSessionPolicyLock, type ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
-import { getManagedSessionStateAccessValidationError } from "../../managed-session-state-policy.js";
+import {
+	getManagedSessionStateAccessValidationError,
+	getManagedSessionTargetAccessValidationError,
+} from "../../managed-session-state-policy.js";
 import {
 	applyOpenResultTabCorrection,
 	buildManagedSessionOutcome,
@@ -452,18 +455,23 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
 	const managedStateAccessError = getManagedSessionStateAccessValidationError({ args: executionPlan.effectiveArgs, cwd, stdin: runtimeToolStdin });
 	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
+	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
+	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
-		cwd,
+		cwd: recordedOwnedSession?.cwd ?? cwd,
 		currentManagedSessionName: state.managedSessionName,
 		currentManagedSessionNamespace: state.managedSessionNamespace,
 		managedSessionName: executionPlan.managedSessionName,
 		namespace: executionPlan.namespace,
+		recordedOwnedSession,
 		restoreState: state.managedSessionRestoreState,
 		sessionName: executionPlan.sessionName,
 		stdin: runtimeToolStdin,
 		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround?.id === "chatgpt-headless-user-agent",
 	});
+	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined);
+	if (!executionPlan.validationError && managedSessionTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedSessionTargetError };
 	if (!executionPlan.validationError && ownedManagedSession) {
 		managedSessionPolicyLock = await acquireManagedSessionPolicyLock({
 			namespace: ownedManagedSession.namespace,
@@ -489,7 +497,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				}, true),
 			};
 			const daemon = await inspectManagedSessionDaemon({
-				cwd,
+				allowManagedSessionTarget: true,
+				cwd: ownedManagedSession.cwd ?? cwd,
 				namespace: ownedManagedSession.namespace,
 				sessionName: ownedManagedSession.sessionName,
 				signal,
@@ -499,20 +508,25 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			}
 		} else {
 			const stickyDisabled = state.managedSessionRestoreState.isDisabled(ownedManagedSession.sessionName, ownedManagedSession.namespace);
+			const hasKnownDaemonRestoreKey = state.managedSessionRestoreState.hasDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace);
 			const knownDaemonRestoreKey = state.managedSessionRestoreState.getDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace);
 			const requestedDaemonRestoreKey = ownedManagedSession.restoreDecision === "enabled" && stickyDisabled
 				? knownDaemonRestoreKey ?? null
 				: ownedManagedSession.expectedDaemonRestoreKey;
 			const daemon = await inspectManagedSessionDaemon({
-				cwd,
+				allowManagedSessionTarget: true,
+				cwd: ownedManagedSession.cwd ?? cwd,
 				namespace: ownedManagedSession.namespace,
 				sessionName: ownedManagedSession.sessionName,
 				signal,
 			});
-			if (daemon.status === "active") {
+			const restoreDisabledPolicyNeedsProvenance = stickyDisabled || ownedManagedSession.restoreDecision !== "enabled";
+			const activePolicyMatches = daemon.status === "active"
+				&& (!restoreDisabledPolicyNeedsProvenance || hasKnownDaemonRestoreKey)
+				&& daemon.restoreKey === requestedDaemonRestoreKey;
+			if (activePolicyMatches) {
 				state.managedSessionRestoreState.recordDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace, daemon.restoreKey);
 			}
-			const activePolicyMatches = daemon.status === "active" && daemon.restoreKey === requestedDaemonRestoreKey;
 			if (!["inactive", "missing-binary"].includes(daemon.status) && !activePolicyMatches) {
 				executionPlan = {
 					...executionPlan,

@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,7 +17,6 @@ import {
 	cleanupSecureTempArtifacts,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
-	TEST_SESSION_ID,
 	createExtensionHarness,
 	createToolBranchEntry,
 	executeRegisteredTool,
@@ -448,7 +447,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 	}
 });
 
-test("agentBrowserExtension preserves full spilled stdout for oversized parse failures", { concurrency: false }, async () => {
+test("agentBrowserExtension discards oversized malformed output instead of persisting browser secrets", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-"));
@@ -467,31 +466,17 @@ test("agentBrowserExtension preserves full spilled stdout for oversized parse fa
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["snapshot", "-i"],
+				args: ["state", "show", "caller-owned.json"],
 			});
 
 			assert.equal(result.isError, true);
 			assert.match(String(result.details?.parseError ?? ""), /invalid JSON/i);
-			assert.equal(result.content[0]?.type, "text");
-			assert.match((result.content[0] as { text: string }).text, /Full output path: /);
-			assert.equal(typeof result.details?.fullOutputPath, "string");
-			assert.equal(result.details?.fullOutputUnavailable, undefined);
-			const fullOutputPath = result.details?.fullOutputPath as string;
-			assert.equal(fullOutputPath.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
-			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
-			assert.equal(manifest?.liveCount, 1);
-			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
-			assert.equal(manifest?.entries?.[0]?.retentionState, "live");
-			assert.equal(manifest?.entries?.[0]?.storageScope, "persistent-session");
-			assert.match(String(result.details?.artifactRetentionSummary), /1 live, 0 evicted/);
-			const stats = await stat(fullOutputPath);
-			assert.ok(stats.size > 512 * 1024);
-			const preservedOutput = await readFile(fullOutputPath, "utf8");
-			assert.match(preservedOutput, new RegExp(`${sentinel}$`));
-			assert.doesNotMatch(preservedOutput, /piab-r2-[a-f\d]{32}/);
-			assert.match(preservedOutput, /REDACTED MANAGED STATE/);
+			assert.equal(result.details?.fullOutputPath, undefined);
+			assert.match(String(result.details?.fullOutputUnavailable ?? ""), /discarded because it may contain sensitive browser data/);
+			assert.equal(result.details?.artifactManifest, undefined);
+			assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
+			assert.doesNotMatch(JSON.stringify(result), /piab-r2-[a-f\d]{32}/);
 			await runExtensionEvent(harness.handlers, "session_shutdown");
-			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
@@ -500,7 +485,7 @@ test("agentBrowserExtension preserves full spilled stdout for oversized parse fa
 	}
 });
 
-test("agentBrowserExtension persists parse-failure output when only a session directory is available", { concurrency: false }, async () => {
+test("agentBrowserExtension discards malformed spills when only a session directory is available", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-only-"));
@@ -521,16 +506,10 @@ test("agentBrowserExtension persists parse-failure output when only a session di
 			});
 
 			assert.equal(result.isError, true);
-			const fullOutputPath = result.details?.fullOutputPath;
-			assert.equal(typeof fullOutputPath, "string");
-			if (typeof fullOutputPath !== "string") assert.fail("expected fullOutputPath to be a string");
-			assert.equal(fullOutputPath.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
-			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
-			assert.equal(manifest?.liveCount, 1);
-			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
-			assert.equal(manifest?.entries?.[0]?.retentionState, "live");
-			assert.equal(manifest?.entries?.[0]?.storageScope, "persistent-session");
-			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+			assert.equal(result.details?.fullOutputPath, undefined);
+			assert.match(String(result.details?.fullOutputUnavailable ?? ""), /discarded because it may contain sensitive browser data/);
+			assert.equal(result.details?.artifactManifest, undefined);
+			assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
@@ -539,7 +518,7 @@ test("agentBrowserExtension persists parse-failure output when only a session di
 	}
 });
 
-test("agentBrowserExtension returns temp full-output path for oversized parse failures without session artifacts", { concurrency: false }, async () => {
+test("agentBrowserExtension discards malformed spills without session artifacts", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";
@@ -561,20 +540,10 @@ test("agentBrowserExtension returns temp full-output path for oversized parse fa
 
 			assert.equal(result.isError, true);
 			assert.match(String(result.details?.parseError ?? ""), /invalid JSON/i);
-			assert.equal(result.content[0]?.type, "text");
-			assert.match((result.content[0] as { text: string }).text, /Full output path: /);
-			assert.equal(typeof result.details?.fullOutputPath, "string");
-			assert.equal(result.details?.fullOutputUnavailable, undefined);
-			const fullOutputPath = result.details?.fullOutputPath as string;
-			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
-			assert.equal(manifest?.liveCount, 0);
-			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
-			assert.equal(manifest?.entries?.[0]?.retentionState, "ephemeral");
-			assert.equal(manifest?.entries?.[0]?.storageScope, "process-temp");
-			assert.match(String(result.details?.artifactRetentionSummary), /0 live, 0 evicted, 1 ephemeral/);
-			const stats = await stat(fullOutputPath);
-			assert.ok(stats.size > 512 * 1024);
-			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+			assert.equal(result.details?.fullOutputPath, undefined);
+			assert.match(String(result.details?.fullOutputUnavailable ?? ""), /discarded because it may contain sensitive browser data/);
+			assert.equal(result.details?.artifactManifest, undefined);
+			assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
