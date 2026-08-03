@@ -217,6 +217,90 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
+test("agentBrowserExtension live-verifies caller-owned explicit sessions before content reads", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-live-url-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const protectedUrl = pathToFileURL(join(tempDir, ".agent-browser", "sessions", "auth.html")).href;
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const sessionIndex = args.indexOf("--session");
+const sessionName = sessionIndex >= 0 ? args[sessionIndex + 1] : "default";
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
+if (args.includes("get") && args.includes("url")) {
+  if (sessionName === "caller-failed") {
+    process.stdout.write(JSON.stringify({ success: false, error: "No active page" }));
+    process.exit(1);
+  }
+  const url = sessionName === "caller-safe" ? "https://safe.example/" : ${JSON.stringify(protectedUrl)};
+  process.stdout.write(JSON.stringify({ success: true, data: { result: url, url } }));
+} else if (args.includes("get") && args.includes("html")) {
+  const html = sessionName === "caller-safe" ? "<body>SAFE CONTENT</body>" : "SECRET_FROM_PROTECTED_FILE";
+  process.stdout.write(JSON.stringify({ success: true, data: { html } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const missingStateHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(missingStateHarness.handlers, "session_start", { reason: "new" }, missingStateHarness.ctx);
+			const missingStateResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				args: ["--session", "caller-missing", "get", "html", "body"],
+			});
+			assert.equal(missingStateResult.isError, true, JSON.stringify(missingStateResult));
+			assert.match(missingStateResult.content[0]?.text ?? "", /authenticated cookies and storage/);
+			assert.doesNotMatch(JSON.stringify(missingStateResult), /SECRET_FROM_PROTECTED_FILE/);
+
+			const staleStateHarness = createExtensionHarness({
+				branch: [createToolBranchEntry({
+					details: {
+						args: ["--session", "caller-stale", "open", "https://stale.example/"],
+						command: "open",
+						sessionName: "caller-stale",
+						sessionTabTarget: { title: "Stale", url: "https://stale.example/" },
+					},
+					isError: false,
+				})],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(staleStateHarness.handlers, "session_start", { reason: "resume" }, staleStateHarness.ctx);
+			const staleStateResult = await executeRegisteredTool(staleStateHarness.tool, staleStateHarness.ctx, {
+				args: ["--session", "caller-stale", "get", "html", "body"],
+			});
+			assert.equal(staleStateResult.isError, true, JSON.stringify(staleStateResult));
+			assert.match(staleStateResult.content[0]?.text ?? "", /authenticated cookies and storage/);
+			assert.doesNotMatch(JSON.stringify(staleStateResult), /SECRET_FROM_PROTECTED_FILE/);
+
+			const failedProbeResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				args: ["--session", "caller-failed", "get", "html", "body"],
+			});
+			assert.equal(failedProbeResult.isError, true, JSON.stringify(failedProbeResult));
+			assert.match(failedProbeResult.content[0]?.text ?? "", /active page became unverified/);
+			assert.doesNotMatch(JSON.stringify(failedProbeResult), /SECRET_FROM_PROTECTED_FILE/);
+
+			const safeResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				args: ["--session", "caller-safe", "get", "html", "body"],
+			});
+			assert.equal(safeResult.isError, false, JSON.stringify(safeResult));
+			assert.match(safeResult.content[0]?.text ?? "", /SAFE CONTENT/);
+
+			const invocations = await readInvocationLog(logPath);
+			for (const sessionName of ["caller-missing", "caller-stale", "caller-failed"]) {
+				const sessionInvocations = invocations.filter((entry) => entry.args.includes(sessionName));
+				assert.equal(sessionInvocations.length, 1, sessionName);
+				assert.equal(sessionInvocations[0]?.args.includes("url"), true, sessionName);
+				assert.equal(sessionInvocations[0]?.args.includes("html"), false, sessionName);
+			}
+			const safeInvocations = invocations.filter((entry) => entry.args.includes("caller-safe"));
+			assert.equal(safeInvocations.length, 2);
+			assert.equal(safeInvocations[0]?.args.includes("url"), true);
+			assert.equal(safeInvocations[1]?.args.includes("html"), true);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension keeps failed navigation targets unverified", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-failed-navigation-state-"));
 	const logPath = join(tempDir, "invocations.log");

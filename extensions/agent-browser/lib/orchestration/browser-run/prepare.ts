@@ -31,6 +31,7 @@ import {
 } from "../../managed-session-restore.js";
 import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import {
+	getCallerOwnedSessionLivePageVerificationRequirement,
 	getManagedSessionStateAccessValidationError,
 	getManagedSessionTargetAccessValidationError,
 } from "../../managed-session-state-policy.js";
@@ -529,7 +530,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const managedSessionRestoreDisabled = () => state.managedSessionRestoreState.isDisabled(executionPlan.sessionName, executionPlan.namespace);
 		const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 		const priorSessionPageState = sessionPageState.get(sessionStateKey);
-		const priorSessionTabTarget = priorSessionPageState.tabTarget;
+		let priorSessionTabTarget: SessionTabTarget | undefined = priorSessionPageState.tabTarget;
+		let priorSessionTabTargetUnknown: true | undefined = priorSessionPageState.tabTargetUnknown;
 		const sessionTabPinningReason = priorSessionPageState.pinningReason;
 		const priorRefSnapshotState = priorSessionPageState.refSnapshot;
 		const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
@@ -562,6 +564,59 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			freshSessionOrdinal += 1;
 		}
 
+		const commandTokens = semanticActionVisibleRefResolution ? extractCommandTokens(semanticActionVisibleRefResolution.args) : extractCommandTokens(preparedArgs.args);
+		const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
+			? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
+			: undefined;
+		const preLiveStaleRefPreflight = buildStaleRefPreflight({
+			commandTokens,
+			currentTarget: priorSessionTabTarget,
+			refSnapshot: resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState,
+			refSnapshotInvalidation: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotInvalidation,
+			stdin: runtimeToolStdin,
+		});
+		const callerOwnedLivePageRequirement = !executionPlan.validationError
+			&& preLiveStaleRefPreflight === undefined
+			&& validateStdinCommandContract({ command: executionPlan.commandInfo.command, commandTokens, stdin: runtimeToolStdin }) === undefined
+			&& executionPlan.sessionName !== undefined
+			&& executionPlan.usedImplicitSession === false
+			&& ownedManagedSession === undefined
+			? getCallerOwnedSessionLivePageVerificationRequirement({
+				args: executionPlan.effectiveArgs,
+				cwd,
+				stdin: runtimeToolStdin,
+			})
+			: undefined;
+		if (callerOwnedLivePageRequirement) {
+			let liveUrl: string | undefined;
+			try {
+				const liveUrlData = await runSessionCommandData({
+					args: ["get", "url"],
+					cwd,
+					namespace: executionPlan.namespace,
+					sessionName: executionPlan.sessionName,
+					signal,
+					throwOnFailure: true,
+				});
+				liveUrl = extractStringResultField(liveUrlData, "result") ?? extractStringResultField(liveUrlData, "url");
+			} catch {}
+			const livePageValidationError = liveUrl === undefined
+				? callerOwnedLivePageRequirement
+				: getManagedSessionStateAccessValidationError({
+					args: executionPlan.effectiveArgs,
+					currentPageUrl: liveUrl,
+					cwd,
+					pageUrlUnknown: false,
+					stdin: runtimeToolStdin,
+				});
+			if (livePageValidationError) {
+				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: livePageValidationError };
+			} else if (liveUrl !== undefined) {
+				priorSessionTabTarget ??= { url: liveUrl };
+				priorSessionTabTargetUnknown = undefined;
+			}
+		}
+
 		if (executionPlan.validationError) {
 			return { kind: "early-result", statePatch, result: {
 				content: [{ type: "text", text: executionPlan.validationError }],
@@ -583,7 +638,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			} };
 		}
 
-		const commandTokens = semanticActionVisibleRefResolution ? extractCommandTokens(semanticActionVisibleRefResolution.args) : extractCommandTokens(preparedArgs.args);
 		const exactSensitiveValues = getExactSensitiveStdinValues({
 			command: executionPlan.commandInfo.command,
 			commandTokens,
@@ -632,9 +686,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				isError: true,
 			} };
 		}
-		const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
-			? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
-			: undefined;
 		const promptRefSnapshot = resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState;
 		const requestedArtifactCloseViolation = await findRequestedArtifactCloseViolation({ artifactManifest: state.artifactManifest, command: executionPlan.commandInfo.command, cwd, promptPolicy: options.promptPolicy });
 		if (requestedArtifactCloseViolation) {
@@ -973,7 +1024,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				preparedArgs,
 				priorRefSnapshotState,
 				priorSessionTabTarget,
-				priorSessionTabTargetUnknown: priorSessionPageState.tabTargetUnknown,
+				priorSessionTabTargetUnknown,
 				processArgs,
 				processStdin,
 				processTimeoutMs,

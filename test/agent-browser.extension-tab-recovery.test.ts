@@ -185,7 +185,7 @@ if (args.includes("batch")) {
 			assert.match((clickedSelector.content[0] as { text: string }).text, /Example Domain/);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 5);
+			assert.equal(invocations.length, 6);
 			assert.deepEqual(invocations[0]?.args, [
 				"--json",
 				"--session",
@@ -197,9 +197,10 @@ if (args.includes("batch")) {
 			]);
 			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
 			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "t1"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[4]?.stdin ?? "[]")), [
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[5]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[5]?.stdin ?? "[]")), [
 				["tab", "t1"],
 				["click", "@e9"],
 				["eval", "({ title: document.title, url: location.href })"],
@@ -311,16 +312,17 @@ if (args.includes("batch")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 4);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
+			assert.equal(invocations.length, 5);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
 				["tab", "t1"],
 				["click", "@e9"],
 				["eval", "({ title: document.title, url: location.href })"],
 			]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "t1"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "t1"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -440,16 +442,17 @@ if (args.includes("batch")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 4);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
+			assert.equal(invocations.length, 5);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[3]?.stdin ?? "[]")), [
 				["tab", "t1"],
 				["click", "@e9"],
 				["eval", "({ title: document.title, url: location.href })"],
 			]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "list"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -518,7 +521,8 @@ if (args.includes("tab") && args.includes("list")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "open", "about:blank"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
 			assert.equal(
 				invocations.some((invocation) => JSON.stringify(invocation.args) === JSON.stringify(["--json", "--session", "named", "tab", "blank"])),
 				false,
@@ -760,11 +764,12 @@ if (args.includes("tab") && args.includes("list")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 4);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "click", "@e9"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "t1"]);
+			assert.equal(invocations.length, 5);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "click", "@e9"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "t1"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

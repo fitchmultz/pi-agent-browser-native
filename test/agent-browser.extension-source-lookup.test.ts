@@ -275,6 +275,10 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("get") && args.includes("url")) {
+    process.stdout.write(JSON.stringify({ success: true, data: { url: "https://app.test/" } }));
+    return;
+  }
   const steps = JSON.parse(stdin);
   const results = steps.map((command) => {
     if (command[0] === "network" && command[1] === "request") {
@@ -338,7 +342,8 @@ process.stdin.on("end", () => {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
-			assert.deepEqual(invocations[2]?.args.slice(-5), ["--namespace", "review", "--session", "named", "batch"]);
+			assert.deepEqual(invocations[2]?.args.slice(-2), ["get", "url"]);
+			assert.deepEqual(invocations[3]?.args.slice(-5), ["--namespace", "review", "--session", "named", "batch"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

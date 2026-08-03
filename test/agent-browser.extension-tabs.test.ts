@@ -268,10 +268,11 @@ if (args.includes("click")) {
 			);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 3);
-			assert.equal(invocations[0]?.args.includes("click"), true);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "get", "title"]);
+			assert.equal(invocations.length, 4);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.equal(invocations[1]?.args.includes("click"), true);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "get", "title"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -8,7 +8,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { parseBatchCommandArgument } from "../extensions/agent-browser/lib/orchestration/batch-stdin.js";
 import {
+	getCallerOwnedSessionLivePageVerificationRequirement,
 	getManagedSessionResultingPageState,
 	getManagedSessionStateAccessValidationError,
 	getManagedSessionTargetAccessValidationError,
@@ -85,6 +87,9 @@ test("managed state policy blocks browser navigation into local agent-browser st
 			["upload", "#file", "-tmp/../../.agent-browser/sessions/auth.json"],
 			["download", "@e1", "-x/../.agent-browser/download.json"],
 			["pdf", "-x/../.agent-browser/page.pdf"],
+			["pdf", "C:.agent-browser\\state\\page.pdf"],
+			["pdf", "C:.agent-browser:secret\\state\\page.pdf"],
+			["pdf", "C:folder\\..\\.agent-browser\\state\\page.pdf"],
 			["state", "load", "-x/../.agent-browser/auth.json"],
 			["screenshot", "--screenshot-format", "png", join(tempDir, ".agent-browser", "capture.png")],
 			["screenshot", "--screenshot-quality", "80", join(tempDir, ".agent-browser", "capture.jpg")],
@@ -122,7 +127,6 @@ test("managed state policy blocks browser navigation into local agent-browser st
 		}
 		for (const stdin of [
 			JSON.stringify([["screenshot", "--screenshot-quality", "80", join(tempDir, ".agent-browser", "batch-capture.jpg")]]),
-			JSON.stringify([["batch", `open ${protectedUrl}`, "get html"]]),
 			JSON.stringify([["open", localDirectoryUrl], ["snapshot", "-i"], ["click", "@e1"]]),
 			JSON.stringify([["tab", "new", "--label", "files", localDirectoryUrl], ["mouse", "down"]]),
 			JSON.stringify([["tab", "t2"], ["snapshot", "-i"]]),
@@ -167,6 +171,7 @@ test("managed state policy blocks browser navigation into local agent-browser st
 			assert.match(validate(tempDir, ["open", "https://example.com"], { [name]: `safe.js,\u0085${protectedPath}` }) ?? "", /authenticated cookies and storage/, name);
 		}
 		assert.equal(validate(tempDir, ["--allow-file-access", "false", "open", localFileUrl]), undefined);
+		assert.equal(validate(tempDir, ["pdf", "C:safe\\report.pdf"]), undefined);
 		assert.match(validate(tempDir, ["screenshot", join(tempDir, ".agent-browser", "capture.png")]) ?? "", /authenticated cookies and storage/);
 		assert.match(validate(tempDir, ["download", "@e1", join(tempDir, ".agent-browser", "download.json")]) ?? "", /authenticated cookies and storage/);
 		assert.equal(validate(tempDir, ["get", "text", ".agent-browser"]), undefined);
@@ -178,8 +183,13 @@ test("managed state policy blocks browser navigation into local agent-browser st
 		assert.match(getObservedBrowserPageValidationError(["back"], localFileUrl, tempDir) ?? "", /authenticated cookies and storage/);
 		assert.match(getObservedBrowserPageValidationError(["open", localFileUrl], protectedUrl, tempDir) ?? "", /authenticated cookies and storage/);
 		assert.match(validate(tempDir, ["batch", `open ${protectedUrl}`, "get html"]) ?? "", /authenticated cookies and storage/);
+		assert.match(validate(tempDir, ["batch"], undefined, JSON.stringify([
+			["batch", `open ${localFileUrl}`],
+			["get", "html", "body"],
+		]), "https://example.com") ?? "", /Nested batch/);
+		assert.match(validate(tempDir, ["batch", `batch 'open ${localFileUrl}'`, "get html body"], undefined, undefined, "https://example.com") ?? "", /Nested batch/);
 		assert.match(validate(tempDir, ["batch", `screenshot --screenshot-quality 80 ${join(tempDir, ".agent-browser", "batch-arg.png")}`]) ?? "", /authenticated cookies and storage/);
-		assert.match(validate(tempDir, ["batch", "'unterminated"]) ?? "", /safely inspected/);
+		assert.equal(validate(tempDir, ["batch", "'unterminated"]), undefined);
 		assert.equal(validate(tempDir, ["batch", "open https://example.com", "snapshot -i"]), undefined);
 		assert.match(validate(tempDir, ["batch"], undefined, JSON.stringify([["eval", "location.href='file:///tmp/local.html'"], ["snapshot", "-i"]])) ?? "", /active page became unverified/);
 		assert.equal(validate(tempDir, ["open", "--headed", "https://example.com"], undefined, undefined, protectedUrl), undefined);
@@ -214,6 +224,7 @@ test("managed state policy blocks browser navigation into local agent-browser st
 		});
 		assert.equal(getManagedSessionStateAccessValidationError({ args: ["get", "url"], cwd: tempDir, pageUrlUnknown: true }), undefined);
 		assert.equal(getManagedSessionStateAccessValidationError({ args: ["tab", "list"], cwd: tempDir, pageUrlUnknown: true }), undefined);
+		assert.equal(getCallerOwnedSessionLivePageVerificationRequirement({ args: ["--session", "external", "session", "info"], cwd: tempDir }), undefined);
 		assert.equal(getManagedSessionStateAccessValidationError({ args: ["tab", "t2"], cwd: tempDir, pageUrlUnknown: true }), undefined);
 		assert.match(getManagedSessionStateAccessValidationError({ args: ["snapshot", "-i"], cwd: tempDir, pageUrlUnknown: true }) ?? "", /active page became unverified/);
 		assert.equal(getManagedSessionStateAccessValidationError({
@@ -234,6 +245,18 @@ test("managed state policy blocks browser navigation into local agent-browser st
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
+});
+
+test("batch command strings match upstream ASCII-space and quoting rules", () => {
+	assert.deepEqual(parseBatchCommandArgument("open https://example.com").step, ["open", "https://example.com"]);
+	assert.deepEqual(parseBatchCommandArgument("open\thttps://example.com").step, ["open\thttps://example.com"]);
+	assert.deepEqual(parseBatchCommandArgument("open\u00a0https://example.com").step, ["open\u00a0https://example.com"]);
+	assert.deepEqual(parseBatchCommandArgument("get text 'main content'").step, ["get", "text", "main content"]);
+	assert.deepEqual(parseBatchCommandArgument('get text "main content"').step, ["get", "text", "main content"]);
+	assert.deepEqual(parseBatchCommandArgument("type #name Ada\\ Lovelace").step, ["type", "#name", "Ada Lovelace"]);
+	assert.deepEqual(parseBatchCommandArgument("open 'unterminated").step, ["open", "unterminated"]);
+	assert.deepEqual(parseBatchCommandArgument("open trailing\\").step, ["open", "trailing"]);
+	assert.match(parseBatchCommandArgument("''").error ?? "", /empty/);
 });
 
 test("managed state policy blocks broad deletion and wrapper-owned state mutation", async () => {

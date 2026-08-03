@@ -856,11 +856,15 @@ test("agentBrowserExtension normalizes and repairs explicit screenshot artifact 
 const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const commandIndex = args.indexOf("screenshot");
-const requestedPath = args[commandIndex + 1];
-fs.mkdirSync(path.dirname(${JSON.stringify(upstreamTempPath)}), { recursive: true });
-fs.writeFileSync(${JSON.stringify(upstreamTempPath)}, "fake-png");
-process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.stringify(upstreamTempPath)} }, error: null }));`,
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://safe.example/" } }));
+} else {
+  const commandIndex = args.indexOf("screenshot");
+  const requestedPath = args[commandIndex + 1];
+  fs.mkdirSync(path.dirname(${JSON.stringify(upstreamTempPath)}), { recursive: true });
+  fs.writeFileSync(${JSON.stringify(upstreamTempPath)}, "fake-png");
+  process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.stringify(upstreamTempPath)} }, error: null }));
+}`,
 	);
 
 	try {
@@ -893,8 +897,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.string
 			assert.equal(artifacts?.[0]?.session, "warden-vfr");
 			assert.equal(artifacts?.[0]?.status, "repaired-from-temp");
 
-			const [invocation] = await readInvocationLog(logPath);
-			assert.equal(invocation.args.at(-1), expectedPath);
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args.at(-2), "get");
+			assert.equal(invocations.at(-1)?.args.at(-1), expectedPath);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1026,7 +1031,9 @@ test("agentBrowserExtension guards wrapper-known trace and profiler ownership", 
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`process.stdout.write(JSON.stringify({ success: true, data: { started: true }, error: null }));`,
+		`const args = process.argv.slice(2);
+const data = args.includes("get") && args.includes("url") ? { url: "https://safe.example/" } : { started: true };
+process.stdout.write(JSON.stringify({ success: true, data, error: null }));`,
 	);
 
 	try {

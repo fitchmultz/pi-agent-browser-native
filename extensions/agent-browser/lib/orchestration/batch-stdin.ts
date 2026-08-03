@@ -1,54 +1,33 @@
 export type BatchCommandStep = [string, ...string[]];
 
+// Mirror upstream commands::shell_words_split so policy inspection sees the same argv.
 export function parseBatchCommandArgument(command: string): { error?: string; step?: BatchCommandStep } {
 	const tokens: string[] = [];
 	let token = "";
-	let tokenStarted = false;
-	let quote: "'" | '"' | undefined;
-	let escaped = false;
-	const finishToken = () => {
-		if (!tokenStarted) return;
-		tokens.push(token);
-		token = "";
-		tokenStarted = false;
-	};
-	for (const character of command) {
-		if (escaped) {
+	let inDoubleQuote = false;
+	let inSingleQuote = false;
+	for (let index = 0; index < command.length; index += 1) {
+		const character = command[index];
+		if (character === "\\" && !inSingleQuote) {
+			const next = command[index + 1];
+			if (next !== undefined) {
+				token += next;
+				index += 1;
+			}
+		} else if (character === '"' && !inSingleQuote) {
+			inDoubleQuote = !inDoubleQuote;
+		} else if (character === "'" && !inDoubleQuote) {
+			inSingleQuote = !inSingleQuote;
+		} else if (character === " " && !inDoubleQuote && !inSingleQuote) {
+			if (token !== "") {
+				tokens.push(token);
+				token = "";
+			}
+		} else {
 			token += character;
-			tokenStarted = true;
-			escaped = false;
-			continue;
-		}
-		if (quote === "'") {
-			if (character === "'") quote = undefined;
-			else token += character;
-			tokenStarted = true;
-			continue;
-		}
-		if (character === "\\") {
-			escaped = true;
-			tokenStarted = true;
-			continue;
-		}
-		if (quote === '"') {
-			if (character === '"') quote = undefined;
-			else token += character;
-			tokenStarted = true;
-			continue;
-		}
-		if (character === "'" || character === '"') {
-			quote = character;
-			tokenStarted = true;
-			continue;
-		}
-		if (/\s/u.test(character)) finishToken();
-		else {
-			token += character;
-			tokenStarted = true;
 		}
 	}
-	if (escaped || quote !== undefined) return { error: "batch command has an unterminated escape or quote" };
-	finishToken();
+	if (token !== "") tokens.push(token);
 	return tokens.length > 0 ? { step: tokens as BatchCommandStep } : { error: "batch command is empty" };
 }
 

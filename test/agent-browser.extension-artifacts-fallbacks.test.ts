@@ -253,7 +253,10 @@ test("agentBrowserExtension keeps stale-ref guidance when tab pinning wraps a co
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-if (args.includes("batch")) {
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
+  process.exit(0);
+} else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify([
     { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
     { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
@@ -308,7 +311,10 @@ test("agentBrowserExtension keeps stale-ref guidance for user batch stdin wrappe
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const args = process.argv.slice(2);
-if (args.includes("batch")) {
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
+  process.exit(0);
+} else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify([
     { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
     { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
@@ -398,7 +404,10 @@ test("agentBrowserExtension reports wrapper-assisted fallback failures with effe
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-if (args.includes("batch")) {
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
+  process.exit(0);
+} else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify([
     { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
     { command: ["get", "title"], success: false, result: { title: "Wrong page" } }
@@ -440,7 +449,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 			assert.match(text, /Wrapper recovery hint:/);
 			assert.match(text, /tab list/);
 			assert.deepEqual(result.details?.effectiveArgs, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String((await readInvocationLog(logPath))[1]?.stdin ?? "[]")), [["tab", "t1"], ["get", "title"]]);
+			assert.deepEqual(JSON.parse(String((await readInvocationLog(logPath))[2]?.stdin ?? "[]")), [["tab", "t1"], ["get", "title"]]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

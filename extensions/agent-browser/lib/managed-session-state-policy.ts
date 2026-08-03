@@ -28,6 +28,7 @@ const FILE_ACCESS_FLAG_MESSAGE = "Browser file-access enablement is blocked beca
 const UPSTREAM_CONFIG_MESSAGE = "Upstream agent-browser config is blocked for browser-backed native calls because it can load protected state, profiles, extensions, or file-access settings. Remove the config and pass safe settings explicitly.";
 const UNVERIFIED_PAGE_MESSAGE = "The active page became unverified after a tab, attachment, history, script, or state-load transition. Run get url or navigate explicitly to a safe URL before page-content inspection.";
 const UNSAFE_BATCH_ARGUMENT_MESSAGE = "Batch command arguments could not be safely inspected. Use batch stdin JSON command arrays instead.";
+const NESTED_BATCH_ARGUMENT_MESSAGE = "Nested batch commands are blocked by the wrapper's page-state safety policy. Flatten the batch steps instead.";
 const EXPLICIT_NAVIGATION_COMMANDS = new Set(["a11y", "goto", "navigate", "open", "pushstate", "visit", "vitals", "web-vitals"]);
 const FILE_PATH_GLOBAL_FLAGS = ["--action-policy", "--config", "--download-path", "--executable-path", "--extension", "--init-script", "--profile", "--screenshot-dir", "--state"] as const;
 const FILE_PATH_ENV_VARIABLES = [
@@ -60,7 +61,7 @@ function decodeUrlComponent(value: string): string {
 
 function hasAgentBrowserPathComponent(value: string): boolean {
 	return decodeUrlComponent(value).replaceAll("\\", "/").toLowerCase().split("/").some((component) => {
-		const windowsCanonicalComponent = component.split(":", 1)[0]?.replace(/[. ]+$/g, "");
+		const windowsCanonicalComponent = component.replace(/^[a-z]:/i, "").split(":", 1)[0]?.replace(/[. ]+$/g, "");
 		return windowsCanonicalComponent === ".agent-browser";
 	});
 }
@@ -102,10 +103,11 @@ function resolveThroughExistingAncestor(path: string): string | undefined {
 export function isProtectedAgentBrowserFileTarget(value: string | undefined, cwd: string): boolean {
 	if (!value) return false;
 	const filePath = getFileUrlPath(value);
-	const windowsPath = /^[a-z]:[\\/]/i.test(value);
-	const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(value) && !windowsPath;
+	const windowsDrivePath = /^[a-z]:/i.test(value);
+	const windowsAbsolutePath = /^[a-z]:[\\/]/i.test(value);
+	const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(value) && !windowsDrivePath;
 	if (hasScheme && filePath === undefined) return false;
-	const pathValue = filePath ?? (isAbsolute(value) || windowsPath ? value : resolve(cwd, value));
+	const pathValue = filePath ?? (isAbsolute(value) || windowsAbsolutePath ? value : resolve(cwd, value));
 	if (hasAgentBrowserPathComponent(pathValue)) return true;
 	const resolvedPath = resolveThroughExistingAncestor(pathValue);
 	return resolvedPath !== undefined && hasAgentBrowserPathComponent(resolvedPath);
@@ -265,6 +267,7 @@ function fileAccessFlagIsEnabled(args: string[], env: NodeJS.ProcessEnv): boolea
 }
 
 function getManagedBrowserFileAccessValidationError(options: {
+	allowUnverifiedPageTransitions?: boolean;
 	args: string[];
 	currentPageUrl?: string;
 	cwd: string;
@@ -280,12 +283,15 @@ function getManagedBrowserFileAccessValidationError(options: {
 	const closesPage = ["close", "exit", "quit"].includes(command ?? "") || (command === "tab" && subcommand === "close");
 	const safelyInspectsPageTarget = (command === "tab" && subcommand === "list") || (command === "get" && subcommand === "url");
 	const safelySelectsUnverifiedTab = command === "tab" && subcommand !== undefined && !["close", "list", "new"].includes(subcommand);
+	const safelyTransitionsUnverifiedPage = options.allowUnverifiedPageTransitions === true
+		&& command !== "eval"
+		&& isUnverifiedPageTransitionCommand(command, subcommand);
 	const safelyLeavesPage = explicitTarget !== undefined && !isFileUrl(explicitTarget) && !isProtectedAgentBrowserFileTarget(explicitTarget, options.cwd);
 	if (fileAccessFlagIsEnabled(options.args, options.env) || rawBrowserArgsEnableFileAccess(options.args, options.env)) return FILE_ACCESS_FLAG_MESSAGE;
 	if (getBrowserContentUrlOperands(options.args).some(isFileUrl)) return BLOCKED_MANAGED_BROWSER_FILE_MESSAGE;
 	if (getBrowserFileOperands(options.args, options.env).some((value) => isProtectedAgentBrowserFileTarget(value, options.cwd))) return BLOCKED_MANAGED_BROWSER_FILE_MESSAGE;
 	if (command === "eval" && options.stdin !== undefined && /(?:\.agent-browser|%2eagent-browser)/i.test(options.stdin)) return BLOCKED_MANAGED_BROWSER_FILE_MESSAGE;
-	if (options.pageUrlUnknown && !closesPage && !safelyInspectsPageTarget && !safelySelectsUnverifiedTab && !safelyLeavesPage && !(options.trustedBatchTabSelection && command === "tab")) return UNVERIFIED_PAGE_MESSAGE;
+	if (options.pageUrlUnknown && !closesPage && !safelyInspectsPageTarget && !safelySelectsUnverifiedTab && !safelyTransitionsUnverifiedPage && !safelyLeavesPage && !(options.trustedBatchTabSelection && command === "tab")) return UNVERIFIED_PAGE_MESSAGE;
 	if (isProtectedAgentBrowserFileTarget(options.currentPageUrl, options.cwd) && !closesPage && !safelyInspectsPageTarget && !safelyLeavesPage) return BLOCKED_MANAGED_BROWSER_FILE_MESSAGE;
 	if (isFileUrl(options.currentPageUrl) && !closesPage && !safelyInspectsPageTarget && !safelyLeavesPage) return BLOCKED_MANAGED_BROWSER_FILE_MESSAGE;
 	return undefined;
@@ -300,11 +306,15 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 		if (decodeUrlComponent(command).toLowerCase().includes(".agent-browser")) return { error: BLOCKED_MANAGED_BROWSER_FILE_MESSAGE, steps: [] };
 		const parsed = parseBatchCommandArgument(command);
 		if (parsed.error || parsed.step === undefined) return { error: parsed.error ?? UNSAFE_BATCH_ARGUMENT_MESSAGE, steps: [] };
+		if (parseArgvDescriptor(parsed.step).commandInfo.command === "batch") return { error: NESTED_BATCH_ARGUMENT_MESSAGE, steps: [] };
 		steps.push(parsed.step);
 	}
 	const parsedStdin = parseUserBatchStdin(stdin);
 	if (parsedStdin.error) return { error: parsedStdin.error, steps: [] };
-	steps.push(...(parsedStdin.steps ?? []));
+	for (const step of parsedStdin.steps ?? []) {
+		if (parseArgvDescriptor(step).commandInfo.command === "batch") return { error: NESTED_BATCH_ARGUMENT_MESSAGE, steps: [] };
+		steps.push(step);
+	}
 	return { steps };
 }
 
@@ -364,6 +374,29 @@ export function getManagedSessionResultingPageState(options: {
 	return { ...state, pageTargetMayHaveChanged };
 }
 
+export function getCallerOwnedSessionLivePageVerificationRequirement(options: {
+	args: string[];
+	cwd: string;
+	stdin?: string;
+	trustedFirstBatchTabSelection?: boolean;
+}): string | undefined {
+	const descriptor = parseArgvDescriptor(options.args);
+	if (!needsManagedSession(descriptor)) return undefined;
+	if (descriptor.commandInfo.command !== "eval" && isUnverifiedPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand)) return undefined;
+	const validationError = getManagedSessionStateAccessValidationError({
+		args: options.args,
+		cwd: options.cwd,
+		env: {},
+		pageUrlUnknown: true,
+		parentEnv: {},
+		stdin: options.stdin,
+		allowUnverifiedPageTransitions: true,
+		trustedFirstBatchTabSelection: options.trustedFirstBatchTabSelection,
+		trustedPinnedEmptyConfig: true,
+	});
+	return validationError === UNVERIFIED_PAGE_MESSAGE ? validationError : undefined;
+}
+
 export function getManagedSessionTargetAccessValidationError(args: string[], ownedManagedSession: boolean, env: NodeJS.ProcessEnv = process.env): string | undefined {
 	const sessionName = extractExplicitSessionName(args) ?? env.AGENT_BROWSER_SESSION;
 	return sessionName && isWrapperManagedSessionName(sessionName) && !ownedManagedSession
@@ -415,6 +448,7 @@ function getReferencedValues(args: string[], cwd: string, env: NodeJS.ProcessEnv
 }
 
 export function getManagedSessionStateAccessValidationError(options: {
+	allowUnverifiedPageTransitions?: boolean;
 	args: string[];
 	currentPageUrl?: string;
 	cwd: string;
@@ -434,7 +468,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	if (command === "batch") {
 		const batch = getBatchCommandSteps(options.args, options.stdin);
 		if (batch.error) {
-			if (batch.error === BLOCKED_MANAGED_BROWSER_FILE_MESSAGE || batch.error.startsWith("agent_browser batch stdin")) return batch.error;
+			if (batch.error === BLOCKED_MANAGED_BROWSER_FILE_MESSAGE || batch.error === NESTED_BATCH_ARGUMENT_MESSAGE || batch.error.startsWith("agent_browser batch stdin")) return batch.error;
 			return UNSAFE_BATCH_ARGUMENT_MESSAGE;
 		}
 		let currentPageUrl = options.currentPageUrl;
@@ -455,11 +489,12 @@ export function getManagedSessionStateAccessValidationError(options: {
 		}
 	}
 	const browserFileError = getManagedBrowserFileAccessValidationError({
+		allowUnverifiedPageTransitions: options.allowUnverifiedPageTransitions,
 		args: options.args,
-		currentPageUrl: options.currentPageUrl,
+		currentPageUrl: command === "batch" ? undefined : options.currentPageUrl,
 		cwd: options.cwd,
 		env: effectiveEnv,
-		pageUrlUnknown: options.pageUrlUnknown,
+		pageUrlUnknown: command === "batch" ? false : options.pageUrlUnknown,
 		stdin: options.stdin,
 		trustedBatchTabSelection: options.trustedFirstBatchTabSelection,
 	});
