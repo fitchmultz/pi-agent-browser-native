@@ -43,7 +43,7 @@ import {
 	type SessionRefSnapshot,
 	type SessionRefSnapshotInvalidation,
 } from "../../session-page-state.js";
-import { extractExplicitSessionName } from "../../managed-session-restore.js";
+import { extractExplicitSessionName } from "../../argv-grammar.js";
 import { redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { buildClickDispatchNextActions, formatClickDispatchDiagnosticText } from "./click-dispatch.js";
@@ -506,8 +506,15 @@ export function buildFinalAgentBrowserToolResult(options: FinalResultInput): Age
 	return options.compiledNetworkSourceLookup ? redactNetworkSourceLookupSurface(result) as typeof result : result;
 }
 
+export function isMissingAgentBrowserBinary(
+	processResult: FinalResultInput["processResult"],
+): processResult is FinalResultInput["processResult"] & { spawnError: Error } {
+	return processResult.spawnError?.message.includes("ENOENT") === true;
+}
+
 export async function buildMissingBinaryFailureResult(options: { compatibilityWorkaround?: FinalResultInput["compatibilityWorkaround"]; electronLaunch?: FinalResultInput["electronLaunch"]; executionPlan: AgentBrowserExecutionPlan; implicitSessionCloseTimeoutMs: number; managedSessionActive: boolean; managedSessionName: string; managedSessionNamespace?: string; processResult: FinalResultInput["processResult"]; redactedArgs: string[]; redactedProcessArgs: string[]; sessionMode: "auto" | "fresh"; sessionTabCorrection?: FinalResultInput["sessionTabCorrection"] }): Promise<AgentBrowserToolResult | undefined> {
-	if (!options.processResult.spawnError?.message.includes("ENOENT")) return undefined;
+	if (!isMissingAgentBrowserBinary(options.processResult)) return undefined;
+	const spawnError = options.processResult.spawnError.message;
 	const errorText = buildMissingBinaryMessage();
 	const managedSessionOutcome = buildManagedSessionOutcome({ activeAfter: options.managedSessionActive, activeBefore: options.managedSessionActive, attemptedSessionName: options.executionPlan.managedSessionName, command: options.executionPlan.commandInfo.command, currentSessionName: options.managedSessionName, currentSessionNamespace: options.managedSessionNamespace, previousSessionName: options.managedSessionName, sessionMode: options.sessionMode, succeeded: false });
 	const managedSessionOutcomeText = formatManagedSessionOutcomeText(managedSessionOutcome);
@@ -519,5 +526,5 @@ export async function buildMissingBinaryFailureResult(options: { compatibilityWo
 		missingBinaryElectronRecord = missingBinaryElectronCleanup.record;
 	}
 	const textParts = [errorText, managedSessionOutcomeText, missingBinaryElectronCleanup ? `Electron cleanup after failed attach: ${missingBinaryElectronCleanup.summary}` : undefined].filter((part): part is string => part !== undefined && part.length > 0);
-	return { content: [{ type: "text", text: textParts.join("\n\n") }], details: { args: options.redactedArgs, compatibilityWorkaround: options.compatibilityWorkaround, effectiveArgs: options.redactedProcessArgs, electron: missingBinaryElectronRecord ? { action: "launch" as const, cleanup: missingBinaryElectronCleanup, launch: missingBinaryElectronRecord, status: "failed" as const, targets: options.electronLaunch?.targets, version: options.electronLaunch?.version } : undefined, managedSessionOutcome, namespace: options.executionPlan.namespace, nextActions: managedSessionRecoveryNextActions.length > 0 ? managedSessionRecoveryNextActions : undefined, sessionMode: options.sessionMode, sessionTabCorrection: options.sessionTabCorrection, ...buildAgentBrowserResultCategoryDetails({ args: options.redactedProcessArgs, command: options.executionPlan.commandInfo.command, errorText, failureCategory: "missing-binary", spawnError: options.processResult.spawnError.message, succeeded: false }), spawnError: options.processResult.spawnError.message }, isError: true };
+	return { content: [{ type: "text", text: textParts.join("\n\n") }], details: { args: options.redactedArgs, compatibilityWorkaround: options.compatibilityWorkaround, effectiveArgs: options.redactedProcessArgs, electron: missingBinaryElectronRecord ? { action: "launch" as const, cleanup: missingBinaryElectronCleanup, launch: missingBinaryElectronRecord, status: "failed" as const, targets: options.electronLaunch?.targets, version: options.electronLaunch?.version } : undefined, managedSessionOutcome, namespace: options.executionPlan.namespace, nextActions: managedSessionRecoveryNextActions.length > 0 ? managedSessionRecoveryNextActions : undefined, sessionMode: options.sessionMode, sessionTabCorrection: options.sessionTabCorrection, ...buildAgentBrowserResultCategoryDetails({ args: options.redactedProcessArgs, command: options.executionPlan.commandInfo.command, errorText, failureCategory: "missing-binary", spawnError, succeeded: false }), spawnError }, isError: true };
 }

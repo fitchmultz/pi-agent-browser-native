@@ -158,6 +158,9 @@ export const MANAGED_RESTORE_INCOMPATIBLE_ENVS = [
 	"HTTP_PROXY",
 	"HTTPS_PROXY",
 	"ALL_PROXY",
+	"http_proxy",
+	"https_proxy",
+	"all_proxy",
 ] as const;
 
 /** Boolean launch mutators block restore only when enabled. */

@@ -198,6 +198,22 @@ test("buildToolPresentation formats stateful browser-context results without lea
 			matches: [/prod-state\.json/, /REDACTED/],
 			missing: /state-secret/,
 		},
+		{
+			commandInfo: { command: "state", subcommand: "show" },
+			data: {
+				encrypted: false,
+				filename: "prod-state.json",
+				size: 512,
+				state: {
+					cookies: [{ domain: "example.test", name: "sid", value: "v1x9p3" }],
+					origins: [{ localStorage: [{ name: "theme", value: "l7q2z8" }], origin: "https://example.test" }],
+				},
+				summary: "1 cookies, 1 origins",
+			},
+			summary: "State show: prod-state.json",
+			matches: [/Saved state: prod-state\.json/, /Summary: 1 cookies, 1 origins/, /Encrypted: no/, /Size: 512 bytes/],
+			missing: /v1x9p3|l7q2z8/,
+		},
 	] as const;
 
 	for (const testCase of cases) {

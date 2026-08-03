@@ -11,6 +11,7 @@ import { discoverElectronApps, type ElectronDiscoveryResult } from "../../electr
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { boundElectronProbeString } from "../../electron/text.js";
 import type { CompiledAgentBrowserElectron } from "../../input-modes.js";
+import type { ManagedSessionRestoreState } from "../../managed-session-restore.js";
 import { isRecord } from "../../parsing.js";
 import { buildAgentBrowserNextActions, buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { appendUniqueAgentBrowserNextActions } from "../../results/next-actions.js";
@@ -642,6 +643,7 @@ function buildElectronProbeResult(options: {
 interface ElectronHostLaunchCleanupState {
 	electronChildProcesses: Map<string, ChildProcess>;
 	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
+	managedSessionRestoreState: ManagedSessionRestoreState;
 }
 
 export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLaunchCleanupState & {
@@ -652,7 +654,7 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 	const results: ElectronCleanupResult[] = [];
 	for (const record of options.records) {
 		const managedSessionCloseError = record.sessionName
-			? await closeManagedSession({ cwd: options.cwd, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
+			? await closeManagedSession({ cwd: options.cwd, restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
 			: undefined;
 		const managedSessionStep = record.sessionName
 			? managedSessionCloseError
@@ -706,6 +708,7 @@ export async function handleElectronHostInput(options: {
 	implicitSessionCloseTimeoutMs: number;
 	managedSessionActive: boolean;
 	managedSessionName: string;
+	managedSessionRestoreState: ManagedSessionRestoreState;
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
 	sessionPageState: SessionPageState;
 	signal?: AbortSignal;
@@ -718,6 +721,7 @@ export async function handleElectronHostInput(options: {
 		implicitSessionCloseTimeoutMs,
 		managedSessionActive,
 		managedSessionName,
+		managedSessionRestoreState,
 		redactedCompiledElectron,
 		sessionPageState,
 		signal,
@@ -848,7 +852,7 @@ export async function handleElectronHostInput(options: {
 	if (compiledElectron?.action === "cleanup") {
 		const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);
 		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
-		const cleanupResults = await cleanupTrackedElectronHostLaunches({ cwd, electronChildProcesses, electronLaunchRecords, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
+		const cleanupResults = await cleanupTrackedElectronHostLaunches({ cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
 		return buildElectronCleanupResult(redactedCompiledElectron ?? compiledElectron, cleanupResults);
 	}
 	return undefined;

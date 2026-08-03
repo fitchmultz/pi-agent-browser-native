@@ -25,9 +25,9 @@ import {
 	isSessionTabPostCommandCorrectionExcludedCommand,
 } from "../../command-taxonomy.js";
 import {
-	buildOwnedManagedSessionEnv,
-	clearManagedSessionRestoreDisabled,
 	isManagedSessionRestoreDisabled,
+	type ManagedSessionRestoreState,
+	pruneOwnedManagedSessionRestoreSnapshots,
 } from "../../managed-session-restore.js";
 import { chooseOpenResultTabCorrection, redactInvocationArgs, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
@@ -608,7 +608,7 @@ export async function runSessionCommandData(options: {
 	const processResult = await runAgentBrowserProcess({
 		args: ["--json", ...(namespace ? ["--namespace", namespace] : []), "--session", sessionName, ...args],
 		cwd,
-		// Ownership is decided by withOwnedManagedSessionContext / main-path owned env, not every probe.
+		// Ownership comes from the call-scoped context or the typed main-path option, not each probe.
 		signal,
 		stdin,
 		timeoutMs,
@@ -895,7 +895,7 @@ export function formatElectronRefFreshnessText(diagnostic: ElectronRefFreshnessD
 	return diagnostic?.summary;
 }
 
-export async function closeManagedSession(options: { cwd: string; namespace?: string; sessionName: string; timeoutMs: number }): Promise<string | undefined> {
+export async function closeManagedSession(options: { cwd: string; namespace?: string; restoreState: ManagedSessionRestoreState; sessionName: string; timeoutMs: number }): Promise<string | undefined> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 	let stdoutSpillPath: string | undefined;
@@ -904,13 +904,15 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 		const processResult = await runAgentBrowserProcess({
 			args: closeArgs,
 			cwd: options.cwd,
-			env: buildOwnedManagedSessionEnv(),
+			managedSessionRestoreState: options.restoreState,
+			ownedManagedSession: true,
 			signal: controller.signal,
 		});
 		// close always targets a wrapper-owned managed session
 		stdoutSpillPath = processResult.stdoutSpillPath;
 		if (!processResult.aborted && !processResult.spawnError && processResult.exitCode === 0) {
-			clearManagedSessionRestoreDisabled(options.sessionName, options.namespace);
+			options.restoreState.clear(options.sessionName, options.namespace);
+			pruneOwnedManagedSessionRestoreSnapshots(options.cwd);
 		}
 		return getAgentBrowserErrorText({
 			aborted: processResult.aborted,

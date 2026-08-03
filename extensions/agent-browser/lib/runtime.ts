@@ -18,10 +18,11 @@ import {
 	type CommandInfo,
 } from "./argv-descriptor.js";
 import {
+	extractExplicitNamespace,
+	extractExplicitSessionName,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
 	PREVALIDATED_VALUE_FLAGS,
-	VALUE_FLAGS,
-	optionalGlobalValueFlagConsumesNext,
+	scanUpstreamGlobalFlagOccurrences,
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
@@ -31,11 +32,8 @@ import {
 	LAUNCH_SCOPED_FLAG_LABEL,
 } from "./launch-scoped-flags.js";
 import {
-	clearManagedSessionRestoreDisabled,
-	extractExplicitNamespace,
-	extractExplicitSessionName,
 	MANAGED_SESSION_NAME_PREFIX,
-	markManagedSessionRestoreDisabled,
+	type ManagedSessionRestoreIdentity,
 } from "./managed-session-restore.js";
 
 export type { CommandInfo } from "./argv-descriptor.js";
@@ -122,6 +120,7 @@ export interface ManagedSessionState {
 export interface RestoredManagedSessionState extends ManagedSessionState {
 	closedSessionName?: string;
 	freshSessionOrdinal: number;
+	managedSessionRestoreDisabledIdentities: ManagedSessionRestoreIdentity[];
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -438,23 +437,19 @@ export function getImplicitSessionIdleTimeoutMs(env: NodeJS.ProcessEnv = process
 }
 
 function countExplicitGlobalFlags(args: string[], targetFlag: "--namespace" | "--session"): number {
-	let count = 0;
-	for (let index = 0; index < args.length; index += 1) {
+	return scanUpstreamGlobalFlagOccurrences(args, targetFlag).length;
+}
+
+function getUnsupportedLeadingIdentityAssignment(args: string[]): "--namespace" | "--session" | undefined {
+	const commandStartIndex = findCommandStartIndex(args) ?? args.length;
+	for (let index = 0; index < commandStartIndex; index += 1) {
 		const token = args[index];
-		if (token === "--") break;
-		if (token === targetFlag) {
-			count += 1;
-			index += 1;
-			continue;
-		}
-		if (token.startsWith(`${targetFlag}=`)) {
-			count += 1;
-			continue;
-		}
+		if (token.startsWith("--session=")) return "--session";
+		if (token.startsWith("--namespace=")) return "--namespace";
 		const flag = token.split("=", 1)[0] ?? token;
-		if (!token.includes("=") && (VALUE_FLAGS.has(flag) || optionalGlobalValueFlagConsumesNext(flag, args[index + 1]))) index += 1;
+		if (!token.includes("=") && PREVALIDATED_VALUE_FLAGS.has(flag)) index += 1;
 	}
-	return count;
+	return undefined;
 }
 
 export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -542,7 +537,8 @@ export function restoreManagedSessionStateFromBranch(
 	branch: unknown[],
 	fallbackSessionName: string,
 ): RestoredManagedSessionState {
-	clearManagedSessionRestoreDisabled();
+	const restoreDisabledIdentities = new Map<string, ManagedSessionRestoreIdentity>();
+	const restoreIdentityKey = (sessionName: string, namespace?: string) => `${namespace ?? ""}\0${sessionName}`;
 	let restoredState: ManagedSessionState = {
 		active: false,
 		sessionName: fallbackSessionName,
@@ -605,7 +601,7 @@ export function restoreManagedSessionStateFromBranch(
 		// Sticky restore policy is session-identity state and must apply even for explicit
 		// `--session <current-managed>` rows that are not used for managed-session lifecycle replay.
 		if (details.managedSessionRestoreDisabled === true && typeof sessionName === "string") {
-			markManagedSessionRestoreDisabled(sessionName, namespace);
+			restoreDisabledIdentities.set(restoreIdentityKey(sessionName, namespace), { namespace, sessionName });
 		}
 		const managedSessionName =
 			!explicitSessionName &&
@@ -636,7 +632,7 @@ export function restoreManagedSessionStateFromBranch(
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
 		if (commandClosesSession) {
 			if (succeeded) {
-				clearManagedSessionRestoreDisabled(managedSessionName, namespace);
+				restoreDisabledIdentities.delete(restoreIdentityKey(managedSessionName, namespace));
 				applyManagedClose(managedSessionName, namespace);
 			}
 			continue;
@@ -665,6 +661,7 @@ export function restoreManagedSessionStateFromBranch(
 		...restoredState,
 		...(closedSessionName ? { closedSessionName } : {}),
 		freshSessionOrdinal,
+		managedSessionRestoreDisabledIdentities: [...restoreDisabledIdentities.values()],
 	};
 }
 
@@ -745,7 +742,6 @@ export function validateToolArgs(args: string[]): string | undefined {
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
-		if (token === "--") break;
 		if (!token.startsWith("-")) {
 			continue;
 		}
@@ -937,6 +933,7 @@ export function buildExecutionPlan(
 	},
 ): ExecutionPlan {
 	const invalidValueFlag = getInvalidValueFlagDetails(args);
+	const unsupportedIdentityAssignment = getUnsupportedLeadingIdentityAssignment(args);
 	const explicitNamespace = extractExplicitNamespace(args);
 	const startupScopedFlags = getStartupScopedFlags(args).filter((flag) => !(flag === "--namespace" && explicitNamespace === options.managedSessionNamespace));
 	const plainTextInspection = isPlainTextInspectionArgs(args);
@@ -954,6 +951,18 @@ export function buildExecutionPlan(
 			startupScopedFlags: [],
 			usedImplicitSession: false,
 			validationError: formatInvalidValueFlagError(invalidValueFlag),
+		};
+	}
+
+	if (unsupportedIdentityAssignment) {
+		return {
+			commandInfo: {},
+			effectiveArgs,
+			plainTextInspection: false,
+			startupScopedFlags: [],
+			usedImplicitSession: false,
+			validationError:
+				`${unsupportedIdentityAssignment}=... is not supported by agent-browser 0.33.2. Pass ${unsupportedIdentityAssignment} and its value as separate arguments.`,
 		};
 	}
 

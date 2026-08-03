@@ -20,6 +20,7 @@ import type { NetworkRouteRecord, SessionArtifactManifest } from "../../results/
 import type { RichInputRecoveryDiagnostic, VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import type { SessionPageState, SessionRefSnapshot, SessionRefSnapshotInvalidation, SessionTabTarget } from "../../session-page-state.js";
 import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection } from "../../runtime.js";
+import type { ManagedSessionRestoreState, OwnedManagedSessionContext } from "../../managed-session-restore.js";
 import type { AllowedDomainsPolicy } from "../../navigation-policy.js";
 import type { PromptPolicy } from "../../prompt-policy.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
@@ -75,6 +76,7 @@ export interface BrowserRunState {
 	managedSessionCwd: string;
 	managedSessionName: string;
 	managedSessionNamespace?: string;
+	managedSessionRestoreState: ManagedSessionRestoreState;
 	networkRoutesBySession: Map<string, NetworkRouteRecord[]>;
 	sessionPageState: SessionPageState;
 	traceOwners: Map<string, TraceOwner>;
@@ -435,6 +437,7 @@ export interface PreparedBrowserRun {
 	exactSensitiveValues: string[];
 	executionPlan: AgentBrowserExecutionPlan;
 	includePinnedNavigationSummary: boolean;
+	ownedManagedSessionContext?: OwnedManagedSessionContext;
 	clickDispatchProbe?: ClickDispatchProbe;
 	pinnedBatchUnwrapMode?: PinnedBatchUnwrapMode;
 	preparedArgs: PreparedAgentBrowserArgs;

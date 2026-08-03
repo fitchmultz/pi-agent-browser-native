@@ -7,16 +7,13 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
-import {
-	clearManagedSessionRestoreDisabled,
-	isManagedSessionRestoreDisabled,
-} from "../extensions/agent-browser/lib/managed-session-restore.js";
+import { createManagedSessionRestoreKey } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import {
 	collectTimeoutPartialProgress,
 	formatTimeoutPartialProgressText,
@@ -69,6 +66,71 @@ process.stdout.write(JSON.stringify({ success: true, data: { args } }));`,
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rejects incompatible launch reuse of an active restore-enabled managed daemon", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restore-reuse-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, ownedMarker: process.env.PI_AGENT_BROWSER_OWNED_MANAGED_SESSION, restore: process.env.AGENT_BROWSER_RESTORE, stateExpireDays: process.env.AGENT_BROWSER_STATE_EXPIRE_DAYS }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.com" } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64), HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com"],
+			});
+			assert.equal(opened.isError, false, JSON.stringify(opened));
+			const sessionName = String(opened.details?.sessionName ?? "");
+			assert.match(sessionName, /^piab-/);
+			const openInvocations = await readInvocationLog(logPath);
+			assert.equal((openInvocations[0] as { ownedMarker?: string }).ownedMarker, undefined);
+			assert.equal((openInvocations[0] as { stateExpireDays?: string }).stateExpireDays, undefined);
+
+			const chatGptOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://chatgpt.com"] });
+			assert.equal(chatGptOpen.isError, false, JSON.stringify(chatGptOpen));
+			const afterChatGptOpen = await readInvocationLog(logPath);
+			const chatGptInvocation = afterChatGptOpen.find((entry) => entry.args.includes("https://chatgpt.com"));
+			assert.ok(chatGptInvocation?.args.includes("--user-agent"));
+			assert.equal((chatGptInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
+			const invocationCount = afterChatGptOpen.length;
+
+			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", sessionName, "--cdp", "http://127.0.0.1:9222", "open", "https://example.com"],
+			});
+			assert.equal(blocked.isError, true);
+			assert.equal(blocked.details?.failureCategory, "validation-error");
+			assert.match(String(blocked.details?.validationError ?? ""), /daemon may still retain managed restore state/);
+			assert.equal((await readInvocationLog(logPath)).length, invocationCount);
+			assert.equal(blocked.details?.managedSessionRestoreDisabled, undefined);
+
+			const sessionsDir = join(tempDir, ".agent-browser", "sessions");
+			const restoreKey = createManagedSessionRestoreKey(tempDir);
+			await mkdir(sessionsDir, { recursive: true });
+			for (const [index, suffix] of ["old", "middle", "new"].entries()) {
+				const path = join(sessionsDir, `${restoreKey}-${suffix}.json`);
+				await writeFile(path, "{}");
+				await utimes(path, index + 1, index + 1);
+			}
+			const callerState = join(sessionsDir, "caller-owned.json");
+			await writeFile(callerState, "{}");
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+			await assert.rejects(access(join(sessionsDir, `${restoreKey}-old.json`)));
+			await access(join(sessionsDir, `${restoreKey}-middle.json`));
+			await access(join(sessionsDir, `${restoreKey}-new.json`));
+			await access(callerState);
+		});
+	} finally {
+			await rm(tempDir, { force: true, recursive: true });
 	}
 });
 
@@ -325,7 +387,6 @@ if (args.includes("open")) {
 });
 
 test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async () => {
-	clearManagedSessionRestoreDisabled();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -389,6 +450,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 				await runExtensionEvent(abandonedMissingBinaryHarness.handlers, "session_start", { reason: "new" }, abandonedMissingBinaryHarness.ctx);
 				const abandonedMissingBinary = await executeRegisteredTool(abandonedMissingBinaryHarness.tool, abandonedMissingBinaryHarness.ctx, { args: ["--namespace", "next", "open", "https://missing-binary.test"], sessionMode: "fresh" });
 				assert.equal(abandonedMissingBinary.isError, true);
+				assert.equal(abandonedMissingBinary.details?.managedSessionRestoreDisabled, undefined);
 				const abandonedMissingBinaryNextActions = abandonedMissingBinary.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
 				assert.ok(abandonedMissingBinaryNextActions?.some((action) => action.id === "retry-fresh-managed-session" && action.params?.args?.join(" ") === "--namespace next open about:blank"));
 			});
@@ -415,11 +477,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			});
 			const incompatibleOutcome = incompatibleFailure.details?.managedSessionOutcome as { attemptedSessionName?: string } | undefined;
 			assert.ok(incompatibleOutcome?.attemptedSessionName);
-			assert.equal(isManagedSessionRestoreDisabled(incompatibleOutcome?.attemptedSessionName), false);
+			assert.equal(incompatibleFailure.details?.managedSessionRestoreDisabled, undefined);
 		});
 	} finally {
-		clearManagedSessionRestoreDisabled();
-		await rm(tempDir, { force: true, recursive: true });
+			await rm(tempDir, { force: true, recursive: true });
 	}
 });
 

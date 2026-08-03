@@ -47,18 +47,36 @@ test("buildExecutionPlan rejects ambiguous session identity flags without reject
 		options,
 	);
 	assert.match(duplicateNamespace.validationError ?? "", /Multiple --namespace flags/);
-	const literalText = buildExecutionPlan(
-		["--session", "piab-managed", "fill", "#field", "--", "--session"],
+	const afterSentinel = buildExecutionPlan(
+		["--session", "piab-managed", "fill", "#field", "--", "--session", "caller-owned"],
 		options,
 	);
-	assert.equal(literalText.validationError, undefined);
-	assert.equal(literalText.sessionName, "piab-managed");
+	assert.match(afterSentinel.validationError ?? "", /Multiple --session flags/);
 	const launchArgValue = buildExecutionPlan(
 		["--session", "piab-managed", "--args", "--session=browser-flag-value", "open", "https://example.com"],
 		{ ...options, managedSessionActive: false },
 	);
 	assert.doesNotMatch(launchArgValue.validationError ?? "", /Multiple --session flags/);
 	assert.equal(launchArgValue.sessionName, "piab-managed");
+	const commandFlagSmuggle = buildExecutionPlan(
+		["wait", "--text", "Dashboard", "--timeout", "--session", "caller-owned", "5000"],
+		options,
+	);
+	assert.equal(commandFlagSmuggle.validationError, undefined);
+	assert.equal(commandFlagSmuggle.sessionName, "caller-owned");
+	assert.equal(commandFlagSmuggle.usedImplicitSession, false);
+	const unsupportedEqualsSession = buildExecutionPlan(
+		["--session=caller-owned", "open", "https://example.com"],
+		options,
+	);
+	assert.match(unsupportedEqualsSession.validationError ?? "", /--session=\.\.\. is not supported/);
+	const unsupportedEqualsNamespace = buildExecutionPlan(
+		["--namespace=caller-owned", "open", "https://example.com"],
+		options,
+	);
+	assert.match(unsupportedEqualsNamespace.validationError ?? "", /--namespace=\.\.\. is not supported/);
+	const literalEqualsSession = buildExecutionPlan(["fill", "#field", "--session=literal"], options);
+	assert.equal(literalEqualsSession.validationError, undefined);
 });
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
@@ -231,6 +249,7 @@ test("restoreManagedSessionStateFromBranch ignores inspection entries and recons
 	assert.deepEqual(restored, {
 		active: true,
 		freshSessionOrdinal: 1,
+		managedSessionRestoreDisabledIdentities: [],
 		replacedSessionName: undefined,
 		sessionName: "piab-demo-123-fresh-aaa",
 	});
@@ -753,6 +772,7 @@ test("restoreManagedSessionStateFromBranch keeps cwd isolation by ignoring sessi
 	assert.deepEqual(restored, {
 		active: false,
 		freshSessionOrdinal: 0,
+		managedSessionRestoreDisabledIdentities: [],
 		sessionName: "piab-demo-123",
 	});
 });

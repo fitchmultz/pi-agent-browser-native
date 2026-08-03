@@ -11,7 +11,7 @@ import { chmod, mkdir } from "node:fs/promises";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
-import { getManagedSessionRestoreEnv } from "./managed-session-restore.js";
+import { getManagedSessionRestoreEnv, type ManagedSessionRestoreState } from "./managed-session-restore.js";
 import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
@@ -242,15 +242,23 @@ export async function runAgentBrowserProcess(options: {
 	args: string[];
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
+	managedSessionRestoreState?: ManagedSessionRestoreState;
+	ownedManagedSession?: boolean;
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
 }): Promise<ProcessRunResult> {
-	const { args, cwd, env, signal, stdin } = options;
+	const { args, cwd, env, managedSessionRestoreState, ownedManagedSession, signal, stdin } = options;
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
-		...getManagedSessionRestoreEnv({ args, cwd, env }),
+		...getManagedSessionRestoreEnv({
+			args,
+			cwd,
+			env,
+			ownedManagedSession,
+			restoreState: managedSessionRestoreState,
+		}),
 		...env,
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];

@@ -45,7 +45,7 @@ import {
 import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore } from "../../temp.js";
 import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../../temp.js";
 import { isRecord } from "../../parsing.js";
-import { clearManagedSessionRestoreDisabled } from "../../managed-session-restore.js";
+import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.js";
 import { createFreshSessionName, extractCommandTokens, resolveManagedSessionState } from "../../runtime.js";
 import {
 	applyOpenResultTabCorrection,
@@ -428,14 +428,15 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage;
 		const managedSessionState = resolveManagedSessionState({ command: prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, managedSessionNamespace: prepared.executionPlan.namespace, priorActive: priorManagedSessionActive, priorNamespace: priorManagedSessionNamespace, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
 		if (!managedTransitionSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName) {
-			clearManagedSessionRestoreDisabled(prepared.executionPlan.managedSessionName, prepared.executionPlan.namespace);
+			state.managedSessionRestoreState.clear(prepared.executionPlan.managedSessionName, prepared.executionPlan.namespace);
 		}
 		const replacedManagedSessionName = managedSessionState.replacedSessionName;
 		managedSessionActive = managedSessionState.active;
 		managedSessionName = managedSessionState.sessionName;
 		managedSessionNamespace = managedSessionState.namespace;
 		if (commandClosesSession && succeeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
-			clearManagedSessionRestoreDisabled(managedCloseSessionName, priorManagedSessionNamespace);
+			state.managedSessionRestoreState.clear(managedCloseSessionName, priorManagedSessionNamespace);
+			pruneOwnedManagedSessionRestoreSnapshots(cwd);
 			freshSessionOrdinal += 1;
 			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, freshSessionOrdinal);
 			managedSessionNamespace = undefined;
@@ -456,7 +457,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			networkRoutesBySession = new Map(networkRoutesBySession);
 			networkRoutesBySession.delete(replacedSessionStateKey ?? replacedManagedSessionName);
 			sessionPageState.clearSession(replacedSessionStateKey ?? replacedManagedSessionName);
-			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, namespace: priorManagedSessionNamespace, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
+			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, namespace: priorManagedSessionNamespace, restoreState: state.managedSessionRestoreState, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
 			if (!replacedCloseError) state.closedManagedSessionNames.add(replacedSessionStateKey ?? replacedManagedSessionName);
 		}
 

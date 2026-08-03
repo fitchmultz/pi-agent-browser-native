@@ -1,12 +1,8 @@
 import { runAgentBrowserProcess } from "../../process.js";
-import {
-	buildOwnedManagedSessionRestoreContext,
-	buildOwnedManagedSessionEnv,
-	withOwnedManagedSessionContext,
-} from "../../managed-session-restore.js";
+import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
 import { applyBrowserRunStatePatch } from "./session-state.js";
-import { buildMissingBinaryFailureResult } from "./final-result.js";
+import { buildMissingBinaryFailureResult, isMissingAgentBrowserBinary } from "./final-result.js";
 import { prepareBrowserRun } from "./prepare.js";
 import { processBrowserOutput } from "./process-output.js";
 import type { AgentBrowserToolResult, BrowserRunOptions } from "./types.js";
@@ -22,31 +18,29 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 	}
 
 	const { prepared } = preparedResult;
-	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
-		args: prepared.executionPlan.effectiveArgs,
-		cwd: options.cwd,
-		currentManagedSessionName: options.state.managedSessionName,
-		currentManagedSessionNamespace: options.state.managedSessionNamespace,
-		managedSessionName: prepared.executionPlan.managedSessionName,
-		namespace: prepared.executionPlan.namespace,
-		sessionName: prepared.executionPlan.sessionName,
-	});
+	const ownedManagedSession = prepared.ownedManagedSessionContext;
 	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		try {
 			const processResult = await runAgentBrowserProcess({
 				args: prepared.processArgs,
 				cwd: options.cwd,
 				env: ownedManagedSession
-					? {
-							AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs,
-							...buildOwnedManagedSessionEnv(),
-						}
+					? { AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs }
 					: undefined,
+				managedSessionRestoreState: options.state.managedSessionRestoreState,
+				ownedManagedSession: ownedManagedSession !== undefined,
 				signal: options.signal,
 				stdin: prepared.processStdin,
 				timeoutMs: prepared.processTimeoutMs,
 			});
 
+			const missingBinary = isMissingAgentBrowserBinary(processResult);
+			if (missingBinary && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName) {
+				options.state.managedSessionRestoreState.clear(
+					prepared.executionPlan.managedSessionName,
+					prepared.executionPlan.namespace,
+				);
+			}
 			const missingBinaryResult = await buildMissingBinaryFailureResult({
 				compatibilityWorkaround: prepared.compatibilityWorkaround,
 				electronLaunch: prepared.electronLaunch,
@@ -61,9 +55,7 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 				sessionMode: prepared.sessionMode,
 				sessionTabCorrection: prepared.sessionTabCorrection,
 			});
-			if (missingBinaryResult) {
-				return missingBinaryResult;
-			}
+			if (missingBinaryResult) return missingBinaryResult;
 
 			const output = await processBrowserOutput({ ...options, prepared, processResult });
 			applyBrowserRunStatePatch(options.state, output.statePatch);

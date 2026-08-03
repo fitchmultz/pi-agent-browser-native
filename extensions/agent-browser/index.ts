@@ -34,7 +34,8 @@ import {
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
 } from "./lib/runtime.js";
-import { extractExplicitNamespace, extractExplicitSessionName } from "./lib/managed-session-restore.js";
+import { extractExplicitNamespace, extractExplicitSessionName } from "./lib/argv-grammar.js";
+import { ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
 import { isCloseCommand } from "./lib/command-taxonomy.js";
@@ -480,17 +481,17 @@ function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSe
 	}
 }
 
-async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManagedSession>, keepSessionName: string | undefined, timeoutMs: number, keepNamespace?: string): Promise<void> {
+async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManagedSession>, restoreState: ManagedSessionRestoreState, keepSessionName: string | undefined, timeoutMs: number, keepNamespace?: string): Promise<void> {
 	const keepKey = getSessionContextKey(keepSessionName, keepNamespace);
 	for (const [key, owner] of [...sessions]) {
 		if (key === keepKey) continue;
-		const error = await closeManagedSession({ cwd: owner.cwd, namespace: owner.namespace, sessionName: owner.sessionName, timeoutMs });
+		const error = await closeManagedSession({ cwd: owner.cwd, namespace: owner.namespace, restoreState, sessionName: owner.sessionName, timeoutMs });
 		if (!error) sessions.delete(key);
 	}
 }
 
-async function closeOwnedManagedSessions(sessions: Map<string, OwnedManagedSession>, timeoutMs: number): Promise<void> {
-	await closeOwnedManagedSessionsExcept(sessions, undefined, timeoutMs);
+async function closeOwnedManagedSessions(sessions: Map<string, OwnedManagedSession>, restoreState: ManagedSessionRestoreState, timeoutMs: number): Promise<void> {
+	await closeOwnedManagedSessionsExcept(sessions, restoreState, undefined, timeoutMs);
 }
 
 function getOffBranchOwnedElectronLaunchRecords(ownedRecords: Map<string, ElectronLaunchRecord>, branchRecords: Map<string, ElectronLaunchRecord>): Map<string, ElectronLaunchRecord> {
@@ -600,6 +601,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let ownedElectronLaunchRecords = new Map<string, ElectronLaunchRecord>();
 	let branchOwnedElectronLaunchIds = new Set<string>();
 	let electronChildProcesses = new Map<string, ChildProcess>();
+	const managedSessionRestoreState = new ManagedSessionRestoreState();
 	const ownedManagedSessions = new Map<string, OwnedManagedSession>();
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 	let branchStateGeneration = 0;
@@ -620,6 +622,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		const branch = ctx.sessionManager.getBranch();
 		const branchResourceEvents = collectBranchManagedResourceEvents(branch);
 		const restoredState = restoreManagedSessionStateFromBranch(branch, managedSessionBaseName);
+		managedSessionRestoreState.replace(restoredState.managedSessionRestoreDisabledIdentities);
 		managedSessionActive = restoredState.active;
 		const restoredFreshSessionOrdinal = options.resetRuntimeOwnership
 			? restoredState.freshSessionOrdinal
@@ -721,6 +724,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				cwd: shutdownCwd,
 				electronChildProcesses,
 				electronLaunchRecords: electronRecordsToCleanup,
+				managedSessionRestoreState,
 				timeoutMs: implicitSessionCloseTimeoutMs,
 			});
 			preservedElectronProfileDirs = [...new Set([
@@ -729,10 +733,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			])];
 			syncElectronCleanupManagedSessions(ownedManagedSessions, electronCleanupResults);
 			if (quitting) {
-				await closeOwnedManagedSessions(ownedManagedSessions, implicitSessionCloseTimeoutMs);
+				await closeOwnedManagedSessions(ownedManagedSessions, managedSessionRestoreState, implicitSessionCloseTimeoutMs);
 			} else {
 				await closeOwnedManagedSessionsExcept(
 					ownedManagedSessions,
+					managedSessionRestoreState,
 					managedSessionActive ? managedSessionName : undefined,
 					implicitSessionCloseTimeoutMs,
 					managedSessionActive ? managedSessionNamespace : undefined,
@@ -845,6 +850,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					implicitSessionCloseTimeoutMs,
 					managedSessionActive,
 					managedSessionName,
+					managedSessionRestoreState,
 					redactedCompiledElectron,
 					sessionPageState,
 					signal,
@@ -911,6 +917,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					managedSessionCwd,
 					managedSessionName,
 					managedSessionNamespace,
+					managedSessionRestoreState,
 					networkRoutesBySession,
 					sessionPageState,
 					traceOwners,

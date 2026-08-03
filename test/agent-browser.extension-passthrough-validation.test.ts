@@ -402,7 +402,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["snapshot", "--interactive", "--selector", "main", "--cursor"],
 		["eval", "document.title"],
 		["eval", "-b", "ZG9jdW1lbnQudGl0bGU="],
-		["connect", "9222"],
+		["--session", "connector", "connect", "9222"],
 		["get", "url"],
 		["get", "cdp-url"],
 		["get", "box", "#button"],
@@ -445,11 +445,12 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				.map((entry) => stripWrapperPrefix(entry.args))
 				.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin"));
 			const expectedInvocations = commands.flatMap((args) => {
-				const command = args[0];
-				if (command === "click" || (command === "tab" && args[1] === "close")) return [[...args], ["get", "url"], ["get", "title"]];
+				const normalizedArgs = stripWrapperPrefix([...args]);
+				const command = normalizedArgs[0];
+				if (command === "click" || (command === "tab" && normalizedArgs[1] === "close")) return [normalizedArgs, ["get", "url"], ["get", "title"]];
 				return command === "back" || command === "forward" || command === "reload" || command === "dblclick"
-					? [[...args], ["get", "url"], ["get", "title"]]
-					: [[...args]];
+					? [normalizedArgs, ["get", "url"], ["get", "title"]]
+					: [normalizedArgs];
 			});
 			assert.deepEqual(commandInvocations, expectedInvocations);
 			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));

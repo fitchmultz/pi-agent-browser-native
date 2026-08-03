@@ -1,6 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+import { isCloseCommand } from "../../command-taxonomy.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
@@ -447,8 +448,25 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		currentManagedSessionNamespace: state.managedSessionNamespace,
 		managedSessionName: executionPlan.managedSessionName,
 		namespace: executionPlan.namespace,
+		restoreState: state.managedSessionRestoreState,
 		sessionName: executionPlan.sessionName,
+		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround?.id === "chatgpt-headless-user-agent",
 	});
+	const reusesCurrentManagedRestoreDaemon = state.managedSessionActive &&
+		ownedManagedSession?.restoreSuppressed === true &&
+		ownedManagedSession.sessionName === state.managedSessionName &&
+		(ownedManagedSession.namespace ?? "") === (state.managedSessionNamespace ?? "") &&
+		!isCloseCommand(executionPlan.commandInfo.command);
+	if (reusesCurrentManagedRestoreDaemon) {
+		executionPlan = {
+			...executionPlan,
+			recoveryHint: undefined,
+			validationError: [
+				"This call would apply incompatible launch, config, or storage policy to the active wrapper-owned managed session while its browser daemon may still retain managed restore state.",
+				"Close the current managed session first, retry without an explicit --session using sessionMode: \"fresh\", or use a distinct explicit --session.",
+			].join(" "),
+		};
+	}
 	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 		const priorSessionPageState = sessionPageState.get(sessionStateKey);
@@ -883,6 +901,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				exactSensitiveValues,
 				executionPlan,
 				includePinnedNavigationSummary,
+				ownedManagedSessionContext: ownedManagedSession,
 				pinnedBatchUnwrapMode,
 				preparedArgs,
 				priorRefSnapshotState,

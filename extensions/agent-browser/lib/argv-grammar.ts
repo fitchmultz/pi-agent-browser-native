@@ -105,6 +105,38 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 	"--webgpu",
 ]);
 
+export interface UpstreamGlobalFlagOccurrence {
+	index: number;
+	value?: string;
+}
+
+/** Mirror upstream 0.33.2 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
+export function scanUpstreamGlobalFlagOccurrences(args: string[], targetFlag: string): UpstreamGlobalFlagOccurrence[] {
+	const occurrences: UpstreamGlobalFlagOccurrence[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index];
+		if (token === targetFlag) {
+			occurrences.push({ index, value: args[index + 1] });
+			index += 1;
+			continue;
+		}
+		if (PREVALIDATED_VALUE_FLAGS.has(token)) {
+			index += 1;
+			continue;
+		}
+		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token) && ["true", "false"].includes(args[index + 1] ?? "")) index += 1;
+	}
+	return occurrences;
+}
+
+export function extractExplicitSessionName(args: string[]): string | undefined {
+	return scanUpstreamGlobalFlagOccurrences(args, "--session").at(-1)?.value;
+}
+
+export function extractExplicitNamespace(args: string[]): string | undefined {
+	return scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value;
+}
+
 export function getFlagName(token: string): string {
 	return token.split("=", 1)[0] ?? token;
 }

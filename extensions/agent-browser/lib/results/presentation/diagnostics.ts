@@ -199,7 +199,7 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 		const states = getArrayField(data, "states") ?? getArrayField(data, "files");
 		if (states) return `States: ${states.length}`;
 		if (commandInfo.subcommand === "load") return undefined;
-		const stateName = getStringField(data, "name") ?? getStringField(data, "file") ?? getStringField(data, "path") ?? commandInfo.subcommand;
+		const stateName = getStringField(data, "name") ?? getStringField(data, "file") ?? getStringField(data, "filename") ?? getStringField(data, "path") ?? commandInfo.subcommand;
 		if (stateName) return `State ${commandInfo.subcommand ?? "result"}: ${stateName}`;
 	}
 
@@ -891,7 +891,16 @@ function formatFrameText(data: Record<string, unknown>): string | undefined {
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
-function formatStateText(data: Record<string, unknown>): string | undefined {
+function formatStateText(data: Record<string, unknown>, subcommand?: string): string | undefined {
+	if (subcommand === "show") {
+		const filename = getStringField(data, "filename") ?? getStringField(data, "name") ?? "saved state";
+		const summary = getStringField(data, "summary");
+		const lines = [`Saved state: ${redactModelFacingText(filename)}`];
+		if (summary) lines.push(`Summary: ${redactModelFacingText(summary)}`);
+		if (typeof data.encrypted === "boolean") lines.push(`Encrypted: ${data.encrypted ? "yes" : "no"}`);
+		if (typeof data.size === "number") lines.push(`Size: ${data.size} bytes`);
+		return lines.join("\n");
+	}
 	const states = getArrayField(data, "states") ?? getArrayField(data, "files");
 	if (states) {
 		if (states.length === 0) return "No saved states.";
@@ -935,6 +944,7 @@ function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unkno
 export function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
 	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
 	if (commandInfo.command === "storage") return redactStorageData(data);
+	if (commandInfo.command === "state" && commandInfo.subcommand === "show") return redactStatefulValues(data, new Set(["value"]));
 	return redactStructuredPresentationValue(data);
 }
 
@@ -953,7 +963,7 @@ export function formatDiagnosticText(commandInfo: CommandInfo, data: Record<stri
 	if (commandInfo.command === "storage") return formatStorageText(data);
 	if (commandInfo.command === "dialog") return formatDialogText(data);
 	if (commandInfo.command === "frame") return formatFrameText(data);
-	if (commandInfo.command === "state") return formatStateText(data);
+	if (commandInfo.command === "state") return formatStateText(data, commandInfo.subcommand);
 	if (commandInfo.command === "network" && commandInfo.subcommand === "requests") return formatNetworkRequestsText(data, commandInfo);
 	if (commandInfo.command === "network" && commandInfo.subcommand === "request") return formatNetworkRequestText(data);
 	if (commandInfo.command === "diff") return stringifyModelFacing(data);
