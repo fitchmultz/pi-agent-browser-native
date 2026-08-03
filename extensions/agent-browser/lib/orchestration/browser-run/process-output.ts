@@ -65,6 +65,7 @@ import {
 	formatElectronSessionMismatchText,
 	getSessionContextKey,
 	getStaleRefArgs,
+	inspectManagedSessionDaemon,
 	mergeNavigationSummaryIntoData,
 	shouldCaptureNavigationSummary,
 	shouldCorrectSessionTabAfterCommand,
@@ -425,7 +426,24 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const policyBlockedFreshManagedSession = allowedDomainsViolation !== undefined && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName === prepared.executionPlan.sessionName;
 		const postLaunchBatchFailure = !succeeded && processSucceeded && parseSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && batchStartedManagedBrowser(presentationEnvelope?.data);
 		const postLaunchTimeoutWithPage = !succeeded && processResult.timedOut && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && timeoutPartialProgress?.liveUrlRecovered === true;
-		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage;
+		const failedFreshSessionMayHaveStarted = !succeeded
+			&& (processResult.agentBrowserStarted || (!processResult.aborted && processResult.spawnError === undefined))
+			&& prepared.sessionMode === "fresh"
+			&& prepared.executionPlan.managedSessionName === prepared.executionPlan.sessionName;
+		const failedFreshDaemon = failedFreshSessionMayHaveStarted && prepared.executionPlan.sessionName
+			? await inspectManagedSessionDaemon({
+				cwd,
+				namespace: prepared.executionPlan.namespace,
+				sessionName: prepared.executionPlan.sessionName,
+				timeoutMs: Math.min(implicitSessionCloseTimeoutMs, 2_000),
+			})
+			: undefined;
+		if (failedFreshDaemon?.status === "active") {
+			state.managedSessionRestoreState.recordDaemonRestoreKey(prepared.executionPlan.sessionName, prepared.executionPlan.namespace, failedFreshDaemon.restoreKey);
+		}
+		// Only a confirmed inactive daemon proves that a started fresh command did not establish browser ownership.
+		const postLaunchFreshFailure = failedFreshDaemon !== undefined && failedFreshDaemon.status !== "inactive";
+		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage || postLaunchFreshFailure;
 		const managedSessionState = resolveManagedSessionState({ command: prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, managedSessionNamespace: prepared.executionPlan.namespace, priorActive: priorManagedSessionActive, priorNamespace: priorManagedSessionNamespace, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
 		if (!managedTransitionSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName) {
 			state.managedSessionRestoreState.clear(prepared.executionPlan.managedSessionName, prepared.executionPlan.namespace);
@@ -446,7 +464,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			managedSessionNamespace = undefined;
 		}
 		let managedSessionOutcome = buildManagedSessionOutcome({ activeAfter: managedSessionActive, activeBefore: priorManagedSessionActive, attemptedSessionName: managedCloseSessionName, command: prepared.executionPlan.commandInfo.command, currentSessionName: managedSessionName, currentSessionNamespace: managedSessionNamespace, previousSessionName: priorManagedSessionName, replacedSessionName: replacedManagedSessionName, replacedSessionNamespace: priorManagedSessionNamespace, sessionMode: prepared.sessionMode, succeeded: managedTransitionSucceeded });
-		if (prepared.executionPlan.managedSessionName && succeeded && managedSessionActive) {
+		if (prepared.executionPlan.managedSessionName && managedTransitionSucceeded && managedSessionActive) {
 			managedSessionCwd = cwd;
 			managedSessionNamespace = prepared.executionPlan.namespace;
 		}

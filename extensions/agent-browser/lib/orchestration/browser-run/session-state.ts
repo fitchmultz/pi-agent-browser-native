@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
+import { acquireManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { runAgentBrowserProcess } from "../../process.js";
 import { buildAgentBrowserNextActions, getAgentBrowserErrorText, parseAgentBrowserEnvelope, type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results.js";
@@ -597,6 +598,38 @@ export function unwrapPinnedSessionBatchEnvelope(options: {
 	};
 }
 
+export type ManagedSessionDaemonInspection =
+	| { restoreKey: string | null; status: "active" }
+	| { status: "inactive" | "missing-binary" | "unknown" };
+
+export async function inspectManagedSessionDaemon(options: {
+	cwd: string;
+	namespace?: string;
+	sessionName: string;
+	signal?: AbortSignal;
+	timeoutMs?: number;
+}): Promise<ManagedSessionDaemonInspection> {
+	const processResult = await runAgentBrowserProcess({
+		args: ["--json", "--namespace", options.namespace ?? "", "--session", options.sessionName, "session", "info"],
+		cwd: options.cwd,
+		signal: options.signal,
+		timeoutMs: options.timeoutMs,
+	});
+	try {
+		if ((processResult.spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return { status: "missing-binary" };
+		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) return { status: "unknown" };
+		const parsed = await parseAgentBrowserEnvelope({ stdout: processResult.stdout, stdoutPath: processResult.stdoutSpillPath });
+		const data = parsed.parseError || parsed.envelope?.success === false ? undefined : parsed.envelope?.data;
+		if (!isRecord(data) || typeof data.active !== "boolean") return { status: "unknown" };
+		if (!data.active) return { status: "inactive" };
+		if (!isRecord(data.runtime)) return { status: "unknown" };
+		if (typeof data.runtime.restoreKey === "string" && data.runtime.restoreKey.length > 0) return { restoreKey: data.runtime.restoreKey, status: "active" };
+		return data.runtime.restoreKey === null ? { restoreKey: null, status: "active" } : { status: "unknown" };
+	} finally {
+		if (processResult.stdoutSpillPath) await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
+	}
+}
+
 export async function runSessionCommandData(options: {
 	args: string[];
 	cwd: string;
@@ -905,6 +938,16 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 	let stdoutSpillPath: string | undefined;
 	const closeArgs = [...(options.namespace ? ["--namespace", options.namespace] : []), "--session", options.sessionName, "close"];
+	const policyLock = await acquireManagedSessionPolicyLock({
+		namespace: options.namespace,
+		sessionName: options.sessionName,
+		signal: controller.signal,
+		timeoutMs: Math.min(options.timeoutMs, 1_000),
+	});
+	if (!policyLock) {
+		clearTimeout(timer);
+		return "Another Pi process is using this wrapper-owned browser session; cleanup did not run, so retry close after that operation finishes.";
+	}
 	try {
 		const processResult = await runAgentBrowserProcess({
 			args: closeArgs,
@@ -944,9 +987,8 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 		return error instanceof Error ? error.message : String(error);
 	} finally {
 		clearTimeout(timer);
-		if (stdoutSpillPath) {
-			await rm(stdoutSpillPath, { force: true }).catch(() => undefined);
-		}
+		if (stdoutSpillPath) await rm(stdoutSpillPath, { force: true }).catch(() => undefined);
+		await policyLock.release();
 	}
 }
 

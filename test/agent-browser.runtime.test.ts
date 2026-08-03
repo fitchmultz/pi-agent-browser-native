@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { canonicalizeAgentBrowserNamespace, isBooleanFlagEnabled } from "../extensions/agent-browser/lib/argv-grammar.js";
+import { canonicalizeAgentBrowserNamespace, extractRequestedRestoreKey, isBooleanFlagEnabled } from "../extensions/agent-browser/lib/argv-grammar.js";
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
 import { LAUNCH_SCOPED_FLAGS } from "../extensions/agent-browser/lib/launch-scoped-flags.js";
 import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT_GUIDELINES_SUFFIX } from "../extensions/agent-browser/lib/playbook.js";
@@ -78,6 +78,9 @@ test("buildExecutionPlan rejects ambiguous session identity flags without reject
 	assert.match(unsupportedEqualsNamespace.validationError ?? "", /--namespace=\.\.\. is not supported/);
 	const literalEqualsSession = buildExecutionPlan(["fill", "#field", "--session=literal"], options);
 	assert.equal(literalEqualsSession.validationError, undefined);
+	const helpWithUnsupportedEqualsSession = buildExecutionPlan(["--session=caller-owned", "--help"], options);
+	assert.equal(helpWithUnsupportedEqualsSession.validationError, undefined);
+	assert.deepEqual(helpWithUnsupportedEqualsSession.effectiveArgs, ["--session=caller-owned", "--help"]);
 });
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
@@ -121,6 +124,16 @@ test("shared parsing helpers preserve boundary parsing semantics", () => {
 	assert.equal(parsePositiveInteger("9007199254740992"), undefined);
 	assert.equal(canonicalizeAgentBrowserNamespace("Next Dev Loop: /Users/me/worktree!"), "next-dev-loop-users-me-worktree");
 	assert.equal(canonicalizeAgentBrowserNamespace(" --Agent__ "), "agent");
+});
+
+test("extractRequestedRestoreKey mirrors optional values and post-command session fallback", () => {
+	assert.equal(extractRequestedRestoreKey(["open", "https://example.com"], "managed", "env-key"), "env-key");
+	assert.equal(extractRequestedRestoreKey(["open", "https://example.com"], "managed", ""), null);
+	assert.equal(extractRequestedRestoreKey(["--restore", "caller-key", "open", "https://example.com"], "managed", undefined), "caller-key");
+	assert.equal(extractRequestedRestoreKey(["open", "https://example.com", "--restore=caller-key"], "managed", undefined), "caller-key");
+	assert.equal(extractRequestedRestoreKey(["--restore=", "open", "https://example.com"], "managed", undefined), "managed");
+	assert.equal(extractRequestedRestoreKey(["--restore", "open", "https://example.com"], "managed", undefined), "managed");
+	assert.equal(extractRequestedRestoreKey(["open", "https://example.com", "--restore", "ignored"], "managed", undefined), "managed");
 });
 
 test("implicit session timeout helpers prefer explicit overrides and safe defaults", () => {
@@ -842,6 +855,16 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	assert.deepEqual(namespaced.effectiveArgs, ["--json", "--namespace", "review", "--session", "custom", "snapshot", "-i"]);
 	assert.equal(namespaced.sessionName, "custom");
 	assert.equal(namespaced.namespace, "review");
+
+	const defaultNamespace = buildExecutionPlan(["--namespace", "", "--session", "custom", "close"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		managedSessionNamespace: "prod",
+		sessionMode: "auto",
+	});
+	assert.deepEqual(defaultNamespace.effectiveArgs, ["--json", "--namespace", "", "--session", "custom", "close"]);
+	assert.equal(defaultNamespace.namespace, undefined);
 
 	const sameNamespace = buildExecutionPlan(["--namespace", "Review", "snapshot", "-i"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),

@@ -928,6 +928,17 @@ export function buildExecutionPlan(
 	const commandNeedsManagedSession = !plainTextInspection && needsManagedSession(argvDescriptor);
 	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
 	let namespace = explicitNamespace;
+	if (plainTextInspection) {
+		return {
+			commandInfo,
+			effectiveArgs,
+			namespace,
+			plainTextInspection,
+			startupScopedFlags,
+			usedImplicitSession: false,
+		};
+	}
+
 	if (invalidValueFlag) {
 		return {
 			commandInfo: {},
@@ -965,24 +976,13 @@ export function buildExecutionPlan(
 		};
 	}
 
-	if (plainTextInspection) {
-		return {
-			commandInfo,
-			effectiveArgs,
-			namespace,
-			plainTextInspection,
-			startupScopedFlags,
-			usedImplicitSession: false,
-		};
-	}
-
 	const explicitSessionName = extractExplicitSessionName(args);
 	const shouldCreateFreshManagedSession =
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && !isCloseCommand(commandInfo.command);
 	let argsToAppend = args;
 	const compatibilityWorkaround = getCompatibilityWorkaround(args, commandInfo);
 	if (explicitSessionName && explicitNamespacePresent) {
-		if (explicitNamespace) effectiveArgs.push("--namespace", explicitNamespace);
+		effectiveArgs.push("--namespace", explicitNamespace ?? "");
 		argsToAppend = stripExplicitNamespaceArgs(args);
 	}
 	let managedSessionName: string | undefined;

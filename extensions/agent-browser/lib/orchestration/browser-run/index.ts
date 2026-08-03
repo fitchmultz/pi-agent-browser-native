@@ -54,12 +54,16 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 			applyBrowserRunStatePatch(options.state, output.statePatch);
 			return output.result;
 		} finally {
-			await cleanupClickDispatchProbe({
-				cwd: options.cwd,
-				namespace: prepared.executionPlan.namespace,
-				probe: prepared.clickDispatchProbe,
-				sessionName: prepared.executionPlan.sessionName,
-			});
+			try {
+				await cleanupClickDispatchProbe({
+					cwd: options.cwd,
+					namespace: prepared.executionPlan.namespace,
+					probe: prepared.clickDispatchProbe,
+					sessionName: prepared.executionPlan.sessionName,
+				});
+			} finally {
+				await prepared.managedSessionPolicyLock?.release();
+			}
 		}
 	});
 }

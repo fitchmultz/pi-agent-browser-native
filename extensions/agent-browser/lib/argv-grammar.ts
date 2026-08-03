@@ -185,6 +185,38 @@ export function extractExplicitNamespace(args: string[]): string | undefined {
 	return canonicalizeAgentBrowserNamespace(scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value);
 }
 
+/** Mirror upstream's optional restore value and full-argv last-wins parsing. */
+export function extractRequestedRestoreKey(args: string[], sessionName: string, envValue: string | undefined): string | null {
+	let restoreKey = envValue || null;
+	let seenCommand = false;
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index];
+		if (token.startsWith("--restore=")) {
+			restoreKey = token.slice("--restore=".length) || sessionName;
+			continue;
+		}
+		if (token === "--restore") {
+			if (!seenCommand && optionalGlobalValueFlagConsumesNext(token, args[index + 1])) {
+				restoreKey = args[index + 1] as string;
+				index += 1;
+			} else {
+				restoreKey = sessionName;
+			}
+			continue;
+		}
+		if (PREVALIDATED_VALUE_FLAGS.has(token)) {
+			index += 1;
+			continue;
+		}
+		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token) && ["true", "false"].includes(args[index + 1] ?? "")) {
+			index += 1;
+			continue;
+		}
+		if (isKnownCommandToken(token)) seenCommand = true;
+	}
+	return restoreKey;
+}
+
 export function getFlagName(token: string): string {
 	return token.split("=", 1)[0] ?? token;
 }

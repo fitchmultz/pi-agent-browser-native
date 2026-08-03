@@ -126,6 +126,10 @@ async function assertInstalledAgentBrowserVersion(): Promise<void> {
 	);
 }
 
+async function initializeGitProject(path: string): Promise<void> {
+	await execFileAsync("git", ["init", "-q", path]);
+}
+
 async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?: string; socketDir: string }): Promise<void> {
 	const sessionName = options.sessionName;
 	if (!sessionName) return;
@@ -140,6 +144,7 @@ async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<voi
 	const socketDir = join(tempDir, "sockets");
 	let sessionName: string | undefined;
 	try {
+		await initializeGitProject(tempDir);
 		await withPatchedEnv({
 			AGENT_BROWSER_CONFIG: undefined,
 			AGENT_BROWSER_ENCRYPTION_KEY: process.platform === "win32" ? "a".repeat(64) : undefined,
@@ -160,7 +165,7 @@ async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<voi
 				args: ["--proxy", "http://127.0.0.1:8080", "open", "about:blank"],
 			});
 			assert.equal(blocked.isError, true);
-			assert.match(String(blocked.details?.validationError ?? ""), /daemon may still retain managed restore state/);
+			assert.match(String(blocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 			assert.equal(blocked.details?.exitCode, undefined);
 
 			const closed = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, { args: ["close"] });
@@ -178,6 +183,7 @@ async function assertRealUpstreamRestoreStorageSymlinkFailsClosed(): Promise<voi
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-symlink-"));
 	const socketDir = join(tempDir, "sockets");
 	const targetDir = join(tempDir, "outside-state-target");
+	await initializeGitProject(tempDir);
 	await mkdir(join(tempDir, ".agent-browser"), { recursive: true, mode: 0o700 });
 	await mkdir(targetDir);
 	await symlink(targetDir, join(tempDir, ".agent-browser", "sessions"), "dir");
@@ -212,6 +218,7 @@ async function assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed(): Promi
 	const socketDir = join(tempDir, "sockets");
 	const outsideStateFile = join(tempDir, "outside-candidate.json");
 	const temporaryDirectory = join(tempDir, ".agent-browser", "sessions", ".tmp");
+	await initializeGitProject(tempDir);
 	await mkdir(temporaryDirectory, { recursive: true, mode: 0o700 });
 	await writeFile(outsideStateFile, "unchanged");
 	await symlink(outsideStateFile, join(temporaryDirectory, "candidate.json"), "file");
@@ -246,6 +253,7 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 	const socketDir = join(tempDir, "sockets");
 	let sessionName: string | undefined;
 	try {
+		await initializeGitProject(tempDir);
 		await withPatchedEnv({
 			AGENT_BROWSER_CONFIG: undefined,
 			AGENT_BROWSER_ENCRYPTION_KEY: undefined,
@@ -281,6 +289,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-upstream-"));
 		const socketDir = join(tempDir, "sockets");
 		const downloadDir = join(tempDir, "Downloads");
+		await initializeGitProject(tempDir);
 		await mkdir(downloadDir, { recursive: true });
 		let fixtureServer: FixtureServer | undefined;
 		let managedSessionName: string | undefined;
@@ -614,8 +623,8 @@ if (!REAL_UPSTREAM_ENABLED) {
 					]) {
 						const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
 						assert.equal(blockedBatch.isError, true);
-						assert.equal(blockedBatch.details?.failureCategory, "validation-error");
-						assert.match(String(blockedBatch.details?.validationError ?? ""), /daemon may still retain managed restore state/);
+						assert.equal(blockedBatch.details?.failureCategory, "validation-error", JSON.stringify(blockedBatch.details));
+						assert.match(String(blockedBatch.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 						assert.equal(blockedBatch.details?.exitCode, undefined, "nested batch attachment must fail before upstream spawn");
 					}
 					const firstClose = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, async () =>

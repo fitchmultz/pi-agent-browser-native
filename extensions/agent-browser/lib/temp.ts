@@ -6,16 +6,13 @@
  * Invariants/Assumptions: Temp artifacts live under the OS temp directory, each active run uses a dedicated 0700 directory, files are created with exclusive 0600 permissions, session-scoped persisted artifacts stay under the pi session directory, and stale pruning only touches roots with an explicit pi-agent-browser ownership marker.
  */
 
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
-
 import { isRecord, parsePositiveInteger } from "./parsing.js";
-import { buildProcessStartIdentityCommand, normalizeProcessStartIdentity, processStartIdentitiesMatch } from "./process-identity.js";
+import { processStartIdentitiesMatch, readProcessStartIdentity } from "./process-identity.js";
 
 const TEMP_ROOT_PREFIX = "pi-agent-browser-";
 const TEMP_ROOT_MARKER_FILE_NAME = ".pi-agent-browser-owner.json";
@@ -28,8 +25,6 @@ const DEFAULT_TEMP_ROOT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES";
 const DEFAULT_SESSION_ARTIFACT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACTS_ROOT_DIR_NAME = ".pi-agent-browser-artifacts";
-const PROCESS_START_IDENTITY_TIMEOUT_MS = 1_000;
-const execFileAsync = promisify(execFile);
 
 export interface PersistentSessionArtifactStore {
 	protectedPaths?: readonly string[];
@@ -230,17 +225,7 @@ async function removeTempRootChildrenExcept(tempRoot: string, protectedChildren:
 }
 
 async function getProcessStartIdentity(pid: number | undefined): Promise<string | undefined> {
-	if (pid === undefined) return undefined;
-	const command = buildProcessStartIdentityCommand(pid);
-	if (!command) return undefined;
-	try {
-		const { stdout } = await execFileAsync(command.file, command.args, {
-			timeout: PROCESS_START_IDENTITY_TIMEOUT_MS,
-		});
-		return normalizeProcessStartIdentity(stdout);
-	} catch {
-		return undefined;
-	}
+	return pid === undefined ? undefined : await readProcessStartIdentity(pid);
 }
 
 export async function writeSecureTempRootOwnershipMarker(

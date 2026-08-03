@@ -15,7 +15,10 @@ import {
 	commitManagedSessionRestoreSuppression,
 	getManagedSessionRestoreConfigEnv,
 	getManagedSessionRestoreEnv,
+	getManagedSessionRestoreProtectedEnv,
 	getOwnedManagedSessionNamespaceEnv,
+	shouldOmitOwnedManagedSessionRestoreEnv,
+	validateManagedSessionRestoreContextForSpawn,
 	type ManagedSessionRestoreState,
 } from "./managed-session-restore.js";
 import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
@@ -38,6 +41,8 @@ const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND
 
 export interface ProcessRunResult {
 	aborted: boolean;
+	/** True once the native agent-browser executable, not merely the Windows PowerShell launcher, started. */
+	agentBrowserStarted: boolean;
 	exitCode: number;
 	spawnError?: Error;
 	stderr: string;
@@ -280,7 +285,7 @@ export async function runAgentBrowserProcess(options: {
 	const { args, cwd, env, managedSessionRestoreState, ownedManagedSession, signal, stdin } = options;
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
 	if (signal?.aborted) {
-		return { aborted: true, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
 	}
 	const managedSessionRestoreOptions = {
 		args,
@@ -290,27 +295,52 @@ export async function runAgentBrowserProcess(options: {
 		restoreState: managedSessionRestoreState,
 		stdin,
 	};
+	if (!validateManagedSessionRestoreContextForSpawn(managedSessionRestoreOptions)) {
+		return {
+			aborted: false,
+			agentBrowserStarted: false,
+			exitCode: 1,
+			spawnError: new Error("Managed session restore policy, storage, or checkout identity changed after planning; refusing to start agent-browser."),
+			stderr: "",
+			stdout: "",
+			timedOut: false,
+		};
+	}
 	const managedSessionRestoreEnv = getManagedSessionRestoreEnv(managedSessionRestoreOptions);
 	const managedSessionRestoreConfigEnv = await getManagedSessionRestoreConfigEnv(managedSessionRestoreEnv);
+	if (managedSessionRestoreConfigEnv === undefined) {
+		return {
+			aborted: false,
+			agentBrowserStarted: false,
+			exitCode: 1,
+			spawnError: new Error("Managed session restore requires a protected empty config, but secure temp storage was unavailable."),
+			stderr: "",
+			stdout: "",
+			timedOut: false,
+		};
+	}
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
 		...managedSessionRestoreEnv,
 		...env,
 		...managedSessionRestoreConfigEnv,
+		...getManagedSessionRestoreProtectedEnv(managedSessionRestoreOptions, managedSessionRestoreEnv),
 		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
+	if (shouldOmitOwnedManagedSessionRestoreEnv(managedSessionRestoreOptions)) effectiveEnv = { ...effectiveEnv, AGENT_BROWSER_RESTORE: undefined };
 	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir && (await ensureAgentBrowserSocketDir(requestedSocketDir))) {
 		effectiveEnv = { ...effectiveEnv, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };
 	}
 	if (signal?.aborted) {
-		return { aborted: true, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
 	}
 
 	return await new Promise<ProcessRunResult>((resolve) => {
 		let aborted = false;
+		let agentBrowserStarted = false;
 		let settled = false;
 		let spawnError: Error | undefined;
 		let stderr = "";
@@ -382,6 +412,7 @@ export async function runAgentBrowserProcess(options: {
 					await stdoutSpillHandle.close().catch(() => undefined);
 				}
 				const windowsMissingBinary = processPlatform === "win32" && exitCode !== 0 && isWindowsAgentBrowserCommandMissing(stderr);
+				if (processPlatform === "win32" && !windowsMissingBinary && !spawnError) agentBrowserStarted = true;
 				if (windowsMissingBinary && !spawnError) {
 					spawnError = Object.assign(new Error("spawn agent-browser ENOENT"), { code: "ENOENT" });
 				} else if (processPlatform === "win32" && shouldCommitManagedRestoreAfterWindowsProcess({ exitCode, spawnError, stderr })) {
@@ -394,6 +425,7 @@ export async function runAgentBrowserProcess(options: {
 				destroySpawnedChildStreams(child);
 				resolve({
 					aborted,
+					agentBrowserStarted,
 					exitCode,
 					spawnError,
 					stderr,
@@ -412,7 +444,10 @@ export async function runAgentBrowserProcess(options: {
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		if (processPlatform !== "win32") {
-			child.once("spawn", () => commitManagedSessionRestoreSuppression(managedSessionRestoreOptions));
+			child.once("spawn", () => {
+				agentBrowserStarted = true;
+				commitManagedSessionRestoreSuppression(managedSessionRestoreOptions);
+			});
 		}
 
 		const terminateChild = (reason: "abort" | "timeout") => {

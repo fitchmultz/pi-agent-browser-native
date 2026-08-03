@@ -21,6 +21,7 @@ import type { RichInputRecoveryDiagnostic, VisibleRefFallbackDiagnostic } from "
 import type { SessionPageState, SessionRefSnapshot, SessionRefSnapshotInvalidation, SessionTabTarget } from "../../session-page-state.js";
 import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection } from "../../runtime.js";
 import type { ManagedSessionRestoreState, OwnedManagedSessionContext } from "../../managed-session-restore.js";
+import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import type { AllowedDomainsPolicy } from "../../navigation-policy.js";
 import type { PromptPolicy } from "../../prompt-policy.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
@@ -437,6 +438,7 @@ export interface PreparedBrowserRun {
 	exactSensitiveValues: string[];
 	executionPlan: AgentBrowserExecutionPlan;
 	includePinnedNavigationSummary: boolean;
+	managedSessionPolicyLock?: ManagedSessionPolicyLock;
 	ownedManagedSessionContext?: OwnedManagedSessionContext;
 	clickDispatchProbe?: ClickDispatchProbe;
 	pinnedBatchUnwrapMode?: PinnedBatchUnwrapMode;
