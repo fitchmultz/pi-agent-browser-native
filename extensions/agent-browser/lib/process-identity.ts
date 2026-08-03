@@ -41,20 +41,44 @@ export function buildProcessStartIdentityCommand(
 		};
 }
 
+export function buildProcessStartIdentityCommands(
+	pid: number,
+	platform: NodeJS.Platform = process.platform,
+): ProcessStartIdentityCommand[] {
+	const primary = buildProcessStartIdentityCommand(pid, platform);
+	if (!primary) return [];
+	return platform === "win32"
+		? [primary]
+		: [primary, { ...primary, file: "/usr/bin/ps" }];
+}
+
 export function normalizeProcessStartIdentity(stdout: string): string | undefined {
 	return stdout.trim().replace(/\s+/g, " ") || undefined;
 }
 
 let currentProcessStartIdentityPromise: Promise<string | undefined> | undefined;
 
-async function readUncachedProcessStartIdentity(pid: number, platform: NodeJS.Platform): Promise<string | undefined> {
-	const command = buildProcessStartIdentityCommand(pid, platform);
-	if (!command) return undefined;
+async function executeProcessStartIdentityCommand(command: ProcessStartIdentityCommand): Promise<string | undefined> {
 	return await new Promise((resolve) => {
 		execFile(command.file, command.args, { timeout: PROCESS_START_IDENTITY_TIMEOUT_MS }, (error, stdout) => {
 			resolve(error ? undefined : normalizeProcessStartIdentity(stdout));
 		});
 	});
+}
+
+export async function resolveProcessStartIdentityFromCommands(
+	commands: readonly ProcessStartIdentityCommand[],
+	execute: (command: ProcessStartIdentityCommand) => Promise<string | undefined> = executeProcessStartIdentityCommand,
+): Promise<string | undefined> {
+	for (const command of commands) {
+		const identity = await execute(command);
+		if (identity) return identity;
+	}
+	return undefined;
+}
+
+async function readUncachedProcessStartIdentity(pid: number, platform: NodeJS.Platform): Promise<string | undefined> {
+	return await resolveProcessStartIdentityFromCommands(buildProcessStartIdentityCommands(pid, platform));
 }
 
 export async function readProcessStartIdentity(

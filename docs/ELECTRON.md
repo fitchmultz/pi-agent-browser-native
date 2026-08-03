@@ -155,7 +155,7 @@ Handoff selection (`handoff` field):
 
 Optional `timeoutMs` on `electron.launch` bounds host-side CDP readiness (waiting for `DevToolsActivePort` and attach). When omitted, the default is **15 seconds** with a hard maximum of **120 seconds**, matching `ELECTRON_LAUNCH_DEFAULT_TIMEOUT_MS` and `ELECTRON_LAUNCH_MAX_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/launch.ts`.
 
-Wrapper-owned launches **always** use an isolated temp profile and an OS-chosen port. `--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and bare `--` in `appArgs` are rejected. There is no caller-supplied port and no way to make `electron.launch` reuse the app's normal signed-in profile or attach to an already-running app — by design. Use the manual path described above when those are the actual requirements.
+Wrapper-owned launches **always** use an isolated temp profile and an OS-chosen port. If wrapper validation or managed-session policy fails after the host app starts but before upstream attach, the wrapper immediately stops that process and removes the isolated profile; it retains a partial tracked record only when cleanup itself cannot finish. `--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and bare `--` in `appArgs` are rejected. There is no caller-supplied port and no way to make `electron.launch` reuse the app's normal signed-in profile or attach to an already-running app — by design. Use the manual path described above when those are the actual requirements.
 
 ### `electron.status` — liveness and targets
 

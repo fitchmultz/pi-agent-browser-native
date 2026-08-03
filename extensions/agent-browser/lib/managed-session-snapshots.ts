@@ -1,11 +1,11 @@
 /**
  * Purpose: Retain only wrapper-owned managed-restore snapshots after successful close operations.
- * Responsibilities: Persist atomic per-snapshot ownership records, self-heal malformed records, and apply age/count retention without deleting unproven paths.
+ * Responsibilities: Persist atomic per-snapshot ownership records, self-heal malformed records, and apply per-key plus superseded-generation retention without deleting unproven paths.
  * Scope: Snapshot ownership and pruning only; restore eligibility and daemon policy live in sibling modules.
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, type Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 import {
@@ -138,6 +138,54 @@ function readRecord(options: {
 	}
 }
 
+function pruneExpiredOtherRestoreKeys(options: {
+	directory: string;
+	home: string;
+	namespace?: string;
+	platform: NodeJS.Platform;
+	protectedRestoreKey: string;
+	staleBefore: number;
+}): number {
+	let removed = 0;
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(options.directory, { withFileTypes: true });
+	} catch {
+		return 0;
+	}
+	for (const entry of entries) {
+		if (!entry.isDirectory() || !entry.name.startsWith(`${OWNED_RESTORE_SNAPSHOT_MANIFEST_PREFIX}-`)) continue;
+		const restoreKey = entry.name.slice(`${OWNED_RESTORE_SNAPSHOT_MANIFEST_PREFIX}-`.length);
+		if (!isManagedSessionRestoreKey(restoreKey) || restoreKey === options.protectedRestoreKey) continue;
+		const manifestDirectory = join(options.directory, entry.name);
+		if (!ensureManifestDirectory(manifestDirectory, options.platform)) continue;
+		let snapshots: ReturnType<typeof scanOwnedSnapshots>;
+		try {
+			snapshots = scanOwnedSnapshots({ home: options.home, manifestDirectory, namespace: options.namespace, platform: options.platform, restoreKey });
+		} catch {
+			continue;
+		}
+		for (const snapshot of snapshots) {
+			if (snapshot.mtimeMs >= options.staleBefore) continue;
+			try {
+				const current = lstatSync(snapshot.path);
+				if (current.isSymbolicLink() || !current.isFile() || current.mtimeMs !== snapshot.mtimeMs) continue;
+				unlinkSync(snapshot.path);
+				try { unlinkSync(snapshot.recordPath); } catch {}
+				removed += 1;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+					try { unlinkSync(snapshot.recordPath); } catch {}
+				}
+			}
+		}
+		try {
+			if (readdirSync(manifestDirectory).length === 0) rmdirSync(manifestDirectory);
+		} catch {}
+	}
+	return removed;
+}
+
 function scanOwnedSnapshots(options: {
 	home: string;
 	manifestDirectory: string;
@@ -189,9 +237,9 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 	if (!home) return 0;
 	const directory = getManagedRestoreSessionsDirectory(home, options.namespace);
 	const manifestDirectory = getManifestDirectory(directory, restoreKey);
-	if (!options.statePath && !pathExistsOrIsUnreadable(manifestDirectory)) return 0;
+	const hasCurrentManifest = pathExistsOrIsUnreadable(manifestDirectory);
 	if (!ensureManagedSessionRestoreStorageIsSecure(parentEnv, platform, options.namespace)) return 0;
-	if (!ensureManifestDirectory(manifestDirectory, platform)) return 0;
+	if ((options.statePath || hasCurrentManifest) && !ensureManifestDirectory(manifestDirectory, platform)) return 0;
 	if (options.statePath) {
 		const ownedPath = validateOwnedSnapshotPath({ home, namespace: options.namespace, path: options.statePath, restoreKey });
 		if (ownedPath && !writeRecord(manifestDirectory, ownedPath, platform)) return 0;
@@ -199,7 +247,7 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 
 	const staleBefore = Date.now() - OWNED_RESTORE_SNAPSHOT_MAX_AGE_MS;
 	let removed = 0;
-	for (let pass = 0; pass <= OWNED_RESTORE_SNAPSHOT_MAX_RECORDS; pass += 1) {
+	for (let pass = 0; (options.statePath || hasCurrentManifest) && pass <= OWNED_RESTORE_SNAPSHOT_MAX_RECORDS; pass += 1) {
 		const snapshots = scanOwnedSnapshots({ home, manifestDirectory, namespace: options.namespace, platform, restoreKey });
 		const candidates = snapshots.filter((snapshot, index) =>
 			index >= OWNED_RESTORE_SNAPSHOT_MAX_RECORDS
@@ -223,5 +271,16 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 		}
 		if (!changed) break;
 	}
+	const protectedRestoreKey = hasManagedSessionRestoreProjectIdentity(options.cwd)
+		? createManagedSessionRestoreKey(options.cwd)
+		: restoreKey;
+	removed += pruneExpiredOtherRestoreKeys({
+		directory,
+		home,
+		namespace: options.namespace,
+		platform,
+		protectedRestoreKey,
+		staleBefore,
+	});
 	return removed;
 }

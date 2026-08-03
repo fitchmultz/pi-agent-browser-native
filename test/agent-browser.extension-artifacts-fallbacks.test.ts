@@ -455,9 +455,10 @@ test("agentBrowserExtension preserves full spilled stdout for oversized parse fa
 	const sessionFile = join(sessionDir, "session.jsonl");
 	const basePath = process.env.PATH ?? "";
 	const sentinel = "RQ-0006-parse-failure-sentinel";
+	const restoreKey = `piab-r2-${"a".repeat(32)}`;
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`process.stdout.write("x".repeat(600000) + ${JSON.stringify(sentinel)});`,
+		`process.stdout.write("x".repeat(600000) + ${JSON.stringify(restoreKey + sentinel)});`,
 	);
 
 	try {
@@ -485,7 +486,10 @@ test("agentBrowserExtension preserves full spilled stdout for oversized parse fa
 			assert.match(String(result.details?.artifactRetentionSummary), /1 live, 0 evicted/);
 			const stats = await stat(fullOutputPath);
 			assert.ok(stats.size > 512 * 1024);
-			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+			const preservedOutput = await readFile(fullOutputPath, "utf8");
+			assert.match(preservedOutput, new RegExp(`${sentinel}$`));
+			assert.doesNotMatch(preservedOutput, /piab-r2-[a-f\d]{32}/);
+			assert.match(preservedOutput, /REDACTED MANAGED STATE/);
 			await runExtensionEvent(harness.handlers, "session_shutdown");
 			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
 		});

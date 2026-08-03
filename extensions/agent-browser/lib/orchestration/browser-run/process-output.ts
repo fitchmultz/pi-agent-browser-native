@@ -1,6 +1,7 @@
 import { readFile, rm } from "node:fs/promises";
 
 import { isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand } from "../../command-taxonomy.js";
+import { redactManagedSessionRestoreKeys } from "../../managed-session-capabilities.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -200,7 +201,7 @@ export async function preserveParseFailureOutput(options: {
 }): Promise<ParseFailureOutput> {
 	if (!options.stdoutSpillPath) return {};
 	try {
-		const rawOutput = redactExactSensitiveText(await readFile(options.stdoutSpillPath, "utf8"), options.exactSensitiveValues ?? []);
+		const rawOutput = redactManagedSessionRestoreKeys(redactExactSensitiveText(await readFile(options.stdoutSpillPath, "utf8"), options.exactSensitiveValues ?? []));
 		const nowMs = Date.now();
 		let evictedArtifacts: PersistentSessionArtifactEviction[] = [];
 		let fullOutputPath: string;

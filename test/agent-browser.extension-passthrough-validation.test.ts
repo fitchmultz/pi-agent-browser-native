@@ -499,7 +499,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["state", "save", statePath],
 		["state", "load", statePath],
 		["state", "list"],
-		["state", "clear", "-a"],
+		["state", "clear", "caller-owned"],
 		["cookies", "get"],
 		["cookies", "set", "sid", "cookie-secret", "--url", "https://example.test"],
 		["cookies", "clear"],
@@ -547,7 +547,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.ok(invocations.every((entry) => {
 				const userArgs = stripWrapperPrefix(entry.args);
 				const isSessionlessAuth = userArgs[0] === "auth" && ["save", "list", "show", "delete", "remove"].includes(userArgs[1] ?? "");
-				const isSessionlessState = userArgs[0] === "state" && (userArgs[1] === "list" || (userArgs[1] === "clear" && userArgs[2] === "-a"));
+				const isSessionlessState = userArgs[0] === "state" && (userArgs[1] === "list" || (userArgs[1] === "clear" && userArgs[2] === "caller-owned"));
 				return isSessionlessAuth || isSessionlessState ? !entry.args.includes("--session") : entry.args.includes("--session");
 			}));
 		});

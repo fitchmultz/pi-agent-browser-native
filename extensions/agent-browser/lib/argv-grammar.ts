@@ -41,6 +41,7 @@ export const GLOBAL_VALUE_FLAGS = [
 	"--confirm-actions",
 	"--max-output",
 	"--model",
+	"--hide-scrollbars",
 	"--idle-timeout",
 ] as const;
 

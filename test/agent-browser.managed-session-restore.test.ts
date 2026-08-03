@@ -960,6 +960,35 @@ test("owned snapshot pruning persists close-proven paths and leaves unrecorded m
 	}
 });
 
+test("owned snapshot pruning expires stale ownership-proven checkout generations", () => {
+	const home = mkdtempSync(join(tmpdir(), "piab-prune-generations-home-"));
+	const retiredProject = mkdtempSync(join(tmpdir(), "piab-prune-retired-project-"));
+	initializeGitProject(retiredProject);
+	const sessions = join(home, ".agent-browser", "sessions");
+	const currentKey = createManagedSessionRestoreKey(isolatedProject);
+	const retiredKey = createManagedSessionRestoreKey(retiredProject);
+	try {
+		mkdirSync(sessions, { recursive: true, mode: 0o700 });
+		chmodSync(join(home, ".agent-browser"), 0o700);
+		const retiredPath = join(sessions, `${retiredKey}-retired.json`);
+		const unrecordedPath = join(sessions, `${retiredKey}-caller.json`);
+		const currentPath = join(sessions, `${currentKey}-current.json`);
+		for (const path of [retiredPath, unrecordedPath, currentPath]) writeFileSync(path, "{}");
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: retiredProject, parentEnv: { HOME: home }, platform: "linux", statePath: retiredPath }), 0);
+		const oldSeconds = (Date.now() - 31 * 24 * 60 * 60 * 1_000) / 1_000;
+		utimesSync(retiredPath, oldSeconds, oldSeconds);
+
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: isolatedProject, parentEnv: { HOME: home }, platform: "linux", statePath: currentPath }), 1);
+		assert.equal(existsSync(retiredPath), false);
+		assert.equal(existsSync(unrecordedPath), true);
+		assert.equal(existsSync(join(sessions, `.pi-agent-browser-owned-snapshots-v2-${retiredKey}`)), false);
+		assert.equal(existsSync(currentPath), true);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+		rmSync(retiredProject, { recursive: true, force: true });
+	}
+});
+
 test("owned snapshot manifest self-heals malformed records without claiming unrecorded files", () => {
 	const cwd = isolatedProject;
 	const home = mkdtempSync(join(tmpdir(), "piab-prune-recovery-home-"));

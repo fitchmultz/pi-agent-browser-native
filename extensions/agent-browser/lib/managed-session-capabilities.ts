@@ -1,0 +1,23 @@
+// Purpose: Identify and redact wrapper-owned managed restore capabilities.
+// Scope: Pure string helpers shared by storage, policy, and presentation paths.
+
+const MANAGED_SESSION_RESTORE_KEY_PATTERN = /piab-r(?:2)?-[a-f\d]{32}/gi;
+const MANAGED_SESSION_RESTORE_KEY_EXACT_PATTERN = /^piab-r2-[a-f\d]{32}$/i;
+
+export function isManagedSessionRestoreKey(value: string | null | undefined): value is string {
+	return typeof value === "string" && MANAGED_SESSION_RESTORE_KEY_EXACT_PATTERN.test(value);
+}
+
+export function extractManagedSessionRestoreKeys(value: string): string[] {
+	return [...new Set(value.match(MANAGED_SESSION_RESTORE_KEY_PATTERN)?.map((key) => key.toLowerCase()) ?? [])];
+}
+
+export function containsManagedSessionRestoreKey(value: string): boolean {
+	MANAGED_SESSION_RESTORE_KEY_PATTERN.lastIndex = 0;
+	return MANAGED_SESSION_RESTORE_KEY_PATTERN.test(value);
+}
+
+export function redactManagedSessionRestoreKeys(value: string): string {
+	MANAGED_SESSION_RESTORE_KEY_PATTERN.lastIndex = 0;
+	return value.replace(MANAGED_SESSION_RESTORE_KEY_PATTERN, "[REDACTED MANAGED STATE]");
+}

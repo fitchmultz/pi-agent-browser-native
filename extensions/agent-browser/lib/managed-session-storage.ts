@@ -11,6 +11,8 @@ import { dirname, isAbsolute, join, parse, resolve, win32 } from "node:path";
 
 import { canonicalizeAgentBrowserNamespace } from "./argv-grammar.js";
 
+export { isManagedSessionRestoreKey } from "./managed-session-capabilities.js";
+
 const MANAGED_SESSION_NAME_PREFIX = "piab-r2-";
 const MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH = 32;
 const PROJECT_GENERATION_MARKER_NAME = "pi-agent-browser-project-generation-v1.json";
@@ -203,10 +205,6 @@ function resolveProjectGenerationIdentity(cwd: string, platform: NodeJS.Platform
 	} catch {
 		return undefined;
 	}
-}
-
-export function isManagedSessionRestoreKey(value: string | null | undefined): value is string {
-	return typeof value === "string" && /^piab-r2-[a-f\d]{32}$/.test(value);
 }
 
 export function hasManagedSessionRestoreProjectIdentity(cwd: string): boolean {

@@ -28,6 +28,7 @@ import {
 	scanUpstreamGlobalFlagOccurrences,
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
+import { redactManagedSessionRestoreKeys } from "./managed-session-capabilities.js";
 import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
 import {
 	hasLaunchScopedFlagToken,
@@ -326,7 +327,7 @@ export function redactSensitiveText(text: string): string {
 	return redactEmbeddedStructuredText(
 		redactEnvSecretAssignments(
 			redactStandaloneBasicCredential(
-				redactBearerCredentials(redactLooseUrlUserinfo(redactLooseUrlMatches(text)))
+				redactBearerCredentials(redactLooseUrlUserinfo(redactLooseUrlMatches(redactManagedSessionRestoreKeys(text))))
 					.replace(/\b(Authorization\s*:\s*Basic)\s+[^\s",]+/gi, "$1 [REDACTED]")
 					.replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\n\r"]+/gi, "$1: [REDACTED]"),
 			),

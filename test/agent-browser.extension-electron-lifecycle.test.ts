@@ -174,6 +174,45 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	}
 });
 
+test("agentBrowserExtension cleans Electron after post-launch managed policy rejection", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-policy-reject-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	let launchPid: number | undefined;
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.PolicyReject", launchLogPath, name: "Policy Reject" });
+		await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(upstreamLogPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: true, runtime: { restoreKey: "foreign-policy" } } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "unexpected", url: "about:blank" } }));
+}`);
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "launch", appPath: app.appPath },
+			});
+			assert.equal(result.isError, true, JSON.stringify(result));
+			assert.match(result.content[0]?.text ?? "", /does not match the requested managed-restore policy/);
+			const launch = JSON.parse((await readFile(launchLogPath, "utf8")).trim()) as { pid: number; userDataDir: string };
+			launchPid = launch.pid;
+			await waitForTestPidExit(launch.pid);
+			await assert.rejects(stat(launch.userDataDir));
+			const invocations = await readInvocationLog(upstreamLogPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("connect")), false);
+		});
+	} finally {
+		if (launchPid) await stopTestPid(launchPid);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension launches Electron with isolated profile, snapshot handoff, status, and cleanup", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-launch-"));
 	const applicationsDir = join(tempDir, "Applications");

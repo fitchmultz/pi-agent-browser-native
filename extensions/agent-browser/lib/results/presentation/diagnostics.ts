@@ -4,6 +4,7 @@
  * Scope: Diagnostic/result-state command presentation only; core orchestration stays in presentation.ts.
  */
 
+import { containsManagedSessionRestoreKey } from "../../managed-session-capabilities.js";
 import { isRecord } from "../../parsing.js";
 import { isSensitiveFieldName, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
@@ -891,6 +892,22 @@ function formatFrameText(data: Record<string, unknown>): string | undefined {
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
+function containsManagedStateCapability(value: unknown): boolean {
+	if (typeof value === "string") return containsManagedSessionRestoreKey(value);
+	if (Array.isArray(value)) return value.some(containsManagedStateCapability);
+	return isRecord(value) && Object.values(value).some(containsManagedStateCapability);
+}
+
+function filterManagedStateListRows(data: unknown): unknown {
+	if (!isRecord(data)) return data;
+	return Object.fromEntries(Object.entries(data).map(([key, value]) => [
+		key,
+		(key === "states" || key === "files") && Array.isArray(value)
+			? value.filter((item) => !containsManagedStateCapability(item))
+			: value,
+	]));
+}
+
 function formatStateText(data: Record<string, unknown>, subcommand?: string): string | undefined {
 	if (subcommand === "show") {
 		const filename = getStringField(data, "filename") ?? getStringField(data, "name") ?? "saved state";
@@ -903,8 +920,9 @@ function formatStateText(data: Record<string, unknown>, subcommand?: string): st
 	}
 	const states = getArrayField(data, "states") ?? getArrayField(data, "files");
 	if (states) {
-		if (states.length === 0) return "No saved states.";
-		return states
+		const visibleStates = states.filter((item) => !containsManagedStateCapability(item));
+		if (visibleStates.length === 0) return "No caller-owned saved states.";
+		return visibleStates
 			.map((item, index) => {
 				if (!isRecord(item)) return `${index + 1}. ${redactModelFacingTextIfSensitive(stringifyModelFacing(item))}`;
 				const name = getStringField(item, "name") ?? getStringField(item, "file") ?? getStringField(item, "path") ?? `(state ${index + 1})`;
@@ -944,6 +962,7 @@ function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unkno
 export function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
 	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
 	if (commandInfo.command === "storage") return redactStorageData(data);
+	if (commandInfo.command === "state" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(filterManagedStateListRows(data));
 	if (commandInfo.command === "state" && commandInfo.subcommand === "show") return redactStatefulValues(data, new Set(["value"]));
 	return redactStructuredPresentationValue(data);
 }

@@ -10,7 +10,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { chmod, mkdir } from "node:fs/promises";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
-import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
+import { findCommandStartIndex } from "./argv-descriptor.js";
 import {
 	canonicalizeOwnedManagedSessionCloseArgs,
 	commitManagedSessionRestoreSuppression,
@@ -20,8 +20,10 @@ import {
 	getOwnedManagedSessionNamespaceEnv,
 	shouldOmitOwnedManagedSessionRestoreEnv,
 	validateManagedSessionRestoreContextForSpawn,
+	type ManagedSessionRestoreEnvOptions,
 	type ManagedSessionRestoreState,
 } from "./managed-session-restore.js";
+import { getManagedSessionStateAccessValidationError } from "./managed-session-state-policy.js";
 import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
@@ -62,29 +64,11 @@ function quoteWindowsPowerShellArg(value: string): string {
 	return `'${value.replace(/'/g, "''")}'`;
 }
 
-const WINDOWS_LEADING_GLOBAL_VALUE_FLAGS = new Set<string>(GLOBAL_VALUE_FLAGS);
-
 /** Exported for unit tests that lock Windows launcher argv ordering. */
 export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
-	const leadingGlobals: string[] = [];
-	let index = 0;
-	while (index < args.length && args[index]?.startsWith("-")) {
-		const token = args[index];
-		const flagName = getFlagName(token);
-		leadingGlobals.push(token);
-		index += 1;
-		if (WINDOWS_LEADING_GLOBAL_VALUE_FLAGS.has(flagName) && !token.includes("=") && index < args.length) {
-			leadingGlobals.push(args[index]);
-			index += 1;
-			continue;
-		}
-		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(flagName) && ["true", "false"].includes(args[index] ?? "")) {
-			leadingGlobals.push(args[index]);
-			index += 1;
-		}
-	}
-	if (leadingGlobals.length === 0 || index >= args.length) return args;
-	return [args[index], ...leadingGlobals, ...args.slice(index + 1)];
+	const commandIndex = findCommandStartIndex(args);
+	if (commandIndex === undefined || commandIndex === 0) return args;
+	return [args[commandIndex], ...args.slice(0, commandIndex), ...args.slice(commandIndex + 1)];
 }
 
 export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {
@@ -273,6 +257,19 @@ export function buildAgentBrowserProcessEnv(
 	return childEnv;
 }
 
+function getManagedPreSpawnPolicyError(options: ManagedSessionRestoreEnvOptions, effectiveEnv?: NodeJS.ProcessEnv): string | undefined {
+	if (!validateManagedSessionRestoreContextForSpawn(options)) {
+		return "Managed session restore policy, storage, or checkout identity changed after planning; refusing to start agent-browser.";
+	}
+	return getManagedSessionStateAccessValidationError({
+		args: options.args,
+		cwd: options.cwd,
+		env: effectiveEnv ?? options.env,
+		parentEnv: effectiveEnv ? {} : options.parentEnv ?? processEnv,
+		stdin: options.stdin,
+	});
+}
+
 export async function runAgentBrowserProcess(options: {
 	args: string[];
 	cwd: string;
@@ -304,12 +301,13 @@ export async function runAgentBrowserProcess(options: {
 		restoreState: managedSessionRestoreState,
 		stdin,
 	};
-	if (!validateManagedSessionRestoreContextForSpawn(managedSessionRestoreOptions)) {
+	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions);
+	if (planningPolicyError) {
 		return {
 			aborted: false,
 			agentBrowserStarted: false,
 			exitCode: 1,
-			spawnError: new Error("Managed session restore policy, storage, or checkout identity changed after planning; refusing to start agent-browser."),
+			spawnError: new Error(planningPolicyError),
 			stderr: "",
 			stdout: "",
 			timedOut: false,
@@ -347,7 +345,6 @@ export async function runAgentBrowserProcess(options: {
 	if (signal?.aborted) {
 		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
 	}
-
 	return await new Promise<ProcessRunResult>((resolve) => {
 		let aborted = false;
 		let agentBrowserStarted = false;
@@ -447,10 +444,16 @@ export async function runAgentBrowserProcess(options: {
 			});
 		};
 
+		const childEnv = buildAgentBrowserProcessEnv(processEnv, effectiveEnv);
+		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, childEnv);
+		if (spawnPolicyError) {
+			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
+			return;
+		}
 		const spawnCommand = buildAgentBrowserSpawnCommand(args);
 		const child = spawn(spawnCommand.command, spawnCommand.args, {
 			cwd,
-			env: buildAgentBrowserProcessEnv(processEnv, effectiveEnv),
+			env: childEnv,
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		if (processPlatform !== "win32") {

@@ -20,7 +20,7 @@ import {
 	ManagedSessionRestoreState,
 	withOwnedManagedSessionContext,
 } from "../extensions/agent-browser/lib/managed-session-restore.js";
-import { buildProcessStartIdentityCommand, normalizeProcessStartIdentity, processStartIdentitiesMatch } from "../extensions/agent-browser/lib/process-identity.js";
+import { buildProcessStartIdentityCommand, buildProcessStartIdentityCommands, normalizeProcessStartIdentity, processStartIdentitiesMatch, resolveProcessStartIdentityFromCommands } from "../extensions/agent-browser/lib/process-identity.js";
 import {
 	buildAgentBrowserProcessEnv,
 	buildAgentBrowserSpawnCommand,
@@ -124,6 +124,18 @@ test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", (
 		reorderWindowsLeadingGlobalArgs(["--json", "--headed", "false", "--download-path=/tmp/downloads", "open", "https://example.com"]),
 		["open", "--json", "--headed", "false", "--download-path=/tmp/downloads", "https://example.com"],
 	);
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--restore", "login-state", "open", "https://example.com"]),
+		["open", "--restore", "login-state", "https://example.com"],
+	);
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--restore", "open", "https://example.com"]),
+		["open", "--restore", "https://example.com"],
+	);
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--hide-scrollbars", "false", "open", "https://example.com"]),
+		["open", "--hide-scrollbars", "false", "https://example.com"],
+	);
 });
 
 test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
@@ -137,7 +149,15 @@ test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
 	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
 });
 
-test("process start identity commands use native PowerShell on Windows", () => {
+test("process start identity commands use absolute POSIX fallbacks and native PowerShell on Windows", async () => {
+	const posixCommands = buildProcessStartIdentityCommands(123, "linux");
+	assert.deepEqual(posixCommands.map((command) => command.file), ["/bin/ps", "/usr/bin/ps"]);
+	const attempts: string[] = [];
+	assert.equal(await resolveProcessStartIdentityFromCommands(posixCommands, async (command) => {
+		attempts.push(command.file);
+		return command.file === "/usr/bin/ps" ? "fallback-identity" : undefined;
+	}), "fallback-identity");
+	assert.deepEqual(attempts, ["/bin/ps", "/usr/bin/ps"]);
 	const windows = buildProcessStartIdentityCommand(123, "win32");
 	assert.match(windows?.file ?? "", /(?:^|[\\/])powershell\.exe$/i);
 	assert.equal(win32.isAbsolute(windows?.file ?? ""), true);
@@ -776,6 +796,29 @@ test("runAgentBrowserProcess refuses incompatible environment changes after plan
 			}));
 			assert.equal(result.agentBrowserStarted, false);
 			assert.match(result.spawnError?.message ?? "", /policy, storage, or checkout identity changed/);
+			await assert.rejects(stat(startedPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("runAgentBrowserProcess blocks foreign managed-state capabilities at the spawn boundary", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-state-boundary-"));
+	const basePath = process.env.PATH ?? "";
+	const startedPath = join(tempDir, "started");
+	await writeFakeAgentBrowserBinary(tempDir, `require("node:fs").writeFileSync(${JSON.stringify(startedPath)}, "started");`);
+	execFileSync("git", ["init", "-q", tempDir], { stdio: "ignore" });
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
+			const currentKey = createManagedSessionRestoreKey(tempDir);
+			const foreignKey = currentKey === `piab-r2-${"a".repeat(32)}` ? `piab-r2-${"b".repeat(32)}` : `piab-r2-${"a".repeat(32)}`;
+			const result = await runAgentBrowserProcess({
+				args: ["state", "show", `${foreignKey}-foreign.json`],
+				cwd: tempDir,
+			});
+			assert.equal(result.agentBrowserStarted, false);
+			assert.match(result.spawnError?.message ?? "", /outside the current checkout/);
 			await assert.rejects(stat(startedPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 		});
 	} finally {

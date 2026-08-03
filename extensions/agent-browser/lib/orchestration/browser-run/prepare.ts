@@ -1,8 +1,8 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { canonicalizeAgentBrowserNamespace } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
+import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
@@ -30,6 +30,7 @@ import {
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
 import { acquireManagedSessionPolicyLock, type ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
+import { getManagedSessionStateAccessValidationError } from "../../managed-session-state-policy.js";
 import {
 	applyOpenResultTabCorrection,
 	buildManagedSessionOutcome,
@@ -434,6 +435,10 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		runtimeToolArgs = ["connect", electronLaunch.connectArg];
 		runtimeToolStdin = undefined;
 	}
+	let managedSessionPolicyLock: ManagedSessionPolicyLock | undefined;
+	let managedSessionPolicyLockTransferred = false;
+	let electronLaunchTransferred = false;
+	try {
 	const preparedArgs = await prepareAgentBrowserArgs(runtimeToolArgs, runtimeToolStdin, cwd);
 	const userRequestedJson = runtimeToolArgs.includes("--json");
 	let executionPlan = buildExecutionPlan(preparedArgs.args, {
@@ -445,6 +450,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	const idleTimeoutMismatch = getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs);
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
+	const managedStateAccessError = getManagedSessionStateAccessValidationError({ args: executionPlan.effectiveArgs, cwd, stdin: runtimeToolStdin });
+	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
 		cwd,
@@ -457,7 +464,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		stdin: runtimeToolStdin,
 		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround?.id === "chatgpt-headless-user-agent",
 	});
-	let managedSessionPolicyLock: ManagedSessionPolicyLock | undefined;
 	if (!executionPlan.validationError && ownedManagedSession) {
 		managedSessionPolicyLock = await acquireManagedSessionPolicyLock({
 			namespace: ownedManagedSession.namespace,
@@ -469,7 +475,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				executionPlan = {
 					...executionPlan,
 					recoveryHint: undefined,
-					validationError: "Managed-session policy coordination is unavailable or busy. Retry after the current operation finishes or repair the private policy-lock directory.",
+					validationError: "Managed-session policy coordination is unavailable or busy. Retry after the current operation finishes, repair the private policy-lock directory, and on POSIX verify that /bin/ps or /usr/bin/ps is available.",
 				};
 			}
 		} else if (isCloseCommand(executionPlan.commandInfo.command)) {
@@ -495,43 +501,30 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			const stickyDisabled = state.managedSessionRestoreState.isDisabled(ownedManagedSession.sessionName, ownedManagedSession.namespace);
 			const knownDaemonRestoreKey = state.managedSessionRestoreState.getDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace);
 			const requestedDaemonRestoreKey = ownedManagedSession.restoreDecision === "enabled" && stickyDisabled
-				? knownDaemonRestoreKey
+				? knownDaemonRestoreKey ?? null
 				: ownedManagedSession.expectedDaemonRestoreKey;
-			const localPolicyIsCurrent = state.managedSessionActive
-				&& state.managedSessionName === ownedManagedSession.sessionName
-				&& canonicalizeAgentBrowserNamespace(state.managedSessionNamespace) === ownedManagedSession.namespace
-				&& knownDaemonRestoreKey !== undefined
-				&& knownDaemonRestoreKey === requestedDaemonRestoreKey;
-			if (!localPolicyIsCurrent) {
-				const daemon = await inspectManagedSessionDaemon({
-					cwd,
-					namespace: ownedManagedSession.namespace,
-					sessionName: ownedManagedSession.sessionName,
-					signal,
-				});
-				if (daemon.status === "active") {
-					state.managedSessionRestoreState.recordDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace, daemon.restoreKey);
-				}
-				const activePolicyMatches = daemon.status === "active" && (
-					stickyDisabled && ownedManagedSession.restoreDecision === "enabled"
-						? true
-						: daemon.restoreKey === ownedManagedSession.expectedDaemonRestoreKey
-				);
-				if (!["inactive", "missing-binary"].includes(daemon.status) && !activePolicyMatches) {
-					executionPlan = {
-						...executionPlan,
-						recoveryHint: undefined,
-						validationError: [
-							"This wrapper-owned session's live daemon does not match the requested managed-restore policy.",
-							"Close that session first, retry with sessionMode: \"fresh\", or use a distinct explicit --session.",
-						].join(" "),
-					};
-				}
+			const daemon = await inspectManagedSessionDaemon({
+				cwd,
+				namespace: ownedManagedSession.namespace,
+				sessionName: ownedManagedSession.sessionName,
+				signal,
+			});
+			if (daemon.status === "active") {
+				state.managedSessionRestoreState.recordDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace, daemon.restoreKey);
+			}
+			const activePolicyMatches = daemon.status === "active" && daemon.restoreKey === requestedDaemonRestoreKey;
+			if (!["inactive", "missing-binary"].includes(daemon.status) && !activePolicyMatches) {
+				executionPlan = {
+					...executionPlan,
+					recoveryHint: undefined,
+					validationError: [
+						"This wrapper-owned session's live daemon does not match the requested managed-restore policy.",
+						"Close that session first, retry with sessionMode: \"fresh\", or use a distinct explicit --session.",
+					].join(" "),
+				};
 			}
 		}
 	}
-	let managedSessionPolicyLockTransferred = false;
-	try {
 		return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		const managedSessionRestoreDisabled = () => state.managedSessionRestoreState.isDisabled(executionPlan.sessionName, executionPlan.namespace);
 		const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
@@ -957,6 +950,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		});
 
 		managedSessionPolicyLockTransferred = true;
+		electronLaunchTransferred = true;
 		return {
 			kind: "ready",
 			prepared: {
@@ -1007,5 +1001,21 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		});
 	} finally {
 		if (!managedSessionPolicyLockTransferred) await managedSessionPolicyLock?.release();
+		if (electronLaunch && !electronLaunchTransferred) {
+			try {
+				const cleanup = await cleanupElectronLaunchResources({
+					child: electronLaunch.child,
+					record: electronLaunch.record,
+					timeoutMs: options.implicitSessionCloseTimeoutMs,
+				});
+				if (cleanup.partial) {
+					state.electronLaunchRecords.set(cleanup.launchId, cleanup.record);
+					state.electronChildProcesses.set(cleanup.launchId, electronLaunch.child);
+				}
+			} catch {
+				state.electronLaunchRecords.set(electronLaunch.record.launchId, electronLaunch.record);
+				state.electronChildProcesses.set(electronLaunch.record.launchId, electronLaunch.child);
+			}
+		}
 	}
 }
