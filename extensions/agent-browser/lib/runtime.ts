@@ -25,10 +25,11 @@ import {
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
 	isBooleanFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
+	resolveAgentBrowserNamespace,
 	scanUpstreamGlobalFlagOccurrences,
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
-import { redactManagedSessionRestoreKeys } from "./managed-session-capabilities.js";
+import { isWrapperManagedSessionName, redactManagedSessionRestoreKeys } from "./managed-session-capabilities.js";
 import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
 import {
 	hasLaunchScopedFlagToken,
@@ -978,6 +979,9 @@ export function buildExecutionPlan(
 	}
 
 	const explicitSessionName = extractExplicitSessionName(args);
+	if (explicitSessionName && !isWrapperManagedSessionName(explicitSessionName)) {
+		namespace = resolveAgentBrowserNamespace(args, process.env.AGENT_BROWSER_NAMESPACE);
+	}
 	const shouldCreateFreshManagedSession =
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && !isCloseCommand(commandInfo.command);
 	let argsToAppend = args;

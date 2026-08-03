@@ -866,7 +866,7 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 		sessionMode: "auto",
 	});
 	assert.deepEqual(defaultNamespace.effectiveArgs, ["--json", "--namespace", "", "--session", "custom", "close"]);
-	assert.equal(defaultNamespace.namespace, undefined);
+	assert.equal(defaultNamespace.namespace, "");
 
 	const sameNamespace = buildExecutionPlan(["--namespace", "Review", "snapshot", "-i"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -877,6 +877,37 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	});
 	assert.deepEqual(sameNamespace.effectiveArgs, ["--json", "--namespace", "review", "--session", "piab-demo-123", "snapshot", "-i"]);
 	assert.equal(sameNamespace.validationError, undefined);
+});
+
+test("buildExecutionPlan resolves caller-owned session namespaces from argv before environment", () => {
+	const previousNamespace = process.env.AGENT_BROWSER_NAMESPACE;
+	try {
+		process.env.AGENT_BROWSER_NAMESPACE = "Review Space";
+		const inherited = buildExecutionPlan(["--session", "custom", "snapshot", "-i"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(inherited.namespace, "review-space");
+		const explicitDefault = buildExecutionPlan(["--namespace", "", "--session", "custom", "snapshot", "-i"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(explicitDefault.namespace, "");
+		const wrapperManaged = buildExecutionPlan(["--session", "piab-demo-123", "close"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(wrapperManaged.namespace, undefined);
+	} finally {
+		if (previousNamespace === undefined) delete process.env.AGENT_BROWSER_NAMESPACE;
+		else process.env.AGENT_BROWSER_NAMESPACE = previousNamespace;
+	}
 });
 
 test("buildExecutionPlan preserves stored namespace for implicit managed sessions", () => {

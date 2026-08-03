@@ -195,11 +195,13 @@ test("managed state policy blocks browser navigation into local agent-browser st
 		assert.equal(validate(tempDir, ["open", "--headed", "https://example.com"], undefined, undefined, protectedUrl), undefined);
 		assert.equal(validate(tempDir, ["close"], undefined, undefined, protectedUrl), undefined);
 		assert.equal(validate(tempDir, ["close"], { AGENT_BROWSER_STATE: protectedPath }), undefined);
-		assert.equal(validate(tempDir, ["batch"], undefined, JSON.stringify([
+		const attachNavigateSnapshotBatch = JSON.stringify([
 			["connect", "9222"],
 			["open", "https://example.com"],
 			["snapshot", "-i"],
-		])), undefined);
+		]);
+		assert.match(validate(tempDir, ["batch"], undefined, attachNavigateSnapshotBatch) ?? "", /--bail/);
+		assert.equal(validate(tempDir, ["batch", "--bail"], undefined, attachNavigateSnapshotBatch), undefined);
 		assert.deepEqual(getManagedSessionResultingPageState({ args: ["batch"], stdin: JSON.stringify([["connect", "9222"]]) }), {
 			pageTargetMayHaveChanged: true,
 			pageUrlUnknown: true,
@@ -225,6 +227,66 @@ test("managed state policy blocks browser navigation into local agent-browser st
 		assert.equal(getManagedSessionStateAccessValidationError({ args: ["get", "url"], cwd: tempDir, pageUrlUnknown: true }), undefined);
 		assert.equal(getManagedSessionStateAccessValidationError({ args: ["tab", "list"], cwd: tempDir, pageUrlUnknown: true }), undefined);
 		assert.equal(getCallerOwnedSessionLivePageVerificationRequirement({ args: ["--session", "external", "session", "info"], cwd: tempDir }), undefined);
+		const navigationThenContentBatch = JSON.stringify([["pushstate", "https://safe.example/"], ["get", "html", "body"]]);
+		assert.match(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch"],
+			cwd: tempDir,
+			pageUrlUnknown: true,
+			stdin: navigationThenContentBatch,
+		}) ?? "", /--bail/);
+		assert.equal(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch", "--bail"],
+			cwd: tempDir,
+			pageUrlUnknown: true,
+			stdin: navigationThenContentBatch,
+		}), undefined);
+		assert.equal(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch"],
+			currentPageUrl: "https://initial.example/",
+			cwd: tempDir,
+			stdin: navigationThenContentBatch,
+		}), undefined);
+		assert.match(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch"],
+			currentPageUrl: protectedUrl,
+			cwd: tempDir,
+			stdin: navigationThenContentBatch,
+		}) ?? "", /--bail/);
+		assert.equal(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch", "--bail"],
+			currentPageUrl: protectedUrl,
+			cwd: tempDir,
+			stdin: navigationThenContentBatch,
+		}), undefined);
+		assert.match(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch", "--bail=false"],
+			currentPageUrl: protectedUrl,
+			cwd: tempDir,
+			stdin: navigationThenContentBatch,
+		}) ?? "", /--bail/);
+		assert.match(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch", "open https://safe.example/", "get html body"],
+			currentPageUrl: protectedUrl,
+			cwd: tempDir,
+		}) ?? "", /--bail/);
+		assert.match(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch"],
+			currentPageUrl: protectedUrl,
+			cwd: tempDir,
+			stdin: JSON.stringify([["open", "https://one.example/"], ["open", "https://two.example/"], ["get", "html", "body"]]),
+		}) ?? "", /--bail/);
+		assert.match(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch"],
+			currentPageUrl: protectedUrl,
+			cwd: tempDir,
+			stdin: JSON.stringify([["open", "https://safe.example/"], ["eval", "document.title"]]),
+		}) ?? "", /--bail/);
+		assert.match(getManagedSessionStateAccessValidationError({
+			args: ["--session", "external", "batch"],
+			currentPageUrl: "https://initial.example/",
+			cwd: tempDir,
+			stdin: JSON.stringify([["open", "https://safe.example/"], ["connect", "9222"], ["get", "html", "body"]]),
+		}) ?? "", /active page became unverified/);
 		assert.equal(getManagedSessionStateAccessValidationError({ args: ["tab", "t2"], cwd: tempDir, pageUrlUnknown: true }), undefined);
 		assert.match(getManagedSessionStateAccessValidationError({ args: ["snapshot", "-i"], cwd: tempDir, pageUrlUnknown: true }) ?? "", /active page became unverified/);
 		assert.equal(getManagedSessionStateAccessValidationError({

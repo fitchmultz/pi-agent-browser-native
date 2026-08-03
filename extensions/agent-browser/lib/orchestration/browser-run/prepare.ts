@@ -536,7 +536,51 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const priorRefSnapshotState = priorSessionPageState.refSnapshot;
 		const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
 		let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
-		if (!executionPlan.validationError && executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction)) {
+		let callerOwnedLivePageVerified = false;
+		const isCallerOwnedExplicitSession = () => executionPlan.sessionName !== undefined
+			&& executionPlan.usedImplicitSession === false
+			&& ownedManagedSession === undefined;
+		const verifyCallerOwnedLivePage = async (options: { args: string[]; requirement?: string; stdin?: string }) => {
+			if (!options.requirement || !executionPlan.sessionName) return;
+			let liveUrl: string | undefined;
+			try {
+				const liveUrlData = await runSessionCommandData({
+					args: ["get", "url"],
+					cwd,
+					namespace: executionPlan.namespace,
+					sessionName: executionPlan.sessionName,
+					signal,
+					throwOnFailure: true,
+				});
+				liveUrl = extractStringResultField(liveUrlData, "result") ?? extractStringResultField(liveUrlData, "url");
+			} catch {}
+			if (liveUrl === undefined) {
+				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: options.requirement };
+				return;
+			}
+			const livePageValidationError = getManagedSessionStateAccessValidationError({
+				args: options.args,
+				currentPageUrl: liveUrl,
+				cwd,
+				pageUrlUnknown: false,
+				stdin: options.stdin,
+			});
+			if (livePageValidationError) {
+				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: livePageValidationError };
+				return;
+			}
+			callerOwnedLivePageVerified = true;
+			priorSessionTabTarget ??= { url: liveUrl };
+			priorSessionTabTargetUnknown = undefined;
+		};
+		const mayResolveSemanticVisibleRef = executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction);
+		if (!executionPlan.validationError && mayResolveSemanticVisibleRef && isCallerOwnedExplicitSession()) {
+			await verifyCallerOwnedLivePage({
+				args: ["snapshot", "-i"],
+				requirement: getCallerOwnedSessionLivePageVerificationRequirement({ args: ["snapshot", "-i"], cwd }),
+			});
+		}
+		if (!executionPlan.validationError && mayResolveSemanticVisibleRef) {
 			semanticActionVisibleRefResolution = await resolveSemanticActionVisibleRefArgs({
 				compiled: compiledSemanticAction,
 				cwd,
@@ -554,15 +598,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				sessionMode,
 			});
 		}
-		const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
-		const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
-		const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
-		const statePatch: BrowserRunStatePatch = executionPlan.managedSessionName === freshSessionName
-			? { freshSessionOrdinal: freshSessionOrdinal + 1 }
-			: {};
-		if (executionPlan.managedSessionName === freshSessionName) {
-			freshSessionOrdinal += 1;
-		}
 
 		const commandTokens = semanticActionVisibleRefResolution ? extractCommandTokens(semanticActionVisibleRefResolution.args) : extractCommandTokens(preparedArgs.args);
 		const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
@@ -575,46 +610,32 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			refSnapshotInvalidation: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotInvalidation,
 			stdin: runtimeToolStdin,
 		});
-		const callerOwnedLivePageRequirement = !executionPlan.validationError
+		const callerOwnedPageAccessEligible = !executionPlan.validationError
 			&& preLiveStaleRefPreflight === undefined
 			&& validateStdinCommandContract({ command: executionPlan.commandInfo.command, commandTokens, stdin: runtimeToolStdin }) === undefined
-			&& executionPlan.sessionName !== undefined
-			&& executionPlan.usedImplicitSession === false
-			&& ownedManagedSession === undefined
+			&& isCallerOwnedExplicitSession();
+		const callerOwnedLivePageRequirement = callerOwnedPageAccessEligible
+			&& !callerOwnedLivePageVerified
 			? getCallerOwnedSessionLivePageVerificationRequirement({
 				args: executionPlan.effectiveArgs,
 				cwd,
 				stdin: runtimeToolStdin,
 			})
 			: undefined;
-		if (callerOwnedLivePageRequirement) {
-			let liveUrl: string | undefined;
-			try {
-				const liveUrlData = await runSessionCommandData({
-					args: ["get", "url"],
-					cwd,
-					namespace: executionPlan.namespace,
-					sessionName: executionPlan.sessionName,
-					signal,
-					throwOnFailure: true,
-				});
-				liveUrl = extractStringResultField(liveUrlData, "result") ?? extractStringResultField(liveUrlData, "url");
-			} catch {}
-			const livePageValidationError = liveUrl === undefined
-				? callerOwnedLivePageRequirement
-				: getManagedSessionStateAccessValidationError({
-					args: executionPlan.effectiveArgs,
-					currentPageUrl: liveUrl,
-					cwd,
-					pageUrlUnknown: false,
-					stdin: runtimeToolStdin,
-				});
-			if (livePageValidationError) {
-				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: livePageValidationError };
-			} else if (liveUrl !== undefined) {
-				priorSessionTabTarget ??= { url: liveUrl };
-				priorSessionTabTargetUnknown = undefined;
-			}
+		await verifyCallerOwnedLivePage({
+			args: executionPlan.effectiveArgs,
+			requirement: callerOwnedLivePageRequirement,
+			stdin: runtimeToolStdin,
+		});
+
+		const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
+		const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
+		const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
+		const statePatch: BrowserRunStatePatch = executionPlan.managedSessionName === freshSessionName
+			? { freshSessionOrdinal: freshSessionOrdinal + 1 }
+			: {};
+		if (executionPlan.managedSessionName === freshSessionName) {
+			freshSessionOrdinal += 1;
 		}
 
 		if (executionPlan.validationError) {

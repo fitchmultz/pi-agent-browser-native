@@ -232,11 +232,26 @@ if (args.includes("get") && args.includes("url")) {
     process.stdout.write(JSON.stringify({ success: false, error: "No active page" }));
     process.exit(1);
   }
-  const url = sessionName === "caller-safe" ? "https://safe.example/" : ${JSON.stringify(protectedUrl)};
+  const url = ["caller-safe", "caller-semantic-safe"].includes(sessionName) ? "https://safe.example/" : ${JSON.stringify(protectedUrl)};
   process.stdout.write(JSON.stringify({ success: true, data: { result: url, url } }));
+} else if (args.includes("snapshot")) {
+  const safe = sessionName === "caller-semantic-safe";
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: safe ? "https://safe.example/" : ${JSON.stringify(protectedUrl)},
+    snapshot: safe ? '- button "Safe" [ref=e1]' : '- button "SECRET_SEMANTIC_FROM_PROTECTED_FILE" [ref=e1]'
+  } }));
 } else if (args.includes("get") && args.includes("html")) {
   const html = sessionName === "caller-safe" ? "<body>SAFE CONTENT</body>" : "SECRET_FROM_PROTECTED_FILE";
   process.stdout.write(JSON.stringify({ success: true, data: { html } }));
+} else if (args.includes("batch")) {
+  const safe = sessionName === "caller-safe";
+  const first = { command: ["pushstate", "https://safe.example/"], success: safe, ...(safe ? { result: { url: "https://safe.example/" } } : { error: "SecurityError" }) };
+  process.stdout.write(JSON.stringify(args.includes("--bail") && !safe ? [first] : [
+    first,
+    { command: ["get", "html", "body"], success: true, result: { html: safe ? "SAFE BATCH CONTENT" : "SECRET_BATCH_FROM_PROTECTED_FILE" } }
+  ]));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e1", title: "Safe", url: "https://safe.example/" } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
 }`);
@@ -271,30 +286,163 @@ if (args.includes("get") && args.includes("url")) {
 			assert.match(staleStateResult.content[0]?.text ?? "", /authenticated cookies and storage/);
 			assert.doesNotMatch(JSON.stringify(staleStateResult), /SECRET_FROM_PROTECTED_FILE/);
 
+			const batchResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				args: ["--session", "caller-batch", "batch"],
+				stdin: JSON.stringify([["pushstate", "https://safe.example/"], ["get", "html", "body"]]),
+			});
+			assert.equal(batchResult.isError, true, JSON.stringify(batchResult));
+			assert.match(batchResult.content[0]?.text ?? "", /--bail/);
+			assert.doesNotMatch(JSON.stringify(batchResult), /SECRET_BATCH_FROM_PROTECTED_FILE/);
+			const bailBatchResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				args: ["--session", "caller-bail", "batch", "--bail"],
+				stdin: JSON.stringify([["pushstate", "https://safe.example/"], ["get", "html", "body"]]),
+			});
+			assert.equal(bailBatchResult.isError, true, JSON.stringify(bailBatchResult));
+			assert.doesNotMatch(JSON.stringify(bailBatchResult), /SECRET_BATCH_FROM_PROTECTED_FILE/);
+
+			const semanticResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				semanticAction: { action: "click", locator: "role", name: "Secret", role: "button", session: "caller-semantic" },
+			});
+			assert.equal(semanticResult.isError, true, JSON.stringify(semanticResult));
+			assert.match(semanticResult.content[0]?.text ?? "", /authenticated cookies and storage/);
+			assert.doesNotMatch(JSON.stringify(semanticResult), /SECRET_SEMANTIC_FROM_PROTECTED_FILE/);
+
+			const safeSemanticResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				semanticAction: { action: "click", locator: "role", name: "Safe", role: "button", session: "caller-semantic-safe" },
+			});
+			assert.equal(safeSemanticResult.isError, false, JSON.stringify(safeSemanticResult));
+
 			const failedProbeResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
 				args: ["--session", "caller-failed", "get", "html", "body"],
 			});
 			assert.equal(failedProbeResult.isError, true, JSON.stringify(failedProbeResult));
 			assert.match(failedProbeResult.content[0]?.text ?? "", /active page became unverified/);
 			assert.doesNotMatch(JSON.stringify(failedProbeResult), /SECRET_FROM_PROTECTED_FILE/);
+			const failedProbeRecovery = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				args: ["--session", "caller-failed", "open", "https://safe.example/"],
+			});
+			assert.equal(failedProbeRecovery.isError, false, JSON.stringify(failedProbeRecovery));
 
 			const safeResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
 				args: ["--session", "caller-safe", "get", "html", "body"],
 			});
 			assert.equal(safeResult.isError, false, JSON.stringify(safeResult));
 			assert.match(safeResult.content[0]?.text ?? "", /SAFE CONTENT/);
+			const safeBatchResult = await executeRegisteredTool(missingStateHarness.tool, missingStateHarness.ctx, {
+				args: ["--session", "caller-safe", "batch"],
+				stdin: JSON.stringify([["pushstate", "https://safe.example/"], ["get", "html", "body"]]),
+			});
+			assert.equal(safeBatchResult.isError, false, JSON.stringify(safeBatchResult));
+			assert.match(safeBatchResult.content[0]?.text ?? "", /SAFE BATCH CONTENT/);
 
 			const invocations = await readInvocationLog(logPath);
-			for (const sessionName of ["caller-missing", "caller-stale", "caller-failed"]) {
+			for (const sessionName of ["caller-missing", "caller-stale", "caller-batch", "caller-semantic"]) {
 				const sessionInvocations = invocations.filter((entry) => entry.args.includes(sessionName));
 				assert.equal(sessionInvocations.length, 1, sessionName);
 				assert.equal(sessionInvocations[0]?.args.includes("url"), true, sessionName);
 				assert.equal(sessionInvocations[0]?.args.includes("html"), false, sessionName);
+				assert.equal(sessionInvocations[0]?.args.includes("snapshot"), false, sessionName);
 			}
+			const failedInvocations = invocations.filter((entry) => entry.args.includes("caller-failed"));
+			assert.equal(failedInvocations.length, 2);
+			assert.equal(failedInvocations[0]?.args.includes("url"), true);
+			assert.equal(failedInvocations[1]?.args.includes("open"), true);
+			const safeSemanticInvocations = invocations.filter((entry) => entry.args.includes("caller-semantic-safe"));
+			assert.equal(safeSemanticInvocations.filter((entry) => entry.args.includes("url")).length, 1);
+			assert.deepEqual(safeSemanticInvocations.map((entry) =>
+				entry.args.includes("snapshot") ? "snapshot" : entry.args.includes("find") ? "find" : "get-url"
+			), ["get-url", "snapshot", "find"]);
+			const bailInvocations = invocations.filter((entry) => entry.args.includes("caller-bail"));
+			assert.equal(bailInvocations.length, 1);
+			assert.equal(bailInvocations[0]?.args.includes("--bail"), true);
 			const safeInvocations = invocations.filter((entry) => entry.args.includes("caller-safe"));
-			assert.equal(safeInvocations.length, 2);
+			assert.equal(safeInvocations.length, 4);
 			assert.equal(safeInvocations[0]?.args.includes("url"), true);
 			assert.equal(safeInvocations[1]?.args.includes("html"), true);
+			assert.equal(safeInvocations[2]?.args.includes("url"), true);
+			assert.equal(safeInvocations[3]?.args.includes("batch"), true);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension serializes caller-owned live verification with same-session commands", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-live-race-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "active-page.txt");
+	const liveProbePath = join(tempDir, "live-probe-started");
+	const releaseLiveProbePath = join(tempDir, "release-live-probe");
+	const basePath = process.env.PATH ?? "";
+	await writeFile(statePath, "safe", "utf8");
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const readState = () => fs.readFileSync(${JSON.stringify(statePath)}, "utf8");
+if (args.includes("get") && args.includes("url")) {
+  const observedState = readState();
+  fs.writeFileSync(${JSON.stringify(liveProbePath)}, "started");
+  const deadline = Date.now() + 5000;
+  while (!fs.existsSync(${JSON.stringify(releaseLiveProbePath)}) && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  const url = observedState === "safe" ? "https://safe.example/" : "file:///tmp/.agent-browser/sessions/auth.html";
+  process.stdout.write(JSON.stringify({ success: true, data: { url } }));
+} else if (args.includes("tab") && args.includes("t2")) {
+  fs.writeFileSync(${JSON.stringify(statePath)}, "protected");
+  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t2" } }));
+} else if (args.includes("get") && args.includes("html")) {
+  const html = readState() === "safe" ? "SAFE CONTENT" : "SECRET_RACE_FROM_PROTECTED_FILE";
+  process.stdout.write(JSON.stringify({ success: true, data: { html } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`);
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "Review Space", PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const contentPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "caller-race", "get", "html", "body"],
+			});
+			for (let attempt = 0; attempt < 100; attempt += 1) {
+				try {
+					await access(liveProbePath);
+					break;
+				} catch {
+					await new Promise((resolve) => setTimeout(resolve, 5));
+				}
+			}
+			await access(liveProbePath);
+			const tabPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", "review-space", "--session", "caller-race", "tab", "t2"],
+			});
+			const otherSessionPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "caller-other", "open", "https://other.example"],
+			});
+			let beforeRelease = await readInvocationLog(logPath);
+			for (let attempt = 0; attempt < 100 && !beforeRelease.some((entry) => entry.args.includes("caller-other")); attempt += 1) {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				beforeRelease = await readInvocationLog(logPath);
+			}
+			assert.equal(beforeRelease.some((entry) => entry.args.includes("caller-other")), true);
+			assert.equal(beforeRelease.some((entry) => entry.args.includes("caller-race") && entry.args.includes("tab")), false);
+			await writeFile(releaseLiveProbePath, "release", "utf8");
+			const [contentResult, tabResult, otherSessionResult] = await Promise.all([contentPromise, tabPromise, otherSessionPromise]);
+			assert.equal(contentResult.isError, false, JSON.stringify(contentResult));
+			assert.match(contentResult.content[0]?.text ?? "", /SAFE CONTENT/);
+			assert.doesNotMatch(JSON.stringify(contentResult), /SECRET_RACE_FROM_PROTECTED_FILE/);
+			assert.equal(tabResult.isError, false, JSON.stringify(tabResult));
+			assert.equal(otherSessionResult.isError, false, JSON.stringify(otherSessionResult));
+			const invocations = await readInvocationLog(logPath);
+			const callerRaceInvocations = invocations.filter((entry) => entry.args.includes("caller-race"));
+			assert.deepEqual(callerRaceInvocations.map((entry) => entry.args.slice(-2)), [
+				["get", "url"],
+				["html", "body"],
+				["tab", "t2"],
+			]);
+			const otherOpenIndex = invocations.findIndex((entry) => entry.args.includes("caller-other") && entry.args.includes("open"));
+			const raceContentIndex = invocations.findIndex((entry) => entry.args.includes("caller-race") && entry.args.includes("html"));
+			assert.equal(otherOpenIndex > 0 && otherOpenIndex < raceContentIndex, true);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

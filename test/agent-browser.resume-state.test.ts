@@ -1786,10 +1786,11 @@ if (args.includes("batch")) {
 			]);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 2);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
+			assert.equal(invocations.length, 3);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
 				["tab", "t1"],
 				["open", "https://example.org"],
 				["get", "title"],

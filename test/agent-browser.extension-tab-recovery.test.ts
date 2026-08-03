@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -533,10 +533,9 @@ if (args.includes("tab") && args.includes("list")) {
 	}
 });
 
-test("agentBrowserExtension keeps newer explicit-session tab target after overlapping opens", { concurrency: false }, async () => {
+test("agentBrowserExtension serializes overlapping same-session opens and keeps the newer target", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
-	const releaseSlowOpenPath = join(tempDir, "release-slow-open");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -546,12 +545,8 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 const slow = { title: "Slow First", url: "https://example.com/slow-first" };
 const fast = { title: "Fast Second", url: "https://example.com/fast-second" };
-const releaseSlowOpenPath = ${JSON.stringify(releaseSlowOpenPath)};
 if (args.includes("https://example.com/slow-first")) {
-  const deadline = Date.now() + 5000;
-  while (!fs.existsSync(releaseSlowOpenPath) && Date.now() < deadline) {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
   process.stdout.write(JSON.stringify({ success: true, data: slow }));
 } else if (args.includes("https://example.com/fast-second")) {
   process.stdout.write(JSON.stringify({ success: true, data: fast }));
@@ -594,71 +589,33 @@ if (args.includes("https://example.com/slow-first")) {
 				args: ["--session", "named", "open", "https://example.com/fast-second"],
 			});
 
-			const fastOpen = await fastOpenPromise;
-			assert.equal(fastOpen.isError, false, JSON.stringify(fastOpen));
-			await writeFile(releaseSlowOpenPath, "1", "utf8");
-			const slowOpen = await slowOpenPromise;
+			const [slowOpen, fastOpen] = await Promise.all([slowOpenPromise, fastOpenPromise]);
 			assert.equal(slowOpen.isError, false, JSON.stringify(slowOpen));
-			assert.deepEqual(slowOpen.details?.sessionTabTarget, { title: "Fast Second", url: "https://example.com/fast-second" });
-			assert.equal(slowOpen.details?.sessionTabTargetUnknown, undefined);
-
-			const clickedSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "click", "@e9"],
-			});
-			assert.equal(clickedSelector.isError, false, JSON.stringify(clickedSelector));
-			assert.deepEqual(clickedSelector.details?.sessionTabCorrection, {
-				selectedTab: "t2",
-				selectionKind: "tabId",
-				targetTitle: "Fast Second",
-				targetUrl: "https://example.com/fast-second",
-			});
-			assert.equal(
-				(clickedSelector.details?.navigationSummary as { title?: string; url?: string } | undefined)?.title,
-				"Fast Second",
-			);
-			assert.equal(
-				(clickedSelector.details?.navigationSummary as { title?: string; url?: string } | undefined)?.url,
-				"https://example.com/fast-second",
-			);
+			assert.equal(fastOpen.isError, false, JSON.stringify(fastOpen));
+			assert.deepEqual(slowOpen.details?.sessionTabTarget, { title: "Slow First", url: "https://example.com/slow-first" });
+			assert.deepEqual(fastOpen.details?.sessionTabTarget, { title: "Fast Second", url: "https://example.com/fast-second" });
+			assert.equal(fastOpen.details?.sessionTabTargetUnknown, undefined);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(
-				invocations.some((entry) =>
-					entry.args.join("\u0000") === ["--json", "--session", "named", "open", "https://example.com/slow-first"].join("\u0000"),
-				),
-				true,
-			);
-			assert.equal(
-				invocations.some((entry) =>
-					entry.args.join("\u0000") === ["--json", "--session", "named", "open", "https://example.com/fast-second"].join("\u0000"),
-				),
-				true,
-			);
-			assert.deepEqual(invocations.at(-2)?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations.at(-1)?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations.at(-1)?.stdin ?? "[]")), [
-				["tab", "t2"],
-				["click", "@e9"],
-				["eval", "({ title: document.title, url: location.href })"],
-			]);
+			assert.equal(invocations.length, 2);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "open", "https://example.com/slow-first"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "open", "https://example.com/fast-second"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 
-test("agentBrowserExtension serializes a newer unverified target after a stale navigation completes", { concurrency: false }, async () => {
+test("agentBrowserExtension serializes a newer unverified target after prior navigation", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-unverified-target-"));
 	const logPath = join(tempDir, "invocations.log");
-	const releasePath = join(tempDir, "release-slow-open");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("https://example.com/slow")) {
-  const deadline = Date.now() + 5000;
-  while (!fs.existsSync(${JSON.stringify(releasePath)}) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-  process.stdout.write(JSON.stringify({ success: true, data: { title: "Stale", url: "https://example.com/slow" } }));
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "First", url: "https://example.com/slow" } }));
 } else if (args.includes("connect")) {
   process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
 } else if (args.includes("snapshot")) {
@@ -672,14 +629,12 @@ if (args.includes("https://example.com/slow")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const slowOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "open", "https://example.com/slow"] });
 			await waitForInvocation(logPath, (entry) => entry.args.includes("https://example.com/slow"));
-			const connected = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "connect", "9222"] });
+			const connectPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "connect", "9222"] });
+			const [firstOpen, connected] = await Promise.all([slowOpenPromise, connectPromise]);
+			assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
+			assert.deepEqual(firstOpen.details?.sessionTabTarget, { title: "First", url: "https://example.com/slow" });
 			assert.equal(connected.isError, false, JSON.stringify(connected));
 			assert.equal(connected.details?.sessionTabTargetUnknown, true);
-			await writeFile(releasePath, "1", "utf8");
-			const staleOpen = await slowOpenPromise;
-			assert.equal(staleOpen.isError, false, JSON.stringify(staleOpen));
-			assert.equal(staleOpen.details?.sessionTabTarget, undefined);
-			assert.equal(staleOpen.details?.sessionTabTargetUnknown, true);
 			const invocationCount = (await readInvocationLog(logPath)).length;
 			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "snapshot", "-i"] });
 			assert.equal(snapshot.isError, true, JSON.stringify(snapshot));

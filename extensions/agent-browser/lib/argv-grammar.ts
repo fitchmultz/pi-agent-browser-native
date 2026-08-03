@@ -186,6 +186,12 @@ export function extractExplicitNamespace(args: string[]): string | undefined {
 	return canonicalizeAgentBrowserNamespace(scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value);
 }
 
+export function resolveAgentBrowserNamespace(args: string[], envValue: string | undefined): string | undefined {
+	const occurrences = scanUpstreamGlobalFlagOccurrences(args, "--namespace");
+	if (occurrences.length > 0) return canonicalizeAgentBrowserNamespace(occurrences.at(-1)?.value) ?? "";
+	return canonicalizeAgentBrowserNamespace(envValue);
+}
+
 /** Mirror upstream's optional restore value and full-argv last-wins parsing. */
 export function extractRequestedRestoreKey(args: string[], sessionName: string, envValue: string | undefined): string | null {
 	let restoreKey = envValue || null;

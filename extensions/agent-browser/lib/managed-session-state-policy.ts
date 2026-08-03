@@ -29,6 +29,7 @@ const UPSTREAM_CONFIG_MESSAGE = "Upstream agent-browser config is blocked for br
 const UNVERIFIED_PAGE_MESSAGE = "The active page became unverified after a tab, attachment, history, script, or state-load transition. Run get url or navigate explicitly to a safe URL before page-content inspection.";
 const UNSAFE_BATCH_ARGUMENT_MESSAGE = "Batch command arguments could not be safely inspected. Use batch stdin JSON command arrays instead.";
 const NESTED_BATCH_ARGUMENT_MESSAGE = "Nested batch commands are blocked by the wrapper's page-state safety policy. Flatten the batch steps instead.";
+const NON_BAIL_BATCH_NAVIGATION_MESSAGE = "Batches that navigate before page-content access must use exact batch --bail so a failed navigation cannot expose the prior page.";
 const EXPLICIT_NAVIGATION_COMMANDS = new Set(["a11y", "goto", "navigate", "open", "pushstate", "visit", "vitals", "web-vitals"]);
 const FILE_PATH_GLOBAL_FLAGS = ["--action-policy", "--config", "--download-path", "--executable-path", "--extension", "--init-script", "--profile", "--screenshot-dir", "--state"] as const;
 const FILE_PATH_ENV_VARIABLES = [
@@ -318,6 +319,35 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 	return { steps };
 }
 
+function batchBailsOnFirstError(args: string[]): boolean {
+	const descriptor = parseArgvDescriptor(args);
+	return descriptor.commandInfo.command === "batch" && descriptor.commandTokens.slice(1).includes("--bail");
+}
+
+interface PossibleBatchPageState {
+	currentPageUrl?: string;
+	pageUrlUnknown: boolean;
+	retainedAfterFailedNavigation: boolean;
+}
+
+function commandMayChangePageTarget(args: string[], trustedBatchTabSelection: boolean): boolean {
+	const descriptor = parseArgvDescriptor(args);
+	return getExplicitNavigationTarget(args) !== undefined
+		|| (isUnverifiedPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand)
+			&& !(trustedBatchTabSelection && descriptor.commandInfo.command === "tab"));
+}
+
+function deduplicatePossibleBatchPageStates(states: PossibleBatchPageState[]): PossibleBatchPageState[] {
+	const deduplicated = new Map<string, PossibleBatchPageState>();
+	for (const state of states) {
+		const key = `${state.pageUrlUnknown ? "unknown" : "known"}\0${state.currentPageUrl ?? ""}`;
+		const existing = deduplicated.get(key);
+		if (!existing) deduplicated.set(key, state);
+		else existing.retainedAfterFailedNavigation ||= state.retainedAfterFailedNavigation;
+	}
+	return [...deduplicated.values()];
+}
+
 export function managedSessionCommandRequiresLivePageVerification(args: string[], stdin?: string): boolean {
 	const descriptor = parseArgvDescriptor(args);
 	if (descriptor.commandInfo.command === "eval") return true;
@@ -394,7 +424,9 @@ export function getCallerOwnedSessionLivePageVerificationRequirement(options: {
 		trustedFirstBatchTabSelection: options.trustedFirstBatchTabSelection,
 		trustedPinnedEmptyConfig: true,
 	});
-	return validationError === UNVERIFIED_PAGE_MESSAGE ? validationError : undefined;
+	return validationError === UNVERIFIED_PAGE_MESSAGE || validationError === NON_BAIL_BATCH_NAVIGATION_MESSAGE
+		? UNVERIFIED_PAGE_MESSAGE
+		: undefined;
 }
 
 export function getManagedSessionTargetAccessValidationError(args: string[], ownedManagedSession: boolean, env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -471,21 +503,53 @@ export function getManagedSessionStateAccessValidationError(options: {
 			if (batch.error === BLOCKED_MANAGED_BROWSER_FILE_MESSAGE || batch.error === NESTED_BATCH_ARGUMENT_MESSAGE || batch.error.startsWith("agent_browser batch stdin")) return batch.error;
 			return UNSAFE_BATCH_ARGUMENT_MESSAGE;
 		}
-		let currentPageUrl = options.currentPageUrl;
-		let pageUrlUnknown = options.pageUrlUnknown ?? false;
+		const bailOnFirstError = batchBailsOnFirstError(options.args);
+		let possibleStates: PossibleBatchPageState[] = [{
+			currentPageUrl: options.currentPageUrl,
+			pageUrlUnknown: options.pageUrlUnknown ?? false,
+			retainedAfterFailedNavigation: false,
+		}];
 		for (let index = 0; index < batch.steps.length; index += 1) {
 			const step = batch.steps[index];
 			const trustedBatchTabSelection = options.trustedFirstBatchTabSelection === true && index === 0;
-			const error = getManagedSessionStateAccessValidationError({
-				...options,
-				args: step,
-				currentPageUrl,
-				pageUrlUnknown,
-				stdin: undefined,
-				trustedFirstBatchTabSelection: trustedBatchTabSelection,
-			});
-			if (error) return error;
-			({ currentPageUrl, pageUrlUnknown } = getResultingPageState({ args: step, currentPageUrl, pageUrlUnknown, trustedBatchTabSelection }));
+			let directError: string | undefined;
+			let failedNavigationHazard = false;
+			for (const state of possibleStates) {
+				const error = getManagedSessionStateAccessValidationError({
+					...options,
+					args: step,
+					currentPageUrl: state.currentPageUrl,
+					pageUrlUnknown: state.pageUrlUnknown,
+					stdin: undefined,
+					trustedFirstBatchTabSelection: trustedBatchTabSelection,
+				});
+				if (!error) continue;
+				if (state.retainedAfterFailedNavigation && [BLOCKED_MANAGED_BROWSER_FILE_MESSAGE, UNVERIFIED_PAGE_MESSAGE].includes(error)) {
+					failedNavigationHazard = true;
+				} else {
+					directError ??= error;
+				}
+			}
+			if (directError) return directError;
+			if (failedNavigationHazard) return NON_BAIL_BATCH_NAVIGATION_MESSAGE;
+			const mayChangePageTarget = commandMayChangePageTarget(step, trustedBatchTabSelection);
+			const nextStates: PossibleBatchPageState[] = [];
+			for (const state of possibleStates) {
+				const successState = getResultingPageState({
+					args: step,
+					currentPageUrl: state.currentPageUrl,
+					pageUrlUnknown: state.pageUrlUnknown,
+					trustedBatchTabSelection,
+				});
+				nextStates.push({
+					...successState,
+					retainedAfterFailedNavigation: mayChangePageTarget ? false : state.retainedAfterFailedNavigation,
+				});
+				if (!bailOnFirstError && mayChangePageTarget) {
+					nextStates.push({ ...state, retainedAfterFailedNavigation: true });
+				}
+			}
+			possibleStates = deduplicatePossibleBatchPageStates(nextStates);
 		}
 	}
 	const browserFileError = getManagedBrowserFileAccessValidationError({

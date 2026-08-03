@@ -34,7 +34,7 @@ import {
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
 } from "./lib/runtime.js";
-import { extractExplicitNamespace, extractExplicitSessionName } from "./lib/argv-grammar.js";
+import { extractExplicitNamespace, extractExplicitSessionName, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
 import { cleanupManagedSessionRestoreConfig, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
@@ -538,6 +538,22 @@ class AsyncExecutionQueue {
 	}
 }
 
+class KeyedAsyncExecutionQueue {
+	private readonly entries = new Map<string, { queue: AsyncExecutionQueue; users: number }>();
+
+	async run<T>(key: string, work: () => Promise<T>): Promise<T> {
+		const entry = this.entries.get(key) ?? { queue: new AsyncExecutionQueue(), users: 0 };
+		entry.users += 1;
+		this.entries.set(key, entry);
+		try {
+			return await entry.queue.run(work);
+		} finally {
+			entry.users -= 1;
+			if (entry.users === 0 && this.entries.get(key) === entry) this.entries.delete(key);
+		}
+	}
+}
+
 function findPackageRoot(startDir: string): string {
 	let currentDir = startDir;
 	while (true) {
@@ -604,6 +620,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const managedSessionRestoreState = new ManagedSessionRestoreState();
 	const ownedManagedSessions = new Map<string, OwnedManagedSession>();
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
+	const callerOwnedSessionExecutionQueues = new KeyedAsyncExecutionQueue();
 	let branchStateGeneration = 0;
 
 	const clearSessionScopedBrowserState = (sessionName: string, namespace?: string): void => {
@@ -909,6 +926,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				ownedElectronLaunchRecords,
 				ownedManagedSessions,
 			});
+			const callerOwnedSessionQueueKey = !serializeBrowserCommand && explicitSessionName
+				? getSessionContextKey(explicitSessionName, resolveAgentBrowserNamespace(toolArgs, process.env.AGENT_BROWSER_NAMESPACE)) ?? explicitSessionName
+				: undefined;
 			const runBrowserCommand = async () => {
 				const generationAtStart = branchStateGeneration;
 				const sessionPageStateUpdate = sessionPageState.beginUpdate();
@@ -971,8 +991,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, preserveTextContent: Array.isArray(params.args) && params.args.includes("--json"), result });
 			};
 
-			return serializeBrowserCommand
-				? managedSessionExecutionQueue.run(runBrowserCommand)
+			if (serializeBrowserCommand) return managedSessionExecutionQueue.run(runBrowserCommand);
+			return callerOwnedSessionQueueKey
+				? callerOwnedSessionExecutionQueues.run(callerOwnedSessionQueueKey, runBrowserCommand)
 				: runBrowserCommand();
 		},
 	});
