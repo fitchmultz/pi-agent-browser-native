@@ -24,6 +24,7 @@ import {
 const stripWrapperPrefix = (args: string[]) => {
 	const stripped = [...args];
 	if (stripped[0] === "--json") stripped.shift();
+	if (stripped[0] === "--namespace") stripped.splice(0, 2);
 	if (stripped[0] === "--session") stripped.splice(0, 2);
 	return stripped;
 };
@@ -447,13 +448,14 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const expectedInvocations = commands.flatMap((args) => {
 				const normalizedArgs = stripWrapperPrefix([...args]);
 				const command = normalizedArgs[0];
+				if (["close", "exit", "quit"].includes(command ?? "")) return [["close"]];
 				if (command === "click" || (command === "tab" && normalizedArgs[1] === "close")) return [normalizedArgs, ["get", "url"], ["get", "title"]];
 				return command === "back" || command === "forward" || command === "reload" || command === "dblclick"
 					? [normalizedArgs, ["get", "url"], ["get", "title"]]
 					: [normalizedArgs];
 			});
 			assert.deepEqual(commandInvocations, expectedInvocations);
-			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));
+			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args.includes("--session")));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

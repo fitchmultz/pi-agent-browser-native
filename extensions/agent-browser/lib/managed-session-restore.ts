@@ -254,6 +254,30 @@ export function shouldOmitOwnedManagedSessionRestoreEnv(options: ManagedSessionR
 	return resolveManagedSessionRestorePolicy(options).owned && closesBrowserSession(options.args);
 }
 
+export function canonicalizeOwnedManagedSessionCloseArgs(
+	options: ManagedSessionRestoreEnvOptions,
+	force = false,
+): string[] {
+	const policy = resolveManagedSessionRestorePolicy(options);
+	if (!policy.owned || !closesBrowserSession(options.args)) return options.args;
+	const sessionName = policy.ownedContext?.sessionName ?? policy.sessionName;
+	if (!sessionName) return options.args;
+	const namespace = canonicalizeAgentBrowserNamespace(policy.ownedContext?.namespace ?? policy.namespace) ?? "";
+	const command = options.args.at(-1);
+	const prefix = options.args.slice(0, -1);
+	const safePrefixes = [
+		["--session", sessionName],
+		["--json", "--session", sessionName],
+		["--namespace", namespace, "--session", sessionName],
+		["--json", "--namespace", namespace, "--session", sessionName],
+	];
+	if (!force && command && ["close", "exit", "quit"].includes(command)
+		&& safePrefixes.some((candidate) => candidate.length === prefix.length && candidate.every((token, index) => token === prefix[index]))) {
+		return options.args;
+	}
+	return ["--json", "--namespace", namespace, "--session", sessionName, "close"];
+}
+
 export function cleanupManagedSessionRestoreConfig(): void {
 	if (managedSessionRestoreEmptyConfigPath) {
 		try { unlinkSync(managedSessionRestoreEmptyConfigPath); } catch {}
@@ -291,8 +315,11 @@ async function ensureManagedSessionRestoreEmptyConfig(platform: NodeJS.Platform)
 	return undefined;
 }
 
-export async function getManagedSessionRestoreConfigEnv(restoreEnv: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv | undefined> {
-	if (restoreEnv[AGENT_BROWSER_RESTORE_ENV] === undefined) return {};
+export async function getManagedSessionRestoreConfigEnv(
+	restoreEnv: NodeJS.ProcessEnv,
+	pinForOwnedClose = false,
+): Promise<NodeJS.ProcessEnv | undefined> {
+	if (restoreEnv[AGENT_BROWSER_RESTORE_ENV] === undefined && !pinForOwnedClose) return {};
 	const path = await ensureManagedSessionRestoreEmptyConfig(process.platform);
 	return path ? { [AGENT_BROWSER_CONFIG_ENV]: path } : undefined;
 }

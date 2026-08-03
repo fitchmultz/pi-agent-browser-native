@@ -17,10 +17,12 @@ const PROJECT_GENERATION_MARKER_NAME = "pi-agent-browser-project-generation-v1.j
 const PROJECT_GENERATION_MARKER_MAX_BYTES = 1_024;
 
 type ProjectGenerationCacheEntry = {
-	filesystemIdentity: string;
 	gitDirectory: string;
+	gitFilesystemIdentity: string;
 	identity: string;
 	marker: string;
+	worktreeDirectory: string;
+	worktreeFilesystemIdentity: string;
 };
 const projectGenerationCache = new Map<string, ProjectGenerationCacheEntry>();
 
@@ -100,13 +102,13 @@ export function directoryContainsSymlink(path: string): boolean {
 	}
 }
 
-function resolveGitDirectory(cwd: string, platform: NodeJS.Platform): string | undefined {
+function resolveGitCheckout(cwd: string, platform: NodeJS.Platform): { gitDirectory: string; worktreeDirectory: string } | undefined {
 	let directory = cwd;
 	while (true) {
 		const dotGit = join(directory, ".git");
 		try {
 			const entry = lstatSync(dotGit);
-			if (entry.isDirectory() && !entry.isSymbolicLink()) return realpathSync(dotGit);
+			if (entry.isDirectory() && !entry.isSymbolicLink()) return { gitDirectory: realpathSync(dotGit), worktreeDirectory: realpathSync(directory) };
 			if (!entry.isFile() || entry.isSymbolicLink() || entry.size > PROJECT_GENERATION_MARKER_MAX_BYTES) return undefined;
 			if (platform !== "win32") {
 				const uid = currentUid();
@@ -114,7 +116,7 @@ function resolveGitDirectory(cwd: string, platform: NodeJS.Platform): string | u
 			}
 			const match = /^gitdir:\s*(.+)\s*$/i.exec(readFileSync(dotGit, "utf8"));
 			if (!match?.[1]) return undefined;
-			return realpathSync(resolve(directory, match[1]));
+			return { gitDirectory: realpathSync(resolve(directory, match[1])), worktreeDirectory: realpathSync(directory) };
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
 		}
@@ -154,21 +156,27 @@ function resolveProjectGenerationIdentity(cwd: string, platform: NodeJS.Platform
 	let canonicalCwd: string;
 	try { canonicalCwd = realpathSync(cwd); } catch { return undefined; }
 	if (platform !== "win32" && !isTrustedPosixDirectory(canonicalCwd, false)) return undefined;
+	const checkout = resolveGitCheckout(canonicalCwd, platform);
+	if (!checkout) return undefined;
+	if (platform !== "win32" && (
+		!isTrustedPosixDirectory(checkout.worktreeDirectory, true)
+		|| !isTrustedPosixDirectory(checkout.gitDirectory, true)
+	)) return undefined;
+	const gitFilesystemIdentity = getDirectoryFilesystemIdentity(checkout.gitDirectory);
+	const worktreeFilesystemIdentity = getDirectoryFilesystemIdentity(checkout.worktreeDirectory);
+	if (!gitFilesystemIdentity || !worktreeFilesystemIdentity) return undefined;
+	const markerPath = join(checkout.gitDirectory, PROJECT_GENERATION_MARKER_NAME);
+	let marker = readProjectGenerationMarker(markerPath, platform);
 	const cached = projectGenerationCache.get(canonicalCwd);
-	if (cached) {
-		const filesystemIdentity = getDirectoryFilesystemIdentity(cached.gitDirectory);
-		const marker = readProjectGenerationMarker(join(cached.gitDirectory, PROJECT_GENERATION_MARKER_NAME), platform);
-		if (filesystemIdentity === cached.filesystemIdentity && marker === cached.marker) return cached.identity;
-		projectGenerationCache.delete(canonicalCwd);
-	}
-	const gitDirectory = resolveGitDirectory(canonicalCwd, platform);
-	if (!gitDirectory) return undefined;
-	if (platform !== "win32" && !isTrustedPosixDirectory(gitDirectory, true)) return undefined;
-	const filesystemIdentity = getDirectoryFilesystemIdentity(gitDirectory);
-	if (!filesystemIdentity) return undefined;
+	if (cached
+		&& cached.gitDirectory === checkout.gitDirectory
+		&& cached.worktreeDirectory === checkout.worktreeDirectory
+		&& cached.gitFilesystemIdentity === gitFilesystemIdentity
+		&& cached.worktreeFilesystemIdentity === worktreeFilesystemIdentity
+		&& cached.marker === marker
+	) return cached.identity;
+	projectGenerationCache.delete(canonicalCwd);
 	try {
-		const markerPath = join(gitDirectory, PROJECT_GENERATION_MARKER_NAME);
-		let marker = readProjectGenerationMarker(markerPath, platform);
 		if (!marker) {
 			const candidatePath = `${markerPath}.candidate-${process.pid}-${randomUUID()}`;
 			try {
@@ -182,12 +190,23 @@ function resolveProjectGenerationIdentity(cwd: string, platform: NodeJS.Platform
 			marker = readProjectGenerationMarker(markerPath, platform);
 		}
 		if (!marker) return undefined;
-		const identity = `${platform}:${filesystemIdentity}:${marker}`;
-		projectGenerationCache.set(canonicalCwd, { filesystemIdentity, gitDirectory, identity, marker });
+		const identity = `${platform}:${worktreeFilesystemIdentity}:${gitFilesystemIdentity}:${marker}`;
+		projectGenerationCache.set(canonicalCwd, {
+			gitDirectory: checkout.gitDirectory,
+			gitFilesystemIdentity,
+			identity,
+			marker,
+			worktreeDirectory: checkout.worktreeDirectory,
+			worktreeFilesystemIdentity,
+		});
 		return identity;
 	} catch {
 		return undefined;
 	}
+}
+
+export function isManagedSessionRestoreKey(value: string | null | undefined): value is string {
+	return typeof value === "string" && /^piab-r2-[a-f\d]{32}$/.test(value);
 }
 
 export function hasManagedSessionRestoreProjectIdentity(cwd: string): boolean {

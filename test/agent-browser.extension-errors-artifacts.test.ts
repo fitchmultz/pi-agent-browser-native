@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -261,6 +261,15 @@ try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, restore: process.env.AGENT_BROWSER_RESTORE }) + "\\n");
 if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey } : null } }));
+} else if (args.includes("close")) {
+  const sessions = require("node:path").join(process.env.HOME, ".agent-browser", "sessions");
+  const sessionIndex = args.indexOf("--session");
+  const snapshotPath = require("node:path").join(sessions, state.restoreKey + "-" + args[sessionIndex + 1] + ".json");
+  fs.mkdirSync(sessions, { recursive: true });
+  fs.writeFileSync(snapshotPath, "{}");
+  state.active = false;
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true, statePath: snapshotPath } }));
 } else {
   if (args.includes("open")) {
     state = { active: true, restoreKey: process.env.AGENT_BROWSER_RESTORE ?? null };
@@ -275,6 +284,7 @@ if (args.includes("session") && args.includes("info")) {
 			const opened = await executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com"] });
 			assert.equal(opened.isError, false, JSON.stringify(opened));
 			const priorKey = (JSON.parse(await readFile(statePath, "utf8")) as { restoreKey: string }).restoreKey;
+			const managedSessionName = String(opened.details?.sessionName);
 
 			await rm(join(tempDir, ".git"), { force: true, recursive: true });
 			const sameInstanceBlocked = await executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com"] });
@@ -300,10 +310,27 @@ if (args.includes("session") && args.includes("info")) {
 			assert.match(String(replacementBlocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 			assert.equal((await readInvocationLog(logPath)).filter((entry) => entry.args.includes("open")).length, 1);
 
+			const attackerConfigPath = join(tempDir, "attacker-agent-browser.json");
+			await writeFile(attackerConfigPath, JSON.stringify({ restore: "attacker-key" }));
+			const closed = await executeRegisteredTool(first.tool, first.ctx, {
+				args: ["--session", managedSessionName, "--config", attackerConfigPath, "--restore", "attacker-key", "close"],
+			});
+			assert.equal(closed.isError, false, JSON.stringify(closed));
 			await runExtensionEvent(first.handlers, "session_shutdown", { reason: "quit" }, first.ctx);
 			const closeInvocation = (await readInvocationLog(logPath)).find((entry) => entry.args.includes("close"));
 			assert.ok(closeInvocation);
+			assert.deepEqual(closeInvocation.args.slice(0, 4), ["--json", "--namespace", "", "--session"]);
+			assert.equal(closeInvocation.args[4], managedSessionName);
+			assert.deepEqual(closeInvocation.args.slice(5), ["close"]);
+			assert.equal(closeInvocation.args.includes("--config"), false);
+			assert.equal(closeInvocation.args.includes("--restore"), false);
 			assert.equal((closeInvocation as { restore?: string }).restore, undefined);
+			const sessions = join(tempDir, ".agent-browser", "sessions");
+			const ownershipDirectoryName = (await readdir(sessions)).find((name) => name === `.pi-agent-browser-owned-snapshots-v2-${priorKey}`);
+			assert.ok(ownershipDirectoryName);
+			const ownershipRecords = (await readdir(join(sessions, ownershipDirectoryName))).filter((name) => name.endsWith(".json"));
+			assert.equal(ownershipRecords.length, 1);
+			assert.match(await readFile(join(sessions, ownershipDirectoryName, ownershipRecords[0] as string), "utf8"), new RegExp(`${priorKey}-`));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1103,7 +1130,7 @@ if (args.includes("batch")) {
 
 			assert.equal(result.isError, true);
 			const progress = result.details?.timeoutPartialProgress as { currentPage?: { source?: string; url?: string }; liveUrlRecovered?: boolean; retryStep?: { args?: string[] } } | undefined;
-			assert.equal(progress?.currentPage?.source, "planned");
+			assert.equal(progress?.currentPage?.source, "planned", JSON.stringify(result.details));
 			assert.equal(progress?.liveUrlRecovered, false);
 			assert.deepEqual(progress?.retryStep?.args, ["open", "https://example.test/fresh-timeout"]);
 			const retryAction = (result.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; sessionMode?: string } }> | undefined)?.find((action) => action.id === "retry-timeout-step");
@@ -1248,6 +1275,7 @@ test("agentBrowserExtension reports artifact lifecycle guidance on close", { con
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-artifact-cleanup-"));
 	const screenshotPath = join(tempDir, "artifact.png");
 	const deletedScreenshotPath = join(tempDir, "deleted-artifact.png");
+	const failClosePath = join(tempDir, "fail-close");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -1260,7 +1288,7 @@ if (args.includes("screenshot")) {
   fs.writeFileSync(outputPath, Buffer.from("89504e470d0a1a0a", "hex"));
   process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
 } else if (args.includes("close")) {
-  if (args.includes("--fail")) {
+  if (fs.existsSync(${JSON.stringify(failClosePath)})) {
     process.stdout.write(JSON.stringify({ success: false, error: "close failed" }));
   } else {
     process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
@@ -1296,7 +1324,8 @@ if (args.includes("screenshot")) {
 				summary: String(close.details?.artifactRetentionSummary),
 			});
 
-			const failedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close", "--fail"] });
+			await writeFile(failClosePath, "fail");
+			const failedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
 			assert.equal(failedClose.isError, true);
 			assert.doesNotMatch((failedClose.content[0] as { text: string }).text, /Artifact lifecycle:/);
 			assert.equal(failedClose.details?.artifactCleanup, undefined);

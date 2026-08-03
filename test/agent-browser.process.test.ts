@@ -568,7 +568,8 @@ if (args.includes("session") && args.includes("info")) {
 	const statePath = path.join(sessions, restoreKey + "-auto.json");
 	fs.mkdirSync(sessions, { recursive: true });
 	fs.writeFileSync(statePath, "{}");
-	fs.writeFileSync(${JSON.stringify(closeDebugPath)}, JSON.stringify({ envRestore: process.env.AGENT_BROWSER_RESTORE ?? null, restoreKey, statePath }));
+	const config = process.env.AGENT_BROWSER_CONFIG;
+	fs.writeFileSync(${JSON.stringify(closeDebugPath)}, JSON.stringify({ configContent: config ? fs.readFileSync(config, "utf8") : null, envRestore: process.env.AGENT_BROWSER_RESTORE ?? null, restoreKey, statePath }));
 	if (process.env.AGENT_BROWSER_JSON === "1") process.stdout.write(JSON.stringify({ success: true, data: { closed: true, payload: "x".repeat(700000), statePath } }));
 	else process.stdout.write("Browser closed");
 } else {
@@ -588,6 +589,7 @@ if (args.includes("session") && args.includes("info")) {
 			});
 			assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
 
+			await writeFile(join(tempDir, "agent-browser.json"), JSON.stringify({ restore: "replacement-key" }));
 			const freshOpen = await withPatchedEnv({ AGENT_BROWSER_RESTORE: "replacement-key" }, async () => await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--profile", "Default", "open", "https://example.com/two"],
 				sessionMode: "fresh",
@@ -598,7 +600,8 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal(typeof currentTempRoot, "string");
 			const entries = await readdir(currentTempRoot as string);
 			assert.deepEqual(entries.filter((entry) => entry.startsWith("process-stdout-")), []);
-			const closeDebug = JSON.parse(await readFile(closeDebugPath, "utf8")) as { envRestore: string | null; restoreKey: string; statePath: string };
+			const closeDebug = JSON.parse(await readFile(closeDebugPath, "utf8")) as { configContent: string | null; envRestore: string | null; restoreKey: string; statePath: string };
+			assert.equal(closeDebug.configContent, "{}\n");
 			assert.equal(closeDebug.envRestore, null);
 			assert.equal(closeDebug.restoreKey, createManagedSessionRestoreKey(tempDir));
 			const sessions = join(tempDir, ".agent-browser", "sessions");
@@ -662,7 +665,7 @@ test("runAgentBrowserProcess pins owned namespace and config after planning", { 
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-namespace-env-"));
 	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs"); const config = process.env.AGENT_BROWSER_CONFIG; process.stdout.write(JSON.stringify({ success: true, data: { config, configContent: config ? fs.readFileSync(config, "utf8") : null, encryptionKey: process.env.AGENT_BROWSER_ENCRYPTION_KEY ?? null, home: process.env.HOME ?? null, namespace: process.env.AGENT_BROWSER_NAMESPACE ?? null, restore: process.env.AGENT_BROWSER_RESTORE ?? null } }));`);
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs"); const config = process.env.AGENT_BROWSER_CONFIG; process.stdout.write(JSON.stringify({ success: true, data: { args: process.argv.slice(2), config, configContent: config ? fs.readFileSync(config, "utf8") : null, encryptionKey: process.env.AGENT_BROWSER_ENCRYPTION_KEY ?? null, home: process.env.HOME ?? null, namespace: process.env.AGENT_BROWSER_NAMESPACE ?? null, restore: process.env.AGENT_BROWSER_RESTORE ?? null } }));`);
 	execFileSync("git", ["init", "-q", tempDir], { stdio: "ignore" });
 	try {
 		await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected", HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
@@ -696,6 +699,19 @@ test("runAgentBrowserProcess pins owned namespace and config after planning", { 
 			if (process.platform !== "win32") assert.equal((await stat(data.config)).mode & 0o777, 0o400);
 			await stat(join(dirname(data.config), ".pi-agent-browser-owner.json"));
 			assert.notEqual(data.config, join(tempDir, "agent-browser.json"));
+
+			const closeResult = await withOwnedManagedSessionContext(context, () => runAgentBrowserProcess({
+				args: ["--session", "piab-managed", "--config", join(tempDir, "agent-browser.json"), "--restore", "attacker-key", "close"],
+				cwd: tempDir,
+				env: { AGENT_BROWSER_CONFIG: join(tempDir, "agent-browser.json"), AGENT_BROWSER_RESTORE: "attacker-key" },
+				managedSessionRestoreState: restoreState,
+				ownedManagedSession: true,
+			}));
+			const closeParsed = await parseAgentBrowserEnvelope(closeResult.stdout);
+			const closeData = closeParsed.envelope?.data as { args?: string[]; configContent?: string; restore?: string | null };
+			assert.deepEqual(closeData.args, ["--json", "--namespace", "", "--session", "piab-managed", "close"]);
+			assert.equal(closeData.configContent, "{}\n");
+			assert.equal(closeData.restore, null);
 			await cleanupSecureTempArtifacts();
 			await assert.rejects(stat(data.config), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 		});

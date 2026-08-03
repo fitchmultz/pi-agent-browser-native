@@ -29,6 +29,7 @@ import {
 	type ManagedSessionRestoreState,
 	pruneOwnedManagedSessionRestoreSnapshots,
 } from "../../managed-session-restore.js";
+import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { chooseOpenResultTabCorrection, redactInvocationArgs, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { parseUserBatchStdin } from "../batch-stdin.js";
@@ -946,9 +947,20 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 	});
 	if (!policyLock) {
 		clearTimeout(timer);
-		return "Another Pi process is using this wrapper-owned browser session; cleanup did not run, so retry close after that operation finishes.";
+		return "Managed-session policy coordination is unavailable or busy; cleanup did not run. Retry after the current operation finishes or repair the private policy-lock directory.";
 	}
 	try {
+		const daemon = await inspectManagedSessionDaemon({
+			cwd: options.cwd,
+			namespace: options.namespace,
+			sessionName: options.sessionName,
+			signal: controller.signal,
+			timeoutMs: Math.min(options.timeoutMs, 2_000),
+		});
+		if (daemon.status === "active") options.restoreState.recordDaemonRestoreKey(options.sessionName, options.namespace, daemon.restoreKey);
+		const daemonRestoreKey = options.restoreState.getDaemonRestoreKey(options.sessionName, options.namespace);
+		const ownedRestoreKey = !options.restoreState.isDisabled(options.sessionName, options.namespace)
+			&& isManagedSessionRestoreKey(daemonRestoreKey) ? daemonRestoreKey : null;
 		const processResult = await runAgentBrowserProcess({
 			args: closeArgs,
 			cwd: options.cwd,
@@ -969,6 +981,7 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 			pruneOwnedManagedSessionRestoreSnapshots({
 				cwd: options.cwd,
 				namespace: options.namespace,
+				restoreKey: ownedRestoreKey,
 				statePath: typeof data?.statePath === "string" ? data.statePath : undefined,
 			});
 		}

@@ -627,9 +627,19 @@ if (!REAL_UPSTREAM_ENABLED) {
 						assert.match(String(blockedBatch.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 						assert.equal(blockedBatch.details?.exitCode, undefined, "nested batch attachment must fail before upstream spawn");
 					}
-					const firstClose = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, async () =>
-						await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] }));
-					assert.equal(firstClose.isError, false, `first managed close should persist restore state: ${firstClose.content[0]?.text ?? ""}`);
+					const lateConfigPath = join(tempDir, "agent-browser.json");
+					await writeFile(lateConfigPath, JSON.stringify({ restore: "replacement-close-key" }), "utf8");
+					const firstClose = await (async () => {
+						try {
+							return await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, async () =>
+								await executeRegisteredTool(harness.tool, harness.ctx, {
+									args: ["--session", managedSessionName ?? "", "--config", lateConfigPath, "--restore", "replacement-close-key", "close"],
+								}));
+						} finally {
+							await rm(lateConfigPath, { force: true });
+						}
+					})();
+					assert.equal(firstClose.isError, false, `first managed close should persist restore state despite late config: ${firstClose.content[0]?.text ?? ""}`);
 					await new Promise((resolve) => setTimeout(resolve, 200));
 					const closedInfo = await execFileAsync("agent-browser", ["--json", "--namespace", "", "--session", managedSessionName ?? "", "session", "info"], {
 						cwd: tempDir,

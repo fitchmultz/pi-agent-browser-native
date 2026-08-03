@@ -12,6 +12,7 @@ import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
 import {
+	canonicalizeOwnedManagedSessionCloseArgs,
 	commitManagedSessionRestoreSuppression,
 	getManagedSessionRestoreConfigEnv,
 	getManagedSessionRestoreEnv,
@@ -282,7 +283,15 @@ export async function runAgentBrowserProcess(options: {
 	stdin?: string;
 	timeoutMs?: number;
 }): Promise<ProcessRunResult> {
-	const { args, cwd, env, managedSessionRestoreState, ownedManagedSession, signal, stdin } = options;
+	const { cwd, env, managedSessionRestoreState, ownedManagedSession, signal, stdin } = options;
+	const args = canonicalizeOwnedManagedSessionCloseArgs({
+		args: options.args,
+		cwd,
+		env,
+		ownedManagedSession,
+		restoreState: managedSessionRestoreState,
+		stdin,
+	});
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
 	if (signal?.aborted) {
 		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
@@ -307,7 +316,8 @@ export async function runAgentBrowserProcess(options: {
 		};
 	}
 	const managedSessionRestoreEnv = getManagedSessionRestoreEnv(managedSessionRestoreOptions);
-	const managedSessionRestoreConfigEnv = await getManagedSessionRestoreConfigEnv(managedSessionRestoreEnv);
+	const ownedManagedSessionClose = shouldOmitOwnedManagedSessionRestoreEnv(managedSessionRestoreOptions);
+	const managedSessionRestoreConfigEnv = await getManagedSessionRestoreConfigEnv(managedSessionRestoreEnv, ownedManagedSessionClose);
 	if (managedSessionRestoreConfigEnv === undefined) {
 		return {
 			aborted: false,
@@ -329,7 +339,7 @@ export async function runAgentBrowserProcess(options: {
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
-	if (shouldOmitOwnedManagedSessionRestoreEnv(managedSessionRestoreOptions)) effectiveEnv = { ...effectiveEnv, AGENT_BROWSER_RESTORE: undefined };
+	if (ownedManagedSessionClose) effectiveEnv = { ...effectiveEnv, AGENT_BROWSER_RESTORE: undefined };
 	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir && (await ensureAgentBrowserSocketDir(requestedSocketDir))) {
 		effectiveEnv = { ...effectiveEnv, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };

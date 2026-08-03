@@ -131,6 +131,30 @@ test("createManagedSessionRestoreKey is checkout-generation-stable across path a
 	}
 });
 
+test("linked-worktree copies and retargeted git pointers get distinct restore keys", () => {
+	const root = mkdtempSync(join(tmpdir(), "piab-linked-worktree-key-"));
+	const source = join(root, "source");
+	const linked = join(root, "linked");
+	const otherLinked = join(root, "other-linked");
+	const copied = join(root, "copied");
+	try {
+		initializeGitProject(source);
+		execFileSync("git", ["-C", source, "config", "user.email", "piab@example.invalid"]);
+		execFileSync("git", ["-C", source, "config", "user.name", "piab"]);
+		execFileSync("git", ["-C", source, "commit", "--allow-empty", "-qm", "initial"]);
+		execFileSync("git", ["-C", source, "worktree", "add", "--detach", "-q", linked]);
+		execFileSync("git", ["-C", source, "worktree", "add", "--detach", "-q", otherLinked]);
+		const linkedKey = createManagedSessionRestoreKey(linked);
+		cpSync(linked, copied, { recursive: true, preserveTimestamps: true });
+		assert.notEqual(createManagedSessionRestoreKey(copied), linkedKey);
+
+		writeFileSync(join(linked, ".git"), readFileSync(join(otherLinked, ".git"), "utf8"));
+		assert.notEqual(createManagedSessionRestoreKey(linked), linkedKey);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("checkout-generation marker creation converges across processes", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "piab-marker-race-project-"));
 	try {

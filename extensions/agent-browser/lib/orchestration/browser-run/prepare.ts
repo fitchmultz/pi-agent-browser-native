@@ -26,6 +26,7 @@ import {
 } from "../../runtime.js";
 import {
 	buildOwnedManagedSessionRestoreContext,
+	canonicalizeOwnedManagedSessionCloseArgs,
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
 import { acquireManagedSessionPolicyLock, type ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
@@ -468,10 +469,29 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				executionPlan = {
 					...executionPlan,
 					recoveryHint: undefined,
-					validationError: "Another Pi process is using this wrapper-owned browser session. Retry after that operation finishes.",
+					validationError: "Managed-session policy coordination is unavailable or busy. Retry after the current operation finishes or repair the private policy-lock directory.",
 				};
 			}
-		} else if (!isCloseCommand(executionPlan.commandInfo.command)) {
+		} else if (isCloseCommand(executionPlan.commandInfo.command)) {
+			executionPlan = {
+				...executionPlan,
+				effectiveArgs: canonicalizeOwnedManagedSessionCloseArgs({
+					args: executionPlan.effectiveArgs,
+					cwd,
+					ownedManagedSession: true,
+					restoreState: state.managedSessionRestoreState,
+				}, true),
+			};
+			const daemon = await inspectManagedSessionDaemon({
+				cwd,
+				namespace: ownedManagedSession.namespace,
+				sessionName: ownedManagedSession.sessionName,
+				signal,
+			});
+			if (daemon.status === "active") {
+				state.managedSessionRestoreState.recordDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace, daemon.restoreKey);
+			}
+		} else {
 			const stickyDisabled = state.managedSessionRestoreState.isDisabled(ownedManagedSession.sessionName, ownedManagedSession.namespace);
 			const knownDaemonRestoreKey = state.managedSessionRestoreState.getDaemonRestoreKey(ownedManagedSession.sessionName, ownedManagedSession.namespace);
 			const requestedDaemonRestoreKey = ownedManagedSession.restoreDecision === "enabled" && stickyDisabled

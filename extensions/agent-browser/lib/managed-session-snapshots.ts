@@ -15,6 +15,7 @@ import {
 	ensureOwnerOnlyDirectory,
 	getManagedRestoreSessionsDirectory,
 	hasManagedSessionRestoreProjectIdentity,
+	isManagedSessionRestoreKey,
 	resolveManagedSessionRestoreHome,
 } from "./managed-session-storage.js";
 
@@ -35,10 +36,10 @@ function pathExistsOrIsUnreadable(path: string): boolean {
 }
 
 function validateOwnedSnapshotPath(options: {
-	cwd: string;
 	home: string;
 	namespace?: string;
 	path: string;
+	restoreKey: string;
 }): string | undefined {
 	if (!isAbsolute(options.path)) return undefined;
 	let path: string;
@@ -49,7 +50,7 @@ function validateOwnedSnapshotPath(options: {
 	}
 	const directory = getManagedRestoreSessionsDirectory(options.home, options.namespace);
 	const name = basename(path);
-	if (dirname(path) !== directory || !name.startsWith(`${createManagedSessionRestoreKey(options.cwd)}-`)) return undefined;
+	if (dirname(path) !== directory || !name.startsWith(`${options.restoreKey}-`)) return undefined;
 	if (!/\.json(?:\.enc)?$/.test(name)) return undefined;
 	try {
 		const entry = lstatSync(path);
@@ -59,8 +60,8 @@ function validateOwnedSnapshotPath(options: {
 	}
 }
 
-function getManifestDirectory(directory: string, cwd: string): string {
-	return join(directory, `${OWNED_RESTORE_SNAPSHOT_MANIFEST_PREFIX}-${createManagedSessionRestoreKey(cwd)}`);
+function getManifestDirectory(directory: string, restoreKey: string): string {
+	return join(directory, `${OWNED_RESTORE_SNAPSHOT_MANIFEST_PREFIX}-${restoreKey}`);
 }
 
 function ensureManifestDirectory(path: string, platform: NodeJS.Platform): boolean {
@@ -118,11 +119,11 @@ function writeRecord(directory: string, snapshotPath: string, platform: NodeJS.P
 }
 
 function readRecord(options: {
-	cwd: string;
 	home: string;
 	namespace?: string;
 	path: string;
 	platform: NodeJS.Platform;
+	restoreKey: string;
 }): string | undefined {
 	try {
 		const entry = lstatSync(options.path);
@@ -130,7 +131,7 @@ function readRecord(options: {
 		if (options.platform !== "win32" && (entry.mode & 0o077) !== 0) return undefined;
 		const parsed = JSON.parse(readFileSync(options.path, "utf8")) as unknown;
 		if (typeof parsed !== "string" || !isAbsolute(parsed)) return undefined;
-		const snapshotPath = validateOwnedSnapshotPath({ cwd: options.cwd, home: options.home, namespace: options.namespace, path: parsed });
+		const snapshotPath = validateOwnedSnapshotPath({ home: options.home, namespace: options.namespace, path: parsed, restoreKey: options.restoreKey });
 		return snapshotPath && getRecordPath(dirname(options.path), snapshotPath) === options.path ? snapshotPath : undefined;
 	} catch {
 		return undefined;
@@ -138,11 +139,11 @@ function readRecord(options: {
 }
 
 function scanOwnedSnapshots(options: {
-	cwd: string;
 	home: string;
 	manifestDirectory: string;
 	namespace?: string;
 	platform: NodeJS.Platform;
+	restoreKey: string;
 }): Array<{ mtimeMs: number; path: string; recordPath: string }> {
 	const snapshots: Array<{ mtimeMs: number; path: string; recordPath: string }> = [];
 	for (const entry of readdirSync(options.manifestDirectory, { withFileTypes: true })) {
@@ -175,27 +176,31 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 	namespace?: string;
 	parentEnv?: NodeJS.ProcessEnv;
 	platform?: NodeJS.Platform;
+	restoreKey?: string | null;
 	statePath?: string;
 }): number {
 	const parentEnv = options.parentEnv ?? process.env;
 	const platform = options.platform ?? process.platform;
-	if (!hasManagedSessionRestoreProjectIdentity(options.cwd)) return 0;
+	const restoreKey = options.restoreKey === undefined
+		? hasManagedSessionRestoreProjectIdentity(options.cwd) ? createManagedSessionRestoreKey(options.cwd) : undefined
+		: isManagedSessionRestoreKey(options.restoreKey) ? options.restoreKey : undefined;
+	if (!restoreKey) return 0;
 	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
 	if (!home) return 0;
 	const directory = getManagedRestoreSessionsDirectory(home, options.namespace);
-	const manifestDirectory = getManifestDirectory(directory, options.cwd);
+	const manifestDirectory = getManifestDirectory(directory, restoreKey);
 	if (!options.statePath && !pathExistsOrIsUnreadable(manifestDirectory)) return 0;
 	if (!ensureManagedSessionRestoreStorageIsSecure(parentEnv, platform, options.namespace)) return 0;
 	if (!ensureManifestDirectory(manifestDirectory, platform)) return 0;
 	if (options.statePath) {
-		const ownedPath = validateOwnedSnapshotPath({ cwd: options.cwd, home, namespace: options.namespace, path: options.statePath });
+		const ownedPath = validateOwnedSnapshotPath({ home, namespace: options.namespace, path: options.statePath, restoreKey });
 		if (ownedPath && !writeRecord(manifestDirectory, ownedPath, platform)) return 0;
 	}
 
 	const staleBefore = Date.now() - OWNED_RESTORE_SNAPSHOT_MAX_AGE_MS;
 	let removed = 0;
 	for (let pass = 0; pass <= OWNED_RESTORE_SNAPSHOT_MAX_RECORDS; pass += 1) {
-		const snapshots = scanOwnedSnapshots({ cwd: options.cwd, home, manifestDirectory, namespace: options.namespace, platform });
+		const snapshots = scanOwnedSnapshots({ home, manifestDirectory, namespace: options.namespace, platform, restoreKey });
 		const candidates = snapshots.filter((snapshot, index) =>
 			index >= OWNED_RESTORE_SNAPSHOT_MAX_RECORDS
 			|| (index >= OWNED_RESTORE_SNAPSHOT_FAMILIES_TO_KEEP && snapshot.mtimeMs < staleBefore));

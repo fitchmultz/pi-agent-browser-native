@@ -46,6 +46,7 @@ import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore 
 import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../../temp.js";
 import { isRecord } from "../../parsing.js";
 import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.js";
+import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { createFreshSessionName, extractCommandTokens, resolveManagedSessionState } from "../../runtime.js";
 import {
 	applyOpenResultTabCorrection,
@@ -453,10 +454,14 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		managedSessionName = managedSessionState.sessionName;
 		managedSessionNamespace = managedSessionState.namespace;
 		if (commandClosesSession && succeeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
+			const daemonRestoreKey = state.managedSessionRestoreState.getDaemonRestoreKey(managedCloseSessionName, priorManagedSessionNamespace);
+			const ownedRestoreKey = !state.managedSessionRestoreState.isDisabled(managedCloseSessionName, priorManagedSessionNamespace)
+				&& isManagedSessionRestoreKey(daemonRestoreKey) ? daemonRestoreKey : null;
 			state.managedSessionRestoreState.clear(managedCloseSessionName, priorManagedSessionNamespace);
 			pruneOwnedManagedSessionRestoreSnapshots({
 				cwd,
 				namespace: priorManagedSessionNamespace,
+				restoreKey: ownedRestoreKey,
 				statePath: typeof presentationDataRecord?.statePath === "string" ? presentationDataRecord.statePath : undefined,
 			});
 			freshSessionOrdinal += 1;
