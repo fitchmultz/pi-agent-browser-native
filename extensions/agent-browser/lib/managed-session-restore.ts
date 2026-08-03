@@ -5,8 +5,8 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, win32 } from "node:path";
 
@@ -31,6 +31,9 @@ const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE";
 export const MANAGED_SESSION_NAME_PREFIX = "piab-";
 const MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH = 32;
 const OWNED_RESTORE_SNAPSHOT_FAMILIES_TO_KEEP = 2;
+const OWNED_RESTORE_SNAPSHOT_MANIFEST_MAX_BYTES = 128 * 1_024;
+const OWNED_RESTORE_SNAPSHOT_MANIFEST_MAX_PATHS = 1_024;
+const OWNED_RESTORE_SNAPSHOT_MANIFEST_NAME = ".pi-agent-browser-owned-snapshots-v1";
 const OWNED_RESTORE_SNAPSHOT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 
 function isDisabledEnvFlag(value: string | undefined): boolean {
@@ -86,7 +89,6 @@ export interface ManagedSessionRestoreIdentity {
 
 export class ManagedSessionRestoreState {
 	readonly #disabled = new Set<string>();
-	readonly #ownedSnapshotPaths = new Set<string>();
 
 	clear(sessionName?: string, namespace?: string): void {
 		if (sessionName) this.#disabled.delete(getAgentBrowserSessionIdentityKey(sessionName, namespace));
@@ -97,20 +99,8 @@ export class ManagedSessionRestoreState {
 		if (sessionName && sessionName.length > 0) this.#disabled.add(getAgentBrowserSessionIdentityKey(sessionName, namespace));
 	}
 
-	forgetOwnedSnapshotPath(path: string): void {
-		this.#ownedSnapshotPaths.delete(path);
-	}
-
-	getOwnedSnapshotPaths(): string[] {
-		return [...this.#ownedSnapshotPaths];
-	}
-
 	isDisabled(sessionName: string | undefined, namespace?: string): boolean {
 		return typeof sessionName === "string" && this.#disabled.has(getAgentBrowserSessionIdentityKey(sessionName, namespace));
-	}
-
-	recordOwnedSnapshotPath(path: string): void {
-		this.#ownedSnapshotPaths.add(path);
 	}
 
 	replace(identities: ManagedSessionRestoreIdentity[]): void {
@@ -121,8 +111,6 @@ export class ManagedSessionRestoreState {
 
 export type OwnedManagedSessionContext = {
 	namespace?: string;
-	/** Original main-plan launch conflict, retained when prepare rewrites subprocess argv. */
-	restoreLaunchConflict?: boolean;
 	/** One policy decision shared by the main spawn and every helper in this call. */
 	restoreDecision?: "enabled" | "incompatible" | "opted-out";
 	restoreKey?: string;
@@ -387,14 +375,12 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 		stdin: options.stdin,
 		wrapperInjectedUserAgent: options.wrapperInjectedUserAgent,
 	};
-	const restoreLaunchConflict = hasManagedSessionRestoreLaunchConflict(policyOptions);
 	const optedOut = managedSessionRestoreOptedOut(policyOptions);
 	const incompatible = !optedOut && isManagedSessionRestoreIncompatible(policyOptions);
 	return {
 		...owned,
 		restoreDecision: optedOut ? "opted-out" : incompatible ? "incompatible" : "enabled",
 		restoreKey: createManagedSessionRestoreKey(options.cwd),
-		restoreLaunchConflict,
 		restoreSuppressed: optedOut || incompatible,
 	};
 }
@@ -425,13 +411,44 @@ function validateOwnedSnapshotPath(options: {
 	}
 }
 
-/** After an owned close, expire only recorded wrapper-created snapshots while retaining two fallbacks. */
+function readOwnedSnapshotManifest(directory: string, platform: NodeJS.Platform): string[] | undefined {
+	const path = join(directory, OWNED_RESTORE_SNAPSHOT_MANIFEST_NAME);
+	try {
+		const entry = lstatSync(path);
+		if (entry.isSymbolicLink() || !entry.isFile() || entry.size > OWNED_RESTORE_SNAPSHOT_MANIFEST_MAX_BYTES) return undefined;
+		if (platform !== "win32" && (entry.mode & 0o077) !== 0) return undefined;
+		const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+		if (!Array.isArray(parsed) || parsed.length > OWNED_RESTORE_SNAPSHOT_MANIFEST_MAX_PATHS) return undefined;
+		return parsed.every((value) => typeof value === "string" && value.length > 0 && isAbsolute(value))
+			? [...new Set(parsed)]
+			: undefined;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : undefined;
+	}
+}
+
+function writeOwnedSnapshotManifest(directory: string, paths: string[]): boolean {
+	const content = JSON.stringify(paths);
+	if (paths.length > OWNED_RESTORE_SNAPSHOT_MANIFEST_MAX_PATHS || Buffer.byteLength(content) > OWNED_RESTORE_SNAPSHOT_MANIFEST_MAX_BYTES) return false;
+	const manifestPath = join(directory, OWNED_RESTORE_SNAPSHOT_MANIFEST_NAME);
+	const temporaryPath = join(directory, ".tmp", `${OWNED_RESTORE_SNAPSHOT_MANIFEST_NAME}-${process.pid}-${randomUUID()}`);
+	try {
+		writeFileSync(temporaryPath, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+		renameSync(temporaryPath, manifestPath);
+		return true;
+	} catch {
+		return false;
+	} finally {
+		try { unlinkSync(temporaryPath); } catch {}
+	}
+}
+
+/** After an owned close, expire only ownership-manifest snapshots while retaining two fallbacks. */
 export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 	cwd: string;
 	namespace?: string;
 	parentEnv?: NodeJS.ProcessEnv;
 	platform?: NodeJS.Platform;
-	restoreState: ManagedSessionRestoreState;
 	statePath?: string;
 }): number {
 	const parentEnv = options.parentEnv ?? process.env;
@@ -439,28 +456,34 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
 	if (!home) return 0;
 	const directory = getManagedRestoreSessionsDirectory(home, options.namespace);
-	const recordedPaths = options.restoreState.getOwnedSnapshotPaths();
-	if (!options.statePath && !recordedPaths.some((path) => isAbsolute(path) && dirname(resolve(path)) === directory)) return 0;
+	const manifestPath = join(directory, OWNED_RESTORE_SNAPSHOT_MANIFEST_NAME);
+	if (!options.statePath && !configPathExistsOrIsUnreadable(manifestPath)) return 0;
 	if (!ensureManagedSessionRestoreStorageIsSecure(parentEnv, platform, options.namespace)) return 0;
+	const persistedPaths = readOwnedSnapshotManifest(directory, platform);
+	if (!persistedPaths) return 0;
+	const recordedPaths = new Set(persistedPaths);
 	if (options.statePath) {
 		const ownedPath = validateOwnedSnapshotPath({ cwd: options.cwd, home, namespace: options.namespace, path: options.statePath });
-		if (ownedPath) options.restoreState.recordOwnedSnapshotPath(ownedPath);
+		if (ownedPath) recordedPaths.add(ownedPath);
 	}
-	const staleBefore = Date.now() - OWNED_RESTORE_SNAPSHOT_MAX_AGE_MS;
+	const currentPrefix = `${createManagedSessionRestoreKey(options.cwd)}-`;
+	const otherOwnedPaths = [...recordedPaths].filter((path) => dirname(resolve(path)) !== directory || !basename(path).startsWith(currentPrefix));
+	const otherOwnedPathSet = new Set(otherOwnedPaths);
 	const snapshots: Array<{ mtimeMs: number; path: string }> = [];
-	for (const recordedPath of options.restoreState.getOwnedSnapshotPaths()) {
+	for (const recordedPath of recordedPaths) {
+		if (otherOwnedPathSet.has(recordedPath)) continue;
 		const path = validateOwnedSnapshotPath({ cwd: options.cwd, home, namespace: options.namespace, path: recordedPath });
-		if (!path) {
-			if (!isAbsolute(recordedPath) || dirname(resolve(recordedPath)) === directory) options.restoreState.forgetOwnedSnapshotPath(recordedPath);
-			continue;
-		}
+		if (!path) continue;
 		try {
 			snapshots.push({ mtimeMs: lstatSync(path).mtimeMs, path });
 		} catch {
-			options.restoreState.forgetOwnedSnapshotPath(path);
+			continue;
 		}
 	}
+	if (!writeOwnedSnapshotManifest(directory, [...otherOwnedPaths, ...snapshots.map((snapshot) => snapshot.path)])) return 0;
+	const staleBefore = Date.now() - OWNED_RESTORE_SNAPSHOT_MAX_AGE_MS;
 	let removed = 0;
+	const removedPaths = new Set<string>();
 	for (const snapshot of snapshots
 		.sort((left, right) => right.mtimeMs - left.mtimeMs)
 		.slice(OWNED_RESTORE_SNAPSHOT_FAMILIES_TO_KEEP)) {
@@ -469,11 +492,16 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 			const current = lstatSync(snapshot.path);
 			if (current.isSymbolicLink() || !current.isFile() || current.mtimeMs >= staleBefore) continue;
 			unlinkSync(snapshot.path);
-			options.restoreState.forgetOwnedSnapshotPath(snapshot.path);
+			removedPaths.add(snapshot.path);
 			removed += 1;
 		} catch {
 			// Best effort after the daemon has closed; a later owned close retries cleanup.
 		}
+	}
+	if (removedPaths.size > 0) {
+		writeOwnedSnapshotManifest(directory, [...otherOwnedPaths, ...snapshots
+			.filter((snapshot) => !removedPaths.has(snapshot.path))
+			.map((snapshot) => snapshot.path)]);
 	}
 	return removed;
 }

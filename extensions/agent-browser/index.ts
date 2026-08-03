@@ -850,6 +850,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					implicitSessionCloseTimeoutMs,
 					managedSessionActive,
 					managedSessionName,
+					managedSessionNamespace,
 					managedSessionRestoreState,
 					redactedCompiledElectron,
 					sessionPageState,

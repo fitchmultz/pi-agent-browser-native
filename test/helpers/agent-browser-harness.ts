@@ -452,8 +452,9 @@ export async function executeRegisteredTool(
 	tool: NonNullable<ReturnType<typeof createExtensionHarness>["tool"]>,
 	ctx: ReturnType<typeof createExtensionHarness>["ctx"],
 	params: unknown,
+	signal: AbortSignal = new AbortController().signal,
 ) {
-	return (await tool.execute("test-tool-call", params, new AbortController().signal, undefined, ctx)) as {
+	return (await tool.execute("test-tool-call", params, signal, undefined, ctx)) as {
 		content: Array<{ type: string; text?: string }>;
 		details?: Record<string, unknown>;
 		isError?: boolean;

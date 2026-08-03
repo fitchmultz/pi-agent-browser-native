@@ -601,16 +601,17 @@ export async function runSessionCommandData(options: {
 	args: string[];
 	cwd: string;
 	namespace?: string;
+	pinNamespace?: boolean;
 	sessionName?: string;
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
 }): Promise<unknown | undefined> {
-	const { args, cwd, namespace, sessionName, signal, stdin, timeoutMs } = options;
+	const { args, cwd, namespace, pinNamespace, sessionName, signal, stdin, timeoutMs } = options;
 	if (!sessionName) return undefined;
 
 	const processResult = await runAgentBrowserProcess({
-		args: ["--json", ...(namespace ? ["--namespace", namespace] : []), "--session", sessionName, ...args],
+		args: ["--json", ...(namespace !== undefined || pinNamespace ? ["--namespace", namespace ?? ""] : []), "--session", sessionName, ...args],
 		cwd,
 		// Ownership comes from the call-scoped context or the typed main-path option, not each probe.
 		signal,
@@ -924,7 +925,6 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 			pruneOwnedManagedSessionRestoreSnapshots({
 				cwd: options.cwd,
 				namespace: options.namespace,
-				restoreState: options.restoreState,
 				statePath: typeof data?.statePath === "string" ? data.statePath : undefined,
 			});
 		}

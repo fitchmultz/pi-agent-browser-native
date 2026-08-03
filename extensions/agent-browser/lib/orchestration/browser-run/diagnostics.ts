@@ -524,7 +524,7 @@ export function formatArtifactCleanupGuidanceText(guidance: ArtifactCleanupGuida
 }
 
 async function collectManagedSessionCommandData(options: { args: string[]; cwd: string; namespace?: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ data?: unknown; error?: string }> {
-	try { return { data: await runSessionCommandData(options) }; } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+	try { return { data: await runSessionCommandData({ ...options, pinNamespace: true }) }; } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
 }
 
 async function collectElectronManagedSessionUrl(options: { cwd: string; namespace?: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ error?: string; url?: string }> {

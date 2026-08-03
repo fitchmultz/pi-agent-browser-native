@@ -15,7 +15,7 @@ import type { ManagedSessionRestoreState } from "../../managed-session-restore.j
 import { isRecord } from "../../parsing.js";
 import { buildAgentBrowserNextActions, buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { appendUniqueAgentBrowserNextActions } from "../../results/next-actions.js";
-import { extractRefSnapshotFromData, isAboutBlankUrl, normalizeSessionTabTarget, type SessionPageState, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
+import { extractRefSnapshotFromData, getSessionPageStateKey, isAboutBlankUrl, normalizeSessionTabTarget, type SessionPageState, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import { redactSensitiveText } from "../../runtime.js";
 import { collectElectronManagedSessionTarget } from "../browser-run/diagnostics.js";
 import { buildElectronHostFailureResult, formatElectronTargetLines, redactToolDetails } from "../browser-run/final-result.js";
@@ -480,13 +480,14 @@ function getElectronProbeSummary(probe: Omit<ElectronProbeResult, "summary">): s
 async function runElectronProbeCommandData(options: {
 	args: string[];
 	cwd: string;
+	namespace?: string;
 	sessionName: string;
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
 }): Promise<{ data?: unknown; error?: string }> {
 	try {
-		return { data: await runSessionCommandData(options) };
+		return { data: await runSessionCommandData({ ...options, pinNamespace: true }) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -494,15 +495,17 @@ async function runElectronProbeCommandData(options: {
 
 async function collectElectronProbe(options: {
 	cwd: string;
+	namespace?: string;
 	sessionName: string;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 }): Promise<ElectronProbeResult> {
-	const titleResult = await runElectronProbeCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs });
-	const urlResult = await runElectronProbeCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs });
-	const focusedResult = await runElectronProbeCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: ELECTRON_FOCUSED_ELEMENT_EVAL, timeoutMs: options.timeoutMs });
-	const tabsResult = await runElectronProbeCommandData({ args: ["tab", "list"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs });
-	const snapshotResult = await runElectronProbeCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs });
+	const commandContext = { cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs };
+	const titleResult = await runElectronProbeCommandData({ ...commandContext, args: ["get", "title"] });
+	const urlResult = await runElectronProbeCommandData({ ...commandContext, args: ["get", "url"] });
+	const focusedResult = await runElectronProbeCommandData({ ...commandContext, args: ["eval", "--stdin"], stdin: ELECTRON_FOCUSED_ELEMENT_EVAL });
+	const tabsResult = await runElectronProbeCommandData({ ...commandContext, args: ["tab", "list"] });
+	const snapshotResult = await runElectronProbeCommandData({ ...commandContext, args: ["snapshot", "-i"] });
 	const errors = [
 		titleResult.error ? `get title: ${titleResult.error}` : undefined,
 		urlResult.error ? `get url: ${urlResult.error}` : undefined,
@@ -708,6 +711,7 @@ export async function handleElectronHostInput(options: {
 	implicitSessionCloseTimeoutMs: number;
 	managedSessionActive: boolean;
 	managedSessionName: string;
+	managedSessionNamespace?: string;
 	managedSessionRestoreState: ManagedSessionRestoreState;
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
 	sessionPageState: SessionPageState;
@@ -721,6 +725,7 @@ export async function handleElectronHostInput(options: {
 		implicitSessionCloseTimeoutMs,
 		managedSessionActive,
 		managedSessionName,
+		managedSessionNamespace,
 		managedSessionRestoreState,
 		redactedCompiledElectron,
 		sessionPageState,
@@ -795,7 +800,8 @@ export async function handleElectronHostInput(options: {
 		}
 		try {
 			const status = launchRecord ? await inspectElectronLaunchStatus(launchRecord) : undefined;
-			const probe = await collectElectronProbe({ cwd, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs });
+			const probeNamespace = compiledElectron.launchId ? undefined : managedSessionNamespace;
+			const probe = await collectElectronProbe({ cwd, namespace: probeNamespace, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs });
 			const managedSession: ElectronManagedSessionTarget = {
 				sessionName: probe.sessionName,
 				title: probe.title ?? probe.activeTab?.title,
@@ -820,13 +826,14 @@ export async function handleElectronHostInput(options: {
 				url: probe.url ?? probe.activeTab?.url ?? probe.refSnapshot?.target?.url,
 			});
 			const pageStateUpdate = sessionPageState.beginUpdate();
+			const pageStateKey = getSessionPageStateKey(probe.sessionName, probeNamespace) ?? probe.sessionName;
 			if (sessionTabTarget) {
-				sessionPageState.applyTabTarget({ sessionName: probe.sessionName, target: sessionTabTarget, update: pageStateUpdate });
+				sessionPageState.applyTabTarget({ sessionName: pageStateKey, target: sessionTabTarget, update: pageStateUpdate });
 			}
 			if (probe.refSnapshot) {
 				sessionPageState.applyRefSnapshot({
 					fallbackTarget: sessionTabTarget,
-					sessionName: probe.sessionName,
+					sessionName: pageStateKey,
 					snapshot: probe.refSnapshot,
 					update: pageStateUpdate,
 				});

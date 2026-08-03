@@ -120,6 +120,15 @@ if (args.includes("session") && args.includes("info")) {
 			const userInvocationCount = async () => (await readInvocationLog(logPath))
 				.filter((entry) => !(entry.args.includes("session") && entry.args.includes("info"))).length;
 
+			const abortController = new AbortController();
+			abortController.abort();
+			const aborted = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--proxy", "http://127.0.0.1:8080", "open", "https://example.com"],
+			}, abortController.signal);
+			assert.equal(aborted.isError, true);
+			assert.equal(aborted.details?.validationError, undefined);
+			assert.equal(await userInvocationCount(), invocationCount);
+
 			for (const params of [
 				{
 					args: ["batch"],

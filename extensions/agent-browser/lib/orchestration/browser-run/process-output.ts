@@ -439,7 +439,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			pruneOwnedManagedSessionRestoreSnapshots({
 				cwd,
 				namespace: priorManagedSessionNamespace,
-				restoreState: state.managedSessionRestoreState,
 				statePath: typeof presentationDataRecord?.statePath === "string" ? presentationDataRecord.statePath : undefined,
 			});
 			freshSessionOrdinal += 1;

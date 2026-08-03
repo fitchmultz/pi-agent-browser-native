@@ -464,7 +464,6 @@ test("wrapper-injected ChatGPT user agent remains compatible with managed restor
 		restoreState: managedSessionRestoreState,
 		wrapperInjectedUserAgent: true,
 	});
-	assert.equal(context?.restoreLaunchConflict, false);
 	await withOwnedManagedSessionContext(context, async () => {
 		assert.deepEqual(
 			getAndCommitManagedSessionRestoreEnv({
@@ -692,13 +691,12 @@ test("managed restore rejects symlinks and files along POSIX restore state paths
 	}
 });
 
-test("owned snapshot pruning retains two newest recorded files and leaves unrecorded matching state untouched", () => {
+test("owned snapshot pruning persists close-proven paths and leaves unrecorded matching state untouched", () => {
 	const cwd = "/Users/example/Projects/work-app";
 	const home = mkdtempSync(join(tmpdir(), "piab-prune-home-"));
 	const sessions = join(home, ".agent-browser", "sessions");
 	const namespaceSessions = join(home, ".agent-browser", "namespaces", "team", "state", "sessions");
 	const key = createManagedSessionRestoreKey(cwd);
-	const restoreState = new ManagedSessionRestoreState();
 	try {
 		for (const directory of [sessions, namespaceSessions]) {
 			mkdirSync(directory, { recursive: true });
@@ -706,30 +704,33 @@ test("owned snapshot pruning retains two newest recorded files and leaves unreco
 				const path = join(directory, `${key}-${suffix}.json`);
 				writeFileSync(path, "{}");
 				utimesSync(path, index + 1, index + 1);
-				if (directory !== sessions || suffix !== "new") restoreState.recordOwnedSnapshotPath(path);
 			}
 			writeFileSync(join(directory, `${key}-caller.json`), "{}");
 		}
 		chmodSync(join(home, ".agent-browser"), 0o700);
 
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({
-			cwd,
-			parentEnv: { HOME: home },
-			platform: "linux",
-			restoreState,
-			statePath: join(sessions, `${key}-new.json`),
-		}), 1);
+		for (const [index, suffix] of ["old", "middle", "new"].entries()) {
+			assert.equal(pruneOwnedManagedSessionRestoreSnapshots({
+				cwd,
+				parentEnv: { HOME: home },
+				platform: "linux",
+				statePath: join(sessions, `${key}-${suffix}.json`),
+			}), index === 2 ? 1 : 0);
+		}
 		assert.equal(existsSync(join(sessions, `${key}-old.json`)), false);
+		assert.equal(statSync(join(sessions, ".pi-agent-browser-owned-snapshots-v1")).mode & 0o077, 0);
 		assert.equal(existsSync(join(namespaceSessions, `${key}-old.json`)), true);
 		assert.equal(existsSync(join(sessions, `${key}-caller.json`)), true);
 
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({
-			cwd,
-			namespace: "Team",
-			parentEnv: { HOME: home },
-			platform: "linux",
-			restoreState,
-		}), 1);
+		for (const [index, suffix] of ["old", "middle", "new"].entries()) {
+			assert.equal(pruneOwnedManagedSessionRestoreSnapshots({
+				cwd,
+				namespace: "Team",
+				parentEnv: { HOME: home },
+				platform: "linux",
+				statePath: join(namespaceSessions, `${key}-${suffix}.json`),
+			}), index === 2 ? 1 : 0);
+		}
 		assert.equal(existsSync(join(namespaceSessions, `${key}-old.json`)), false);
 		assert.equal(existsSync(join(namespaceSessions, `${key}-middle.json`)), true);
 		assert.equal(existsSync(join(namespaceSessions, `${key}-new.json`)), true);

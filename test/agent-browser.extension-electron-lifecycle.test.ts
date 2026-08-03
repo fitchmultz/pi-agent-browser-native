@@ -230,17 +230,23 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(invocationsAfterLaunch.map((entry) => entry.args.at(-2)), ["connect", "tab", "snapshot"]);
 			assert.equal(invocationsAfterLaunch[0]?.args.includes("--session"), true);
 
-			const statusResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				electron: { action: "status", launchId: launchDetails.electron.launch.launchId },
-			});
+			await rm(upstreamLogPath, { force: true });
+			const statusResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, () =>
+				executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "status", launchId: launchDetails.electron.launch.launchId },
+				}));
 			assert.equal(statusResult.isError, false);
 			assert.match(statusResult.content[0]?.text ?? "", /debug port alive/);
 			assert.match(statusResult.content[0]?.text ?? "", /Identifiers: launchId .*; sessionName/);
 			assert.deepEqual((statusResult.details?.electron as { identifiers?: unknown } | undefined)?.identifiers, launchDetails.electron.identifiers);
 			assert.equal(((statusResult.details?.electron as { targets?: unknown[] } | undefined)?.targets ?? []).length, 1);
+			const statusInvocations = await readInvocationLog(upstreamLogPath);
+			assert.equal(statusInvocations.length, 2);
+			assert.equal(statusInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
 
 			await rm(upstreamLogPath, { force: true });
-			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 10_000 } });
+			const probeResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, () =>
+				executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 10_000 } }));
 			assert.equal(probeResult.isError, false);
 			assert.match(probeResult.content[0]?.text ?? "", /Electron probe: Demo Electron — app:\/\/demo/);
 			assert.match(probeResult.content[0]?.text ?? "", /Focused: button\/button "Run" \(#run-button\)/);
@@ -262,6 +268,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(probeDetails.sessionTabTarget, { title: "Demo Electron", url: "app://demo" });
 			const probeInvocations = await readInvocationLog(upstreamLogPath);
 			assert.deepEqual(probeInvocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
+			assert.equal(probeInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
 
 			const broadTextResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "body"] });
 			assert.equal(broadTextResult.isError, false);

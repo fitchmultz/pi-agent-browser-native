@@ -380,8 +380,9 @@ export async function resolveSemanticActionVisibleRefArgs(options: {
 	return resolveSemanticActionVisibleRefArgsFromSnapshot(options.compiled, snapshotData);
 }
 
-type ManagedRestoreDaemonStatus = "inactive" | "missing-binary" | "restore-disabled" | "restore-enabled" | "unknown";
+type ManagedRestoreDaemonStatus = "aborted" | "inactive" | "missing-binary" | "restore-disabled" | "restore-enabled" | "unknown";
 
+/** Intentionally uncached because an idle daemon can exit or restart between wrapper calls. */
 async function inspectManagedRestoreDaemon(options: {
 	cwd: string;
 	namespace?: string;
@@ -394,8 +395,9 @@ async function inspectManagedRestoreDaemon(options: {
 		signal: options.signal,
 	});
 	try {
+		if (processResult.aborted) return "aborted";
 		if ((processResult.spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return "missing-binary";
-		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) return "unknown";
+		if (processResult.spawnError || processResult.exitCode !== 0) return "unknown";
 		const parsed = await parseAgentBrowserEnvelope({
 			stdout: processResult.stdout,
 			stdoutPath: processResult.stdoutSpillPath,
