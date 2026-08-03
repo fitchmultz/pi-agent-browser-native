@@ -35,7 +35,7 @@ import {
 	validateToolArgs,
 } from "./lib/runtime.js";
 import { extractExplicitNamespace, extractExplicitSessionName } from "./lib/argv-grammar.js";
-import { ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
+import { cleanupManagedSessionRestoreConfig, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
 import { isCloseCommand } from "./lib/command-taxonomy.js";
@@ -756,6 +756,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		branchOwnedElectronLaunchIds = new Set<string>();
 		electronChildProcesses = new Map<string, ChildProcess>();
 		ownedManagedSessions.clear();
+		cleanupManagedSessionRestoreConfig();
 		await cleanupSecureTempArtifacts({ preservePaths: preservedElectronProfileDirs });
 	});
 

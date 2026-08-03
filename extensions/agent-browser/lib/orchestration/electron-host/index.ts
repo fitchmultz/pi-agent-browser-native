@@ -600,6 +600,7 @@ function formatElectronProbeVisibleText(options: {
 function buildElectronProbeResult(options: {
 	compiledElectron: CompiledAgentBrowserElectron;
 	mismatch?: ElectronSessionMismatch;
+	namespace?: string;
 	probe: ElectronProbeResult;
 	probeContext: ElectronProbeContext;
 	record?: ElectronLaunchRecord;
@@ -631,6 +632,8 @@ function buildElectronProbeResult(options: {
 		},
 		nextActions: nextActions.length > 0 ? nextActions : undefined,
 		...buildAgentBrowserResultCategoryDetails({ args: [], succeeded: true }),
+		namespace: options.namespace,
+		refSnapshot: options.probe.refSnapshot,
 		sessionName: options.probe.sessionName,
 		sessionTabTarget: options.sessionTabTarget,
 		summary: options.mismatch?.summary ?? options.probe.summary,
@@ -841,6 +844,7 @@ export async function handleElectronHostInput(options: {
 			return buildElectronProbeResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,
 				mismatch: sessionMismatch,
+				namespace: probeNamespace,
 				probe,
 				probeContext,
 				record: launchRecord,

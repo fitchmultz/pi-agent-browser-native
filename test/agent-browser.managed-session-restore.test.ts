@@ -5,7 +5,9 @@
  */
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,7 +25,16 @@ import {
 	resolveOwnedManagedSessionContext,
 	withOwnedManagedSessionContext,
 } from "../extensions/agent-browser/lib/managed-session-restore.js";
+import { buildProcessStartIdentityCommand, normalizeProcessStartIdentity } from "../extensions/agent-browser/lib/process-identity.js";
 import { buildExecutionPlan, restoreManagedSessionStateFromBranch } from "../extensions/agent-browser/lib/runtime.js";
+
+function getCurrentProcessStartIdentity(): string {
+	const command = buildProcessStartIdentityCommand(process.pid);
+	if (!command) throw new Error("Expected a current-process identity command.");
+	const identity = normalizeProcessStartIdentity(execFileSync(command.file, command.args, { encoding: "utf8" }));
+	if (!identity) throw new Error("Expected a current-process start identity.");
+	return identity;
+}
 
 const isolatedHome = mkdtempSync(join(tmpdir(), "piab-restore-suite-home-"));
 const managedSessionRestoreState = new ManagedSessionRestoreState();
@@ -718,7 +729,13 @@ test("owned snapshot pruning persists close-proven paths and leaves unrecorded m
 			}), index === 2 ? 1 : 0);
 		}
 		assert.equal(existsSync(join(sessions, `${key}-old.json`)), false);
-		assert.equal(statSync(join(sessions, ".pi-agent-browser-owned-snapshots-v1")).mode & 0o077, 0);
+		const manifest = readdirSync(sessions).find((name) => name.startsWith(".pi-agent-browser-owned-snapshots-v1-"));
+		assert.ok(manifest);
+		const manifestDirectory = join(sessions, manifest);
+		assert.equal(statSync(manifestDirectory).mode & 0o077, 0);
+		const ownershipRecords = readdirSync(manifestDirectory).filter((name) => name.endsWith(".json"));
+		assert.equal(ownershipRecords.length, 2);
+		assert.equal(ownershipRecords.every((name) => (statSync(join(manifestDirectory, name)).mode & 0o077) === 0), true);
 		assert.equal(existsSync(join(namespaceSessions, `${key}-old.json`)), true);
 		assert.equal(existsSync(join(sessions, `${key}-caller.json`)), true);
 
@@ -735,6 +752,133 @@ test("owned snapshot pruning persists close-proven paths and leaves unrecorded m
 		assert.equal(existsSync(join(namespaceSessions, `${key}-middle.json`)), true);
 		assert.equal(existsSync(join(namespaceSessions, `${key}-new.json`)), true);
 		assert.equal(existsSync(join(namespaceSessions, `${key}-caller.json`)), true);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("owned snapshot manifest self-heals malformed state and stale locks without claiming unrecorded files", () => {
+	const cwd = "/Users/example/Projects/manifest-recovery";
+	const home = mkdtempSync(join(tmpdir(), "piab-prune-recovery-home-"));
+	const sessions = join(home, ".agent-browser", "sessions");
+	const key = createManagedSessionRestoreKey(cwd);
+	try {
+		mkdirSync(sessions, { recursive: true });
+		chmodSync(join(home, ".agent-browser"), 0o700);
+		const oldPath = join(sessions, `${key}-old.json`);
+		const middlePath = join(sessions, `${key}-middle.json`);
+		const newPath = join(sessions, `${key}-new.json`);
+		for (const path of [oldPath, middlePath, newPath]) writeFileSync(path, "{}");
+
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: oldPath }), 0);
+		const manifestName = readdirSync(sessions).find((name) => name.startsWith(".pi-agent-browser-owned-snapshots-v1-"));
+		assert.ok(manifestName);
+		const manifestDirectory = join(sessions, manifestName);
+		const firstRecordPath = join(manifestDirectory, readdirSync(manifestDirectory).find((name) => name.endsWith(".json")) as string);
+		writeFileSync(firstRecordPath, "not json");
+		chmodSync(firstRecordPath, 0o644);
+
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: middlePath }), 0);
+		const middleRecordPath = join(manifestDirectory, readdirSync(manifestDirectory).find((name) => name.endsWith(".json")) as string);
+		assert.equal(statSync(middleRecordPath).mode & 0o777, 0o600);
+		assert.equal(JSON.parse(readFileSync(middleRecordPath, "utf8")), middlePath);
+		assert.equal(existsSync(oldPath), true);
+
+		writeFileSync(middleRecordPath, "x".repeat(16 * 1_024 + 1));
+		const lockPath = join(manifestDirectory, ".lock");
+		writeFileSync(lockPath, "stale", { mode: 0o600 });
+		const staleTime = new Date(Date.now() - 60_000);
+		utimesSync(lockPath, staleTime, staleTime);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: newPath }), 0);
+		const remainingRecords = readdirSync(manifestDirectory).filter((name) => name.endsWith(".json"));
+		assert.equal(remainingRecords.length, 1);
+		assert.equal(JSON.parse(readFileSync(join(manifestDirectory, remainingRecords[0] as string), "utf8")), newPath);
+		assert.equal(existsSync(lockPath), false);
+		assert.equal(existsSync(middlePath), true);
+
+		const liveLockPath = join(sessions, `${key}-live-lock.json`);
+		writeFileSync(liveLockPath, "{}");
+		writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startIdentity: getCurrentProcessStartIdentity() }), { mode: 0o600 });
+		utimesSync(lockPath, staleTime, staleTime);
+		const lockWaitStartedAt = Date.now();
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: liveLockPath }), 0);
+		assert.ok(Date.now() - lockWaitStartedAt >= 900);
+		assert.equal(existsSync(lockPath), true);
+		assert.equal(readdirSync(manifestDirectory).filter((name) => name.endsWith(".json")).length, 2);
+		unlinkSync(lockPath);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux" }), 0);
+
+		writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startIdentity: process.platform === "win32" ? "win32-powershell-ticks-v1:0" : "reused-process" }), { mode: 0o600 });
+		utimesSync(lockPath, staleTime, staleTime);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux" }), 0);
+		assert.equal(existsSync(lockPath), false);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("owned snapshot manifest serializes concurrent process writers", async () => {
+	const cwd = "/Users/example/Projects/manifest-concurrency";
+	const home = mkdtempSync(join(tmpdir(), "piab-prune-concurrency-home-"));
+	const sessions = join(home, ".agent-browser", "sessions");
+	const key = createManagedSessionRestoreKey(cwd);
+	const parentEnv = process.platform === "win32"
+		? { AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64), USERPROFILE: home }
+		: { HOME: home };
+	try {
+		mkdirSync(sessions, { recursive: true });
+		if (process.platform !== "win32") chmodSync(join(home, ".agent-browser"), 0o700);
+		const paths = ["first", "second", "third"].map((suffix) => join(sessions, `${key}-${suffix}.json`));
+		for (const path of paths) writeFileSync(path, "{}");
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv, statePath: paths[0] }), 0);
+		const manifestName = readdirSync(sessions).find((name) => name.startsWith(".pi-agent-browser-owned-snapshots-v1-"));
+		assert.ok(manifestName);
+		const manifestPath = join(sessions, manifestName);
+		const lockPath = join(manifestPath, ".lock");
+		writeFileSync(lockPath, "held", { mode: 0o600 });
+		const moduleUrl = new URL("../extensions/agent-browser/lib/managed-session-restore.ts", import.meta.url).href;
+		const children = paths.slice(1).map((statePath) => {
+			const script = `import { pruneOwnedManagedSessionRestoreSnapshots } from ${JSON.stringify(moduleUrl)}; pruneOwnedManagedSessionRestoreSnapshots(${JSON.stringify({ cwd, parentEnv, statePath })});`;
+			const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { stdio: ["ignore", "pipe", "pipe"] });
+			const stderr: Buffer[] = [];
+			child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+			return { exit: once(child, "exit"), stderr };
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		unlinkSync(lockPath);
+		for (const child of children) {
+			const [code] = await child.exit as [number | null];
+			assert.equal(code, 0, Buffer.concat(child.stderr).toString("utf8"));
+		}
+		const recordedPaths = readdirSync(manifestPath)
+			.filter((name) => name.endsWith(".json"))
+			.map((name) => JSON.parse(readFileSync(join(manifestPath, name), "utf8")) as string);
+		assert.deepEqual(new Set(recordedPaths), new Set(paths));
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("owned snapshot retention caps young close records while keeping the newest 256", () => {
+	const cwd = "/Users/example/Projects/retention-cap";
+	const home = mkdtempSync(join(tmpdir(), "piab-prune-cap-home-"));
+	const sessions = join(home, ".agent-browser", "sessions");
+	const key = createManagedSessionRestoreKey(cwd);
+	try {
+		mkdirSync(sessions, { recursive: true });
+		chmodSync(join(home, ".agent-browser"), 0o700);
+		const paths = Array.from({ length: 257 }, (_, index) => join(sessions, `${key}-${String(index).padStart(3, "0")}.json`));
+		const nowSeconds = Date.now() / 1_000;
+		for (const [index, path] of paths.entries()) {
+			writeFileSync(path, "{}");
+			utimesSync(path, nowSeconds - (paths.length - index), nowSeconds - (paths.length - index));
+			pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: path });
+		}
+		assert.equal(existsSync(paths[0] as string), false);
+		assert.equal(existsSync(paths.at(-1) as string), true);
+		const manifestName = readdirSync(sessions).find((name) => name.startsWith(".pi-agent-browser-owned-snapshots-v1-"));
+		assert.ok(manifestName);
+		assert.equal(readdirSync(join(sessions, manifestName)).filter((name) => name.endsWith(".json")).length, 256);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}

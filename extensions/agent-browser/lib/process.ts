@@ -13,6 +13,7 @@ import { env as processEnv, platform as processPlatform } from "node:process";
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
 import {
 	commitManagedSessionRestoreSuppression,
+	getManagedSessionRestoreConfigEnv,
 	getManagedSessionRestoreEnv,
 	getOwnedManagedSessionNamespaceEnv,
 	type ManagedSessionRestoreState,
@@ -278,6 +279,9 @@ export async function runAgentBrowserProcess(options: {
 }): Promise<ProcessRunResult> {
 	const { args, cwd, env, managedSessionRestoreState, ownedManagedSession, signal, stdin } = options;
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
+	if (signal?.aborted) {
+		return { aborted: true, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+	}
 	const managedSessionRestoreOptions = {
 		args,
 		cwd,
@@ -286,10 +290,13 @@ export async function runAgentBrowserProcess(options: {
 		restoreState: managedSessionRestoreState,
 		stdin,
 	};
+	const managedSessionRestoreEnv = getManagedSessionRestoreEnv(managedSessionRestoreOptions);
+	const managedSessionRestoreConfigEnv = await getManagedSessionRestoreConfigEnv(managedSessionRestoreEnv);
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
-		...getManagedSessionRestoreEnv(managedSessionRestoreOptions),
+		...managedSessionRestoreEnv,
 		...env,
+		...managedSessionRestoreConfigEnv,
 		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
@@ -297,6 +304,9 @@ export async function runAgentBrowserProcess(options: {
 	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir && (await ensureAgentBrowserSocketDir(requestedSocketDir))) {
 		effectiveEnv = { ...effectiveEnv, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };
+	}
+	if (signal?.aborted) {
+		return { aborted: true, exitCode: 1, stderr: "", stdout: "", timedOut: false };
 	}
 
 	return await new Promise<ProcessRunResult>((resolve) => {
@@ -472,12 +482,9 @@ export async function runAgentBrowserProcess(options: {
 		}
 
 		if (signal) {
-			if (signal.aborted) {
-				terminateChild("abort");
-			} else {
-				abortListener = () => terminateChild("abort");
-				signal.addEventListener("abort", abortListener, { once: true });
-			}
+			abortListener = () => terminateChild("abort");
+			signal.addEventListener("abort", abortListener, { once: true });
+			if (signal.aborted) terminateChild("abort");
 		}
 
 		writeChildStdin();

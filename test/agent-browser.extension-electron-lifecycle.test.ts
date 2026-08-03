@@ -14,6 +14,7 @@ import test from "node:test";
 
 import { Check } from "typebox/value";
 
+import { getSessionPageStateKey, SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -253,6 +254,8 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.match(probeResult.content[0]?.text ?? "", /Snapshot: 1 interactive ref\(s\)/);
 			const probeDetails = probeResult.details as {
 				electron: { action?: string; identifiers?: { appName?: string; launchId?: string; sessionName?: string }; probe?: { focusedElement?: { id?: string }; refSnapshot?: unknown; snapshot?: { refIds?: string[] }; title?: string; url?: string } };
+				namespace?: string;
+				refSnapshot?: { refIds?: string[] };
 				sessionName?: string;
 				sessionTabTarget?: { title?: string; url?: string };
 			};
@@ -264,11 +267,24 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.equal(probeDetails.electron.probe?.focusedElement?.id, "run-button");
 			assert.deepEqual(probeDetails.electron.probe?.snapshot?.refIds, ["e1"]);
 			assert.equal(probeDetails.electron.probe?.refSnapshot, undefined);
+			assert.deepEqual(probeDetails.refSnapshot?.refIds, ["e1"]);
 			assert.equal(probeDetails.sessionName, launchDetails.electron.launch.sessionName);
 			assert.deepEqual(probeDetails.sessionTabTarget, { title: "Demo Electron", url: "app://demo" });
 			const probeInvocations = await readInvocationLog(upstreamLogPath);
 			assert.deepEqual(probeInvocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
 			assert.equal(probeInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
+
+			harness.setBranch([{ type: "message", message: { details: { ...launchResult.details, namespace: "team" }, isError: false, toolName: "agent_browser" } }]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "namespaced", oldLeafId: null }, harness.ctx);
+			const namespacedProbe = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe" } });
+			assert.equal(namespacedProbe.isError, false, JSON.stringify(namespacedProbe));
+			assert.equal(namespacedProbe.details?.namespace, "team");
+			assert.deepEqual((namespacedProbe.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+			const restoredPageState = SessionPageState.fromBranch([{ type: "message", message: { details: namespacedProbe.details, isError: false, toolName: "agent_browser" } }]);
+			const namespacedPageStateKey = getSessionPageStateKey(String(namespacedProbe.details?.sessionName), "team");
+			assert.ok(namespacedPageStateKey);
+			assert.deepEqual(restoredPageState.get(namespacedPageStateKey).refSnapshot?.refIds, ["e1"]);
+			assert.equal(restoredPageState.get(String(namespacedProbe.details?.sessionName)).refSnapshot, undefined);
 
 			const broadTextResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "body"] });
 			assert.equal(broadTextResult.isError, false);

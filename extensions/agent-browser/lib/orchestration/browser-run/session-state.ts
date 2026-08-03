@@ -909,6 +909,7 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 		const processResult = await runAgentBrowserProcess({
 			args: closeArgs,
 			cwd: options.cwd,
+			env: { AGENT_BROWSER_JSON: "1" },
 			managedSessionRestoreState: options.restoreState,
 			ownedManagedSession: true,
 			signal: controller.signal,

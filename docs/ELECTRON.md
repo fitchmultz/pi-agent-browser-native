@@ -178,7 +178,7 @@ Reports `cleanupState`, debug-port and PID liveness, and bounded CDP target meta
 { "electron": { "action": "probe", "launchId": "electron-…", "timeoutMs": 5000 } }
 ```
 
-Output appears under `details.electron.probe`: `title`, `url`, `focusedElement`, `activeTab`, `tabs`, compact `snapshot` metadata (`refCount`, `refIds`, optional text preview and omission counts), and `errors`. When `launchId` is given, the probe is tied to that tracked launch and will surface mismatch guidance if the wrapper sees a session or target drift; visible output also includes debug-port/pid liveness so a stale `about:blank` against a dead launch is unmistakable.
+Output appears under `details.electron.probe`: `title`, `url`, `focusedElement`, `activeTab`, `tabs`, compact `snapshot` metadata (`refCount`, `refIds`, optional text preview and omission counts), and `errors`. A current-managed probe also persists top-level `details.namespace`, `sessionTabTarget`, and `refSnapshot` so Pi reload/branch replay keeps the same namespaced page identity. When `launchId` is given, the probe is tied to that tracked launch and will surface mismatch guidance if the wrapper sees a session or target drift; visible output also includes debug-port/pid liveness so a stale `about:blank` against a dead launch is unmistakable.
 
 `timeoutMs` bounds each underlying read subprocess. Use it for dense desktop apps when the default budget is too short, or to fail fast when you suspect the app process is wedged.
 
