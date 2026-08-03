@@ -3,7 +3,7 @@
  * Responsibilities: Build fake pi extension contexts, run registered extension events/tools, patch process env safely, create fake agent-browser binaries, read invocation logs, and manage child-process fixtures.
  * Scope: Test-only utilities for `test/agent-browser.*.test.ts`; production code must not import this module.
  * Usage: Import focused helpers from `./helpers/agent-browser-harness.js` inside Node test-runner suites.
- * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run. `writeFakeAgentBrowserBinary` installs a Unix shell-script launcher or a Windows `agent-browser.cmd` that runs the same Node script body; pass `platform: "win32"` to assert Windows launcher layout from non-Windows hosts (spawn/PATHEXT behavior still needs a real Windows runner).
+ * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run. `writeFakeAgentBrowserBinary` installs a Unix shell-script launcher or a Windows `agent-browser.cmd`; fake daemons report inactive `session info` by default, and stateful daemon tests set `PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO=1`; pass `platform: "win32"` to assert Windows launcher layout from non-Windows hosts (spawn/PATHEXT behavior still needs a real Windows runner).
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -525,8 +525,14 @@ export async function writeFakeAgentBrowserBinary(
 	scriptBody: string,
 	platform: NodeJS.Platform = processPlatform,
 ): Promise<string> {
+	const defaultSessionInfo = `const __piabFakeArgs = process.argv.slice(2);
+if (process.env.PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO !== "1" && __piabFakeArgs.includes("session") && __piabFakeArgs.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
+  process.exit(0);
+}`;
+	const wrappedScriptBody = `${defaultSessionInfo}\n${scriptBody}`;
 	const scriptPath = join(tempDir, "agent-browser-fake.cjs");
-	await writeFile(scriptPath, `${scriptBody}\n`, "utf8");
+	await writeFile(scriptPath, `${wrappedScriptBody}\n`, "utf8");
 
 	if (platform === "win32") {
 		const launcherPath = join(tempDir, "agent-browser.cmd");
@@ -539,7 +545,7 @@ export async function writeFakeAgentBrowserBinary(
 	}
 
 	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
-	await writeFile(fakeAgentBrowserPath, `#!/usr/bin/env node\n${scriptBody}\n`, "utf8");
+	await writeFile(fakeAgentBrowserPath, `#!/usr/bin/env node\n${wrappedScriptBody}\n`, "utf8");
 	await chmod(fakeAgentBrowserPath, 0o755);
 	return fakeAgentBrowserPath;
 }

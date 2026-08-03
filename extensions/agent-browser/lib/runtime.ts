@@ -21,6 +21,7 @@ import {
 	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
 	extractExplicitSessionName,
+	getAgentBrowserSessionIdentityKey,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
 	isBooleanFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
@@ -542,7 +543,6 @@ export function restoreManagedSessionStateFromBranch(
 	fallbackSessionName: string,
 ): RestoredManagedSessionState {
 	const restoreDisabledIdentities = new Map<string, ManagedSessionRestoreIdentity>();
-	const restoreIdentityKey = (sessionName: string, namespace?: string) => `${canonicalizeAgentBrowserNamespace(namespace) ?? ""}\0${sessionName}`;
 	let restoredState: ManagedSessionState = {
 		active: false,
 		sessionName: fallbackSessionName,
@@ -606,7 +606,7 @@ export function restoreManagedSessionStateFromBranch(
 		// Sticky restore policy is session-identity state and must apply even for explicit
 		// `--session <current-managed>` rows that are not used for managed-session lifecycle replay.
 		if (details.managedSessionRestoreDisabled === true && typeof sessionName === "string") {
-			restoreDisabledIdentities.set(restoreIdentityKey(sessionName, namespace), { namespace, sessionName });
+			restoreDisabledIdentities.set(getAgentBrowserSessionIdentityKey(sessionName, namespace), { namespace, sessionName });
 		}
 		const managedSessionName =
 			!explicitSessionName &&
@@ -637,7 +637,7 @@ export function restoreManagedSessionStateFromBranch(
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
 		if (commandClosesSession) {
 			if (succeeded) {
-				restoreDisabledIdentities.delete(restoreIdentityKey(managedSessionName, namespace));
+				restoreDisabledIdentities.delete(getAgentBrowserSessionIdentityKey(managedSessionName, namespace));
 				applyManagedClose(managedSessionName, namespace);
 			}
 			continue;

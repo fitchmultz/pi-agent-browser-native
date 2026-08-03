@@ -11,7 +11,12 @@ import { chmod, mkdir } from "node:fs/promises";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
-import { commitManagedSessionRestoreSuppression, getManagedSessionRestoreEnv, type ManagedSessionRestoreState } from "./managed-session-restore.js";
+import {
+	commitManagedSessionRestoreSuppression,
+	getManagedSessionRestoreEnv,
+	getOwnedManagedSessionNamespaceEnv,
+	type ManagedSessionRestoreState,
+} from "./managed-session-restore.js";
 import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
@@ -285,6 +290,7 @@ export async function runAgentBrowserProcess(options: {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
 		...getManagedSessionRestoreEnv(managedSessionRestoreOptions),
 		...env,
+		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;

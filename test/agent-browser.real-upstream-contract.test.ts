@@ -14,10 +14,12 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
+import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import { CAPABILITY_BASELINE, expectedVersionLabel } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
+	runExtensionEvent,
 	startAgentBrowserContractFixtureServer,
 	withPatchedEnv,
 	type FixtureServer,
@@ -133,6 +135,44 @@ async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?
 	});
 }
 
+async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<void> {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-orphan-daemon-"));
+	const socketDir = join(tempDir, "sockets");
+	let sessionName: string | undefined;
+	try {
+		await withPatchedEnv({
+			AGENT_BROWSER_CONFIG: undefined,
+			AGENT_BROWSER_ENCRYPTION_KEY: process.platform === "win32" ? "a".repeat(64) : undefined,
+			AGENT_BROWSER_SOCKET_DIR: socketDir,
+			HOME: tempDir,
+			USERPROFILE: tempDir,
+			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
+		}, async () => {
+			const firstHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
+			const opened = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, { args: ["open", "about:blank"] });
+			assert.equal(opened.isError, false, `orphan-daemon setup open failed: ${opened.content[0]?.text ?? ""}`);
+			sessionName = typeof opened.details?.sessionName === "string" ? opened.details.sessionName : undefined;
+
+			const emptyTranscriptHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(emptyTranscriptHarness.handlers, "session_start", { reason: "new" }, emptyTranscriptHarness.ctx);
+			const blocked = await executeRegisteredTool(emptyTranscriptHarness.tool, emptyTranscriptHarness.ctx, {
+				args: ["--proxy", "http://127.0.0.1:8080", "open", "about:blank"],
+			});
+			assert.equal(blocked.isError, true);
+			assert.match(String(blocked.details?.validationError ?? ""), /daemon may still retain managed restore state/);
+			assert.equal(blocked.details?.exitCode, undefined);
+
+			const closed = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, { args: ["close"] });
+			assert.equal(closed.isError, false, `orphan-daemon cleanup close failed: ${closed.content[0]?.text ?? ""}`);
+			sessionName = undefined;
+		});
+	} finally {
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
+		await rm(tempDir, { force: true, recursive: true });
+	}
+}
+
 async function assertRealUpstreamRestoreStorageSymlinkFailsClosed(): Promise<void> {
 	if (process.platform === "win32") return;
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-symlink-"));
@@ -160,6 +200,69 @@ async function assertRealUpstreamRestoreStorageSymlinkFailsClosed(): Promise<voi
 			sessionName = undefined;
 		});
 		assert.deepEqual(await readdir(targetDir), [], "real upstream must not write restore state through the sessions symlink, including on close");
+	} finally {
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
+		await rm(tempDir, { force: true, recursive: true });
+	}
+}
+
+async function assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed(): Promise<void> {
+	if (process.platform === "win32") return;
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-nested-symlink-"));
+	const socketDir = join(tempDir, "sockets");
+	const outsideStateFile = join(tempDir, "outside-candidate.json");
+	const temporaryDirectory = join(tempDir, ".agent-browser", "sessions", ".tmp");
+	await mkdir(temporaryDirectory, { recursive: true, mode: 0o700 });
+	await writeFile(outsideStateFile, "unchanged");
+	await symlink(outsideStateFile, join(temporaryDirectory, "candidate.json"), "file");
+	let sessionName: string | undefined;
+	try {
+		await withPatchedEnv({
+			AGENT_BROWSER_CONFIG: undefined,
+			AGENT_BROWSER_ENCRYPTION_KEY: undefined,
+			AGENT_BROWSER_SOCKET_DIR: socketDir,
+			HOME: tempDir,
+			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
+		}, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"], sessionMode: "fresh" });
+			assert.equal(opened.isError, false, `nested symlink fail-closed open should succeed without restore: ${opened.content[0]?.text ?? ""}`);
+			assert.equal(opened.details?.managedSessionRestoreDisabled, true);
+			sessionName = typeof opened.details?.sessionName === "string" ? opened.details.sessionName : undefined;
+			const closed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(closed.isError, false, `nested symlink fail-closed close should succeed: ${closed.content[0]?.text ?? ""}`);
+			sessionName = undefined;
+		});
+		assert.equal(await readFile(outsideStateFile, "utf8"), "unchanged");
+	} finally {
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
+		await rm(tempDir, { force: true, recursive: true });
+	}
+}
+
+async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
+	if (process.platform === "win32") return;
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-relative-home-"));
+	const socketDir = join(tempDir, "sockets");
+	let sessionName: string | undefined;
+	try {
+		await withPatchedEnv({
+			AGENT_BROWSER_CONFIG: undefined,
+			AGENT_BROWSER_ENCRYPTION_KEY: undefined,
+			AGENT_BROWSER_SOCKET_DIR: socketDir,
+			HOME: "relative-home",
+			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
+		}, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"], sessionMode: "fresh" });
+			assert.equal(opened.isError, false, `relative-home fail-closed open should succeed without restore: ${opened.content[0]?.text ?? ""}`);
+			assert.equal(opened.details?.managedSessionRestoreDisabled, true);
+			sessionName = typeof opened.details?.sessionName === "string" ? opened.details.sessionName : undefined;
+			const closed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(closed.isError, false, `relative-home fail-closed close should succeed: ${closed.content[0]?.text ?? ""}`);
+			sessionName = undefined;
+		});
+		await assert.rejects(readdir(join(tempDir, "relative-home")));
 	} finally {
 		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
 		await rm(tempDir, { force: true, recursive: true });
@@ -501,6 +604,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 						stdin: `document.cookie = "piab_restore_cookie=${restoreMarker}; path=/"; localStorage.setItem("piab-restore-local", "${restoreMarker}"); sessionStorage.setItem("piab-restore-session", "${restoreMarker}"); true`,
 					});
 					assertSuccessfulResult(seedRestoreState, shapes.commands.eval, "seed managed restore state");
+
 					for (const params of [
 						{
 							args: ["batch"],
@@ -514,8 +618,15 @@ if (!REAL_UPSTREAM_ENABLED) {
 						assert.match(String(blockedBatch.details?.validationError ?? ""), /daemon may still retain managed restore state/);
 						assert.equal(blockedBatch.details?.exitCode, undefined, "nested batch attachment must fail before upstream spawn");
 					}
-					const firstClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+					const firstClose = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, async () =>
+						await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] }));
 					assert.equal(firstClose.isError, false, `first managed close should persist restore state: ${firstClose.content[0]?.text ?? ""}`);
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					const closedInfo = await execFileAsync("agent-browser", ["--json", "--namespace", "", "--session", managedSessionName ?? "", "session", "info"], {
+						cwd: tempDir,
+						env: { ...process.env, AGENT_BROWSER_NAMESPACE: "redirected", AGENT_BROWSER_SOCKET_DIR: getAgentBrowserSocketDir() ?? socketDir, HOME: tempDir },
+					});
+					assert.equal((JSON.parse(closedInfo.stdout) as { data?: { active?: boolean } }).data?.active, false, "owned close must override a redirecting namespace environment");
 
 					const restoredHarness = createExtensionHarness({ cwd: tempDir });
 					let restoredValueText: string | undefined;
@@ -586,7 +697,10 @@ if (!REAL_UPSTREAM_ENABLED) {
 			await fixtureServer?.close();
 			await rm(tempDir, { force: true, recursive: true });
 		}
+		await assertRealUpstreamUnrecordedDaemonReuseFailsClosed();
 		await assertRealUpstreamRestoreStorageSymlinkFailsClosed();
+		await assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed();
+		await assertRealUpstreamRelativeHomeFailsClosed();
 	});
 
 	test("real upstream agent-browser plugin list stays sessionless", { timeout: 60_000 }, async () => {

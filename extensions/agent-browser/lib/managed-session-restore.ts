@@ -6,15 +6,16 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, win32 } from "node:path";
 
 import { extractCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
 import {
 	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
 	extractExplicitSessionName,
+	getAgentBrowserSessionIdentityKey,
 	scanUpstreamGlobalFlagOccurrences,
 } from "./argv-grammar.js";
 import {
@@ -48,25 +49,34 @@ function hasUpstreamEnvValue(env: NodeJS.ProcessEnv | undefined, name: string): 
 	return env?.[name] !== undefined;
 }
 
+function isAbsoluteHome(path: string, platform: NodeJS.Platform): boolean {
+	return platform === "win32" ? win32.isAbsolute(path) : isAbsolute(path);
+}
+
 function resolveManagedSessionRestoreHome(
 	parentEnv: NodeJS.ProcessEnv,
 	platform: NodeJS.Platform = process.platform,
 ): string | undefined {
 	const configuredHome = platform === "win32" ? parentEnv.USERPROFILE : parentEnv.HOME;
-	if (configuredHome !== undefined) return configuredHome.length > 0 && configuredHome.trim() === configuredHome ? configuredHome : undefined;
+	if (configuredHome !== undefined) {
+		return configuredHome.length > 0 && configuredHome.trim() === configuredHome && isAbsoluteHome(configuredHome, platform)
+			? configuredHome
+			: undefined;
+	}
 	const fallback = homedir();
-	return fallback.length > 0 && fallback.trim() === fallback ? fallback : undefined;
+	return fallback.length > 0 && fallback.trim() === fallback && isAbsoluteHome(fallback, platform) ? fallback : undefined;
 }
 
 /** Cwd-stable restore key so SSO browser storage survives across Pi chats in the same project. */
 export function createManagedSessionRestoreKey(cwd: string): string {
-	const digest = createHash("sha256").update(`restore:${cwd}`).digest("hex").slice(0, MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH);
+	let canonicalCwd = resolve(cwd);
+	try {
+		canonicalCwd = realpathSync(canonicalCwd);
+	} catch {
+		// The tool cwd normally exists; lexical resolution keeps direct unit callers deterministic.
+	}
+	const digest = createHash("sha256").update(`restore:${canonicalCwd}`).digest("hex").slice(0, MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH);
 	return `${MANAGED_SESSION_NAME_PREFIX}r-${digest}`;
-}
-
-function managedSessionIdentityKey(sessionName: string, namespace?: string): string {
-	const canonicalNamespace = canonicalizeAgentBrowserNamespace(namespace);
-	return canonicalNamespace ? `${canonicalNamespace}\0${sessionName}` : sessionName;
 }
 
 export interface ManagedSessionRestoreIdentity {
@@ -76,18 +86,31 @@ export interface ManagedSessionRestoreIdentity {
 
 export class ManagedSessionRestoreState {
 	readonly #disabled = new Set<string>();
+	readonly #ownedSnapshotPaths = new Set<string>();
 
 	clear(sessionName?: string, namespace?: string): void {
-		if (sessionName) this.#disabled.delete(managedSessionIdentityKey(sessionName, namespace));
+		if (sessionName) this.#disabled.delete(getAgentBrowserSessionIdentityKey(sessionName, namespace));
 		else this.#disabled.clear();
 	}
 
 	disable(sessionName: string | undefined, namespace?: string): void {
-		if (sessionName && sessionName.length > 0) this.#disabled.add(managedSessionIdentityKey(sessionName, namespace));
+		if (sessionName && sessionName.length > 0) this.#disabled.add(getAgentBrowserSessionIdentityKey(sessionName, namespace));
+	}
+
+	forgetOwnedSnapshotPath(path: string): void {
+		this.#ownedSnapshotPaths.delete(path);
+	}
+
+	getOwnedSnapshotPaths(): string[] {
+		return [...this.#ownedSnapshotPaths];
 	}
 
 	isDisabled(sessionName: string | undefined, namespace?: string): boolean {
-		return typeof sessionName === "string" && this.#disabled.has(managedSessionIdentityKey(sessionName, namespace));
+		return typeof sessionName === "string" && this.#disabled.has(getAgentBrowserSessionIdentityKey(sessionName, namespace));
+	}
+
+	recordOwnedSnapshotPath(path: string): void {
+		this.#ownedSnapshotPaths.add(path);
 	}
 
 	replace(identities: ManagedSessionRestoreIdentity[]): void {
@@ -195,6 +218,14 @@ function ensureOwnerOnlyDirectory(path: string): boolean {
 	}
 }
 
+function directoryContainsSymlink(path: string): boolean {
+	try {
+		return readdirSync(path, { withFileTypes: true }).some((entry) => entry.isSymbolicLink());
+	} catch {
+		return true;
+	}
+}
+
 /** Require the upstream 256-bit key format and secure every directory that can receive restore snapshots. */
 export function ensureManagedSessionRestoreStorageIsSecure(
 	parentEnv: NodeJS.ProcessEnv = process.env,
@@ -217,11 +248,9 @@ export function ensureManagedSessionRestoreStorageIsSecure(
 		path = join(path, component);
 		if (!ensureOwnerOnlyDirectory(path)) return false;
 	}
-	try {
-		return !readdirSync(path, { withFileTypes: true }).some((entry) => entry.isSymbolicLink());
-	} catch {
-		return false;
-	}
+	if (directoryContainsSymlink(path)) return false;
+	const temporaryDirectory = join(path, ".tmp");
+	return ensureOwnerOnlyDirectory(temporaryDirectory) && !directoryContainsSymlink(temporaryDirectory);
 }
 
 function omitWrapperInjectedUserAgent(args: string[], enabled: boolean | undefined): string[] {
@@ -297,6 +326,12 @@ function resolveManagedSessionRestorePolicy(options: ManagedSessionRestoreEnvOpt
 	return { namespace, owned, ownedContext, parentEnv, restoreState, sessionName };
 }
 
+/** Pin wrapper-owned subprocesses to their recorded namespace, including the default namespace. */
+export function getOwnedManagedSessionNamespaceEnv(options: ManagedSessionRestoreEnvOptions): NodeJS.ProcessEnv {
+	const { namespace, owned, ownedContext } = resolveManagedSessionRestorePolicy(options);
+	return owned ? { AGENT_BROWSER_NAMESPACE: ownedContext?.namespace ?? namespace ?? "" } : {};
+}
+
 /** Build env for an upstream managed-session subprocess without exposing caller-owned sessions or mutating sticky state. */
 export function getManagedSessionRestoreEnv(options: ManagedSessionRestoreEnvOptions): NodeJS.ProcessEnv {
 	const { namespace, owned, ownedContext, parentEnv, restoreState, sessionName } = resolveManagedSessionRestorePolicy(options);
@@ -364,98 +399,80 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 	};
 }
 
-function isRealDirectory(path: string): boolean {
+function getManagedRestoreSessionsDirectory(home: string, namespace?: string): string {
+	const canonicalNamespace = canonicalizeAgentBrowserNamespace(namespace);
+	return canonicalNamespace
+		? join(home, ".agent-browser", "namespaces", canonicalNamespace, "state", "sessions")
+		: join(home, ".agent-browser", "sessions");
+}
+
+function validateOwnedSnapshotPath(options: {
+	cwd: string;
+	home: string;
+	namespace?: string;
+	path: string;
+}): string | undefined {
+	const path = resolve(options.path);
+	const directory = getManagedRestoreSessionsDirectory(options.home, options.namespace);
+	const name = basename(path);
+	if (dirname(path) !== directory || !name.startsWith(`${createManagedSessionRestoreKey(options.cwd)}-`)) return undefined;
+	if (!/\.json(?:\.enc)?$/.test(name)) return undefined;
 	try {
 		const entry = lstatSync(path);
-		return entry.isDirectory() && !entry.isSymbolicLink();
+		return !entry.isSymbolicLink() && entry.isFile() ? path : undefined;
 	} catch {
-		return false;
+		return undefined;
 	}
 }
 
-function getManagedRestoreSessionsDirectories(root: string): string[] {
-	if (!isRealDirectory(root)) return [];
-	const directories: string[] = [];
-	const rootSessions = join(root, "sessions");
-	if (isRealDirectory(rootSessions)) directories.push(rootSessions);
-	const namespacesRoot = join(root, "namespaces");
-	if (!isRealDirectory(namespacesRoot)) return directories;
-	try {
-		for (const entry of readdirSync(namespacesRoot, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
-			const namespaceRoot = join(namespacesRoot, entry.name);
-			const stateRoot = join(namespaceRoot, "state");
-			const sessions = join(stateRoot, "sessions");
-			if (isRealDirectory(namespaceRoot) && isRealDirectory(stateRoot) && isRealDirectory(sessions)) directories.push(sessions);
-		}
-	} catch {
-		return directories;
-	}
-	return directories;
-}
-
-/** After an owned close, expire only this wrapper key's old snapshots while retaining two fallback families. */
-export function pruneOwnedManagedSessionRestoreSnapshots(
-	cwd: string,
-	parentEnv: NodeJS.ProcessEnv = process.env,
-	platform: NodeJS.Platform = process.platform,
-): number {
+/** After an owned close, expire only recorded wrapper-created snapshots while retaining two fallbacks. */
+export function pruneOwnedManagedSessionRestoreSnapshots(options: {
+	cwd: string;
+	namespace?: string;
+	parentEnv?: NodeJS.ProcessEnv;
+	platform?: NodeJS.Platform;
+	restoreState: ManagedSessionRestoreState;
+	statePath?: string;
+}): number {
+	const parentEnv = options.parentEnv ?? process.env;
+	const platform = options.platform ?? process.platform;
 	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
 	if (!home) return 0;
-	const root = join(home, ".agent-browser");
-	const encryptionKey = parentEnv.AGENT_BROWSER_ENCRYPTION_KEY;
-	if (encryptionKey !== undefined && !hasValidEncryptionKey(parentEnv)) return 0;
-	if (platform === "win32" && !hasValidEncryptionKey(parentEnv)) return 0;
-	if (platform !== "win32") {
-		try {
-			const rootEntry = lstatSync(root);
-			if (rootEntry.isSymbolicLink() || !rootEntry.isDirectory() || (rootEntry.mode & 0o077) !== 0) return 0;
-		} catch {
-			return 0;
-		}
+	const directory = getManagedRestoreSessionsDirectory(home, options.namespace);
+	const recordedPaths = options.restoreState.getOwnedSnapshotPaths();
+	if (!options.statePath && !recordedPaths.some((path) => isAbsolute(path) && dirname(resolve(path)) === directory)) return 0;
+	if (!ensureManagedSessionRestoreStorageIsSecure(parentEnv, platform, options.namespace)) return 0;
+	if (options.statePath) {
+		const ownedPath = validateOwnedSnapshotPath({ cwd: options.cwd, home, namespace: options.namespace, path: options.statePath });
+		if (ownedPath) options.restoreState.recordOwnedSnapshotPath(ownedPath);
 	}
-	const restoreKey = createManagedSessionRestoreKey(cwd);
-	const namePrefix = `${restoreKey}-`;
-	let removed = 0;
-	for (const directory of getManagedRestoreSessionsDirectories(root)) {
-		let entries;
-		try {
-			entries = readdirSync(directory, { withFileTypes: true });
-		} catch {
+	const staleBefore = Date.now() - OWNED_RESTORE_SNAPSHOT_MAX_AGE_MS;
+	const snapshots: Array<{ mtimeMs: number; path: string }> = [];
+	for (const recordedPath of options.restoreState.getOwnedSnapshotPaths()) {
+		const path = validateOwnedSnapshotPath({ cwd: options.cwd, home, namespace: options.namespace, path: recordedPath });
+		if (!path) {
+			if (!isAbsolute(recordedPath) || dirname(resolve(recordedPath)) === directory) options.restoreState.forgetOwnedSnapshotPath(recordedPath);
 			continue;
 		}
-		const families = new Map<string, { mtimeMs: number; paths: string[] }>();
-		for (const entry of entries) {
-			if (!entry.isFile() || !entry.name.startsWith(namePrefix) || !/\.json(?:\.enc)?(?:\.previous)?$/.test(entry.name)) continue;
-			const path = join(directory, entry.name);
-			try {
-				const fileEntry = lstatSync(path);
-				if (fileEntry.isSymbolicLink() || !fileEntry.isFile()) continue;
-				const familyName = entry.name.endsWith(".previous") ? entry.name.slice(0, -".previous".length) : entry.name;
-				const family = families.get(familyName) ?? { mtimeMs: 0, paths: [] };
-				family.mtimeMs = Math.max(family.mtimeMs, fileEntry.mtimeMs);
-				family.paths.push(path);
-				families.set(familyName, family);
-			} catch {
-				continue;
-			}
+		try {
+			snapshots.push({ mtimeMs: lstatSync(path).mtimeMs, path });
+		} catch {
+			options.restoreState.forgetOwnedSnapshotPath(path);
 		}
-		const staleBefore = Date.now() - OWNED_RESTORE_SNAPSHOT_MAX_AGE_MS;
-		const staleFamilies = [...families.values()]
-			.sort((left, right) => right.mtimeMs - left.mtimeMs)
-			.slice(OWNED_RESTORE_SNAPSHOT_FAMILIES_TO_KEEP)
-			.filter((family) => family.mtimeMs < staleBefore);
-		for (const family of staleFamilies) {
-			for (const path of family.paths) {
-				try {
-					const current = lstatSync(path);
-					if (current.isSymbolicLink() || !current.isFile() || current.mtimeMs >= staleBefore) continue;
-					unlinkSync(path);
-					removed += 1;
-				} catch {
-					// Best effort after the daemon has closed; a later owned close retries cleanup.
-				}
-			}
+	}
+	let removed = 0;
+	for (const snapshot of snapshots
+		.sort((left, right) => right.mtimeMs - left.mtimeMs)
+		.slice(OWNED_RESTORE_SNAPSHOT_FAMILIES_TO_KEEP)) {
+		if (snapshot.mtimeMs >= staleBefore) continue;
+		try {
+			const current = lstatSync(snapshot.path);
+			if (current.isSymbolicLink() || !current.isFile() || current.mtimeMs >= staleBefore) continue;
+			unlinkSync(snapshot.path);
+			options.restoreState.forgetOwnedSnapshotPath(snapshot.path);
+			removed += 1;
+		} catch {
+			// Best effort after the daemon has closed; a later owned close retries cleanup.
 		}
 	}
 	return removed;

@@ -915,8 +915,18 @@ export async function closeManagedSession(options: { cwd: string; namespace?: st
 		// close always targets a wrapper-owned managed session
 		stdoutSpillPath = processResult.stdoutSpillPath;
 		if (!processResult.aborted && !processResult.spawnError && processResult.exitCode === 0) {
+			const parsed = await parseAgentBrowserEnvelope({
+				stdout: processResult.stdout,
+				stdoutPath: processResult.stdoutSpillPath,
+			});
+			const data = parsed.envelope?.success === true && isRecord(parsed.envelope.data) ? parsed.envelope.data : undefined;
 			options.restoreState.clear(options.sessionName, options.namespace);
-			pruneOwnedManagedSessionRestoreSnapshots(options.cwd);
+			pruneOwnedManagedSessionRestoreSnapshots({
+				cwd: options.cwd,
+				namespace: options.namespace,
+				restoreState: options.restoreState,
+				statePath: typeof data?.statePath === "string" ? data.statePath : undefined,
+			});
 		}
 		return getAgentBrowserErrorText({
 			aborted: processResult.aborted,

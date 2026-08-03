@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
+import { ManagedSessionRestoreState } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import {
 	buildAgentBrowserProcessEnv,
 	buildAgentBrowserSpawnCommand,
@@ -529,7 +530,9 @@ test("agentBrowserExtension removes oversized close stdout spill after fresh-ses
 		tempDir,
 		`const args = process.argv.slice(2);
 const isClose = args.includes("close");
-if (isClose) {
+if (args.includes("session") && args.includes("info")) {
+	process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
+} else if (isClose) {
 	process.stdout.write(JSON.stringify({ success: true, data: { closed: true, payload: "x".repeat(700000) } }));
 } else {
 	process.stdout.write(JSON.stringify({ success: true, data: { title: "OK", url: "https://example.com/" } }));
@@ -603,6 +606,26 @@ if (isNavigationSummaryHelper) {
 	} finally {
 		await cleanupSecureTempArtifacts();
 		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
+	}
+});
+
+test("runAgentBrowserProcess pins owned managed subprocesses to the default namespace", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-namespace-env-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write(JSON.stringify({ success: true, data: { namespace: process.env.AGENT_BROWSER_NAMESPACE ?? null } }));`);
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected", HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
+			const processResult = await runAgentBrowserProcess({
+				args: ["--session", "piab-managed", "close"],
+				cwd: tempDir,
+				managedSessionRestoreState: new ManagedSessionRestoreState(),
+				ownedManagedSession: true,
+			});
+			const parsed = await parseAgentBrowserEnvelope(processResult.stdout);
+			assert.equal((parsed.envelope?.data as { namespace?: string }).namespace, "");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 

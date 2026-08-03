@@ -436,7 +436,12 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		managedSessionNamespace = managedSessionState.namespace;
 		if (commandClosesSession && succeeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
 			state.managedSessionRestoreState.clear(managedCloseSessionName, priorManagedSessionNamespace);
-			pruneOwnedManagedSessionRestoreSnapshots(cwd);
+			pruneOwnedManagedSessionRestoreSnapshots({
+				cwd,
+				namespace: priorManagedSessionNamespace,
+				restoreState: state.managedSessionRestoreState,
+				statePath: typeof presentationDataRecord?.statePath === "string" ? presentationDataRecord.statePath : undefined,
+			});
 			freshSessionOrdinal += 1;
 			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, freshSessionOrdinal);
 			managedSessionNamespace = undefined;

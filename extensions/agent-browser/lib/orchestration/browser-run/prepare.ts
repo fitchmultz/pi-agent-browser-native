@@ -1,10 +1,11 @@
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { canonicalizeAgentBrowserNamespace } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
+import { isRecord } from "../../parsing.js";
+import { runAgentBrowserProcess } from "../../process.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
 import { tryDirectAnchorDownload } from "./prepare/direct-anchor-download.js";
 import { tryNetworkRequestsPageFilter } from "./prepare/network-page-filter.js";
@@ -12,7 +13,7 @@ import { tryContainerScroll, tryPageScrollTo } from "./prepare/scroll-shims.js";
 import { trySnapshotFilter } from "./prepare/snapshot-filter.js";
 import { commandTimeoutNeedsActivePageUrl, getCommandAwareProcessTimeoutMs } from "./prepare/wait-timeouts.js";
 import { getPersistentSessionArtifactStore } from "./session-artifacts.js";
-import { buildAgentBrowserResultCategoryDetails } from "../../results.js";
+import { buildAgentBrowserResultCategoryDetails, parseAgentBrowserEnvelope } from "../../results.js";
 import { applyNamespaceToNextActions } from "../../results/next-actions.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
 import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-recovery.js";
@@ -379,6 +380,37 @@ export async function resolveSemanticActionVisibleRefArgs(options: {
 	return resolveSemanticActionVisibleRefArgsFromSnapshot(options.compiled, snapshotData);
 }
 
+type ManagedRestoreDaemonStatus = "inactive" | "missing-binary" | "restore-disabled" | "restore-enabled" | "unknown";
+
+async function inspectManagedRestoreDaemon(options: {
+	cwd: string;
+	namespace?: string;
+	sessionName: string;
+	signal?: AbortSignal;
+}): Promise<ManagedRestoreDaemonStatus> {
+	const processResult = await runAgentBrowserProcess({
+		args: ["--json", "--namespace", options.namespace ?? "", "--session", options.sessionName, "session", "info"],
+		cwd: options.cwd,
+		signal: options.signal,
+	});
+	try {
+		if ((processResult.spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return "missing-binary";
+		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) return "unknown";
+		const parsed = await parseAgentBrowserEnvelope({
+			stdout: processResult.stdout,
+			stdoutPath: processResult.stdoutSpillPath,
+		});
+		const data = parsed.parseError || parsed.envelope?.success === false ? undefined : parsed.envelope?.data;
+		if (!isRecord(data) || typeof data.active !== "boolean") return "unknown";
+		if (!data.active) return "inactive";
+		if (!isRecord(data.runtime)) return "unknown";
+		if (typeof data.runtime.restoreKey === "string" && data.runtime.restoreKey.length > 0) return "restore-enabled";
+		return data.runtime.restoreKey === null ? "restore-disabled" : "unknown";
+	} finally {
+		if (processResult.stdoutSpillPath) await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
+	}
+}
+
 export async function prepareBrowserRun(options: BrowserRunOptions): Promise<PrepareBrowserRunResult> {
 	const { cwd, onUpdate, params, signal, state } = options;
 	const { sessionPageState, traceOwners, managedSessionBaseName, ephemeralSessionSeed } = state;
@@ -454,22 +486,23 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		stdin: runtimeToolStdin,
 		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround?.id === "chatgpt-headless-user-agent",
 	});
-	const currentManagedSessionNamespace = canonicalizeAgentBrowserNamespace(state.managedSessionNamespace);
-	const reusesCurrentManagedRestoreDaemon = state.managedSessionActive &&
-		!state.managedSessionRestoreState.isDisabled(state.managedSessionName, currentManagedSessionNamespace) &&
-		ownedManagedSession?.restoreSuppressed === true &&
-		ownedManagedSession.sessionName === state.managedSessionName &&
-		ownedManagedSession.namespace === currentManagedSessionNamespace &&
-		!isCloseCommand(executionPlan.commandInfo.command);
-	if (reusesCurrentManagedRestoreDaemon) {
-		executionPlan = {
-			...executionPlan,
-			recoveryHint: undefined,
-			validationError: [
-				"This call would apply incompatible launch, config, or storage policy to the active wrapper-owned managed session while its browser daemon may still retain managed restore state.",
-				"Close the current managed session first, retry without an explicit --session using sessionMode: \"fresh\", or use a distinct explicit --session.",
-			].join(" "),
-		};
+	if (!executionPlan.validationError && ownedManagedSession?.restoreSuppressed === true && !isCloseCommand(executionPlan.commandInfo.command)) {
+		const daemonStatus = await inspectManagedRestoreDaemon({
+			cwd,
+			namespace: ownedManagedSession.namespace,
+			sessionName: ownedManagedSession.sessionName,
+			signal,
+		});
+		if (daemonStatus === "restore-enabled" || daemonStatus === "unknown") {
+			executionPlan = {
+				...executionPlan,
+				recoveryHint: undefined,
+				validationError: [
+					"This call would apply incompatible launch, config, or storage policy to a wrapper-owned managed session because a daemon may still retain managed restore state.",
+					"Close that managed session first, retry without an explicit --session using sessionMode: \"fresh\", or use a distinct explicit --session.",
+				].join(" "),
+			};
+		}
 	}
 	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		const managedSessionRestoreDisabled = () => state.managedSessionRestoreState.isDisabled(executionPlan.sessionName, executionPlan.namespace);

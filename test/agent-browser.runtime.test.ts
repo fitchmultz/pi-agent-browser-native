@@ -1237,6 +1237,14 @@ test("buildExecutionPlan only treats the last exact lowercase auto-connect false
 	});
 	assert.match(lastEnabled.validationError ?? "", /launch-scoped flags.*--auto-connect/i);
 
+	const unsupportedEqualsDoesNotDisable = buildExecutionPlan(["--auto-connect", "open", "https://example.com", "--auto-connect=false"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.match(unsupportedEqualsDoesNotDisable.validationError ?? "", /launch-scoped flags.*--auto-connect/i);
+
 	const lastDisabled = buildExecutionPlan(["--auto-connect", "--auto-connect", "false", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: true,

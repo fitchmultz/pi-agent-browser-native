@@ -122,10 +122,6 @@ export function isBooleanFlagEnabled(args: string[], flag: string): boolean {
 			if (["true", "false"].includes(args[index + 1] ?? "")) index += 1;
 			continue;
 		}
-		if (token.startsWith(`${flag}=`)) {
-			enabled = token.slice(flag.length + 1) !== "false";
-			continue;
-		}
 		if (PREVALIDATED_VALUE_FLAGS.has(token)) {
 			index += 1;
 			continue;
@@ -155,6 +151,11 @@ export function canonicalizeAgentBrowserNamespace(value: string | undefined): st
 		}
 	}
 	return normalized.replace(/[-_]+$/u, "") || undefined;
+}
+
+export function getAgentBrowserSessionIdentityKey(sessionName: string, namespace?: string): string {
+	const canonicalNamespace = canonicalizeAgentBrowserNamespace(namespace);
+	return canonicalNamespace ? `${canonicalNamespace}\0${sessionName}` : sessionName;
 }
 
 /** Mirror upstream 0.33.2 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
