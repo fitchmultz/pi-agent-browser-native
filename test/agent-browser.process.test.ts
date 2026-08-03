@@ -18,8 +18,10 @@ import {
 	buildAgentBrowserSpawnCommand,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
+	isWindowsAgentBrowserCommandMissing,
 	reorderWindowsLeadingGlobalArgs,
 	resolveSpawnedChildExitCode,
+	shouldCommitManagedRestoreAfterWindowsProcess,
 	runAgentBrowserProcess,
 } from "../extensions/agent-browser/lib/process.js";
 import {
@@ -121,10 +123,20 @@ test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
 		buildAgentBrowserSpawnCommand(["--json", "--session", "managed", "open", "https://example.com"], "win32"),
 		{
 			command: "powershell.exe",
-			args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "& agent-browser.cmd 'open' '--json' '--session' 'managed' 'https://example.com'"],
+			args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue; if (-not $agentBrowser) { [Console]::Error.WriteLine('PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd'); exit 127 }; & $agentBrowser.Source 'open' '--json' '--session' 'managed' 'https://example.com'"],
 		},
 	);
 	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
+});
+
+test("Windows managed restore commit excludes PowerShell command-not-found wrappers", () => {
+	const missing = "& : The term 'agent-browser.cmd' is not recognized as the name of a cmdlet. CategoryInfo: ObjectNotFound CommandNotFoundException";
+	assert.equal(isWindowsAgentBrowserCommandMissing(missing), true);
+	assert.equal(isWindowsAgentBrowserCommandMissing("PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd"), true);
+	assert.equal(shouldCommitManagedRestoreAfterWindowsProcess({ exitCode: 1, stderr: missing }), false);
+	assert.equal(shouldCommitManagedRestoreAfterWindowsProcess({ exitCode: 1, stderr: "selector not found" }), true);
+	assert.equal(shouldCommitManagedRestoreAfterWindowsProcess({ exitCode: 0, stderr: "" }), true);
+	assert.equal(shouldCommitManagedRestoreAfterWindowsProcess({ exitCode: 127, spawnError: new Error("spawn powershell ENOENT"), stderr: "" }), false);
 });
 
 test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is win32", async () => {

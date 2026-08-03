@@ -110,13 +110,51 @@ export interface UpstreamGlobalFlagOccurrence {
 	value?: string;
 }
 
-/** Match upstream's case-sensitive boolean semantics; only the exact value `false` disables a present flag. */
+const SESSION_COMPONENT_ALPHANUMERIC = /^[\p{Alphabetic}\p{Number}]$/u;
+
+/** Match upstream's last-wins, case-sensitive boolean semantics; only exact `false` disables a present flag. */
 export function isBooleanFlagEnabled(args: string[], flag: string): boolean {
-	for (const [index, token] of args.entries()) {
-		if (token === flag) return args[index + 1] !== "false";
-		if (token.startsWith(`${flag}=`)) return token.slice(flag.length + 1) !== "false";
+	let enabled = false;
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index];
+		if (token === flag) {
+			enabled = args[index + 1] !== "false";
+			if (["true", "false"].includes(args[index + 1] ?? "")) index += 1;
+			continue;
+		}
+		if (token.startsWith(`${flag}=`)) {
+			enabled = token.slice(flag.length + 1) !== "false";
+			continue;
+		}
+		if (PREVALIDATED_VALUE_FLAGS.has(token)) {
+			index += 1;
+			continue;
+		}
+		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token) && ["true", "false"].includes(args[index + 1] ?? "")) index += 1;
 	}
-	return false;
+	return enabled;
+}
+
+/** Mirror upstream sanitize_session_component for namespace/socket/state identity. */
+export function canonicalizeAgentBrowserNamespace(value: string | undefined): string | undefined {
+	if (value === undefined) return undefined;
+	let normalized = "";
+	let lastWasSeparator = false;
+	for (const character of value) {
+		if (SESSION_COMPONENT_ALPHANUMERIC.test(character)) {
+			normalized += character.toLowerCase();
+			lastWasSeparator = false;
+		} else if (character === "-" || character === "_") {
+			if (normalized && !lastWasSeparator) {
+				normalized += character;
+				lastWasSeparator = true;
+			}
+		} else if (normalized && !lastWasSeparator) {
+			normalized += "-";
+			lastWasSeparator = true;
+		}
+	}
+	return normalized.replace(/[-_]+$/u, "") || undefined;
 }
 
 /** Mirror upstream 0.33.2 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
@@ -143,7 +181,7 @@ export function extractExplicitSessionName(args: string[]): string | undefined {
 }
 
 export function extractExplicitNamespace(args: string[]): string | undefined {
-	return scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value;
+	return canonicalizeAgentBrowserNamespace(scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value);
 }
 
 export function getFlagName(token: string): string {

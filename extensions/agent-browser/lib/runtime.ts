@@ -18,6 +18,7 @@ import {
 	type CommandInfo,
 } from "./argv-descriptor.js";
 import {
+	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
 	extractExplicitSessionName,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
@@ -466,7 +467,9 @@ export function resolveManagedSessionState(options: {
 	priorSessionName: string;
 	succeeded: boolean;
 }): ManagedSessionState {
-	const { command, managedSessionName, managedSessionNamespace, priorActive, priorNamespace, priorSessionName, succeeded } = options;
+	const { command, managedSessionName, priorActive, priorSessionName, succeeded } = options;
+	const managedSessionNamespace = canonicalizeAgentBrowserNamespace(options.managedSessionNamespace);
+	const priorNamespace = canonicalizeAgentBrowserNamespace(options.priorNamespace);
 	if (!managedSessionName) {
 		return { active: priorActive, ...(priorNamespace ? { namespace: priorNamespace } : {}), sessionName: priorSessionName };
 	}
@@ -539,7 +542,7 @@ export function restoreManagedSessionStateFromBranch(
 	fallbackSessionName: string,
 ): RestoredManagedSessionState {
 	const restoreDisabledIdentities = new Map<string, ManagedSessionRestoreIdentity>();
-	const restoreIdentityKey = (sessionName: string, namespace?: string) => `${namespace ?? ""}\0${sessionName}`;
+	const restoreIdentityKey = (sessionName: string, namespace?: string) => `${canonicalizeAgentBrowserNamespace(namespace) ?? ""}\0${sessionName}`;
 	let restoredState: ManagedSessionState = {
 		active: false,
 		sessionName: fallbackSessionName,
@@ -550,6 +553,7 @@ export function restoreManagedSessionStateFromBranch(
 	const freshSessionRanks = new Map<string, number>();
 
 	const applyManagedClose = (sessionName: string, namespace?: string): void => {
+		namespace = canonicalizeAgentBrowserNamespace(namespace);
 		const restoreRank = getManagedSessionRestoreRank({
 			fallbackSessionName,
 			freshSessionRanks,
@@ -583,7 +587,7 @@ export function restoreManagedSessionStateFromBranch(
 
 		const explicitSessionName = extractExplicitSessionName(args);
 		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
-		const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
+		const namespace = canonicalizeAgentBrowserNamespace(typeof details.namespace === "string" ? details.namespace : undefined);
 		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
 		const usedImplicitSession = details.usedImplicitSession === true;
 		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
@@ -914,8 +918,10 @@ export function buildExecutionPlan(
 ): ExecutionPlan {
 	const invalidValueFlag = getInvalidValueFlagDetails(args);
 	const unsupportedIdentityAssignment = getUnsupportedLeadingIdentityAssignment(args);
+	const explicitNamespacePresent = scanUpstreamGlobalFlagOccurrences(args, "--namespace").length > 0;
 	const explicitNamespace = extractExplicitNamespace(args);
-	const startupScopedFlags = getStartupScopedFlags(args).filter((flag) => !(flag === "--namespace" && explicitNamespace === options.managedSessionNamespace));
+	const managedSessionNamespace = canonicalizeAgentBrowserNamespace(options.managedSessionNamespace);
+	const startupScopedFlags = getStartupScopedFlags(args).filter((flag) => !(flag === "--namespace" && explicitNamespacePresent && explicitNamespace === managedSessionNamespace));
 	const plainTextInspection = isPlainTextInspectionArgs(args);
 	const argvDescriptor = parseArgvDescriptor(args);
 	const commandInfo = argvDescriptor.commandInfo;
@@ -975,8 +981,8 @@ export function buildExecutionPlan(
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && !isCloseCommand(commandInfo.command);
 	let argsToAppend = args;
 	const compatibilityWorkaround = getCompatibilityWorkaround(args, commandInfo);
-	if (explicitSessionName && explicitNamespace) {
-		effectiveArgs.push("--namespace", explicitNamespace);
+	if (explicitSessionName && explicitNamespacePresent) {
+		if (explicitNamespace) effectiveArgs.push("--namespace", explicitNamespace);
 		argsToAppend = stripExplicitNamespaceArgs(args);
 	}
 	let managedSessionName: string | undefined;
@@ -999,10 +1005,10 @@ export function buildExecutionPlan(
 				"Retry this call with `sessionMode: \"fresh\"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.",
 			].join(" ");
 		} else {
-			namespace = explicitNamespace ?? options.managedSessionNamespace;
+			namespace = explicitNamespacePresent ? explicitNamespace : managedSessionNamespace;
 			if (namespace) effectiveArgs.push("--namespace", namespace);
 			effectiveArgs.push("--session", options.managedSessionName);
-			if (explicitNamespace) argsToAppend = stripExplicitNamespaceArgs(args);
+			if (explicitNamespacePresent) argsToAppend = stripExplicitNamespaceArgs(args);
 			managedSessionName = options.managedSessionName;
 			sessionName = options.managedSessionName;
 			usedImplicitSession = true;
@@ -1010,7 +1016,7 @@ export function buildExecutionPlan(
 	} else if (shouldCreateFreshManagedSession && commandNeedsManagedSession) {
 		if (namespace) effectiveArgs.push("--namespace", namespace);
 		effectiveArgs.push("--session", options.freshSessionName);
-		if (explicitNamespace) argsToAppend = stripExplicitNamespaceArgs(args);
+		if (explicitNamespacePresent) argsToAppend = stripExplicitNamespaceArgs(args);
 		managedSessionName = options.freshSessionName;
 		sessionName = options.freshSessionName;
 	}

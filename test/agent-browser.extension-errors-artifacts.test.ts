@@ -86,9 +86,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", u
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["open", "https://example.com"],
+				args: ["--namespace", "Team", "open", "https://example.com"],
 			});
 			assert.equal(opened.isError, false, JSON.stringify(opened));
+			assert.equal(opened.details?.namespace, "team");
 			const sessionName = String(opened.details?.sessionName ?? "");
 			assert.match(sessionName, /^piab-/);
 			const openInvocations = await readInvocationLog(logPath);
@@ -103,8 +104,21 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", u
 			assert.equal((chatGptInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
 			const invocationCount = afterChatGptOpen.length;
 
+			for (const params of [
+				{
+					args: ["batch"],
+					stdin: JSON.stringify([["connect", "wss://remote.example/devtools/browser/test"], ["snapshot", "-i"]]),
+				},
+				{ args: ["batch", "connect wss://remote.example/devtools/browser/test"] },
+			]) {
+				const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
+				assert.equal(blockedBatch.isError, true);
+				assert.match(String(blockedBatch.details?.validationError ?? ""), /daemon may still retain managed restore state/);
+				assert.equal((await readInvocationLog(logPath)).length, invocationCount);
+			}
+
 			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", sessionName, "--cdp", "http://127.0.0.1:9222", "open", "https://example.com"],
+				args: ["--namespace", "team", "--session", sessionName, "--cdp", "http://127.0.0.1:9222", "open", "https://example.com"],
 			});
 			assert.equal(blocked.isError, true);
 			assert.equal(blocked.details?.failureCategory, "validation-error");

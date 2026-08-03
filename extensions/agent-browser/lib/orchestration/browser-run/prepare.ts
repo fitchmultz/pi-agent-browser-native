@@ -1,6 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+import { canonicalizeAgentBrowserNamespace } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
@@ -450,13 +451,15 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		namespace: executionPlan.namespace,
 		restoreState: state.managedSessionRestoreState,
 		sessionName: executionPlan.sessionName,
+		stdin: runtimeToolStdin,
 		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround?.id === "chatgpt-headless-user-agent",
 	});
+	const currentManagedSessionNamespace = canonicalizeAgentBrowserNamespace(state.managedSessionNamespace);
 	const reusesCurrentManagedRestoreDaemon = state.managedSessionActive &&
-		!state.managedSessionRestoreState.isDisabled(state.managedSessionName, state.managedSessionNamespace) &&
+		!state.managedSessionRestoreState.isDisabled(state.managedSessionName, currentManagedSessionNamespace) &&
 		ownedManagedSession?.restoreSuppressed === true &&
 		ownedManagedSession.sessionName === state.managedSessionName &&
-		(ownedManagedSession.namespace ?? "") === (state.managedSessionNamespace ?? "") &&
+		ownedManagedSession.namespace === currentManagedSessionNamespace &&
 		!isCloseCommand(executionPlan.commandInfo.command);
 	if (reusesCurrentManagedRestoreDaemon) {
 		executionPlan = {

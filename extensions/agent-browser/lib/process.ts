@@ -28,6 +28,7 @@ export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
+const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd";
 
 export interface ProcessRunResult {
 	aborted: boolean;
@@ -78,8 +79,30 @@ export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.P
 	if (platform !== "win32") {
 		return { command: "agent-browser", args };
 	}
-	const commandLine = ["&", "agent-browser.cmd", ...reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg)].join(" ");
+	const invocationArgs = reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg).join(" ");
+	const commandLine = [
+		"$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue;",
+		`if (-not $agentBrowser) { [Console]::Error.WriteLine('${WINDOWS_AGENT_BROWSER_MISSING_MARKER}'); exit 127 };`,
+		`& $agentBrowser.Source ${invocationArgs}`.trimEnd(),
+	].join(" ");
 	return { command: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", commandLine] };
+}
+
+export function isWindowsAgentBrowserCommandMissing(stderr: string): boolean {
+	const normalized = stderr.toLowerCase();
+	return normalized.includes(WINDOWS_AGENT_BROWSER_MISSING_MARKER.toLowerCase()) || (normalized.includes("agent-browser.cmd") && (
+		normalized.includes("commandnotfoundexception") ||
+		normalized.includes("not recognized as the name of a cmdlet") ||
+		normalized.includes("not recognized as an internal or external command")
+	));
+}
+
+export function shouldCommitManagedRestoreAfterWindowsProcess(input: {
+	exitCode: number;
+	spawnError?: Error;
+	stderr: string;
+}): boolean {
+	return !input.spawnError && !(input.exitCode !== 0 && isWindowsAgentBrowserCommandMissing(input.stderr));
 }
 
 function terminateSpawnedChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
@@ -256,6 +279,7 @@ export async function runAgentBrowserProcess(options: {
 		env,
 		ownedManagedSession,
 		restoreState: managedSessionRestoreState,
+		stdin,
 	};
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
@@ -341,6 +365,12 @@ export async function runAgentBrowserProcess(options: {
 				if (stdoutSpillHandle) {
 					await stdoutSpillHandle.close().catch(() => undefined);
 				}
+				const windowsMissingBinary = processPlatform === "win32" && exitCode !== 0 && isWindowsAgentBrowserCommandMissing(stderr);
+				if (windowsMissingBinary && !spawnError) {
+					spawnError = Object.assign(new Error("spawn agent-browser ENOENT"), { code: "ENOENT" });
+				} else if (processPlatform === "win32" && shouldCommitManagedRestoreAfterWindowsProcess({ exitCode, spawnError, stderr })) {
+					commitManagedSessionRestoreSuppression(managedSessionRestoreOptions);
+				}
 				if (!spawnError && stdoutSpillError) {
 					spawnError = stdoutSpillError;
 				}
@@ -365,7 +395,9 @@ export async function runAgentBrowserProcess(options: {
 			env: buildAgentBrowserProcessEnv(processEnv, effectiveEnv),
 			stdio: ["pipe", "pipe", "pipe"],
 		});
-		child.once("spawn", () => commitManagedSessionRestoreSuppression(managedSessionRestoreOptions));
+		if (processPlatform !== "win32") {
+			child.once("spawn", () => commitManagedSessionRestoreSuppression(managedSessionRestoreOptions));
+		}
 
 		const terminateChild = (reason: "abort" | "timeout") => {
 			if (settled) return;

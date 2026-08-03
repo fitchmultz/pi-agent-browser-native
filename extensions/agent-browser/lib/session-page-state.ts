@@ -6,6 +6,7 @@
  * Invariants/Assumptions: One tool-call update token must govern all page-state observations from that invocation; stale overlapping updates must not overwrite newer state.
  */
 
+import { canonicalizeAgentBrowserNamespace } from "./argv-grammar.js";
 import { isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
@@ -375,7 +376,8 @@ function stripRefSnapshotInvalidationOrder(invalidation: OrderedSessionRefSnapsh
 
 export function getSessionPageStateKey(sessionName: string | undefined, namespace?: string): string | undefined {
 	if (!sessionName) return undefined;
-	return namespace ? `${namespace}\u0000${sessionName}` : sessionName;
+	const canonicalNamespace = canonicalizeAgentBrowserNamespace(namespace);
+	return canonicalNamespace ? `${canonicalNamespace}\u0000${sessionName}` : sessionName;
 }
 
 export class SessionPageState {

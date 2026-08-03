@@ -15,6 +15,7 @@ import {
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
 	extractSessionTabTargetFromCommandData,
+	getSessionPageStateKey,
 } from "../extensions/agent-browser/lib/session-page-state.js";
 
 function toolEntry(details: Record<string, unknown>, isError = false): unknown {
@@ -29,6 +30,7 @@ function toolEntry(details: Record<string, unknown>, isError = false): unknown {
 }
 
 test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidations, and restore pinning", () => {
+	assert.equal(getSessionPageStateKey("session", "Team"), getSessionPageStateKey("session", "team"));
 	const state = SessionPageState.fromBranch([
 		toolEntry({
 			command: "snapshot",

@@ -10,8 +10,9 @@ import { chmodSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { parseCommandInfo } from "./argv-descriptor.js";
+import { extractCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
 import {
+	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
 	extractExplicitSessionName,
 	scanUpstreamGlobalFlagOccurrences,
@@ -22,6 +23,7 @@ import {
 	MANAGED_RESTORE_INCOMPATIBLE_ENVS,
 	MANAGED_RESTORE_INCOMPATIBLE_FLAGS,
 } from "./launch-scoped-flags.js";
+import { parseUserBatchStdin } from "./orchestration/batch-stdin.js";
 
 const AGENT_BROWSER_RESTORE_ENV = "AGENT_BROWSER_RESTORE";
 const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE";
@@ -63,7 +65,8 @@ export function createManagedSessionRestoreKey(cwd: string): string {
 }
 
 function managedSessionIdentityKey(sessionName: string, namespace?: string): string {
-	return namespace ? `${namespace}\0${sessionName}` : sessionName;
+	const canonicalNamespace = canonicalizeAgentBrowserNamespace(namespace);
+	return canonicalNamespace ? `${canonicalNamespace}\0${sessionName}` : sessionName;
 }
 
 export interface ManagedSessionRestoreIdentity {
@@ -124,14 +127,16 @@ export function resolveOwnedManagedSessionContext(options: {
 	sessionName?: string;
 }): OwnedManagedSessionContext | undefined {
 	const contextFields = { restoreState: options.restoreState };
-	if (options.managedSessionName) return { ...contextFields, namespace: options.namespace, sessionName: options.managedSessionName };
+	const namespace = canonicalizeAgentBrowserNamespace(options.namespace);
+	const currentManagedSessionNamespace = canonicalizeAgentBrowserNamespace(options.currentManagedSessionNamespace);
+	if (options.managedSessionName) return { ...contextFields, namespace, sessionName: options.managedSessionName };
 	if (
 		options.sessionName &&
 		options.currentManagedSessionName &&
 		options.sessionName === options.currentManagedSessionName &&
-		(options.namespace ?? undefined) === (options.currentManagedSessionNamespace ?? undefined)
+		namespace === currentManagedSessionNamespace
 	) {
-		return { ...contextFields, namespace: options.namespace, sessionName: options.sessionName };
+		return { ...contextFields, namespace, sessionName: options.sessionName };
 	}
 	return undefined;
 }
@@ -139,7 +144,7 @@ export function resolveOwnedManagedSessionContext(options: {
 function ownedContextMatches(sessionName: string | undefined, namespace: string | undefined): OwnedManagedSessionContext | undefined {
 	const owned = ownedManagedSessionStorage.getStore();
 	if (!owned || !sessionName) return undefined;
-	if (owned.sessionName !== sessionName || (owned.namespace ?? undefined) !== (namespace ?? undefined)) return undefined;
+	if (owned.sessionName !== sessionName || owned.namespace !== canonicalizeAgentBrowserNamespace(namespace)) return undefined;
 	return owned;
 }
 
@@ -175,10 +180,26 @@ function hasValidEncryptionKey(parentEnv: NodeJS.ProcessEnv): boolean {
 	return typeof value === "string" && /^[a-f\d]{64}$/i.test(value);
 }
 
-/** Require the upstream 256-bit key format and ensure its state parent has owner-only permissions. */
+function ensureOwnerOnlyDirectory(path: string): boolean {
+	try {
+		mkdirSync(path, { recursive: true, mode: 0o700 });
+		let entry = lstatSync(path);
+		if (entry.isSymbolicLink() || !entry.isDirectory()) return false;
+		if ((entry.mode & 0o077) !== 0) {
+			chmodSync(path, 0o700);
+			entry = lstatSync(path);
+		}
+		return !entry.isSymbolicLink() && entry.isDirectory() && (entry.mode & 0o077) === 0;
+	} catch {
+		return false;
+	}
+}
+
+/** Require the upstream 256-bit key format and secure every directory that can receive restore snapshots. */
 export function ensureManagedSessionRestoreStorageIsSecure(
 	parentEnv: NodeJS.ProcessEnv = process.env,
 	platform: NodeJS.Platform = process.platform,
+	namespace?: string,
 ): boolean {
 	const encryptionKey = parentEnv.AGENT_BROWSER_ENCRYPTION_KEY;
 	if (encryptionKey !== undefined && !hasValidEncryptionKey(parentEnv)) return false;
@@ -186,15 +207,18 @@ export function ensureManagedSessionRestoreStorageIsSecure(
 	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
 	if (!home) return false;
 	const root = join(home, ".agent-browser");
+	if (!ensureOwnerOnlyDirectory(root)) return false;
+	const canonicalNamespace = canonicalizeAgentBrowserNamespace(namespace);
+	const stateComponents = canonicalNamespace
+		? ["namespaces", canonicalNamespace, "state", "sessions"]
+		: ["sessions"];
+	let path = root;
+	for (const component of stateComponents) {
+		path = join(path, component);
+		if (!ensureOwnerOnlyDirectory(path)) return false;
+	}
 	try {
-		mkdirSync(root, { recursive: true, mode: 0o700 });
-		let rootEntry = lstatSync(root);
-		if (rootEntry.isSymbolicLink() || !rootEntry.isDirectory()) return false;
-		if ((rootEntry.mode & 0o077) !== 0) {
-			chmodSync(root, 0o700);
-			rootEntry = lstatSync(root);
-		}
-		return !rootEntry.isSymbolicLink() && rootEntry.isDirectory() && (rootEntry.mode & 0o077) === 0;
+		return !readdirSync(path, { withFileTypes: true }).some((entry) => entry.isSymbolicLink());
 	} catch {
 		return false;
 	}
@@ -211,8 +235,21 @@ type ManagedSessionRestorePolicyOptions = {
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
 	parentEnv?: NodeJS.ProcessEnv;
+	stdin?: string;
 	wrapperInjectedUserAgent?: boolean;
 };
+
+function batchHasManagedSessionRestoreConflict(args: string[], stdin: string | undefined): boolean {
+	const [command, ...commandArgs] = extractCommandTokens(args);
+	if (command !== "batch") return false;
+	if (commandArgs.some((token) => token !== "--bail")) return true;
+	const parsed = parseUserBatchStdin(stdin);
+	if (parsed.error || !parsed.steps) return false;
+	return parsed.steps.some((step) => {
+		const nestedCommand = parseCommandInfo(step).command;
+		return nestedCommand === "connect" || nestedCommand === "batch";
+	});
+}
 
 function hasManagedSessionRestoreLaunchConflict(options: ManagedSessionRestorePolicyOptions): boolean {
 	const parentEnv = options.parentEnv ?? process.env;
@@ -222,7 +259,7 @@ function hasManagedSessionRestoreLaunchConflict(options: ManagedSessionRestorePo
 	if (MANAGED_RESTORE_INCOMPATIBLE_BOOLEAN_ENVS.some((name) =>
 		isUpstreamEnvFlagEnabled(parentEnv[name]) || isUpstreamEnvFlagEnabled(options.env?.[name]))) return true;
 	if (MANAGED_RESTORE_INCOMPATIBLE_FLAGS.some((flag) => hasLaunchScopedFlagToken(args, flag))) return true;
-	if (parseCommandInfo(args).command === "connect") return true;
+	if (parseCommandInfo(args).command === "connect" || batchHasManagedSessionRestoreConflict(args, options.stdin)) return true;
 	return hasExplicitConfigArg(args) || hasUpstreamEnvValue({ ...parentEnv, ...options.env }, "AGENT_BROWSER_CONFIG");
 }
 
@@ -237,7 +274,7 @@ function isManagedSessionRestoreIncompatible(options: ManagedSessionRestorePolic
 	const effectiveEnv = { ...(options.parentEnv ?? process.env), ...options.env };
 	const args = omitWrapperInjectedUserAgent(options.args, options.wrapperInjectedUserAgent);
 	if (options.cwd && agentBrowserConfigBlocksManagedRestore(options.cwd, effectiveEnv, args)) return true;
-	return !ensureManagedSessionRestoreStorageIsSecure(effectiveEnv);
+	return !ensureManagedSessionRestoreStorageIsSecure(effectiveEnv, process.platform, extractExplicitNamespace(args));
 }
 
 export interface ManagedSessionRestoreEnvOptions {
@@ -247,6 +284,7 @@ export interface ManagedSessionRestoreEnvOptions {
 	ownedManagedSession?: boolean;
 	parentEnv?: NodeJS.ProcessEnv;
 	restoreState?: ManagedSessionRestoreState;
+	stdin?: string;
 }
 
 function resolveManagedSessionRestorePolicy(options: ManagedSessionRestoreEnvOptions) {
@@ -301,6 +339,7 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 	parentEnv?: NodeJS.ProcessEnv;
 	restoreState: ManagedSessionRestoreState;
 	sessionName?: string;
+	stdin?: string;
 	wrapperInjectedUserAgent?: boolean;
 }): OwnedManagedSessionContext | undefined {
 	const owned = resolveOwnedManagedSessionContext(options);
@@ -310,6 +349,7 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 		cwd: options.cwd,
 		env: options.env,
 		parentEnv: options.parentEnv,
+		stdin: options.stdin,
 		wrapperInjectedUserAgent: options.wrapperInjectedUserAgent,
 	};
 	const restoreLaunchConflict = hasManagedSessionRestoreLaunchConflict(policyOptions);

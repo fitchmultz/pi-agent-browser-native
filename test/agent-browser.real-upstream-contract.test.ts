@@ -1,6 +1,6 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse and cross-harness restore persistence, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, nested batch-attachment isolation, cross-harness restore persistence, and symlinked-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -131,6 +131,39 @@ async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?
 		const harness = createExtensionHarness({ cwd: options.cwd });
 		await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "close"] }).catch(() => undefined);
 	});
+}
+
+async function assertRealUpstreamRestoreStorageSymlinkFailsClosed(): Promise<void> {
+	if (process.platform === "win32") return;
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-symlink-"));
+	const socketDir = join(tempDir, "sockets");
+	const targetDir = join(tempDir, "outside-state-target");
+	await mkdir(join(tempDir, ".agent-browser"), { recursive: true, mode: 0o700 });
+	await mkdir(targetDir);
+	await symlink(targetDir, join(tempDir, ".agent-browser", "sessions"), "dir");
+	let sessionName: string | undefined;
+	try {
+		await withPatchedEnv({
+			AGENT_BROWSER_CONFIG: undefined,
+			AGENT_BROWSER_ENCRYPTION_KEY: undefined,
+			AGENT_BROWSER_SOCKET_DIR: socketDir,
+			HOME: tempDir,
+			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
+		}, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"], sessionMode: "fresh" });
+			assert.equal(opened.isError, false, `symlink fail-closed open should succeed without restore: ${opened.content[0]?.text ?? ""}`);
+			assert.equal(opened.details?.managedSessionRestoreDisabled, true);
+			sessionName = typeof opened.details?.sessionName === "string" ? opened.details.sessionName : undefined;
+			const closed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(closed.isError, false, `symlink fail-closed close should succeed: ${closed.content[0]?.text ?? ""}`);
+			sessionName = undefined;
+		});
+		assert.deepEqual(await readdir(targetDir), [], "real upstream must not write restore state through the sessions symlink, including on close");
+	} finally {
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
+		await rm(tempDir, { force: true, recursive: true });
+	}
 }
 
 if (!REAL_UPSTREAM_ENABLED) {
@@ -468,6 +501,19 @@ if (!REAL_UPSTREAM_ENABLED) {
 						stdin: `document.cookie = "piab_restore_cookie=${restoreMarker}; path=/"; localStorage.setItem("piab-restore-local", "${restoreMarker}"); sessionStorage.setItem("piab-restore-session", "${restoreMarker}"); true`,
 					});
 					assertSuccessfulResult(seedRestoreState, shapes.commands.eval, "seed managed restore state");
+					for (const params of [
+						{
+							args: ["batch"],
+							stdin: JSON.stringify([["connect", "wss://remote.example/devtools/browser/test"], ["snapshot", "-i"]]),
+						},
+						{ args: ["batch", "connect wss://remote.example/devtools/browser/test"] },
+					]) {
+						const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
+						assert.equal(blockedBatch.isError, true);
+						assert.equal(blockedBatch.details?.failureCategory, "validation-error");
+						assert.match(String(blockedBatch.details?.validationError ?? ""), /daemon may still retain managed restore state/);
+						assert.equal(blockedBatch.details?.exitCode, undefined, "nested batch attachment must fail before upstream spawn");
+					}
 					const firstClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
 					assert.equal(firstClose.isError, false, `first managed close should persist restore state: ${firstClose.content[0]?.text ?? ""}`);
 
@@ -540,6 +586,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 			await fixtureServer?.close();
 			await rm(tempDir, { force: true, recursive: true });
 		}
+		await assertRealUpstreamRestoreStorageSymlinkFailsClosed();
 	});
 
 	test("real upstream agent-browser plugin list stays sessionless", { timeout: 60_000 }, async () => {
