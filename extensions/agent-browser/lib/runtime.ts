@@ -1,19 +1,15 @@
 /**
  * Purpose: Build safe, deterministic agent-browser invocations and persisted session state for the pi-agent-browser extension.
  * Responsibilities: Validate raw tool arguments, derive extension-managed session names from the pi session identity, restore managed-session state from persisted tool details, redact sensitive invocation text, classify browser-oriented prompts, and build the effective CLI argument list passed to the upstream agent-browser binary.
- * Scope: Runtime-planning helpers only; no subprocess execution. Managed-restore policy may read upstream agent-browser config files for fail-closed incompatibility checks.
+ * Scope: Runtime-planning helpers only; no subprocess execution or filesystem access.
  * Usage: Imported by the extension entrypoint and unit tests before spawning the upstream CLI.
  * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, keeps plain-text inspection stateless,
  * and only injects wrapper-owned flags: `--json`, an extension-managed `--session` when appropriate, the narrow
- * OpenAI/ChatGPT headless compatibility `--user-agent` when that workaround applies, and a cwd-stable
- * `AGENT_BROWSER_RESTORE` key for extension-managed `piab-*` sessions so SSO cookies survive browser relaunches.
+ * OpenAI/ChatGPT headless compatibility `--user-agent` when that workaround applies.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { basename } from "node:path";
 
 import {
 	findCommandStartIndex,
@@ -24,11 +20,23 @@ import {
 import {
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
 	PREVALIDATED_VALUE_FLAGS,
+	VALUE_FLAGS,
 	optionalGlobalValueFlagConsumesNext,
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
-import { LAUNCH_SCOPED_FLAG_DEFINITIONS, LAUNCH_SCOPED_FLAG_LABEL } from "./launch-scoped-flags.js";
+import {
+	hasLaunchScopedFlagToken,
+	LAUNCH_SCOPED_FLAG_DEFINITIONS,
+	LAUNCH_SCOPED_FLAG_LABEL,
+} from "./launch-scoped-flags.js";
+import {
+	clearManagedSessionRestoreDisabled,
+	extractExplicitNamespace,
+	extractExplicitSessionName,
+	MANAGED_SESSION_NAME_PREFIX,
+	markManagedSessionRestoreDisabled,
+} from "./managed-session-restore.js";
 
 export type { CommandInfo } from "./argv-descriptor.js";
 export { extractCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo } from "./argv-descriptor.js";
@@ -37,30 +45,10 @@ import { isRecord } from "./parsing.js";
 
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
-const AGENT_BROWSER_RESTORE_ENV = "AGENT_BROWSER_RESTORE";
-const AGENT_BROWSER_ALLOWED_DOMAINS_ENV = "AGENT_BROWSER_ALLOWED_DOMAINS";
-const AGENT_BROWSER_PROFILE_ENV = "AGENT_BROWSER_PROFILE";
-const AGENT_BROWSER_STATE_ENV = "AGENT_BROWSER_STATE";
-const AGENT_BROWSER_AUTO_CONNECT_ENV = "AGENT_BROWSER_AUTO_CONNECT";
-const AGENT_BROWSER_CDP_ENV = "AGENT_BROWSER_CDP";
-const AGENT_BROWSER_SESSION_NAME_ENV = "AGENT_BROWSER_SESSION_NAME";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
-const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE";
-export const OWNED_MANAGED_SESSION_ENV = "PI_AGENT_BROWSER_OWNED_MANAGED_SESSION";
-const AGENT_BROWSER_PROVIDER_ENV = "AGENT_BROWSER_PROVIDER";
 const DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
-const MANAGED_SESSION_NAME_PREFIX = "piab-";
-const MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH = 32;
-const MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS = [
-	AGENT_BROWSER_ALLOWED_DOMAINS_ENV,
-	AGENT_BROWSER_PROFILE_ENV,
-	AGENT_BROWSER_STATE_ENV,
-	AGENT_BROWSER_CDP_ENV,
-	AGENT_BROWSER_SESSION_NAME_ENV,
-	AGENT_BROWSER_PROVIDER_ENV,
-] as const;
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
 const SENSITIVE_QUERY_PARAM_PATTERN =
@@ -449,301 +437,24 @@ export function getImplicitSessionIdleTimeoutMs(env: NodeJS.ProcessEnv = process
 		DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS;
 }
 
-function isDisabledEnvFlag(value: string | undefined): boolean {
-	if (value === undefined) return false;
-	const normalized = value.trim().toLowerCase();
-	return normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off";
-}
-
-function isEnabledEnvFlag(value: string | undefined): boolean {
-	if (value === undefined) return false;
-	const normalized = value.trim().toLowerCase();
-	if (normalized.length === 0) return false;
-	return !isDisabledEnvFlag(normalized);
-}
-
-function hasNonEmptyEnvValue(env: NodeJS.ProcessEnv | undefined, name: string): boolean {
-	const value = env?.[name];
-	return typeof value === "string" && value.trim().length > 0;
-}
-
-/** Cwd-stable restore key so SSO browser storage survives across Pi chats in the same project. */
-export function createManagedSessionRestoreKey(cwd: string): string {
-	const digest = createHash("sha256").update(`restore:${cwd}`).digest("hex").slice(0, MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH);
-	return `${MANAGED_SESSION_NAME_PREFIX}r-${digest}`;
-}
-
-/** Sessions launched with profile/cdp/state/etc must never gain wrapper restore on later bare follow-ups. */
-const managedSessionsWithRestoreDisabled = new Set<string>();
-
-export type OwnedManagedSessionContext = {
-	namespace?: string;
-	/** Call-scoped only: suppress restore for helper probes without sticky-disabling the session. */
-	restoreSuppressed?: boolean;
-	sessionName: string;
-};
-
-function managedSessionIdentityKey(sessionName: string, namespace?: string): string {
-	return namespace ? `${namespace}\0${sessionName}` : sessionName;
-}
-
-export function markManagedSessionRestoreDisabled(sessionName: string, namespace?: string): void {
-	if (sessionName.trim().length > 0) managedSessionsWithRestoreDisabled.add(managedSessionIdentityKey(sessionName, namespace));
-}
-
-const ownedManagedSessionStorage = new AsyncLocalStorage<OwnedManagedSessionContext | undefined>();
-
-export async function withOwnedManagedSessionContext<T>(
-	context: OwnedManagedSessionContext | undefined,
-	run: () => Promise<T>,
-): Promise<T> {
-	return await ownedManagedSessionStorage.run(context, run);
-}
-
-export function resolveOwnedManagedSessionContext(options: {
-	currentManagedSessionName?: string;
-	currentManagedSessionNamespace?: string;
-	managedSessionName?: string;
-	namespace?: string;
-	sessionName?: string;
-}): OwnedManagedSessionContext | undefined {
-	if (options.managedSessionName) {
-		return { namespace: options.namespace, sessionName: options.managedSessionName };
-	}
-	if (
-		options.sessionName &&
-		options.currentManagedSessionName &&
-		options.sessionName === options.currentManagedSessionName &&
-		(options.namespace ?? undefined) === (options.currentManagedSessionNamespace ?? undefined)
-	) {
-		return { namespace: options.namespace, sessionName: options.sessionName };
-	}
-	return undefined;
-}
-
-/** @deprecated Use resolveOwnedManagedSessionContext */
-export function resolveOwnedManagedSessionName(options: {
-	currentManagedSessionName?: string;
-	currentManagedSessionNamespace?: string;
-	managedSessionName?: string;
-	namespace?: string;
-	sessionName?: string;
-}): string | undefined {
-	return resolveOwnedManagedSessionContext(options)?.sessionName;
-}
-
-export function clearManagedSessionRestoreDisabled(sessionName?: string, namespace?: string): void {
-	if (sessionName) managedSessionsWithRestoreDisabled.delete(managedSessionIdentityKey(sessionName, namespace));
-	else managedSessionsWithRestoreDisabled.clear();
-}
-
-export function isManagedSessionRestoreDisabled(sessionName: string | undefined, namespace?: string): boolean {
-	return typeof sessionName === "string" && managedSessionsWithRestoreDisabled.has(managedSessionIdentityKey(sessionName, namespace));
-}
-
-function disableManagedSessionRestore(sessionName: string | undefined, namespace?: string): void {
-	if (sessionName) markManagedSessionRestoreDisabled(sessionName, namespace);
-}
-
-function countExplicitSessionFlags(args: string[]): number {
+function countExplicitGlobalFlags(args: string[], targetFlag: "--namespace" | "--session"): number {
 	let count = 0;
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
-		if (token === "--session") {
+		if (token === "--") break;
+		if (token === targetFlag) {
 			count += 1;
 			index += 1;
 			continue;
 		}
-		if (token.startsWith("--session=")) count += 1;
+		if (token.startsWith(`${targetFlag}=`)) {
+			count += 1;
+			continue;
+		}
+		const flag = token.split("=", 1)[0] ?? token;
+		if (!token.includes("=") && (VALUE_FLAGS.has(flag) || optionalGlobalValueFlagConsumesNext(flag, args[index + 1]))) index += 1;
 	}
 	return count;
-}
-
-function ownedContextMatches(sessionName: string | undefined, namespace: string | undefined): OwnedManagedSessionContext | undefined {
-	const owned = ownedManagedSessionStorage.getStore();
-	if (!owned || !sessionName) return undefined;
-	if (owned.sessionName !== sessionName || (owned.namespace ?? undefined) !== (namespace ?? undefined)) return undefined;
-	return owned;
-}
-
-const MANAGED_SESSION_RESTORE_INCOMPATIBLE_CONFIG_KEYS = [
-	"allowedDomains",
-	"allowed_domains",
-	"autoConnect",
-	"auto_connect",
-	"cdp",
-	"profile",
-	"provider",
-	"restore",
-	"sessionName",
-	"session_name",
-	"state",
-] as const;
-
-function configValueIsSet(value: unknown): boolean {
-	if (value === undefined || value === null || value === false) return false;
-	if (typeof value === "string") return value.trim().length > 0;
-	if (Array.isArray(value)) return value.length > 0;
-	return true;
-}
-
-function agentBrowserConfigObjectIncompatible(value: unknown): boolean {
-	if (!isRecord(value)) return false;
-	for (const key of MANAGED_SESSION_RESTORE_INCOMPATIBLE_CONFIG_KEYS) {
-		if (configValueIsSet(value[key])) return true;
-	}
-	return false;
-}
-
-function agentBrowserConfigFileIncompatible(path: string, failClosed = false): boolean {
-	try {
-		const raw = readFileSync(path, "utf8");
-		return agentBrowserConfigObjectIncompatible(JSON.parse(raw) as unknown);
-	} catch {
-		return failClosed;
-	}
-}
-
-function getExplicitConfigPaths(args: string[], cwd: string): string[] {
-	const paths: string[] = [];
-	const commandStart = findCommandStartIndex(args) ?? args.length;
-	for (let index = 0; index < commandStart; index += 1) {
-		const token = args[index];
-		if (token === "--config") {
-			const value = args[index + 1];
-			if (value) paths.push(isAbsolute(value) ? value : join(cwd, value));
-			index += 1;
-		} else if (token.startsWith("--config=")) {
-			const value = token.slice("--config=".length);
-			if (value) paths.push(isAbsolute(value) ? value : join(cwd, value));
-		}
-	}
-	return paths;
-}
-
-/** Fail closed when upstream config would attach profile/cdp/provider/state/containment defaults. */
-export function agentBrowserConfigBlocksManagedRestore(
-	cwd: string,
-	parentEnv: NodeJS.ProcessEnv = process.env,
-	args: string[] = [],
-): boolean {
-	const explicitCandidates = getExplicitConfigPaths(args, cwd);
-	const envConfig = parentEnv.AGENT_BROWSER_CONFIG?.trim();
-	if (envConfig) explicitCandidates.push(isAbsolute(envConfig) ? envConfig : join(cwd, envConfig));
-	if (explicitCandidates.some((path) => agentBrowserConfigFileIncompatible(path, true))) return true;
-	const home = parentEnv.HOME?.trim() || parentEnv.USERPROFILE?.trim() || homedir();
-	return [join(cwd, "agent-browser.json"), join(home, ".agent-browser", "config.json")]
-		.some((path) => agentBrowserConfigFileIncompatible(path));
-}
-
-/** Ensure plaintext upstream state is protected by an owner-only parent directory. */
-export function managedSessionRestoreStorageIsSecure(parentEnv: NodeJS.ProcessEnv = process.env): boolean {
-	if (hasNonEmptyEnvValue(parentEnv, "AGENT_BROWSER_ENCRYPTION_KEY")) return true;
-	// Windows user-profile ACLs are not represented by POSIX mode bits; require encryption there.
-	if (process.platform === "win32") return false;
-	const home = parentEnv.HOME?.trim() || parentEnv.USERPROFILE?.trim() || homedir();
-	if (!home) return false;
-	const root = join(home, ".agent-browser");
-	try {
-		mkdirSync(root, { recursive: true, mode: 0o700 });
-		chmodSync(root, 0o700);
-		return (statSync(root).mode & 0o077) === 0;
-	} catch {
-		return false;
-	}
-}
-
-function isManagedSessionRestoreIncompatible(options: {
-	args: string[];
-	cwd?: string;
-	env?: NodeJS.ProcessEnv;
-	parentEnv?: NodeJS.ProcessEnv;
-}): boolean {
-	const parentEnv = options.parentEnv ?? process.env;
-	const args = options.args;
-	if (hasNonEmptyEnvValue(parentEnv, AGENT_BROWSER_RESTORE_ENV) || hasNonEmptyEnvValue(options.env, AGENT_BROWSER_RESTORE_ENV)) return true;
-	for (const name of MANAGED_SESSION_RESTORE_INCOMPATIBLE_ENVS) {
-		if (hasNonEmptyEnvValue(parentEnv, name) || hasNonEmptyEnvValue(options.env, name)) return true;
-	}
-	if (isEnabledEnvFlag(parentEnv[AGENT_BROWSER_AUTO_CONNECT_ENV]) || isEnabledEnvFlag(options.env?.[AGENT_BROWSER_AUTO_CONNECT_ENV])) return true;
-	for (const flag of ["--restore", "--allowed-domains", "--profile", "--state", "--cdp", "--auto-connect", "--session-name", "--provider", "-p"] as const) {
-		if (hasLaunchScopedFlagToken(args, flag)) return true;
-	}
-	if (parseCommandInfo(args).command === "connect") return true;
-	const effectiveEnv = { ...parentEnv, ...options.env };
-	if (options.cwd && agentBrowserConfigBlocksManagedRestore(options.cwd, effectiveEnv, args)) return true;
-	if (!managedSessionRestoreStorageIsSecure(effectiveEnv)) return true;
-	return false;
-}
-
-/**
- * Enable upstream restore (cookies, localStorage, and sessionStorage) for extension-managed sessions without argv launch flags.
- * Skip when the caller already owns auth persistence, when restore is incompatible, or when disabled.
- * Incompatible launches sticky-disable restore for that managed session identity so later bare follow-ups cannot inject it.
- */
-export function getManagedSessionRestoreEnv(options: {
-	args: string[];
-	cwd: string;
-	env?: NodeJS.ProcessEnv;
-	parentEnv?: NodeJS.ProcessEnv;
-}): NodeJS.ProcessEnv {
-	const parentEnv = options.parentEnv ?? process.env;
-	const args = options.args;
-	const sessionName = extractExplicitSessionName(args);
-	const namespace = extractExplicitNamespace(args);
-	// Ownership comes only from wrapper-set options.env or the in-call owned-session ALS context.
-	// Do not trust parent process env for PI_AGENT_BROWSER_OWNED_MANAGED_SESSION.
-	const ownedFromEnv = isEnabledEnvFlag(options.env?.[OWNED_MANAGED_SESSION_ENV]);
-	const ownedContext = ownedContextMatches(sessionName, namespace);
-	const ownedManagedSession = ownedFromEnv || ownedContext !== undefined;
-
-	if (!ownedManagedSession) return {};
-	// Plan-level suppression (from original main argv) must outlive prepare rewrites such as pinned-batch.
-	if (ownedContext?.restoreSuppressed) {
-		if (ownedFromEnv) disableManagedSessionRestore(sessionName, namespace);
-		return {};
-	}
-
-	const incompatible = isManagedSessionRestoreIncompatible({ args, cwd: options.cwd, env: options.env, parentEnv });
-	if (incompatible) {
-		// Sticky-disable only when this spawn itself is wrapper-owned via options.env (main/close path),
-		// not merely via inherited ALS context on a bare helper probe.
-		if (ownedFromEnv) disableManagedSessionRestore(sessionName, namespace);
-		return {};
-	}
-	if (isDisabledEnvFlag(parentEnv[MANAGED_SESSION_RESTORE_ENV]) || isDisabledEnvFlag(options.env?.[MANAGED_SESSION_RESTORE_ENV])) return {};
-	if (isManagedSessionRestoreDisabled(sessionName, namespace)) return {};
-	if (!sessionName) return {};
-
-	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
-}
-
-/** Mark call-scoped helper suppression from main-plan argv without sticky-disabling until spawn. */
-export function planManagedSessionRestoreSuppressed(options: {
-	args: string[];
-	cwd?: string;
-	env?: NodeJS.ProcessEnv;
-	parentEnv?: NodeJS.ProcessEnv;
-}): boolean {
-	return isManagedSessionRestoreIncompatible(options);
-}
-
-/** @deprecated Prefer planManagedSessionRestoreSuppressed + owned context restoreSuppressed. */
-export function applyManagedSessionRestorePlanPolicy(options: {
-	args: string[];
-	cwd: string;
-	owned?: OwnedManagedSessionContext;
-}): OwnedManagedSessionContext | undefined {
-	if (!options.owned) return undefined;
-	return {
-		...options.owned,
-		restoreSuppressed: planManagedSessionRestoreSuppressed({ args: options.args, cwd: options.cwd }),
-	};
-}
-
-/** Env marker set only for wrapper-owned managed-session subprocesses. */
-export function buildOwnedManagedSessionEnv(): NodeJS.ProcessEnv {
-	return { [OWNED_MANAGED_SESSION_ENV]: "1" };
 }
 
 export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -831,6 +542,7 @@ export function restoreManagedSessionStateFromBranch(
 	branch: unknown[],
 	fallbackSessionName: string,
 ): RestoredManagedSessionState {
+	clearManagedSessionRestoreDisabled();
 	let restoredState: ManagedSessionState = {
 		active: false,
 		sessionName: fallbackSessionName,
@@ -1033,6 +745,7 @@ export function validateToolArgs(args: string[]): string | undefined {
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
+		if (token === "--") break;
 		if (!token.startsWith("-")) {
 			continue;
 		}
@@ -1193,30 +906,6 @@ function getCompatibilityWorkaround(args: string[], commandInfo: CommandInfo): C
 	};
 }
 
-export function extractExplicitSessionName(args: string[]): string | undefined {
-	for (const [index, token] of args.entries()) {
-		if (token === "--session") {
-			return args[index + 1];
-		}
-		if (token.startsWith("--session=")) {
-			return token.slice("--session=".length);
-		}
-	}
-	return undefined;
-}
-
-export function extractExplicitNamespace(args: string[]): string | undefined {
-	for (const [index, token] of args.entries()) {
-		if (token === "--namespace") {
-			return args[index + 1];
-		}
-		if (token.startsWith("--namespace=")) {
-			return token.slice("--namespace=".length);
-		}
-	}
-	return undefined;
-}
-
 function stripExplicitNamespaceArgs(args: string[]): string[] {
 	const stripped: string[] = [];
 	for (let index = 0; index < args.length; index += 1) {
@@ -1229,20 +918,6 @@ function stripExplicitNamespaceArgs(args: string[]): string[] {
 		stripped.push(token);
 	}
 	return stripped;
-}
-
-function hasLaunchScopedFlagToken(args: string[], flag: string): boolean {
-	const commandStartIndex = findCommandStartIndex(args);
-	const command = commandStartIndex === undefined ? undefined : args[commandStartIndex];
-	return args.some((token, index) => {
-		if (token !== flag && !token.startsWith(`${flag}=`)) return false;
-		if (flag === "--auto-connect") return isBooleanFlagEnabled(args, flag);
-		if (flag === "--restore" && token === "--restore" && optionalGlobalValueFlagConsumesNext(flag, args[index + 1])) return true;
-		if (flag === "--state" && command === "wait" && commandStartIndex !== undefined && index > commandStartIndex) {
-			return false;
-		}
-		return true;
-	});
 }
 
 export function getStartupScopedFlags(args: string[]): string[] {
@@ -1282,7 +957,8 @@ export function buildExecutionPlan(
 		};
 	}
 
-	if (countExplicitSessionFlags(args) > 1) {
+	for (const flag of ["--session", "--namespace"] as const) {
+		if (countExplicitGlobalFlags(args, flag) <= 1) continue;
 		return {
 			commandInfo: {},
 			effectiveArgs,
@@ -1290,7 +966,7 @@ export function buildExecutionPlan(
 			startupScopedFlags: [],
 			usedImplicitSession: false,
 			validationError:
-				"Multiple --session flags are not supported. Pass a single --session value; upstream uses the last occurrence while this wrapper would otherwise mis-attribute managed-session ownership.",
+				`Multiple ${flag} flags are not supported. Pass a single ${flag} value; upstream uses the last occurrence while this wrapper would otherwise mis-attribute managed-session ownership.`,
 		};
 	}
 

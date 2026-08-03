@@ -29,13 +29,12 @@ import {
 	createFreshSessionName,
 	createImplicitSessionName,
 	extractCommandTokens,
-	extractExplicitNamespace,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
-	extractExplicitSessionName,
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
 } from "./lib/runtime.js";
+import { extractExplicitNamespace, extractExplicitSessionName } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
 import { isCloseCommand } from "./lib/command-taxonomy.js";

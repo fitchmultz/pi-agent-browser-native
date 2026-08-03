@@ -1,15 +1,13 @@
 /**
  * Purpose: Verify pure runtime planning and policy helpers for the pi-agent-browser extension.
- * Responsibilities: Assert session naming, managed-session restoration, execution-plan argument injection, and redaction helpers.
+ * Responsibilities: Assert session naming/state, execution-plan argument injection, and redaction helpers.
  * Scope: Unit-style Node test-runner coverage for stable helper behavior; extension entrypoint lifecycle tests live in focused integration suites.
  * Usage: Run with `npx tsx --test test/agent-browser.runtime.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests preserve existing assertions and isolate filesystem/env side effects with temp directories and explicit cleanup.
  */
 
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
@@ -18,540 +16,49 @@ import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT
 import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildExecutionPlan,
-	clearManagedSessionRestoreDisabled,
 	createFreshSessionName,
 	createImplicitSessionName,
-	createManagedSessionRestoreKey,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
-	getManagedSessionRestoreEnv,
-	isManagedSessionRestoreDisabled,
 	parseArgvDescriptor,
 	redactInvocationArgs,
 	redactSensitiveText,
 	redactSensitiveValue,
 	resolveManagedSessionState,
-	applyManagedSessionRestorePlanPolicy,
-	resolveOwnedManagedSessionContext,
-	resolveOwnedManagedSessionName,
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
-	withOwnedManagedSessionContext,
 } from "../extensions/agent-browser/lib/runtime.js";
 import { createToolBranchEntry } from "./helpers/agent-browser-harness.js";
 
-test("createManagedSessionRestoreKey is cwd-stable across pi session ids", () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = "/Users/example/Projects/work-app";
-	assert.equal(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(cwd));
-	assert.match(createManagedSessionRestoreKey(cwd), /^piab-r-[a-f0-9]{32}$/);
-	assert.notEqual(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(`${cwd}-other`));
-	assert.notEqual(
-		createManagedSessionRestoreKey("/tmp/piab-collision-20970"),
-		createManagedSessionRestoreKey("/tmp/piab-collision-22987"),
-	);
-});
-
-test("getManagedSessionRestoreEnv enables restore for managed piab sessions", () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = "/Users/example/Projects/work-app";
-	const key = createManagedSessionRestoreKey(cwd);
-	const owned = { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" };
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{ AGENT_BROWSER_RESTORE: key },
-	);
-	// caller-owned explicit session, even with piab- prefix, must not get restore without ownership marker
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-caller-owned", "open", "https://app.example.com"],
-			cwd,
-			parentEnv: {},
-		}),
-		{},
-	);
-	// parent-process owned marker must not elevate caller sessions
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-caller-owned", "open", "https://app.example.com"],
-			cwd,
-			parentEnv: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-		}),
-		{},
-	);
-	// owned env on a spawn is wrapper authority for that spawn only
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "custom", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{ AGENT_BROWSER_RESTORE: key },
-	);
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "--allowed-domains", "example.com", "open", "https://example.com"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: { PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" },
-		}),
-		{},
-	);
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "connect", "9222"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: { AGENT_BROWSER_ALLOWED_DOMAINS: "example.com" },
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: { AGENT_BROWSER_PROFILE: "Default" },
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: { AGENT_BROWSER_AUTO_CONNECT: "1" },
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "--session-name", "legacy", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: { AGENT_BROWSER_SESSION_NAME: "legacy-restore" },
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: { AGENT_BROWSER_CDP: "9222" },
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "-p", "browserbase", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{},
-	);
-	// wait --state is a wait predicate, not launch state; restore must stay enabled
-	clearManagedSessionRestoreDisabled();
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", "piab-work-abc12345-deadbeef", "wait", "@e1", "--state", "hidden"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{ AGENT_BROWSER_RESTORE: key },
-	);
-});
-
-test("getManagedSessionRestoreEnv sticky-disables restore after an incompatible launch", () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = "/Users/example/Projects/work-app";
-	const session = "piab-work-abc12345-deadbeef";
-	const owned = { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" };
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", session, "--profile", "Default", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{},
-	);
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", session, "snapshot", "-i"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled(session);
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", session, "snapshot", "-i"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{ AGENT_BROWSER_RESTORE: createManagedSessionRestoreKey(cwd) },
-	);
-});
-
-test("owned managed session context enables restore for matching helper probes only", async () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = "/Users/example/Projects/work-app";
-	const managed = "piab-work-abc12345-deadbeef";
-	const key = createManagedSessionRestoreKey(cwd);
-	assert.equal(
-		resolveOwnedManagedSessionName({
-			currentManagedSessionName: managed,
-			sessionName: managed,
-		}),
-		managed,
-	);
-	assert.equal(
-		resolveOwnedManagedSessionContext({
-			currentManagedSessionName: managed,
-			currentManagedSessionNamespace: undefined,
-			namespace: "caller",
-			sessionName: managed,
-		}),
-		undefined,
-	);
-	assert.equal(
-		resolveOwnedManagedSessionName({
-			currentManagedSessionName: managed,
-			sessionName: "caller-owned",
-		}),
-		undefined,
-	);
-	await withOwnedManagedSessionContext({ sessionName: managed }, async () => {
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--session", managed, "snapshot", "-i"],
-				cwd,
-				parentEnv: {},
-			}),
-			{ AGENT_BROWSER_RESTORE: key },
-		);
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--session", "caller-owned", "snapshot", "-i"],
-				cwd,
-				parentEnv: {},
-			}),
-			{},
-		);
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--namespace", "caller", "--session", managed, "snapshot", "-i"],
-				cwd,
-				parentEnv: {},
-			}),
-			{},
-		);
-	});
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", managed, "snapshot", "-i"],
-			cwd,
-			parentEnv: {},
-		}),
-		{},
-	);
-});
-
-test("main-plan restore policy suppresses helpers without sticky-disabling on preflight-only plans", async () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = "/Users/example/Projects/work-app";
-	const managed = "piab-work-abc12345-deadbeef";
-	const key = createManagedSessionRestoreKey(cwd);
-	const owned = applyManagedSessionRestorePlanPolicy({
-		args: ["--json", "--session", managed, "--profile", "Default", "click", "xpath=//button"],
-		cwd,
-		owned: { sessionName: managed },
-	});
-	assert.equal(owned?.restoreSuppressed, true);
-	await withOwnedManagedSessionContext(owned, async () => {
-		// helper probe: ALS-only, suppressed
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--session", managed, "eval", "--stdin"],
-				cwd,
-				parentEnv: {},
-			}),
-			{},
-		);
-		// production main spawn: owned env inside suppressed context still sticky-disables
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--session", managed, "--profile", "Default", "open", "https://app.example.com"],
-				cwd,
-				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-				parentEnv: {},
-			}),
-			{},
-		);
-		assert.equal(isManagedSessionRestoreDisabled(managed), true);
-	});
-	// later bare owned follow-up stays disabled after the real main spawn path
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", managed, "snapshot", "-i"],
-			cwd,
-			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-			parentEnv: {},
-		}),
-		{},
-	);
-	clearManagedSessionRestoreDisabled();
-	const preflightOnly = applyManagedSessionRestorePlanPolicy({
-		args: ["--json", "--session", managed, "--profile", "Default", "click", "xpath=//button"],
-		cwd,
-		owned: { sessionName: managed },
-	});
-	await withOwnedManagedSessionContext(preflightOnly, async () => {
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--session", managed, "eval", "--stdin"],
-				cwd,
-				parentEnv: {},
-			}),
-			{},
-		);
-	});
-	// preflight-only (no owned incompatible spawn) must not sticky-disable later bare calls
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", managed, "snapshot", "-i"],
-			cwd,
-			env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-			parentEnv: {},
-		}),
-		{ AGENT_BROWSER_RESTORE: key },
-	);
-});
-
-
-test("agent-browser config blocks managed restore", () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = mkdtempSync(join(tmpdir(), "piab-config-"));
-	const home = mkdtempSync(join(tmpdir(), "piab-home-"));
-	const managed = "piab-work-abc12345-deadbeef";
-	try {
-		writeFileSync(join(cwd, "agent-browser.json"), JSON.stringify({ provider: "browserbase" }));
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--session", managed, "open", "https://app.example.com"],
-				cwd,
-				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-				parentEnv: { HOME: home },
-			}),
-			{},
-		);
-		assert.equal(isManagedSessionRestoreDisabled(managed), true);
-
-		clearManagedSessionRestoreDisabled();
-		rmSync(join(cwd, "agent-browser.json"));
-		writeFileSync(join(cwd, "custom.json"), JSON.stringify({ cdp: "9222" }));
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--config", "custom.json", "--session", managed, "open", "https://app.example.com"],
-				cwd,
-				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-				parentEnv: { HOME: home },
-			}),
-			{},
-		);
-		assert.equal(isManagedSessionRestoreDisabled(managed), true);
-	} finally {
-		rmSync(cwd, { recursive: true, force: true });
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("managed restore secures its plaintext state parent directory", { skip: process.platform === "win32" }, () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = mkdtempSync(join(tmpdir(), "piab-cwd-"));
-	const home = mkdtempSync(join(tmpdir(), "piab-home-"));
-	const managed = "piab-work-abc12345-deadbeef";
-	try {
-		chmodSync(home, 0o755);
-		assert.match(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--session", managed, "open", "https://app.example.com"],
-				cwd,
-				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-				parentEnv: { HOME: home },
-			}).AGENT_BROWSER_RESTORE ?? "",
-			/^piab-r-/,
-		);
-		assert.equal(statSync(join(home, ".agent-browser")).mode & 0o077, 0);
-	} finally {
-		rmSync(cwd, { recursive: true, force: true });
-		rmSync(home, { recursive: true, force: true });
-	}
-});
-
-test("plan-suppressed owned main spawn sticky-disables even when process argv is rewritten", async () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = "/Users/example/Projects/work-app";
-	const managed = "piab-work-abc12345-deadbeef";
-	const owned = applyManagedSessionRestorePlanPolicy({
-		args: ["--json", "--session", managed, "--profile", "Default", "click", "@e1"],
-		cwd,
-		owned: { sessionName: managed },
-	});
-	assert.equal(owned?.restoreSuppressed, true);
-	await withOwnedManagedSessionContext(owned, async () => {
-		// prepare may rewrite processArgs to plain batch while plan suppression remains
-		assert.deepEqual(
-			getManagedSessionRestoreEnv({
-				args: ["--json", "--session", managed, "batch"],
-				cwd,
-				env: { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" },
-				parentEnv: {},
-			}),
-			{},
-		);
-		assert.equal(isManagedSessionRestoreDisabled(managed), true);
-	});
-});
-
-test("restoreManagedSessionStateFromBranch reapplies sticky disable from explicit managed-session rows", () => {
-	clearManagedSessionRestoreDisabled();
-	const managed = "piab-project-abc12345-deadbeef";
-	restoreManagedSessionStateFromBranch(
-		[
-			{
-				type: "message",
-				message: {
-					toolName: "agent_browser",
-					details: {
-						args: ["--session", managed, "--profile", "Default", "open", "https://app.example.com"],
-						sessionName: managed,
-						usedImplicitSession: false,
-						managedSessionRestoreDisabled: true,
-						exitCode: 0,
-					},
-				},
-			},
-		],
-		managed,
-	);
-	assert.equal(isManagedSessionRestoreDisabled(managed), true);
-});
-
-test("incompatible launches sticky-disable even when managed restore is opted out", () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = "/Users/example/Projects/work-app";
-	const managed = "piab-work-abc12345-deadbeef";
-	const owned = { PI_AGENT_BROWSER_OWNED_MANAGED_SESSION: "1" };
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", managed, "--profile", "Default", "open", "https://app.example.com"],
-			cwd,
-			env: owned,
-			parentEnv: { PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" },
-		}),
-		{},
-	);
-	assert.deepEqual(
-		getManagedSessionRestoreEnv({
-			args: ["--json", "--session", managed, "snapshot", "-i"],
-			cwd,
-			env: owned,
-			parentEnv: {},
-		}),
-		{},
-	);
-});
-
-test("buildExecutionPlan rejects multiple --session flags", () => {
-	const plan = buildExecutionPlan(
+test("buildExecutionPlan rejects ambiguous session identity flags without rejecting command text", () => {
+	const options = {
+		freshSessionName: "piab-fresh",
+		managedSessionActive: true,
+		managedSessionName: "piab-managed",
+		sessionMode: "auto" as const,
+	};
+	const duplicate = buildExecutionPlan(
 		["--session", "piab-managed", "--session", "caller-owned", "open", "https://example.com"],
-		{
-			freshSessionName: "piab-fresh",
-			managedSessionActive: true,
-			managedSessionName: "piab-managed",
-			sessionMode: "auto",
-		},
+		options,
 	);
-	assert.match(plan.validationError ?? "", /Multiple --session flags/);
-});
-
-test("owned managed session ALS context is isolated across concurrent calls", async () => {
-	clearManagedSessionRestoreDisabled();
-	const cwd = "/Users/example/Projects/work-app";
-	const managed = "piab-work-abc12345-deadbeef";
-	const key = createManagedSessionRestoreKey(cwd);
-	let ownedProbeSawRestore = false;
-	let foreignProbeSawRestore = false;
-	await Promise.all([
-		withOwnedManagedSessionContext({ sessionName: managed }, async () => {
-			await new Promise((resolve) => setTimeout(resolve, 20));
-			ownedProbeSawRestore =
-				getManagedSessionRestoreEnv({
-					args: ["--json", "--session", managed, "snapshot", "-i"],
-					cwd,
-					parentEnv: {},
-				}).AGENT_BROWSER_RESTORE === key;
-		}),
-		withOwnedManagedSessionContext(undefined, async () => {
-			await new Promise((resolve) => setTimeout(resolve, 5));
-			foreignProbeSawRestore =
-				getManagedSessionRestoreEnv({
-					args: ["--json", "--session", managed, "snapshot", "-i"],
-					cwd,
-					parentEnv: {},
-				}).AGENT_BROWSER_RESTORE === key;
-		}),
-	]);
-	assert.equal(ownedProbeSawRestore, true);
-	assert.equal(foreignProbeSawRestore, false);
+	assert.match(duplicate.validationError ?? "", /Multiple --session flags/);
+	const duplicateNamespace = buildExecutionPlan(
+		["--namespace", "managed", "--namespace", "caller", "open", "https://example.com"],
+		options,
+	);
+	assert.match(duplicateNamespace.validationError ?? "", /Multiple --namespace flags/);
+	const literalText = buildExecutionPlan(
+		["--session", "piab-managed", "fill", "#field", "--", "--session"],
+		options,
+	);
+	assert.equal(literalText.validationError, undefined);
+	assert.equal(literalText.sessionName, "piab-managed");
+	const launchArgValue = buildExecutionPlan(
+		["--session", "piab-managed", "--args", "--session=browser-flag-value", "open", "https://example.com"],
+		{ ...options, managedSessionActive: false },
+	);
+	assert.doesNotMatch(launchArgValue.validationError ?? "", /Multiple --session flags/);
+	assert.equal(launchArgValue.sessionName, "piab-managed");
 });
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {

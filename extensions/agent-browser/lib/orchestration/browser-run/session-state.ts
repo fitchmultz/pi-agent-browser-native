@@ -26,12 +26,10 @@ import {
 } from "../../command-taxonomy.js";
 import {
 	buildOwnedManagedSessionEnv,
-	chooseOpenResultTabCorrection,
 	clearManagedSessionRestoreDisabled,
 	isManagedSessionRestoreDisabled,
-	redactInvocationArgs,
-	type OpenResultTabCorrection,
-} from "../../runtime.js";
+} from "../../managed-session-restore.js";
+import { chooseOpenResultTabCorrection, redactInvocationArgs, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { parseUserBatchStdin } from "../batch-stdin.js";
 import type {

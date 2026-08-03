@@ -14,6 +14,10 @@ import test from "node:test";
 
 import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
 import {
+	clearManagedSessionRestoreDisabled,
+	isManagedSessionRestoreDisabled,
+} from "../extensions/agent-browser/lib/managed-session-restore.js";
+import {
 	collectTimeoutPartialProgress,
 	formatTimeoutPartialProgressText,
 } from "../extensions/agent-browser/lib/orchestration/browser-run/diagnostics.js";
@@ -321,6 +325,7 @@ if (args.includes("open")) {
 });
 
 test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async () => {
+	clearManagedSessionRestoreDisabled();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -403,8 +408,17 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			assert.match((abandonedResult.content[0] as { text: string }).text, /no managed browser session is current/);
 			const abandonedNextActions = abandonedResult.details?.nextActions as Array<{ id?: string }> | undefined;
 			assert.ok(abandonedNextActions?.some((action) => action.id === "retry-fresh-managed-session"));
+
+			const incompatibleFailure = await executeRegisteredTool(abandonedHarness.tool, abandonedHarness.ctx, {
+				args: ["--profile", "Default", "open", "https://fail.test"],
+				sessionMode: "fresh",
+			});
+			const incompatibleOutcome = incompatibleFailure.details?.managedSessionOutcome as { attemptedSessionName?: string } | undefined;
+			assert.ok(incompatibleOutcome?.attemptedSessionName);
+			assert.equal(isManagedSessionRestoreDisabled(incompatibleOutcome?.attemptedSessionName), false);
 		});
 	} finally {
+		clearManagedSessionRestoreDisabled();
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });

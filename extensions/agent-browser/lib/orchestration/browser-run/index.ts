@@ -1,10 +1,9 @@
 import { runAgentBrowserProcess } from "../../process.js";
 import {
-	applyManagedSessionRestorePlanPolicy,
+	buildOwnedManagedSessionRestoreContext,
 	buildOwnedManagedSessionEnv,
-	resolveOwnedManagedSessionContext,
 	withOwnedManagedSessionContext,
-} from "../../runtime.js";
+} from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
 import { applyBrowserRunStatePatch } from "./session-state.js";
 import { buildMissingBinaryFailureResult } from "./final-result.js";
@@ -23,16 +22,14 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 	}
 
 	const { prepared } = preparedResult;
-	const ownedManagedSession = applyManagedSessionRestorePlanPolicy({
+	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: prepared.executionPlan.effectiveArgs,
 		cwd: options.cwd,
-		owned: resolveOwnedManagedSessionContext({
-			currentManagedSessionName: options.state.managedSessionName,
-			currentManagedSessionNamespace: options.state.managedSessionNamespace,
-			managedSessionName: prepared.executionPlan.managedSessionName,
-			namespace: prepared.executionPlan.namespace,
-			sessionName: prepared.executionPlan.sessionName,
-		}),
+		currentManagedSessionName: options.state.managedSessionName,
+		currentManagedSessionNamespace: options.state.managedSessionNamespace,
+		managedSessionName: prepared.executionPlan.managedSessionName,
+		namespace: prepared.executionPlan.namespace,
+		sessionName: prepared.executionPlan.sessionName,
 	});
 	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		try {

@@ -43,7 +43,8 @@ import {
 	type SessionRefSnapshot,
 	type SessionRefSnapshotInvalidation,
 } from "../../session-page-state.js";
-import { extractExplicitSessionName, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type OpenResultTabCorrection } from "../../runtime.js";
+import { extractExplicitSessionName } from "../../managed-session-restore.js";
+import { redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { buildClickDispatchNextActions, formatClickDispatchDiagnosticText } from "./click-dispatch.js";
 import {

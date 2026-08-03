@@ -1,6 +1,6 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse and cross-harness restore persistence, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
@@ -461,6 +461,35 @@ if (!REAL_UPSTREAM_ENABLED) {
 					});
 					const cookiesCurlDetails = assertSuccessfulResult(cookiesCurl, shapes.commands.cookiesCurl, "cookies set --curl");
 					assert.equal((cookiesCurlDetails.data as { set?: boolean }).set, true);
+
+					const restoreMarker = "piab-real-upstream-restore";
+					const seedRestoreState = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["eval", "--stdin"],
+						stdin: `document.cookie = "piab_restore_cookie=${restoreMarker}; path=/"; localStorage.setItem("piab-restore-local", "${restoreMarker}"); sessionStorage.setItem("piab-restore-session", "${restoreMarker}"); true`,
+					});
+					assertSuccessfulResult(seedRestoreState, shapes.commands.eval, "seed managed restore state");
+					const firstClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+					assert.equal(firstClose.isError, false, `first managed close should persist restore state: ${firstClose.content[0]?.text ?? ""}`);
+
+					const restoredHarness = createExtensionHarness({ cwd: tempDir });
+					let restoredValueText: string | undefined;
+					try {
+						const restoredOpen = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, { args: ["open", contractUrl] });
+						assertSuccessfulResult(restoredOpen, shapes.commands.open, "open restored managed session");
+						const readRestoreState = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, {
+							args: ["eval", "--stdin"],
+							stdin: `JSON.stringify({ cookiePresent: document.cookie.includes("piab_restore_cookie=${restoreMarker}"), local: localStorage.getItem("piab-restore-local"), session: sessionStorage.getItem("piab-restore-session") })`,
+						});
+						const restoredDetails = assertSuccessfulResult(readRestoreState, shapes.commands.eval, "read restored managed state");
+						restoredValueText = String((restoredDetails.data as { result?: string }).result);
+					} finally {
+						const restoredClose = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, { args: ["close"] });
+						assert.equal(restoredClose.isError, false, `restored managed close should succeed: ${restoredClose.content[0]?.text ?? ""}`);
+					}
+					const restoredValue = JSON.parse(restoredValueText ?? "{}") as { cookiePresent?: boolean; local?: string; session?: string };
+					assert.equal(restoredValue.cookiePresent, true);
+					assert.equal(restoredValue.local, restoreMarker);
+					assert.equal(restoredValue.session, restoreMarker);
 
 					const reactWithoutReactApp = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["open", "--enable", "react-devtools", contractUrl],
