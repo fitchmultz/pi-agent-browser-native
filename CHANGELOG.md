@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.76 - 2026-08-04
+
+### Fixed
+
+- Wrapper-managed compatibility sessions now pin the normal Chrome user agent at browser launch as well as on the active page. New tabs and SSO popups therefore inherit it instead of reverting to `HeadlessChrome` and falling back into Cloudflare Turnstile, while caller-selected raw-argument, headed, attached, provider, custom-UA, and non-Chrome modes remain untouched.
+
 ## 0.2.75 - 2026-08-04
 
 ### Fixed

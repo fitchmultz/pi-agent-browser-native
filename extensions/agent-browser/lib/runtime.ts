@@ -22,8 +22,8 @@ import {
 	extractExplicitNamespace,
 	extractExplicitSessionName,
 	getAgentBrowserSessionIdentityKey,
+	getBooleanFlagValue,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
-	isBooleanFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
 	resolveAgentBrowserNamespace,
 	scanUpstreamGlobalFlagOccurrences,
@@ -800,18 +800,6 @@ function hasFlagToken(args: string[], flag: string): boolean {
 	return args.some((token) => token === flag || token.startsWith(`${flag}=`));
 }
 
-function getFlagValue(args: string[], flag: string): string | undefined {
-	for (const [index, token] of args.entries()) {
-		if (token === flag) {
-			return args[index + 1];
-		}
-		if (token.startsWith(`${flag}=`)) {
-			return token.slice(flag.length + 1);
-		}
-	}
-	return undefined;
-}
-
 function normalizeComparableUrl(url: string): string | undefined {
 	const normalizedUrl = url.trim();
 	if (normalizedUrl.length === 0) {
@@ -862,10 +850,14 @@ export function getDefaultHeadlessCompatUserAgent(platform: NodeJS.Platform = pr
 	return DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM[platform] ?? FALLBACK_HEADLESS_COMPAT_USER_AGENT;
 }
 
-export function canUseHeadlessCompatibilityUserAgent(args: string[]): boolean {
-	if (hasFlagToken(args, "--user-agent") || isBooleanFlagEnabled(args, "--headed")) return false;
-	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p") || isBooleanFlagEnabled(args, "--auto-connect")) return false;
-	const engine = getFlagValue(args, "--engine");
+export function canUseHeadlessCompatibilityUserAgent(args: string[], env: NodeJS.ProcessEnv = process.env): boolean {
+	if (hasFlagToken(args, "--user-agent") || hasFlagToken(args, "--args")) return false;
+	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p")) return false;
+	if (env.AGENT_BROWSER_USER_AGENT !== undefined || env.AGENT_BROWSER_ARGS !== undefined || env.AGENT_BROWSER_CDP !== undefined || env.AGENT_BROWSER_PROVIDER !== undefined) return false;
+	const envFlagEnabled = (value: string | undefined) => value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
+	if ((getBooleanFlagValue(args, "--headed") ?? envFlagEnabled(env.AGENT_BROWSER_HEADED))
+		|| (getBooleanFlagValue(args, "--auto-connect") ?? envFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT))) return false;
+	const engine = scanUpstreamGlobalFlagOccurrences(args, "--engine").at(-1)?.value ?? env.AGENT_BROWSER_ENGINE;
 	return !engine || engine === "chrome";
 }
 

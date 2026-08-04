@@ -124,7 +124,7 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 	return args;
 }
 
-export function pinAgentBrowserFileAccessDisabled(args: string[]): string[] {
+export function pinAgentBrowserFileAccessDisabled(args: string[], wrapperCompatibilityUserAgent?: string): string[] {
 	const filtered: string[] = [];
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
@@ -135,7 +135,11 @@ export function pinAgentBrowserFileAccessDisabled(args: string[]): string[] {
 		}
 		filtered.push(token);
 	}
-	return ["--args", "", "--allow-file-access", "false", ...filtered];
+	// Upstream's flag overrides only the active CDP target; the Chrome arg covers new tabs. Its --args parser splits commas/newlines.
+	const browserArgs = wrapperCompatibilityUserAgent
+		? `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`
+		: "";
+	return ["--args", browserArgs, "--allow-file-access", "false", ...filtered];
 }
 
 export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {
@@ -471,6 +475,7 @@ export async function runAgentBrowserProcess(options: {
 			timedOut: false,
 		};
 	}
+	const ownedManagedSessionCompatibilityEnv = getOwnedManagedSessionCompatibilityEnv(managedSessionRestoreOptions);
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
 		...managedSessionRestoreEnv,
@@ -478,7 +483,7 @@ export async function runAgentBrowserProcess(options: {
 		...managedSessionRestoreConfigEnv,
 		...getManagedSessionRestoreProtectedEnv(managedSessionRestoreOptions, managedSessionRestoreEnv),
 		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
-		...getOwnedManagedSessionCompatibilityEnv(managedSessionRestoreOptions),
+		...ownedManagedSessionCompatibilityEnv,
 		[AGENT_BROWSER_ARGS_ENV]: undefined,
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
@@ -611,7 +616,7 @@ export async function runAgentBrowserProcess(options: {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
 			return;
 		}
-		const spawnCommand = buildAgentBrowserSpawnCommand(pinAgentBrowserFileAccessDisabled(args));
+		const spawnCommand = buildAgentBrowserSpawnCommand(pinAgentBrowserFileAccessDisabled(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT));
 		const child = spawn(spawnCommand.command, spawnCommand.args, {
 			cwd,
 			env: childEnv,

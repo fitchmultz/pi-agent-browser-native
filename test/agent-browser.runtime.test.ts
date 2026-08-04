@@ -17,6 +17,7 @@ import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT
 import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildExecutionPlan,
+	canUseHeadlessCompatibilityUserAgent,
 	createFreshSessionName,
 	createImplicitSessionName,
 	getImplicitSessionCloseTimeoutMs,
@@ -1412,6 +1413,15 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 	});
 	assert.equal(wrongNamespaceFollowup.compatibilityWorkaround, undefined);
 
+	const rawArgsPlan = buildExecutionPlan(["--args", "--disable-gpu", "open", "https://dash.cloudflare.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(rawArgsPlan.compatibilityWorkaround, undefined);
+	assert.equal(rawArgsPlan.effectiveArgs.includes("--user-agent"), false);
+
 	const callerProvidedUserAgentPlan = buildExecutionPlan(
 		[
 			"--profile",
@@ -1454,6 +1464,53 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 		sessionMode: "auto",
 	});
 	assert.equal(enabledAutoConnectPlan.compatibilityWorkaround, undefined);
+
+	for (const env of [
+		{ AGENT_BROWSER_ENGINE: "lightpanda" },
+		{ AGENT_BROWSER_PROVIDER: "browserbase" },
+		{ AGENT_BROWSER_CDP: "9222" },
+		{ AGENT_BROWSER_ARGS: "--disable-gpu" },
+		{ AGENT_BROWSER_HEADED: "1" },
+		{ AGENT_BROWSER_USER_AGENT: "Custom/1" },
+		{ AGENT_BROWSER_AUTO_CONNECT: "true" },
+	]) {
+		assert.equal(canUseHeadlessCompatibilityUserAgent(["open", "https://dash.cloudflare.com"], env), false);
+	}
+	assert.equal(canUseHeadlessCompatibilityUserAgent(["--args", "--disable-gpu", "open", "https://dash.cloudflare.com"]), false);
+	assert.equal(canUseHeadlessCompatibilityUserAgent(["--engine", "chrome", "open", "https://dash.cloudflare.com"], { AGENT_BROWSER_ENGINE: "lightpanda" }), true);
+	assert.equal(canUseHeadlessCompatibilityUserAgent(["--headed", "false", "open", "https://dash.cloudflare.com"], { AGENT_BROWSER_HEADED: "1" }), true);
+	assert.equal(canUseHeadlessCompatibilityUserAgent(["--auto-connect", "false", "open", "https://dash.cloudflare.com"], { AGENT_BROWSER_AUTO_CONNECT: "true" }), true);
+	assert.equal(canUseHeadlessCompatibilityUserAgent(["--engine", "chrome", "--engine", "lightpanda", "open", "https://dash.cloudflare.com"]), false);
+	assert.equal(canUseHeadlessCompatibilityUserAgent(["--engine", "lightpanda", "--engine", "chrome", "open", "https://dash.cloudflare.com"]), true);
+
+	const previousEngine = process.env.AGENT_BROWSER_ENGINE;
+	const previousHeaded = process.env.AGENT_BROWSER_HEADED;
+	try {
+		process.env.AGENT_BROWSER_ENGINE = "lightpanda";
+		const lightpandaPlan = buildExecutionPlan(["open", "https://dash.cloudflare.com"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: false,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(lightpandaPlan.compatibilityWorkaround, undefined);
+		assert.equal(lightpandaPlan.effectiveArgs.includes("--user-agent"), false);
+
+		delete process.env.AGENT_BROWSER_ENGINE;
+		process.env.AGENT_BROWSER_HEADED = "1";
+		const explicitHeadlessPlan = buildExecutionPlan(["--headed", "false", "open", "https://dash.cloudflare.com"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: false,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(explicitHeadlessPlan.compatibilityWorkaround?.id, "cloudflare-headless-user-agent");
+	} finally {
+		if (previousEngine === undefined) delete process.env.AGENT_BROWSER_ENGINE;
+		else process.env.AGENT_BROWSER_ENGINE = previousEngine;
+		if (previousHeaded === undefined) delete process.env.AGENT_BROWSER_HEADED;
+		else process.env.AGENT_BROWSER_HEADED = previousHeaded;
+	}
 });
 
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {

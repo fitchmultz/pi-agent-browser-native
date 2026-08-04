@@ -162,6 +162,10 @@ test("pinAgentBrowserFileAccessDisabled overrides config raw args and forces the
 	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--allow-file-access", "false", "open", "about:blank"]), pinned);
 	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--allow-file-access", "true", "--allow-file-access=false", "open", "about:blank"]), pinned);
 	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--args", "--disable-gpu", "open", "about:blank"]), ["--args", "", "--allow-file-access", "false", "--args", "--disable-gpu", "open", "about:blank"]);
+	assert.deepEqual(
+		pinAgentBrowserFileAccessDisabled(["open", "about:blank"], "Chrome, not Headless\n"),
+		["--args", "--user-agent=Chrome not Headless", "--allow-file-access", "false", "open", "about:blank"],
+	);
 });
 
 test("runAgentBrowserProcess neutralizes environment raw browser args and pins an empty upstream config", { concurrency: false }, async () => {
