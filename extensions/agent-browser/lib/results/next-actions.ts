@@ -1,11 +1,3 @@
-/**
- * Purpose: Own machine-readable agent_browser next-action contracts and merge policy.
- * Responsibilities: Define the stable nextAction shape, build basic argv follow-ups, and provide deterministic action-list collection helpers.
- * Scope: Result follow-up action mechanics only; command-specific recovery and artifact policies live in neighboring modules.
- * Usage: Imported by result presentation helpers and the extension entrypoint when attaching details.nextActions.
- * Invariants/Assumptions: Action ids are stable machine-readable contracts; dedupe preserves first occurrence order.
- */
-
 export interface AgentBrowserNextAction {
 	artifactPath?: string;
 	id: string;
@@ -104,31 +96,3 @@ export function alignPageChangeSummaryNextActionIds<T extends { nextActionIds?: 
 	return alignedIds.length > 0 ? { ...summary, nextActionIds: alignedIds } : { ...summary, nextActionIds: undefined };
 }
 
-export class AgentBrowserNextActionCollector {
-	private actions: AgentBrowserNextAction[];
-
-	constructor(initialActions: AgentBrowserNextAction[] | undefined = undefined) {
-		this.actions = initialActions ? [...initialActions] : [];
-	}
-
-	append(actions: AgentBrowserNextAction[] | undefined): void {
-		if (!actions || actions.length === 0) return;
-		this.actions.push(...actions);
-	}
-
-	appendUnique(actions: AgentBrowserNextAction[] | undefined): void {
-		appendUniqueAgentBrowserNextActions(this.actions, actions);
-	}
-
-	replace(actions: AgentBrowserNextAction[] | undefined): void {
-		this.actions = actions ? [...actions] : [];
-	}
-
-	removeWhere(predicate: (action: AgentBrowserNextAction) => boolean): void {
-		this.actions = this.actions.filter((action) => !predicate(action));
-	}
-
-	toArray(): AgentBrowserNextAction[] | undefined {
-		return this.actions.length > 0 ? [...this.actions] : undefined;
-	}
-}

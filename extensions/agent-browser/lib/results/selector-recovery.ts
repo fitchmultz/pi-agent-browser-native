@@ -1,11 +1,3 @@
-/**
- * Purpose: Own pure selector-miss recovery diagnostics for visible refs and rich editable inputs.
- * Responsibilities: Parse find/semantic action targets, match current snapshot refs, build public diagnostics, text, and safe nextActions.
- * Scope: Selector recovery policy only; subprocess snapshot probing and result orchestration stay in the extension entrypoint.
- * Usage: The extension entrypoint supplies command tokens plus snapshot data after a selector-not-found failure.
- * Invariants/Assumptions: Public fill recovery must never echo or auto-submit the user-provided fill text; guarded semanticAction fill pre-resolution may execute only one exact current editable ref.
- */
-
 import { isRecord } from "../parsing.js";
 import { extractRefSnapshotFromData, type SessionRefSnapshot } from "../session-page-state.js";
 import { getEditableRefEvidence } from "./editable-ref-evidence.js";

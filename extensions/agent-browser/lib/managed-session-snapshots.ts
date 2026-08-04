@@ -1,9 +1,3 @@
-/**
- * Purpose: Retain only wrapper-owned managed-restore snapshots after successful close operations.
- * Responsibilities: Persist atomic per-snapshot ownership records, self-heal malformed records, and apply per-key plus superseded-generation retention without deleting unproven paths.
- * Scope: Snapshot ownership and pruning only; restore eligibility and daemon policy live in sibling modules.
- */
-
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync, type Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";

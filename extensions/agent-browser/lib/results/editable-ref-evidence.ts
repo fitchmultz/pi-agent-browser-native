@@ -1,11 +1,3 @@
-/**
- * Purpose: Detect whether upstream ref metadata or snapshot text proves an element is editable.
- * Responsibilities: Parse structured ref flags and snapshot-line contenteditable/editable markers into a conservative boolean/unknown signal.
- * Scope: Editable evidence only; callers decide how to rank controls or build recovery actions from the signal.
- * Usage: Imported by snapshot compaction and selector/fill recovery diagnostics.
- * Invariants/Assumptions: Explicit false evidence wins over positive hints; unknown remains undefined.
- */
-
 const EDITABLE_REF_EVIDENCE_KEYS = ["editable", "contentEditable", "contenteditable", "isContentEditable"] as const;
 const EDITABLE_FALSE_TEXT_PATTERN = /\b(?:contenteditable|editable)\s*=\s*["']?(?:false|0)["']?/i;
 const EDITABLE_ASSIGNMENT_TEXT_PATTERN = /\b(contenteditable|editable)\s*=\s*("[^"]*"|'[^']*'|[^\s,\]]+)/gi;

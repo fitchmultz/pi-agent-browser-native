@@ -1,16 +1,10 @@
-/**
- * Purpose: Own wrapper-side Electron host orchestration for agent_browser structured electron input.
- * Responsibilities: Discover Electron apps, inspect/probe/cleanup wrapper-tracked Electron launches, and build Pi-facing Electron host results.
- * Scope: Electron host actions that do not spawn the main upstream browser command; generic agent_browser execution stays in browser-run.
- */
-
 import type { ChildProcess } from "node:child_process";
 
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult, type ElectronLaunchStatus } from "../../electron/cleanup.js";
 import { discoverElectronApps, type ElectronDiscoveryResult } from "../../electron/discovery.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
-import { boundElectronProbeString } from "../../electron/text.js";
-import type { CompiledAgentBrowserElectron } from "../../input-modes.js";
+import { boundElectronProbeString } from "../../electron/cdp.js";
+import type { CompiledAgentBrowserElectron } from "../../input-modes/types.js";
 import {
 	buildOwnedManagedSessionRestoreContext,
 	type ManagedSessionRestoreState,
@@ -19,7 +13,8 @@ import {
 import { getManagedSessionStateAccessValidationError } from "../../managed-session-state-policy.js";
 import { isRecord } from "../../parsing.js";
 import { withAttachedBrowserSessionContext } from "../../process.js";
-import { buildAgentBrowserNextActions, buildAgentBrowserResultCategoryDetails } from "../../results.js";
+import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
+import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
 import { appendUniqueAgentBrowserNextActions } from "../../results/next-actions.js";
 import { extractRefSnapshotFromData, getSessionPageStateKey, isAboutBlankUrl, normalizeSessionTabTarget, type SessionPageState, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import { redactSensitiveText } from "../../runtime.js";

@@ -10,8 +10,7 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 
-import { buildToolPresentation } from "../extensions/agent-browser/lib/results.js";
-
+import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 test("buildToolPresentation redacts scalar extraction results for eval and get commands", async () => {
 	const evalPresentation = await buildToolPresentation({
 		commandInfo: { command: "eval", subcommand: "--stdin" },

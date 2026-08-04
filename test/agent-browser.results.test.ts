@@ -1,30 +1,14 @@
-/**
- * Purpose: Verify command parsing, envelope parsing, tab-correction selection, and error-text rendering helpers.
- * Responsibilities: Assert stable result facade behavior for valid envelopes, malformed output, fallback failures, command extraction, and tab list presentation.
- * Scope: Unit-style Node test-runner coverage for result/runtime helpers; richer presentation formatting lives in `agent-browser.presentation.test.ts`.
- * Usage: Run with `npx tsx --test test/agent-browser.results.test.ts` or via `npm run verify`.
- * Invariants/Assumptions: Tests avoid real subprocesses and use deterministic fixture payloads.
- */
-
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS, getAgentBrowserRichInputRecoveryNextActionId, getAgentBrowserRichInputRecoveryNextActionIds } from "../extensions/agent-browser/lib/results/recovery-actions.js";
+import { buildAgentBrowserNextActions } from "../extensions/agent-browser/lib/results/action-recommendations.js";
+import { buildAgentBrowserResultCategoryDetails, classifyAgentBrowserFailureCategory, classifyAgentBrowserSuccessCategory } from "../extensions/agent-browser/lib/results/categories.js";
+import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
+import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
 import {
-	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
-	AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS,
-	buildAgentBrowserNextActions,
-	buildAgentBrowserResultCategoryDetails,
-	buildToolPresentation,
-	classifyAgentBrowserFailureCategory,
-	classifyAgentBrowserSuccessCategory,
-	getAgentBrowserErrorText,
-	getAgentBrowserRichInputRecoveryNextActionId,
-	getAgentBrowserRichInputRecoveryNextActionIds,
-	parseAgentBrowserEnvelope,
-} from "../extensions/agent-browser/lib/results.js";
-import {
-	AgentBrowserNextActionCollector,
 	alignPageChangeSummaryNextActionIds,
+	appendUniqueAgentBrowserNextActions,
 	applyNamespaceToNextActions,
 	isStandaloneSnapshotNextAction,
 	type AgentBrowserNextAction,
@@ -81,25 +65,24 @@ test("applyNamespaceToNextActions preserves namespaced follow-up context", () =>
 	assert.deepEqual(applyNamespaceToNextActions(namespaced, "review")?.[0]?.params?.args, namespaced?.[0]?.params?.args);
 });
 
-test("AgentBrowserNextActionCollector preserves order, first-id wins, replacement, and snapshot removal", () => {
+test("appendUniqueAgentBrowserNextActions preserves order and first-id wins", () => {
 	const action = (id: string, args?: string[], stdin?: string): AgentBrowserNextAction => ({
 		id,
 		params: args ? { args, ...(stdin ? { stdin } : {}) } : undefined,
 		reason: id,
 		tool: "agent_browser",
 	});
-	const collector = new AgentBrowserNextActionCollector([action("a")]);
-	collector.appendUnique([action("b"), action("a", ["ignored"])]);
-	collector.append([action("a", ["kept-when-not-unique"])]);
-	assert.deepEqual(collector.toArray()?.map((item) => [item.id, item.params?.args?.[0]]), [
+	const actions = [action("a")];
+	appendUniqueAgentBrowserNextActions(actions, [action("b"), action("a", ["ignored"])]);
+	actions.push(action("a", ["kept-when-not-unique"]));
+	assert.deepEqual(actions.map((item) => [item.id, item.params?.args?.[0]]), [
 		["a", undefined],
 		["b", undefined],
 		["a", "kept-when-not-unique"],
 	]);
 
-	collector.replace([action("snapshot", ["snapshot", "-i"]), action("session-snapshot", ["--session", "s1", "snapshot", "-i"]), action("batched-snapshot", ["batch"], JSON.stringify([["snapshot", "-i"]]))]);
-	collector.removeWhere(isStandaloneSnapshotNextAction);
-	assert.deepEqual(collector.toArray()?.map((item) => item.id), ["batched-snapshot"]);
+	const replaced = [action("snapshot", ["snapshot", "-i"]), action("session-snapshot", ["--session", "s1", "snapshot", "-i"]), action("batched-snapshot", ["batch"], JSON.stringify([["snapshot", "-i"]]))];
+	assert.deepEqual(replaced.filter((item) => !isStandaloneSnapshotNextAction(item)).map((item) => item.id), ["batched-snapshot"]);
 });
 
 test("alignPageChangeSummaryNextActionIds keeps only emitted action ids", () => {

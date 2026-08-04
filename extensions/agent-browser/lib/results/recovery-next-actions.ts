@@ -1,11 +1,3 @@
-/**
- * Purpose: Build session-aware recovery nextActions that combine result category policy with known session/tab context.
- * Responsibilities: Prefix recovery argv with the active session and adapt tab/about:blank/no-active/stale-ref contexts into stable nextAction lists.
- * Scope: Recovery nextAction assembly only; diagnostic detection and action-list merge ordering stay in the extension entrypoint.
- * Usage: Imported by the extension entrypoint when adding recovery nextActions to tool details.
- * Invariants/Assumptions: Action ids and argv ordering are public contracts; session prefixing must not double-prefix explicit --session args.
- */
-
 import { buildAgentBrowserNextActions } from "./action-recommendations.js";
 import { type AgentBrowserNextAction, withOptionalSessionArgs } from "./next-actions.js";
 

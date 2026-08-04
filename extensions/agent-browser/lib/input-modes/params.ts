@@ -1,9 +1,3 @@
-/**
- * Purpose: Define the Pi tool input schema for the native agent_browser wrapper.
- * Responsibilities: Keep TypeBox schema construction separate from runtime execution and input-mode compilers.
- * Scope: Schema-only; behavioral validation lives in the mode compilers.
- */
-
 import { JsonSchema, type JsonSchemaBuilder, type TSchema } from "../json-schema.js";
 import { StringEnum as localStringEnum, type StringEnumBuilder } from "../string-enum-schema.js";
 

@@ -1,11 +1,3 @@
-/**
- * Purpose: Detect upstream guarded-action confirmation-needed result shapes without creating wrapper-owned confirmation state.
- * Responsibilities: Recognize confirmation-required markers, extract the pending upstream confirmation id, and optionally surface a short upstream action label.
- * Scope: Pure result-shape detection shared by presentation and error derivation; command execution, approval state, and redaction stay in their existing modules.
- * Usage: Imported by result presentation to render recovery commands and by envelope error handling to avoid hiding actionable confirmation payloads behind generic failure text.
- * Invariants/Assumptions: Detection must be conservative: a confirmation marker and a non-empty upstream id are both required before a result is treated as actionable.
- */
-
 import { isRecord } from "../parsing.js";
 
 export interface ConfirmationRequiredPresentation {

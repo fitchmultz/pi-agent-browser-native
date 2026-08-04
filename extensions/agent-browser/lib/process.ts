@@ -1,11 +1,3 @@
-/**
- * Purpose: Execute the upstream agent-browser binary for the pi-agent-browser extension.
- * Responsibilities: Validate POSIX socket storage, spawn the agent-browser subprocess, forward parent environment variables plus wrapper overrides, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
- * Scope: Process execution only; argument planning, output formatting, and pi tool registration live elsewhere.
- * Usage: Called by the extension tool after argument validation and session planning are complete.
- * Invariants/Assumptions: The binary name is always `agent-browser`; Windows routes through PowerShell to invoke npm launchers with escaped argv; callers handle semantic success/error interpretation.
- */
-
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { lstat, mkdir, readdir } from "node:fs/promises";

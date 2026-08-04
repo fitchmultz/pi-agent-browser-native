@@ -1,6 +1,3 @@
-// Purpose: Prevent native tool calls from crossing wrapper-owned managed-state boundaries.
-// Responsibilities: Guard destructive global state operations, foreign checkout restore/state references, and browser file access to local agent-browser state.
-// Scope: Pre-spawn policy only; result redaction and managed snapshot retention live elsewhere.
 
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";

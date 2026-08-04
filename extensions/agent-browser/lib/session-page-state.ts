@@ -1,11 +1,3 @@
-/**
- * Purpose: Own wrapper-known per-session browser page target, ref snapshot, invalidation, and pinning state.
- * Responsibilities: Restore state from persisted tool details, apply ordered tab/ref updates atomically, and expose order-free public state views to the extension entrypoint.
- * Scope: Session page state only; browser process execution, tab probing, and presentation policies stay in the extension entrypoint.
- * Usage: `index.ts` creates one store per Pi session lifecycle and records observations through update tokens.
- * Invariants/Assumptions: One tool-call update token must govern all page-state observations from that invocation; stale overlapping updates must not overwrite newer state.
- */
-
 import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
 import { isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";

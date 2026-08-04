@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 
-import { buildToolPresentation } from "../extensions/agent-browser/lib/results.js";
+import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 
 test("buildToolPresentation renders agent-browser skills as native-tool guidance", async () => {

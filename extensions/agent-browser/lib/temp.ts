@@ -1,11 +1,3 @@
-/**
- * Purpose: Create private temporary and persisted spill files for the pi-agent-browser extension without leaking artifacts broadly on disk.
- * Responsibilities: Maintain a process-private temp root, stamp explicit ownership/protected-child markers, enforce an aggregate temp-artifact disk budget, create securely permissioned temp files, create session-scoped persisted spill files for resumable sessions, prune explicitly owned stale temp roots from prior runs without deleting protected children, and best-effort clean all owned roots on process exit.
- * Scope: Artifact lifecycle helpers only; callers decide what data to write and when to delete or retain long-lived references.
- * Usage: Imported by result/process helpers when they need secure spill files instead of world-readable shared tmp paths.
- * Invariants/Assumptions: Temp artifacts live under the OS temp directory, each active run uses a dedicated 0700 directory, files are created with exclusive 0600 permissions, session-scoped persisted artifacts stay under the pi session directory, and stale pruning only touches roots with an explicit pi-agent-browser ownership marker.
- */
-
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";

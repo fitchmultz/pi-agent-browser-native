@@ -1,13 +1,5 @@
-/**
- * Purpose: Build generic nextAction recommendations from result categories, artifacts, Electron lifecycle state, and recovery context.
- * Responsibilities: Preserve stable action ids/order while keeping recommendation policy out of generic shared helpers.
- * Scope: Generic result-level recommendations only; feature-specific diagnostics append their own actions in the extension entrypoint.
- * Usage: Called by presentation and extension result assembly.
- * Invariants/Assumptions: Action ids are public machine-readable contracts; preserve first-observed order.
- */
-
 import { isOpenNavigationCommand, isPageMutationCommand } from "../command-taxonomy.js";
-import { isPendingRecordingArtifact } from "./artifact-state.js";
+import { isPendingRecordingArtifact } from "./artifact-manifest.js";
 import type {
 	AgentBrowserFailureCategory,
 	AgentBrowserResultCategory,

@@ -4,6 +4,14 @@
 
 ### Fixed
 
+## 0.2.78
+
+### Changed
+
+- Removed zero-behavior maintainer bloat: Purpose/Responsibilities file banners, barrel-only `lib/results.ts` and `lib/input-modes.ts` facades, the synthetic efficiency benchmark script/tests/verify mode, the completed Electron plan ADR, and the `AgentBrowserNextActionCollector` class (plain array helpers remain).
+- Folded tiny one-liner modules (`session-artifacts`, `artifact-state`, `electron/text`) into neighboring owners; pending-recording predicates live in `artifact-manifest.ts`.
+- Trimmed docs that only existed to index or advertise the removed surfaces (`AGENTS.md`, `RELEASE.md`, `SUPPORT_MATRIX.md`, `ARCHITECTURE.md`, `ELECTRON.md`, `TOOL_CONTRACT.md`, `COMMAND_REFERENCE.md`, README).
+
 - Successful `connect`, `--cdp`, and `--auto-connect` sessions, including environment-configured and wrapper-launched Electron attachments, now keep their attached browser across native-tool follow-ups and cleanup instead of resending local-launch defaults that made upstream replace the connection and prompt again. Content-bearing first use is blocked until the attachment URL is verified, established attachments live-check `get url` before later page reads or interactions so external tab drift cannot expose a local target, and every child clears the file-access environment override even when attached reuse omits the canonical launch flags.
 
 ## 0.2.76 - 2026-08-04

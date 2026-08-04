@@ -1,11 +1,3 @@
-/**
- * Purpose: Register the native agent_browser tool for pi so agents can invoke agent-browser without going through bash.
- * Responsibilities: Define the tool schema, inject thin wrapper behavior around the upstream CLI, manage extension-owned browser session convenience, and return pi-friendly content/details.
- * Scope: Native tool registration and orchestration only; the wrapper intentionally stays close to the upstream agent-browser CLI.
- * Usage: Loaded by pi through the package manifest in this package, or explicitly via `pi --no-extensions -e .` during local checkout development.
- * Invariants/Assumptions: agent-browser is installed separately on PATH, the wrapper targets the current locally installed upstream version only, and no backward-compatibility shims are provided.
- */
-
 import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -43,10 +35,8 @@ import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt
 import { isCloseCommand } from "./lib/command-taxonomy.js";
 import { hasLaunchScopedFlagToken } from "./lib/launch-scoped-flags.js";
 import { cleanupSecureTempArtifacts } from "./lib/temp.js";
-import {
-	AGENT_BROWSER_PARAMS,
-	type CompiledAgentBrowserElectron,
-} from "./lib/input-modes.js";
+import { AGENT_BROWSER_PARAMS } from "./lib/input-modes/params.js";
+import { type CompiledAgentBrowserElectron } from "./lib/input-modes/types.js";
 import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
 import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";

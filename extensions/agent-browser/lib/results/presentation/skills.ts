@@ -1,9 +1,3 @@
-/**
- * Purpose: Render upstream agent-browser skills output as native pi tool guidance.
- * Responsibilities: Format skills list/path/get results and translate agent-browser shell snippets to agent_browser tool calls.
- * Scope: Skills command presentation only.
- */
-
 import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import { getStringField, redactModelFacingText, stringifyModelFacing } from "./common.js";

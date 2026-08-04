@@ -1,9 +1,3 @@
-/**
- * Purpose: Render diagnostic command families and safe redacted diagnostic data.
- * Responsibilities: Format sessions, profiles, auth/cookies/storage, network diagnostics, console/errors, stream/dashboard/chat, and build network follow-up actions.
- * Scope: Diagnostic/result-state command presentation only; core orchestration stays in presentation.ts.
- */
-
 import { isRecord } from "../../parsing.js";
 import { isSensitiveFieldName, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";

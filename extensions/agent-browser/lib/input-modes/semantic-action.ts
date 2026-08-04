@@ -1,9 +1,3 @@
-/**
- * Purpose: Compile semanticAction shorthand inputs into upstream agent-browser commands.
- * Responsibilities: Validate shorthand locator/action fields and expose compiled-command helpers.
- * Scope: semanticAction mode only.
- */
-
 import { isRecord } from "../parsing.js";
 import { getSelectValues } from "./shared.js";
 import {

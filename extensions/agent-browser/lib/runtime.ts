@@ -1,13 +1,3 @@
-/**
- * Purpose: Build safe, deterministic agent-browser invocations and persisted session state for the pi-agent-browser extension.
- * Responsibilities: Validate raw tool arguments, derive extension-managed session names from the pi session identity, restore managed-session state from persisted tool details, redact sensitive invocation text, classify browser-oriented prompts, and build the effective CLI argument list passed to the upstream agent-browser binary.
- * Scope: Runtime-planning helpers only; no subprocess execution or filesystem access.
- * Usage: Imported by the extension entrypoint and unit tests before spawning the upstream CLI.
- * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, keeps plain-text inspection stateless,
- * and only injects wrapper-owned flags: `--json`, an extension-managed `--session` when appropriate, the narrow
- * site-specific headless compatibility `--user-agent` when that workaround applies.
- */
-
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 

@@ -1,9 +1,3 @@
-/**
- * Purpose: Canonical launch-scoped agent-browser flag metadata shared by runtime planning and agent-facing guidance.
- * Responsibilities: Define which upstream flags require a fresh launch, explain why, expose stable guidance labels, and share launch-token detection used by runtime and managed restore policy.
- * Scope: Launch-scoped metadata and token classification; broader execution planning lives in runtime.ts.
- */
-
 import { findCommandStartIndex } from "./argv-descriptor.js";
 import { isBooleanFlagEnabled, optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
 

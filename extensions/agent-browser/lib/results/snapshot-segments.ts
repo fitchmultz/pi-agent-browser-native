@@ -1,11 +1,3 @@
-/**
- * Purpose: Parse raw agent-browser snapshot text into previewable sections.
- * Responsibilities: Identify signal lines, rank content segments, build structured previews, and provide raw-outline fallback previews.
- * Scope: Snapshot text/section planning only; ref enrichment, high-value control ranking, spill files, and final presentation live elsewhere.
- * Usage: Snapshot presentation uses this module before selecting displayed refs.
- * Invariants/Assumptions: Parsing is best-effort and must stay resilient to upstream snapshot text format changes.
- */
-
 import type { SnapshotLineRefInfo, SnapshotRefEntry } from "./snapshot-refs.js";
 import { normalizeWhitespace, truncateText } from "./text.js";
 

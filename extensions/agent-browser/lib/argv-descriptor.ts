@@ -1,9 +1,3 @@
-/**
- * Purpose: Parse raw agent-browser argv once into a stable command descriptor for planners and policy.
- * Responsibilities: Own command-token extraction, command/subcommand identification, and descriptor construction.
- * Scope: Pure argv parsing; runtime planning and session policy consume descriptors instead of re-parsing tokens.
- */
-
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS, optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
 import { isOpenNavigationCommand } from "./command-taxonomy.js";
 

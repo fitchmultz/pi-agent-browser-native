@@ -1,9 +1,3 @@
-/**
- * Purpose: Hold tiny shared parsing helpers for structured agent_browser input modes.
- * Responsibilities: Normalize common select values, batch result rows, and workspace scan limits.
- * Scope: Generic input-mode helpers only; mode-specific policy stays in the owning module.
- */
-
 import { isRecord } from "../parsing.js";
 import { SOURCE_LOOKUP_DEFAULT_MAX_WORKSPACE_FILES, SOURCE_LOOKUP_MAX_WORKSPACE_FILES } from "./types.js";
 

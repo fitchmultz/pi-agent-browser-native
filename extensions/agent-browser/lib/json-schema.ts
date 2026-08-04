@@ -1,9 +1,3 @@
-/**
- * Purpose: Build the small JSON Schema subset used by Pi tool schemas without importing TypeBox at runtime.
- * Responsibilities: Preserve plain JSON Schema objects Pi consumes while keeping extension startup cheap.
- * Scope: Schema construction only; runtime validation still belongs to Pi and the tool input compilers.
- */
-
 import type { TSchema, TSchemaOptions, TUnsafe } from "typebox";
 
 const OPTIONAL_SCHEMA = Symbol("pi-agent-browser-optional-schema");

@@ -1,10 +1,3 @@
-/**
- * Purpose: Centralize upstream agent-browser command capabilities that wrapper behavior depends on.
- * Responsibilities: Normalize command aliases once and expose capability predicates for runtime planning,
- * session/ref guards, result recommendations, and presentation summaries without coupling unrelated behaviors.
- * Scope: Static command capability taxonomy only; command-shape parsing, spawning, and formatting live elsewhere.
- */
-
 type CommandCapabilityFlag =
 	| "closesSession"
 	| "openNavigation"

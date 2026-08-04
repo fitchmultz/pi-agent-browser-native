@@ -1,9 +1,3 @@
-/**
- * Purpose: Resolve and secure the filesystem identity used by automatic managed-session restore.
- * Responsibilities: Bind restore keys to one Git checkout generation, validate trusted HOME ancestry, and prepare owner-only upstream state directories.
- * Scope: Filesystem policy only; argv/session ownership and snapshot retention live in sibling modules.
- */
-
 import { createHash, randomUUID } from "node:crypto";
 import { linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";

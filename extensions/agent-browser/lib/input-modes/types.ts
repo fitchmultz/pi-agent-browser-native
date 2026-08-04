@@ -1,9 +1,3 @@
-/**
- * Purpose: Define structured agent_browser input-mode constants and TypeScript contracts.
- * Responsibilities: Share schema enums and compiled input-mode result types across input-mode modules.
- * Scope: Types and constants only; validation and compilation live in sibling modules.
- */
-
 export const DEFAULT_SESSION_MODE = "auto" as const;
 
 export const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select"] as const;

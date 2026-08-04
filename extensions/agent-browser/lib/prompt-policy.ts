@@ -1,9 +1,3 @@
-/**
- * Purpose: Derive operator prompt constraints for browser-run preflight guards and legacy bash policy.
- * Responsibilities: Parse the latest user message into requested artifact paths and legacy bash allowance.
- * Scope: Pure prompt-text policy; enforcement lives in orchestration prompt-guards and the extension entrypoint.
- */
-
 export interface PromptRequestedArtifact {
 	kind: "recording" | "screenshot";
 	path: string;

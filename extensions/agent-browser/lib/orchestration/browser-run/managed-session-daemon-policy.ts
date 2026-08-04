@@ -1,11 +1,3 @@
-/**
- * Purpose: Coordinate wrapper-owned managed-session daemon inspection, reuse, and cleanup policy.
- * Responsibilities: Serialize daemon policy decisions, verify live restore keys, and close owned sessions with snapshot cleanup.
- * Scope: Managed-session daemon policy only; page state and browser-result shaping live in sibling modules.
- * Usage: Called by browser-run preparation, Electron host probes, result handling, and extension shutdown cleanup.
- * Invariants/Assumptions: Every owned daemon decision holds the cross-process policy lock until its caller finishes the related operation.
- */
-
 import { rm } from "node:fs/promises";
 
 import { acquireManagedSessionPolicyLock, type ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
@@ -17,7 +9,7 @@ import {
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { isRecord } from "../../parsing.js";
 import { runAgentBrowserProcess } from "../../process.js";
-import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results.js";
+import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { redactInvocationArgs } from "../../runtime.js";
 
 const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 5_000;

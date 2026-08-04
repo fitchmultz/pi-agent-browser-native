@@ -73,7 +73,6 @@ Modes:
   typecheck           Run TypeScript typecheck only.
   command-reference   Check generated command-reference block and live upstream help drift.
   pre-pr              Run default verification plus package-content checks for larger local handoffs.
-  benchmark           Run the deterministic agent-browser efficiency benchmark and focused tests.
   startup-profile     Run the safe package entrypoint startup profiler.
   real-upstream       Run the opt-in real upstream browser contract suite (localhost fixtures, broad core commands).
   dogfood             Run a deterministic model-free live-browser smoke through the native tool wrapper.
@@ -115,7 +114,7 @@ Examples:
 
 Publisher note:
   package.json prepublishOnly runs release (default + lifecycle + package-pi + platform smoke), then npm pack --dry-run during npm publish.
-  It does not run real-upstream, dogfood, or benchmark; see docs/RELEASE.md#pre-release-checks.
+  It does not run real-upstream or dogfood; see docs/RELEASE.md#pre-release-checks.
 
 Exit codes:
   0  Verification passed or help was shown.
@@ -217,7 +216,6 @@ export function parseVerifyArgs(argv) {
 		"typecheck",
 		"command-reference",
 		"pre-pr",
-		"benchmark",
 		"startup-profile",
 		"real-upstream",
 		"dogfood",
@@ -264,7 +262,6 @@ function validatePassthrough(mode, passthrough) {
 		typecheck: new Set(),
 		"command-reference": new Set(),
 		"pre-pr": new Set(),
-		benchmark: new Set(),
 		"startup-profile": new Set(["--samples", "--json"]),
 		"real-upstream": new Set(),
 		dogfood: new Set(["--artifact-dir", "--keep-artifacts", "--json"]),
@@ -334,11 +331,6 @@ export function verifySteps(options) {
 			return [
 				...verifySteps({ mode: "default", passthrough: [], showHelp: false }),
 				...verifySteps({ mode: "package", passthrough: [], showHelp: false }),
-			];
-		case "benchmark":
-			return [
-				scriptStep(["./scripts/agent-browser-efficiency-benchmark.mjs", "--json"]),
-				localToolStep("tsx", ["--test", "test/agent-browser.efficiency-benchmark.test.ts"]),
 			];
 		case "startup-profile":
 			return [scriptStep(["./scripts/profile-startup.mjs", ...options.passthrough])];

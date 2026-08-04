@@ -1,11 +1,3 @@
-/**
- * Purpose: Discover installed Electron desktop applications without invoking upstream agent-browser.
- * Responsibilities: Scan bounded macOS app bundles and Linux .desktop launchers, apply Electron framework evidence gates, and return small platform-tagged app metadata.
- * Scope: Discovery only; launch, cleanup, status, and CDP attachment live in later Electron lifecycle work items.
- * Usage: Called by the agent_browser top-level electron.list shorthand and directly by tests through parameterized scan locations.
- * Invariants/Assumptions: Discovery is best-effort, missing scan roots are ignored, malformed .desktop files are skipped, and results are capped before they reach model-visible output.
- */
-
 import { constants as fsConstants } from "node:fs";
 import { access, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";

@@ -1,5 +1,5 @@
 import { isRecord } from "../../../parsing.js";
-import { buildAgentBrowserResultCategoryDetails } from "../../../results.js";
+import { buildAgentBrowserResultCategoryDetails } from "../../../results/categories.js";
 import { buildSnapshotPresentation } from "../../../results/snapshot.js";
 import { extractRefSnapshotFromData, type SessionRefSnapshot } from "../../../session-page-state.js";
 import type { CompatibilityWorkaround } from "../../../runtime.js";

@@ -34,9 +34,7 @@ import {
 	shouldCommitManagedRestoreAfterWindowsProcess,
 	runAgentBrowserProcess,
 } from "../extensions/agent-browser/lib/process.js";
-import {
-	parseAgentBrowserEnvelope
-} from "../extensions/agent-browser/lib/results.js";
+import { parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
 import {
 	cleanupSecureTempArtifacts,
 	getSecureTempDebugState,

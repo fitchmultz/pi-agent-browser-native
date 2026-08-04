@@ -1,9 +1,3 @@
-/**
- * Purpose: Provide the optional provider-backed `agent_browser_web_search` companion tool.
- * Responsibilities: Define strict search input schema, resolve configured Brave/Exa credentials lazily, call the selected search API with cancellation/timeout, normalize compact results, and keep secrets out of content/details.
- * Scope: Live web search only; browser automation remains in the `agent_browser` tool.
- */
-
 import { JsonSchema, type JsonSchemaBuilder } from "./json-schema.js";
 import { WEB_SEARCH_PROMPT_GUIDELINE } from "./playbook.js";
 import { StringEnum as localStringEnum, type StringEnumBuilder } from "./string-enum-schema.js";

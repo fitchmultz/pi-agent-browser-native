@@ -358,26 +358,11 @@ Before ending the task:
 
 If `cleanup` returns `failureCategory: "cleanup-failed"`, inspect `details.electron.cleanup.results[].steps` and use `retry-electron-cleanup` for the same `launchId`. Do not invent new cleanup commands for processes the wrapper did not start.
 
-## Verification and benchmarks
+## Verification
 
-Electron support is gated by the same release evidence as the rest of the wrapper:
+- Fake-upstream Electron discovery/lifecycle tests cover list/launch/status/probe/cleanup without a real app.
+- Real-app validation is a manual `tmux` smoke pass per `AGENTS.md`. Electron is a narrow typed lifecycle (`list`/`launch`/`status`/`probe`/`cleanup`) adopted because agents repeatedly failed the manual discover→debug-port→attach→cleanup sequence; it is not a generic recipe runtime (`RQ-0068` / `RQ-0096`).
 
-- `RQ-0096` in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) records the contract, runtime, test, and verification coverage.
-- `electron-lifecycle` and `electron-probe` scenarios in `scripts/agent-browser-efficiency-benchmark.mjs` track the token-efficiency claim deterministically (no real browser, no real launches).
-- Fake-upstream Electron discovery and lifecycle coverage lives in `test/agent-browser.extension-electron-discovery.test.ts` and `test/agent-browser.extension-electron-lifecycle.test.ts`; ref/session recovery coverage lives in `test/agent-browser.extension-ref-guards.test.ts`, with shared validation paths in `test/agent-browser.extension-validation.test.ts`.
-- Real-app validation is a manual `tmux` smoke pass per the maintainer notes in `AGENTS.md`; the 2026-05-21 dogfood result and resulting decision are summarized in the repo-local [`Electron ADR`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/docs/plans/electron-extension-2026-05-20.md).
-
-Run the local gate the same way as the rest of the project:
-
-```bash
-npm run verify
-```
-
-The token-efficiency claim has its own opt-in run:
-
-```bash
-npm run benchmark:agent-browser
-```
 
 ## Where to go next
 

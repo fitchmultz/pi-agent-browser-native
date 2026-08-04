@@ -1,5 +1,3 @@
-// Purpose: Identify and redact wrapper-owned managed restore capabilities.
-// Scope: Pure string helpers shared by storage, policy, and presentation paths.
 
 const MANAGED_SESSION_RESTORE_KEY_PATTERN = /piab-r(?:2)?-[a-f\d]{32}/gi;
 const MANAGED_SESSION_RESTORE_KEY_EXACT_PATTERN = /^piab-r2-[a-f\d]{32}$/i;

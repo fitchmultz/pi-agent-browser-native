@@ -1,9 +1,3 @@
-/**
- * Purpose: Share small presentation formatting and redaction helpers across result presentation modules.
- * Responsibilities: Normalize scalar fields, stringify model-facing values, and apply sensitive-text redaction.
- * Scope: Leaf helpers only; command-family formatting lives in sibling modules.
- */
-
 import { containsManagedSessionRestoreKey } from "../../managed-session-capabilities.js";
 import { redactSensitiveText, redactSensitiveValue } from "../../runtime.js";
 import { stringifyUnknown, truncateText } from "../text.js";

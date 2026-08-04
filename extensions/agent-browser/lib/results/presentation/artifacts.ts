@@ -1,19 +1,15 @@
-/**
- * Purpose: Own file artifact detection, verification, manifest merging, and inline image attachment for tool presentation.
- * Responsibilities: Build artifact metadata, verification summaries, saved-file details, artifact retention notices, and safe image content.
- * Scope: Artifact and image presentation only.
- */
-
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
+
 
 import { isRecord, parsePositiveInteger } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import {
 	formatSessionArtifactRetentionSummary,
+	isPendingRecordingArtifact,
+	isPendingRecordingCommand,
 	mergeSessionArtifactManifest,
 } from "../artifact-manifest.js";
-import { isPendingRecordingArtifact, isPendingRecordingCommand } from "../artifact-state.js";
 import { classifyAgentBrowserSuccessCategory } from "../categories.js";
 import type {
 	ArtifactVerificationEntry,
@@ -25,6 +21,8 @@ import type {
 	SessionArtifactManifestEntry,
 	ToolPresentation,
 } from "../contracts.js";
+
+
 
 const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
 	".gif": "image/gif",
