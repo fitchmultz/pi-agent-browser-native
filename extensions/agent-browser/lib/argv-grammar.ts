@@ -154,13 +154,17 @@ export function canonicalizeAgentBrowserNamespace(value: string | undefined): st
 	return normalized.replace(/[-_]+$/u, "") || undefined;
 }
 
+function foldAgentBrowserFilesystemIdentity(value: string, platform: NodeJS.Platform): string {
+	if (platform !== "darwin" && platform !== "win32") return value;
+	// APFS aliases include full Unicode folds such as ß/SS and ς/Σ, not just ASCII case.
+	return value.normalize("NFC").toLowerCase().toUpperCase().toLowerCase().normalize("NFC");
+}
+
 export function getAgentBrowserSessionIdentityKey(sessionName: string, namespace?: string, platform: NodeJS.Platform = process.platform): string {
 	const canonicalNamespace = canonicalizeAgentBrowserNamespace(namespace);
-	// APFS aliases include full Unicode folds such as ß/SS and ς/Σ, not just ASCII case.
-	const canonicalSessionName = platform === "darwin" || platform === "win32"
-		? sessionName.normalize("NFC").toLowerCase().toUpperCase().toLowerCase().normalize("NFC")
-		: sessionName;
-	return canonicalNamespace ? `${canonicalNamespace}\0${canonicalSessionName}` : canonicalSessionName;
+	const identityNamespace = canonicalNamespace ? foldAgentBrowserFilesystemIdentity(canonicalNamespace, platform) : undefined;
+	const canonicalSessionName = foldAgentBrowserFilesystemIdentity(sessionName, platform);
+	return identityNamespace ? `${identityNamespace}\0${canonicalSessionName}` : canonicalSessionName;
 }
 
 /** Mirror upstream 0.33.2 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */

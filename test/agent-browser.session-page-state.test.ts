@@ -36,8 +36,12 @@ test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidat
 	assert.equal(getAgentBrowserSessionIdentityKey("Session", undefined, "darwin"), getAgentBrowserSessionIdentityKey("session", undefined, "darwin"));
 	assert.equal(getAgentBrowserSessionIdentityKey("Straße", undefined, "darwin"), getAgentBrowserSessionIdentityKey("STRASSE", undefined, "darwin"));
 	assert.equal(getAgentBrowserSessionIdentityKey("Σ", undefined, "darwin"), getAgentBrowserSessionIdentityKey("ς", undefined, "darwin"));
+	assert.equal(getAgentBrowserSessionIdentityKey("session", "Straße", "darwin"), getAgentBrowserSessionIdentityKey("session", "STRASSE", "darwin"));
+	assert.equal(getAgentBrowserSessionIdentityKey("session", "Σ", "darwin"), getAgentBrowserSessionIdentityKey("session", "ς", "darwin"));
 	assert.equal(getAgentBrowserSessionIdentityKey("Session", undefined, "win32"), getAgentBrowserSessionIdentityKey("session", undefined, "win32"));
+	assert.equal(getAgentBrowserSessionIdentityKey("session", "Straße", "win32"), getAgentBrowserSessionIdentityKey("session", "STRASSE", "win32"));
 	assert.notEqual(getAgentBrowserSessionIdentityKey("Session", undefined, "linux"), getAgentBrowserSessionIdentityKey("session", undefined, "linux"));
+	assert.notEqual(getAgentBrowserSessionIdentityKey("session", "Straße", "linux"), getAgentBrowserSessionIdentityKey("session", "STRASSE", "linux"));
 	const state = SessionPageState.fromBranch([
 		toolEntry({
 			command: "snapshot",

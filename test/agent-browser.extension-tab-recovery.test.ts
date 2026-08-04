@@ -647,9 +647,9 @@ if (args.includes("https://example.com/slow")) {
 	}
 });
 
-test("agentBrowserExtension serializes case-alias sessions on case-insensitive hosts", {
+test("agentBrowserExtension serializes case-alias session and namespace identities on case-insensitive hosts", {
 	concurrency: false,
-	skip: process.platform === "darwin" || process.platform === "win32" ? false : "session socket paths are case-sensitive on this host",
+	skip: process.platform === "darwin" || process.platform === "win32" ? false : "session daemon paths are case-sensitive on this host",
 }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-session-case-alias-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -657,6 +657,10 @@ test("agentBrowserExtension serializes case-alias sessions on case-insensitive h
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
 const args = process.argv.slice(2);
+const namespaceIndex = args.indexOf("--namespace");
+const namespace = namespaceIndex >= 0 ? args[namespaceIndex + 1] : "";
+const sessionIndex = args.indexOf("--session");
+const session = sessionIndex >= 0 ? args[sessionIndex + 1] : "";
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 let state = { url: "about:blank" };
 try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
@@ -669,28 +673,35 @@ if (args.includes("open")) {
 } else if (args.includes("snapshot")) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
   try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
-  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: ["snapshot-finished"] }) + "\\n");
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: ["snapshot-finished", namespace, session] }) + "\\n");
   process.stdout.write(JSON.stringify({ success: true, data: { snapshot: state.url.startsWith("file:") ? "SECRET LOCAL CONTENT" : "SAFE CONTENT" } }));
 }`);
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "Foo", "open", "https://example.com/"] });
-			assert.equal(opened.isError, false, JSON.stringify(opened));
+			const runAliasRace = async (readIdentityArgs: string[], writeIdentityArgs: string[], label: string): Promise<void> => {
+				const session = readIdentityArgs[readIdentityArgs.indexOf("--session") + 1]!;
+				const localUrl = `file:///tmp/${label}-secret.html`;
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...readIdentityArgs, "open", "https://example.com/"] });
+				assert.equal(opened.isError, false, JSON.stringify(opened));
 
-			const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "Foo", "snapshot", "-i"] });
-			await waitForInvocation(logPath, (entry) => entry.args.includes("snapshot"));
-			const localOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "foo", "open", "file:///tmp/secret.html"] });
-			const [snapshot, localOpen] = await Promise.all([snapshotPromise, localOpenPromise]);
-			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
-			assert.doesNotMatch(JSON.stringify(snapshot), /SECRET LOCAL CONTENT/);
-			assert.equal(localOpen.isError, false, JSON.stringify(localOpen));
+				const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: [...readIdentityArgs, "snapshot", "-i"] });
+				await waitForInvocation(logPath, (entry) => entry.args.includes("snapshot") && entry.args.includes(session));
+				const localOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: [...writeIdentityArgs, "open", localUrl] });
+				const [snapshot, localOpen] = await Promise.all([snapshotPromise, localOpenPromise]);
+				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+				assert.doesNotMatch(JSON.stringify(snapshot), /SECRET LOCAL CONTENT/);
+				assert.equal(localOpen.isError, false, JSON.stringify(localOpen));
 
-			const invocations = await readInvocationLog(logPath);
-			const snapshotFinishedIndex = invocations.findIndex((entry) => entry.args[0] === "snapshot-finished");
-			const localOpenIndex = invocations.findIndex((entry) => entry.args.includes("file:///tmp/secret.html"));
-			assert.ok(snapshotFinishedIndex >= 0 && localOpenIndex > snapshotFinishedIndex, JSON.stringify(invocations));
+				const invocations = await readInvocationLog(logPath);
+				const snapshotFinishedIndex = invocations.findIndex((entry) => entry.args[0] === "snapshot-finished" && entry.args[2] === session);
+				const localOpenIndex = invocations.findIndex((entry) => entry.args.includes(localUrl));
+				assert.ok(snapshotFinishedIndex >= 0 && localOpenIndex > snapshotFinishedIndex, JSON.stringify(invocations));
+			};
+			await runAliasRace(["--session", "Foo"], ["--session", "foo"], "session-case");
+			await runAliasRace(["--namespace", "Straße", "--session", "namespace-sharp-s"], ["--namespace", "STRASSE", "--session", "namespace-sharp-s"], "namespace-sharp-s");
+			await runAliasRace(["--namespace", "Σ", "--session", "namespace-sigma"], ["--namespace", "ς", "--session", "namespace-sigma"], "namespace-sigma");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
