@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.77 - 2026-08-04
+
+### Fixed
+
+- Successful `connect`, `--cdp`, and `--auto-connect` sessions, including environment-configured and wrapper-launched Electron attachments, now keep their attached browser across native-tool follow-ups and cleanup instead of resending local-launch defaults that made upstream replace the connection and prompt again. Content-bearing first use is blocked until the attachment URL is verified, established attachments live-check `get url` before later page reads or interactions so external tab drift cannot expose a local target, and every child clears the file-access environment override even when attached reuse omits the canonical launch flags.
+
 ## 0.2.76 - 2026-08-04
 
 ### Fixed

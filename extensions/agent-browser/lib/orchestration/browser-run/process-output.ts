@@ -484,8 +484,12 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			networkRoutesBySession = new Map(networkRoutesBySession);
 			networkRoutesBySession.delete(replacedSessionStateKey ?? replacedManagedSessionName);
 			sessionPageState.clearSession(replacedSessionStateKey ?? replacedManagedSessionName);
-			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, namespace: priorManagedSessionNamespace, restoreState: state.managedSessionRestoreState, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
-			if (!replacedCloseError) state.closedManagedSessionNames.add(replacedSessionStateKey ?? replacedManagedSessionName);
+			const replacedSessionKey = replacedSessionStateKey ?? replacedManagedSessionName;
+			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, namespace: priorManagedSessionNamespace, preserveAttachedBrowserSession: state.attachedSessionKeys.has(replacedSessionKey), restoreState: state.managedSessionRestoreState, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
+			if (!replacedCloseError) {
+				state.attachedSessionKeys.delete(replacedSessionKey);
+				state.closedManagedSessionNames.add(replacedSessionKey);
+			}
 		}
 
 		let electronLaunchRecord: ElectronLaunchRecord | undefined;
@@ -509,7 +513,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				if (electronHandoff.error) {
 					succeeded = false;
 					presentationEnvelope = { error: electronHandoff.error, success: false };
-					const closeError = await closeManagedSession({ cwd, namespace: prepared.executionPlan.namespace, policyLock: prepared.managedSessionPolicyLock, restoreState: state.managedSessionRestoreState, sessionName: electronSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
+					const closeError = await closeManagedSession({ cwd, namespace: prepared.executionPlan.namespace, policyLock: prepared.managedSessionPolicyLock, preserveAttachedBrowserSession: input.preserveAttachedBrowserSession, restoreState: state.managedSessionRestoreState, sessionName: electronSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
 					electronFailedConnectCleanup = await cleanupElectronLaunchResources({ child: prepared.electronLaunch.child, record: electronLaunchRecord, timeoutMs: implicitSessionCloseTimeoutMs });
 					electronLaunchRecord = electronFailedConnectCleanup.record;
 					if (electronFailedConnectCleanup.partial) {

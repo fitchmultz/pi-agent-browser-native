@@ -30,6 +30,7 @@ export async function inspectManagedSessionDaemon(options: {
 	cwd: string;
 	allowManagedSessionTarget?: boolean;
 	namespace?: string;
+	preserveAttachedBrowserSession?: boolean;
 	sessionName: string;
 	signal?: AbortSignal;
 	timeoutMs?: number;
@@ -38,6 +39,7 @@ export async function inspectManagedSessionDaemon(options: {
 		allowManagedSessionTarget: options.allowManagedSessionTarget,
 		args: ["--json", "--namespace", options.namespace ?? "", "--session", options.sessionName, "session", "info"],
 		cwd: options.cwd,
+		preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,
 		signal: options.signal,
 		timeoutMs: options.timeoutMs ?? MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS,
 	});
@@ -126,6 +128,7 @@ export async function closeManagedSession(options: {
 	cwd: string;
 	namespace?: string;
 	policyLock?: ManagedSessionPolicyLock;
+	preserveAttachedBrowserSession?: boolean;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
 	timeoutMs: number;
@@ -149,6 +152,7 @@ export async function closeManagedSession(options: {
 			allowManagedSessionTarget: true,
 			cwd: options.cwd,
 			namespace: options.namespace,
+			preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,
 			sessionName: options.sessionName,
 			signal: controller.signal,
 			timeoutMs: Math.min(options.timeoutMs, 2_000),
@@ -163,6 +167,7 @@ export async function closeManagedSession(options: {
 			env: { AGENT_BROWSER_JSON: "1" },
 			managedSessionRestoreState: options.restoreState,
 			ownedManagedSession: true,
+			preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,
 			signal: controller.signal,
 		});
 		stdoutSpillPath = processResult.stdoutSpillPath;

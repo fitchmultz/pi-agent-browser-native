@@ -1,4 +1,4 @@
-import { runAgentBrowserProcess } from "../../process.js";
+import { runAgentBrowserProcess, withAttachedBrowserSessionContext } from "../../process.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
 import { applyBrowserRunStatePatch } from "./session-state.js";
@@ -12,6 +12,10 @@ export { getSessionContextKey } from "./session-state.js";
 export type { AgentBrowserToolResult, BrowserRunOptions, BrowserRunState, TraceOwner } from "./types.js";
 
 export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
+	return await withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options));
+}
+
+async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
 	const preparedResult = await prepareBrowserRun(options);
 	applyBrowserRunStatePatch(options.state, preparedResult.kind === "ready" ? preparedResult.prepared.statePatch : preparedResult.statePatch);
 	if (preparedResult.kind === "early-result") {

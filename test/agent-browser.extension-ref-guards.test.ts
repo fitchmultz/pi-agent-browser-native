@@ -1035,7 +1035,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS: "1" }, async () => {
 			const userDataDir = await createSecureTempDirectory("electron-profile-");
 			child = spawnElectronFixtureProcess(userDataDir);
 			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
