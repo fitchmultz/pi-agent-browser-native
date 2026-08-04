@@ -116,7 +116,7 @@ test("agentBrowserExtension reconstructs managed session state on session_start 
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, userAgent: process.env.AGENT_BROWSER_USER_AGENT }) + "\\n");
 const envelope = args.includes("close")
   ? { success: true, data: { closed: true } }
   : { success: true, data: { url: args[args.length - 1] } };
@@ -129,27 +129,63 @@ process.stdout.write(JSON.stringify(envelope));`,
 			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
 
 			const firstOpen = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, {
-				args: ["open", "https://example.com/first"],
+				args: ["open", "https://dash.cloudflare.com"],
 			});
 			assert.equal(firstOpen.isError, false);
+			assert.equal((firstOpen.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
+			const sessionName = String(firstOpen.details?.sessionName ?? "");
+			assert.match(sessionName, /^piab-/);
 			await runExtensionEvent(firstHarness.handlers, "session_shutdown", { reason: "resume" });
 			assert.equal((await readInvocationLog(logPath)).length, 1);
 
 			const resumedBranch = [
 				createToolBranchEntry({
-					details: firstOpen.details ?? {},
-					isError: firstOpen.isError,
+					details: {
+						...firstOpen.details,
+						exitCode: 1,
+						managedSessionOutcome: {
+							...(firstOpen.details?.managedSessionOutcome as Record<string, unknown>),
+							activeAfter: true,
+							status: "created",
+							succeeded: true,
+						},
+						resultCategory: "failure",
+					},
+					isError: true,
+				}),
+				createToolBranchEntry({
+					details: { ...firstOpen.details, compatibilityWorkaround: undefined, exitCode: 1, managedSessionOutcome: undefined },
 				}),
 			];
 			const resumedHarness = createExtensionHarness({ branch: resumedBranch, cwd: tempDir });
 			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
 
+			const snapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["--session", sessionName, "snapshot", "-i"] });
+			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+			assert.equal((snapshot.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
+			const snapshotInvocation = (await readInvocationLog(logPath)).at(-1) as { args: string[]; userAgent?: string };
+			assert.ok(snapshotInvocation.args.includes("--user-agent"));
+			assert.match(snapshotInvocation.userAgent ?? "", /Chrome\/\d+\.0\.0\.0/);
+
+			const explicitOptOut = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", sessionName, "--user-agent", "Custom/1", "snapshot", "-i"],
+			});
+			assert.equal(explicitOptOut.isError, false, JSON.stringify(explicitOptOut));
+			assert.equal(explicitOptOut.details?.compatibilityWorkaround, undefined);
+			const afterOptOut = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(afterOptOut.isError, false, JSON.stringify(afterOptOut));
+			assert.equal(afterOptOut.details?.compatibilityWorkaround, undefined);
+			const afterOptOutInvocation = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("snapshot")).at(-1) as { args: string[]; userAgent?: string };
+			assert.equal(afterOptOutInvocation.args.includes("--user-agent"), false);
+			assert.equal(afterOptOutInvocation.userAgent, undefined);
+
+			const invocationCount = (await readInvocationLog(logPath)).length;
 			const blocked = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
 				args: ["--profile", "Default", "open", "https://example.com/profiled"],
 			});
 			assert.equal(blocked.isError, true);
 			assert.match(String(blocked.details?.validationError ?? ""), /launch-scoped flags/i);
-			assert.equal((await readInvocationLog(logPath)).length, 1);
+			assert.equal((await readInvocationLog(logPath)).length, invocationCount);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

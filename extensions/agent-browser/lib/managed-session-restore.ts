@@ -112,6 +112,7 @@ export class ManagedSessionRestoreState {
 }
 
 export type OwnedManagedSessionContext = {
+	compatibilityUserAgent?: string;
 	cwd?: string;
 	expectedDaemonRestoreKey?: string | null;
 	namespace?: string;
@@ -281,6 +282,13 @@ export function getOwnedManagedSessionNamespaceEnv(options: ManagedSessionRestor
 	return owned ? { AGENT_BROWSER_NAMESPACE: ownedContext?.namespace ?? namespace ?? "" } : {};
 }
 
+export function getOwnedManagedSessionCompatibilityEnv(options: ManagedSessionRestoreEnvOptions): NodeJS.ProcessEnv {
+	const { owned, ownedContext } = resolveManagedSessionRestorePolicy(options);
+	return owned && ownedContext?.compatibilityUserAgent
+		? { AGENT_BROWSER_USER_AGENT: ownedContext.compatibilityUserAgent }
+		: {};
+}
+
 export function shouldOmitOwnedManagedSessionRestoreEnv(options: ManagedSessionRestoreEnvOptions): boolean {
 	return resolveManagedSessionRestorePolicy(options).owned && closesBrowserSession(options.args);
 }
@@ -420,6 +428,7 @@ export function commitManagedSessionRestoreSuppression(options: ManagedSessionRe
 
 export function buildOwnedManagedSessionRestoreContext(options: {
 	args: string[];
+	compatibilityUserAgent?: string;
 	cwd: string;
 	currentManagedSessionName?: string;
 	currentManagedSessionNamespace?: string;
@@ -452,6 +461,7 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 	const restoreKey = projectIdentityAvailable ? createManagedSessionRestoreKey(ownedCwd) : undefined;
 	return {
 		...owned,
+		compatibilityUserAgent: options.compatibilityUserAgent,
 		expectedDaemonRestoreKey: enabled ? restoreKey : extractRequestedRestoreKey(options.args, owned.sessionName, effectiveEnv[AGENT_BROWSER_RESTORE_ENV]),
 		protectedStorageEnv: enabled ? getManagedSessionRestoreProtectedStorageEnv(true, effectiveEnv) : undefined,
 		restoreDecision: optedOut ? "opted-out" : incompatible ? "incompatible" : "enabled",

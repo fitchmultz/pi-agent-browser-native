@@ -25,6 +25,7 @@ import {
 } from "./lib/playbook.js";
 import { SessionPageState } from "./lib/session-page-state.js";
 import {
+	canUseHeadlessCompatibilityUserAgent,
 	createEphemeralSessionSeed,
 	createFreshSessionName,
 	createImplicitSessionName,
@@ -33,6 +34,7 @@ import {
 	getImplicitSessionIdleTimeoutMs,
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
+	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
 import { extractExplicitNamespace, extractExplicitSessionName, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
 import { cleanupManagedSessionRestoreConfig, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
@@ -135,6 +137,42 @@ function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactMa
 		}
 	}
 	return restoredManifest;
+}
+
+function restoreManagedSessionCompatibilityWorkaroundFromBranch(
+	branch: unknown[],
+	sessionName: string,
+	namespace?: string,
+): CompatibilityWorkaround | undefined {
+	let restored: CompatibilityWorkaround | undefined;
+	const targetKey = getSessionContextKey(sessionName, namespace);
+	for (const entry of branch) {
+		if (!isRecord(entry) || entry.type !== "message") continue;
+		const message = isRecord(entry.message) ? entry.message : undefined;
+		if (!message || message.toolName !== "agent_browser") continue;
+		const details = isRecord(message.details) ? message.details : undefined;
+		if (!details) continue;
+		const workaround = isRecord(details.compatibilityWorkaround) ? details.compatibilityWorkaround : undefined;
+		if (getSessionContextKey(typeof details.sessionName === "string" ? details.sessionName : undefined, typeof details.namespace === "string" ? details.namespace : undefined) !== targetKey) continue;
+		const recognizedWorkaround: CompatibilityWorkaround | undefined =
+			(workaround?.id === "chatgpt-headless-user-agent" || workaround?.id === "cloudflare-headless-user-agent") && typeof workaround.reason === "string"
+				? { id: workaround.id, reason: workaround.reason }
+				: undefined;
+		const succeeded = getSuccessfulToolResult(details, message);
+		const outcome = getManagedSessionOutcome(details);
+		const activeAfterFailure = recognizedWorkaround
+			&& outcome?.activeAfter === true
+			&& typeof outcome.currentSessionName === "string"
+			&& getSessionContextKey(outcome.currentSessionName, typeof outcome.currentSessionNamespace === "string" ? outcome.currentSessionNamespace : undefined) === targetKey
+			&& (outcome.status === "created" || outcome.status === "replaced" || outcome.status === "unchanged");
+		if (!succeeded && !activeAfterFailure) continue;
+		if (recognizedWorkaround) {
+			restored = recognizedWorkaround;
+		} else if (!canUseHeadlessCompatibilityUserAgent(getToolResultArgs(details))) {
+			restored = undefined;
+		}
+	}
+	return restored;
 }
 
 function getToolResultArgs(details: Record<string, unknown>): string[] {
@@ -632,6 +670,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let webSearchToolRegistered = false;
 	let managedSessionActive = false;
 	let managedSessionBaseName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
+	let managedSessionCompatibilityWorkaround: CompatibilityWorkaround | undefined;
 	let managedSessionName = managedSessionBaseName;
 	let managedSessionCwd = process.cwd();
 	let managedSessionNamespace: string | undefined;
@@ -694,6 +733,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				: createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, nextFreshSessionOrdinal)
 			: restoredState.sessionName;
 		managedSessionNamespace = shouldReservePostCloseSession ? undefined : restoredState.namespace;
+		managedSessionCompatibilityWorkaround = managedSessionActive
+			? restoreManagedSessionCompatibilityWorkaroundFromBranch(branch, managedSessionName, managedSessionNamespace)
+			: undefined;
 		managedSessionCwd = ctx.cwd;
 		freshSessionOrdinal = nextFreshSessionOrdinal;
 		sessionPageState = SessionPageState.fromBranch(branch);
@@ -798,6 +840,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 		});
 		managedSessionActive = false;
+		managedSessionCompatibilityWorkaround = undefined;
 		managedSessionNamespace = undefined;
 		sessionPageState.reset();
 		traceOwners = new Map<string, TraceOwner>();
@@ -936,6 +979,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						clearSessionScopedBrowserState(closedSessionName);
 						if (closedSessionName === managedSessionName) {
 							managedSessionActive = false;
+							managedSessionCompatibilityWorkaround = undefined;
 							managedSessionNamespace = undefined;
 							freshSessionOrdinal += 1;
 							managedSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal);
@@ -977,6 +1021,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					freshSessionOrdinal,
 					managedSessionActive,
 					managedSessionBaseName,
+					managedSessionCompatibilityWorkaround,
 					managedSessionCwd,
 					managedSessionName,
 					managedSessionNamespace,
@@ -1024,6 +1069,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				if (serializeBrowserCommand || branchStateStillCurrent) {
 					freshSessionOrdinal = Math.max(freshSessionOrdinal, browserRunState.freshSessionOrdinal);
 					managedSessionActive = browserRunState.managedSessionActive;
+					managedSessionCompatibilityWorkaround = browserRunState.managedSessionCompatibilityWorkaround;
 					managedSessionCwd = browserRunState.managedSessionCwd;
 					managedSessionName = browserRunState.managedSessionName;
 					managedSessionNamespace = browserRunState.managedSessionNamespace;

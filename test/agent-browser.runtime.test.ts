@@ -1347,20 +1347,70 @@ test("buildExecutionPlan assigns a new managed session for fresh session mode", 
 	assert.equal(plan.recoveryHint, undefined);
 });
 
-test("buildExecutionPlan injects the ChatGPT headless compatibility user-agent only when needed", () => {
-	for (const targetUrl of ["https://chat.com", "https://chatgpt.com"] as const) {
+test("buildExecutionPlan injects and retains site-specific headless compatibility user agents", () => {
+	for (const [targetUrl, expectedId] of [
+		["https://chat.com", "chatgpt-headless-user-agent"],
+		["https://chatgpt.com", "chatgpt-headless-user-agent"],
+		["https://dash.cloudflare.com", "cloudflare-headless-user-agent"],
+	] as const) {
 		const plan = buildExecutionPlan(["--profile", "Default", "open", targetUrl], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
 			managedSessionName: "piab-demo-123",
 			sessionMode: "auto",
 		});
-		assert.equal(plan.compatibilityWorkaround?.id, "chatgpt-headless-user-agent");
+		assert.equal(plan.compatibilityWorkaround?.id, expectedId);
 		const userAgentFlagIndex = plan.effectiveArgs.indexOf("--user-agent");
 		assert.ok(userAgentFlagIndex >= 0);
 		assert.match(plan.effectiveArgs[userAgentFlagIndex + 1] ?? "", /Chrome\/146\.0\.0\.0/);
 		assert.doesNotMatch(plan.effectiveArgs[userAgentFlagIndex + 1] ?? "", /HeadlessChrome/);
 	}
+
+	const cloudflarePlan = buildExecutionPlan(["open", "https://dash.cloudflare.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	const cloudflareFollowup = buildExecutionPlan(["snapshot", "-i"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionCompatibilityWorkaround: cloudflarePlan.compatibilityWorkaround,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(cloudflareFollowup.compatibilityWorkaround?.id, "cloudflare-headless-user-agent");
+	assert.equal(cloudflareFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 1);
+
+	const explicitCloudflareFollowup = buildExecutionPlan(["--session", "piab-demo-123", "snapshot", "-i"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionCompatibilityWorkaround: cloudflarePlan.compatibilityWorkaround,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(explicitCloudflareFollowup.compatibilityWorkaround?.id, "cloudflare-headless-user-agent");
+	assert.equal(explicitCloudflareFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 1);
+
+	const explicitUserAgentFollowup = buildExecutionPlan(["--session", "piab-demo-123", "--user-agent", "Custom/1", "snapshot", "-i"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionCompatibilityWorkaround: cloudflarePlan.compatibilityWorkaround,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(explicitUserAgentFollowup.compatibilityWorkaround, undefined);
+	assert.equal(explicitUserAgentFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 1);
+
+	const wrongNamespaceFollowup = buildExecutionPlan(["--namespace", "other", "--session", "piab-demo-123", "snapshot", "-i"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionCompatibilityWorkaround: cloudflarePlan.compatibilityWorkaround,
+		managedSessionName: "piab-demo-123",
+		managedSessionNamespace: "team",
+		sessionMode: "auto",
+	});
+	assert.equal(wrongNamespaceFollowup.compatibilityWorkaround, undefined);
 
 	const callerProvidedUserAgentPlan = buildExecutionPlan(
 		[

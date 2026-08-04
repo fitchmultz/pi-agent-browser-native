@@ -54,6 +54,7 @@ export function applyBrowserRunStatePatch(state: BrowserRunState, patch: Browser
 	if ("artifactManifest" in patch) state.artifactManifest = patch.artifactManifest;
 	if (patch.freshSessionOrdinal !== undefined) state.freshSessionOrdinal = patch.freshSessionOrdinal;
 	if (patch.managedSessionActive !== undefined) state.managedSessionActive = patch.managedSessionActive;
+	if ("managedSessionCompatibilityWorkaround" in patch) state.managedSessionCompatibilityWorkaround = patch.managedSessionCompatibilityWorkaround;
 	if (patch.managedSessionCwd !== undefined) state.managedSessionCwd = patch.managedSessionCwd;
 	if (patch.managedSessionName !== undefined) state.managedSessionName = patch.managedSessionName;
 	if ("managedSessionNamespace" in patch) state.managedSessionNamespace = patch.managedSessionNamespace;

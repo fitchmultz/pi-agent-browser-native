@@ -5,7 +5,7 @@
  * Usage: Imported by the extension entrypoint and unit tests before spawning the upstream CLI.
  * Invariants/Assumptions: The wrapper stays thin, preserves upstream command vocabulary, keeps plain-text inspection stateless,
  * and only injects wrapper-owned flags: `--json`, an extension-managed `--session` when appropriate, the narrow
- * OpenAI/ChatGPT headless compatibility `--user-agent` when that workaround applies.
+ * site-specific headless compatibility `--user-agent` when that workaround applies.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -47,6 +47,7 @@ export { extractCommandTokens, findCommandStartIndex, parseArgvDescriptor, parse
 import { isRecord } from "./parsing.js";
 
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
+const CLOUDFLARE_HEADLESS_COMPAT_HOST = "dash.cloudflare.com";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_IDLE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS";
 const IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV = "PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS";
@@ -89,7 +90,7 @@ export interface InvalidValueFlagDetails {
 }
 
 export interface CompatibilityWorkaround {
-	id: "chatgpt-headless-user-agent";
+	id: "chatgpt-headless-user-agent" | "cloudflare-headless-user-agent";
 	reason: string;
 }
 
@@ -857,35 +858,29 @@ function parseComparableNavigationUrl(url: string): URL | undefined {
 	}
 }
 
-function getDefaultHeadlessCompatUserAgent(platform: NodeJS.Platform = process.platform): string {
+export function getDefaultHeadlessCompatUserAgent(platform: NodeJS.Platform = process.platform): string {
 	return DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM[platform] ?? FALLBACK_HEADLESS_COMPAT_USER_AGENT;
 }
 
-function getCompatibilityWorkaround(args: string[], commandInfo: CommandInfo): CompatibilityWorkaround | undefined {
-	if (!commandInfo.command || !isOpenNavigationCommand(commandInfo.command) || !commandInfo.subcommand) {
-		return undefined;
-	}
-	if (hasFlagToken(args, "--user-agent")) {
-		return undefined;
-	}
-	if (isBooleanFlagEnabled(args, "--headed")) {
-		return undefined;
-	}
-	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p") || isBooleanFlagEnabled(args, "--auto-connect")) {
-		return undefined;
-	}
+export function canUseHeadlessCompatibilityUserAgent(args: string[]): boolean {
+	if (hasFlagToken(args, "--user-agent") || isBooleanFlagEnabled(args, "--headed")) return false;
+	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p") || isBooleanFlagEnabled(args, "--auto-connect")) return false;
 	const engine = getFlagValue(args, "--engine");
-	if (engine && engine !== "chrome") {
-		return undefined;
-	}
+	return !engine || engine === "chrome";
+}
+
+function getCompatibilityWorkaround(args: string[], commandInfo: CommandInfo): CompatibilityWorkaround | undefined {
+	if (!commandInfo.command || !isOpenNavigationCommand(commandInfo.command) || !commandInfo.subcommand || !canUseHeadlessCompatibilityUserAgent(args)) return undefined;
 	const parsedTargetUrl = parseComparableNavigationUrl(commandInfo.subcommand);
-	if (!parsedTargetUrl || !["http:", "https:"].includes(parsedTargetUrl.protocol)) {
-		return undefined;
-	}
+	if (!parsedTargetUrl || !["http:", "https:"].includes(parsedTargetUrl.protocol)) return undefined;
 	const hostname = parsedTargetUrl.hostname.toLowerCase();
-	if (!OPENAI_HEADLESS_COMPAT_HOSTS.has(hostname)) {
-		return undefined;
+	if (hostname === CLOUDFLARE_HEADLESS_COMPAT_HOST) {
+		return {
+			id: "cloudflare-headless-user-agent",
+			reason: "Cloudflare Dashboard challenges the default headless Chrome user agent; inject a normal Chrome user agent so authenticated headless browsing reaches the dashboard instead of Turnstile.",
+		};
 	}
+	if (!OPENAI_HEADLESS_COMPAT_HOSTS.has(hostname)) return undefined;
 	return {
 		id: "chatgpt-headless-user-agent",
 		reason:
@@ -913,6 +908,7 @@ export function buildExecutionPlan(
 	options: {
 		freshSessionName: string;
 		managedSessionActive: boolean;
+		managedSessionCompatibilityWorkaround?: CompatibilityWorkaround;
 		managedSessionName: string;
 		managedSessionNamespace?: string;
 		sessionMode: SessionMode;
@@ -985,7 +981,8 @@ export function buildExecutionPlan(
 	const shouldCreateFreshManagedSession =
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && !isCloseCommand(commandInfo.command);
 	let argsToAppend = args;
-	const compatibilityWorkaround = getCompatibilityWorkaround(args, commandInfo);
+	const requestedCompatibilityWorkaround = getCompatibilityWorkaround(args, commandInfo);
+	let compatibilityWorkaround = requestedCompatibilityWorkaround;
 	if (explicitSessionName && explicitNamespacePresent) {
 		effectiveArgs.push("--namespace", explicitNamespace ?? "");
 		argsToAppend = stripExplicitNamespaceArgs(args);
@@ -1026,6 +1023,13 @@ export function buildExecutionPlan(
 		sessionName = options.freshSessionName;
 	}
 
+	if (!compatibilityWorkaround
+		&& canUseHeadlessCompatibilityUserAgent(args)
+		&& options.managedSessionActive
+		&& sessionName
+		&& getAgentBrowserSessionIdentityKey(sessionName, namespace) === getAgentBrowserSessionIdentityKey(options.managedSessionName, options.managedSessionNamespace)) {
+		compatibilityWorkaround = options.managedSessionCompatibilityWorkaround;
+	}
 	if (compatibilityWorkaround) {
 		effectiveArgs.push("--user-agent", getDefaultHeadlessCompatUserAgent());
 	}
