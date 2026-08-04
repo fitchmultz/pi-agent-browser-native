@@ -21,6 +21,7 @@ import {
 	buildExecutionPlan,
 	createFreshSessionName,
 	extractCommandTokens,
+	getDefaultHeadlessCompatUserAgent,
 	redactInvocationArgs,
 	type CompatibilityWorkaround,
 } from "../../runtime.js";
@@ -468,6 +469,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	let executionPlan = buildExecutionPlan(preparedArgs.args, {
 		freshSessionName,
 		managedSessionActive: state.managedSessionActive,
+		managedSessionCompatibilityWorkaround: state.managedSessionCompatibilityWorkaround,
 		managedSessionName: state.managedSessionName,
 		managedSessionNamespace: state.managedSessionNamespace,
 		sessionMode,
@@ -496,7 +498,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		restoreState: state.managedSessionRestoreState,
 		sessionName: executionPlan.sessionName,
 		stdin: runtimeToolStdin,
-		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround?.id === "chatgpt-headless-user-agent",
+		compatibilityUserAgent: executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined,
+		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround !== undefined,
 	});
 	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined);
 	if (!executionPlan.validationError && managedSessionTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedSessionTargetError };
@@ -595,6 +598,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {
 				freshSessionName,
 				managedSessionActive: state.managedSessionActive,
+				managedSessionCompatibilityWorkaround: state.managedSessionCompatibilityWorkaround,
 				managedSessionName: state.managedSessionName,
 				managedSessionNamespace: state.managedSessionNamespace,
 				sessionMode,

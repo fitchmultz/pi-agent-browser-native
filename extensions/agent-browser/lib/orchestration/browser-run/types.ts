@@ -80,6 +80,7 @@ export interface BrowserRunState {
 	freshSessionOrdinal: number;
 	managedSessionActive: boolean;
 	managedSessionBaseName: string;
+	managedSessionCompatibilityWorkaround?: CompatibilityWorkaround;
 	managedSessionCwd: string;
 	managedSessionName: string;
 	managedSessionNamespace?: string;
@@ -95,6 +96,7 @@ export interface BrowserRunStatePatch {
 	artifactManifest?: SessionArtifactManifest;
 	freshSessionOrdinal?: number;
 	managedSessionActive?: boolean;
+	managedSessionCompatibilityWorkaround?: CompatibilityWorkaround;
 	managedSessionCwd?: string;
 	managedSessionName?: string;
 	managedSessionNamespace?: string;

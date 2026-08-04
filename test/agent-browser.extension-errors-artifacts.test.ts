@@ -589,7 +589,7 @@ const args = process.argv.slice(2);
 const statePath = ${JSON.stringify(join(tempDir, "daemon-state.json"))};
 let state = { active: false, restoreKey: null };
 try { state = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {}
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, ownedMarker: process.env.PI_AGENT_BROWSER_OWNED_MANAGED_SESSION, restore: process.env.AGENT_BROWSER_RESTORE, stateExpireDays: process.env.AGENT_BROWSER_STATE_EXPIRE_DAYS }) + "\\n");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, ownedMarker: process.env.PI_AGENT_BROWSER_OWNED_MANAGED_SESSION, restore: process.env.AGENT_BROWSER_RESTORE, stateExpireDays: process.env.AGENT_BROWSER_STATE_EXPIRE_DAYS, userAgent: process.env.AGENT_BROWSER_USER_AGENT }) + "\\n");
 if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey } : null } }));
 } else {
@@ -619,13 +619,23 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal((openInvocations[0] as { ownedMarker?: string }).ownedMarker, undefined);
 			assert.equal((openInvocations[0] as { stateExpireDays?: string }).stateExpireDays, undefined);
 
-			const chatGptOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://chatgpt.com"] });
-			assert.equal(chatGptOpen.isError, false, JSON.stringify(chatGptOpen));
-			const afterChatGptOpen = await readInvocationLog(logPath);
-			assert.equal(afterChatGptOpen.filter((entry) => entry.args.includes("session") && entry.args.includes("info")).length, 2);
-			const chatGptInvocation = afterChatGptOpen.find((entry) => entry.args.includes("https://chatgpt.com"));
-			assert.ok(chatGptInvocation?.args.includes("--user-agent"));
-			assert.equal((chatGptInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
+			const cloudflareOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://dash.cloudflare.com"] });
+			assert.equal(cloudflareOpen.isError, false, JSON.stringify(cloudflareOpen));
+			assert.equal((cloudflareOpen.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
+			const afterCloudflareOpen = await readInvocationLog(logPath);
+			assert.equal(afterCloudflareOpen.filter((entry) => entry.args.includes("session") && entry.args.includes("info")).length, 2);
+			const cloudflareInvocation = afterCloudflareOpen.find((entry) => entry.args.includes("https://dash.cloudflare.com"));
+			assert.ok(cloudflareInvocation?.args.includes("--user-agent"));
+			assert.match(String((cloudflareInvocation as { userAgent?: string } | undefined)?.userAgent), /Chrome\/\d+\.0\.0\.0/);
+			assert.equal((cloudflareInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
+
+			const cloudflareFollowup = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(cloudflareFollowup.isError, false, JSON.stringify(cloudflareFollowup));
+			assert.equal((cloudflareFollowup.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
+			const afterCloudflareFollowup = await readInvocationLog(logPath);
+			const followupInvocation = afterCloudflareFollowup.filter((entry) => entry.args.includes("snapshot")).at(-1);
+			assert.ok(followupInvocation?.args.includes("--user-agent"));
+			assert.equal((followupInvocation as { userAgent?: string } | undefined)?.userAgent, (cloudflareInvocation as { userAgent?: string } | undefined)?.userAgent);
 			const userInvocationCount = async () => (await readInvocationLog(logPath))
 				.filter((entry) => !(entry.args.includes("session") && entry.args.includes("info"))).length;
 			const invocationCount = await userInvocationCount();

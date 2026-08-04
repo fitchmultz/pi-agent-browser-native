@@ -26,6 +26,7 @@ import {
 	getManagedSessionRestoreConfigEnv,
 	getManagedSessionRestoreEnv,
 	getManagedSessionRestoreProtectedEnv,
+	getOwnedManagedSessionCompatibilityEnv,
 	getOwnedManagedSessionNamespaceEnv,
 	isOwnedManagedSessionTarget,
 	shouldOmitOwnedManagedSessionRestoreEnv,
@@ -477,6 +478,7 @@ export async function runAgentBrowserProcess(options: {
 		...managedSessionRestoreConfigEnv,
 		...getManagedSessionRestoreProtectedEnv(managedSessionRestoreOptions, managedSessionRestoreEnv),
 		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
+		...getOwnedManagedSessionCompatibilityEnv(managedSessionRestoreOptions),
 		[AGENT_BROWSER_ARGS_ENV]: undefined,
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];

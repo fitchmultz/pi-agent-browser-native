@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.75 - 2026-08-04
+
+### Fixed
+
+- Headless `dash.cloudflare.com` now uses the same normal-Chrome user-agent compatibility path as OpenAI web properties, bypassing the Turnstile loop caused by `HeadlessChrome`. Wrapper-managed sessions retain that wrapper-owned user agent across follow-up calls and Pi reload/resume while preserving checkout-managed authentication restore.
+
 ## 0.2.74 - 2026-08-03
 
 ### Changed
