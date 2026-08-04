@@ -58,7 +58,6 @@ export function renderCommandReferenceBaselineBlock(id) {
         "",
         "The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.",
         "",
-        "Use `npm run benchmark:agent-browser` or `npm run verify -- benchmark` before and after agent-facing workflow abstractions to measure task success, tool calls, model-visible output size, stale-ref behavior, artifact success, failure-category coverage, and elapsed-time estimates.",
       ].join("\n");
     case "capability-token-baseline":
       return [

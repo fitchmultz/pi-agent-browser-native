@@ -1,11 +1,3 @@
-/**
- * Purpose: Centralize recovery-oriented nextAction ids and action construction.
- * Responsibilities: Build tab/about:blank/no-active-page/connected-session follow-ups and rich-input recovery ids.
- * Scope: Recovery action contracts only; result category classification and artifact follow-ups live elsewhere.
- * Usage: Imported by shared result action builders and the extension entrypoint.
- * Invariants/Assumptions: Ids are public machine-readable contracts mirrored by docs and tests.
- */
-
 import { buildNextToolAction, type AgentBrowserNextAction, withOptionalSessionArgs } from "./next-actions.js";
 
 export type AgentBrowserRecoveryKind = "about-blank" | "connected-session" | "no-active-page" | "tab-drift";

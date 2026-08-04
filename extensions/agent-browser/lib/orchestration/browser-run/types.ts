@@ -3,20 +3,11 @@ import type { ChildProcess } from "node:child_process";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { ElectronCleanupResult, ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord, ElectronLaunchSuccess } from "../../electron/launch.js";
-import type {
-	AgentBrowserNetworkSourceLookupAnalysis,
-	AgentBrowserQaPresetAnalysis,
-	AgentBrowserSourceLookupAnalysis,
-	CompiledAgentBrowserElectron,
-	CompiledAgentBrowserJob,
-	CompiledAgentBrowserNetworkSourceLookup,
-	CompiledAgentBrowserQaPreset,
-	CompiledAgentBrowserSemanticAction,
-	CompiledAgentBrowserSourceLookup,
-} from "../../input-modes.js";
+import type { AgentBrowserNetworkSourceLookupAnalysis, AgentBrowserQaPresetAnalysis, AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserElectron, CompiledAgentBrowserJob, CompiledAgentBrowserNetworkSourceLookup, CompiledAgentBrowserQaPreset, CompiledAgentBrowserSemanticAction, CompiledAgentBrowserSourceLookup } from "../../input-modes/types.js";
 import type { runAgentBrowserProcess } from "../../process.js";
-import type { AgentBrowserEnvelope, AgentBrowserNextAction, buildAgentBrowserResultCategoryDetails, buildToolPresentation } from "../../results.js";
-import type { NetworkRouteRecord, SessionArtifactManifest } from "../../results/contracts.js";
+import type { AgentBrowserEnvelope, AgentBrowserNextAction, NetworkRouteRecord, SessionArtifactManifest } from "../../results/contracts.js";
+import type { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
+import type { buildToolPresentation } from "../../results/presentation.js";
 import type { RichInputRecoveryDiagnostic, VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import type { SessionPageState, SessionRefSnapshot, SessionRefSnapshotInvalidation, SessionTabTarget } from "../../session-page-state.js";
 import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection } from "../../runtime.js";

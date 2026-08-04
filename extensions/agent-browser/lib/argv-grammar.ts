@@ -1,9 +1,3 @@
-/**
- * Purpose: Shared argv flag-shape metadata and helpers for command discovery and sessionless policy checks.
- * Responsibilities: Own global/command value-flag sets and boolean/value-flag validation used during argv parsing.
- * Scope: Pure token grammar; command semantics and subprocess execution live elsewhere.
- */
-
 import { isKnownCommandToken } from "./command-taxonomy.js";
 
 export const GLOBAL_VALUE_FLAGS = [

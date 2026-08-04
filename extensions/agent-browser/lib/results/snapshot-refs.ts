@@ -1,11 +1,3 @@
-/**
- * Purpose: Own canonical parsing and enrichment of refs from agent-browser snapshot payloads.
- * Responsibilities: Read structured refs, correlate them with raw snapshot lines, and infer editable/ref role evidence once for consumers.
- * Scope: Snapshot ref metadata only; section preview, high-value ranking, and presentation assembly live in neighboring modules.
- * Usage: Imported by snapshot presentation and recovery diagnostics that need consistent ref/name/role/editable evidence.
- * Invariants/Assumptions: Snapshot text parsing is best-effort and must tolerate upstream formatting changes by preserving structured ref data when line parsing fails.
- */
-
 import { isRecord } from "../parsing.js";
 import { getEditableRefEvidence } from "./editable-ref-evidence.js";
 import { compareRefIds, normalizeWhitespace } from "./text.js";

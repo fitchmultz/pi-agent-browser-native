@@ -1,9 +1,3 @@
-/**
- * Purpose: Describe the native command used to read a process start identity for PID-reuse-safe ownership checks.
- * Responsibilities: Keep POSIX and native-Windows process identity probes aligned across policy locks and temp cleanup.
- * Scope: Command construction, output normalization, and cached async lookup for the current process.
- */
-
 import { execFile } from "node:child_process";
 import { win32 } from "node:path";
 

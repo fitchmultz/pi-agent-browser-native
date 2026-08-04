@@ -7,23 +7,12 @@ import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type Elect
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import { getAllowedDomainsViolation, parseAllowedDomainsPolicyFromArgs } from "../../navigation-policy.js";
 import { getManagedSessionResultingPageState, getObservedBrowserPageValidationError, managedSessionCommandRequiresLivePageVerification } from "../../managed-session-state-policy.js";
-import {
-	analyzeNetworkSourceLookupResults,
-	analyzeQaPresetResults,
-	analyzeQaPresetTimeout,
-	analyzeSourceLookupResults,
-	buildQaCompactPassText,
-	extractQaPageContext,
-	redactNetworkSourceLookupAnalysis,
-} from "../../input-modes.js";
-import {
-	applyNetworkRouteRecords,
-	buildNetworkRouteDiagnostics,
-	buildToolPresentation,
-	getAgentBrowserErrorText,
-	parseAgentBrowserEnvelope,
-	type AgentBrowserEnvelope,
-} from "../../results.js";
+import { analyzeNetworkSourceLookupResults, analyzeSourceLookupResults, redactNetworkSourceLookupAnalysis } from "../../input-modes/lookups.js";
+import { analyzeQaPresetResults, analyzeQaPresetTimeout, buildQaCompactPassText, extractQaPageContext } from "../../input-modes/job.js";
+import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../../results/network-routes.js";
+import { buildToolPresentation } from "../../results/presentation.js";
+import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
+import { type AgentBrowserEnvelope } from "../../results/contracts.js";
 import type { NetworkRouteRecord } from "../../results/contracts.js";
 import { getClipboardWritePayloadCandidates, redactClipboardPermissionEcho, redactClipboardPermissionErrorValue } from "../../results/presentation/errors.js";
 import { shouldCaptureSemanticActionNavigationSummary } from "../../results/presentation/semantic-action.js";
@@ -91,7 +80,7 @@ import {
 	getSourceLookupElectronContext,
 } from "./diagnostics.js";
 import { repairScreenshotData } from "./prepare.js";
-import { getPersistentSessionArtifactStore } from "./session-artifacts.js";
+import { getPersistentSessionArtifactStore } from "./session-state.js";
 import {
 	buildFinalAgentBrowserToolResult,
 	buildRedactedPresentationContent,

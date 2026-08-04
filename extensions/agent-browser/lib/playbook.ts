@@ -1,12 +1,5 @@
 import { LAUNCH_SCOPED_FLAG_LABEL } from "./launch-scoped-flags.js";
 
-/**
- * Purpose: Provide the canonical agent_browser operating playbook shared by runtime prompt metadata and generated documentation fragments.
- * Responsibilities: Define stable guidance bullets, native tool-call examples, and wrapper-behavior notes without importing runtime/browser process code.
- * Scope: Agent-facing documentation and prompt-guidance text only; command execution and wrapper state behavior live in runtime modules.
- * Usage: Imported by the extension entrypoint for promptGuidelines and by the documentation drift-check script for generated Markdown blocks.
- * Invariants/Assumptions: The native pi tool receives args after the agent-browser binary, stdin is only for batch/eval --stdin/auth save --password-stdin, and wrapper behavior documented here must match implemented behavior.
- */
 
 export const PROJECT_RULE_PROMPT =
 	"Project rule: when browser automation is needed, prefer the native `agent_browser` tool. Do not run direct `agent-browser` bash commands unless the user explicitly asks for a bash-oriented workflow or browser-integration debugging.";

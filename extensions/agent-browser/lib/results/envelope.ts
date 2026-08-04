@@ -1,11 +1,3 @@
-/**
- * Purpose: Parse upstream agent-browser output and turn failure envelopes into actionable error text.
- * Responsibilities: Read inline or spilled stdout, parse observed JSON envelope shapes, normalize batch arrays, and extract the most useful error text from nested upstream failures.
- * Scope: Envelope parsing and error derivation only; content rendering and snapshot compaction live in separate modules.
- * Usage: Imported by the public `lib/results.ts` facade and by tests through that facade.
- * Invariants/Assumptions: Upstream `agent-browser --json` responses follow the observed `{ success, data, error }` envelope shape or the array shape returned by `batch --json`.
- */
-
 import { readFile } from "node:fs/promises";
 
 import { isRecord } from "../parsing.js";

@@ -1,9 +1,3 @@
-/**
- * Purpose: Share small ToolPresentation content helpers used by batch and compaction code.
- * Responsibilities: Extract text/image/path fields and format batch step command labels.
- * Scope: Pure ToolPresentation content helpers only.
- */
-
 import type { ToolPresentation } from "../contracts.js";
 
 export function isStringArray(value: unknown): value is string[] {

@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.2.77",
+  "version": "0.2.78",
   "description": "pi extension that exposes agent-browser as a native tool for browser automation",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
@@ -79,7 +79,6 @@
   "scripts": {
     "docs": "node ./scripts/project.mjs docs",
     "doctor": "node ./scripts/doctor.mjs",
-    "benchmark:agent-browser": "node ./scripts/agent-browser-efficiency-benchmark.mjs",
     "check:platform-smoke": "node --check platform-smoke.config.mjs && node --check scripts/platform-smoke.mjs && node --check scripts/platform-smoke/doctor.mjs && node --check scripts/platform-smoke/crabbox-runner.mjs && node --check scripts/platform-smoke/targets.mjs && node --check scripts/platform-smoke/artifacts.mjs && tsx --test test/platform-smoke.test.ts",
     "smoke:platform": "node scripts/platform-smoke.mjs",
     "smoke:platform:doctor": "node scripts/platform-smoke.mjs doctor",

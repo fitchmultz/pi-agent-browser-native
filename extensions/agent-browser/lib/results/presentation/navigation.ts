@@ -1,9 +1,3 @@
-/**
- * Purpose: Format scalar extraction results, navigation summaries, and page-change summaries.
- * Responsibilities: Keep navigation/extraction presentation separate from core tool result orchestration.
- * Scope: Navigation and get/eval extraction formatting only.
- */
-
 import { isNavigationObservableCommandName, isPageChangeSummaryCommand } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";

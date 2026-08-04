@@ -1,9 +1,3 @@
-/**
- * Purpose: Lock lightweight source import boundaries that protect browser-run orchestration maintainability.
- * Responsibilities: Detect local TypeScript import cycles in the browser-run orchestration subtree.
- * Scope: Static source graph checks only; behavioral coverage lives in focused browser-run tests.
- */
-
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve, relative, dirname } from "node:path";

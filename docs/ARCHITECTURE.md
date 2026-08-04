@@ -85,12 +85,12 @@ Tier B guidance lives in `SHARED_BROWSER_PLAYBOOK_GUIDELINES`, generated README/
 Do **not** add reusable browser recipes as a first-class runtime surface yet.
 
 Current evidence does not justify another source of truth for workflows:
-- the deterministic efficiency benchmark in [`scripts/agent-browser-efficiency-benchmark.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/agent-browser-efficiency-benchmark.mjs) models one native `job` scenario (`job-open-assert-screenshot`), one `qa` preset (`qa-open-diagnostics`), one `sourceLookup` (`source-lookup-visible-element`), one `networkSourceLookup` (`network-source-lookup-failed-request`), plus deterministic `electron` lifecycle/probe scenarios (`electron-lifecycle`, `electron-probe`) rather than repeated named job patterns that agents keep re-specifying
+- unit/fake-upstream coverage and real-app dogfood exercise `job`, `qa`, experimental lookups, and `electron` lifecycle without a separate accounting benchmark layer
 - repo-local dogfood evidence does not show repeated project-specific job recipes that need versioning or ownership
 - `qa` already covers the only repeated smoke-test shape with a stable top-level preset
 - docs and prompt guidance can carry examples without adding recipe state, migration rules, or another schema
 
-Revisit this only when benchmark or dogfood data shows at least two repeated, failure-prone job sequences that cannot be represented clearly by `job`, `qa`, top-level `electron`, or raw `batch`. If that happens, define ownership, versioning, schema boundaries, generated docs, and tests before adding executable recipes.
+Revisit this only when dogfood data shows at least two repeated, failure-prone job sequences that cannot be represented clearly by `job`, `qa`, top-level `electron`, or raw `batch`. If that happens, define ownership, versioning, schema boundaries, generated docs, and tests before adding executable recipes.
 
 ### Package layout versus local checkout development
 
@@ -109,7 +109,7 @@ Why:
 - keeps reload and exact-session relaunch validation tied to Pi's configured-source lifecycle instead of an isolated quick-test path, while `session_tree` state changes stay covered by focused extension harness tests
 - keeps the published tarball focused on the package manifest, extension code, canonical docs, and license
 
-The published package should exclude agent-only and internal planning materials such as `AGENTS.md` and `docs/plans/`.
+The published package should exclude agent-only and internal planning materials such as `AGENTS.md`.
 
 ## Session model
 
@@ -213,7 +213,6 @@ Upstream restore-state persistence remains upstream-owned. The wrapper passes `A
 - inline screenshots/images for the plain `screenshot` command; other image-like saves (for example `diff screenshot`) still appear in `details.artifacts` and summaries but are not auto-inlined as Pi image attachments (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details))
 - lightweight session convenience
 - docs, including a repo-readable command reference that mirrors the blocked direct-binary help path closely enough for normal agent work
-- a deterministic **agent efficiency benchmark** (`scripts/agent-browser-efficiency-benchmark.mjs`) used to quantify representative agent-facing workflows without invoking upstream; maintainer commands and constraints are in [`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md) under “Agent browser efficiency benchmark”
 
 ### Upstream `agent-browser` owns
 

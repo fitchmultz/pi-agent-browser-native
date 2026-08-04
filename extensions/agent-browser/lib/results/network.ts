@@ -1,11 +1,3 @@
-/**
- * Purpose: Classify failed network requests into actionable vs benign diagnostics.
- * Responsibilities: Recognize failed request rows, de-prioritize browser icon misses, and summarize failure counts.
- * Scope: Network diagnostic classification only.
- * Usage: QA preset analysis and presentation network summaries.
- * Invariants/Assumptions: Browser favicon/apple-touch icon misses are warnings; API/document/script failures are actionable.
- */
-
 import { isRecord } from "../parsing.js";
 import type { NetworkFailureClassification, NetworkFailureSummary } from "./contracts.js";
 

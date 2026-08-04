@@ -3,11 +3,11 @@ import { isAbsolute, resolve } from "node:path";
 
 import { isCloseCommand, isOpenNavigationCommand } from "../../command-taxonomy.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
-import { boundElectronProbeString } from "../../electron/text.js";
+import { boundElectronProbeString } from "../../electron/cdp.js";
 import { executableExistsOnPath } from "../../executable-path.js";
-import type { AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserJob, CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
+import type { AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserJob, CompiledAgentBrowserSemanticAction } from "../../input-modes/types.js";
 import { isHttpOrHttpsUrl } from "../../input-modes/job.js";
-import type { AgentBrowserNextAction } from "../../results.js";
+import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.js";
 import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTarget, type VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";

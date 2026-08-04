@@ -1,11 +1,3 @@
-/**
- * Purpose: Parse and fetch Chrome DevTools Protocol metadata for wrapper-owned Electron launches.
- * Responsibilities: Normalize CDP version/target JSON and perform bounded localhost CDP JSON fetches.
- * Scope: Tiny Electron CDP boundary helpers only; launch, status, cleanup, and target selection stay in their owning modules.
- * Usage: Imported by Electron launch and cleanup paths when polling `/json/version` and `/json/list`.
- * Invariants/Assumptions: Malformed or unavailable CDP endpoints return undefined/empty metadata rather than throwing, matching prior caller behavior.
- */
-
 import { isRecord } from "../parsing.js";
 
 const ELECTRON_CDP_FETCH_TIMEOUT_MS = 1_000;
@@ -66,4 +58,10 @@ export async function fetchCdpJson(url: string, signal?: AbortSignal): Promise<u
 	} finally {
 		clearTimeout(timeout);
 	}
+}
+
+export function boundElectronProbeString(value: string | undefined, maxLength = 240): string | undefined {
+	const trimmed = value?.trim();
+	if (!trimmed) return undefined;
+	return trimmed.length > maxLength ? `${trimmed.slice(0, Math.max(0, maxLength - 3))}...` : trimmed;
 }

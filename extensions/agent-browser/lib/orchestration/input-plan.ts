@@ -1,23 +1,11 @@
 import { parseArgvDescriptor } from "../argv-descriptor.js";
 import { validateToolArgs, redactInvocationArgs, redactSensitiveText } from "../runtime.js";
 import { buildAgentBrowserResultCategoryDetails } from "../results/categories.js";
-import {
-	compileAgentBrowserElectron,
-	compileAgentBrowserJob,
-	compileAgentBrowserNetworkSourceLookup,
-	compileAgentBrowserQaPreset,
-	compileAgentBrowserSemanticAction,
-	compileAgentBrowserSourceLookup,
-	redactNetworkSourceLookupArgs,
-	redactNetworkSourceLookupUrl,
-	type CompiledAgentBrowserElectron,
-	type CompiledAgentBrowserJob,
-	type CompiledAgentBrowserNetworkSourceLookup,
-	type CompiledAgentBrowserQaPreset,
-	type CompiledAgentBrowserSemanticAction,
-	type CompiledAgentBrowserSourceLookup,
-} from "../input-modes.js";
-
+import { compileAgentBrowserElectron } from "../input-modes/electron.js";
+import { compileAgentBrowserJob, compileAgentBrowserQaPreset } from "../input-modes/job.js";
+import { compileAgentBrowserNetworkSourceLookup, compileAgentBrowserSourceLookup, redactNetworkSourceLookupArgs, redactNetworkSourceLookupUrl } from "../input-modes/lookups.js";
+import { compileAgentBrowserSemanticAction } from "../input-modes/semantic-action.js";
+import { type CompiledAgentBrowserElectron, type CompiledAgentBrowserJob, type CompiledAgentBrowserNetworkSourceLookup, type CompiledAgentBrowserQaPreset, type CompiledAgentBrowserSemanticAction, type CompiledAgentBrowserSourceLookup } from "../input-modes/types.js";
 export interface AgentBrowserExecuteParams {
 	args?: string[];
 	electron?: unknown;

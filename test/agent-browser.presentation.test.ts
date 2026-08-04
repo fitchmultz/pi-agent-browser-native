@@ -9,8 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildToolPresentation } from "../extensions/agent-browser/lib/results.js";
-
+import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 test("buildToolPresentation formats snapshot output for the model", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "snapshot" },

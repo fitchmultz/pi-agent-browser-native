@@ -1,11 +1,3 @@
-/**
- * Purpose: Inspect and clean wrapper-owned Electron launch resources.
- * Responsibilities: Report CDP liveness/targets without mutation and remove only tracked process/profile resources during explicit or shutdown cleanup.
- * Scope: Host-side Electron status and resource cleanup only; upstream managed-session close remains in the extension entrypoint.
- * Usage: Called by electron.status, electron.cleanup, and session_shutdown handling.
- * Invariants/Assumptions: Cleanup operates only on launch records produced by this wrapper and prefers partial cleanup reporting over killing or deleting untracked resources.
- */
-
 import { execFile, type ChildProcess } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { promisify } from "node:util";

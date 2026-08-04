@@ -1,9 +1,3 @@
-/**
- * Purpose: Own automatic restore policy for wrapper-managed browser sessions.
- * Responsibilities: Resolve owned session identity, isolate per-call policy, reject incompatible argv/env/config, and persist sticky restore-disable state.
- * Scope: Restore policy only; storage identity and snapshot retention live in focused sibling modules.
- */
-
 import { AsyncLocalStorage } from "node:async_hooks";
 import { chmodSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";

@@ -1,9 +1,3 @@
-/**
- * Purpose: Remove wrapper-owned managed session and state capabilities from caller-visible list results.
- * Responsibilities: Recognize managed list rows recursively and preserve the surrounding upstream result shape.
- * Scope: Presentation filtering only; command authorization lives in managed-session-state-policy.ts.
- */
-
 import { containsManagedSessionRestoreKey, isWrapperManagedSessionName } from "../../managed-session-capabilities.js";
 import { isRecord } from "../../parsing.js";
 

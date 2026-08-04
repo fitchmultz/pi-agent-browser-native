@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.78 - 2026-08-04
+
+### Changed
+
+- Removed zero-behavior maintainer bloat: Purpose/Responsibilities file banners, barrel-only `lib/results.ts` and `lib/input-modes.ts` facades, the synthetic efficiency benchmark script/tests/verify mode, the completed Electron plan ADR, and the `AgentBrowserNextActionCollector` class (plain array helpers remain).
+- Folded tiny one-liner modules (`session-artifacts`, `artifact-state`, `electron/text`) into neighboring owners; pending-recording predicates live in `artifact-manifest.ts`.
+- Trimmed docs that only existed to index or advertise the removed surfaces (`AGENTS.md`, `RELEASE.md`, `SUPPORT_MATRIX.md`, `ARCHITECTURE.md`, `ELECTRON.md`, `TOOL_CONTRACT.md`, `COMMAND_REFERENCE.md`, README).
+
 ## 0.2.77 - 2026-08-04
 
 ### Fixed

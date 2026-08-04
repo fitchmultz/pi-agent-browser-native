@@ -1,11 +1,3 @@
-/**
- * Purpose: Persist full compacted snapshot payloads when model-facing output is shortened.
- * Responsibilities: Write persistent or secure-temp snapshot spill files and merge spill retention metadata into the session artifact manifest.
- * Scope: Snapshot spill artifact lifecycle only; preview planning and presentation text live in snapshot.ts and sibling modules.
- * Usage: Snapshot presentation calls these helpers after deciding a snapshot is too large for inline output.
- * Invariants/Assumptions: Explicit full-output paths are reported but not deleted here; retention state mirrors the backing storage scope.
- */
-
 import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore } from "../temp.js";
 import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../temp.js";
 import {

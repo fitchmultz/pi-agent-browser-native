@@ -1,9 +1,3 @@
-/**
- * Purpose: Compile and analyze experimental DOM/source and network source lookup input modes.
- * Responsibilities: Build lookup batches, collect DOM/React/workspace candidates, and redact network lookup surfaces.
- * Scope: Source lookup and network source lookup only.
- */
-
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join } from "node:path";
 

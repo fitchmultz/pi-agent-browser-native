@@ -1,9 +1,12 @@
 import { rm } from "node:fs/promises";
 
+import type { PersistentSessionArtifactStore } from "../../temp.js";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { runAgentBrowserProcess } from "../../process.js";
-import { buildAgentBrowserNextActions, parseAgentBrowserEnvelope, type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results.js";
+import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
+import { parseAgentBrowserEnvelope } from "../../results/envelope.js";
+import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results/contracts.js";
 import { buildNextToolAction, withOptionalNamespaceArgs, withOptionalSessionArgs } from "../../results/next-actions.js";
 import {
 	getSessionPageStateKey,
@@ -27,8 +30,7 @@ import {
 import { chooseOpenResultTabCorrection, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { parseUserBatchStdin } from "../batch-stdin.js";
-import type {
-	AboutBlankSessionMismatch,
+import type { AboutBlankSessionMismatch,
 	BatchCommandStep,
 	BrowserRunState,
 	BrowserRunStatePatch,
@@ -43,6 +45,7 @@ import type {
 	PinnedBatchPlan,
 	PinnedBatchUnwrapMode,
 	StaleRefPreflight,
+	BrowserRunContext,
 	TraceOwner,
 } from "./types.js";
 
@@ -910,3 +913,9 @@ export function formatElectronRefFreshnessText(diagnostic: ElectronRefFreshnessD
 }
 
 export { extractBatchResultCommand };
+
+export function getPersistentSessionArtifactStore(ctx: BrowserRunContext): PersistentSessionArtifactStore | undefined {
+	const sessionDir = typeof ctx.sessionManager.getSessionDir === "function" ? ctx.sessionManager.getSessionDir() : undefined;
+	const sessionId = ctx.sessionManager.getSessionId();
+	return sessionDir && sessionId ? { sessionDir, sessionId } : undefined;
+}

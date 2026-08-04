@@ -21,7 +21,7 @@ This map keeps the active documentation set navigable. When changing behavior, u
 | Electron-specific lifecycle and troubleshooting | [`ELECTRON.md`](ELECTRON.md) | Public desktop app guide; link to contracts instead of duplicating schemas. |
 | Targeted upstream support, release gates, and live verification status | [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md) | Active checklist; closed requirement decisions link to the compact [`support-notes.md`](support-notes.md) index. |
 | Maintainer release process and smoke-test procedures | [`RELEASE.md`](RELEASE.md) and [`../AGENTS.md`](../AGENTS.md) | `AGENTS.md` is agent-specific operational guidance; release evidence belongs in `RELEASE.md` or CueLoop. |
-| Durable design decisions | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`support-notes.md`](support-notes.md), and focused ADRs under [`plans/`](plans/) | Keep only current rationale and evidence links; delete completed execution logs. |
+| Durable design decisions | [`ARCHITECTURE.md`](ARCHITECTURE.md), [`support-notes.md`](support-notes.md) | Keep only current rationale. |
 
 ## Update rules
 

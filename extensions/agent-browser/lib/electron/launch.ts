@@ -1,11 +1,3 @@
-/**
- * Purpose: Launch wrapper-owned Electron applications and discover their CDP endpoint.
- * Responsibilities: Resolve Electron targets, enforce caller-owned allow/deny policy, create isolated userDataDir profiles, launch with remote debugging on an OS-chosen port, poll DevToolsActivePort, and read bounded CDP version/target metadata.
- * Scope: Host-side Electron lifecycle setup only; upstream agent-browser attach/presentation stays in the extension entrypoint.
- * Usage: Called by the agent_browser electron.launch shorthand before routing through upstream `connect`.
- * Invariants/Assumptions: The wrapper only launches targets with Electron framework evidence, always uses an isolated temp profile, never accepts a caller-supplied remote debugging port, and cleans any spawned process/profile when cancellation interrupts readiness.
- */
-
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";

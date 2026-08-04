@@ -1,11 +1,3 @@
-/**
- * Purpose: Compact large agent-browser snapshots into actionable pi-facing previews while preserving access to the raw payload when budgets allow.
- * Responsibilities: Parse the current raw snapshot text format, detect when structured parsing is trustworthy, derive primary/additional content sections, rank high-value refs, and fall back to raw-outline previews when the upstream snapshot text format is unfamiliar.
- * Scope: Snapshot-specific rendering only; generic envelope parsing, non-snapshot summaries, and image attachment live in neighboring modules.
- * Usage: Imported by the focused presentation module for snapshot content and summary rendering.
- * Invariants/Assumptions: Snapshot compaction should stay helpful even if upstream snapshot text formatting shifts, so structured parsing is best-effort and always has a resilient raw-outline fallback.
- */
-
 import { isRecord } from "../parsing.js";
 import type { PersistentSessionArtifactStore } from "../temp.js";
 import type {

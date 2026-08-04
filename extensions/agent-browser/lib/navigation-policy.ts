@@ -1,9 +1,3 @@
-/**
- * Purpose: Keep wrapper-side navigation policy parsing and evaluation small and explicit.
- * Responsibilities: Parse allowed-domain argv values and detect final-page host escapes.
- * Scope: Wrapper diagnostics only; upstream remains responsible for browser-time enforcement.
- */
-
 export interface AllowedDomainsPolicy {
 	allowedDomains: string[];
 	display: string;

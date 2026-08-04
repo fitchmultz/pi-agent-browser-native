@@ -1,9 +1,3 @@
-/*
- * Purpose: Render parsed agent-browser results into concise pi-facing summaries, text content, and optional inline image attachments.
- * Responsibilities: Orchestrate specialized presentation modules, attach inline images within size limits, and keep generic record formatting distinct from envelope parsing.
- * Scope: Presentation shaping only; upstream stdout parsing and snapshot compaction internals live in separate modules.
- */
-
 import type { CompiledAgentBrowserSemanticAction } from "../input-modes/types.js";
 import { isRecord } from "../parsing.js";
 import { extractCommandTokens, type CommandInfo } from "../runtime.js";

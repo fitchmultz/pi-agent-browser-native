@@ -1,9 +1,3 @@
-/**
- * Purpose: Compile top-level Electron wrapper inputs into validated Electron actions.
- * Responsibilities: Enforce action-specific fields, launch-target rules, and wrapper-owned flag safety.
- * Scope: Electron input-mode validation only; launch/probe/cleanup execution stays in the extension entrypoint.
- */
-
 import { isRecord } from "../parsing.js";
 import {
 	AGENT_BROWSER_ELECTRON_ACTIONS,

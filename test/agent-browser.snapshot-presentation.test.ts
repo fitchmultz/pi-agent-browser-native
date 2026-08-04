@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { buildToolPresentation } from "../extensions/agent-browser/lib/results.js";
+import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import { cleanupSecureTempArtifacts } from "../extensions/agent-browser/lib/temp.js";
 import { TEST_SESSION_ID, withPatchedEnv } from "./helpers/agent-browser-harness.js";
 

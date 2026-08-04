@@ -1,7 +1,3 @@
-// Purpose: Serialize wrapper-owned daemon policy decisions across cooperating Pi processes.
-// Responsibilities: Elect one live claim, bridge the pre-update v2 path, recover proven-dead current-protocol artifacts, and release only the caller's immutable token.
-// Scope: Wrapper coordination only; agent-browser never reads these claims.
-
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
