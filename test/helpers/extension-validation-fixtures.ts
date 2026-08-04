@@ -305,7 +305,7 @@ export function fakeAgentBrowserLifecycleScript(logPath: string, options: {
 	const tabUrl = options.tabUrl ?? "app://demo";
 	return `const fs = require("node:fs");
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS || null }) + "\\n");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS || null, restore: process.env.AGENT_BROWSER_RESTORE || null }) + "\\n");
 const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
 let commandIndex = -1;
 for (let i = 0; i < args.length; i += 1) {
@@ -320,6 +320,7 @@ const command = args[commandIndex];
 const subcommand = args[commandIndex + 1];
 let data = { ok: true };
 if (command === "connect") data = { connected: true, endpoint: subcommand };
+else if (["goto", "navigate", "open", "visit"].includes(command)) data = { title: "Opened", url: subcommand };
 else if (command === "get" && subcommand === "title") data = { result: ${JSON.stringify(sessionTitle)}, title: ${JSON.stringify(sessionTitle)} };
 else if (command === "get" && subcommand === "url") data = { result: ${JSON.stringify(sessionUrl)}, url: ${JSON.stringify(sessionUrl)} };
 else if (command === "eval") data = { result: { focusedElement: { id: "run-button", name: "Run", role: "button", tagName: "button" } } };

@@ -1,17 +1,43 @@
 /**
  * Purpose: Execute the upstream agent-browser binary for the pi-agent-browser extension.
- * Responsibilities: Spawn the agent-browser subprocess, forward parent environment variables plus wrapper overrides, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
+ * Responsibilities: Validate POSIX socket storage, spawn the agent-browser subprocess, forward parent environment variables plus wrapper overrides, stream optional stdin, bound in-memory output buffering, spill oversized stdout safely to a private temp file under a disk budget, and honor abort signals.
  * Scope: Process execution only; argument planning, output formatting, and pi tool registration live elsewhere.
  * Usage: Called by the extension tool after argument validation and session planning are complete.
  * Invariants/Assumptions: The binary name is always `agent-browser`; Windows routes through PowerShell to invoke npm launchers with escaped argv; callers handle semantic success/error interpretation.
  */
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { chmod, mkdir } from "node:fs/promises";
+import { lstat, mkdir, readdir } from "node:fs/promises";
+import { dirname, isAbsolute, join } from "node:path";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
-import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, getFlagName } from "./argv-grammar.js";
-import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
+import { parseArgvDescriptor } from "./argv-descriptor.js";
+import { needsManagedSession } from "./command-policy.js";
+import { isKnownCommandToken } from "./command-taxonomy.js";
+import {
+	getFlagName,
+	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
+	GLOBAL_VALUE_FLAGS,
+	optionalGlobalValueFlagConsumesNext,
+} from "./argv-grammar.js";
+import {
+	canonicalizeOwnedManagedSessionCloseArgs,
+	commitManagedSessionRestoreSuppression,
+	getManagedSessionRestoreConfigEnv,
+	getManagedSessionRestoreEnv,
+	getManagedSessionRestoreProtectedEnv,
+	getOwnedManagedSessionNamespaceEnv,
+	isOwnedManagedSessionTarget,
+	shouldOmitOwnedManagedSessionRestoreEnv,
+	validateManagedSessionRestoreContextForSpawn,
+	type ManagedSessionRestoreEnvOptions,
+	type ManagedSessionRestoreState,
+} from "./managed-session-restore.js";
+import {
+	getManagedSessionStateAccessValidationError,
+	getManagedSessionTargetAccessValidationError,
+} from "./managed-session-state-policy.js";
+import { getImplicitSessionIdleTimeoutMs, isPlainTextInspectionArgs } from "./runtime.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
 const MAX_BUFFERED_STDOUT_BYTES = 512 * 1_024;
@@ -19,6 +45,7 @@ const MAX_BUFFERED_STDERR_CHARS = 32_000;
 const MAX_BUFFERED_STDOUT_TAIL_CHARS = 32_000;
 const PROCESS_STDOUT_SPILL_FILE_PREFIX = "process-stdout";
 const AGENT_BROWSER_SOCKET_DIR_ENV = "AGENT_BROWSER_SOCKET_DIR";
+const AGENT_BROWSER_ARGS_ENV = "AGENT_BROWSER_ARGS";
 const AGENT_BROWSER_DEFAULT_TIMEOUT_ENV = "AGENT_BROWSER_DEFAULT_TIMEOUT";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS";
@@ -27,9 +54,12 @@ export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
+const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd";
 
 export interface ProcessRunResult {
 	aborted: boolean;
+	/** True once the native agent-browser executable, not merely the Windows PowerShell launcher, started. */
+	agentBrowserStarted: boolean;
 	exitCode: number;
 	spawnError?: Error;
 	stderr: string;
@@ -48,37 +78,93 @@ function quoteWindowsPowerShellArg(value: string): string {
 	return `'${value.replace(/'/g, "''")}'`;
 }
 
-const WINDOWS_LEADING_GLOBAL_VALUE_FLAGS = new Set<string>(GLOBAL_VALUE_FLAGS);
-
 /** Exported for unit tests that lock Windows launcher argv ordering. */
 export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 	const leadingGlobals: string[] = [];
-	let index = 0;
-	while (index < args.length && args[index]?.startsWith("-")) {
-		const token = args[index];
-		const flagName = getFlagName(token);
-		leadingGlobals.push(token);
-		index += 1;
-		if (WINDOWS_LEADING_GLOBAL_VALUE_FLAGS.has(flagName) && !token.includes("=") && index < args.length) {
-			leadingGlobals.push(args[index]);
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index] as string;
+		if (isKnownCommandToken(token)) {
+			return index === 0 ? args : [token, ...leadingGlobals, ...args.slice(index + 1)];
+		}
+		if (!token.startsWith("-")) return args;
+		if (token.startsWith("--restore=")) {
+			leadingGlobals.push(token);
+			continue;
+		}
+		if (token === "--restore") {
+			const value = args[index + 1];
+			if (optionalGlobalValueFlagConsumesNext(token, value)) {
+				leadingGlobals.push(`--restore=${value}`);
+				index += 1;
+			} else {
+				leadingGlobals.push(token);
+			}
+			continue;
+		}
+		if (token.includes("=")) return args;
+		const flag = getFlagName(token);
+		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(flag)) {
+			leadingGlobals.push(token);
+			if (["true", "false"].includes(args[index + 1] ?? "")) {
+				leadingGlobals.push(args[index + 1] as string);
+				index += 1;
+			}
+			continue;
+		}
+		if (GLOBAL_VALUE_FLAGS.includes(flag as typeof GLOBAL_VALUE_FLAGS[number])) {
+			const value = args[index + 1];
+			if (value === undefined) return args;
+			leadingGlobals.push(token, value);
 			index += 1;
 			continue;
 		}
-		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(flagName) && ["true", "false"].includes(args[index] ?? "")) {
-			leadingGlobals.push(args[index]);
-			index += 1;
-		}
+		return args;
 	}
-	if (leadingGlobals.length === 0 || index >= args.length) return args;
-	return [args[index], ...leadingGlobals, ...args.slice(index + 1)];
+	return args;
+}
+
+export function pinAgentBrowserFileAccessDisabled(args: string[]): string[] {
+	const filtered: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index];
+		if (token.startsWith("--allow-file-access=")) continue;
+		if (token === "--allow-file-access") {
+			if (["false", "true"].includes(args[index + 1] ?? "")) index += 1;
+			continue;
+		}
+		filtered.push(token);
+	}
+	return ["--args", "", "--allow-file-access", "false", ...filtered];
 }
 
 export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {
 	if (platform !== "win32") {
 		return { command: "agent-browser", args };
 	}
-	const commandLine = ["&", "agent-browser.cmd", ...reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg)].join(" ");
+	const invocationArgs = reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg).join(" ");
+	const commandLine = [
+		"$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue;",
+		`if (-not $agentBrowser) { [Console]::Error.WriteLine('${WINDOWS_AGENT_BROWSER_MISSING_MARKER}'); exit 127 };`,
+		`& $agentBrowser.Source ${invocationArgs}`.trimEnd(),
+	].join(" ");
 	return { command: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", commandLine] };
+}
+
+export function isWindowsAgentBrowserCommandMissing(stderr: string): boolean {
+	const normalized = stderr.toLowerCase();
+	return normalized.includes(WINDOWS_AGENT_BROWSER_MISSING_MARKER.toLowerCase()) || (normalized.includes("agent-browser.cmd") && (
+		normalized.includes("commandnotfoundexception") ||
+		normalized.includes("not recognized as the name of a cmdlet") ||
+		normalized.includes("not recognized as an internal or external command")
+	));
+}
+
+export function shouldCommitManagedRestoreAfterWindowsProcess(input: {
+	exitCode: number;
+	spawnError?: Error;
+	stderr: string;
+}): boolean {
+	return !input.spawnError && !(input.exitCode !== 0 && isWindowsAgentBrowserCommandMissing(input.stderr));
 }
 
 function terminateSpawnedChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
@@ -204,14 +290,66 @@ export function getAgentBrowserSocketDir(
 	if (platform === "win32") {
 		return undefined;
 	}
-	return `${DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX}${typeof uid === "number" ? `-${uid}` : ""}`;
+	const prefix = platform === "darwin" ? "/private/tmp/piab" : DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX;
+	return `${prefix}${typeof uid === "number" ? `-${uid}` : ""}`;
 }
 
-async function ensureAgentBrowserSocketDir(socketDir: string): Promise<boolean> {
+async function hasTrustedSocketDirAncestry(socketDir: string, uid: number): Promise<boolean> {
+	for (let current = dirname(socketDir);;) {
+		const metadata = await lstat(current);
+		if (metadata.isSymbolicLink()) {
+			if (metadata.uid !== 0) return false;
+		} else if (!metadata.isDirectory()) {
+			return false;
+		}
+		if (!metadata.isSymbolicLink()) {
+			const mode = metadata.mode & 0o7777;
+			if (metadata.uid === uid) {
+				if ((mode & 0o022) !== 0) return false;
+			} else if (metadata.uid !== 0 || ((mode & 0o022) !== 0 && (mode & 0o1000) === 0)) {
+				return false;
+			}
+		}
+		const parent = dirname(current);
+		if (parent === current) return true;
+		current = parent;
+	}
+}
+
+async function socketDirEntriesAreOwned(socketDir: string, uid: number, visited = { count: 0 }): Promise<boolean> {
+	for (const name of await readdir(socketDir)) {
+		if ((visited.count += 1) > 16_384) return false;
+		try {
+			const path = join(socketDir, name);
+			const metadata = await lstat(path);
+			if (metadata.uid !== uid || metadata.isSymbolicLink()) return false;
+			if (metadata.isDirectory()) {
+				if (!await socketDirEntriesAreOwned(path, uid, visited)) return false;
+			} else if (!metadata.isFile() && !metadata.isSocket()) {
+				return false;
+			}
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
+		}
+	}
+	return true;
+}
+
+export async function ensureAgentBrowserSocketDir(
+	socketDir: string,
+	uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
+): Promise<boolean> {
+	if (!isAbsolute(socketDir) || typeof uid !== "number") return false;
 	try {
-		await mkdir(socketDir, { recursive: true, mode: 0o700 });
-		await chmod(socketDir, 0o700).catch(() => undefined);
-		return true;
+		if (!await hasTrustedSocketDirAncestry(socketDir, uid)) return false;
+		try {
+			await mkdir(socketDir, { mode: 0o700 });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+		}
+		const metadata = await lstat(socketDir);
+		if (!metadata.isDirectory() || metadata.isSymbolicLink() || metadata.uid !== uid || (metadata.mode & 0o777) !== 0o700) return false;
+		return await hasTrustedSocketDirAncestry(socketDir, uid) && await socketDirEntriesAreOwned(socketDir, uid);
 	} catch {
 		return false;
 	}
@@ -237,29 +375,138 @@ export function buildAgentBrowserProcessEnv(
 	return childEnv;
 }
 
+function getManagedPreSpawnPolicyError(
+	options: ManagedSessionRestoreEnvOptions,
+	effectiveEnv?: NodeJS.ProcessEnv,
+	allowManagedSessionTarget = false,
+	currentPageUrl?: string,
+	pageUrlUnknown = false,
+	trustedFirstBatchTabSelection = false,
+	trustedPinnedEmptyConfig = false,
+): string | undefined {
+	const policyEnv = effectiveEnv ?? { ...(options.parentEnv ?? processEnv), ...options.env };
+	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(
+		options.args,
+		allowManagedSessionTarget || options.ownedManagedSession === true || isOwnedManagedSessionTarget(options.args),
+		policyEnv,
+	);
+	if (managedSessionTargetError) return managedSessionTargetError;
+	if (!validateManagedSessionRestoreContextForSpawn(options)) {
+		return "Managed session restore policy, storage, or checkout identity changed after planning; refusing to start agent-browser.";
+	}
+	return getManagedSessionStateAccessValidationError({
+		args: options.args,
+		currentPageUrl,
+		cwd: options.cwd,
+		env: effectiveEnv ?? options.env,
+		pageUrlUnknown,
+		parentEnv: effectiveEnv ? {} : options.parentEnv ?? processEnv,
+		stdin: options.stdin,
+		trustedFirstBatchTabSelection,
+		trustedPinnedEmptyConfig,
+	});
+}
+
 export async function runAgentBrowserProcess(options: {
+	allowManagedSessionTarget?: boolean;
 	args: string[];
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
+	managedSessionRestoreState?: ManagedSessionRestoreState;
+	managedStateCurrentPageUrl?: string;
+	managedStatePageUrlUnknown?: boolean;
+	ownedManagedSession?: boolean;
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
+	trustedFirstBatchTabSelection?: boolean;
 }): Promise<ProcessRunResult> {
-	const { args, cwd, env, signal, stdin } = options;
+	const { allowManagedSessionTarget, cwd, env, managedSessionRestoreState, managedStateCurrentPageUrl, managedStatePageUrlUnknown, signal, stdin, trustedFirstBatchTabSelection } = options;
+	const ownedManagedSession = options.ownedManagedSession === true || isOwnedManagedSessionTarget(options.args);
+	const args = canonicalizeOwnedManagedSessionCloseArgs({
+		args: options.args,
+		cwd,
+		env,
+		ownedManagedSession,
+		restoreState: managedSessionRestoreState,
+		stdin,
+	});
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
+	if (signal?.aborted) {
+		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+	}
+	const managedSessionRestoreOptions = {
+		args,
+		cwd,
+		env,
+		ownedManagedSession,
+		restoreState: managedSessionRestoreState,
+		stdin,
+	};
+	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, undefined, allowManagedSessionTarget, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection);
+	if (planningPolicyError) {
+		return {
+			aborted: false,
+			agentBrowserStarted: false,
+			exitCode: 1,
+			spawnError: new Error(planningPolicyError),
+			stderr: "",
+			stdout: "",
+			timedOut: false,
+		};
+	}
+	const managedSessionRestoreEnv = getManagedSessionRestoreEnv(managedSessionRestoreOptions);
+	const ownedManagedSessionClose = shouldOmitOwnedManagedSessionRestoreEnv(managedSessionRestoreOptions);
+	const browserConfigPinRequired = !isPlainTextInspectionArgs(args) && needsManagedSession(parseArgvDescriptor(args));
+	const managedSessionRestoreConfigEnv = await getManagedSessionRestoreConfigEnv(managedSessionRestoreEnv, ownedManagedSessionClose || browserConfigPinRequired);
+	if (managedSessionRestoreConfigEnv === undefined) {
+		return {
+			aborted: false,
+			agentBrowserStarted: false,
+			exitCode: 1,
+			spawnError: new Error("Browser-backed agent-browser commands require a protected empty config, but secure temp storage was unavailable."),
+			stderr: "",
+			stdout: "",
+			timedOut: false,
+		};
+	}
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
+		...managedSessionRestoreEnv,
 		...env,
+		...managedSessionRestoreConfigEnv,
+		...getManagedSessionRestoreProtectedEnv(managedSessionRestoreOptions, managedSessionRestoreEnv),
+		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
+		[AGENT_BROWSER_ARGS_ENV]: undefined,
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
+	if (ownedManagedSessionClose) effectiveEnv = { ...effectiveEnv, AGENT_BROWSER_RESTORE: undefined };
 	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
-	if (requestedSocketDir && (await ensureAgentBrowserSocketDir(requestedSocketDir))) {
+	if (requestedSocketDir !== undefined) {
+		const socketDirIsSecure = requestedSocketDir.length > 0 && await ensureAgentBrowserSocketDir(requestedSocketDir);
+		if (signal?.aborted) {
+			return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+		}
+		if (!socketDirIsSecure) {
+			return {
+				aborted: false,
+				agentBrowserStarted: false,
+				exitCode: 1,
+				spawnError: new Error("Agent-browser socket storage must be an absolute, non-symlink directory owned by the current user with mode 0700."),
+				stderr: "",
+				stdout: "",
+				timedOut: false,
+			};
+		}
 		effectiveEnv = { ...effectiveEnv, [AGENT_BROWSER_SOCKET_DIR_ENV]: requestedSocketDir };
 	}
-
+	if (signal?.aborted) {
+		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+	}
 	return await new Promise<ProcessRunResult>((resolve) => {
 		let aborted = false;
+		let agentBrowserStarted = false;
 		let settled = false;
 		let spawnError: Error | undefined;
 		let stderr = "";
@@ -330,6 +577,13 @@ export async function runAgentBrowserProcess(options: {
 				if (stdoutSpillHandle) {
 					await stdoutSpillHandle.close().catch(() => undefined);
 				}
+				const windowsMissingBinary = processPlatform === "win32" && exitCode !== 0 && isWindowsAgentBrowserCommandMissing(stderr);
+				if (processPlatform === "win32" && !windowsMissingBinary && !spawnError) agentBrowserStarted = true;
+				if (windowsMissingBinary && !spawnError) {
+					spawnError = Object.assign(new Error("spawn agent-browser ENOENT"), { code: "ENOENT" });
+				} else if (processPlatform === "win32" && shouldCommitManagedRestoreAfterWindowsProcess({ exitCode, spawnError, stderr })) {
+					commitManagedSessionRestoreSuppression(managedSessionRestoreOptions);
+				}
 				if (!spawnError && stdoutSpillError) {
 					spawnError = stdoutSpillError;
 				}
@@ -337,6 +591,7 @@ export async function runAgentBrowserProcess(options: {
 				destroySpawnedChildStreams(child);
 				resolve({
 					aborted,
+					agentBrowserStarted,
 					exitCode,
 					spawnError,
 					stderr,
@@ -348,12 +603,24 @@ export async function runAgentBrowserProcess(options: {
 			});
 		};
 
-		const spawnCommand = buildAgentBrowserSpawnCommand(args);
+		const childEnv = buildAgentBrowserProcessEnv(processEnv, effectiveEnv);
+		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, childEnv, allowManagedSessionTarget, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection, managedSessionRestoreConfigEnv.AGENT_BROWSER_CONFIG !== undefined);
+		if (spawnPolicyError) {
+			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
+			return;
+		}
+		const spawnCommand = buildAgentBrowserSpawnCommand(pinAgentBrowserFileAccessDisabled(args));
 		const child = spawn(spawnCommand.command, spawnCommand.args, {
 			cwd,
-			env: buildAgentBrowserProcessEnv(processEnv, effectiveEnv),
+			env: childEnv,
 			stdio: ["pipe", "pipe", "pipe"],
 		});
+		if (processPlatform !== "win32") {
+			child.once("spawn", () => {
+				agentBrowserStarted = true;
+				commitManagedSessionRestoreSuppression(managedSessionRestoreOptions);
+			});
+		}
 
 		const terminateChild = (reason: "abort" | "timeout") => {
 			if (settled) return;
@@ -422,12 +689,9 @@ export async function runAgentBrowserProcess(options: {
 		}
 
 		if (signal) {
-			if (signal.aborted) {
-				terminateChild("abort");
-			} else {
-				abortListener = () => terminateChild("abort");
-				signal.addEventListener("abort", abortListener, { once: true });
-			}
+			abortListener = () => terminateChild("abort");
+			signal.addEventListener("abort", abortListener, { once: true });
+			if (signal.aborted) terminateChild("abort");
 		}
 
 		writeChildStdin();

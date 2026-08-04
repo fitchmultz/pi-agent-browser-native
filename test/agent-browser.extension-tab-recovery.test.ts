@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -185,7 +185,7 @@ if (args.includes("batch")) {
 			assert.match((clickedSelector.content[0] as { text: string }).text, /Example Domain/);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 5);
+			assert.equal(invocations.length, 6);
 			assert.deepEqual(invocations[0]?.args, [
 				"--json",
 				"--session",
@@ -197,9 +197,10 @@ if (args.includes("batch")) {
 			]);
 			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
 			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "t1"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[4]?.stdin ?? "[]")), [
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[5]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[5]?.stdin ?? "[]")), [
 				["tab", "t1"],
 				["click", "@e9"],
 				["eval", "({ title: document.title, url: location.href })"],
@@ -311,16 +312,17 @@ if (args.includes("batch")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 4);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
+			assert.equal(invocations.length, 5);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
 				["tab", "t1"],
 				["click", "@e9"],
 				["eval", "({ title: document.title, url: location.href })"],
 			]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "t1"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "t1"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -440,16 +442,17 @@ if (args.includes("batch")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 4);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
+			assert.equal(invocations.length, 5);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[3]?.stdin ?? "[]")), [
 				["tab", "t1"],
 				["click", "@e9"],
 				["eval", "({ title: document.title, url: location.href })"],
 			]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "list"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -518,7 +521,8 @@ if (args.includes("tab") && args.includes("list")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "open", "about:blank"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
 			assert.equal(
 				invocations.some((invocation) => JSON.stringify(invocation.args) === JSON.stringify(["--json", "--session", "named", "tab", "blank"])),
 				false,
@@ -529,10 +533,9 @@ if (args.includes("tab") && args.includes("list")) {
 	}
 });
 
-test("agentBrowserExtension keeps newer explicit-session tab target after overlapping opens", { concurrency: false }, async () => {
+test("agentBrowserExtension serializes overlapping same-session opens and keeps the newer target", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
-	const releaseSlowOpenPath = join(tempDir, "release-slow-open");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -542,12 +545,8 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 const slow = { title: "Slow First", url: "https://example.com/slow-first" };
 const fast = { title: "Fast Second", url: "https://example.com/fast-second" };
-const releaseSlowOpenPath = ${JSON.stringify(releaseSlowOpenPath)};
 if (args.includes("https://example.com/slow-first")) {
-  const deadline = Date.now() + 5000;
-  while (!fs.existsSync(releaseSlowOpenPath) && Date.now() < deadline) {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
   process.stdout.write(JSON.stringify({ success: true, data: slow }));
 } else if (args.includes("https://example.com/fast-second")) {
   process.stdout.write(JSON.stringify({ success: true, data: fast }));
@@ -590,51 +589,155 @@ if (args.includes("https://example.com/slow-first")) {
 				args: ["--session", "named", "open", "https://example.com/fast-second"],
 			});
 
-			const fastOpen = await fastOpenPromise;
-			assert.equal(fastOpen.isError, false, JSON.stringify(fastOpen));
-			await writeFile(releaseSlowOpenPath, "1", "utf8");
-			const slowOpen = await slowOpenPromise;
+			const [slowOpen, fastOpen] = await Promise.all([slowOpenPromise, fastOpenPromise]);
 			assert.equal(slowOpen.isError, false, JSON.stringify(slowOpen));
-
-			const clickedSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "click", "@e9"],
-			});
-			assert.equal(clickedSelector.isError, false, JSON.stringify(clickedSelector));
-			assert.deepEqual(clickedSelector.details?.sessionTabCorrection, {
-				selectedTab: "t2",
-				selectionKind: "tabId",
-				targetTitle: "Fast Second",
-				targetUrl: "https://example.com/fast-second",
-			});
-			assert.equal(
-				(clickedSelector.details?.navigationSummary as { title?: string; url?: string } | undefined)?.title,
-				"Fast Second",
-			);
-			assert.equal(
-				(clickedSelector.details?.navigationSummary as { title?: string; url?: string } | undefined)?.url,
-				"https://example.com/fast-second",
-			);
+			assert.equal(fastOpen.isError, false, JSON.stringify(fastOpen));
+			assert.deepEqual(slowOpen.details?.sessionTabTarget, { title: "Slow First", url: "https://example.com/slow-first" });
+			assert.deepEqual(fastOpen.details?.sessionTabTarget, { title: "Fast Second", url: "https://example.com/fast-second" });
+			assert.equal(fastOpen.details?.sessionTabTargetUnknown, undefined);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(
-				invocations.some((entry) =>
-					entry.args.join("\u0000") === ["--json", "--session", "named", "open", "https://example.com/slow-first"].join("\u0000"),
-				),
-				true,
-			);
-			assert.equal(
-				invocations.some((entry) =>
-					entry.args.join("\u0000") === ["--json", "--session", "named", "open", "https://example.com/fast-second"].join("\u0000"),
-				),
-				true,
-			);
-			assert.deepEqual(invocations.at(-2)?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations.at(-1)?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations.at(-1)?.stdin ?? "[]")), [
-				["tab", "t2"],
-				["click", "@e9"],
-				["eval", "({ title: document.title, url: location.href })"],
-			]);
+			assert.equal(invocations.length, 2);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "open", "https://example.com/slow-first"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "open", "https://example.com/fast-second"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension serializes a newer unverified target after prior navigation", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-unverified-target-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("https://example.com/slow")) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "First", url: "https://example.com/slow" } }));
+} else if (args.includes("connect")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { snapshot: "SECRET UNVERIFIED CONTENT" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const slowOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "open", "https://example.com/slow"] });
+			await waitForInvocation(logPath, (entry) => entry.args.includes("https://example.com/slow"));
+			const connectPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "connect", "9222"] });
+			const [firstOpen, connected] = await Promise.all([slowOpenPromise, connectPromise]);
+			assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
+			assert.deepEqual(firstOpen.details?.sessionTabTarget, { title: "First", url: "https://example.com/slow" });
+			assert.equal(connected.isError, false, JSON.stringify(connected));
+			assert.equal(connected.details?.sessionTabTargetUnknown, true);
+			const invocationCount = (await readInvocationLog(logPath)).length;
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "snapshot", "-i"] });
+			assert.equal(snapshot.isError, true, JSON.stringify(snapshot));
+			assert.match(snapshot.content[0]?.text ?? "", /active page became unverified/);
+			assert.doesNotMatch(JSON.stringify(snapshot), /SECRET UNVERIFIED CONTENT/);
+			assert.equal((await readInvocationLog(logPath)).length, invocationCount);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension serializes case-alias session and namespace identities on case-insensitive hosts", {
+	concurrency: false,
+	skip: process.platform === "darwin" || process.platform === "win32" ? false : "session daemon paths are case-sensitive on this host",
+}, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-session-case-alias-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "shared-session-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const namespaceIndex = args.indexOf("--namespace");
+const namespace = namespaceIndex >= 0 ? args[namespaceIndex + 1] : "";
+const sessionIndex = args.indexOf("--session");
+const session = sessionIndex >= 0 ? args[sessionIndex + 1] : "";
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+let state = { url: "about:blank" };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+if (args.includes("open")) {
+  state = { url: args.at(-1) };
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Page", url: state.url } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url } }));
+} else if (args.includes("snapshot")) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+  try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: ["snapshot-finished", namespace, session] }) + "\\n");
+  process.stdout.write(JSON.stringify({ success: true, data: { snapshot: state.url.startsWith("file:") ? "SECRET LOCAL CONTENT" : "SAFE CONTENT" } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const runAliasRace = async (readIdentityArgs: string[], writeIdentityArgs: string[], label: string): Promise<void> => {
+				const session = readIdentityArgs[readIdentityArgs.indexOf("--session") + 1]!;
+				const localUrl = `file:///tmp/${label}-secret.html`;
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...readIdentityArgs, "open", "https://example.com/"] });
+				assert.equal(opened.isError, false, JSON.stringify(opened));
+
+				const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: [...readIdentityArgs, "snapshot", "-i"] });
+				await waitForInvocation(logPath, (entry) => entry.args.includes("snapshot") && entry.args.includes(session));
+				const localOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: [...writeIdentityArgs, "open", localUrl] });
+				const [snapshot, localOpen] = await Promise.all([snapshotPromise, localOpenPromise]);
+				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+				assert.doesNotMatch(JSON.stringify(snapshot), /SECRET LOCAL CONTENT/);
+				assert.equal(localOpen.isError, false, JSON.stringify(localOpen));
+
+				const invocations = await readInvocationLog(logPath);
+				const snapshotFinishedIndex = invocations.findIndex((entry) => entry.args[0] === "snapshot-finished" && entry.args[2] === session);
+				const localOpenIndex = invocations.findIndex((entry) => entry.args.includes(localUrl));
+				assert.ok(snapshotFinishedIndex >= 0 && localOpenIndex > snapshotFinishedIndex, JSON.stringify(invocations));
+			};
+			await runAliasRace(["--session", "Foo"], ["--session", "foo"], "session-case");
+			await runAliasRace(["--namespace", "Straße", "--session", "namespace-sharp-s"], ["--namespace", "STRASSE", "--session", "namespace-sharp-s"], "namespace-sharp-s");
+			await runAliasRace(["--namespace", "Σ", "--session", "namespace-sigma"], ["--namespace", "ς", "--session", "namespace-sigma"], "namespace-sigma");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension propagates caller aborts during live page verification", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-live-page-abort-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("get") && args.includes("url")) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/" } }));
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.com/" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { snapshot: "SHOULD NOT RUN" } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const controller = new AbortController();
+			const snapshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "snapshot", "-i"] }, controller.signal);
+			await waitForInvocation(logPath, (entry) => entry.args.includes("get") && entry.args.includes("url"));
+			controller.abort(new Error("caller cancelled"));
+			await assert.rejects(snapshot, /caller cancelled/);
+
+			const reopened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "open", "https://example.com/"] });
+			assert.equal(reopened.isError, false, JSON.stringify(reopened));
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("snapshot")), false);
+			assert.equal(invocations.some((entry) => entry.args.includes("open")), true);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -712,11 +815,12 @@ if (args.includes("tab") && args.includes("list")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 4);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "click", "@e9"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "t1"]);
+			assert.equal(invocations.length, 5);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "click", "@e9"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "t1"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

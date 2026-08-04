@@ -9,7 +9,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
@@ -163,6 +163,13 @@ async function runSteps(steps) {
 
 function scriptStep(args, env) {
 	return { command: nodeCommand, args, env };
+}
+
+export function hostToolPath(pathValue = process.env.PATH ?? "") {
+	return pathValue
+		.split(delimiter)
+		.filter((directory) => directory && !/(^|[\\/])node_modules[\\/]\.bin$/i.test(directory))
+		.join(delimiter);
 }
 
 function localToolStep(command, args, env) {
@@ -336,7 +343,10 @@ export function verifySteps(options) {
 		case "startup-profile":
 			return [scriptStep(["./scripts/profile-startup.mjs", ...options.passthrough])];
 		case "real-upstream":
-			return [localToolStep("tsx", ["--test", "test/agent-browser.real-upstream-contract.test.ts"], { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" })];
+			return [
+				localToolStep("tsx", ["--test", "--test-force-exit", "--test-name-pattern", "plugin list stays sessionless", "test/agent-browser.real-upstream-contract.test.ts"], { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" }),
+				localToolStep("tsx", ["--test", "--test-force-exit", "--test-name-pattern", "contract suite matches", "test/agent-browser.real-upstream-contract.test.ts"], { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" }),
+			];
 		case "dogfood":
 			return [localToolStep("tsx", ["./scripts/verify-agent-browser-dogfood.ts", ...options.passthrough])];
 		case "package":
@@ -344,7 +354,7 @@ export function verifySteps(options) {
 		case "package-pi":
 			return [scriptStep(["./scripts/verify-package.mjs", "--smoke-pi", ...options.passthrough])];
 		case "lifecycle":
-			return [scriptStep(["./scripts/verify-lifecycle.mjs", ...options.passthrough])];
+			return [scriptStep(["./scripts/verify-lifecycle.mjs", ...options.passthrough], { PATH: hostToolPath() })];
 		case "platform-target":
 			return [
 				...docsSteps({ mode: "check", target: "all" }),

@@ -14,8 +14,8 @@ export const COMMAND_REFERENCE_BASELINE_BLOCK_IDS = Object.freeze(["upstream-bas
 
 const sourceEvidence = Object.freeze({
   repository: "vercel-labs/agent-browser",
-  upstreamHead: "1ed371f3af472cc0d6cd8fdaea75d1a085ff7534",
-  upstreamPackageVersion: "0.33.0",
+  upstreamHead: "93cdda5709e8861c0c26b0b955d8d746e9fda0d7",
+  upstreamPackageVersion: "0.33.2",
   inspectedSources: Object.freeze([
     "agent-browser --version",
     "agent-browser --help",
@@ -640,6 +640,7 @@ const inventorySections = Object.freeze([
       "AGENT_BROWSER_IGNORE_HTTPS_ERRORS",
       "--allow-file-access",
       "AGENT_BROWSER_ALLOW_FILE_ACCESS",
+      "--hide-scrollbars <bool>",
       "--headed",
       "AGENT_BROWSER_HEADED",
       "--webgpu",
@@ -701,6 +702,9 @@ const inventorySections = Object.freeze([
       "--idle-timeout <ms>",
       "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS",
       "AGENT_BROWSER_STREAM_PORT",
+      "AGENT_BROWSER_STREAM_QUALITY",
+      "AGENT_BROWSER_STREAM_MAX_WIDTH",
+      "AGENT_BROWSER_STREAM_MAX_HEIGHT",
       "AGENT_BROWSER_IDLE_TIMEOUT_MS",
       "AGENT_BROWSER_ENCRYPTION_KEY",
       "AGENT_BROWSER_STATE_EXPIRE_DAYS",
@@ -779,6 +783,7 @@ const inventorySections = Object.freeze([
       root("AGENT_BROWSER_IGNORE_HTTPS_ERRORS"),
       root("--allow-file-access"),
       root("AGENT_BROWSER_ALLOW_FILE_ACCESS"),
+      root("--hide-scrollbars <bool>"),
       root("--headed"),
       root("AGENT_BROWSER_HEADED"),
       root("--webgpu"),
@@ -833,6 +838,9 @@ const inventorySections = Object.freeze([
       root("AGENT_BROWSER_DEFAULT_TIMEOUT"),
       root("AGENT_BROWSER_AUTOSAVE_INTERVAL_MS"),
       root("AGENT_BROWSER_STREAM_PORT"),
+      root("AGENT_BROWSER_STREAM_QUALITY"),
+      root("AGENT_BROWSER_STREAM_MAX_WIDTH"),
+      root("AGENT_BROWSER_STREAM_MAX_HEIGHT"),
       root("AGENT_BROWSER_IDLE_TIMEOUT_MS"),
       root("AGENT_BROWSER_ENCRYPTION_KEY"),
       root("AGENT_BROWSER_STATE_EXPIRE_DAYS"),
@@ -844,7 +852,7 @@ const inventorySections = Object.freeze([
 ]);
 
 export const CAPABILITY_BASELINE = Object.freeze({
-  targetVersion: "0.33.0",
+  targetVersion: "0.33.2",
   sourceEvidence,
   helpCommands,
   inventorySections,

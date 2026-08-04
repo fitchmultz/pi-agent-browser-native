@@ -1,5 +1,36 @@
 export type BatchCommandStep = [string, ...string[]];
 
+// Mirror upstream commands::shell_words_split so policy inspection sees the same argv.
+export function parseBatchCommandArgument(command: string): { error?: string; step?: BatchCommandStep } {
+	const tokens: string[] = [];
+	let token = "";
+	let inDoubleQuote = false;
+	let inSingleQuote = false;
+	for (let index = 0; index < command.length; index += 1) {
+		const character = command[index];
+		if (character === "\\" && !inSingleQuote) {
+			const next = command[index + 1];
+			if (next !== undefined) {
+				token += next;
+				index += 1;
+			}
+		} else if (character === '"' && !inSingleQuote) {
+			inDoubleQuote = !inDoubleQuote;
+		} else if (character === "'" && !inDoubleQuote) {
+			inSingleQuote = !inSingleQuote;
+		} else if (character === " " && !inDoubleQuote && !inSingleQuote) {
+			if (token !== "") {
+				tokens.push(token);
+				token = "";
+			}
+		} else {
+			token += character;
+		}
+	}
+	if (token !== "") tokens.push(token);
+	return tokens.length > 0 ? { step: tokens as BatchCommandStep } : { error: "batch command is empty" };
+}
+
 function validateUserBatchStep(step: unknown, index: number): { error: string; ok: false } | { ok: true; step: BatchCommandStep } {
 	if (!Array.isArray(step)) {
 		return {

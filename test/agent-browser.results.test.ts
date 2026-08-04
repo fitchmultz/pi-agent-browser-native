@@ -42,6 +42,7 @@ const NON_BOOLEAN_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON 
 test("AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS locks documented recovery action ids", () => {
 	assert.deepEqual(AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, {
 		aboutBlankListTabs: "list-tabs-for-about-blank-recovery",
+		connectedSessionGetUrl: "verify-connected-session-url",
 		connectedSessionListTabs: "list-connected-session-tabs",
 		genericTabDriftListTabs: "list-tabs-for-recovery",
 		noActivePageListTabs: "list-tabs-after-no-active-page",
@@ -242,6 +243,7 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	assert.deepEqual(
 		buildAgentBrowserNextActions({ recovery: { kind: "connected-session", sessionName: "named" }, resultCategory: "success", successCategory: "completed" })?.map((action) => ({ id: action.id, args: action.params?.args })),
 		[
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.connectedSessionGetUrl, args: ["--session", "named", "get", "url"] },
 			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.connectedSessionListTabs, args: ["--session", "named", "tab", "list"] },
 		],
 	);

@@ -39,6 +39,10 @@ for (let i = 0; i < args.length; i += 1) {
 const command = args[commandIndex];
 if (command === "find") {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "[data-agent-browser-located='true']" } }));
+} else if (command === "get" && args[commandIndex + 1] === "url") {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.test/", url: "https://example.test/" } }));
+} else if (command === "get" && args[commandIndex + 1] === "title") {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Example Domain", title: "Example Domain" } }));
 } else if (command === "eval") {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Example Domain", url: "https://example.test/" } } }));
 } else if (command === "click") {
@@ -89,8 +93,10 @@ if (command === "find") {
 			assert.match(directText, /Current page:/);
 
 			const invocations = await readInvocationLog(logPath);
-			const evalProbe = invocations.find((entry) => entry.args.includes("eval"));
-			assert.ok(evalProbe, "expected read-only page-state eval after semantic click");
+			const urlProbeIndex = invocations.findIndex((entry) => entry.args.includes("get") && entry.args.includes("url"));
+			const titleProbeIndex = invocations.findIndex((entry) => entry.args.includes("get") && entry.args.includes("title"));
+			assert.ok(urlProbeIndex >= 0, "expected URL verification after semantic click");
+			assert.ok(titleProbeIndex > urlProbeIndex, "expected title lookup only after URL verification");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

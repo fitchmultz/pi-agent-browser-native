@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -44,6 +44,12 @@ if (args.includes("open")) {
   const state = ref === "@e3" ? { title: "Example Same", url: "https://example.com/same" } : { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: ref } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else if (args.includes("close")) {
@@ -85,6 +91,91 @@ if (args.includes("open")) {
 	}
 });
 
+test("agentBrowserExtension preserves policies from overlapping caller-owned sessions", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-allowed-domains-concurrent-"));
+	const startedPath = join(tempDir, "slow-started");
+	const generationStartedPath = join(tempDir, "generation-started");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const sessionIndex = args.indexOf("--session");
+const session = sessionIndex >= 0 ? args[sessionIndex + 1] : "default";
+const statePath = path.join(${JSON.stringify(tempDir)}, "state-" + session + ".json");
+const readState = () => { try { return JSON.parse(fs.readFileSync(statePath, "utf8")); } catch { return { title: "", url: "about:blank" }; } };
+const writeState = (state) => fs.writeFileSync(statePath, JSON.stringify(state));
+if (args.includes("open")) {
+  if (session === "slow" || session === "generation") {
+    fs.writeFileSync(session === "slow" ? ${JSON.stringify(startedPath)} : ${JSON.stringify(generationStartedPath)}, "started");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, session === "slow" ? 100 : 500);
+  }
+  const url = args.at(-1);
+  const state = { title: session, url };
+  writeState(state);
+  process.stdout.write(JSON.stringify({ success: true, data: state }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("click")) {
+  const state = { title: "Outside", url: "https://outside.test/" + session };
+  writeState(state);
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1), ...state } }));
+} else if (args.includes("eval")) {
+  process.stdout.write(JSON.stringify({ success: true, data: readState() }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: readState() }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const slowOpen = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "slow", "--allowed-domains", "example.com", "open", "https://example.com/"],
+			});
+			for (let attempt = 0; attempt < 3_000; attempt += 1) {
+				try { await access(startedPath); break; } catch {
+					if (attempt === 2_999) assert.fail("slow caller-owned open did not start");
+					await new Promise((resolve) => setTimeout(resolve, 5));
+				}
+			}
+			const fastOpen = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "fast", "--allowed-domains", "iana.org", "open", "https://iana.org/"],
+			});
+			const opened = await Promise.all([slowOpen, fastOpen]);
+			assert.equal(opened.every((result) => result.isError === false), true, JSON.stringify(opened));
+
+			for (const session of ["slow", "fast"]) {
+				const escaped = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", session, "click", "a"] });
+				assert.equal(escaped.isError, true, JSON.stringify(escaped));
+				assert.equal(escaped.details?.failureCategory, "policy-blocked");
+			}
+
+			const generationOpen = executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "generation", "--allowed-domains", "example.com", "open", "https://example.com/"],
+			});
+			for (let attempt = 0; attempt < 3_000; attempt += 1) {
+				try { await access(generationStartedPath); break; } catch {
+					if (attempt === 2_999) assert.fail("generation caller-owned open did not start");
+					await new Promise((resolve) => setTimeout(resolve, 5));
+				}
+			}
+			const managedOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://managed.test/"] });
+			assert.equal(managedOpen.isError, false, JSON.stringify(managedOpen));
+			assert.equal((await generationOpen).isError, false);
+			const generationEscape = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "generation", "click", "a"] });
+			assert.equal(generationEscape.isError, true, JSON.stringify(generationEscape));
+			assert.equal(generationEscape.details?.failureCategory, "policy-blocked");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension tracks fresh managed sessions that fail after allowed-domain policy checks", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-allowed-domains-fresh-fail-"));
 	const statePath = join(tempDir, "page-state.json");
@@ -105,6 +196,12 @@ if (args.includes("open")) {
   const state = { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else if (args.includes("close")) {
@@ -168,6 +265,12 @@ if (args.includes("open")) {
   const state = { title: "Example Domains", url: "https://www.iana.org/help/example-domains" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else {
@@ -243,6 +346,12 @@ process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
   if (args.includes("batch")) {
     process.stdout.write(JSON.stringify(JSON.parse(stdin).map(runCommand)));
+  } else if (args.includes("get") && args.includes("url")) {
+    const state = readState();
+    process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+  } else if (args.includes("get") && args.includes("title")) {
+    const state = readState();
+    process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
   } else if (args.includes("eval")) {
     process.stdout.write(JSON.stringify({ success: true, data: readState() }));
   } else {
@@ -311,6 +420,12 @@ if (args.includes("open")) {
   const state = { title: "Example Same", url: "https://example.com/same" };
   writeState(state);
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.url, url: state.url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  const state = readState();
+  process.stdout.write(JSON.stringify({ success: true, data: { result: state.title, title: state.title } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: readState() }));
 } else if (args.includes("close")) {

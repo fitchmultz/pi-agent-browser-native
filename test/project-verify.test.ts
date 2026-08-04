@@ -8,14 +8,16 @@
 
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { delimiter } from "node:path";
 import test from "node:test";
 
 const projectModule = (await import("../scripts/project.mjs")) as {
 	docsSteps: (options: { mode: string; target: string }) => Array<{ command: string; args: string[]; env?: Record<string, string> }>;
+	hostToolPath: (pathValue?: string) => string;
 	parseVerifyArgs: (argv?: string[]) => { mode: string; passthrough: string[]; showHelp: boolean };
 	verifySteps: (options: { mode: string; passthrough: string[]; showHelp: boolean }) => Array<{ command: string; args: string[]; env?: Record<string, string> }>;
 };
-const { docsSteps, parseVerifyArgs, verifySteps } = projectModule;
+const { docsSteps, hostToolPath, parseVerifyArgs, verifySteps } = projectModule;
 
 function labels(steps: Array<{ args: string[]; env?: Record<string, string> }>): string[] {
 	return steps.map((step) => step.args.join(" "));
@@ -61,8 +63,11 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 	assert.deepEqual(labels(startupProfile), ["./scripts/profile-startup.mjs --samples 3 --json"]);
 
 	const realUpstream = verifySteps({ mode: "real-upstream", passthrough: [], showHelp: false });
-	assert.deepEqual(labels(realUpstream), ["--test test/agent-browser.real-upstream-contract.test.ts"]);
-	assert.equal(realUpstream[0]?.env?.PI_AGENT_BROWSER_REAL_UPSTREAM, "1");
+	assert.deepEqual(labels(realUpstream), [
+		"--test --test-force-exit --test-name-pattern plugin list stays sessionless test/agent-browser.real-upstream-contract.test.ts",
+		"--test --test-force-exit --test-name-pattern contract suite matches test/agent-browser.real-upstream-contract.test.ts",
+	]);
+	assert.equal(realUpstream.every((step) => step.env?.PI_AGENT_BROWSER_REAL_UPSTREAM === "1"), true);
 
 	const dogfood = verifySteps({ mode: "dogfood", passthrough: ["--keep-artifacts"], showHelp: false });
 	assert.deepEqual(labels(dogfood), ["./scripts/verify-agent-browser-dogfood.ts --keep-artifacts"]);
@@ -147,6 +152,8 @@ test("verify facade lifecycle mode passes --model and other allowed flags throug
 	assert.deepEqual(labels(steps), [
 		"./scripts/verify-lifecycle.mjs --model openai-codex/gpt-5.5:minimal --keep-artifacts --verbose --timeout-ms 600000",
 	]);
+	assert.equal(steps[0]?.env?.PATH, hostToolPath());
+	assert.equal(hostToolPath(["/repo/node_modules/.bin", "/global/bin", "/usr/bin"].join(delimiter)), ["/global/bin", "/usr/bin"].join(delimiter));
 });
 
 test("verify facade lifecycle mode rejects --model without a value", () => {

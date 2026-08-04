@@ -54,11 +54,11 @@ export function parseCdpTargets(value: unknown): ElectronCdpTarget[] {
 	}));
 }
 
-export async function fetchCdpJson(url: string): Promise<unknown | undefined> {
+export async function fetchCdpJson(url: string, signal?: AbortSignal): Promise<unknown | undefined> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), ELECTRON_CDP_FETCH_TIMEOUT_MS);
 	try {
-		const response = await fetch(url, { signal: controller.signal });
+		const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal });
 		if (!response.ok) return undefined;
 		return await response.json() as unknown;
 	} catch {

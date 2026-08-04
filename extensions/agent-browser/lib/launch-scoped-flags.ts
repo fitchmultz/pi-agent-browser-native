@@ -1,8 +1,11 @@
 /**
  * Purpose: Canonical launch-scoped agent-browser flag metadata shared by runtime planning and agent-facing guidance.
- * Responsibilities: Define which upstream flags require a fresh launch, explain why, and expose stable guidance labels.
- * Scope: Metadata only; argv parsing and execution planning live in runtime.ts.
+ * Responsibilities: Define which upstream flags require a fresh launch, explain why, expose stable guidance labels, and share launch-token detection used by runtime and managed restore policy.
+ * Scope: Launch-scoped metadata and token classification; broader execution planning lives in runtime.ts.
  */
+
+import { findCommandStartIndex } from "./argv-descriptor.js";
+import { isBooleanFlagEnabled, optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
 
 export interface LaunchScopedFlagDefinition {
 	flag: string;
@@ -96,3 +99,87 @@ export const LAUNCH_SCOPED_FLAGS = LAUNCH_SCOPED_FLAG_DEFINITIONS.map((definitio
 export const LAUNCH_SCOPED_FLAG_LABEL = LAUNCH_SCOPED_FLAGS.join(", ");
 
 export const OPEN_RESULT_TAB_CORRECTION_FLAGS = new Set<string>(["--profile", "--restore", "--session-name", "--state"]);
+
+/** Launch modes that must never be combined with wrapper-managed restore state. */
+export const MANAGED_RESTORE_INCOMPATIBLE_FLAGS = [
+	"--restore",
+	"--restore-save",
+	"--restore-check-url",
+	"--restore-check-text",
+	"--restore-check-fn",
+	"--allowed-domains",
+	"--profile",
+	"--state",
+	"--cdp",
+	"--auto-connect",
+	"--session-name",
+	"--provider",
+	"-p",
+	"--executable-path",
+	"--extension",
+	"--init-script",
+	"--enable",
+	"--args",
+	"--user-agent",
+	"--proxy",
+	"--proxy-bypass",
+	"--ignore-https-errors",
+	"--allow-file-access",
+	"--webgpu",
+	"--device",
+	"--engine",
+] as const;
+
+/** Nonempty upstream env defaults that can replace or mutate the browser receiving restored state. */
+export const MANAGED_RESTORE_INCOMPATIBLE_ENVS = [
+	"AGENT_BROWSER_RESTORE",
+	"AGENT_BROWSER_RESTORE_SAVE",
+	"AGENT_BROWSER_RESTORE_CHECK_URL",
+	"AGENT_BROWSER_RESTORE_CHECK_TEXT",
+	"AGENT_BROWSER_RESTORE_CHECK_FN",
+	"AGENT_BROWSER_ALLOWED_DOMAINS",
+	"AGENT_BROWSER_PROFILE",
+	"AGENT_BROWSER_STATE",
+	"AGENT_BROWSER_CDP",
+	"AGENT_BROWSER_NAMESPACE",
+	"AGENT_BROWSER_SESSION_NAME",
+	"AGENT_BROWSER_PROVIDER",
+	"AGENT_BROWSER_EXECUTABLE_PATH",
+	"AGENT_BROWSER_EXTENSIONS",
+	"AGENT_BROWSER_INIT_SCRIPTS",
+	"AGENT_BROWSER_ENABLE",
+	"AGENT_BROWSER_ARGS",
+	"AGENT_BROWSER_USER_AGENT",
+	"AGENT_BROWSER_PROXY",
+	"AGENT_BROWSER_PROXY_BYPASS",
+	"AGENT_BROWSER_PLUGINS",
+	"AGENT_BROWSER_IOS_DEVICE",
+	"AGENT_BROWSER_IOS_UDID",
+	"AGENT_BROWSER_ENGINE",
+	"HTTP_PROXY",
+	"HTTPS_PROXY",
+	"ALL_PROXY",
+	"http_proxy",
+	"https_proxy",
+	"all_proxy",
+] as const;
+
+/** Boolean launch mutators block restore only when enabled. */
+export const MANAGED_RESTORE_INCOMPATIBLE_BOOLEAN_ENVS = [
+	"AGENT_BROWSER_AUTO_CONNECT",
+	"AGENT_BROWSER_IGNORE_HTTPS_ERRORS",
+	"AGENT_BROWSER_ALLOW_FILE_ACCESS",
+	"AGENT_BROWSER_WEBGPU",
+] as const;
+
+export function hasLaunchScopedFlagToken(args: string[], flag: string): boolean {
+	const commandStartIndex = findCommandStartIndex(args);
+	const command = commandStartIndex === undefined ? undefined : args[commandStartIndex];
+	return args.some((token, index) => {
+		if (token !== flag && !token.startsWith(`${flag}=`)) return false;
+		if (flag === "--auto-connect") return isBooleanFlagEnabled(args, flag);
+		if (flag === "--restore" && token === "--restore" && optionalGlobalValueFlagConsumesNext(flag, args[index + 1])) return true;
+		if (flag === "--state" && command === "wait" && commandStartIndex !== undefined && index > commandStartIndex) return false;
+		return true;
+	});
+}

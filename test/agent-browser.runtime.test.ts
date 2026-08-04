@@ -1,6 +1,6 @@
 /**
  * Purpose: Verify pure runtime planning and policy helpers for the pi-agent-browser extension.
- * Responsibilities: Assert session naming, managed-session restoration, execution-plan argument injection, and redaction helpers.
+ * Responsibilities: Assert session naming/state, execution-plan argument injection, and redaction helpers.
  * Scope: Unit-style Node test-runner coverage for stable helper behavior; extension entrypoint lifecycle tests live in focused integration suites.
  * Usage: Run with `npx tsx --test test/agent-browser.runtime.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests preserve existing assertions and isolate filesystem/env side effects with temp directories and explicit cleanup.
@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { canonicalizeAgentBrowserNamespace, extractRequestedRestoreKey, isBooleanFlagEnabled } from "../extensions/agent-browser/lib/argv-grammar.js";
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
 import { LAUNCH_SCOPED_FLAGS } from "../extensions/agent-browser/lib/launch-scoped-flags.js";
 import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT_GUIDELINES_SUFFIX } from "../extensions/agent-browser/lib/playbook.js";
@@ -29,6 +30,58 @@ import {
 	validateToolArgs,
 } from "../extensions/agent-browser/lib/runtime.js";
 import { createToolBranchEntry } from "./helpers/agent-browser-harness.js";
+
+test("buildExecutionPlan rejects ambiguous session identity flags without rejecting command text", () => {
+	const options = {
+		freshSessionName: "piab-fresh",
+		managedSessionActive: true,
+		managedSessionName: "piab-managed",
+		sessionMode: "auto" as const,
+	};
+	const duplicate = buildExecutionPlan(
+		["--session", "piab-managed", "--session", "caller-owned", "open", "https://example.com"],
+		options,
+	);
+	assert.match(duplicate.validationError ?? "", /Multiple --session flags/);
+	const duplicateNamespace = buildExecutionPlan(
+		["--namespace", "managed", "--namespace", "caller", "open", "https://example.com"],
+		options,
+	);
+	assert.match(duplicateNamespace.validationError ?? "", /Multiple --namespace flags/);
+	const afterSentinel = buildExecutionPlan(
+		["--session", "piab-managed", "fill", "#field", "--", "--session", "caller-owned"],
+		options,
+	);
+	assert.match(afterSentinel.validationError ?? "", /Multiple --session flags/);
+	const launchArgValue = buildExecutionPlan(
+		["--session", "piab-managed", "--args", "--session=browser-flag-value", "open", "https://example.com"],
+		{ ...options, managedSessionActive: false },
+	);
+	assert.doesNotMatch(launchArgValue.validationError ?? "", /Multiple --session flags/);
+	assert.equal(launchArgValue.sessionName, "piab-managed");
+	const commandFlagSmuggle = buildExecutionPlan(
+		["wait", "--text", "Dashboard", "--timeout", "--session", "caller-owned", "5000"],
+		options,
+	);
+	assert.equal(commandFlagSmuggle.validationError, undefined);
+	assert.equal(commandFlagSmuggle.sessionName, "caller-owned");
+	assert.equal(commandFlagSmuggle.usedImplicitSession, false);
+	const unsupportedEqualsSession = buildExecutionPlan(
+		["--session=caller-owned", "open", "https://example.com"],
+		options,
+	);
+	assert.match(unsupportedEqualsSession.validationError ?? "", /--session=\.\.\. is not supported/);
+	const unsupportedEqualsNamespace = buildExecutionPlan(
+		["--namespace=caller-owned", "open", "https://example.com"],
+		options,
+	);
+	assert.match(unsupportedEqualsNamespace.validationError ?? "", /--namespace=\.\.\. is not supported/);
+	const literalEqualsSession = buildExecutionPlan(["fill", "#field", "--session=literal"], options);
+	assert.equal(literalEqualsSession.validationError, undefined);
+	const helpWithUnsupportedEqualsSession = buildExecutionPlan(["--session=caller-owned", "--help"], options);
+	assert.equal(helpWithUnsupportedEqualsSession.validationError, undefined);
+	assert.deepEqual(helpWithUnsupportedEqualsSession.effectiveArgs, ["--session=caller-owned", "--help"]);
+});
 
 test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const sessionId = "12345678-1234-5678-9abc-def012345678";
@@ -51,7 +104,7 @@ test("createImplicitSessionName includes cwd isolation for same-named checkouts"
 });
 
 test("getAgentBrowserSocketDir uses a short user-specific unix socket directory and skips windows", () => {
-	assert.equal(getAgentBrowserSocketDir("darwin", 501), "/tmp/piab-501");
+	assert.equal(getAgentBrowserSocketDir("darwin", 501), "/private/tmp/piab-501");
 	assert.equal(getAgentBrowserSocketDir("linux", 1000), "/tmp/piab-1000");
 	assert.equal(getAgentBrowserSocketDir("win32", undefined), undefined);
 });
@@ -69,6 +122,20 @@ test("shared parsing helpers preserve boundary parsing semantics", () => {
 	assert.equal(parsePositiveInteger("-1"), undefined);
 	assert.equal(parsePositiveInteger("1.5"), undefined);
 	assert.equal(parsePositiveInteger("9007199254740992"), undefined);
+	assert.equal(canonicalizeAgentBrowserNamespace("Next Dev Loop: /Users/me/worktree!"), "next-dev-loop-users-me-worktree");
+	assert.equal(canonicalizeAgentBrowserNamespace(" --Agent__ "), "agent");
+	assert.equal(parseArgvDescriptor(["--hide-scrollbars", "open", "https://example.com"]).commandInfo.command, "open");
+	assert.equal(parseArgvDescriptor(["--hide-scrollbars", "false", "open", "https://example.com"]).commandInfo.command, "open");
+});
+
+test("extractRequestedRestoreKey mirrors optional values and post-command session fallback", () => {
+	assert.equal(extractRequestedRestoreKey(["open", "https://example.com"], "managed", "env-key"), "env-key");
+	assert.equal(extractRequestedRestoreKey(["open", "https://example.com"], "managed", ""), null);
+	assert.equal(extractRequestedRestoreKey(["--restore", "caller-key", "open", "https://example.com"], "managed", undefined), "caller-key");
+	assert.equal(extractRequestedRestoreKey(["open", "https://example.com", "--restore=caller-key"], "managed", undefined), "caller-key");
+	assert.equal(extractRequestedRestoreKey(["--restore=", "open", "https://example.com"], "managed", undefined), "managed");
+	assert.equal(extractRequestedRestoreKey(["--restore", "open", "https://example.com"], "managed", undefined), "managed");
+	assert.equal(extractRequestedRestoreKey(["open", "https://example.com", "--restore", "ignored"], "managed", undefined), "managed");
 });
 
 test("implicit session timeout helpers prefer explicit overrides and safe defaults", () => {
@@ -200,6 +267,7 @@ test("restoreManagedSessionStateFromBranch ignores inspection entries and recons
 	assert.deepEqual(restored, {
 		active: true,
 		freshSessionOrdinal: 1,
+		managedSessionRestoreDisabledIdentities: [],
 		replacedSessionName: undefined,
 		sessionName: "piab-demo-123-fresh-aaa",
 	});
@@ -722,6 +790,7 @@ test("restoreManagedSessionStateFromBranch keeps cwd isolation by ignoring sessi
 	assert.deepEqual(restored, {
 		active: false,
 		freshSessionOrdinal: 0,
+		managedSessionRestoreDisabledIdentities: [],
 		sessionName: "piab-demo-123",
 	});
 });
@@ -740,14 +809,14 @@ test("buildExecutionPlan injects --json and the implicit session when needed", (
 	assert.equal(plan.usedImplicitSession, true);
 	assert.equal(plan.validationError, undefined);
 
-	const namespaced = buildExecutionPlan(["--namespace", "review", "open", "https://example.com"], {
+	const namespaced = buildExecutionPlan(["--namespace", "Review Team!", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: false,
 		managedSessionName: "piab-demo-123",
 		sessionMode: "auto",
 	});
-	assert.deepEqual(namespaced.effectiveArgs, ["--json", "--namespace", "review", "--session", "piab-demo-123", "open", "https://example.com"]);
-	assert.equal(namespaced.namespace, "review");
+	assert.deepEqual(namespaced.effectiveArgs, ["--json", "--namespace", "review-team", "--session", "piab-demo-123", "open", "https://example.com"]);
+	assert.equal(namespaced.namespace, "review-team");
 });
 
 test("buildExecutionPlan treats upstream close aliases as managed-session closes", () => {
@@ -789,7 +858,17 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	assert.equal(namespaced.sessionName, "custom");
 	assert.equal(namespaced.namespace, "review");
 
-	const sameNamespace = buildExecutionPlan(["--namespace", "review", "snapshot", "-i"], {
+	const defaultNamespace = buildExecutionPlan(["--namespace", "", "--session", "custom", "close"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		managedSessionNamespace: "prod",
+		sessionMode: "auto",
+	});
+	assert.deepEqual(defaultNamespace.effectiveArgs, ["--json", "--namespace", "", "--session", "custom", "close"]);
+	assert.equal(defaultNamespace.namespace, "");
+
+	const sameNamespace = buildExecutionPlan(["--namespace", "Review", "snapshot", "-i"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: true,
 		managedSessionName: "piab-demo-123",
@@ -800,12 +879,43 @@ test("buildExecutionPlan respects explicit upstream sessions", () => {
 	assert.equal(sameNamespace.validationError, undefined);
 });
 
+test("buildExecutionPlan resolves caller-owned session namespaces from argv before environment", () => {
+	const previousNamespace = process.env.AGENT_BROWSER_NAMESPACE;
+	try {
+		process.env.AGENT_BROWSER_NAMESPACE = "Review Space";
+		const inherited = buildExecutionPlan(["--session", "custom", "snapshot", "-i"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(inherited.namespace, "review-space");
+		const explicitDefault = buildExecutionPlan(["--namespace", "", "--session", "custom", "snapshot", "-i"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(explicitDefault.namespace, "");
+		const wrapperManaged = buildExecutionPlan(["--session", "piab-demo-123", "close"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(wrapperManaged.namespace, undefined);
+	} finally {
+		if (previousNamespace === undefined) delete process.env.AGENT_BROWSER_NAMESPACE;
+		else process.env.AGENT_BROWSER_NAMESPACE = previousNamespace;
+	}
+});
+
 test("buildExecutionPlan preserves stored namespace for implicit managed sessions", () => {
 	const plan = buildExecutionPlan(["snapshot", "-i"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: true,
 		managedSessionName: "piab-demo-123-fresh-aaa",
-		managedSessionNamespace: "review",
+		managedSessionNamespace: "Review",
 		sessionMode: "auto",
 	});
 
@@ -1050,6 +1160,29 @@ test("buildExecutionPlan parses restore and namespace globals before command dis
 	}
 });
 
+test("buildExecutionPlan only relocates namespace occurrences recognized by upstream global parsing", () => {
+	const plan = buildExecutionPlan([
+		"--session", "caller",
+		"--args", "--namespace",
+		"--namespace", "team",
+		"open", "https://example.com",
+	], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+
+	assert.equal(plan.validationError, undefined);
+	assert.equal(plan.namespace, "team");
+	assert.deepEqual(plan.effectiveArgs, [
+		"--json", "--namespace", "team",
+		"--session", "caller",
+		"--args", "--namespace",
+		"open", "https://example.com",
+	]);
+});
+
 test("buildExecutionPlan allows dash-starting --args values", () => {
 	const plan = buildExecutionPlan(["--args", "--disable-gpu,--lang=en-US", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -1130,7 +1263,8 @@ test("buildExecutionPlan treats wait --state as command-scoped after the command
 	assert.deepEqual(plan.effectiveArgs.slice(-4), ["wait", "@button", "--state", "hidden"]);
 });
 
-test("buildExecutionPlan allows disabled auto-connect after an active implicit session", () => {
+test("buildExecutionPlan only treats the last exact lowercase auto-connect false as disabled", () => {
+	assert.equal(isBooleanFlagEnabled(["--args", "--auto-connect", "open", "https://example.com"], "--auto-connect"), false);
 	const plan = buildExecutionPlan(["--auto-connect", "false", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: true,
@@ -1142,6 +1276,39 @@ test("buildExecutionPlan allows disabled auto-connect after an active implicit s
 	assert.deepEqual(plan.startupScopedFlags, []);
 	assert.equal(plan.usedImplicitSession, true);
 	assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" });
+
+	const uppercaseFalse = buildExecutionPlan(["--auto-connect", "FALSE", "open", "https://example.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.match(uppercaseFalse.validationError ?? "", /launch-scoped flags.*--auto-connect/i);
+
+	const lastEnabled = buildExecutionPlan(["--auto-connect", "false", "--auto-connect", "open", "https://example.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.match(lastEnabled.validationError ?? "", /launch-scoped flags.*--auto-connect/i);
+
+	const unsupportedEqualsDoesNotDisable = buildExecutionPlan(["--auto-connect", "open", "https://example.com", "--auto-connect=false"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.match(unsupportedEqualsDoesNotDisable.validationError ?? "", /launch-scoped flags.*--auto-connect/i);
+
+	const lastDisabled = buildExecutionPlan(["--auto-connect", "--auto-connect", "false", "open", "https://example.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(lastDisabled.validationError, undefined);
+	assert.deepEqual(lastDisabled.startupScopedFlags, []);
 });
 
 test("buildExecutionPlan treats provider and iOS device flags as launch-scoped", () => {

@@ -287,7 +287,7 @@ function commandTokens() {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") continue;
-    if (arg === "--session") { index += 1; continue; }
+    if (["--allow-file-access", "--args", "--namespace", "--session"].includes(arg)) { index += 1; continue; }
     tokens.push(arg);
   }
   return tokens;
@@ -300,9 +300,13 @@ function tabList(state) { return { tabs: [{ tabId: "t1", label: "t1", index: 0, 
 function execute(tokens) {
   let state = load();
   const [command, ...rest] = tokens;
+  if (command === "session" && rest[0] === "info") {
+    const active = fs.existsSync(statePath);
+    return { result: { active, runtime: active ? { restoreKey: state.restoreKey ?? null } : null } };
+  }
   if (command === "open") {
     const url = rest[rest.length - 1] || "about:blank";
-    state = { ...state, title: url.includes("react.dev") ? "React" : "Lifecycle Page", url, activeTab: "t1" };
+    state = { ...state, title: url.includes("react.dev") ? "React" : "Lifecycle Page", url, activeTab: "t1", restoreKey: process.env.AGENT_BROWSER_RESTORE ?? null };
     save(state);
     return { result: { title: state.title, url: state.url } };
   }
@@ -314,7 +318,10 @@ function execute(tokens) {
   if (command === "eval") return { result: "PIAB-LIFECYCLE-LARGE-OUTPUT\\n" + "x".repeat(700 * 1024) };
   if (command === "tab" && rest.includes("list")) return { result: tabList(state) };
   if (command === "tab") return { result: { selectedTab: rest[0] || "t1", ...state } };
-  if (command === "close") return { result: { closed: true, sessionName } };
+  if (command === "close") {
+    try { fs.unlinkSync(statePath); } catch {}
+    return { result: { closed: true, sessionName } };
+  }
   return { result: { ok: true, command, args: rest, stdin, state } };
 }
 function executeBatch(steps) {
@@ -327,7 +334,7 @@ function executeBatch(steps) {
     if (name === "open") {
       const url = String(step[1] || "about:blank");
       const title = url.includes("react.dev") ? "React" : "Lifecycle QA Page";
-      save({ title, url, activeTab: "t1" });
+      save({ title, url, activeTab: "t1", restoreKey: process.env.AGENT_BROWSER_RESTORE ?? null });
       mode = url.includes("fail") ? "fail" : "clean";
       return { command: step, success: true, result: { title, url } };
     }

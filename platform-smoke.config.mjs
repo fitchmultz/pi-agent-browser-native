@@ -22,7 +22,7 @@ export default {
 	ubuntuContainerImage: PLATFORM_SMOKE_UBUNTU_IMAGE,
 	windowsParallels: {
 		sourceVm: "pi-extension-windows-template",
-		// Shared template snapshot with agent-browser 0.33.0 (+ Chrome 151 for the SSH user).
+		// Shared template snapshot; refresh when the Windows image moves past agent-browser 0.33.0.
 		// Parent crabbox-ready remains for other projects' linked clones.
 		snapshot: "crabbox-ready-ab-0.33.0",
 	},

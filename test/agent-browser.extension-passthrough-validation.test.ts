@@ -23,7 +23,9 @@ import {
 
 const stripWrapperPrefix = (args: string[]) => {
 	const stripped = [...args];
+	if (stripped[0] === "--allow-file-access") stripped.splice(0, 2);
 	if (stripped[0] === "--json") stripped.shift();
+	if (stripped[0] === "--namespace") stripped.splice(0, 2);
 	if (stripped[0] === "--session") stripped.splice(0, 2);
 	return stripped;
 };
@@ -307,12 +309,12 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 
 				for (const args of providerCommands) {
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args], sessionMode: "fresh" });
-					assert.equal(result.isError, false, args.join(" "));
+					assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 					assert.doesNotMatch(JSON.stringify(result.details), /agentcore-key|browserbase-key|browserless-key|browser-use-key|kernel-key/);
 				}
 				for (const args of skillCommands) {
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
-					assert.equal(result.isError, false, args.join(" "));
+					assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 					assert.equal(result.details?.sessionName, undefined, args.join(" "));
 					assert.equal(result.details?.usedImplicitSession, undefined, args.join(" "));
 				}
@@ -351,15 +353,26 @@ test("agentBrowserExtension passes through core command coverage fallback matrix
 const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-let commandIndex = args[0] === "--json" ? 1 : 0;
-if (args[commandIndex] === "--session") commandIndex += 2;
+const valueFlags = new Set(["--allow-file-access", "--namespace", "--session"]);
+let commandIndex = -1;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--json") continue;
+  if (valueFlags.has(args[index])) { index += 1; continue; }
+  if (args[index].startsWith("--")) continue;
+  commandIndex = index;
+  break;
+}
 const command = args[commandIndex] || "unknown";
+const subcommand = args[commandIndex + 1];
 const artifactPath = command === "download" || command === "screenshot" || command === "pdf" || (command === "wait" && args.includes("--download")) ? args[args.length - 1] : undefined;
 if (artifactPath) {
   fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
   fs.writeFileSync(artifactPath, "artifact");
 }
-const data = artifactPath ? { path: artifactPath } : { ok: true, command };
+const data = artifactPath ? { path: artifactPath }
+  : command === "get" && subcommand === "url" ? { result: "https://example.test/current", url: "https://example.test/current" }
+  : command === "get" && subcommand === "title" ? { result: "Example", title: "Example" }
+  : { ok: true, command };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
@@ -402,7 +415,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["snapshot", "--interactive", "--selector", "main", "--cursor"],
 		["eval", "document.title"],
 		["eval", "-b", "ZG9jdW1lbnQudGl0bGU="],
-		["connect", "9222"],
+		["--session", "connector", "connect", "9222"],
 		["get", "url"],
 		["get", "cdp-url"],
 		["get", "box", "#button"],
@@ -437,7 +450,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
-				assert.equal(result.isError, false, args.join(" "));
+				assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 			}
 
 			const invocations = await readInvocationLog(logPath);
@@ -445,14 +458,16 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				.map((entry) => stripWrapperPrefix(entry.args))
 				.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin"));
 			const expectedInvocations = commands.flatMap((args) => {
-				const command = args[0];
-				if (command === "click" || (command === "tab" && args[1] === "close")) return [[...args], ["get", "url"], ["get", "title"]];
-				return command === "back" || command === "forward" || command === "reload" || command === "dblclick"
-					? [[...args], ["get", "url"], ["get", "title"]]
-					: [[...args]];
+				const normalizedArgs = stripWrapperPrefix([...args]);
+				const command = normalizedArgs[0];
+				if (["close", "exit", "quit"].includes(command ?? "")) return [["close"]];
+				if (command === "click" || (command === "tab" && normalizedArgs[1] === "close")) return [normalizedArgs, ["get", "url"], ["get", "title"]];
+				return command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval"
+					? [normalizedArgs, ["get", "url"], ["get", "title"]]
+					: [normalizedArgs];
 			});
 			assert.deepEqual(commandInvocations, expectedInvocations);
-			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args[1] === "--session"));
+			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args.includes("--session")));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -469,11 +484,20 @@ test("agentBrowserExtension passes through stateful browser-context workflow com
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const commandIndex = args.findIndex((arg) => !arg.startsWith("--") && args[args.indexOf("--session") + 1] !== arg);
+const valueFlags = new Set(["--allow-file-access", "--namespace", "--session"]);
+let commandIndex = -1;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--json") continue;
+  if (valueFlags.has(args[index])) { index += 1; continue; }
+  if (args[index].startsWith("--")) continue;
+  commandIndex = index;
+  break;
+}
 const command = args[commandIndex];
 const subcommand = args[commandIndex + 1];
 if (command === "state" && subcommand === "save") fs.writeFileSync(args[commandIndex + 2], "{}");
-const data = command === "auth" && subcommand === "list" ? { profiles: [{ name: "demo" }] }
+const data = command === "get" && subcommand === "url" ? { result: "https://example.test/current", url: "https://example.test/current" }
+  : command === "auth" && subcommand === "list" ? { profiles: [{ name: "demo" }] }
   : command === "auth" && subcommand === "show" ? { name: "demo", url: "https://example.test", username: "user@example.test" }
   : command === "cookies" && (subcommand === undefined || subcommand === "get") ? { cookies: [{ name: "sid", domain: "example.test", path: "/", value: "cookie-get-secret" }] }
   : command === "cookies" && subcommand === "set" ? { name: args[commandIndex + 2], value: args[commandIndex + 3], domain: "example.test" }
@@ -495,8 +519,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		["auth", "remove", "demo"],
 		["state", "save", statePath],
 		["state", "load", statePath],
+		["get", "url"],
 		["state", "list"],
-		["state", "clear", "-a"],
+		["state", "clear", "caller-owned"],
 		["cookies", "get"],
 		["cookies", "set", "sid", "cookie-secret", "--url", "https://example.test"],
 		["cookies", "clear"],
@@ -520,7 +545,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			let storageSetResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
-				assert.equal(result.isError, false, args.join(" "));
+				assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 				assert.doesNotMatch(result.content[0]?.text ?? "", /cookie-secret|cookie-get-secret|storage-secret/);
 				assert.doesNotMatch(JSON.stringify(result.details), /cookie-secret|cookie-get-secret|storage-secret/);
 				if (args[0] === "storage" && args[1] === "local" && args[2] === "set") storageSetResult = result;
@@ -544,7 +569,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.ok(invocations.every((entry) => {
 				const userArgs = stripWrapperPrefix(entry.args);
 				const isSessionlessAuth = userArgs[0] === "auth" && ["save", "list", "show", "delete", "remove"].includes(userArgs[1] ?? "");
-				const isSessionlessState = userArgs[0] === "state" && (userArgs[1] === "list" || (userArgs[1] === "clear" && userArgs[2] === "-a"));
+				const isSessionlessState = userArgs[0] === "state" && (userArgs[1] === "list" || (userArgs[1] === "clear" && userArgs[2] === "caller-owned"));
 				return isSessionlessAuth || isSessionlessState ? !entry.args.includes("--session") : entry.args.includes("--session");
 			}));
 		});
@@ -568,7 +593,7 @@ test("agentBrowserExtension passes through non-core network debug diff stream da
 const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, model: process.env.AI_GATEWAY_MODEL || null, apiKey: process.env.AI_GATEWAY_API_KEY || null }) + "\\n");
-const valueFlags = new Set(["--session", "--model", "--port", "--body", "--resource-type", "--baseline"]);
+const valueFlags = new Set(["--allow-file-access", "--session", "--model", "--port", "--body", "--resource-type", "--baseline"]);
 let commandIndex = -1;
 for (let i = 0; i < args.length; i += 1) {
   const token = args[i];
@@ -664,7 +689,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			let networkRequestsResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
-				assert.equal(result.isError, false, args.join(" "));
+				assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
 				assert.doesNotMatch(result.content[0]?.text ?? "", /route-secret|clipboard-secret|chat-secret/);
 				assert.doesNotMatch(JSON.stringify(result.details), /route-secret|clipboard-secret|chat-secret/);
 				if (args[0] === "network" && args[1] === "requests") networkRequestsResult = result;
@@ -831,11 +856,15 @@ test("agentBrowserExtension normalizes and repairs explicit screenshot artifact 
 const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const commandIndex = args.indexOf("screenshot");
-const requestedPath = args[commandIndex + 1];
-fs.mkdirSync(path.dirname(${JSON.stringify(upstreamTempPath)}), { recursive: true });
-fs.writeFileSync(${JSON.stringify(upstreamTempPath)}, "fake-png");
-process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.stringify(upstreamTempPath)} }, error: null }));`,
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://safe.example/" } }));
+} else {
+  const commandIndex = args.indexOf("screenshot");
+  const requestedPath = args[commandIndex + 1];
+  fs.mkdirSync(path.dirname(${JSON.stringify(upstreamTempPath)}), { recursive: true });
+  fs.writeFileSync(${JSON.stringify(upstreamTempPath)}, "fake-png");
+  process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.stringify(upstreamTempPath)} }, error: null }));
+}`,
 	);
 
 	try {
@@ -868,8 +897,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.string
 			assert.equal(artifacts?.[0]?.session, "warden-vfr");
 			assert.equal(artifacts?.[0]?.status, "repaired-from-temp");
 
-			const [invocation] = await readInvocationLog(logPath);
-			assert.equal(invocation.args.at(-1), expectedPath);
+			const invocations = await readInvocationLog(logPath);
+			assert.deepEqual(invocations[0]?.args.at(-2), "get");
+			assert.equal(invocations.at(-1)?.args.at(-1), expectedPath);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1001,7 +1031,9 @@ test("agentBrowserExtension guards wrapper-known trace and profiler ownership", 
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`process.stdout.write(JSON.stringify({ success: true, data: { started: true }, error: null }));`,
+		`const args = process.argv.slice(2);
+const data = args.includes("get") && args.includes("url") ? { url: "https://safe.example/" } : { started: true };
+process.stdout.write(JSON.stringify({ success: true, data, error: null }));`,
 	);
 
 	try {

@@ -1,5 +1,8 @@
 import { extname, isAbsolute } from "node:path";
 
+import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "../../argv-grammar.js";
+
+const SCREENSHOT_BOOLEAN_FLAGS = new Set(["--annotate", "--full", "-f"]);
 const SCREENSHOT_VALUE_FLAGS = new Set(["--screenshot-dir", "--screenshot-format", "--screenshot-quality"]);
 const SCREENSHOT_IMAGE_EXTENSIONS = new Set([".jpeg", ".jpg", ".png", ".webp"]);
 
@@ -24,10 +27,14 @@ export function getScreenshotPathTokenIndex(commandTokens: string[]): number | u
 		}
 		if (token.startsWith("-")) {
 			const normalizedToken = token.split("=", 1)[0] ?? token;
-			if (SCREENSHOT_VALUE_FLAGS.has(normalizedToken) && !token.includes("=")) {
+			if ((SCREENSHOT_VALUE_FLAGS.has(normalizedToken) || VALUE_FLAGS.has(normalizedToken)) && !token.includes("=")) {
 				index += 1;
+				continue;
 			}
-			continue;
+			if (SCREENSHOT_BOOLEAN_FLAGS.has(normalizedToken) || GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken)) {
+				if (["true", "false"].includes(commandTokens[index + 1] ?? "")) index += 1;
+				continue;
+			}
 		}
 		positionalIndices.push(index);
 	}

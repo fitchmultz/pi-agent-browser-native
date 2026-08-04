@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { runAgentBrowserProcess } from "../../process.js";
-import { buildAgentBrowserNextActions, getAgentBrowserErrorText, parseAgentBrowserEnvelope, type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results.js";
+import { buildAgentBrowserNextActions, parseAgentBrowserEnvelope, type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results.js";
 import { buildNextToolAction, withOptionalNamespaceArgs, withOptionalSessionArgs } from "../../results/next-actions.js";
 import {
 	getSessionPageStateKey,
@@ -24,7 +24,7 @@ import {
 	isSessionTabPinningExcludedCommand,
 	isSessionTabPostCommandCorrectionExcludedCommand,
 } from "../../command-taxonomy.js";
-import { chooseOpenResultTabCorrection, redactInvocationArgs, type OpenResultTabCorrection } from "../../runtime.js";
+import { chooseOpenResultTabCorrection, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { parseUserBatchStdin } from "../batch-stdin.js";
 import type {
@@ -62,8 +62,22 @@ export function applyBrowserRunStatePatch(state: BrowserRunState, patch: Browser
 
 export const getSessionContextKey = getSessionPageStateKey;
 
-export function buildSessionDetailFields(sessionName: string | undefined, usedImplicitSession: boolean, namespace?: string): Record<string, unknown> {
-	return { ...(namespace ? { namespace } : {}), ...(sessionName ? { sessionName, usedImplicitSession } : {}) };
+export function buildSessionDetailFields(
+	sessionName: string | undefined,
+	usedImplicitSession: boolean,
+	namespace?: string,
+	managedSessionRestoreDisabled = false,
+): Record<string, unknown> {
+	return {
+		...(namespace ? { namespace } : {}),
+		...(sessionName
+			? {
+				sessionName,
+				usedImplicitSession,
+				...(managedSessionRestoreDisabled ? { managedSessionRestoreDisabled: true } : {}),
+			}
+			: {}),
+	};
 }
 
 export function buildManagedSessionOutcome(options: {
@@ -282,6 +296,7 @@ export function extractNavigationSummaryFromData(data: unknown): NavigationSumma
 }
 
 export function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {
+	if (command === "eval") return true;
 	if (isRecord(data) && typeof data.clicked === "string" && !data.clicked.startsWith("@") && !data.clicked.startsWith("ref=") && typeof data.href !== "string") return false;
 	return (
 		isNavigationObservableCommandName(command) &&
@@ -582,17 +597,21 @@ export function unwrapPinnedSessionBatchEnvelope(options: {
 export async function runSessionCommandData(options: {
 	args: string[];
 	cwd: string;
+	allowManagedSessionTarget?: boolean;
 	namespace?: string;
+	pinNamespace?: boolean;
 	sessionName?: string;
 	signal?: AbortSignal;
 	stdin?: string;
+	throwOnFailure?: boolean;
 	timeoutMs?: number;
 }): Promise<unknown | undefined> {
-	const { args, cwd, namespace, sessionName, signal, stdin, timeoutMs } = options;
+	const { allowManagedSessionTarget, args, cwd, namespace, pinNamespace, sessionName, signal, stdin, throwOnFailure, timeoutMs } = options;
 	if (!sessionName) return undefined;
 
 	const processResult = await runAgentBrowserProcess({
-		args: ["--json", ...(namespace ? ["--namespace", namespace] : []), "--session", sessionName, ...args],
+		allowManagedSessionTarget,
+		args: ["--json", ...(namespace !== undefined || pinNamespace ? ["--namespace", namespace ?? ""] : []), "--session", sessionName, ...args],
 		cwd,
 		signal,
 		stdin,
@@ -600,6 +619,14 @@ export async function runSessionCommandData(options: {
 	});
 	try {
 		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
+			if (throwOnFailure) {
+				const reason = processResult.aborted
+					? "command was aborted"
+					: processResult.spawnError
+						? "process could not start"
+						: `process exited with code ${processResult.exitCode}`;
+				throw new Error(`agent-browser ${reason}`);
+			}
 			return undefined;
 		}
 		const parsed = await parseAgentBrowserEnvelope({
@@ -607,6 +634,7 @@ export async function runSessionCommandData(options: {
 			stdoutPath: processResult.stdoutSpillPath,
 		});
 		if (parsed.parseError || parsed.envelope?.success === false) {
+			if (throwOnFailure) throw new Error(parsed.parseError ? "agent-browser returned invalid structured output" : "agent-browser reported failure");
 			return undefined;
 		}
 		return parsed.envelope?.data;
@@ -878,39 +906,6 @@ export function buildElectronRefFreshnessDiagnostic(options: {
 
 export function formatElectronRefFreshnessText(diagnostic: ElectronRefFreshnessDiagnostic | undefined): string | undefined {
 	return diagnostic?.summary;
-}
-
-export async function closeManagedSession(options: { cwd: string; namespace?: string; sessionName: string; timeoutMs: number }): Promise<string | undefined> {
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-	let stdoutSpillPath: string | undefined;
-	const closeArgs = [...(options.namespace ? ["--namespace", options.namespace] : []), "--session", options.sessionName, "close"];
-	try {
-		const processResult = await runAgentBrowserProcess({
-			args: closeArgs,
-			cwd: options.cwd,
-			signal: controller.signal,
-		});
-		stdoutSpillPath = processResult.stdoutSpillPath;
-		return getAgentBrowserErrorText({
-			aborted: processResult.aborted,
-			command: "close",
-			effectiveArgs: redactInvocationArgs(closeArgs),
-			exitCode: processResult.exitCode,
-			plainTextInspection: false,
-			spawnError: processResult.spawnError,
-			stderr: processResult.stderr,
-			timedOut: processResult.timedOut,
-			timeoutMs: processResult.timeoutMs,
-		});
-	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
-	} finally {
-		clearTimeout(timer);
-		if (stdoutSpillPath) {
-			await rm(stdoutSpillPath, { force: true }).catch(() => undefined);
-		}
-	}
 }
 
 export { extractBatchResultCommand };

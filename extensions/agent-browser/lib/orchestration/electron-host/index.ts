@@ -11,18 +11,24 @@ import { discoverElectronApps, type ElectronDiscoveryResult } from "../../electr
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { boundElectronProbeString } from "../../electron/text.js";
 import type { CompiledAgentBrowserElectron } from "../../input-modes.js";
+import {
+	buildOwnedManagedSessionRestoreContext,
+	type ManagedSessionRestoreState,
+	withOwnedManagedSessionContext,
+} from "../../managed-session-restore.js";
+import { getManagedSessionStateAccessValidationError } from "../../managed-session-state-policy.js";
 import { isRecord } from "../../parsing.js";
 import { buildAgentBrowserNextActions, buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { appendUniqueAgentBrowserNextActions } from "../../results/next-actions.js";
-import { extractRefSnapshotFromData, isAboutBlankUrl, normalizeSessionTabTarget, type SessionPageState, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
+import { extractRefSnapshotFromData, getSessionPageStateKey, isAboutBlankUrl, normalizeSessionTabTarget, type SessionPageState, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import { redactSensitiveText } from "../../runtime.js";
 import { collectElectronManagedSessionTarget } from "../browser-run/diagnostics.js";
 import { buildElectronHostFailureResult, formatElectronTargetLines, redactToolDetails } from "../browser-run/final-result.js";
+import { acquireOwnedManagedSessionDaemonPolicy, closeManagedSession } from "../browser-run/managed-session-daemon-policy.js";
 import {
 	buildElectronIdentifiers,
 	buildElectronMismatchNextActions,
 	buildElectronSessionMismatch,
-	closeManagedSession,
 	extractStringResultField,
 	findElectronLaunchRecordForSession,
 	formatElectronSessionMismatchText,
@@ -476,16 +482,75 @@ function getElectronProbeSummary(probe: Omit<ElectronProbeResult, "summary">): s
 	return parts.length > 0 ? `Electron probe collected ${parts.join(", ")}.` : "Electron probe did not return current session state.";
 }
 
+class ElectronManagedSessionPolicyError extends Error {}
+
+async function withOwnedElectronManagedSessionPolicy<T>(options: {
+	args: string[];
+	cwd: string;
+	namespace?: string;
+	restoreState: ManagedSessionRestoreState;
+	sessionName: string;
+	signal?: AbortSignal;
+}, run: () => Promise<T>): Promise<T> {
+	const context = buildOwnedManagedSessionRestoreContext({
+		args: ["--namespace", options.namespace ?? "", "--session", options.sessionName, ...options.args],
+		cwd: options.cwd,
+		managedSessionName: options.sessionName,
+		namespace: options.namespace,
+		restoreState: options.restoreState,
+	});
+	if (!context) throw new ElectronManagedSessionPolicyError("Electron helper could not establish wrapper ownership for its managed session.");
+	let policy: Awaited<ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>>;
+	try {
+		policy = await acquireOwnedManagedSessionDaemonPolicy({ context, signal: options.signal });
+	} catch (error) {
+		throw new ElectronManagedSessionPolicyError(error instanceof Error ? error.message : String(error), { cause: error });
+	}
+	try {
+		if (policy.error) throw new ElectronManagedSessionPolicyError(policy.error);
+		if (!policy.lock) throw new ElectronManagedSessionPolicyError(options.signal?.aborted ? "Electron helper was aborted." : "Electron helper could not acquire managed-session policy coordination.");
+		return await withOwnedManagedSessionContext(context, run);
+	} finally {
+		await policy.lock?.release();
+	}
+}
+
+async function collectOwnedElectronManagedSessionTarget(options: {
+	cwd: string;
+	namespace?: string;
+	restoreState: ManagedSessionRestoreState;
+	sessionName: string;
+	signal?: AbortSignal;
+	timeoutMs?: number;
+}): Promise<ElectronManagedSessionTarget> {
+	try {
+		return await withOwnedElectronManagedSessionPolicy(
+			{ ...options, args: ["get", "url"] },
+			async () => await collectElectronManagedSessionTarget({
+				allowManagedSessionTarget: true,
+				cwd: options.cwd,
+				namespace: options.namespace,
+				sessionName: options.sessionName,
+				signal: options.signal,
+				timeoutMs: options.timeoutMs,
+			}),
+		) ?? { sessionName: options.sessionName };
+	} catch (error) {
+		return { error: error instanceof Error ? error.message : String(error), sessionName: options.sessionName };
+	}
+}
+
 async function runElectronProbeCommandData(options: {
 	args: string[];
 	cwd: string;
+	namespace?: string;
 	sessionName: string;
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
 }): Promise<{ data?: unknown; error?: string }> {
 	try {
-		return { data: await runSessionCommandData(options) };
+		return { data: await runSessionCommandData({ ...options, allowManagedSessionTarget: true, pinNamespace: true, throwOnFailure: true }) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -493,27 +558,35 @@ async function runElectronProbeCommandData(options: {
 
 async function collectElectronProbe(options: {
 	cwd: string;
+	namespace?: string;
 	sessionName: string;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 }): Promise<ElectronProbeResult> {
-	const titleResult = await runElectronProbeCommandData({ args: ["get", "title"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs });
-	const urlResult = await runElectronProbeCommandData({ args: ["get", "url"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs });
-	const focusedResult = await runElectronProbeCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, stdin: ELECTRON_FOCUSED_ELEMENT_EVAL, timeoutMs: options.timeoutMs });
-	const tabsResult = await runElectronProbeCommandData({ args: ["tab", "list"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs });
-	const snapshotResult = await runElectronProbeCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs });
+	const commandContext = { cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, timeoutMs: options.timeoutMs };
+	const urlResult = await runElectronProbeCommandData({ ...commandContext, args: ["get", "url"] });
+	if (urlResult.error) throw new Error(`get url: ${urlResult.error}`);
+	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);
+	if (!url) throw new Error("get url returned no active page URL.");
+	const fileAccessError = getManagedSessionStateAccessValidationError({ args: ["snapshot", "-i"], currentPageUrl: url, cwd: options.cwd });
+	if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
+	const titleResult = await runElectronProbeCommandData({ ...commandContext, args: ["get", "title"] });
+	const focusedResult = await runElectronProbeCommandData({ ...commandContext, args: ["eval", "--stdin"], stdin: ELECTRON_FOCUSED_ELEMENT_EVAL });
+	const tabsResult = await runElectronProbeCommandData({ ...commandContext, args: ["tab", "list"] });
+	const snapshotResult = await runElectronProbeCommandData({ ...commandContext, args: ["snapshot", "-i"] });
 	const errors = [
 		titleResult.error ? `get title: ${titleResult.error}` : undefined,
-		urlResult.error ? `get url: ${urlResult.error}` : undefined,
 		focusedResult.error ? `focused element: ${focusedResult.error}` : undefined,
 		tabsResult.error ? `tab list: ${tabsResult.error}` : undefined,
 		snapshotResult.error ? `snapshot: ${snapshotResult.error}` : undefined,
 	].filter((item): item is string => item !== undefined).map((error) => boundElectronProbeString(error, 240) ?? "probe command failed");
 	const title = boundElectronProbeString(extractStringResultField(titleResult.data, "result") ?? extractStringResultField(titleResult.data, "title"), 160);
-	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);
 	const focusedElement = extractElectronFocusedElement(focusedResult.data);
 	const { activeTab, tabs } = extractElectronProbeTabs(tabsResult.data);
 	const { refSnapshot, snapshot } = summarizeElectronProbeSnapshot(snapshotResult.data);
+	if (errors.length > 0 && !(title || url || focusedElement || tabs || snapshot)) {
+		throw new Error(errors.join("; "));
+	}
 	const probeWithoutSummary = {
 		activeTab,
 		focusedElement,
@@ -596,6 +669,7 @@ function formatElectronProbeVisibleText(options: {
 function buildElectronProbeResult(options: {
 	compiledElectron: CompiledAgentBrowserElectron;
 	mismatch?: ElectronSessionMismatch;
+	namespace?: string;
 	probe: ElectronProbeResult;
 	probeContext: ElectronProbeContext;
 	record?: ElectronLaunchRecord;
@@ -627,6 +701,8 @@ function buildElectronProbeResult(options: {
 		},
 		nextActions: nextActions.length > 0 ? nextActions : undefined,
 		...buildAgentBrowserResultCategoryDetails({ args: [], succeeded: true }),
+		namespace: options.namespace,
+		refSnapshot: options.probe.refSnapshot,
 		sessionName: options.probe.sessionName,
 		sessionTabTarget: options.sessionTabTarget,
 		summary: options.mismatch?.summary ?? options.probe.summary,
@@ -642,6 +718,7 @@ function buildElectronProbeResult(options: {
 interface ElectronHostLaunchCleanupState {
 	electronChildProcesses: Map<string, ChildProcess>;
 	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
+	managedSessionRestoreState: ManagedSessionRestoreState;
 }
 
 export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLaunchCleanupState & {
@@ -652,7 +729,7 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 	const results: ElectronCleanupResult[] = [];
 	for (const record of options.records) {
 		const managedSessionCloseError = record.sessionName
-			? await closeManagedSession({ cwd: options.cwd, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
+			? await closeManagedSession({ cwd: options.cwd, restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
 			: undefined;
 		const managedSessionStep = record.sessionName
 			? managedSessionCloseError
@@ -706,6 +783,8 @@ export async function handleElectronHostInput(options: {
 	implicitSessionCloseTimeoutMs: number;
 	managedSessionActive: boolean;
 	managedSessionName: string;
+	managedSessionNamespace?: string;
+	managedSessionRestoreState: ManagedSessionRestoreState;
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
 	sessionPageState: SessionPageState;
 	signal?: AbortSignal;
@@ -718,6 +797,8 @@ export async function handleElectronHostInput(options: {
 		implicitSessionCloseTimeoutMs,
 		managedSessionActive,
 		managedSessionName,
+		managedSessionNamespace,
+		managedSessionRestoreState,
 		redactedCompiledElectron,
 		sessionPageState,
 		signal,
@@ -735,12 +816,15 @@ export async function handleElectronHostInput(options: {
 		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
 		const records = selection.records ?? [];
 		const statuses = await Promise.all(records.map((record) => inspectElectronLaunchStatus(record)));
-		const managedSessions = (await Promise.all(records.map((record) => collectElectronManagedSessionTarget({
-			cwd,
-			sessionName: record.sessionName,
-			signal,
-			timeoutMs: compiledElectron.timeoutMs,
-		})))).filter((managedSession): managedSession is ElectronManagedSessionTarget => managedSession !== undefined);
+		const managedSessions = await Promise.all(records
+			.filter((record): record is ElectronLaunchRecord & { sessionName: string } => typeof record.sessionName === "string")
+			.map((record) => collectOwnedElectronManagedSessionTarget({
+				cwd,
+				restoreState: managedSessionRestoreState,
+				sessionName: record.sessionName,
+				signal,
+				timeoutMs: compiledElectron.timeoutMs,
+			})));
 		const mismatches = managedSessions
 			.map((managedSession) => {
 				const record = records.find((candidate) => candidate.sessionName === managedSession.sessionName);
@@ -791,7 +875,27 @@ export async function handleElectronHostInput(options: {
 		}
 		try {
 			const status = launchRecord ? await inspectElectronLaunchStatus(launchRecord) : undefined;
-			const probe = await collectElectronProbe({ cwd, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs });
+			const probeNamespace = compiledElectron.launchId ? undefined : managedSessionNamespace;
+			const pageStateKey = getSessionPageStateKey(probeSessionName, probeNamespace) ?? probeSessionName;
+			const currentPageState = sessionPageState.get(pageStateKey);
+			const fileAccessError = getManagedSessionStateAccessValidationError({
+				args: ["snapshot", "-i"],
+				currentPageUrl: currentPageState.tabTarget?.url,
+				cwd,
+				pageUrlUnknown: currentPageState.tabTargetUnknown === true,
+			});
+			if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
+			const probe = await withOwnedElectronManagedSessionPolicy(
+				{
+					args: ["snapshot", "-i"],
+					cwd,
+					namespace: probeNamespace,
+					restoreState: managedSessionRestoreState,
+					sessionName: probeSessionName,
+					signal,
+				},
+				async () => await collectElectronProbe({ cwd, namespace: probeNamespace, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs }),
+			);
 			const managedSession: ElectronManagedSessionTarget = {
 				sessionName: probe.sessionName,
 				title: probe.title ?? probe.activeTab?.title,
@@ -816,13 +920,14 @@ export async function handleElectronHostInput(options: {
 				url: probe.url ?? probe.activeTab?.url ?? probe.refSnapshot?.target?.url,
 			});
 			const pageStateUpdate = sessionPageState.beginUpdate();
+			const probePageStateKey = getSessionPageStateKey(probe.sessionName, probeNamespace) ?? probe.sessionName;
 			if (sessionTabTarget) {
-				sessionPageState.applyTabTarget({ sessionName: probe.sessionName, target: sessionTabTarget, update: pageStateUpdate });
+				sessionPageState.applyTabTarget({ sessionName: probePageStateKey, target: sessionTabTarget, update: pageStateUpdate });
 			}
 			if (probe.refSnapshot) {
 				sessionPageState.applyRefSnapshot({
 					fallbackTarget: sessionTabTarget,
-					sessionName: probe.sessionName,
+					sessionName: probePageStateKey,
 					snapshot: probe.refSnapshot,
 					update: pageStateUpdate,
 				});
@@ -830,6 +935,7 @@ export async function handleElectronHostInput(options: {
 			return buildElectronProbeResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,
 				mismatch: sessionMismatch,
+				namespace: probeNamespace,
 				probe,
 				probeContext,
 				record: launchRecord,
@@ -841,14 +947,14 @@ export async function handleElectronHostInput(options: {
 			return buildElectronHostFailureResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,
 				errorText: `Electron probe failed: ${errorText}`,
-				failureCategory: "upstream-error",
+				failureCategory: error instanceof ElectronManagedSessionPolicyError ? "validation-error" : "upstream-error",
 			});
 		}
 	}
 	if (compiledElectron?.action === "cleanup") {
 		const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);
 		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
-		const cleanupResults = await cleanupTrackedElectronHostLaunches({ cwd, electronChildProcesses, electronLaunchRecords, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
+		const cleanupResults = await cleanupTrackedElectronHostLaunches({ cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
 		return buildElectronCleanupResult(redactedCompiledElectron ?? compiledElectron, cleanupResults);
 	}
 	return undefined;

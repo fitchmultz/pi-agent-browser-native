@@ -2,14 +2,15 @@
 /**
  * Purpose: Run a deterministic, model-free live-browser smoke through the native agent_browser extension surface.
  * Responsibilities: Exercise top-level qa, semanticAction, job, artifact verification, and close without relying on an LLM to choose tool calls.
- * Scope: Maintainer verification only; it uses a local file fixture and the local extension harness, and it is not part of the published runtime package.
+ * Scope: Maintainer verification only; it uses a loopback HTTP fixture and the local extension harness, and it is not part of the published runtime package.
  * Usage: `npm run verify -- dogfood` or `npx tsx scripts/verify-agent-browser-dogfood.ts [--keep-artifacts] [--artifact-dir <path>] [--json]`.
- * Invariants/Assumptions: `agent-browser` is installed on PATH; the script serves a local file fixture so platform checks do not depend on public network reachability.
+ * Invariants/Assumptions: `agent-browser` is installed on PATH; the script serves a loopback fixture so platform checks do not depend on public network reachability.
  */
 
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -109,29 +110,30 @@ function getArtifactVerification(result: Awaited<ReturnType<typeof executeRegist
 	return typeof value === "object" && value !== null ? value as { verified?: boolean } : undefined;
 }
 
-async function writeDogfoodFixture(rootDir: string): Promise<{ helpUrl: string; origin: string }> {
-	const fixtureDir = join(rootDir, "fixture");
-	await mkdir(fixtureDir, { recursive: true });
-	const helpPath = join(fixtureDir, "example-domains.html");
-	const indexPath = join(fixtureDir, "index.html");
-	await writeFile(helpPath, `<!doctype html>
-<html lang="en">
-<head><title>Example Domain Help</title></head>
-<body><h1>Example Domain Help</h1><p>Learn more target reached.</p></body>
-</html>`);
-	const helpUrl = pathToFileURL(helpPath).href;
-	await writeFile(indexPath, `<!doctype html>
-<html lang="en">
-<head><title>Example Domain</title></head>
-<body>
-<main>
-<h1>Example Domain</h1>
-<p>This local fixture is reserved for deterministic platform smoke tests.</p>
-<a href="${helpUrl}">Learn more</a>
-</main>
-</body>
-</html>`);
-	return { helpUrl, origin: pathToFileURL(indexPath).href };
+async function startDogfoodFixture(): Promise<{ close: () => Promise<void>; helpUrl: string; origin: string }> {
+	const server = createServer((request, response) => {
+		response.setHeader("content-type", "text/html; charset=utf-8");
+		if (request.url === "/example-domains.html") {
+			response.end("<!doctype html><html lang=\"en\"><head><title>Example Domain Help</title></head><body><h1>Example Domain Help</h1><p>Learn more target reached.</p></body></html>");
+			return;
+		}
+		response.end("<!doctype html><html lang=\"en\"><head><title>Example Domain</title></head><body><main><h1>Example Domain</h1><p>This loopback fixture is reserved for deterministic platform smoke tests.</p><a href=\"/example-domains.html\">Learn more</a></main></body></html>");
+	});
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("Loopback dogfood server did not expose a TCP port.");
+	const origin = `http://127.0.0.1:${address.port}/`;
+	return {
+		close: async () => await new Promise<void>((resolve, reject) => {
+			server.close((error) => error ? reject(error) : resolve());
+			server.closeAllConnections();
+		}),
+		helpUrl: `${origin}example-domains.html`,
+		origin,
+	};
 }
 
 type AgentBrowserToolExecutionResult = Awaited<ReturnType<typeof executeRegisteredTool>>;
@@ -174,7 +176,7 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 	await mkdir(artifactDir, { recursive: true });
 	const jobScreenshotPath = join(artifactDir, "job.png");
 	const harness = createExtensionHarness({ cwd, sessionId: randomUUID() });
-	const fixture = await writeDogfoodFixture(artifactDir);
+	const fixture = await startDogfoodFixture();
 	const reports: DogfoodStepReport[] = [];
 	let closed = false;
 
@@ -250,6 +252,7 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] }).catch(() => undefined);
 		}
 		await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx).catch(() => undefined);
+		await fixture.close();
 		if (shouldRemoveArtifacts) {
 			await rm(artifactDir, { force: true, recursive: true });
 		}

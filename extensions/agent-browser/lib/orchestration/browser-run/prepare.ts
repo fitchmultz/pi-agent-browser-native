@@ -1,6 +1,8 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+import { isCloseCommand } from "../../command-taxonomy.js";
+import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix, type CompiledAgentBrowserSemanticAction } from "../../input-modes.js";
@@ -22,6 +24,18 @@ import {
 	redactInvocationArgs,
 	type CompatibilityWorkaround,
 } from "../../runtime.js";
+import {
+	buildOwnedManagedSessionRestoreContext,
+	canonicalizeOwnedManagedSessionCloseArgs,
+	withOwnedManagedSessionContext,
+} from "../../managed-session-restore.js";
+import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
+import {
+	getCallerOwnedSessionLivePageVerificationRequirement,
+	getManagedSessionStateAccessValidationError,
+	getManagedSessionTargetAccessValidationError,
+} from "../../managed-session-state-policy.js";
+import { acquireOwnedManagedSessionDaemonPolicy } from "./managed-session-daemon-policy.js";
 import {
 	applyOpenResultTabCorrection,
 	buildManagedSessionOutcome,
@@ -399,8 +413,28 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	let electronLaunch: ElectronLaunchSuccess | undefined;
 	const sessionMode = compiledElectron?.action === "launch" ? "fresh" : params.sessionMode ?? "auto";
 	const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
+	const rawManagedStateAccessError = getManagedSessionStateAccessValidationError({
+		args: runtimeToolArgs,
+		cwd,
+		stdin: runtimeToolStdin,
+		trustedFirstBatchTabSelection: true,
+	});
+	if (rawManagedStateAccessError) {
+		return {
+			kind: "early-result",
+			result: {
+				content: [{ type: "text", text: rawManagedStateAccessError }],
+				details: {
+					args: redactedArgs,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, errorText: rawManagedStateAccessError, succeeded: false, validationError: rawManagedStateAccessError }),
+					validationError: rawManagedStateAccessError,
+				},
+				isError: true,
+			},
+		};
+	}
 	if (compiledElectron?.action === "launch") {
-		const launchResult = await launchElectronApp(compiledElectron);
+		const launchResult = await launchElectronApp({ ...compiledElectron, signal });
 		if (!launchResult.ok) {
 			const managedSessionOutcome = buildManagedSessionOutcome({
 				activeAfter: state.managedSessionActive,
@@ -425,6 +459,10 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		runtimeToolArgs = ["connect", electronLaunch.connectArg];
 		runtimeToolStdin = undefined;
 	}
+	let managedSessionPolicyLock: ManagedSessionPolicyLock | undefined;
+	let managedSessionPolicyLockTransferred = false;
+	let electronLaunchTransferred = false;
+	try {
 	const preparedArgs = await prepareAgentBrowserArgs(runtimeToolArgs, runtimeToolStdin, cwd);
 	const userRequestedJson = runtimeToolArgs.includes("--json");
 	let executionPlan = buildExecutionPlan(preparedArgs.args, {
@@ -436,463 +474,623 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	const idleTimeoutMismatch = getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs);
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
-	const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
-	const priorSessionPageState = sessionPageState.get(sessionStateKey);
-	const priorSessionTabTarget = priorSessionPageState.tabTarget;
-	const sessionTabPinningReason = priorSessionPageState.pinningReason;
-	const priorRefSnapshotState = priorSessionPageState.refSnapshot;
-	const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
-	let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
-	if (!executionPlan.validationError && executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction)) {
-		semanticActionVisibleRefResolution = await resolveSemanticActionVisibleRefArgs({
-			compiled: compiledSemanticAction,
-			cwd,
-			namespace: executionPlan.namespace,
-			sessionName: executionPlan.sessionName,
-			signal,
-		});
-	}
-	if (semanticActionVisibleRefResolution) {
-		executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {
-			freshSessionName,
-			managedSessionActive: state.managedSessionActive,
-			managedSessionName: state.managedSessionName,
-			managedSessionNamespace: state.managedSessionNamespace,
-			sessionMode,
-		});
-	}
-	const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
-	const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
-	const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
-	const statePatch: BrowserRunStatePatch = executionPlan.managedSessionName === freshSessionName
-		? { freshSessionOrdinal: freshSessionOrdinal + 1 }
-		: {};
-	if (executionPlan.managedSessionName === freshSessionName) {
-		freshSessionOrdinal += 1;
-	}
-
-	if (executionPlan.validationError) {
-		return { kind: "early-result", statePatch, result: {
-			content: [{ type: "text", text: executionPlan.validationError }],
-			details: {
-				args: redactedArgs,
-				compiledElectron: redactedCompiledElectron,
-				compiledJob: redactedCompiledJob,
-				compiledQaPreset: redactedCompiledQaPreset,
-				compiledSourceLookup: redactedCompiledSourceLookup,
-				compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
-				invalidValueFlag: executionPlan.invalidValueFlag,
-				sessionMode,
-				sessionRecoveryHint: redactedRecoveryHint,
-				startupScopedFlags: executionPlan.startupScopedFlags,
-				...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, command: executionPlan.commandInfo.command, errorText: executionPlan.validationError, succeeded: false, validationError: executionPlan.validationError }),
-				validationError: executionPlan.validationError,
-			},
-			isError: true,
-		} };
-	}
-
-	const commandTokens = semanticActionVisibleRefResolution ? extractCommandTokens(semanticActionVisibleRefResolution.args) : extractCommandTokens(preparedArgs.args);
-	const exactSensitiveValues = getExactSensitiveStdinValues({
-		command: executionPlan.commandInfo.command,
-		commandTokens,
-		stdin: runtimeToolStdin,
-	});
-	const traceOwnerGuardMessage = getTraceOwnerGuardMessage({
-		command: executionPlan.commandInfo.command,
-		sessionName: sessionStateKey,
-		subcommand: executionPlan.commandInfo.subcommand,
-		traceOwners,
-	});
-	if (traceOwnerGuardMessage) {
-		return { kind: "early-result", statePatch, result: {
-			content: [{ type: "text", text: traceOwnerGuardMessage }],
-			details: {
-				args: redactedArgs,
-				command: executionPlan.commandInfo.command,
-				compatibilityWorkaround,
-				effectiveArgs: redactedEffectiveArgs,
-				sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: traceOwnerGuardMessage, succeeded: false, validationError: traceOwnerGuardMessage }),
-				validationError: traceOwnerGuardMessage,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-			},
-			isError: true,
-		} };
-	}
-	const stdinValidationError = validateStdinCommandContract({
-		command: executionPlan.commandInfo.command,
-		commandTokens,
-		stdin: runtimeToolStdin,
-	});
-	if (stdinValidationError) {
-		return { kind: "early-result", statePatch, result: {
-			content: [{ type: "text", text: stdinValidationError }],
-			details: {
-				args: redactedArgs,
-				command: executionPlan.commandInfo.command,
-				compatibilityWorkaround,
-				effectiveArgs: redactedEffectiveArgs,
-				sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: stdinValidationError, succeeded: false, validationError: stdinValidationError }),
-				validationError: stdinValidationError,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-			},
-			isError: true,
-		} };
-	}
-	const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
-		? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
-		: undefined;
-	const promptRefSnapshot = resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState;
-	const requestedArtifactCloseViolation = await findRequestedArtifactCloseViolation({ artifactManifest: state.artifactManifest, command: executionPlan.commandInfo.command, cwd, promptPolicy: options.promptPolicy });
-	if (requestedArtifactCloseViolation) {
-		return { kind: "early-result", statePatch, result: {
-			content: [{ type: "text", text: requestedArtifactCloseViolation.message }],
-			details: {
-				args: redactedArgs,
-				command: executionPlan.commandInfo.command,
-				compatibilityWorkaround,
-				effectiveArgs: redactedEffectiveArgs,
-				promptGuard: requestedArtifactCloseViolation,
-				sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: requestedArtifactCloseViolation.message, failureCategory: "policy-blocked", succeeded: false, validationError: requestedArtifactCloseViolation.message }),
-				validationError: requestedArtifactCloseViolation.message,
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-			},
-			isError: true,
-		} };
-	}
-	const staleRefPreflight = buildStaleRefPreflight({
-		commandTokens,
-		currentTarget: priorSessionTabTarget,
-		refSnapshot: resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState,
-		refSnapshotInvalidation: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotInvalidation,
-		stdin: runtimeToolStdin,
-	});
-	if (staleRefPreflight) {
-		return { kind: "early-result", statePatch, result: {
-			content: [{ type: "text", text: staleRefPreflight.message }],
-			details: {
-				args: redactedArgs,
-				command: executionPlan.commandInfo.command,
-				compatibilityWorkaround,
-				effectiveArgs: redactedEffectiveArgs,
-				nextActions: applyNamespaceToNextActions(buildSessionAwareStaleRefNextActions(executionPlan.sessionName), executionPlan.namespace),
-				refIds: staleRefPreflight.refIds,
-				refSnapshot: staleRefPreflight.snapshot,
-				refSnapshotInvalidation: staleRefPreflight.snapshotInvalidation,
-				sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: staleRefPreflight.message, failureCategory: "stale-ref", succeeded: false }),
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-			},
-			isError: true,
-		} };
-	}
-	const samePageRefFreshnessPreflight = await collectSamePageRefFreshnessPreflight({
-		commandTokens,
+	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
+	const plannedSessionPageState = sessionPageState.get(ownedSessionKey);
+	const managedStateAccessError = getManagedSessionStateAccessValidationError({
+		args: executionPlan.effectiveArgs,
+		currentPageUrl: plannedSessionPageState.tabTarget?.url,
+		pageUrlUnknown: plannedSessionPageState.tabTargetUnknown === true,
 		cwd,
-		currentTarget: priorSessionTabTarget,
-		previousSnapshot: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotState,
-		namespace: executionPlan.namespace,
-		sessionName: executionPlan.sessionName,
-		signal,
+		stdin: runtimeToolStdin,
 	});
-	if (samePageRefFreshnessPreflight) {
-		if (samePageRefFreshnessPreflight.snapshot && sessionStateKey) {
-			sessionPageState.applyRefSnapshot({ fallbackTarget: priorSessionTabTarget, sessionName: sessionStateKey, snapshot: samePageRefFreshnessPreflight.snapshot, update: options.sessionPageStateUpdate });
-		}
-		return { kind: "early-result", statePatch, result: {
-			content: [{ type: "text", text: samePageRefFreshnessPreflight.message }],
-			details: {
-				args: redactedArgs,
-				command: executionPlan.commandInfo.command,
-				compatibilityWorkaround,
-				effectiveArgs: redactedEffectiveArgs,
-				nextActions: applyNamespaceToNextActions(buildSessionAwareStaleRefNextActions(executionPlan.sessionName), executionPlan.namespace),
-				refIds: samePageRefFreshnessPreflight.refIds,
-				refSnapshot: samePageRefFreshnessPreflight.snapshot,
-				sessionMode,
-				...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: samePageRefFreshnessPreflight.message, failureCategory: "stale-ref", succeeded: false }),
-				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-			},
-			isError: true,
-		} };
-	}
-
-	if (compiledQaPreset?.checks.attached) {
-		const qaAttachedPrecondition = await validateQaAttachedPrecondition({
-			cwd,
-			namespace: executionPlan.namespace,
-			sessionName: executionPlan.sessionName,
+	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
+	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
+	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
+		args: executionPlan.effectiveArgs,
+		cwd: recordedOwnedSession?.cwd ?? cwd,
+		currentManagedSessionName: state.managedSessionName,
+		currentManagedSessionNamespace: state.managedSessionNamespace,
+		managedSessionName: executionPlan.managedSessionName,
+		namespace: executionPlan.namespace,
+		recordedOwnedSession,
+		restoreState: state.managedSessionRestoreState,
+		sessionName: executionPlan.sessionName,
+		stdin: runtimeToolStdin,
+		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround?.id === "chatgpt-headless-user-agent",
+	});
+	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined);
+	if (!executionPlan.validationError && managedSessionTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedSessionTargetError };
+	if (!executionPlan.validationError && ownedManagedSession) {
+		const closeCommand = isCloseCommand(executionPlan.commandInfo.command);
+		const policy = await acquireOwnedManagedSessionDaemonPolicy({
+			context: ownedManagedSession,
+			mode: closeCommand ? "close" : "reuse",
 			signal,
 		});
-		if (qaAttachedPrecondition) {
-			return { kind: "early-result", statePatch, result: {
-				content: [{ type: "text", text: qaAttachedPrecondition.error }],
-				details: {
-					args: redactedArgs,
-					compiledQaPreset: redactedCompiledQaPreset,
-					compatibilityWorkaround,
-					effectiveArgs: redactedEffectiveArgs,
-					nextActions: applyNamespaceToNextActions(qaAttachedPrecondition.nextActions, executionPlan.namespace),
-					sessionMode,
-					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: qaAttachedPrecondition.error, succeeded: false, validationError: qaAttachedPrecondition.error }),
-					validationError: qaAttachedPrecondition.error,
-					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-				},
-				isError: true,
-			} };
+		managedSessionPolicyLock = policy.lock;
+		if (policy.error) {
+			executionPlan = {
+				...executionPlan,
+				recoveryHint: undefined,
+				validationError: policy.error,
+			};
+		} else if (closeCommand && managedSessionPolicyLock) {
+			executionPlan = {
+				...executionPlan,
+				effectiveArgs: canonicalizeOwnedManagedSessionCloseArgs({
+					args: executionPlan.effectiveArgs,
+					cwd,
+					ownedManagedSession: true,
+					restoreState: state.managedSessionRestoreState,
+				}, true),
+			};
 		}
 	}
-
-	const persistentArtifactStore = getPersistentSessionArtifactStore(options.ctx);
-	const snapshotFilter = await trySnapshotFilter({
-		artifactManifest: state.artifactManifest,
-		commandTokens,
-		compatibilityWorkaround,
-		cwd,
-		effectiveArgs: redactedEffectiveArgs,
-		persistentArtifactStore,
-		previousRefSnapshot: priorRefSnapshotState,
-		redactedArgs,
-		namespace: executionPlan.namespace,
-		sessionMode,
-		sessionName: executionPlan.sessionName,
-		sessionStateKey,
-		sessionPageState,
-		sessionPageStateUpdate: options.sessionPageStateUpdate,
-		signal,
-		usedImplicitSession: executionPlan.usedImplicitSession,
-	});
-	if (snapshotFilter) return { kind: "early-result", statePatch: { ...statePatch, artifactManifest: snapshotFilter.artifactManifest ?? statePatch.artifactManifest }, result: snapshotFilter.result };
-
-	const networkRequestsPageFilter = await tryNetworkRequestsPageFilter({
-		commandTokens,
-		compatibilityWorkaround,
-		cwd,
-		effectiveArgs: redactedEffectiveArgs,
-		redactedArgs,
-		sessionMode,
-		namespace: executionPlan.namespace,
-		sessionName: executionPlan.sessionName,
-		signal,
-		usedImplicitSession: executionPlan.usedImplicitSession,
-	});
-	if (networkRequestsPageFilter) return { kind: "early-result", statePatch, result: networkRequestsPageFilter };
-
-	if (executionPlan.startupScopedFlags.length === 0) {
-		const containerScroll = await tryContainerScroll({
-			commandTokens,
-			compatibilityWorkaround,
-			cwd,
-			effectiveArgs: redactedEffectiveArgs,
-			redactedArgs,
-			sessionMode,
-			namespace: executionPlan.namespace,
-			sessionName: executionPlan.sessionName,
-			signal,
-			usedImplicitSession: executionPlan.usedImplicitSession,
-		});
-		if (containerScroll) return { kind: "early-result", statePatch, result: containerScroll };
-		const pageScrollTo = await tryPageScrollTo({
-			commandTokens,
-			compatibilityWorkaround,
-			cwd,
-			effectiveArgs: redactedEffectiveArgs,
-			redactedArgs,
-			sessionMode,
-			namespace: executionPlan.namespace,
-			sessionName: executionPlan.sessionName,
-			signal,
-			usedImplicitSession: executionPlan.usedImplicitSession,
-		});
-		if (pageScrollTo) return { kind: "early-result", statePatch, result: pageScrollTo };
-	}
-
-	const directAnchorDownload = await tryDirectAnchorDownload({
-		artifactManifest: state.artifactManifest,
-		commandTokens,
-		compatibilityWorkaround,
-		cwd,
-		effectiveArgs: redactedEffectiveArgs,
-		redactedArgs,
-		sessionMode,
-		namespace: executionPlan.namespace,
-		sessionName: executionPlan.sessionName,
-		signal,
-		usedImplicitSession: executionPlan.usedImplicitSession,
-	});
-	if (directAnchorDownload) return { kind: "early-result", statePatch: { ...statePatch, artifactManifest: directAnchorDownload.artifactManifest ?? statePatch.artifactManifest }, result: directAnchorDownload.result };
-
-	let pinnedBatchUnwrapMode: PreparedBrowserRun["pinnedBatchUnwrapMode"];
-	let includePinnedNavigationSummary = false;
-	let sessionTabCorrection: PreparedBrowserRun["sessionTabCorrection"];
-	let processArgs = executionPlan.effectiveArgs;
-	let processStdin = preparedArgs.stdin ?? runtimeToolStdin;
-	if (
-		priorSessionTabTarget &&
-		shouldPinSessionTabForCommand({
-			command: executionPlan.commandInfo.command,
-			commandTokens,
-			pinningRequired: sessionTabPinningReason !== undefined,
-			sessionName: executionPlan.sessionName,
-			stdin: runtimeToolStdin,
-		})
-	) {
-		const collectTabSelection = promptRefSnapshot && getGuardedRefUsage(commandTokens, runtimeToolStdin).length > 0 ? collectAnySessionTabSelection : collectSessionTabSelection;
-		const plannedSessionTabSelection = await collectTabSelection({
-			cwd,
-			namespace: executionPlan.namespace,
-			sessionName: executionPlan.sessionName,
-			signal,
-			target: priorSessionTabTarget,
-		});
-		if (plannedSessionTabSelection && executionPlan.sessionName) {
-			if (executionPlan.commandInfo.command === "eval" && runtimeToolStdin !== undefined) {
-				const appliedSessionTabSelection = await applyOpenResultTabCorrection({
-					correction: plannedSessionTabSelection,
+		return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
+		const managedSessionRestoreDisabled = () => state.managedSessionRestoreState.isDisabled(executionPlan.sessionName, executionPlan.namespace);
+		const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
+		const priorSessionPageState = sessionPageState.get(sessionStateKey);
+		let priorSessionTabTarget: SessionTabTarget | undefined = priorSessionPageState.tabTarget;
+		let priorSessionTabTargetUnknown: true | undefined = priorSessionPageState.tabTargetUnknown;
+		const sessionTabPinningReason = priorSessionPageState.pinningReason;
+		const priorRefSnapshotState = priorSessionPageState.refSnapshot;
+		const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
+		let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
+		let callerOwnedLivePageVerified = false;
+		const isCallerOwnedExplicitSession = () => executionPlan.sessionName !== undefined
+			&& executionPlan.usedImplicitSession === false
+			&& ownedManagedSession === undefined;
+		const verifyCallerOwnedLivePage = async (options: { args: string[]; requirement?: string; stdin?: string }) => {
+			if (!options.requirement || !executionPlan.sessionName) return;
+			let liveUrl: string | undefined;
+			try {
+				const liveUrlData = await runSessionCommandData({
+					args: ["get", "url"],
 					cwd,
 					namespace: executionPlan.namespace,
 					sessionName: executionPlan.sessionName,
 					signal,
+					throwOnFailure: true,
 				});
-				if (!appliedSessionTabSelection) {
-					const error = "agent-browser could not re-select the intended tab before running the command.";
-					return { kind: "early-result", statePatch, result: {
-						content: [{ type: "text", text: error }],
-						details: {
-							args: redactedArgs,
-							command: executionPlan.commandInfo.command,
-							compatibilityWorkaround,
-							effectiveArgs: redactedEffectiveArgs,
-							sessionMode,
-							sessionTabCorrection: plannedSessionTabSelection,
-							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: error }),
-							nextActions: applyNamespaceToNextActions(buildSessionTabRecoveryNextActions({
-								kind: "tab-drift",
-								resultCategory: "failure",
-								sessionName: executionPlan.sessionName,
-								tabCorrection: plannedSessionTabSelection,
-								target: priorSessionTabTarget,
-							}), executionPlan.namespace),
-							validationError: error,
-							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-						},
-						isError: true,
-					} };
-				}
-				sessionTabCorrection = appliedSessionTabSelection;
-			} else {
-				const pinnedBatchPlan = buildPinnedBatchPlan({
+				liveUrl = extractStringResultField(liveUrlData, "result") ?? extractStringResultField(liveUrlData, "url");
+			} catch (error) {
+				if (signal?.aborted) throw signal.reason ?? error;
+			}
+			if (liveUrl === undefined) {
+				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: options.requirement };
+				return;
+			}
+			const livePageValidationError = getManagedSessionStateAccessValidationError({
+				args: options.args,
+				currentPageUrl: liveUrl,
+				cwd,
+				pageUrlUnknown: false,
+				stdin: options.stdin,
+			});
+			if (livePageValidationError) {
+				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: livePageValidationError };
+				return;
+			}
+			callerOwnedLivePageVerified = true;
+			priorSessionTabTarget ??= { url: liveUrl };
+			priorSessionTabTargetUnknown = undefined;
+		};
+		const mayResolveSemanticVisibleRef = executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction);
+		if (!executionPlan.validationError && mayResolveSemanticVisibleRef && isCallerOwnedExplicitSession()) {
+			await verifyCallerOwnedLivePage({
+				args: ["snapshot", "-i"],
+				requirement: getCallerOwnedSessionLivePageVerificationRequirement({ args: ["snapshot", "-i"], cwd }),
+			});
+		}
+		if (!executionPlan.validationError && mayResolveSemanticVisibleRef) {
+			semanticActionVisibleRefResolution = await resolveSemanticActionVisibleRefArgs({
+				compiled: compiledSemanticAction,
+				cwd,
+				namespace: executionPlan.namespace,
+				sessionName: executionPlan.sessionName,
+				signal,
+			});
+		}
+		if (semanticActionVisibleRefResolution) {
+			executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {
+				freshSessionName,
+				managedSessionActive: state.managedSessionActive,
+				managedSessionName: state.managedSessionName,
+				managedSessionNamespace: state.managedSessionNamespace,
+				sessionMode,
+			});
+		}
+
+		const commandTokens = semanticActionVisibleRefResolution ? extractCommandTokens(semanticActionVisibleRefResolution.args) : extractCommandTokens(preparedArgs.args);
+		const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
+			? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
+			: undefined;
+		const preLiveStaleRefPreflight = buildStaleRefPreflight({
+			commandTokens,
+			currentTarget: priorSessionTabTarget,
+			refSnapshot: resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState,
+			refSnapshotInvalidation: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotInvalidation,
+			stdin: runtimeToolStdin,
+		});
+		const callerOwnedPageAccessEligible = !executionPlan.validationError
+			&& preLiveStaleRefPreflight === undefined
+			&& validateStdinCommandContract({ command: executionPlan.commandInfo.command, commandTokens, stdin: runtimeToolStdin }) === undefined
+			&& isCallerOwnedExplicitSession();
+		const callerOwnedLivePageRequirement = callerOwnedPageAccessEligible
+			&& !callerOwnedLivePageVerified
+			? getCallerOwnedSessionLivePageVerificationRequirement({
+				args: executionPlan.effectiveArgs,
+				cwd,
+				stdin: runtimeToolStdin,
+			})
+			: undefined;
+		await verifyCallerOwnedLivePage({
+			args: executionPlan.effectiveArgs,
+			requirement: callerOwnedLivePageRequirement,
+			stdin: runtimeToolStdin,
+		});
+
+		const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
+		const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
+		const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
+		const statePatch: BrowserRunStatePatch = executionPlan.managedSessionName === freshSessionName
+			? { freshSessionOrdinal: freshSessionOrdinal + 1 }
+			: {};
+		if (executionPlan.managedSessionName === freshSessionName) {
+			freshSessionOrdinal += 1;
+		}
+
+		if (executionPlan.validationError) {
+			return { kind: "early-result", statePatch, result: {
+				content: [{ type: "text", text: executionPlan.validationError }],
+				details: {
+					args: redactedArgs,
+					compiledElectron: redactedCompiledElectron,
+					compiledJob: redactedCompiledJob,
+					compiledQaPreset: redactedCompiledQaPreset,
+					compiledSourceLookup: redactedCompiledSourceLookup,
+					compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
+					invalidValueFlag: executionPlan.invalidValueFlag,
+					sessionMode,
+					sessionRecoveryHint: redactedRecoveryHint,
+					startupScopedFlags: executionPlan.startupScopedFlags,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, command: executionPlan.commandInfo.command, errorText: executionPlan.validationError, succeeded: false, validationError: executionPlan.validationError }),
+					validationError: executionPlan.validationError,
+				},
+				isError: true,
+			} };
+		}
+
+		const exactSensitiveValues = getExactSensitiveStdinValues({
+			command: executionPlan.commandInfo.command,
+			commandTokens,
+			stdin: runtimeToolStdin,
+		});
+		const traceOwnerGuardMessage = getTraceOwnerGuardMessage({
+			command: executionPlan.commandInfo.command,
+			sessionName: sessionStateKey,
+			subcommand: executionPlan.commandInfo.subcommand,
+			traceOwners,
+		});
+		if (traceOwnerGuardMessage) {
+			return { kind: "early-result", statePatch, result: {
+				content: [{ type: "text", text: traceOwnerGuardMessage }],
+				details: {
+					args: redactedArgs,
 					command: executionPlan.commandInfo.command,
-					commandTokens,
-					selectedTab: plannedSessionTabSelection.selectedTab,
-					stdin: runtimeToolStdin,
-				});
-				if (pinnedBatchPlan && "error" in pinnedBatchPlan) {
-					return { kind: "early-result", statePatch, result: {
-						content: [{ type: "text", text: pinnedBatchPlan.error }],
-						details: {
-							args: redactedArgs,
-							command: executionPlan.commandInfo.command,
-							compatibilityWorkaround,
-							effectiveArgs: redactedEffectiveArgs,
-							sessionMode,
-							sessionTabCorrection: plannedSessionTabSelection,
-							...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: pinnedBatchPlan.error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: pinnedBatchPlan.error }),
-							nextActions: applyNamespaceToNextActions(buildSessionTabRecoveryNextActions({
-								kind: "tab-drift",
-								resultCategory: "failure",
-								sessionName: executionPlan.sessionName,
-								tabCorrection: plannedSessionTabSelection,
-								target: priorSessionTabTarget,
-							}), executionPlan.namespace),
-							validationError: pinnedBatchPlan.error,
-							...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-						},
-						isError: true,
-					} };
-				}
-				if (pinnedBatchPlan) {
-					sessionTabCorrection = plannedSessionTabSelection;
-					processArgs = ["--json", ...(executionPlan.namespace ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
-					processStdin = JSON.stringify(pinnedBatchPlan.steps);
-					includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
-					pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;
+					compatibilityWorkaround,
+					effectiveArgs: redactedEffectiveArgs,
+					sessionMode,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: traceOwnerGuardMessage, succeeded: false, validationError: traceOwnerGuardMessage }),
+					validationError: traceOwnerGuardMessage,
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+				},
+				isError: true,
+			} };
+		}
+		const stdinValidationError = validateStdinCommandContract({
+			command: executionPlan.commandInfo.command,
+			commandTokens,
+			stdin: runtimeToolStdin,
+		});
+		if (stdinValidationError) {
+			return { kind: "early-result", statePatch, result: {
+				content: [{ type: "text", text: stdinValidationError }],
+				details: {
+					args: redactedArgs,
+					command: executionPlan.commandInfo.command,
+					compatibilityWorkaround,
+					effectiveArgs: redactedEffectiveArgs,
+					sessionMode,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: stdinValidationError, succeeded: false, validationError: stdinValidationError }),
+					validationError: stdinValidationError,
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+				},
+				isError: true,
+			} };
+		}
+		const promptRefSnapshot = resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState;
+		const requestedArtifactCloseViolation = await findRequestedArtifactCloseViolation({ artifactManifest: state.artifactManifest, command: executionPlan.commandInfo.command, cwd, promptPolicy: options.promptPolicy });
+		if (requestedArtifactCloseViolation) {
+			return { kind: "early-result", statePatch, result: {
+				content: [{ type: "text", text: requestedArtifactCloseViolation.message }],
+				details: {
+					args: redactedArgs,
+					command: executionPlan.commandInfo.command,
+					compatibilityWorkaround,
+					effectiveArgs: redactedEffectiveArgs,
+					promptGuard: requestedArtifactCloseViolation,
+					sessionMode,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: requestedArtifactCloseViolation.message, failureCategory: "policy-blocked", succeeded: false, validationError: requestedArtifactCloseViolation.message }),
+					validationError: requestedArtifactCloseViolation.message,
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+				},
+				isError: true,
+			} };
+		}
+		const staleRefPreflight = buildStaleRefPreflight({
+			commandTokens,
+			currentTarget: priorSessionTabTarget,
+			refSnapshot: resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState,
+			refSnapshotInvalidation: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotInvalidation,
+			stdin: runtimeToolStdin,
+		});
+		if (staleRefPreflight) {
+			return { kind: "early-result", statePatch, result: {
+				content: [{ type: "text", text: staleRefPreflight.message }],
+				details: {
+					args: redactedArgs,
+					command: executionPlan.commandInfo.command,
+					compatibilityWorkaround,
+					effectiveArgs: redactedEffectiveArgs,
+					nextActions: applyNamespaceToNextActions(buildSessionAwareStaleRefNextActions(executionPlan.sessionName), executionPlan.namespace),
+					refIds: staleRefPreflight.refIds,
+					refSnapshot: staleRefPreflight.snapshot,
+					refSnapshotInvalidation: staleRefPreflight.snapshotInvalidation,
+					sessionMode,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: staleRefPreflight.message, failureCategory: "stale-ref", succeeded: false }),
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+				},
+				isError: true,
+			} };
+		}
+		const samePageRefFreshnessPreflight = await collectSamePageRefFreshnessPreflight({
+			commandTokens,
+			cwd,
+			currentTarget: priorSessionTabTarget,
+			previousSnapshot: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotState,
+			namespace: executionPlan.namespace,
+			sessionName: executionPlan.sessionName,
+			signal,
+		});
+		if (samePageRefFreshnessPreflight) {
+			if (samePageRefFreshnessPreflight.snapshot && sessionStateKey) {
+				sessionPageState.applyRefSnapshot({ fallbackTarget: priorSessionTabTarget, sessionName: sessionStateKey, snapshot: samePageRefFreshnessPreflight.snapshot, update: options.sessionPageStateUpdate });
+			}
+			return { kind: "early-result", statePatch, result: {
+				content: [{ type: "text", text: samePageRefFreshnessPreflight.message }],
+				details: {
+					args: redactedArgs,
+					command: executionPlan.commandInfo.command,
+					compatibilityWorkaround,
+					effectiveArgs: redactedEffectiveArgs,
+					nextActions: applyNamespaceToNextActions(buildSessionAwareStaleRefNextActions(executionPlan.sessionName), executionPlan.namespace),
+					refIds: samePageRefFreshnessPreflight.refIds,
+					refSnapshot: samePageRefFreshnessPreflight.snapshot,
+					sessionMode,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: samePageRefFreshnessPreflight.message, failureCategory: "stale-ref", succeeded: false }),
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+				},
+				isError: true,
+			} };
+		}
+
+		if (compiledQaPreset?.checks.attached) {
+			const qaAttachedPrecondition = await validateQaAttachedPrecondition({
+				cwd,
+				namespace: executionPlan.namespace,
+				sessionName: executionPlan.sessionName,
+				signal,
+			});
+			if (qaAttachedPrecondition) {
+				return { kind: "early-result", statePatch, result: {
+					content: [{ type: "text", text: qaAttachedPrecondition.error }],
+					details: {
+						args: redactedArgs,
+						compiledQaPreset: redactedCompiledQaPreset,
+						compatibilityWorkaround,
+						effectiveArgs: redactedEffectiveArgs,
+						nextActions: applyNamespaceToNextActions(qaAttachedPrecondition.nextActions, executionPlan.namespace),
+						sessionMode,
+						...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: qaAttachedPrecondition.error, succeeded: false, validationError: qaAttachedPrecondition.error }),
+						validationError: qaAttachedPrecondition.error,
+						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+					},
+					isError: true,
+				} };
+			}
+		}
+
+		const persistentArtifactStore = getPersistentSessionArtifactStore(options.ctx);
+		const snapshotFilter = await trySnapshotFilter({
+			artifactManifest: state.artifactManifest,
+			commandTokens,
+			compatibilityWorkaround,
+			cwd,
+			effectiveArgs: redactedEffectiveArgs,
+			managedSessionRestoreDisabled,
+			persistentArtifactStore,
+			previousRefSnapshot: priorRefSnapshotState,
+			redactedArgs,
+			namespace: executionPlan.namespace,
+			sessionMode,
+			sessionName: executionPlan.sessionName,
+			sessionStateKey,
+			sessionPageState,
+			sessionPageStateUpdate: options.sessionPageStateUpdate,
+			signal,
+			usedImplicitSession: executionPlan.usedImplicitSession,
+		});
+		if (snapshotFilter) return { kind: "early-result", statePatch: { ...statePatch, artifactManifest: snapshotFilter.artifactManifest ?? statePatch.artifactManifest }, result: snapshotFilter.result };
+
+		const networkRequestsPageFilter = await tryNetworkRequestsPageFilter({
+			commandTokens,
+			compatibilityWorkaround,
+			cwd,
+			effectiveArgs: redactedEffectiveArgs,
+			managedSessionRestoreDisabled,
+			redactedArgs,
+			sessionMode,
+			namespace: executionPlan.namespace,
+			sessionName: executionPlan.sessionName,
+			signal,
+			usedImplicitSession: executionPlan.usedImplicitSession,
+		});
+		if (networkRequestsPageFilter) return { kind: "early-result", statePatch, result: networkRequestsPageFilter };
+
+		if (executionPlan.startupScopedFlags.length === 0) {
+			const containerScroll = await tryContainerScroll({
+				commandTokens,
+				compatibilityWorkaround,
+				cwd,
+				effectiveArgs: redactedEffectiveArgs,
+				managedSessionRestoreDisabled,
+				redactedArgs,
+				sessionMode,
+				namespace: executionPlan.namespace,
+				sessionName: executionPlan.sessionName,
+				signal,
+				usedImplicitSession: executionPlan.usedImplicitSession,
+			});
+			if (containerScroll) return { kind: "early-result", statePatch, result: containerScroll };
+			const pageScrollTo = await tryPageScrollTo({
+				commandTokens,
+				compatibilityWorkaround,
+				cwd,
+				effectiveArgs: redactedEffectiveArgs,
+				managedSessionRestoreDisabled,
+				redactedArgs,
+				sessionMode,
+				namespace: executionPlan.namespace,
+				sessionName: executionPlan.sessionName,
+				signal,
+				usedImplicitSession: executionPlan.usedImplicitSession,
+			});
+			if (pageScrollTo) return { kind: "early-result", statePatch, result: pageScrollTo };
+		}
+
+		const directAnchorDownload = await tryDirectAnchorDownload({
+			artifactManifest: state.artifactManifest,
+			commandTokens,
+			compatibilityWorkaround,
+			cwd,
+			effectiveArgs: redactedEffectiveArgs,
+			managedSessionRestoreDisabled,
+			redactedArgs,
+			sessionMode,
+			namespace: executionPlan.namespace,
+			sessionName: executionPlan.sessionName,
+			signal,
+			usedImplicitSession: executionPlan.usedImplicitSession,
+		});
+		if (directAnchorDownload) return { kind: "early-result", statePatch: { ...statePatch, artifactManifest: directAnchorDownload.artifactManifest ?? statePatch.artifactManifest }, result: directAnchorDownload.result };
+
+		let pinnedBatchUnwrapMode: PreparedBrowserRun["pinnedBatchUnwrapMode"];
+		let includePinnedNavigationSummary = false;
+		let sessionTabCorrection: PreparedBrowserRun["sessionTabCorrection"];
+		let processArgs = executionPlan.effectiveArgs;
+		let processStdin = preparedArgs.stdin ?? runtimeToolStdin;
+		if (
+			priorSessionTabTarget &&
+			shouldPinSessionTabForCommand({
+				command: executionPlan.commandInfo.command,
+				commandTokens,
+				pinningRequired: sessionTabPinningReason !== undefined,
+				sessionName: executionPlan.sessionName,
+				stdin: runtimeToolStdin,
+			})
+		) {
+			const collectTabSelection = promptRefSnapshot && getGuardedRefUsage(commandTokens, runtimeToolStdin).length > 0 ? collectAnySessionTabSelection : collectSessionTabSelection;
+			const plannedSessionTabSelection = await collectTabSelection({
+				cwd,
+				namespace: executionPlan.namespace,
+				sessionName: executionPlan.sessionName,
+				signal,
+				target: priorSessionTabTarget,
+			});
+			if (plannedSessionTabSelection && executionPlan.sessionName) {
+				if (executionPlan.commandInfo.command === "eval" && runtimeToolStdin !== undefined) {
+					const appliedSessionTabSelection = await applyOpenResultTabCorrection({
+						correction: plannedSessionTabSelection,
+						cwd,
+						namespace: executionPlan.namespace,
+						sessionName: executionPlan.sessionName,
+						signal,
+					});
+					if (!appliedSessionTabSelection) {
+						const error = "agent-browser could not re-select the intended tab before running the command.";
+						return { kind: "early-result", statePatch, result: {
+							content: [{ type: "text", text: error }],
+							details: {
+								args: redactedArgs,
+								command: executionPlan.commandInfo.command,
+								compatibilityWorkaround,
+								effectiveArgs: redactedEffectiveArgs,
+								sessionMode,
+								sessionTabCorrection: plannedSessionTabSelection,
+								...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: error }),
+								nextActions: applyNamespaceToNextActions(buildSessionTabRecoveryNextActions({
+									kind: "tab-drift",
+									resultCategory: "failure",
+									sessionName: executionPlan.sessionName,
+									tabCorrection: plannedSessionTabSelection,
+									target: priorSessionTabTarget,
+								}), executionPlan.namespace),
+								validationError: error,
+								...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+							},
+							isError: true,
+						} };
+					}
+					sessionTabCorrection = appliedSessionTabSelection;
+				} else {
+					const pinnedBatchPlan = buildPinnedBatchPlan({
+						command: executionPlan.commandInfo.command,
+						commandTokens,
+						selectedTab: plannedSessionTabSelection.selectedTab,
+						stdin: runtimeToolStdin,
+					});
+					if (pinnedBatchPlan && "error" in pinnedBatchPlan) {
+						return { kind: "early-result", statePatch, result: {
+							content: [{ type: "text", text: pinnedBatchPlan.error }],
+							details: {
+								args: redactedArgs,
+								command: executionPlan.commandInfo.command,
+								compatibilityWorkaround,
+								effectiveArgs: redactedEffectiveArgs,
+								sessionMode,
+								sessionTabCorrection: plannedSessionTabSelection,
+								...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: pinnedBatchPlan.error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: pinnedBatchPlan.error }),
+								nextActions: applyNamespaceToNextActions(buildSessionTabRecoveryNextActions({
+									kind: "tab-drift",
+									resultCategory: "failure",
+									sessionName: executionPlan.sessionName,
+									tabCorrection: plannedSessionTabSelection,
+									target: priorSessionTabTarget,
+								}), executionPlan.namespace),
+								validationError: pinnedBatchPlan.error,
+								...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+							},
+							isError: true,
+						} };
+					}
+					if (pinnedBatchPlan) {
+						sessionTabCorrection = plannedSessionTabSelection;
+						processArgs = ["--json", ...(executionPlan.namespace ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
+						processStdin = JSON.stringify(pinnedBatchPlan.steps);
+						includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
+						pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;
+					}
 				}
 			}
 		}
-	}
-	const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
-		? await prepareClickDispatchProbe({ commandTokens, cwd, namespace: executionPlan.namespace, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
-		: undefined;
-	let readTimeoutPageUrl = priorSessionTabTarget?.url;
-	if (options.params.timeoutMs === undefined && readTimeoutPageUrl === undefined && executionPlan.sessionName && commandTimeoutNeedsActivePageUrl(commandTokens, processStdin)) {
-		try {
-			const data = await runSessionCommandData({ args: ["get", "url"], cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal });
-			readTimeoutPageUrl = extractStringResultField(data, "result") ?? extractStringResultField(data, "url");
-		} catch {}
-	}
-	const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ?? getCommandAwareProcessTimeoutMs(commandTokens, processStdin, readTimeoutPageUrl);
-	const redactedProcessArgs = redactInvocationArgs(processArgs);
-	const scrollAmount = Number(commandTokens.find((token) => /^\d+(?:\.\d+)?$/.test(token)));
-	const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0 && (state.managedSessionActive || sessionMode === "fresh") && (!Number.isFinite(scrollAmount) || scrollAmount >= 500);
-	const scrollPositionBefore = shouldProbeScrollNoop
-		? await collectScrollPositionSnapshot({ cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal })
-		: undefined;
+		const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
+			? await prepareClickDispatchProbe({ commandTokens, cwd, namespace: executionPlan.namespace, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
+			: undefined;
+		let readTimeoutPageUrl = priorSessionTabTarget?.url;
+		if (options.params.timeoutMs === undefined && readTimeoutPageUrl === undefined && executionPlan.sessionName && commandTimeoutNeedsActivePageUrl(commandTokens, processStdin)) {
+			try {
+				const data = await runSessionCommandData({ args: ["get", "url"], cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal });
+				readTimeoutPageUrl = extractStringResultField(data, "result") ?? extractStringResultField(data, "url");
+			} catch {}
+		}
+		const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ?? getCommandAwareProcessTimeoutMs(commandTokens, processStdin, readTimeoutPageUrl);
+		const redactedProcessArgs = redactInvocationArgs(processArgs);
+		const scrollAmount = Number(commandTokens.find((token) => /^\d+(?:\.\d+)?$/.test(token)));
+		const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0 && (state.managedSessionActive || sessionMode === "fresh") && (!Number.isFinite(scrollAmount) || scrollAmount >= 500);
+		const scrollPositionBefore = shouldProbeScrollNoop
+			? await collectScrollPositionSnapshot({ cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal })
+			: undefined;
 
-	onUpdate?.({
-		content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(redactedProcessArgs)}` }],
-		details: {
-			compatibilityWorkaround,
-			effectiveArgs: redactedProcessArgs,
-			sessionMode,
-			sessionTabCorrection,
-			...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace),
-		},
-	});
+		onUpdate?.({
+			content: [{ type: "text", text: `Running agent-browser ${buildInvocationPreview(redactedProcessArgs)}` }],
+			details: {
+				compatibilityWorkaround,
+				effectiveArgs: redactedProcessArgs,
+				sessionMode,
+				sessionTabCorrection,
+				...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+			},
+		});
 
-	return { kind: "ready", prepared: {
-		commandTokens,
-		compiledElectron,
-		compiledJob,
-		compiledNetworkSourceLookup,
-		compiledQaPreset,
-		compiledSemanticAction,
-		compiledSourceLookup,
-		compatibilityWorkaround,
-		clickDispatchProbe,
-		electronLaunch,
-		exactSensitiveValues,
-		executionPlan,
-		includePinnedNavigationSummary,
-		pinnedBatchUnwrapMode,
-		preparedArgs,
-		priorRefSnapshotState,
-		priorSessionTabTarget,
-		processArgs,
-		processStdin,
-		processTimeoutMs,
-		redactedArgs,
-		redactedCompiledElectron,
-		redactedCompiledJob,
-		redactedCompiledNetworkSourceLookup,
-		redactedCompiledQaPreset,
-		redactedCompiledSemanticAction,
-		redactedCompiledSourceLookup,
-		redactedEffectiveArgs,
-		redactedProcessArgs,
-		redactedRecoveryHint,
-		resolvedSemanticActionRefSnapshot,
-		runtimeToolArgs,
-		runtimeToolStdin,
-		scrollPositionBefore,
-		sessionMode,
-		sessionTabCorrection,
-		sessionTabPinningReason,
-		shouldProbeScrollNoop,
-		statePatch,
-		userRequestedJson,
-	} };
+		managedSessionPolicyLockTransferred = true;
+		electronLaunchTransferred = true;
+		return {
+			kind: "ready",
+			prepared: {
+				commandTokens,
+				managedSessionPolicyLock,
+				compiledElectron,
+				compiledJob,
+				compiledNetworkSourceLookup,
+				compiledQaPreset,
+				compiledSemanticAction,
+				compiledSourceLookup,
+				compatibilityWorkaround,
+				clickDispatchProbe,
+				electronLaunch,
+				exactSensitiveValues,
+				executionPlan,
+				includePinnedNavigationSummary,
+				ownedManagedSessionContext: ownedManagedSession,
+				pinnedBatchUnwrapMode,
+				preparedArgs,
+				priorRefSnapshotState,
+				priorSessionTabTarget,
+				priorSessionTabTargetUnknown,
+				processArgs,
+				processStdin,
+				processTimeoutMs,
+				redactedArgs,
+				redactedCompiledElectron,
+				redactedCompiledJob,
+				redactedCompiledNetworkSourceLookup,
+				redactedCompiledQaPreset,
+				redactedCompiledSemanticAction,
+				redactedCompiledSourceLookup,
+				redactedEffectiveArgs,
+				redactedProcessArgs,
+				redactedRecoveryHint,
+				resolvedSemanticActionRefSnapshot,
+				runtimeToolArgs,
+				runtimeToolStdin,
+				scrollPositionBefore,
+				sessionMode,
+				sessionTabCorrection,
+				sessionTabPinningReason,
+				shouldProbeScrollNoop,
+				statePatch,
+				userRequestedJson,
+			},
+		};
+		});
+	} finally {
+		if (!managedSessionPolicyLockTransferred) await managedSessionPolicyLock?.release();
+		if (electronLaunch && !electronLaunchTransferred) {
+			try {
+				const cleanup = await cleanupElectronLaunchResources({
+					child: electronLaunch.child,
+					record: electronLaunch.record,
+					timeoutMs: options.implicitSessionCloseTimeoutMs,
+				});
+				if (cleanup.partial) {
+					state.electronLaunchRecords.set(cleanup.launchId, cleanup.record);
+					state.electronChildProcesses.set(cleanup.launchId, electronLaunch.child);
+				}
+			} catch {
+				state.electronLaunchRecords.set(electronLaunch.record.launchId, electronLaunch.record);
+				state.electronChildProcesses.set(electronLaunch.record.launchId, electronLaunch.child);
+			}
+		}
+	}
 }

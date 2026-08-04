@@ -268,10 +268,11 @@ if (args.includes("click")) {
 			);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 3);
-			assert.equal(invocations[0]?.args.includes("click"), true);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "get", "title"]);
+			assert.equal(invocations.length, 4);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.equal(invocations[1]?.args.includes("click"), true);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "get", "title"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -407,6 +408,8 @@ if (args.includes("open")) {
   ]));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e1" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/", url: "https://example.com/" } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Example Domain", url: "https://example.com/" } } }));
 } else {
@@ -432,11 +435,12 @@ if (args.includes("open")) {
 			});
 			assert.equal(extraction.isError, false, JSON.stringify(extraction));
 			assert.deepEqual(extraction.details?.sessionTabTarget, { title: undefined, url: "https://example.com/" });
+			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.args.includes("get") && entry.args.includes("url")), true);
 
 			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(click.isError, false, JSON.stringify(click));
 			assert.notEqual(click.details?.failureCategory, "stale-ref");
-			assert.deepEqual(click.details?.sessionTabTarget, { title: "Example Domain", url: "https://example.com/" });
+			assert.deepEqual(click.details?.sessionTabTarget, { title: undefined, url: "https://example.com/" });
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

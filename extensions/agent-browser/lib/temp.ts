@@ -6,28 +6,25 @@
  * Invariants/Assumptions: Temp artifacts live under the OS temp directory, each active run uses a dedicated 0700 directory, files are created with exclusive 0600 permissions, session-scoped persisted artifacts stay under the pi session directory, and stale pruning only touches roots with an explicit pi-agent-browser ownership marker.
  */
 
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
-
 import { isRecord, parsePositiveInteger } from "./parsing.js";
+import { processStartIdentitiesMatch, readProcessStartIdentity } from "./process-identity.js";
 
 const TEMP_ROOT_PREFIX = "pi-agent-browser-";
 const TEMP_ROOT_MARKER_FILE_NAME = ".pi-agent-browser-owner.json";
 const TEMP_ROOT_MARKER_KIND = "pi-agent-browser-temp-root";
-const TEMP_ROOT_MARKER_VERSION = 1;
+const TEMP_ROOT_LEGACY_MARKER_VERSION = 1;
+const TEMP_ROOT_MARKER_VERSION = 2;
 const STALE_TEMP_ROOT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const TEMP_ROOT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES";
 const DEFAULT_TEMP_ROOT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES";
 const DEFAULT_SESSION_ARTIFACT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACTS_ROOT_DIR_NAME = ".pi-agent-browser-artifacts";
-const PROCESS_START_IDENTITY_TIMEOUT_MS = 1_000;
-const execFileAsync = promisify(execFile);
 
 export interface PersistentSessionArtifactStore {
 	protectedPaths?: readonly string[];
@@ -89,7 +86,7 @@ function isProtectedTempChildName(value: unknown): value is string {
 
 function isTempRootOwnershipRecord(value: unknown): value is TempRootOwnershipRecord {
 	if (!isRecord(value)) return false;
-	if (value.kind !== TEMP_ROOT_MARKER_KIND || value.version !== TEMP_ROOT_MARKER_VERSION) return false;
+	if (value.kind !== TEMP_ROOT_MARKER_KIND || ![TEMP_ROOT_LEGACY_MARKER_VERSION, TEMP_ROOT_MARKER_VERSION].includes(value.version as number)) return false;
 	if (!isPositiveFiniteNumber(value.createdAtMs)) return false;
 	if (value.leaseUpdatedAtMs !== undefined && !isPositiveFiniteNumber(value.leaseUpdatedAtMs)) return false;
 	if (value.ownerPid !== undefined) {
@@ -197,6 +194,7 @@ async function persistProtectedTempChildren(tempRoot: string, protectedChildren:
 		...ownershipMarker,
 		leaseUpdatedAtMs: Date.now(),
 		protectedChildNames: childNames,
+		version: TEMP_ROOT_MARKER_VERSION,
 	});
 }
 
@@ -227,17 +225,7 @@ async function removeTempRootChildrenExcept(tempRoot: string, protectedChildren:
 }
 
 async function getProcessStartIdentity(pid: number | undefined): Promise<string | undefined> {
-	if (pid === undefined) return undefined;
-	if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
-	try {
-		const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], {
-			timeout: PROCESS_START_IDENTITY_TIMEOUT_MS,
-		});
-		const identity = stdout.trim().replace(/\s+/g, " ");
-		return identity || undefined;
-	} catch {
-		return undefined;
-	}
+	return pid === undefined ? undefined : await readProcessStartIdentity(pid);
 }
 
 export async function writeSecureTempRootOwnershipMarker(
@@ -265,12 +253,9 @@ async function refreshSecureTempRootLease(tempRoot: string): Promise<void> {
 	const currentUid = getCurrentProcessUid();
 	if (currentUid !== undefined && ownershipMarker.ownerUid !== undefined && ownershipMarker.ownerUid !== currentUid) return;
 	const currentProcessStartIdentity = await getProcessStartIdentity(process.pid);
-	if (
-		ownershipMarker.ownerProcessStartIdentity !== undefined &&
-		currentProcessStartIdentity !== undefined &&
-		ownershipMarker.ownerProcessStartIdentity !== currentProcessStartIdentity
-	) {
-		return;
+	if (ownershipMarker.ownerProcessStartIdentity !== undefined && currentProcessStartIdentity !== undefined) {
+		const identitiesMatch = processStartIdentitiesMatch(ownershipMarker.ownerProcessStartIdentity, currentProcessStartIdentity);
+		if (identitiesMatch === false) return;
 	}
 	const refreshedMarker: TempRootOwnershipRecord = {
 		...ownershipMarker,
@@ -278,6 +263,7 @@ async function refreshSecureTempRootLease(tempRoot: string): Promise<void> {
 		ownerPid: process.pid,
 		ownerProcessStartIdentity: currentProcessStartIdentity ?? ownershipMarker.ownerProcessStartIdentity,
 		ownerUid: currentUid,
+		version: TEMP_ROOT_MARKER_VERSION,
 	};
 	await writeTempRootOwnershipMarkerRecord(tempRoot, refreshedMarker);
 }
@@ -297,7 +283,8 @@ async function getMarkerOwnerLiveness(ownershipMarker: TempRootOwnershipRecord):
 	if (ownershipMarker.ownerProcessStartIdentity === undefined || currentProcessStartIdentity === undefined) {
 		return "unknown";
 	}
-	return ownershipMarker.ownerProcessStartIdentity === currentProcessStartIdentity ? "alive" : "dead";
+	const identitiesMatch = processStartIdentitiesMatch(ownershipMarker.ownerProcessStartIdentity, currentProcessStartIdentity);
+	return identitiesMatch === undefined ? "unknown" : identitiesMatch ? "alive" : "dead";
 }
 
 async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise<void> {

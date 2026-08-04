@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,7 +17,6 @@ import {
 	cleanupSecureTempArtifacts,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
-	TEST_SESSION_ID,
 	createExtensionHarness,
 	createToolBranchEntry,
 	executeRegisteredTool,
@@ -254,7 +253,10 @@ test("agentBrowserExtension keeps stale-ref guidance when tab pinning wraps a co
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-if (args.includes("batch")) {
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
+  process.exit(0);
+} else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify([
     { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
     { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
@@ -309,7 +311,10 @@ test("agentBrowserExtension keeps stale-ref guidance for user batch stdin wrappe
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const args = process.argv.slice(2);
-if (args.includes("batch")) {
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
+  process.exit(0);
+} else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify([
     { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
     { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
@@ -399,7 +404,10 @@ test("agentBrowserExtension reports wrapper-assisted fallback failures with effe
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-if (args.includes("batch")) {
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
+  process.exit(0);
+} else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify([
     { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
     { command: ["get", "title"], success: false, result: { title: "Wrong page" } }
@@ -441,23 +449,24 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 			assert.match(text, /Wrapper recovery hint:/);
 			assert.match(text, /tab list/);
 			assert.deepEqual(result.details?.effectiveArgs, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String((await readInvocationLog(logPath))[1]?.stdin ?? "[]")), [["tab", "t1"], ["get", "title"]]);
+			assert.deepEqual(JSON.parse(String((await readInvocationLog(logPath))[2]?.stdin ?? "[]")), [["tab", "t1"], ["get", "title"]]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 
-test("agentBrowserExtension preserves full spilled stdout for oversized parse failures", { concurrency: false }, async () => {
+test("agentBrowserExtension discards oversized malformed output instead of persisting browser secrets", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-"));
 	const sessionFile = join(sessionDir, "session.jsonl");
 	const basePath = process.env.PATH ?? "";
 	const sentinel = "RQ-0006-parse-failure-sentinel";
+	const restoreKey = `piab-r2-${"a".repeat(32)}`;
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`process.stdout.write("x".repeat(600000) + ${JSON.stringify(sentinel)});`,
+		`process.stdout.write("x".repeat(600000) + ${JSON.stringify(restoreKey + sentinel)});`,
 	);
 
 	try {
@@ -466,28 +475,17 @@ test("agentBrowserExtension preserves full spilled stdout for oversized parse fa
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["snapshot", "-i"],
+				args: ["state", "show", "caller-owned.json"],
 			});
 
 			assert.equal(result.isError, true);
 			assert.match(String(result.details?.parseError ?? ""), /invalid JSON/i);
-			assert.equal(result.content[0]?.type, "text");
-			assert.match((result.content[0] as { text: string }).text, /Full output path: /);
-			assert.equal(typeof result.details?.fullOutputPath, "string");
-			assert.equal(result.details?.fullOutputUnavailable, undefined);
-			const fullOutputPath = result.details?.fullOutputPath as string;
-			assert.equal(fullOutputPath.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
-			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
-			assert.equal(manifest?.liveCount, 1);
-			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
-			assert.equal(manifest?.entries?.[0]?.retentionState, "live");
-			assert.equal(manifest?.entries?.[0]?.storageScope, "persistent-session");
-			assert.match(String(result.details?.artifactRetentionSummary), /1 live, 0 evicted/);
-			const stats = await stat(fullOutputPath);
-			assert.ok(stats.size > 512 * 1024);
-			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+			assert.equal(result.details?.fullOutputPath, undefined);
+			assert.match(String(result.details?.fullOutputUnavailable ?? ""), /discarded because it may contain sensitive browser data/);
+			assert.equal(result.details?.artifactManifest, undefined);
+			assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
+			assert.doesNotMatch(JSON.stringify(result), /piab-r2-[a-f\d]{32}/);
 			await runExtensionEvent(harness.handlers, "session_shutdown");
-			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
@@ -496,7 +494,7 @@ test("agentBrowserExtension preserves full spilled stdout for oversized parse fa
 	}
 });
 
-test("agentBrowserExtension persists parse-failure output when only a session directory is available", { concurrency: false }, async () => {
+test("agentBrowserExtension discards malformed spills when only a session directory is available", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-only-"));
@@ -517,16 +515,10 @@ test("agentBrowserExtension persists parse-failure output when only a session di
 			});
 
 			assert.equal(result.isError, true);
-			const fullOutputPath = result.details?.fullOutputPath;
-			assert.equal(typeof fullOutputPath, "string");
-			if (typeof fullOutputPath !== "string") assert.fail("expected fullOutputPath to be a string");
-			assert.equal(fullOutputPath.startsWith(join(sessionDir, ".pi-agent-browser-artifacts", TEST_SESSION_ID)), true);
-			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
-			assert.equal(manifest?.liveCount, 1);
-			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
-			assert.equal(manifest?.entries?.[0]?.retentionState, "live");
-			assert.equal(manifest?.entries?.[0]?.storageScope, "persistent-session");
-			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+			assert.equal(result.details?.fullOutputPath, undefined);
+			assert.match(String(result.details?.fullOutputUnavailable ?? ""), /discarded because it may contain sensitive browser data/);
+			assert.equal(result.details?.artifactManifest, undefined);
+			assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
@@ -535,7 +527,7 @@ test("agentBrowserExtension persists parse-failure output when only a session di
 	}
 });
 
-test("agentBrowserExtension returns temp full-output path for oversized parse failures without session artifacts", { concurrency: false }, async () => {
+test("agentBrowserExtension discards malformed spills without session artifacts", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";
@@ -557,20 +549,10 @@ test("agentBrowserExtension returns temp full-output path for oversized parse fa
 
 			assert.equal(result.isError, true);
 			assert.match(String(result.details?.parseError ?? ""), /invalid JSON/i);
-			assert.equal(result.content[0]?.type, "text");
-			assert.match((result.content[0] as { text: string }).text, /Full output path: /);
-			assert.equal(typeof result.details?.fullOutputPath, "string");
-			assert.equal(result.details?.fullOutputUnavailable, undefined);
-			const fullOutputPath = result.details?.fullOutputPath as string;
-			const manifest = result.details?.artifactManifest as { entries?: Array<{ path?: string; retentionState?: string; storageScope?: string }>; liveCount?: number } | undefined;
-			assert.equal(manifest?.liveCount, 0);
-			assert.equal(manifest?.entries?.[0]?.path, fullOutputPath);
-			assert.equal(manifest?.entries?.[0]?.retentionState, "ephemeral");
-			assert.equal(manifest?.entries?.[0]?.storageScope, "process-temp");
-			assert.match(String(result.details?.artifactRetentionSummary), /0 live, 0 evicted, 1 ephemeral/);
-			const stats = await stat(fullOutputPath);
-			assert.ok(stats.size > 512 * 1024);
-			assert.match(await readFile(fullOutputPath, "utf8"), new RegExp(`${sentinel}$`));
+			assert.equal(result.details?.fullOutputPath, undefined);
+			assert.match(String(result.details?.fullOutputUnavailable ?? ""), /discarded because it may contain sensitive browser data/);
+			assert.equal(result.details?.artifactManifest, undefined);
+			assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
