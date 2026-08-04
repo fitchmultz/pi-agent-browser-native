@@ -1,4 +1,3 @@
-
 const MANAGED_SESSION_RESTORE_KEY_PATTERN = /piab-r(?:2)?-[a-f\d]{32}/gi;
 const MANAGED_SESSION_RESTORE_KEY_EXACT_PATTERN = /^piab-r2-[a-f\d]{32}$/i;
 const WRAPPER_MANAGED_SESSION_PREFIX = "piab-";

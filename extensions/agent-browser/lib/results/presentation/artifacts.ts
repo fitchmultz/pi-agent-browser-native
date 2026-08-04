@@ -1,7 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 
-
 import { isRecord, parsePositiveInteger } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import {
@@ -21,8 +20,6 @@ import type {
 	SessionArtifactManifestEntry,
 	ToolPresentation,
 } from "../contracts.js";
-
-
 
 const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
 	".gif": "image/gif",

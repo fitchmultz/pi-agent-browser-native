@@ -1,9 +1,4 @@
 // @ts-check
-/**
- * Purpose: Canonical pi-agent-browser-native config policy shared by runtime and setup CLI.
- * Responsibilities: Own config paths, provider descriptors, credential source parsing, layer validation/merge, status projection, and redacted summaries.
- * Scope: Pure configuration policy plus synchronous status loading; secret command execution and browser/web-search runtime calls live elsewhere.
- */
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
