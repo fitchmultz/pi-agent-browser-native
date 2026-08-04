@@ -114,8 +114,8 @@ export interface UpstreamGlobalFlagOccurrence {
 const SESSION_COMPONENT_ALPHANUMERIC = /^[\p{Alphabetic}\p{Number}]$/u;
 
 /** Match upstream's last-wins, case-sensitive boolean semantics; only exact `false` disables a present flag. */
-export function isBooleanFlagEnabled(args: string[], flag: string): boolean {
-	let enabled = false;
+export function getBooleanFlagValue(args: string[], flag: string): boolean | undefined {
+	let enabled: boolean | undefined;
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
 		if (token === flag) {
@@ -130,6 +130,10 @@ export function isBooleanFlagEnabled(args: string[], flag: string): boolean {
 		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token) && ["true", "false"].includes(args[index + 1] ?? "")) index += 1;
 	}
 	return enabled;
+}
+
+export function isBooleanFlagEnabled(args: string[], flag: string): boolean {
+	return getBooleanFlagValue(args, flag) ?? false;
 }
 
 /** Mirror upstream sanitize_session_component for namespace/socket/state identity. */

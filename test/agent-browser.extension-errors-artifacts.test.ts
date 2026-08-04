@@ -626,6 +626,9 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal(afterCloudflareOpen.filter((entry) => entry.args.includes("session") && entry.args.includes("info")).length, 2);
 			const cloudflareInvocation = afterCloudflareOpen.find((entry) => entry.args.includes("https://dash.cloudflare.com"));
 			assert.ok(cloudflareInvocation?.args.includes("--user-agent"));
+			const cloudflareBrowserArgs = cloudflareInvocation?.args[cloudflareInvocation.args.indexOf("--args") + 1] ?? "";
+			assert.match(cloudflareBrowserArgs, /^--user-agent=.*Chrome\/\d+\.0\.0\.0/);
+			assert.doesNotMatch(cloudflareBrowserArgs, /[,\r\n]/);
 			assert.match(String((cloudflareInvocation as { userAgent?: string } | undefined)?.userAgent), /Chrome\/\d+\.0\.0\.0/);
 			assert.equal((cloudflareInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
 
@@ -635,6 +638,7 @@ if (args.includes("session") && args.includes("info")) {
 			const afterCloudflareFollowup = await readInvocationLog(logPath);
 			const followupInvocation = afterCloudflareFollowup.filter((entry) => entry.args.includes("snapshot")).at(-1);
 			assert.ok(followupInvocation?.args.includes("--user-agent"));
+			assert.equal(followupInvocation?.args[followupInvocation.args.indexOf("--args") + 1], cloudflareBrowserArgs);
 			assert.equal((followupInvocation as { userAgent?: string } | undefined)?.userAgent, (cloudflareInvocation as { userAgent?: string } | undefined)?.userAgent);
 			const userInvocationCount = async () => (await readInvocationLog(logPath))
 				.filter((entry) => !(entry.args.includes("session") && entry.args.includes("info"))).length;
