@@ -95,4 +95,3 @@ export function alignPageChangeSummaryNextActionIds<T extends { nextActionIds?: 
 	const alignedIds = summary.nextActionIds.filter((id) => nextActionIds.has(id));
 	return alignedIds.length > 0 ? { ...summary, nextActionIds: alignedIds } : { ...summary, nextActionIds: undefined };
 }
-

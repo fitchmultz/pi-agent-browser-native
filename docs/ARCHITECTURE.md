@@ -109,7 +109,7 @@ Why:
 - keeps reload and exact-session relaunch validation tied to Pi's configured-source lifecycle instead of an isolated quick-test path, while `session_tree` state changes stay covered by focused extension harness tests
 - keeps the published tarball focused on the package manifest, extension code, canonical docs, and license
 
-The published package should exclude agent-only and internal planning materials such as `AGENTS.md` and `docs/plans/`.
+The published package should exclude agent-only and internal planning materials such as `AGENTS.md`.
 
 ## Session model
 

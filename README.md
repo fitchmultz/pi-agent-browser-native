@@ -606,7 +606,6 @@ npm run verify -- pre-pr
 
 That mode composes the full default gate with `npm run verify -- package`, so package contents and forbidden repo-only files are checked without launching Pi lifecycle, Crabbox, or live dogfood flows. Package modes build through npm `prepare`; lifecycle and startup-profile build in their focused scripts; default and platform-target build before consuming `dist/`, so clean checkouts do not validate stale or missing compiled output. The same `prepare` script owns GitHub/source installs; when Pi installs with `npm install --omit=dev`, it installs the source-build dev dependencies with lifecycle scripts disabled before building the ignored `dist/` entrypoint that Pi loads.
 
-It does not launch a browser or mutate local profiles; it models representative raw workflows and provides a stable baseline for later comparisons.
 
 The opt-in startup profiler measures only the package extension entrypoint import plus factory registration in fresh Node processes. It intentionally does **not** launch Pi, tmux, mise, npm, browsers, or `agent-browser`; full Pi TUI ready-prompt profiling proved too invasive for routine verification on the operator machine. Run it after package entrypoint, generated runtime, or top-level import changes:
 

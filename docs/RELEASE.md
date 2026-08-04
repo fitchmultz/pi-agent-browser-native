@@ -38,7 +38,7 @@ For PR-ready local confidence before release-only lifecycle and platform cost, r
 npm run verify -- pre-pr
 ```
 
-`pre-pr` composes the default gate with `npm run verify -- package`: generated docs, clean `dist/` build, TypeScript, the full unit/fake suite, live command-reference sampling, and package-content verification. It intentionally does not run lifecycle, packaged Pi smoke, Crabbox platform smoke, startup-profile, real-upstream, dogfood modes.
+`pre-pr` composes the default gate with `npm run verify -- package`: generated docs, clean `dist/` build, TypeScript, the full unit/fake suite, live command-reference sampling, and package-content verification. It intentionally does not run lifecycle, packaged Pi smoke, Crabbox platform smoke, startup-profile, real-upstream or dogfood modes.
 
 `npm run verify -- release` runs:
 
@@ -182,7 +182,6 @@ The packaged execution smoke intentionally uses a temporary fake `agent-browser`
 Current forbidden packed files include:
 
 - `AGENTS.md`
-- internal planning docs under `docs/plans/`
 - `.pi/extensions/agent-browser.ts`
 - TypeScript extension source and other test/repo-only maintenance files
 

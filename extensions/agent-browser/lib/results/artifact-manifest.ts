@@ -1,7 +1,6 @@
 import { isRecord } from "../parsing.js";
 import type { FileArtifactKind, FileArtifactMetadata, SessionArtifactManifest, SessionArtifactManifestEntry } from "./contracts.js";
 
-
 export function isPendingRecordingCommand(command: string | undefined, subcommand: string | undefined, kind: FileArtifactKind | undefined): boolean {
 	return command === "record" && (subcommand === "start" || subcommand === "restart") && kind === "video";
 }
@@ -9,7 +8,6 @@ export function isPendingRecordingCommand(command: string | undefined, subcomman
 export function isPendingRecordingArtifact(artifact: FileArtifactMetadata): boolean {
 	return isPendingRecordingCommand(artifact.command, artifact.subcommand, artifact.kind);
 }
-
 
 export const SESSION_ARTIFACT_MANIFEST_VERSION = 1;
 export const SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES_ENV = "PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES";
