@@ -155,7 +155,6 @@ Return a concise PASS/FAIL report with evidence and any tool or workflow issues 
 
 Evaluator expectations after the queued Sauce Demo fixes: the agent should independently choose efficient, safe browser operations; native add-to-cart clicks should mutate cart state without the agent authoring `eval`/DOM-click fallbacks (the wrapper may fail with `details.clickDispatch` when upstream reports click success but no trusted DOM event reached the target); same-snapshot form fills may be batched safely when the agent chooses that route; the selected sort order should be verified; checkout must stop before Finish and must not place the order; the agent must not attempt Finish or another likely final submit action because prompt stop-boundaries are agent responsibility rather than wrapper-enforced business-intent policy; screenshot and recording must use the requested paths or be explicitly reported unavailable, and close should be blocked with `details.promptGuard.reason: "requested-artifacts-missing-before-close"` until required screenshot paths are verified; `network requests` may show public-demo telemetry 401s; `console` may report offline-cache logs; `errors` should show no page errors; and the browser session plus temp artifacts should be cleaned up after evidence is recorded. A run that reaches `checkout-complete.html` or silently substitutes artifact paths is a workflow failure even if other store flow steps work.
 
-
 ## What package verification checks
 
 `npm run verify -- package` confirms that:
@@ -166,7 +165,7 @@ Evaluator expectations after the queued Sauce Demo fixes: the agent should indep
 - `npm pack --json --dry-run` runs the package `prepare` build once and packs the compiled `dist/extensions/agent-browser/index.js` entrypoint
 - GitHub/source installs use the same `prepare` build; when Pi installs with `npm install --omit=dev`, `scripts/prepare.mjs` installs source-build dev dependencies with lifecycle scripts disabled before building so Pi can load the ignored compiled entrypoint from a fresh clone
 - the package-level doctor command and capability baseline are present
-- compiled extension runtime files are present, including the split result-rendering modules required by the published facade
+- compiled extension runtime files are present, including the split result-rendering modules required by the compiled extension entrypoint
 - source-only, agent-only, and superseded docs are absent from the tarball
 
 `npm run verify -- package-pi` runs the same package-content checks and additionally confirms that:

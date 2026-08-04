@@ -1,6 +1,6 @@
-import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { rm } from "node:fs/promises";
 
+import type { PersistentSessionArtifactStore } from "../../temp.js";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { runAgentBrowserProcess } from "../../process.js";
@@ -45,8 +45,8 @@ import type { AboutBlankSessionMismatch,
 	PinnedBatchPlan,
 	PinnedBatchUnwrapMode,
 	StaleRefPreflight,
-	TraceOwner,
 	BrowserRunContext,
+	TraceOwner,
 } from "./types.js";
 
 export const NAVIGATION_SUMMARY_EVAL = `({ title: document.title, url: location.href })`;

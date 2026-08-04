@@ -363,7 +363,6 @@ If `cleanup` returns `failureCategory: "cleanup-failed"`, inspect `details.elect
 - Fake-upstream Electron discovery/lifecycle tests cover list/launch/status/probe/cleanup without a real app.
 - Real-app validation is a manual `tmux` smoke pass per `AGENTS.md`. Electron is a narrow typed lifecycle (`list`/`launch`/`status`/`probe`/`cleanup`) adopted because agents repeatedly failed the manual discover→debug-port→attach→cleanup sequence; it is not a generic recipe runtime (`RQ-0068` / `RQ-0096`).
 
-
 ## Where to go next
 
 - For exact field semantics, schemas, and `details.*` payloads: [`TOOL_CONTRACT.md#electron`](TOOL_CONTRACT.md#electron) and [`TOOL_CONTRACT.md#qa`](TOOL_CONTRACT.md#qa).

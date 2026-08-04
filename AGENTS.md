@@ -133,7 +133,6 @@ This module is **pre-spawn planning only**: it validates raw `args`, derives imp
 
 Product-facing behavior and rationale live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) under **Session model** / **Launch flags**; agent-visible fields live in [`docs/TOOL_CONTRACT.md`](docs/TOOL_CONTRACT.md) (`sessionMode`, `sessionRecoveryHint`, `managedSessionRestoreDisabled`, `effectiveArgs`).
 
-
 ### Maintainer rebaselining workflow
 
 Use this sequence when upstream ships a new `agent-browser` version or help text changes enough to break the live verifier:
