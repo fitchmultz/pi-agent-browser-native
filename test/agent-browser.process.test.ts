@@ -166,6 +166,10 @@ test("pinAgentBrowserFileAccessDisabled overrides config raw args and forces the
 		pinAgentBrowserFileAccessDisabled(["open", "about:blank"], "Chrome, not Headless\n"),
 		["--args", "--user-agent=Chrome not Headless", "--allow-file-access", "false", "open", "about:blank"],
 	);
+	assert.deepEqual(
+		pinAgentBrowserFileAccessDisabled(["--allow-file-access", "false", "get", "url"], undefined, true),
+		["get", "url"],
+	);
 });
 
 test("runAgentBrowserProcess neutralizes environment raw browser args and pins an empty upstream config", { concurrency: false }, async () => {
@@ -174,17 +178,24 @@ test("runAgentBrowserProcess neutralizes environment raw browser args and pins a
 	const basePath = process.env.PATH ?? "";
 	await writeFile(binaryPath, `#!/usr/bin/env node
 const config = process.env.AGENT_BROWSER_CONFIG;
-process.stdout.write(JSON.stringify({ success: true, data: { args: process.argv.slice(2), config, configContent: config ? require("node:fs").readFileSync(config, "utf8") : null, envArgs: process.env.AGENT_BROWSER_ARGS ?? null } }));\n`, "utf8");
+process.stdout.write(JSON.stringify({ success: true, data: { allowFileAccessEnv: process.env.AGENT_BROWSER_ALLOW_FILE_ACCESS ?? null, args: process.argv.slice(2), config, configContent: config ? require("node:fs").readFileSync(config, "utf8") : null, envArgs: process.env.AGENT_BROWSER_ARGS ?? null } }));\n`, "utf8");
 	await chmod(binaryPath, 0o755);
 	try {
 		await withPatchedEnv({ AGENT_BROWSER_ARGS: "--disable-gpu", PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 			const result = await runAgentBrowserProcess({ args: ["open", "about:blank"], cwd: tempDir });
 			const parsed = await parseAgentBrowserEnvelope(result.stdout);
-			const data = parsed.envelope?.data as { args?: string[]; config?: string; configContent?: string | null; envArgs?: string | null };
+			const data = parsed.envelope?.data as { allowFileAccessEnv?: string | null; args?: string[]; config?: string; configContent?: string | null; envArgs?: string | null };
 			assert.deepEqual(data.args?.slice(0, 4), ["--args", "", "--allow-file-access", "false"]);
 			assert.equal(data.configContent, "{}\n");
 			assert.match(data.config ?? "", /managed-restore-config/);
 			assert.equal(data.envArgs, null);
+		});
+		await withPatchedEnv({ AGENT_BROWSER_ALLOW_FILE_ACCESS: "true", PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
+			const result = await runAgentBrowserProcess({ args: ["--allow-file-access", "false", "get", "url"], cwd: tempDir, preserveAttachedBrowserSession: true });
+			const parsed = await parseAgentBrowserEnvelope(result.stdout);
+			const data = parsed.envelope?.data as { allowFileAccessEnv?: string | null; args?: string[] };
+			assert.equal(data.allowFileAccessEnv, null);
+			assert.deepEqual(data.args, ["get", "url"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -72,6 +72,7 @@ export interface OwnedManagedSessionReference {
 
 export interface BrowserRunState {
 	allowedDomainsBySession: Map<string, AllowedDomainsPolicy>;
+	attachedSessionKeys: Set<string>;
 	artifactManifest?: SessionArtifactManifest;
 	closedManagedSessionNames: Set<string>;
 	electronChildProcesses: Map<string, ChildProcess>;
@@ -108,11 +109,13 @@ export interface BrowserRunOptions {
 	cwd: string;
 	electronPostCommandStatusSettleMs: number;
 	electronProfileIsolationDetails: unknown;
+	establishAttachedBrowserSession?: boolean;
 	implicitSessionCloseTimeoutMs: number;
 	implicitSessionIdleTimeoutMs: string;
 	input: ResolvedAgentBrowserValidInput;
 	onUpdate?: (result: AgentToolResult<unknown>) => void;
 	params: AgentBrowserExecuteParams;
+	preserveAttachedBrowserSession?: boolean;
 	promptPolicy: PromptPolicy;
 	sessionPageStateUpdate: ReturnType<SessionPageState["beginUpdate"]>;
 	signal?: AbortSignal;

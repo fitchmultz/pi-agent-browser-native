@@ -18,6 +18,7 @@ import {
 } from "../../managed-session-restore.js";
 import { getManagedSessionStateAccessValidationError } from "../../managed-session-state-policy.js";
 import { isRecord } from "../../parsing.js";
+import { withAttachedBrowserSessionContext } from "../../process.js";
 import { buildAgentBrowserNextActions, buildAgentBrowserResultCategoryDetails } from "../../results.js";
 import { appendUniqueAgentBrowserNextActions } from "../../results/next-actions.js";
 import { extractRefSnapshotFromData, getSessionPageStateKey, isAboutBlankUrl, normalizeSessionTabTarget, type SessionPageState, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
@@ -716,6 +717,7 @@ function buildElectronProbeResult(options: {
 }
 
 interface ElectronHostLaunchCleanupState {
+	attachedSessionKeys: ReadonlySet<string>;
 	electronChildProcesses: Map<string, ChildProcess>;
 	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
 	managedSessionRestoreState: ManagedSessionRestoreState;
@@ -729,7 +731,7 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 	const results: ElectronCleanupResult[] = [];
 	for (const record of options.records) {
 		const managedSessionCloseError = record.sessionName
-			? await closeManagedSession({ cwd: options.cwd, restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
+			? await closeManagedSession({ cwd: options.cwd, preserveAttachedBrowserSession: options.attachedSessionKeys.has(getSessionPageStateKey(record.sessionName) ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
 			: undefined;
 		const managedSessionStep = record.sessionName
 			? managedSessionCloseError
@@ -776,6 +778,7 @@ export async function cleanupActiveElectronHostLaunches(options: ElectronHostLau
 }
 
 export async function handleElectronHostInput(options: {
+	attachedSessionKeys: ReadonlySet<string>;
 	compiledElectron?: CompiledAgentBrowserElectron;
 	cwd: string;
 	electronChildProcesses: Map<string, ChildProcess>;
@@ -789,7 +792,15 @@ export async function handleElectronHostInput(options: {
 	sessionPageState: SessionPageState;
 	signal?: AbortSignal;
 }): Promise<AgentBrowserToolResult | undefined> {
+	const currentSessionKey = getSessionPageStateKey(options.managedSessionName, options.managedSessionNamespace) ?? options.managedSessionName;
+	const preserveAttachedBrowserSession = options.attachedSessionKeys.has(currentSessionKey)
+		|| [...options.electronLaunchRecords.values()].some((record) => record.sessionName !== undefined && options.attachedSessionKeys.has(getSessionPageStateKey(record.sessionName) ?? record.sessionName));
+	return await withAttachedBrowserSessionContext(preserveAttachedBrowserSession, () => handleElectronHostInputInContext(options));
+}
+
+async function handleElectronHostInputInContext(options: Parameters<typeof handleElectronHostInput>[0]): Promise<AgentBrowserToolResult | undefined> {
 	const {
+		attachedSessionKeys,
 		compiledElectron,
 		cwd,
 		electronChildProcesses,
@@ -954,7 +965,7 @@ export async function handleElectronHostInput(options: {
 	if (compiledElectron?.action === "cleanup") {
 		const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);
 		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
-		const cleanupResults = await cleanupTrackedElectronHostLaunches({ cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
+		const cleanupResults = await cleanupTrackedElectronHostLaunches({ attachedSessionKeys, cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
 		return buildElectronCleanupResult(redactedCompiledElectron ?? compiledElectron, cleanupResults);
 	}
 	return undefined;

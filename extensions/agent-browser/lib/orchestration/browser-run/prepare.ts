@@ -539,12 +539,17 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const priorRefSnapshotState = priorSessionPageState.refSnapshot;
 		const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
 		let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
-		let callerOwnedLivePageVerified = false;
+		let livePageVerified = false;
 		const isCallerOwnedExplicitSession = () => executionPlan.sessionName !== undefined
 			&& executionPlan.usedImplicitSession === false
 			&& ownedManagedSession === undefined;
-		const verifyCallerOwnedLivePage = async (options: { args: string[]; requirement?: string; stdin?: string }) => {
-			if (!options.requirement || !executionPlan.sessionName) return;
+		const requiresLivePageVerification = () => isCallerOwnedExplicitSession() || options.preserveAttachedBrowserSession === true;
+		const verifyLivePage = async (request: { args: string[]; requirement?: string; stdin?: string }) => {
+			if (!request.requirement || !executionPlan.sessionName) return;
+			if (options.establishAttachedBrowserSession) {
+				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: request.requirement };
+				return;
+			}
 			let liveUrl: string | undefined;
 			try {
 				const liveUrlData = await runSessionCommandData({
@@ -560,27 +565,27 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				if (signal?.aborted) throw signal.reason ?? error;
 			}
 			if (liveUrl === undefined) {
-				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: options.requirement };
+				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: request.requirement };
 				return;
 			}
 			const livePageValidationError = getManagedSessionStateAccessValidationError({
-				args: options.args,
+				args: request.args,
 				currentPageUrl: liveUrl,
 				cwd,
 				pageUrlUnknown: false,
-				stdin: options.stdin,
+				stdin: request.stdin,
 			});
 			if (livePageValidationError) {
 				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: livePageValidationError };
 				return;
 			}
-			callerOwnedLivePageVerified = true;
+			livePageVerified = true;
 			priorSessionTabTarget ??= { url: liveUrl };
 			priorSessionTabTargetUnknown = undefined;
 		};
 		const mayResolveSemanticVisibleRef = executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction);
-		if (!executionPlan.validationError && mayResolveSemanticVisibleRef && isCallerOwnedExplicitSession()) {
-			await verifyCallerOwnedLivePage({
+		if (!executionPlan.validationError && mayResolveSemanticVisibleRef && requiresLivePageVerification()) {
+			await verifyLivePage({
 				args: ["snapshot", "-i"],
 				requirement: getCallerOwnedSessionLivePageVerificationRequirement({ args: ["snapshot", "-i"], cwd }),
 			});
@@ -616,21 +621,21 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			refSnapshotInvalidation: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotInvalidation,
 			stdin: runtimeToolStdin,
 		});
-		const callerOwnedPageAccessEligible = !executionPlan.validationError
+		const livePageAccessEligible = !executionPlan.validationError
 			&& preLiveStaleRefPreflight === undefined
 			&& validateStdinCommandContract({ command: executionPlan.commandInfo.command, commandTokens, stdin: runtimeToolStdin }) === undefined
-			&& isCallerOwnedExplicitSession();
-		const callerOwnedLivePageRequirement = callerOwnedPageAccessEligible
-			&& !callerOwnedLivePageVerified
+			&& requiresLivePageVerification();
+		const livePageRequirement = livePageAccessEligible
+			&& !livePageVerified
 			? getCallerOwnedSessionLivePageVerificationRequirement({
 				args: executionPlan.effectiveArgs,
 				cwd,
 				stdin: runtimeToolStdin,
 			})
 			: undefined;
-		await verifyCallerOwnedLivePage({
+		await verifyLivePage({
 			args: executionPlan.effectiveArgs,
-			requirement: callerOwnedLivePageRequirement,
+			requirement: livePageRequirement,
 			stdin: runtimeToolStdin,
 		});
 

@@ -6,6 +6,7 @@
  * Invariants/Assumptions: The binary name is always `agent-browser`; Windows routes through PowerShell to invoke npm launchers with escaped argv; callers handle semantic success/error interpretation.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { lstat, mkdir, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
@@ -56,6 +57,11 @@ const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
 const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd";
+const attachedBrowserSessionContext = new AsyncLocalStorage<boolean>();
+
+export function withAttachedBrowserSessionContext<T>(preserve: boolean, run: () => Promise<T>): Promise<T> {
+	return attachedBrowserSessionContext.run(preserve || attachedBrowserSessionContext.getStore() === true, run);
+}
 
 export interface ProcessRunResult {
 	aborted: boolean;
@@ -124,7 +130,7 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 	return args;
 }
 
-export function pinAgentBrowserFileAccessDisabled(args: string[], wrapperCompatibilityUserAgent?: string): string[] {
+export function pinAgentBrowserFileAccessDisabled(args: string[], wrapperCompatibilityUserAgent?: string, preserveAttachedBrowserSession = false): string[] {
 	const filtered: string[] = [];
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
@@ -135,6 +141,8 @@ export function pinAgentBrowserFileAccessDisabled(args: string[], wrapperCompati
 		}
 		filtered.push(token);
 	}
+	// These are launch-only controls. Sending them on an attached-session follow-up makes upstream replace the CDP connection with a local browser.
+	if (preserveAttachedBrowserSession) return filtered;
 	// Upstream's flag overrides only the active CDP target; the Chrome arg covers new tabs. Its --args parser splits commas/newlines.
 	const browserArgs = wrapperCompatibilityUserAgent
 		? `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`
@@ -421,12 +429,14 @@ export async function runAgentBrowserProcess(options: {
 	managedStateCurrentPageUrl?: string;
 	managedStatePageUrlUnknown?: boolean;
 	ownedManagedSession?: boolean;
+	preserveAttachedBrowserSession?: boolean;
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
 	trustedFirstBatchTabSelection?: boolean;
 }): Promise<ProcessRunResult> {
 	const { allowManagedSessionTarget, cwd, env, managedSessionRestoreState, managedStateCurrentPageUrl, managedStatePageUrlUnknown, signal, stdin, trustedFirstBatchTabSelection } = options;
+	const preserveAttachedBrowserSession = options.preserveAttachedBrowserSession === true || attachedBrowserSessionContext.getStore() === true;
 	const ownedManagedSession = options.ownedManagedSession === true || isOwnedManagedSessionTarget(options.args);
 	const args = canonicalizeOwnedManagedSessionCloseArgs({
 		args: options.args,
@@ -484,6 +494,7 @@ export async function runAgentBrowserProcess(options: {
 		...getManagedSessionRestoreProtectedEnv(managedSessionRestoreOptions, managedSessionRestoreEnv),
 		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
 		...ownedManagedSessionCompatibilityEnv,
+		AGENT_BROWSER_ALLOW_FILE_ACCESS: undefined,
 		[AGENT_BROWSER_ARGS_ENV]: undefined,
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
@@ -616,7 +627,7 @@ export async function runAgentBrowserProcess(options: {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
 			return;
 		}
-		const spawnCommand = buildAgentBrowserSpawnCommand(pinAgentBrowserFileAccessDisabled(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT));
+		const spawnCommand = buildAgentBrowserSpawnCommand(pinAgentBrowserFileAccessDisabled(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession));
 		const child = spawn(spawnCommand.command, spawnCommand.args, {
 			cwd,
 			env: childEnv,
