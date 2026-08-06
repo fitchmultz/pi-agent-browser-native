@@ -8,6 +8,7 @@ dist/
 .artifacts/
 .crabbox/
 .debug/
+.dogfood/
 .platform-smoke-runs/
 
 # CueLoop local/runtime state (do not commit)

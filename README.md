@@ -268,6 +268,8 @@ Watch a browser window during a demo or QA run by adding upstream's global `--he
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
+For wrapper-owned headed launches, the extension disables upstream 0.33.2 periodic restore autosave by default because its multi-origin collector opens visible temporary tabs and can delay daemon policy inspection. The extension records the effective launch-time interval and reapplies it to every helper and follow-up subprocess, including still-owned off-current sessions (also after failed replacement cleanup), Electron cleanup closes, and reload/resume, so the receiving daemon does not see changing configuration. Native `close` still saves, but upstream exempts headed browsers from idle shutdown, so closing the window by hand can lose newer state. Set `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` before launch when periodic preservation matters; changing it on a running wrapper-owned headed daemon is rejected until you close that session and launch fresh.
+
 Render a WebGPU page by enabling upstream's WebGPU launch preset on a fresh local browser:
 
 ```json
@@ -321,7 +323,7 @@ Evaluate page JavaScript through stdin. Put the script in the top-level `stdin` 
 { "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })", "outputPath": "logs/page-state.json" }
 ```
 
-Use `outputPath` when `eval`, `get`, `snapshot`, or another extraction should be saved as a durable workspace file. The wrapper writes `details.data` when present, otherwise the model-facing text content, and returns `details.outputFile` with the saved path and byte count. Explicit upstream `--json` content stays parseable; in that case the save notice lives only in `details.outputFile`.
+Use `outputPath` when `eval`, `get`, `snapshot`, or another extraction should be saved as a durable workspace file. Keep it distinct from screenshot, download, recording, and other browser artifact destinations; if the paths resolve to the same file, the wrapper preserves the browser artifact and rejects the result-data write. The wrapper writes `details.data` when present, otherwise the model-facing text content, and returns `details.outputFile` with the saved path and byte count. Explicit upstream `--json` content stays parseable; in that case the save notice lives only in `details.outputFile`.
 
 Extract several known refs or selectors in one `batch` call instead of many serial getter calls:
 

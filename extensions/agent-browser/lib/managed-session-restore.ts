@@ -9,6 +9,7 @@ import {
 	extractExplicitSessionName,
 	extractRequestedRestoreKey,
 	getAgentBrowserSessionIdentityKey,
+	isUpstreamEnvFlagEnabled,
 	scanUpstreamGlobalFlagOccurrences,
 } from "./argv-grammar.js";
 import {
@@ -43,11 +44,6 @@ let managedSessionRestoreEmptyConfigPromise: Promise<string> | undefined;
 function isDisabledEnvFlag(value: string | undefined): boolean {
 	if (value === undefined) return false;
 	return ["0", "false", "no", "off"].includes(value.trim().toLowerCase());
-}
-
-/** Match upstream env_var_is_truthy exactly: lowercase only, without trimming or accepting "off". */
-function isUpstreamEnvFlagEnabled(value: string | undefined): boolean {
-	return value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
 }
 
 function hasUpstreamEnvValue(env: NodeJS.ProcessEnv | undefined, name: string): boolean {
@@ -107,6 +103,8 @@ export class ManagedSessionRestoreState {
 
 export type OwnedManagedSessionContext = {
 	compatibilityUserAgent?: string;
+	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	cwd?: string;
 	expectedDaemonRestoreKey?: string | null;
 	namespace?: string;
@@ -276,11 +274,33 @@ export function getOwnedManagedSessionNamespaceEnv(options: ManagedSessionRestor
 	return owned ? { AGENT_BROWSER_NAMESPACE: ownedContext?.namespace ?? namespace ?? "" } : {};
 }
 
+const DEFAULT_AUTOSAVE_INTERVAL_MS = "30000";
+const MAX_U64 = 18_446_744_073_709_551_615n;
+
+export function resolveExplicitAutosaveInterval(value: string | undefined): string | undefined {
+	if (value === undefined) return undefined;
+	if (!/^\+?\d+$/.test(value)) return DEFAULT_AUTOSAVE_INTERVAL_MS;
+	try {
+		const parsed = BigInt(value);
+		return parsed <= MAX_U64 ? parsed.toString() : DEFAULT_AUTOSAVE_INTERVAL_MS;
+	} catch {
+		return DEFAULT_AUTOSAVE_INTERVAL_MS;
+	}
+}
+
 export function getOwnedManagedSessionCompatibilityEnv(options: ManagedSessionRestoreEnvOptions): NodeJS.ProcessEnv {
 	const { owned, ownedContext } = resolveManagedSessionRestorePolicy(options);
-	return owned && ownedContext?.compatibilityUserAgent
-		? { AGENT_BROWSER_USER_AGENT: ownedContext.compatibilityUserAgent }
-		: {};
+	if (!owned || !ownedContext) return {};
+	const parentEnv = options.parentEnv ?? process.env;
+	const callEnv = options.env ?? {};
+	const explicitRawInterval = Object.hasOwn(callEnv, "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS")
+		? callEnv.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS
+		: parentEnv.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS;
+	const explicitIntervalMatches = resolveExplicitAutosaveInterval(explicitRawInterval) === ownedContext.headedManagedAutosaveInterval;
+	return {
+		...(ownedContext.compatibilityUserAgent ? { AGENT_BROWSER_USER_AGENT: ownedContext.compatibilityUserAgent } : {}),
+		...(ownedContext.headedManagedAutosaveInterval !== undefined && !explicitIntervalMatches ? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: ownedContext.headedManagedAutosaveInterval } : {}),
+	};
 }
 
 export function shouldOmitOwnedManagedSessionRestoreEnv(options: ManagedSessionRestoreEnvOptions): boolean {
@@ -423,6 +443,8 @@ export function commitManagedSessionRestoreSuppression(options: ManagedSessionRe
 export function buildOwnedManagedSessionRestoreContext(options: {
 	args: string[];
 	compatibilityUserAgent?: string;
+	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	cwd: string;
 	currentManagedSessionName?: string;
 	currentManagedSessionNamespace?: string;
@@ -456,6 +478,8 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 	return {
 		...owned,
 		compatibilityUserAgent: options.compatibilityUserAgent,
+		headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
+		headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
 		expectedDaemonRestoreKey: enabled ? restoreKey : extractRequestedRestoreKey(options.args, owned.sessionName, effectiveEnv[AGENT_BROWSER_RESTORE_ENV]),
 		protectedStorageEnv: enabled ? getManagedSessionRestoreProtectedStorageEnv(true, effectiveEnv) : undefined,
 		restoreDecision: optedOut ? "opted-out" : incompatible ? "incompatible" : "enabled",

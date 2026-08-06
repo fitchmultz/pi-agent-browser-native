@@ -14,6 +14,7 @@ import {
 	getAgentBrowserSessionIdentityKey,
 	getBooleanFlagValue,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
+	isUpstreamEnvFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
 	resolveAgentBrowserNamespace,
 	scanUpstreamGlobalFlagOccurrences,
@@ -483,7 +484,7 @@ export function resolveManagedSessionState(options: {
 	};
 }
 
-function isRestorableManagedSessionName(sessionName: string, fallbackSessionName: string): boolean {
+export function isRestorableManagedSessionName(sessionName: string, fallbackSessionName: string): boolean {
 	return sessionName === fallbackSessionName || sessionName.startsWith(`${fallbackSessionName}-fresh-`);
 }
 
@@ -844,9 +845,8 @@ export function canUseHeadlessCompatibilityUserAgent(args: string[], env: NodeJS
 	if (hasFlagToken(args, "--user-agent") || hasFlagToken(args, "--args")) return false;
 	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p")) return false;
 	if (env.AGENT_BROWSER_USER_AGENT !== undefined || env.AGENT_BROWSER_ARGS !== undefined || env.AGENT_BROWSER_CDP !== undefined || env.AGENT_BROWSER_PROVIDER !== undefined) return false;
-	const envFlagEnabled = (value: string | undefined) => value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
-	if ((getBooleanFlagValue(args, "--headed") ?? envFlagEnabled(env.AGENT_BROWSER_HEADED))
-		|| (getBooleanFlagValue(args, "--auto-connect") ?? envFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT))) return false;
+	if ((getBooleanFlagValue(args, "--headed") ?? isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_HEADED))
+		|| (getBooleanFlagValue(args, "--auto-connect") ?? isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT))) return false;
 	const engine = scanUpstreamGlobalFlagOccurrences(args, "--engine").at(-1)?.value ?? env.AGENT_BROWSER_ENGINE;
 	return !engine || engine === "chrome";
 }

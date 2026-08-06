@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { access, link, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1620,6 +1620,11 @@ if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: "Example", title: "Example" } }));
 } else if (args.includes("get")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: "visible terminal text" } }));
+} else if (args.includes("screenshot")) {
+  const output = args[args.indexOf("screenshot") + 1];
+  fs.mkdirSync(require("node:path").dirname(output), { recursive: true });
+  fs.writeFileSync(output, "browser-image");
+  process.stdout.write(JSON.stringify({ success: true, data: { path: output } }));
 } else if (args.includes("#fail")) {
   process.stdout.write(JSON.stringify({ success: false, error: "button failed" }));
 } else {
@@ -1666,6 +1671,30 @@ if (args.includes("eval")) {
 			assert.doesNotThrow(() => JSON.parse(jsonText));
 			const savedJsonText = await readFile(join(tempDir, "logs/stream-status.json"), "utf8");
 			assert.doesNotThrow(() => JSON.parse(savedJsonText));
+
+			const screenshotPath = join(tempDir, "captures/same-path.png");
+			const collidingOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["screenshot", screenshotPath],
+				outputPath: screenshotPath,
+			});
+			assert.equal(collidingOutput.isError, true);
+			assert.equal(collidingOutput.details?.resultCategory, "failure");
+			assert.equal(collidingOutput.details?.failureCategory, "validation-error");
+			assert.equal((collidingOutput.details?.outputFile as { status?: string } | undefined)?.status, "failed");
+			assert.equal((collidingOutput.details?.artifacts as Array<{ sizeBytes?: number }> | undefined)?.[0]?.sizeBytes, "browser-image".length);
+			assert.match(collidingOutput.content[0]?.text ?? "", /outputPath.*browser artifact/i);
+			assert.equal(await readFile(screenshotPath, "utf8"), "browser-image");
+
+			const hardlinkedScreenshotPath = join(tempDir, "captures/hardlinked.png");
+			const hardlinkedOutputPath = join(tempDir, "captures/hardlinked-result.json");
+			await writeFile(hardlinkedScreenshotPath, "seed");
+			await link(hardlinkedScreenshotPath, hardlinkedOutputPath);
+			const hardlinkedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["screenshot", hardlinkedScreenshotPath],
+				outputPath: hardlinkedOutputPath,
+			});
+			assert.equal(hardlinkedOutput.isError, true);
+			assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "browser-image");
 
 			const beforeProtectedOutput = (await readFile(logPath, "utf8")).trim().split("\n").length;
 			const protectedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {

@@ -1232,6 +1232,8 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		{ args: ["open", "--enable", "react-devtools", "https://example.com"], flag: "--enable" },
 		{ args: ["open", "--init-script", "/tmp/setup.js", "https://example.com"], flag: "--init-script" },
 		{ args: ["--idle-timeout", "5000", "open", "https://example.com"], flag: "--idle-timeout" },
+		{ args: ["--headed", "open", "https://example.com"], flag: "--headed" },
+		{ args: ["--headed", "false", "open", "https://example.com"], flag: "--headed" },
 	] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),

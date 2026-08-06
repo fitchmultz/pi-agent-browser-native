@@ -58,6 +58,8 @@ export function applyBrowserRunStatePatch(state: BrowserRunState, patch: Browser
 	if (patch.freshSessionOrdinal !== undefined) state.freshSessionOrdinal = patch.freshSessionOrdinal;
 	if (patch.managedSessionActive !== undefined) state.managedSessionActive = patch.managedSessionActive;
 	if ("managedSessionCompatibilityWorkaround" in patch) state.managedSessionCompatibilityWorkaround = patch.managedSessionCompatibilityWorkaround;
+	if (patch.managedSessionHeadedAutosaveDisabled !== undefined) state.managedSessionHeadedAutosaveDisabled = patch.managedSessionHeadedAutosaveDisabled;
+	if ("managedSessionHeadedAutosaveInterval" in patch) state.managedSessionHeadedAutosaveInterval = patch.managedSessionHeadedAutosaveInterval;
 	if (patch.managedSessionCwd !== undefined) state.managedSessionCwd = patch.managedSessionCwd;
 	if (patch.managedSessionName !== undefined) state.managedSessionName = patch.managedSessionName;
 	if ("managedSessionNamespace" in patch) state.managedSessionNamespace = patch.managedSessionNamespace;
@@ -183,6 +185,12 @@ function formatManagedSessionOutcomeRecoveryGuidance(outcome: ManagedSessionOutc
 
 export function formatManagedSessionOutcomeText(outcome: ManagedSessionOutcome | undefined): string | undefined {
 	if (!outcome) return undefined;
+	if (outcome.replacedSessionClosed === false) {
+		const cleanupWarning = "Cleanup warning: Automatic close of the previous wrapper-managed session failed, so it remains wrapper-owned. Use details.managedSessionOutcome for its exact identity and close it explicitly when safe.";
+		return outcome.succeeded
+			? ["Managed session outcome: The fresh browser became current.", cleanupWarning].join("\n")
+			: [formatManagedSessionOutcomeHeadline(outcome), formatManagedSessionOutcomeRecoveryGuidance(outcome), cleanupWarning].join("\n");
+	}
 	if (outcome.status === "closed" && outcome.succeeded) {
 		return [
 			"Managed session outcome: The current wrapper-managed browser session was closed.",

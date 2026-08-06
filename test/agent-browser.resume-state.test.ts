@@ -976,6 +976,311 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Dom
 	}
 });
 
+test("agentBrowserExtension retains headed autosave policy across follow-ups and session_tree restore", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-state-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+const command = args.find((arg) => ["close", "get", "open", "snapshot"].includes(arg));
+const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+  : command === "snapshot" ? { snapshot: "- heading \\"Headed\\" [ref=e1]" }
+  : command === "close" ? { closed: true }
+  : { title: "Headed", url: "https://example.com/headed" };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, AGENT_BROWSER_HEADED: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"] });
+			assert.equal(open.isError, false, JSON.stringify(open));
+			assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.equal(followUp.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			harness.setBranch([
+				createToolBranchEntry({ details: open.details ?? {}, isError: open.isError }),
+				createToolBranchEntry({ details: followUp.details ?? {}, isError: followUp.isError }),
+			]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "headed", oldLeafId: "live" }, harness.ctx);
+			const restoredFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(restoredFollowUp.isError, false, JSON.stringify(restoredFollowUp));
+			assert.equal(restoredFollowUp.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			const sessionlessDoctor = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["doctor"] });
+			assert.equal(sessionlessDoctor.isError, false, JSON.stringify(sessionlessDoctor));
+			assert.equal(sessionlessDoctor.details?.managedSessionHeadedAutosaveDisabled, undefined);
+
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+			assert.equal(close.details?.managedSessionHeadedAutosaveDisabled, undefined);
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+			const invocations = await readInvocationLog(logPath);
+			const doctorInvocation = invocations.find((entry) => entry.args.includes("doctor"));
+			const managedInvocations = invocations.filter((entry) => !entry.args.includes("doctor"));
+			assert.ok(managedInvocations.length >= 4);
+			assert.equal(managedInvocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
+			assert.equal(doctorInvocation?.autosave, null);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension requires a fresh daemon before changing a resumed headed autosave interval", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-explicit-resume-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: false } }));
+} else {
+  const command = args.find((arg) => ["close", "get", "open"].includes(arg));
+  const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+    : command === "close" ? { closed: true }
+    : { title: "Headed", url: "https://example.com/headed" };
+  process.stdout.write(JSON.stringify({ success: true, data }));
+}`,
+	);
+
+	try {
+		let branch: unknown[] = [];
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"] });
+			assert.equal(open.isError, false, JSON.stringify(open));
+			assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
+			assert.equal(open.details?.managedSessionHeadedAutosaveInterval, "0");
+			branch = [createToolBranchEntry({ details: open.details ?? {}, isError: open.isError })];
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+		});
+
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000", PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, true, JSON.stringify(followUp));
+			assert.match(String(followUp.details?.validationError), /cannot change a running wrapper-owned headed session/);
+
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+			const freshOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--headed", "open", "https://example.com/headed-fresh"],
+				sessionMode: "fresh",
+			});
+			assert.equal(freshOpen.isError, false, JSON.stringify(freshOpen));
+			assert.equal(freshOpen.details?.managedSessionHeadedAutosaveDisabled, undefined);
+			assert.equal(freshOpen.details?.managedSessionHeadedAutosaveInterval, "1000");
+			branch = [createToolBranchEntry({ details: freshOpen.details ?? {}, isError: freshOpen.isError })];
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+		});
+
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0", PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, true, JSON.stringify(followUp));
+			assert.match(String(followUp.details?.validationError), /cannot change a running wrapper-owned headed session/);
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+		});
+
+		const invocations = await readInvocationLog(logPath);
+		assert.equal(invocations.some((entry) => entry.args.includes("get") && entry.args.includes("url")), false, JSON.stringify(invocations));
+		const closeIntervals = invocations.filter((entry) => entry.args.at(-1) === "close").map((entry) => entry.autosave);
+		const freshOpen = invocations.find((entry) => entry.args.includes("open") && entry.args.includes("https://example.com/headed-fresh"));
+		assert.ok(closeIntervals.includes("0"), JSON.stringify(invocations));
+		assert.ok(closeIntervals.includes("1000"), JSON.stringify(invocations));
+		assert.equal(freshOpen?.autosave, "1000", JSON.stringify(invocations));
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension omits headed autosave detail when a failed fresh launch is abandoned", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-abandoned-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: false } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: false, error: "intentional fresh launch failure" }));
+  process.exit(1);
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const failedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--headed", "open", "https://fail.example"],
+				sessionMode: "fresh",
+			});
+			assert.equal(failedOpen.isError, true, JSON.stringify(failedOpen));
+			assert.equal((failedOpen.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, false);
+			assert.equal((failedOpen.details?.managedSessionOutcome as { status?: string } | undefined)?.status, "abandoned");
+			assert.equal(failedOpen.details?.managedSessionHeadedAutosaveDisabled, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension retains headed autosave policy for an older owned session after replacement close fails", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-replaced-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+const command = args.find((arg) => ["close", "get", "open"].includes(arg));
+if (command === "close") {
+  process.stdout.write(JSON.stringify({ success: false, error: "forced close failure" }));
+  process.exit(1);
+} else {
+  const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+    : { title: "Headed", url: args[args.length - 1] };
+  process.stdout.write(JSON.stringify({ success: true, data }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, AGENT_BROWSER_HEADED: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const headedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--headed", "open", "https://example.com/headed"],
+			});
+			assert.equal(headedOpen.isError, false, JSON.stringify(headedOpen));
+			assert.equal(headedOpen.details?.managedSessionHeadedAutosaveDisabled, true);
+			const headedSessionName = headedOpen.details?.sessionName;
+			assertIsString(headedSessionName);
+
+			const replacement = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/replacement"],
+				sessionMode: "fresh",
+			});
+			assert.equal(replacement.isError, false, JSON.stringify(replacement));
+			assert.notEqual(replacement.details?.sessionName, headedSessionName);
+			assert.equal(replacement.details?.managedSessionHeadedAutosaveDisabled, undefined);
+			assert.equal((replacement.details?.managedSessionOutcome as { replacedSessionClosed?: boolean } | undefined)?.replacedSessionClosed, false);
+			assert.match((replacement.content[0] as { text: string }).text, /Automatic close of the previous wrapper-managed session failed/);
+
+			const oldSessionFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", headedSessionName, "get", "url"],
+			});
+			assert.equal(oldSessionFollowUp.isError, false, JSON.stringify(oldSessionFollowUp));
+			assert.equal(oldSessionFollowUp.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({ details: headedOpen.details ?? {}, isError: headedOpen.isError }),
+					createToolBranchEntry({ details: replacement.details ?? {}, isError: replacement.isError }),
+					createToolBranchEntry({ details: oldSessionFollowUp.details ?? {}, isError: oldSessionFollowUp.isError }),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+			const resumedOldSessionFollowUp = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+				args: ["--session", headedSessionName, "get", "url"],
+			});
+			assert.equal(resumedOldSessionFollowUp.isError, false, JSON.stringify(resumedOldSessionFollowUp));
+			assert.equal(resumedOldSessionFollowUp.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			const invocations = await readInvocationLog(logPath);
+			const replacementOpen = invocations.find((entry) => entry.args.includes("https://example.com/replacement"));
+			const explicitOldSessionFollowUps = invocations.filter((entry) =>
+				entry.args.includes(headedSessionName) && entry.args.includes("get") && entry.args.includes("url"),
+			);
+			assert.equal(replacementOpen?.autosave, null, JSON.stringify(invocations));
+			assert.equal(explicitOldSessionFollowUps.length, 2, JSON.stringify(invocations));
+			assert.equal(explicitOldSessionFollowUps.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension does not restore a replaced session after successful close and post-launch failure", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-replaced-close-post-launch-failure-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: false } }));
+} else if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["open", "https://example.com/fresh"], data: { title: "Fresh", url: "https://example.com/fresh" }, success: true },
+    { command: ["assert", "text", "missing"], error: "missing", success: false }
+  ]));
+} else if (args.at(-1) === "close") {
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Old", url: "https://example.com/old" } }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const oldOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/old"] });
+			assert.equal(oldOpen.isError, false, JSON.stringify(oldOpen));
+			const oldSessionName = oldOpen.details?.sessionName;
+			assertIsString(oldSessionName);
+			const freshFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "open", url: "https://example.com/fresh" }, { action: "assertText", text: "missing" }] },
+				sessionMode: "fresh",
+			});
+			assert.equal(freshFailure.isError, true, JSON.stringify(freshFailure));
+			assert.equal((freshFailure.details?.managedSessionOutcome as { replacedSessionClosed?: boolean; status?: string } | undefined)?.status, "replaced");
+			assert.equal((freshFailure.details?.managedSessionOutcome as { replacedSessionClosed?: boolean } | undefined)?.replacedSessionClosed, true);
+
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({ details: oldOpen.details ?? {}, isError: oldOpen.isError }),
+					createToolBranchEntry({ details: freshFailure.details ?? {}, isError: freshFailure.isError }),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+			const oldFollowUp = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["--session", oldSessionName, "get", "url"] });
+			assert.equal(oldFollowUp.isError, true, JSON.stringify(oldFollowUp));
+			assert.match(String(oldFollowUp.details?.validationError), /reserved for a browser managed by this extension instance/);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes(oldSessionName) && entry.args.includes("get")), false, JSON.stringify(invocations));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not restore a managed session from a different cwd/worktree on resume", { concurrency: false }, async () => {
 	const firstParent = await mkdtemp(join(tmpdir(), "pi-agent-browser-first-"));
 	const secondParent = await mkdtemp(join(tmpdir(), "pi-agent-browser-second-"));

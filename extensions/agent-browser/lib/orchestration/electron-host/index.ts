@@ -20,7 +20,7 @@ import { extractRefSnapshotFromData, getSessionPageStateKey, isAboutBlankUrl, no
 import { redactSensitiveText } from "../../runtime.js";
 import { collectElectronManagedSessionTarget } from "../browser-run/diagnostics.js";
 import { buildElectronHostFailureResult, formatElectronTargetLines, redactToolDetails } from "../browser-run/final-result.js";
-import { acquireOwnedManagedSessionDaemonPolicy, closeManagedSession } from "../browser-run/managed-session-daemon-policy.js";
+import { acquireOwnedManagedSessionDaemonPolicy, closeManagedSession, getRunningHeadedAutosavePolicyChangeError } from "../browser-run/managed-session-daemon-policy.js";
 import {
 	buildElectronIdentifiers,
 	buildElectronMismatchNextActions,
@@ -32,7 +32,7 @@ import {
 	getLiveElectronRendererTargets,
 	runSessionCommandData,
 } from "../browser-run/session-state.js";
-import type { AgentBrowserToolResult, ElectronManagedSessionTarget, ElectronSessionMismatch } from "../browser-run/types.js";
+import type { AgentBrowserToolResult, ElectronManagedSessionTarget, ElectronSessionMismatch, OwnedManagedSessionReference } from "../browser-run/types.js";
 
 export type { ElectronLaunchRecord } from "../../electron/launch.js";
 
@@ -483,14 +483,20 @@ class ElectronManagedSessionPolicyError extends Error {}
 async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	args: string[];
 	cwd: string;
+	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	namespace?: string;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
 	signal?: AbortSignal;
 }, run: () => Promise<T>): Promise<T> {
+	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(options.headedManagedAutosaveInterval);
+	if (autosavePolicyChangeError) throw new ElectronManagedSessionPolicyError(autosavePolicyChangeError);
 	const context = buildOwnedManagedSessionRestoreContext({
 		args: ["--namespace", options.namespace ?? "", "--session", options.sessionName, ...options.args],
 		cwd: options.cwd,
+		headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
+		headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
 		managedSessionName: options.sessionName,
 		namespace: options.namespace,
 		restoreState: options.restoreState,
@@ -513,6 +519,8 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 
 async function collectOwnedElectronManagedSessionTarget(options: {
 	cwd: string;
+	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	namespace?: string;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
@@ -664,6 +672,8 @@ function formatElectronProbeVisibleText(options: {
 
 function buildElectronProbeResult(options: {
 	compiledElectron: CompiledAgentBrowserElectron;
+	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	mismatch?: ElectronSessionMismatch;
 	namespace?: string;
 	probe: ElectronProbeResult;
@@ -697,6 +707,8 @@ function buildElectronProbeResult(options: {
 		},
 		nextActions: nextActions.length > 0 ? nextActions : undefined,
 		...buildAgentBrowserResultCategoryDetails({ args: [], succeeded: true }),
+		managedSessionHeadedAutosaveDisabled: options.headedManagedAutosaveDisabled === true ? true : undefined,
+		managedSessionHeadedAutosaveInterval: options.headedManagedAutosaveInterval,
 		namespace: options.namespace,
 		refSnapshot: options.probe.refSnapshot,
 		sessionName: options.probe.sessionName,
@@ -716,6 +728,7 @@ interface ElectronHostLaunchCleanupState {
 	electronChildProcesses: Map<string, ChildProcess>;
 	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
 	managedSessionRestoreState: ManagedSessionRestoreState;
+	ownedManagedSessions: ReadonlyMap<string, OwnedManagedSessionReference>;
 }
 
 export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLaunchCleanupState & {
@@ -725,8 +738,10 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 }): Promise<ElectronCleanupResult[]> {
 	const results: ElectronCleanupResult[] = [];
 	for (const record of options.records) {
+		const sessionKey = getSessionPageStateKey(record.sessionName) ?? record.sessionName;
+		const managedSessionOwner = sessionKey ? options.ownedManagedSessions.get(sessionKey) : undefined;
 		const managedSessionCloseError = record.sessionName
-			? await closeManagedSession({ cwd: options.cwd, preserveAttachedBrowserSession: options.attachedSessionKeys.has(getSessionPageStateKey(record.sessionName) ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
+			? await closeManagedSession({ cwd: options.cwd, headedManagedAutosaveInterval: managedSessionOwner?.headedManagedAutosaveInterval, preserveAttachedBrowserSession: options.attachedSessionKeys.has(sessionKey ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
 			: undefined;
 		const managedSessionStep = record.sessionName
 			? managedSessionCloseError
@@ -783,6 +798,7 @@ export async function handleElectronHostInput(options: {
 	managedSessionName: string;
 	managedSessionNamespace?: string;
 	managedSessionRestoreState: ManagedSessionRestoreState;
+	ownedManagedSessions: ReadonlyMap<string, OwnedManagedSessionReference>;
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
 	sessionPageState: SessionPageState;
 	signal?: AbortSignal;
@@ -805,6 +821,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 		managedSessionName,
 		managedSessionNamespace,
 		managedSessionRestoreState,
+		ownedManagedSessions,
 		redactedCompiledElectron,
 		sessionPageState,
 		signal,
@@ -824,13 +841,18 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 		const statuses = await Promise.all(records.map((record) => inspectElectronLaunchStatus(record)));
 		const managedSessions = await Promise.all(records
 			.filter((record): record is ElectronLaunchRecord & { sessionName: string } => typeof record.sessionName === "string")
-			.map((record) => collectOwnedElectronManagedSessionTarget({
-				cwd,
-				restoreState: managedSessionRestoreState,
-				sessionName: record.sessionName,
-				signal,
-				timeoutMs: compiledElectron.timeoutMs,
-			})));
+			.map((record) => {
+				const sessionKey = getSessionPageStateKey(record.sessionName) ?? record.sessionName;
+				return collectOwnedElectronManagedSessionTarget({
+					cwd,
+					headedManagedAutosaveDisabled: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveDisabled,
+					headedManagedAutosaveInterval: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveInterval,
+					restoreState: managedSessionRestoreState,
+					sessionName: record.sessionName,
+					signal,
+					timeoutMs: compiledElectron.timeoutMs,
+				});
+			}));
 		const mismatches = managedSessions
 			.map((managedSession) => {
 				const record = records.find((candidate) => candidate.sessionName === managedSession.sessionName);
@@ -891,10 +913,15 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 				pageUrlUnknown: currentPageState.tabTargetUnknown === true,
 			});
 			if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
+			const managedSessionOwner = ownedManagedSessions.get(pageStateKey);
+			const headedManagedAutosaveDisabled = managedSessionOwner?.headedManagedAutosaveDisabled === true;
+			const headedManagedAutosaveInterval = managedSessionOwner?.headedManagedAutosaveInterval;
 			const probe = await withOwnedElectronManagedSessionPolicy(
 				{
 					args: ["snapshot", "-i"],
 					cwd,
+					headedManagedAutosaveDisabled,
+					headedManagedAutosaveInterval,
 					namespace: probeNamespace,
 					restoreState: managedSessionRestoreState,
 					sessionName: probeSessionName,
@@ -940,6 +967,8 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 			}
 			return buildElectronProbeResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,
+				headedManagedAutosaveDisabled,
+				headedManagedAutosaveInterval,
 				mismatch: sessionMismatch,
 				namespace: probeNamespace,
 				probe,
@@ -960,7 +989,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 	if (compiledElectron?.action === "cleanup") {
 		const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);
 		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
-		const cleanupResults = await cleanupTrackedElectronHostLaunches({ attachedSessionKeys, cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
+		const cleanupResults = await cleanupTrackedElectronHostLaunches({ attachedSessionKeys, cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, ownedManagedSessions, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
 		return buildElectronCleanupResult(redactedCompiledElectron ?? compiledElectron, cleanupResults);
 	}
 	return undefined;

@@ -160,7 +160,7 @@ export function createAgentBrowserParamsSchema(
 		}, { additionalProperties: false, description: "Constrained multi-step batch." }),
 	),
 	stdin: Type.Optional(Type.String({ description: "Raw stdin for batch, eval --stdin, or auth save --password-stdin; unavailable with structured modes and electron." })),
-	outputPath: Type.Optional(Type.String({ description: "Workspace-relative or absolute result path.", minLength: 1 })),
+	outputPath: Type.Optional(Type.String({ description: "Workspace-relative or absolute result-data path; keep it distinct from screenshot, download, recording, and other browser artifact destinations.", minLength: 1 })),
 	timeoutMs: Type.Optional(Type.Integer({ description: "Wrapper timeout in ms; exceed explicit waits. Electron uses electron.timeoutMs.", minimum: 1 })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {

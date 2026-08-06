@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Result `outputPath` writes now fail validation instead of overwriting a screenshot, download, recording, or other browser artifact when both destinations resolve to the same file; the browser artifact and its verified metadata remain intact, including through filesystem aliases such as hard links.
+### Fixed
+
+- Headed wrapper-managed launches now disable upstream periodic restore autosave by default and retain that launch environment across every follow-up subprocess, including still-owned off-current sessions, transcript-restored sessions whose replacement cleanup failed, and Electron cleanup closes, preventing agent-browser 0.33.2's multi-origin storage collector from flashing temporary tabs, blocking daemon policy probes, or triggering daemon-configuration mismatches; native close still saves, while direct window close can lose newer state because headed browsers are exempt from idle shutdown. The effective launch-time interval, including an explicit `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`, is persisted across transcript resume; changing it in either direction on a running wrapper-owned headed session is rejected until close plus a fresh launch. Slow valid daemon inspections now receive the full 35-second policy budget instead of failing after five seconds.
+- `--headed` and `--headed false` are now enforced as launch-scoped choices instead of being silently sent to an already-running managed session.
+- Bare, review-only, fenced-reference, conditional, permissive/uncertain, directly negated, and Pi clipboard/attachment image/video paths no longer become requested output artifacts that block browser close; output enforcement now requires a direct artifact-creation phrase with a destination, carries that intent across contiguous plain or Markdown path-list lines, handles delimited paths, preserves subordinate requirements such as “do not close until you save,” scopes availability-qualified recordings before, within, or after their list, leaves explicitly optional artifacts unenforced, applies recording availability per path clause, makes required duplicate paths take precedence, handles Markdown-link destinations, scans single-line and multiline path lists once instead of once per path, and avoids pathological backtracking on slash-heavy non-path text.
+
 ## 0.2.78 - 2026-08-04
 
 ### Changed

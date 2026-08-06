@@ -776,6 +776,114 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 	}
 });
 
+test("agentBrowserExtension restores headed autosave policy for an off-current Electron session", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-resume-electron-headed-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	let child: ChildProcess | undefined;
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+if (args.includes("title")) process.stdout.write(JSON.stringify({ success: true, data: { result: "Headed Electron" } }));
+else if (args.includes("url")) process.stdout.write(JSON.stringify({ success: true, data: { result: "app://headed-electron" } }));
+else if (args.includes("tab") && args.includes("list")) process.stdout.write(JSON.stringify({ success: true, data: [{ active: true, title: "Headed Electron", url: "app://headed-electron" }] }));
+else if (args.includes("snapshot")) process.stdout.write(JSON.stringify({ success: true, data: { origin: "app://headed-electron", refs: {}, snapshot: "" } }));
+else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const userDataDir = await createSecureTempDirectory("electron-profile-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const electronSessionName = `${baseSessionName}-fresh-electron-headed`;
+			const replacementSessionName = `${baseSessionName}-fresh-replacement`;
+			const electronRecord = {
+				appName: "Headed Electron",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-resumed-headed",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				processGroupId: child.pid,
+				sessionName: electronSessionName,
+				userDataDir,
+				version: 1,
+			};
+			const electronDetails = {
+				...electronManagedSessionDetails(electronSessionName, electronRecord),
+				managedSessionHeadedAutosaveDisabled: true,
+			};
+			const replacementDetails = {
+				args: ["--session", replacementSessionName, "open", "https://example.com/replacement"],
+				command: "open",
+				exitCode: 0,
+				managedSessionOutcome: {
+					activeAfter: true,
+					activeBefore: true,
+					attemptedSessionName: replacementSessionName,
+					currentSessionName: replacementSessionName,
+					previousSessionName: electronSessionName,
+					replacedSessionName: electronSessionName,
+					sessionMode: "fresh",
+					status: "replaced",
+					succeeded: true,
+					summary: `Managed session ${electronSessionName} was replaced by ${replacementSessionName}.`,
+				},
+				resultCategory: "success",
+				sessionMode: "fresh",
+				sessionName: replacementSessionName,
+				usedImplicitSession: true,
+			};
+			const harness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({ details: electronDetails, isError: false }),
+					createToolBranchEntry({ details: replacementDetails, isError: false }),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			const status = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", launchId: electronRecord.launchId } });
+			assert.equal(status.isError, false, JSON.stringify(status));
+			const probe = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId: electronRecord.launchId } });
+			assert.equal(probe.isError, false, JSON.stringify(probe));
+			assert.equal(probe.details?.managedSessionHeadedAutosaveDisabled, true, JSON.stringify(probe.details));
+
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({ details: electronDetails, isError: false }),
+					createToolBranchEntry({ details: replacementDetails, isError: false }),
+					createToolBranchEntry({ details: probe.details, isError: false }),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+			await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000" }, async () => {
+				const blockedProbe = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { electron: { action: "probe", launchId: electronRecord.launchId } });
+				assert.equal(blockedProbe.isError, true, JSON.stringify(blockedProbe));
+				assert.match(String(blockedProbe.details?.summary), /cannot change a running wrapper-owned headed session/);
+			});
+			const resumedProbe = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { electron: { action: "probe", launchId: electronRecord.launchId } });
+			assert.equal(resumedProbe.isError, false, JSON.stringify(resumedProbe));
+			const cleanup = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });
+			assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
+
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.length >= 13, JSON.stringify(invocations));
+			assert.equal(invocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
+			assert.equal(pidIsAlive(child?.pid), false);
+		});
+	} finally {
+		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not reuse current Electron managed session after cleanup", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-current-cleanup-"));
 	const logPath = join(tempDir, "invocations.log");

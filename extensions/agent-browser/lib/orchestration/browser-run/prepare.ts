@@ -1,6 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+import { getBooleanFlagValue, isUpstreamEnvFlagEnabled } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
@@ -29,6 +30,7 @@ import {
 import {
 	buildOwnedManagedSessionRestoreContext,
 	canonicalizeOwnedManagedSessionCloseArgs,
+	resolveExplicitAutosaveInterval,
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
 import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
@@ -37,7 +39,7 @@ import {
 	getManagedSessionStateAccessValidationError,
 	getManagedSessionTargetAccessValidationError,
 } from "../../managed-session-state-policy.js";
-import { acquireOwnedManagedSessionDaemonPolicy } from "./managed-session-daemon-policy.js";
+import { acquireOwnedManagedSessionDaemonPolicy, getRunningHeadedAutosavePolicyChangeError } from "./managed-session-daemon-policy.js";
 import {
 	applyOpenResultTabCorrection,
 	buildManagedSessionOutcome,
@@ -488,11 +490,27 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
 	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
+	const targetsCurrentManagedSession = state.managedSessionActive
+		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
+	const retainedHeadedAutosaveDisabled = recordedOwnedSession?.headedManagedAutosaveDisabled === true
+		|| (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true);
+	const retainedHeadedAutosaveInterval = recordedOwnedSession?.headedManagedAutosaveInterval
+		?? (targetsCurrentManagedSession ? state.managedSessionHeadedAutosaveInterval : undefined);
+	const explicitAutosaveInterval = resolveExplicitAutosaveInterval(process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
+	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(retainedHeadedAutosaveInterval, isCloseCommand(executionPlan.commandInfo.command));
+	if (!executionPlan.validationError && autosavePolicyChangeError) {
+		executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: autosavePolicyChangeError };
+	}
+	const headedLaunch = getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(process.env.AGENT_BROWSER_HEADED);
+	const headedManagedAutosaveDisabled = retainedHeadedAutosaveDisabled || (explicitAutosaveInterval === undefined && headedLaunch);
+	const headedManagedAutosaveInterval = retainedHeadedAutosaveInterval ?? (headedLaunch ? explicitAutosaveInterval ?? "0" : undefined);
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
 		cwd: recordedOwnedSession?.cwd ?? cwd,
 		currentManagedSessionName: state.managedSessionName,
 		currentManagedSessionNamespace: state.managedSessionNamespace,
+		headedManagedAutosaveDisabled,
+		headedManagedAutosaveInterval,
 		managedSessionName: executionPlan.managedSessionName,
 		namespace: executionPlan.namespace,
 		recordedOwnedSession,

@@ -443,6 +443,57 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 	}
 });
 
+test("agentBrowserExtension retains headed autosave policy for Electron cleanup close", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-headed-cleanup-"));
+	const applicationsDir = join(tempDir, "Applications");
+	const upstreamLogPath = join(tempDir, "agent-browser.log");
+	const launchLogPath = join(tempDir, "electron-launch.log");
+	const basePath = process.env.PATH ?? "";
+	let launchedPid: number | undefined;
+	try {
+		await mkdir(applicationsDir, { recursive: true });
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.HeadedCleanup", launchLogPath, name: "Headed Cleanup" });
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
+		await withPatchedEnv({
+			AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined,
+			AGENT_BROWSER_HEADED: "1",
+			PATH: `${tempDir}:${basePath}`,
+		}, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const launchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "launch", appPath: app.appPath, handoff: "snapshot" },
+			});
+			assert.equal(launchResult.isError, false, JSON.stringify(launchResult));
+			assert.equal(launchResult.details?.managedSessionHeadedAutosaveDisabled, true);
+			const launch = (launchResult.details?.electron as { launch?: { launchId?: string; pid?: number; userDataDir?: string } } | undefined)?.launch;
+			assert.equal(typeof launch?.launchId, "string");
+			launchedPid = launch?.pid;
+
+			await rm(upstreamLogPath, { force: true });
+			const statusResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "status", launchId: launch?.launchId },
+			});
+			assert.equal(statusResult.isError, false, JSON.stringify(statusResult));
+			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "probe", launchId: launch?.launchId },
+			});
+			assert.equal(probeResult.isError, false, JSON.stringify(probeResult));
+			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "cleanup", launchId: launch?.launchId },
+			});
+			assert.equal(cleanupResult.isError, false, JSON.stringify(cleanupResult));
+			const helperInvocations = await readInvocationLog(upstreamLogPath);
+			assert.ok(helperInvocations.length >= 7, JSON.stringify(helperInvocations));
+			assert.equal(helperInvocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(helperInvocations));
+			if (launch?.userDataDir) await assert.rejects(stat(launch.userDataDir));
+		});
+	} finally {
+		if (launchedPid) await stopTestPid(launchedPid);
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension applies managed restore policy to every current-session electron.probe helper", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-restore-"));
 	const upstreamLogPath = join(tempDir, "agent-browser.log");
