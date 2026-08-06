@@ -28,8 +28,8 @@ import {
 	validateToolArgs,
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
-import { extractExplicitNamespace, extractExplicitSessionName, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
-import { cleanupManagedSessionRestoreConfig, isUpstreamEnvFlagEnabled, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
+import { extractExplicitNamespace, extractExplicitSessionName, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
+import { cleanupManagedSessionRestoreConfig, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
 import { isCloseCommand } from "./lib/command-taxonomy.js";
@@ -80,6 +80,7 @@ function isBashToolCallEvent(event: unknown): event is BashToolCallLike {
 type OwnedManagedSession = {
 	branchOwned: boolean;
 	cwd: string;
+	headedManagedAutosaveDisabled?: boolean;
 	namespace?: string;
 	sessionName: string;
 };
@@ -162,6 +163,29 @@ function restoreManagedSessionCompatibilityWorkaroundFromBranch(
 		} else if (!canUseHeadlessCompatibilityUserAgent(getToolResultArgs(details))) {
 			restored = undefined;
 		}
+	}
+	return restored;
+}
+
+function restoreManagedSessionHeadedAutosaveDisabledFromBranch(
+	branch: unknown[],
+	sessionName: string,
+	namespace?: string,
+): boolean {
+	let restored = false;
+	const targetKey = getSessionContextKey(sessionName, namespace);
+	for (const entry of branch) {
+		if (!isRecord(entry) || entry.type !== "message") continue;
+		const message = isRecord(entry.message) ? entry.message : undefined;
+		if (!message || message.toolName !== "agent_browser") continue;
+		const details = isRecord(message.details) ? message.details : undefined;
+		if (!details || details.managedSessionHeadedAutosaveDisabled !== true) continue;
+		if (getSessionContextKey(typeof details.sessionName === "string" ? details.sessionName : undefined, typeof details.namespace === "string" ? details.namespace : undefined) !== targetKey) continue;
+		const outcome = getManagedSessionOutcome(details);
+		const activeAfterFailure = outcome?.activeAfter === true
+			&& typeof outcome.currentSessionName === "string"
+			&& getSessionContextKey(outcome.currentSessionName, typeof outcome.currentSessionNamespace === "string" ? outcome.currentSessionNamespace : undefined) === targetKey;
+		if (getSuccessfulToolResult(details, message) || activeAfterFailure) restored = true;
 	}
 	return restored;
 }
@@ -255,13 +279,14 @@ function trackOwnedManagedSession(
 	sessions: Map<string, OwnedManagedSession>,
 	sessionName: string | undefined,
 	cwd: string,
-	options: { branchOwned?: boolean; namespace?: string } = {},
+	options: { branchOwned?: boolean; headedManagedAutosaveDisabled?: boolean; namespace?: string } = {},
 ): void {
 	if (!sessionName) return;
 	const key = getSessionContextKey(sessionName, options.namespace) ?? sessionName;
 	const existing = sessions.get(key);
 	const branchOwned = existing && !existing.branchOwned ? false : options.branchOwned === true;
-	sessions.set(key, { branchOwned, cwd, namespace: options.namespace, sessionName });
+	const headedManagedAutosaveDisabled = options.headedManagedAutosaveDisabled ?? existing?.headedManagedAutosaveDisabled;
+	sessions.set(key, { branchOwned, cwd, headedManagedAutosaveDisabled, namespace: options.namespace, sessionName });
 }
 
 function untrackOwnedManagedSession(sessions: Map<string, OwnedManagedSession>, sessionName: string | undefined, namespace?: string): void {
@@ -293,7 +318,10 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
 	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
 		const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
-		trackOwnedManagedSession(sessions, currentSessionName, cwd, { namespace });
+		trackOwnedManagedSession(sessions, currentSessionName, cwd, {
+			headedManagedAutosaveDisabled: details?.managedSessionHeadedAutosaveDisabled === true,
+			namespace,
+		});
 	}
 	if (succeeded && status === "closed") {
 		untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName);
@@ -544,7 +572,7 @@ async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManage
 	const keepKey = getSessionContextKey(keepSessionName, keepNamespace);
 	for (const [key, owner] of [...sessions]) {
 		if (key === keepKey) continue;
-		const error = await closeManagedSession({ cwd: owner.cwd, namespace: owner.namespace, preserveAttachedBrowserSession: attachedSessionKeys.has(key), restoreState, sessionName: owner.sessionName, timeoutMs });
+		const error = await closeManagedSession({ cwd: owner.cwd, headedManagedAutosaveDisabled: owner.headedManagedAutosaveDisabled, namespace: owner.namespace, preserveAttachedBrowserSession: attachedSessionKeys.has(key), restoreState, sessionName: owner.sessionName, timeoutMs });
 		if (!error) sessions.delete(key);
 	}
 }
@@ -693,6 +721,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let managedSessionActive = false;
 	let managedSessionBaseName = createImplicitSessionName(undefined, process.cwd(), ephemeralSessionSeed);
 	let managedSessionCompatibilityWorkaround: CompatibilityWorkaround | undefined;
+	let managedSessionHeadedAutosaveDisabled = false;
 	let managedSessionName = managedSessionBaseName;
 	let managedSessionCwd = process.cwd();
 	let managedSessionNamespace: string | undefined;
@@ -761,6 +790,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		managedSessionCompatibilityWorkaround = managedSessionActive
 			? restoreManagedSessionCompatibilityWorkaroundFromBranch(branch, managedSessionName, managedSessionNamespace)
 			: undefined;
+		managedSessionHeadedAutosaveDisabled = managedSessionActive
+			&& restoreManagedSessionHeadedAutosaveDisabledFromBranch(branch, managedSessionName, managedSessionNamespace);
 		managedSessionCwd = ctx.cwd;
 		freshSessionOrdinal = nextFreshSessionOrdinal;
 		sessionPageState = SessionPageState.fromBranch(branch);
@@ -795,7 +826,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			);
 		}
 		if (restoredState.active) {
-			trackOwnedManagedSession(ownedManagedSessions, restoredState.sessionName, ctx.cwd, { branchOwned: true, namespace: restoredState.namespace });
+			trackOwnedManagedSession(ownedManagedSessions, restoredState.sessionName, ctx.cwd, {
+			branchOwned: true,
+			headedManagedAutosaveDisabled: managedSessionHeadedAutosaveDisabled,
+			namespace: restoredState.namespace,
+		});
 		}
 		mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords, {
 			branchOwnedLaunchIds: branchOwnedElectronLaunchIds,
@@ -881,6 +916,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		});
 		managedSessionActive = false;
 		managedSessionCompatibilityWorkaround = undefined;
+		managedSessionHeadedAutosaveDisabled = false;
 		managedSessionNamespace = undefined;
 		sessionPageState.reset();
 		traceOwners = new Map<string, TraceOwner>();
@@ -1022,6 +1058,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						if (closedSessionName === managedSessionName) {
 							managedSessionActive = false;
 							managedSessionCompatibilityWorkaround = undefined;
+							managedSessionHeadedAutosaveDisabled = false;
 							managedSessionNamespace = undefined;
 							freshSessionOrdinal += 1;
 							managedSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal);
@@ -1065,6 +1102,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					managedSessionActive,
 					managedSessionBaseName,
 					managedSessionCompatibilityWorkaround,
+					managedSessionHeadedAutosaveDisabled,
 					managedSessionCwd,
 					managedSessionName,
 					managedSessionNamespace,
@@ -1142,6 +1180,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					freshSessionOrdinal = Math.max(freshSessionOrdinal, browserRunState.freshSessionOrdinal);
 					managedSessionActive = browserRunState.managedSessionActive;
 					managedSessionCompatibilityWorkaround = browserRunState.managedSessionCompatibilityWorkaround;
+					managedSessionHeadedAutosaveDisabled = browserRunState.managedSessionHeadedAutosaveDisabled === true;
 					managedSessionCwd = browserRunState.managedSessionCwd;
 					managedSessionName = browserRunState.managedSessionName;
 					managedSessionNamespace = browserRunState.managedSessionNamespace;

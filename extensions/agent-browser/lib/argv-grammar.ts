@@ -130,6 +130,11 @@ export function isBooleanFlagEnabled(args: string[], flag: string): boolean {
 	return getBooleanFlagValue(args, flag) ?? false;
 }
 
+/** Match upstream env_var_is_truthy exactly: lowercase only, without trimming or accepting "off". */
+export function isUpstreamEnvFlagEnabled(value: string | undefined): boolean {
+	return value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
+}
+
 /** Mirror upstream sanitize_session_component for namespace/socket/state identity. */
 export function canonicalizeAgentBrowserNamespace(value: string | undefined): string | undefined {
 	if (value === undefined) return undefined;

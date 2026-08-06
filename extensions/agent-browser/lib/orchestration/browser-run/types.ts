@@ -73,6 +73,7 @@ export interface BrowserRunState {
 	managedSessionActive: boolean;
 	managedSessionBaseName: string;
 	managedSessionCompatibilityWorkaround?: CompatibilityWorkaround;
+	managedSessionHeadedAutosaveDisabled?: boolean;
 	managedSessionCwd: string;
 	managedSessionName: string;
 	managedSessionNamespace?: string;
@@ -89,6 +90,7 @@ export interface BrowserRunStatePatch {
 	freshSessionOrdinal?: number;
 	managedSessionActive?: boolean;
 	managedSessionCompatibilityWorkaround?: CompatibilityWorkaround;
+	managedSessionHeadedAutosaveDisabled?: boolean;
 	managedSessionCwd?: string;
 	managedSessionName?: string;
 	managedSessionNamespace?: string;
@@ -538,6 +540,7 @@ export interface FinalResultInput {
 	executionPlan: AgentBrowserExecutionPlan;
 	fillVerificationDiagnostic?: FillVerificationDiagnostic;
 	inspectionText?: string;
+	managedSessionHeadedAutosaveDisabled?: boolean;
 	managedSessionOutcome?: ManagedSessionOutcome;
 	managedSessionRestoreDisabled: boolean;
 	navigationSummary?: NavigationSummary;

@@ -14,6 +14,7 @@ import {
 	getAgentBrowserSessionIdentityKey,
 	getBooleanFlagValue,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
+	isUpstreamEnvFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
 	resolveAgentBrowserNamespace,
 	scanUpstreamGlobalFlagOccurrences,
@@ -27,7 +28,6 @@ import {
 	LAUNCH_SCOPED_FLAG_LABEL,
 } from "./launch-scoped-flags.js";
 import {
-	isUpstreamEnvFlagEnabled,
 	MANAGED_SESSION_NAME_PREFIX,
 	type ManagedSessionRestoreIdentity,
 } from "./managed-session-restore.js";

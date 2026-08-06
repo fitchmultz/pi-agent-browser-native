@@ -561,6 +561,7 @@ export interface InvocationLogEntry {
 	agentcoreApiKey?: string | null;
 	apiKey?: string | null;
 	args: string[];
+	autosave?: string | null;
 	browserbaseApiKey?: string | null;
 	browserlessApiKey?: string | null;
 	browserUseApiKey?: string | null;

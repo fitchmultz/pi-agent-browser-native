@@ -1,6 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+import { getBooleanFlagValue, isUpstreamEnvFlagEnabled } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
@@ -488,11 +489,17 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
 	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
+	const targetsCurrentManagedSession = state.managedSessionActive
+		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
+	const headedManagedAutosaveDisabled = (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true)
+		|| (process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS === undefined
+			&& (getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(process.env.AGENT_BROWSER_HEADED)));
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
 		cwd: recordedOwnedSession?.cwd ?? cwd,
 		currentManagedSessionName: state.managedSessionName,
 		currentManagedSessionNamespace: state.managedSessionNamespace,
+		headedManagedAutosaveDisabled,
 		managedSessionName: executionPlan.managedSessionName,
 		namespace: executionPlan.namespace,
 		recordedOwnedSession,

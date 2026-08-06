@@ -103,6 +103,38 @@ if (args.includes("screenshot")) {
 	}
 });
 
+test("agentBrowserExtension allows close for reference and negated screenshot paths", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-reference-artifact-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			for (const prompt of [
+				"Take a screenshot like the reference at /tmp/input.png",
+				"No need to save a screenshot at /tmp/input.png",
+			]) {
+				const harness = createExtensionHarness({ cwd: tempDir, prompt });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+				assert.equal(close.isError, false, JSON.stringify(close));
+				assert.equal(close.details?.promptGuard, undefined);
+			}
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("close")).length, 2);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension resolves relative prompt screenshot paths before allowing close", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-relative-artifact-"));
 	const logPath = join(tempDir, "invocations.log");

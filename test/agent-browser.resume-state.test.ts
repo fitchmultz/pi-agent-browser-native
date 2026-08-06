@@ -976,6 +976,54 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Dom
 	}
 });
 
+test("agentBrowserExtension retains headed autosave policy across follow-ups and session_tree restore", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-state-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+const command = args.find((arg) => ["close", "get", "open", "snapshot"].includes(arg));
+const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+  : command === "snapshot" ? { snapshot: "- heading \\"Headed\\" [ref=e1]" }
+  : command === "close" ? { closed: true }
+  : { title: "Headed", url: "https://example.com/headed" };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, AGENT_BROWSER_HEADED: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"] });
+			assert.equal(open.isError, false, JSON.stringify(open));
+			assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.equal(followUp.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			harness.setBranch([
+				createToolBranchEntry({ details: open.details ?? {}, isError: open.isError }),
+				createToolBranchEntry({ details: followUp.details ?? {}, isError: followUp.isError }),
+			]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "headed", oldLeafId: "live" }, harness.ctx);
+			const restoredFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(restoredFollowUp.isError, false, JSON.stringify(restoredFollowUp));
+			assert.equal(restoredFollowUp.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+			const invocations = await readInvocationLog(logPath);
+			assert.ok(invocations.length >= 4);
+			assert.equal(invocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not restore a managed session from a different cwd/worktree on resume", { concurrency: false }, async () => {
 	const firstParent = await mkdtemp(join(tmpdir(), "pi-agent-browser-first-"));
 	const secondParent = await mkdtemp(join(tmpdir(), "pi-agent-browser-second-"));

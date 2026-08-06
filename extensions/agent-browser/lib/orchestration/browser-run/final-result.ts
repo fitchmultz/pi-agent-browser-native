@@ -429,6 +429,7 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		fullOutputPath: options.parseFailureOutput.fullOutputPath ?? options.presentation.fullOutputPath,
 		fullOutputPaths: options.presentation.fullOutputPaths,
 		fullOutputUnavailable: options.parseFailureOutput.fullOutputUnavailable,
+		managedSessionHeadedAutosaveDisabled: options.managedSessionHeadedAutosaveDisabled,
 		managedSessionOutcome: options.managedSessionOutcome,
 		imagePath: options.presentation.imagePath,
 		imagePaths: options.presentation.imagePaths,

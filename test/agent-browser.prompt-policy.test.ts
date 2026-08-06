@@ -79,6 +79,9 @@ test("buildPromptPolicy does not treat inbound media descriptions as requested o
 		"Capture details from this screenshot: /tmp/input.png",
 		"Save this screenshot for later: /tmp/input.png",
 		"Save a screenshot here and then review this input: /tmp/input.png",
+		"Take a screenshot like the reference at /tmp/input.png",
+		"No need to save a screenshot at /tmp/input.png",
+		"Take this screenshot: /tmp/input.png",
 	]) {
 		assert.deepEqual(buildPromptPolicy(prompt).requestedArtifacts, []);
 	}
@@ -114,8 +117,20 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 		[{ kind: "screenshot", path: "/tmp/checkout.png", required: true }],
 	);
 	assert.deepEqual(
+		buildPromptPolicy("Take a screenshot: /tmp/colon.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/colon.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Capture a screenshot directly to /tmp/direct.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/direct.png", required: true }],
+	);
+	assert.deepEqual(
 		buildPromptPolicy("Screenshot the page at /tmp/checkout.png").requestedArtifacts,
 		[{ kind: "screenshot", path: "/tmp/checkout.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Take a screenshot of react.dev, save to .dogfood/react.png").requestedArtifacts,
+		[{ kind: "screenshot", path: ".dogfood/react.png", required: true }],
 	);
 	assert.deepEqual(
 		buildPromptPolicy("Do not save the input; instead save a screenshot to /tmp/output.png").requestedArtifacts,

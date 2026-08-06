@@ -26,8 +26,9 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 ];
 
 const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?:[\s"'`),;.]|$)/gi;
-const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|screenshots?|screen|video|recording)\b[^;.!?\n]{0,60}(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it|that)\s+(?:at|as|to)\s*[:=-]?\s*$/i;
-const PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN = /\b(?:do\s+not|don't|never)\b[^,;.!?\n]{0,80}\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\b/i;
+const PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|screenshots?|screen|video|recording)\s*:\s*$/i;
+const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|screenshots?|screen|video|recording)\s+(?:directly\s+)?(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it\s+)?(?:at|as|to)\s*[:=-]?\s*$/i;
+const PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN = /\b(?:do\s+not|don't|never|no\s+need\s+to|need\s+not)\b[^,;.!?\n]{0,80}\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\b/i;
 const PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN = /^[\s"'`()\[\]{},;:.*\/&+>-]*(?:(?:and|or)[\s"'`()\[\]{},;:.*\/&+>-]*)?$/i;
 
 function getPromptArtifactKind(path: string): PromptRequestedArtifact["kind"] | undefined {
@@ -38,8 +39,9 @@ function getPromptArtifactKind(path: string): PromptRequestedArtifact["kind"] | 
 }
 
 function hasPromptArtifactOutputIntent(context: string): boolean {
-	const clause = context.split(/(?:[;.!?]\s*|\b(?:but|instead)\b)/i).at(-1) ?? context;
-	return PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN.test(clause) && !PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN.test(clause);
+	const clause = context.split(/(?:[;.!?](?:\s|$)|\b(?:but|instead)\b)/i).at(-1) ?? context;
+	return (PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN.test(clause) || PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN.test(clause))
+		&& !PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN.test(clause);
 }
 
 function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifact[] {

@@ -1009,18 +1009,20 @@ test("runAgentBrowserProcess suppresses visible restore autosave tabs for headed
 	execFileSync("git", ["init", "-q", tempDir], { stdio: "ignore" });
 
 	try {
-		for (const [sessionName, launchArgs, parentAutosave, env, ownedManagedSession, expected] of [
-			["piab-headed-default", ["--headed"], undefined, undefined, true, "0"],
-			["piab-headed-explicit", ["--headed"], undefined, { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000" }, true, "1000"],
-			["piab-headed-parent-explicit", ["--headed"], "2000", undefined, true, "2000"],
-			["piab-headed-env", [], undefined, { AGENT_BROWSER_HEADED: "true" }, true, "0"],
-			["piab-headless-explicit", ["--headed", "false"], undefined, { AGENT_BROWSER_HEADED: "true" }, true, null],
-			["caller-headed", ["--headed"], undefined, undefined, false, null],
+		for (const [sessionName, launchArgs, parentAutosave, env, ownedManagedSession, expected, retainedHeadedDefault] of [
+			["piab-headed-default", ["--headed"], undefined, undefined, true, "0", true],
+			["piab-headed-followup", [], undefined, undefined, true, "0", true],
+			["piab-headed-explicit-unset", ["--headed"], undefined, { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined }, true, null, false],
+			["piab-headed-explicit", ["--headed"], undefined, { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000" }, true, "1000", false],
+			["piab-headed-parent-explicit", ["--headed"], "2000", undefined, true, "2000", false],
+			["piab-headed-env", [], undefined, { AGENT_BROWSER_HEADED: "true" }, true, "0", true],
+			["piab-headless-explicit", ["--headed", "false"], undefined, { AGENT_BROWSER_HEADED: "true" }, true, null, false],
+			["caller-headed", ["--headed"], undefined, undefined, false, null, false],
 		] as const) {
 			await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: parentAutosave, HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 				const args = [...launchArgs, "--session", sessionName, "open", "https://example.com"];
 				const restoreState = new ManagedSessionRestoreState();
-				const context = buildOwnedManagedSessionRestoreContext({ args, cwd: tempDir, managedSessionName: sessionName, restoreState, sessionName });
+				const context = buildOwnedManagedSessionRestoreContext({ args, cwd: tempDir, headedManagedAutosaveDisabled: retainedHeadedDefault, managedSessionName: sessionName, restoreState, sessionName });
 				const run = () => runAgentBrowserProcess({ args, cwd: tempDir, env, managedSessionRestoreState: restoreState, ownedManagedSession });
 				const result = context && ownedManagedSession ? await withOwnedManagedSessionContext(context, run) : await run();
 				const parsed = await parseAgentBrowserEnvelope(result.stdout);

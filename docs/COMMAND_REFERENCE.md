@@ -157,7 +157,7 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 - `electron`: optional Electron desktop-app shorthand. `list`, `status`, `cleanup`, and `probe` are wrapper-owned host/session helpers; `launch` starts a wrapper-owned isolated Electron profile and attaches through upstream `connect`.
 - `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron` generate or manage their own input.
 - `outputPath`: optional wrapper-owned local file sink for successful results. Use it for durable `eval`, `get`, `snapshot`, or diagnostic outputs; `details.outputFile` reports the saved path and byte count. If caller argv includes upstream `--json`, the visible JSON content stays parseable and the save notice is only in `details.outputFile`.
-- `timeoutMs`: optional per-call wrapper subprocess watchdog override in milliseconds for browser CLI modes. Use it for known-slow opens/captures rather than relying on repeated retries.
+- `timeoutMs`: optional per-call wrapper subprocess watchdog override in milliseconds for the requested browser CLI process. Managed-session policy inspection can independently consume up to 35 seconds before that process; this preflight is intentionally not shortened by `timeoutMs` because a busy but valid daemon must remain distinguishable from an unverifiable one.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags (`--allowed-domains`, `--auto-connect`, `--cdp`, `--enable`, `--executable-path`, `--webgpu`, `--init-script`, `--idle-timeout`, `--headed`, `--device`, `--namespace`, `--profile`, `--provider`, `-p`, `--restore`, `--restore-save`, `--restore-check-url`, `--restore-check-text`, `--restore-check-fn`, `--session-name`, `--state`) apply.
@@ -189,7 +189,7 @@ Use upstream's global `--headed` flag on the first launch when the user needs to
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
-`--headed` is launch-scoped, including explicit `false`, so changing an active managed session between headed and headless requires `sessionMode: "fresh"`. Wrapper-owned headed launches default `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` to `0` to avoid upstream 0.33.2's visible temporary storage-collector tabs and related daemon-policy delays. Native close still saves, but direct window close can lose newer state because headed browsers are exempt from idle shutdown; set an explicit interval when periodic preservation matters.
+`--headed` is launch-scoped, including explicit `false`, so changing an active managed session between headed and headless requires `sessionMode: "fresh"`. Wrapper-owned headed launches default `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` to `0` to avoid upstream 0.33.2's visible temporary storage-collector tabs and related daemon-policy delays, and reapply that value to every helper/follow-up subprocess plus reload/resume so daemon configuration remains stable. Native close still saves, but direct window close can lose newer state because headed browsers are exempt from idle shutdown; set an explicit interval when periodic preservation matters.
 
 For a WebGPU page, enable the launch preset before the first navigation. Treat it as local-launch-only and use a fresh managed session when changing an existing browser:
 

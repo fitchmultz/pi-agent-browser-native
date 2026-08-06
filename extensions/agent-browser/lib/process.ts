@@ -8,7 +8,6 @@ import { parseArgvDescriptor } from "./argv-descriptor.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isKnownCommandToken } from "./command-taxonomy.js";
 import {
-	getBooleanFlagValue,
 	getFlagName,
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
 	GLOBAL_VALUE_FLAGS,
@@ -23,7 +22,6 @@ import {
 	getOwnedManagedSessionCompatibilityEnv,
 	getOwnedManagedSessionNamespaceEnv,
 	isOwnedManagedSessionTarget,
-	isUpstreamEnvFlagEnabled,
 	shouldOmitOwnedManagedSessionRestoreEnv,
 	validateManagedSessionRestoreContextForSpawn,
 	type ManagedSessionRestoreEnvOptions,
@@ -42,9 +40,7 @@ const MAX_BUFFERED_STDOUT_TAIL_CHARS = 32_000;
 const PROCESS_STDOUT_SPILL_FILE_PREFIX = "process-stdout";
 const AGENT_BROWSER_SOCKET_DIR_ENV = "AGENT_BROWSER_SOCKET_DIR";
 const AGENT_BROWSER_ARGS_ENV = "AGENT_BROWSER_ARGS";
-const AGENT_BROWSER_AUTOSAVE_INTERVAL_ENV = "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS";
 const AGENT_BROWSER_DEFAULT_TIMEOUT_ENV = "AGENT_BROWSER_DEFAULT_TIMEOUT";
-const AGENT_BROWSER_HEADED_ENV = "AGENT_BROWSER_HEADED";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS";
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
@@ -288,13 +284,6 @@ function clampUpstreamDefaultTimeout(childEnv: NodeJS.ProcessEnv): void {
 	}
 }
 
-function shouldDisableHeadedManagedAutosave(args: string[], env: NodeJS.ProcessEnv | undefined, ownedManagedSession: boolean): boolean {
-	const autosaveInterval = env && Object.hasOwn(env, AGENT_BROWSER_AUTOSAVE_INTERVAL_ENV) ? env[AGENT_BROWSER_AUTOSAVE_INTERVAL_ENV] : processEnv[AGENT_BROWSER_AUTOSAVE_INTERVAL_ENV];
-	if (!ownedManagedSession || autosaveInterval !== undefined) return false;
-	const headedEnv = env && Object.hasOwn(env, AGENT_BROWSER_HEADED_ENV) ? env[AGENT_BROWSER_HEADED_ENV] : processEnv[AGENT_BROWSER_HEADED_ENV];
-	return getBooleanFlagValue(args, "--headed") ?? isUpstreamEnvFlagEnabled(headedEnv);
-}
-
 export function getAgentBrowserProcessTimeoutMs(env: NodeJS.ProcessEnv = processEnv): number {
 	return parsePositiveIntegerEnv(env[PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV]) ?? DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS;
 }
@@ -491,7 +480,6 @@ export async function runAgentBrowserProcess(options: {
 	const ownedManagedSessionCompatibilityEnv = getOwnedManagedSessionCompatibilityEnv(managedSessionRestoreOptions);
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
-		...(shouldDisableHeadedManagedAutosave(args, env, ownedManagedSession) ? { [AGENT_BROWSER_AUTOSAVE_INTERVAL_ENV]: "0" } : {}),
 		...managedSessionRestoreEnv,
 		...env,
 		...managedSessionRestoreConfigEnv,

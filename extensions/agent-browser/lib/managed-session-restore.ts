@@ -9,6 +9,7 @@ import {
 	extractExplicitSessionName,
 	extractRequestedRestoreKey,
 	getAgentBrowserSessionIdentityKey,
+	isUpstreamEnvFlagEnabled,
 	scanUpstreamGlobalFlagOccurrences,
 } from "./argv-grammar.js";
 import {
@@ -43,11 +44,6 @@ let managedSessionRestoreEmptyConfigPromise: Promise<string> | undefined;
 function isDisabledEnvFlag(value: string | undefined): boolean {
 	if (value === undefined) return false;
 	return ["0", "false", "no", "off"].includes(value.trim().toLowerCase());
-}
-
-/** Match upstream env_var_is_truthy exactly: lowercase only, without trimming or accepting "off". */
-export function isUpstreamEnvFlagEnabled(value: string | undefined): boolean {
-	return value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
 }
 
 function hasUpstreamEnvValue(env: NodeJS.ProcessEnv | undefined, name: string): boolean {
@@ -107,6 +103,7 @@ export class ManagedSessionRestoreState {
 
 export type OwnedManagedSessionContext = {
 	compatibilityUserAgent?: string;
+	headedManagedAutosaveDisabled?: boolean;
 	cwd?: string;
 	expectedDaemonRestoreKey?: string | null;
 	namespace?: string;
@@ -278,9 +275,14 @@ export function getOwnedManagedSessionNamespaceEnv(options: ManagedSessionRestor
 
 export function getOwnedManagedSessionCompatibilityEnv(options: ManagedSessionRestoreEnvOptions): NodeJS.ProcessEnv {
 	const { owned, ownedContext } = resolveManagedSessionRestorePolicy(options);
-	return owned && ownedContext?.compatibilityUserAgent
-		? { AGENT_BROWSER_USER_AGENT: ownedContext.compatibilityUserAgent }
-		: {};
+	if (!owned || !ownedContext) return {};
+	const parentEnv = options.parentEnv ?? process.env;
+	const autosaveIntervalIsExplicit = Object.hasOwn(options.env ?? {}, "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS")
+		|| parentEnv.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS !== undefined;
+	return {
+		...(ownedContext.compatibilityUserAgent ? { AGENT_BROWSER_USER_AGENT: ownedContext.compatibilityUserAgent } : {}),
+		...(ownedContext.headedManagedAutosaveDisabled && !autosaveIntervalIsExplicit ? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" } : {}),
+	};
 }
 
 export function shouldOmitOwnedManagedSessionRestoreEnv(options: ManagedSessionRestoreEnvOptions): boolean {
@@ -423,6 +425,7 @@ export function commitManagedSessionRestoreSuppression(options: ManagedSessionRe
 export function buildOwnedManagedSessionRestoreContext(options: {
 	args: string[];
 	compatibilityUserAgent?: string;
+	headedManagedAutosaveDisabled?: boolean;
 	cwd: string;
 	currentManagedSessionName?: string;
 	currentManagedSessionNamespace?: string;
@@ -456,6 +459,7 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 	return {
 		...owned,
 		compatibilityUserAgent: options.compatibilityUserAgent,
+		headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
 		expectedDaemonRestoreKey: enabled ? restoreKey : extractRequestedRestoreKey(options.args, owned.sessionName, effectiveEnv[AGENT_BROWSER_RESTORE_ENV]),
 		protectedStorageEnv: enabled ? getManagedSessionRestoreProtectedStorageEnv(true, effectiveEnv) : undefined,
 		restoreDecision: optedOut ? "opted-out" : incompatible ? "incompatible" : "enabled",

@@ -11,10 +11,11 @@ import {
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
 	VALUE_FLAGS,
 	extractExplicitSessionName,
+	isUpstreamEnvFlagEnabled,
 	optionalGlobalValueFlagConsumesNext,
 } from "./argv-grammar.js";
 import { extractManagedSessionRestoreKeys, isWrapperManagedSessionName } from "./managed-session-capabilities.js";
-import { agentBrowserConfigIsPresent, isUpstreamEnvFlagEnabled } from "./managed-session-restore.js";
+import { agentBrowserConfigIsPresent } from "./managed-session-restore.js";
 import { createManagedSessionRestoreKey, hasManagedSessionRestoreProjectIdentity } from "./managed-session-storage.js";
 
 const BLOCKED_GLOBAL_STATE_MESSAGE = "This operation could read or modify wrapper-owned browser state outside the current checkout. Use a caller-owned state name or path instead.";

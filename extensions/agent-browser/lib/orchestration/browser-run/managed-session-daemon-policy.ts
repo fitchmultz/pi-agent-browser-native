@@ -14,6 +14,12 @@ import { redactInvocationArgs } from "../../runtime.js";
 
 const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 35_000;
 
+function getHeadedManagedAutosaveEnv(disabled: boolean | undefined): NodeJS.ProcessEnv | undefined {
+	return disabled && process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS === undefined
+		? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" }
+		: undefined;
+}
+
 export type ManagedSessionDaemonInspection =
 	| { restoreKey: string | null; status: "active" }
 	| { status: "inactive" | "missing-binary" | "unknown" };
@@ -21,6 +27,7 @@ export type ManagedSessionDaemonInspection =
 export async function inspectManagedSessionDaemon(options: {
 	cwd: string;
 	allowManagedSessionTarget?: boolean;
+	headedManagedAutosaveDisabled?: boolean;
 	namespace?: string;
 	preserveAttachedBrowserSession?: boolean;
 	sessionName: string;
@@ -31,6 +38,7 @@ export async function inspectManagedSessionDaemon(options: {
 		allowManagedSessionTarget: options.allowManagedSessionTarget,
 		args: ["--json", "--namespace", options.namespace ?? "", "--session", options.sessionName, "session", "info"],
 		cwd: options.cwd,
+		env: getHeadedManagedAutosaveEnv(options.headedManagedAutosaveDisabled),
 		preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,
 		signal: options.signal,
 		timeoutMs: options.timeoutMs ?? MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS,
@@ -74,6 +82,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 		const daemon = await inspectManagedSessionDaemon({
 			allowManagedSessionTarget: true,
 			cwd: context.cwd,
+			headedManagedAutosaveDisabled: context.headedManagedAutosaveDisabled,
 			namespace: context.namespace,
 			sessionName: context.sessionName,
 			signal,
@@ -118,6 +127,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 
 export async function closeManagedSession(options: {
 	cwd: string;
+	headedManagedAutosaveDisabled?: boolean;
 	namespace?: string;
 	policyLock?: ManagedSessionPolicyLock;
 	preserveAttachedBrowserSession?: boolean;
@@ -143,6 +153,7 @@ export async function closeManagedSession(options: {
 		const daemon = await inspectManagedSessionDaemon({
 			allowManagedSessionTarget: true,
 			cwd: options.cwd,
+			headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
 			namespace: options.namespace,
 			preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,
 			sessionName: options.sessionName,
@@ -156,7 +167,7 @@ export async function closeManagedSession(options: {
 		const processResult = await runAgentBrowserProcess({
 			args: closeArgs,
 			cwd: options.cwd,
-			env: { AGENT_BROWSER_JSON: "1" },
+			env: { AGENT_BROWSER_JSON: "1", ...getHeadedManagedAutosaveEnv(options.headedManagedAutosaveDisabled) },
 			managedSessionRestoreState: options.restoreState,
 			ownedManagedSession: true,
 			preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,
