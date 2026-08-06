@@ -323,7 +323,7 @@ Evaluate page JavaScript through stdin. Put the script in the top-level `stdin` 
 { "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })", "outputPath": "logs/page-state.json" }
 ```
 
-Use `outputPath` when `eval`, `get`, `snapshot`, or another extraction should be saved as a durable workspace file. The wrapper writes `details.data` when present, otherwise the model-facing text content, and returns `details.outputFile` with the saved path and byte count. Explicit upstream `--json` content stays parseable; in that case the save notice lives only in `details.outputFile`.
+Use `outputPath` when `eval`, `get`, `snapshot`, or another extraction should be saved as a durable workspace file. Keep it distinct from screenshot, download, recording, and other browser artifact destinations; if the paths resolve to the same file, the wrapper preserves the browser artifact and rejects the result-data write. The wrapper writes `details.data` when present, otherwise the model-facing text content, and returns `details.outputFile` with the saved path and byte count. Explicit upstream `--json` content stays parseable; in that case the save notice lives only in `details.outputFile`.
 
 Extract several known refs or selectors in one `batch` call instead of many serial getter calls:
 

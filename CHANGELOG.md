@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Result `outputPath` writes now fail validation instead of overwriting a screenshot, download, recording, or other browser artifact when both destinations resolve to the same file; the browser artifact and its verified metadata remain intact, including through filesystem aliases such as hard links.
 ### Fixed
 
 - Headed wrapper-managed launches now disable upstream periodic restore autosave by default and retain that launch environment across every follow-up subprocess, including still-owned off-current sessions, transcript-restored sessions whose replacement cleanup failed, and Electron cleanup closes, preventing agent-browser 0.33.2's multi-origin storage collector from flashing temporary tabs, blocking daemon policy probes, or triggering daemon-configuration mismatches; native close still saves, while direct window close can lose newer state because headed browsers are exempt from idle shutdown. The effective launch-time interval, including an explicit `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`, is persisted across transcript resume; changing it in either direction on a running wrapper-owned headed session is rejected until close plus a fresh launch. Slow valid daemon inspections now receive the full 35-second policy budget instead of failing after five seconds.
