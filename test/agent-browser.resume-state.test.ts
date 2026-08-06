@@ -1171,7 +1171,7 @@ if (command === "close") {
 			assert.notEqual(replacement.details?.sessionName, headedSessionName);
 			assert.equal(replacement.details?.managedSessionHeadedAutosaveDisabled, undefined);
 			assert.equal((replacement.details?.managedSessionOutcome as { replacedSessionClosed?: boolean } | undefined)?.replacedSessionClosed, false);
-			assert.match((replacement.content[0] as { text: string }).text, /automatic close of the previous wrapper-managed session failed/);
+			assert.match((replacement.content[0] as { text: string }).text, /Automatic close of the previous wrapper-managed session failed/);
 
 			const oldSessionFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", headedSessionName, "get", "url"],

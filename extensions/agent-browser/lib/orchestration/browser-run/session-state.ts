@@ -185,10 +185,10 @@ function formatManagedSessionOutcomeRecoveryGuidance(outcome: ManagedSessionOutc
 export function formatManagedSessionOutcomeText(outcome: ManagedSessionOutcome | undefined): string | undefined {
 	if (!outcome) return undefined;
 	if (outcome.replacedSessionClosed === false) {
-		return [
-			"Managed session outcome: The fresh browser became current, but automatic close of the previous wrapper-managed session failed.",
-			"The previous session remains wrapper-owned. Use details.managedSessionOutcome for its exact identity and close it explicitly when safe.",
-		].join("\n");
+		const cleanupWarning = "Cleanup warning: Automatic close of the previous wrapper-managed session failed, so it remains wrapper-owned. Use details.managedSessionOutcome for its exact identity and close it explicitly when safe.";
+		return outcome.succeeded
+			? ["Managed session outcome: The fresh browser became current.", cleanupWarning].join("\n")
+			: [formatManagedSessionOutcomeHeadline(outcome), formatManagedSessionOutcomeRecoveryGuidance(outcome), cleanupWarning].join("\n");
 	}
 	if (outcome.status === "closed" && outcome.succeeded) {
 		return [
