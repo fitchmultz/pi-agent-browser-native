@@ -95,7 +95,7 @@ test("buildPromptPolicy scans large path lists linearly", () => {
 	assert.deepEqual(buildPromptPolicy(`Review these screenshots: ${inbound}`).requestedArtifacts, []);
 	assert.equal(buildPromptPolicy(`Capture screenshots at ${output}`).requestedArtifacts.length, 10_000);
 	const multiline = Array.from({ length: 4_000 }, (_, index) => `- /tmp/multiline-${index}.png`).join("\n");
-	assert.equal(buildPromptPolicy(`${"Context ".repeat(2_000)}Capture screenshots at:\n${multiline}`).requestedArtifacts.length, 4_000);
+	assert.equal(buildPromptPolicy(`${"Context ".repeat(2_000)}. Capture screenshots at:\n${multiline}`).requestedArtifacts.length, 4_000);
 });
 
 test("buildPromptPolicy detects requested artifact paths on the following line", () => {
@@ -148,6 +148,11 @@ Save recordings here:
 - /tmp/following-qualified-first.webm
 - /tmp/following-qualified-second.webm
 If recording is available.
+
+If recording is available.
+Save recordings here:
+- /tmp/preceding-qualified-first.webm
+- /tmp/preceding-qualified-second.webm
 Optionally save a recording to /tmp/explicitly-optional.webm
 Save a screenshot to /tmp/optional-screenshot.png if possible
 Save a recording to /tmp/required.webm`);
@@ -162,6 +167,8 @@ Save a recording to /tmp/required.webm`);
 		{ kind: "recording", path: "/tmp/item-qualified-second.webm", required: false },
 		{ kind: "recording", path: "/tmp/following-qualified-first.webm", required: false },
 		{ kind: "recording", path: "/tmp/following-qualified-second.webm", required: false },
+		{ kind: "recording", path: "/tmp/preceding-qualified-first.webm", required: false },
+		{ kind: "recording", path: "/tmp/preceding-qualified-second.webm", required: false },
 		{ kind: "recording", path: "/tmp/required.webm", required: true },
 	]);
 });
@@ -178,6 +185,12 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 	assert.deepEqual(buildPromptPolicy("I can't save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("I cannot save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("You may not save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("You may save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("You might save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("You are allowed to save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("If needed, save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("Rather than save a screenshot to /tmp/input.png, continue").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("Save a screenshot to /tmp/input.png if desired").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("You should not save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("You should not accidentally save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("Don’t save a screenshot to /tmp/input.png").requestedArtifacts, []);
@@ -224,6 +237,18 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 	assert.deepEqual(
 		buildPromptPolicy("Save a screenshot to (/tmp/parenthesized.png).").requestedArtifacts,
 		[{ kind: "screenshot", path: "/tmp/parenthesized.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Save a screenshot to /tmp/exclamation.png!").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/exclamation.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Could you save a screenshot to /tmp/question.png?").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/question.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("I need you to save a screenshot to /tmp/needed.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/needed.png", required: true }],
 	);
 	for (const prompt of [
 		"Take the screenshot at /tmp/baseline.png",

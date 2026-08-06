@@ -25,15 +25,16 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
 ];
 
-const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?=[\s"'`),;.]|$)/gi;
+const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?=[\s"'`),;.!?]|$)/gi;
 const PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s*:\s*$/i;
 const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s+(?:directly\s+)?(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it\s+)?(?:at|as|to)\s*[:=-]?\s*$/i;
-const PROMPT_ARTIFACT_UNSAFE_OUTPUT_PREFIX_PATTERN = /n['’]t\b|\b(?:cannot|disallowed|forbidden|maybe|never|no|not|optional(?:ly)?|perhaps|prohibited|refrain|unable|without)\b/i;
-const PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN = /^[\s"'`()\[\]{},;:.*\/&+>-]*(?:(?:and|or)[\s"'`()\[\]{},;:.*\/&+>-]*)?$/i;
+const PROMPT_ARTIFACT_UNSAFE_OUTPUT_PREFIX_PATTERN = /n['’]t\b|\b(?:cannot|disallowed|forbidden|maybe|needed|never|no|not|optional(?:ly)?|perhaps|prohibited|rather|refrain|unable|without)\b|\b(?:he|i|it|she|they|we|you)\s+(?:can|could|may|might)\b/i;
+const PROMPT_ARTIFACT_AFFIRMATIVE_PREFIX_PATTERN = /^(?:and(?:\s+then)?|then|please|you|(?:can|could|will|would)\s+you(?:\s+please)?|(?:i|we)\s+(?:need|want)\s+you\s+to|you\s+(?:must|should))$/i;
+const PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN = /^[\s"'`()\[\]{},;:.*!?\/&+>-]*(?:(?:and|or)[\s"'`()\[\]{},;:.*!?\/&+>-]*)?$/i;
 const PROMPT_ARTIFACT_LIST_PREFIX_PATTERN = /^\s*(?:(?:[-*+]|\d+[.)])\s*)/;
 const PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN = /\b(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available\b/i;
 const PROMPT_ARTIFACT_STANDALONE_OPTIONAL_RECORDING_PATTERN = /^\s*(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available[.:;]?\s*$/i;
-const PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN = /\b(?:optionally|if\s+(?:convenient|possible|you\s+can|you\s+want\s+to)|when\s+(?:convenient|possible)|only\s+if\s+you\s+(?:can|want\s+to))\b/i;
+const PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN = /\b(?:optionally|if\s+(?:convenient|desired|needed|possible|you\s+can|you\s+want\s+to)|when\s+(?:convenient|desired|needed|possible)|only\s+if\s+you\s+(?:can|want\s+to))\b/i;
 const PROMPT_ARTIFACT_REFERENCE_INTENT_PATTERN = /\btake\s+the\s+(?:image|recording|screenshot|video)\s+(?:at|from)\b/i;
 const PROMPT_ARTIFACT_CLAUSE_BOUNDARY_PATTERN = /(?:[;.!?](?:\s|$)|\b(?:but|instead)\b)/i;
 
@@ -58,7 +59,12 @@ function hasPromptArtifactOutputIntent(context: string): boolean {
 	if (!intentMatch) return false;
 	const prefix = clause.slice(0, intentMatch.index ?? 0);
 	const governingPrefix = prefix.split(/\b(?:before|unless|until)\b/i).at(-1) ?? prefix;
-	return !PROMPT_ARTIFACT_UNSAFE_OUTPUT_PREFIX_PATTERN.test(governingPrefix);
+	if (PROMPT_ARTIFACT_UNSAFE_OUTPUT_PREFIX_PATTERN.test(governingPrefix)) return false;
+	const normalizedPrefix = governingPrefix.trim();
+	return normalizedPrefix.length === 0
+		|| PROMPT_ARTIFACT_AFFIRMATIVE_PREFIX_PATTERN.test(normalizedPrefix)
+		|| /\b(?:and|then)\s*$/i.test(normalizedPrefix)
+		|| /[,\-:–—]\s*$/.test(governingPrefix);
 }
 
 function stripPromptArtifactListPrefix(context: string): string {
@@ -79,6 +85,7 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 	const lines = prompt.split(/\r?\n/);
 	let listArtifactIndexes: number[] = [];
 	let listContinuation: { kind: PromptRequestedArtifact["kind"]; required: boolean } | undefined;
+	let pendingRecordingAvailability = false;
 	for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
 		const line = lines[lineIndex] ?? "";
 		PROMPT_ARTIFACT_PATH_PATTERN.lastIndex = 0;
@@ -90,15 +97,22 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 			const start = (match.index ?? 0) + match[0].indexOf(rawPath) + rawPath.indexOf(path);
 			pathMatches.push({ end: start + path.length, path, start });
 		}
-		if (pathMatches.length === 0 && listContinuation?.kind === "recording" && PROMPT_ARTIFACT_STANDALONE_OPTIONAL_RECORDING_PATTERN.test(line)) {
-			for (const artifactIndex of listArtifactIndexes) {
-				if (artifacts[artifactIndex]?.kind === "recording") artifacts[artifactIndex]!.required = false;
+		if (pathMatches.length === 0 && PROMPT_ARTIFACT_STANDALONE_OPTIONAL_RECORDING_PATTERN.test(line)) {
+			if (listContinuation?.kind === "recording") {
+				for (const artifactIndex of listArtifactIndexes) {
+					if (artifacts[artifactIndex]?.kind === "recording") artifacts[artifactIndex]!.required = false;
+				}
+				listContinuation = { ...listContinuation, required: false };
+			} else {
+				pendingRecordingAvailability = true;
 			}
-			listContinuation = { ...listContinuation, required: false };
 			continue;
 		}
+		if (pathMatches.length === 0 && pendingRecordingAvailability && /\brecordings?\b/i.test(line) && hasPromptArtifactOutputIntent(line)) continue;
+		const pendingRecordingAvailabilityForLine = pathMatches.length > 0 && pendingRecordingAvailability;
+		pendingRecordingAvailability = false;
 		const pathlessLine = stripPromptArtifactListPrefix(line.replace(PROMPT_ARTIFACT_PATH_PATTERN, ""));
-		const remainder = pathlessLine.replace(/[\s"'`()\[\],;:.*>-]+/g, "").toLowerCase();
+		const remainder = pathlessLine.replace(/[\s"'`()\[\],;:.*!?>-]+/g, "").toLowerCase();
 		const listSyntax = pathlessLine
 			.replace(PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN, "")
 			.replace(PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN, "");
@@ -122,7 +136,7 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 			let group: number | undefined;
 			if (directIntent) {
 				group = nextGroup++;
-				groupOptional.set(group, PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN.test(getPromptArtifactIntentClause(intentContext)));
+				groupOptional.set(group, pendingRecordingAvailabilityForLine || PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN.test(getPromptArtifactIntentClause(intentContext)));
 			} else if (sameLineContinuation) {
 				group = previousGroup;
 			} else if (priorLineContinuation) {

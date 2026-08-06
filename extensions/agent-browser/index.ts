@@ -179,13 +179,13 @@ function restoreManagedSessionHeadedAutosaveDisabledFromBranch(
 		const message = isRecord(entry.message) ? entry.message : undefined;
 		if (!message || message.toolName !== "agent_browser") continue;
 		const details = isRecord(message.details) ? message.details : undefined;
-		if (!details || details.managedSessionHeadedAutosaveDisabled !== true) continue;
+		if (!details) continue;
 		if (getSessionContextKey(typeof details.sessionName === "string" ? details.sessionName : undefined, typeof details.namespace === "string" ? details.namespace : undefined) !== targetKey) continue;
 		const outcome = getManagedSessionOutcome(details);
 		const activeAfterFailure = outcome?.activeAfter === true
 			&& typeof outcome.currentSessionName === "string"
 			&& getSessionContextKey(outcome.currentSessionName, typeof outcome.currentSessionNamespace === "string" ? outcome.currentSessionNamespace : undefined) === targetKey;
-		if (getSuccessfulToolResult(details, message) || activeAfterFailure) restored = true;
+		if (getSuccessfulToolResult(details, message) || activeAfterFailure) restored = details.managedSessionHeadedAutosaveDisabled === true;
 	}
 	return restored;
 }
@@ -830,6 +830,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				branchOwned: true,
 				headedManagedAutosaveDisabled: managedSessionHeadedAutosaveDisabled,
 				namespace: restoredState.namespace,
+			});
+		}
+		for (const record of getActiveElectronRecords(electronLaunchRecords)) {
+			if (!record.sessionName) continue;
+			trackOwnedManagedSession(ownedManagedSessions, record.sessionName, ctx.cwd, {
+				branchOwned: true,
+				headedManagedAutosaveDisabled: restoreManagedSessionHeadedAutosaveDisabledFromBranch(branch, record.sessionName),
 			});
 		}
 		mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords, {
