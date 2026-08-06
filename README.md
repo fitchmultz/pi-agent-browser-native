@@ -268,6 +268,8 @@ Watch a browser window during a demo or QA run by adding upstream's global `--he
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
+For wrapper-owned headed launches, the extension disables upstream 0.33.2 periodic restore autosave by default because its multi-origin collector opens visible temporary tabs and can delay daemon policy inspection. Save-on-close still runs. Set `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` explicitly to opt back into periodic saves.
+
 Render a WebGPU page by enabling upstream's WebGPU launch preset on a fresh local browser:
 
 ```json

@@ -1002,6 +1002,36 @@ test("runAgentBrowserProcess reports protected restore-config setup failures bef
 	}
 });
 
+test("runAgentBrowserProcess suppresses visible restore autosave tabs for headed managed launches", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write(JSON.stringify({ success: true, data: { autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null } }));`);
+	execFileSync("git", ["init", "-q", tempDir], { stdio: "ignore" });
+
+	try {
+		for (const [sessionName, launchArgs, parentAutosave, env, ownedManagedSession, expected] of [
+			["piab-headed-default", ["--headed"], undefined, undefined, true, "0"],
+			["piab-headed-explicit", ["--headed"], undefined, { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000" }, true, "1000"],
+			["piab-headed-parent-explicit", ["--headed"], "2000", undefined, true, "2000"],
+			["piab-headed-env", [], undefined, { AGENT_BROWSER_HEADED: "true" }, true, "0"],
+			["piab-headless-explicit", ["--headed", "false"], undefined, { AGENT_BROWSER_HEADED: "true" }, true, null],
+			["caller-headed", ["--headed"], undefined, undefined, false, null],
+		] as const) {
+			await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: parentAutosave, HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
+				const args = [...launchArgs, "--session", sessionName, "open", "https://example.com"];
+				const restoreState = new ManagedSessionRestoreState();
+				const context = buildOwnedManagedSessionRestoreContext({ args, cwd: tempDir, managedSessionName: sessionName, restoreState, sessionName });
+				const run = () => runAgentBrowserProcess({ args, cwd: tempDir, env, managedSessionRestoreState: restoreState, ownedManagedSession });
+				const result = context && ownedManagedSession ? await withOwnedManagedSessionContext(context, run) : await run();
+				const parsed = await parseAgentBrowserEnvelope(result.stdout);
+				assert.equal((parsed.envelope?.data as { autosave?: string | null } | undefined)?.autosave, expected);
+			});
+		}
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("runAgentBrowserProcess forwards the parent environment while preserving wrapper overrides", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";

@@ -12,7 +12,7 @@ import { runAgentBrowserProcess } from "../../process.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { redactInvocationArgs } from "../../runtime.js";
 
-const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 5_000;
+const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 35_000;
 
 export type ManagedSessionDaemonInspection =
 	| { restoreKey: string | null; status: "active" }

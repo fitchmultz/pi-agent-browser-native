@@ -68,6 +68,42 @@ test("buildPromptPolicy keeps recording paths distinct when prompts are collapse
 	]);
 });
 
+test("buildPromptPolicy does not treat inbound media descriptions as requested output artifacts", () => {
+	for (const prompt of [
+		"/var/folders/xx/T/pi-clipboard-0d4ba22f-adae-471c-9c31-99186a57e2bc.png",
+		"/tmp/screenshot.png",
+		"/tmp/screen-recording.mp4",
+		"Review this screenshot: /tmp/input.png",
+		"Analyze this video: /tmp/input.mp4",
+	]) {
+		assert.deepEqual(buildPromptPolicy(prompt).requestedArtifacts, []);
+	}
+});
+
+test("buildPromptPolicy detects requested artifact paths on the following line", () => {
+	const policy = buildPromptPolicy("Take a screenshot and save it to:\n/tmp/final.png\nStart a recording at:\n/tmp/run.webm");
+
+	assert.deepEqual(policy.requestedArtifacts, [
+		{ kind: "screenshot", path: "/tmp/final.png", required: true },
+		{ kind: "recording", path: "/tmp/run.webm", required: true },
+	]);
+});
+
+test("buildPromptPolicy associates output intent with its path and rejects negated intent", () => {
+	assert.deepEqual(
+		buildPromptPolicy("Review /tmp/input.png and save a screenshot to /tmp/output.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/output.png", required: true }],
+	);
+	assert.deepEqual(buildPromptPolicy("Do not save this screenshot: /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(
+		buildPromptPolicy("Capture screenshots at /tmp/first.png and /tmp/second.png").requestedArtifacts,
+		[
+			{ kind: "screenshot", path: "/tmp/first.png", required: true },
+			{ kind: "screenshot", path: "/tmp/second.png", required: true },
+		],
+	);
+});
+
 test("shouldAppendBrowserSystemPrompt only targets clearly browser-oriented prompts", () => {
 	assert.equal(shouldAppendBrowserSystemPrompt("Open https://example.com and take a snapshot."), true);
 	assert.equal(shouldAppendBrowserSystemPrompt("Do web research and read the live docs for this API."), true);

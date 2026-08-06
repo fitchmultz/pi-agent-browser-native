@@ -68,7 +68,7 @@ The 0.31.2 rebaseline adds a WebGPU launch preset and periodic restore-state aut
 - `--webgpu` (also `AGENT_BROWSER_WEBGPU`; standalone upstream additionally accepts `"webgpu": true` in `agent-browser.json`) enables the upstream platform preset. Browser-backed native calls reject upstream config files, so use the flag or environment form through this tool. It uses Metal on macOS, D3D on Windows, and SwiftShader software Vulkan on Linux. The native Pi wrapper passes it through as a launch-scoped optional boolean, so use `sessionMode: "fresh"` after an implicit session exists; `--webgpu false` explicitly disables a config/environment default.
 - WebGPU requires a local browser launch. Upstream rejects enabled WebGPU with `--cdp`, `--auto-connect`, or `-p` / `--provider`. Use `doctor --webgpu` to pixel-check rendering and screenshot capture; use `doctor --webgpu --headed` when validating the headed capture path.
 - Headless WebGPU screenshots work on macOS. Upstream documents black headless WebGPU canvas captures on Windows and Linux even when in-page rendering succeeds; Windows needs a logged-in headed desktop, while Linux can use `--headed` with automatic Xvfb unless `AGENT_BROWSER_NO_XVFB=1`. Linux software rendering also needs `libvulkan1` and `mesa-vulkan-drivers`.
-- Restore-enabled sessions now save periodically while the browser remains open, including idle page-driven cookie/storage changes. `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` defaults to `30000`; `0` disables periodic saves but keeps save-on-close. The existing `--restore-save` policy still controls whether automatic saves are allowed.
+- Restore-enabled sessions now save periodically while the browser remains open, including idle page-driven cookie/storage changes. `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` defaults to `30000`; `0` disables periodic saves but keeps save-on-close. The existing `--restore-save` policy still controls whether automatic saves are allowed. For wrapper-owned headed launches, this extension defaults the interval to `0` because upstream 0.33.2 collects multi-origin storage through visible temporary tabs; an explicit environment value opts back in.
 - Upstream MCP `open` and `doctor` tools now expose typed WebGPU fields. This Pi extension keeps `args` as the thin CLI-parity path; `mcp --help` remains sessionless, while bare long-running MCP server startup is intentionally rejected in a one-shot Pi tool call.
 
 ### Upstream 0.31.1 rebaseline
@@ -188,6 +188,8 @@ Use upstream's global `--headed` flag on the first launch when the user needs to
 { "args": ["--headed", "open", "https://example.com"], "sessionMode": "fresh" }
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
+
+`--headed` is launch-scoped, including explicit `false`, so changing an active managed session between headed and headless requires `sessionMode: "fresh"`. Wrapper-owned headed launches default `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` to `0` to avoid upstream 0.33.2's visible temporary storage-collector tabs and related daemon-policy delays; save-on-close remains enabled, and an explicit environment value opts back into periodic saves.
 
 For a WebGPU page, enable the launch preset before the first navigation. Treat it as local-launch-only and use a fresh managed session when changing an existing browser:
 

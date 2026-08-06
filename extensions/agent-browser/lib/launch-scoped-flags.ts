@@ -44,6 +44,10 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "configures background browser lifecycle for the launched session",
 	},
 	{
+		flag: "--headed",
+		reason: "selects whether the launched browser has a visible window",
+	},
+	{
 		flag: "--device",
 		reason: "selects the provider device for the upstream launch",
 	},
