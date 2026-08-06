@@ -28,12 +28,13 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?=[\s"'`),;.]|$)/gi;
 const PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s*:\s*$/i;
 const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s+(?:directly\s+)?(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it\s+)?(?:at|as|to)\s*[:=-]?\s*$/i;
-const PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN = /\b(?:do\s+not|don['’]t|never|no\s+need\s+to|need\s+not|(?:should|must)\s+(?:(?:[a-z]+ly|also|ever)\s+)*not|(?:shouldn|mustn)['’]t)\s+(?:(?:[a-z]+ly|also|ever)\s+)*(?:(?:need|try)\s+to\s+)?(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\b/i;
+const PROMPT_ARTIFACT_UNSAFE_OUTPUT_PREFIX_PATTERN = /n['’]t\b|\b(?:cannot|disallowed|forbidden|maybe|never|no|not|optional(?:ly)?|perhaps|prohibited|refrain|unable|without)\b/i;
 const PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN = /^[\s"'`()\[\]{},;:.*\/&+>-]*(?:(?:and|or)[\s"'`()\[\]{},;:.*\/&+>-]*)?$/i;
 const PROMPT_ARTIFACT_LIST_PREFIX_PATTERN = /^\s*(?:(?:[-*+]|\d+[.)])\s*)/;
 const PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN = /\b(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available\b/i;
+const PROMPT_ARTIFACT_STANDALONE_OPTIONAL_RECORDING_PATTERN = /^\s*(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available[.:;]?\s*$/i;
+const PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN = /\b(?:optionally|if\s+(?:convenient|possible|you\s+can|you\s+want\s+to)|when\s+(?:convenient|possible)|only\s+if\s+you\s+(?:can|want\s+to))\b/i;
 const PROMPT_ARTIFACT_REFERENCE_INTENT_PATTERN = /\btake\s+the\s+(?:image|recording|screenshot|video)\s+(?:at|from)\b/i;
-const PROMPT_ARTIFACT_REFERENCE_TRAILING_PATTERN = /^\s*(?:and\s+)?(?:analy[sz]e|compare|inspect|review|use\s+as\s+(?:a\s+)?reference)\b/i;
 const PROMPT_ARTIFACT_CLAUSE_BOUNDARY_PATTERN = /(?:[;.!?](?:\s|$)|\b(?:but|instead)\b)/i;
 
 function getPromptArtifactKind(path: string): PromptRequestedArtifact["kind"] | undefined {
@@ -53,8 +54,11 @@ function getPromptArtifactTrailingClause(context: string): string {
 
 function hasPromptArtifactOutputIntent(context: string): boolean {
 	const clause = getPromptArtifactIntentClause(context).replace(/[([{\"'`]+\s*$/, "");
-	return (PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN.test(clause) || PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN.test(clause))
-		&& !PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN.test(clause);
+	const intentMatch = clause.match(PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN) ?? clause.match(PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN);
+	if (!intentMatch) return false;
+	const prefix = clause.slice(0, intentMatch.index ?? 0);
+	const governingPrefix = prefix.split(/\b(?:before|unless|until)\b/i).at(-1) ?? prefix;
+	return !PROMPT_ARTIFACT_UNSAFE_OUTPUT_PREFIX_PATTERN.test(governingPrefix);
 }
 
 function stripPromptArtifactListPrefix(context: string): string {
@@ -71,8 +75,9 @@ function isLikelyInboundPromptArtifact(path: string): boolean {
 
 function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifact[] {
 	const artifacts: PromptRequestedArtifact[] = [];
-	const seen = new Set<string>();
+	const seen = new Map<string, number>();
 	const lines = prompt.split(/\r?\n/);
+	let listArtifactIndexes: number[] = [];
 	let listContinuation: { kind: PromptRequestedArtifact["kind"]; required: boolean } | undefined;
 	for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
 		const line = lines[lineIndex] ?? "";
@@ -85,11 +90,21 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 			const start = (match.index ?? 0) + match[0].indexOf(rawPath) + rawPath.indexOf(path);
 			pathMatches.push({ end: start + path.length, path, start });
 		}
+		if (pathMatches.length === 0 && listContinuation?.kind === "recording" && PROMPT_ARTIFACT_STANDALONE_OPTIONAL_RECORDING_PATTERN.test(line)) {
+			for (const artifactIndex of listArtifactIndexes) {
+				if (artifacts[artifactIndex]?.kind === "recording") artifacts[artifactIndex]!.required = false;
+			}
+			listContinuation = { ...listContinuation, required: false };
+			continue;
+		}
 		const pathlessLine = stripPromptArtifactListPrefix(line.replace(PROMPT_ARTIFACT_PATH_PATTERN, ""));
 		const remainder = pathlessLine.replace(/[\s"'`()\[\],;:.*>-]+/g, "").toLowerCase();
-		const isPathList = pathMatches.length > 0 && PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN.test(pathlessLine);
+		const listSyntax = pathlessLine
+			.replace(PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN, "")
+			.replace(PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN, "");
+		const isPathList = pathMatches.length > 0 && PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN.test(listSyntax);
 		const groupOptional = new Map<number, boolean>();
-		const candidates: Array<{ group: number; kind: PromptRequestedArtifact["kind"]; matchIndex: number; path: string }> = [];
+		const candidates: Array<{ continuedFromPriorLine: boolean; group: number; kind: PromptRequestedArtifact["kind"]; matchIndex: number; path: string }> = [];
 		let nextGroup = 0;
 		let previousGroup: number | undefined;
 		let previousKind: PromptRequestedArtifact["kind"] | undefined;
@@ -97,7 +112,7 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 		for (let matchIndex = 0; matchIndex < pathMatches.length; matchIndex += 1) {
 			const { end, path, start } = pathMatches[matchIndex]!;
 			const localContext = stripPromptArtifactListPrefix(line.slice(previousPathEnd, start));
-			const intentContext = isPathList || !remainder || ["file", "output", "path"].includes(remainder)
+			const intentContext = matchIndex === 0 && (isPathList || !remainder || ["file", "output", "path"].includes(remainder))
 				? `${lines[lineIndex - 1] ?? ""}\n${localContext}`
 				: localContext;
 			const kind = getPromptArtifactKind(path);
@@ -114,16 +129,18 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 				group = nextGroup++;
 				groupOptional.set(group, listContinuation?.required === false);
 			}
-			const referenceReading = directIntent
-				&& PROMPT_ARTIFACT_REFERENCE_INTENT_PATTERN.test(getPromptArtifactIntentClause(intentContext))
-				&& PROMPT_ARTIFACT_REFERENCE_TRAILING_PATTERN.test(getPromptArtifactTrailingClause(line.slice(end)));
-			if (!kind || group === undefined || referenceReading || (!directIntent && isLikelyInboundPromptArtifact(path))) {
+			const referenceReading = directIntent && PROMPT_ARTIFACT_REFERENCE_INTENT_PATTERN.test(getPromptArtifactIntentClause(intentContext));
+			const explicitlyOptional = directIntent && (
+				PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN.test(getPromptArtifactIntentClause(intentContext))
+				|| PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN.test(getPromptArtifactTrailingClause(line.slice(end)))
+			);
+			if (!kind || group === undefined || referenceReading || explicitlyOptional || isLikelyInboundPromptArtifact(path)) {
 				previousGroup = undefined;
 				previousKind = undefined;
 				previousPathEnd = end;
 				continue;
 			}
-			candidates.push({ group, kind, matchIndex, path });
+			candidates.push({ continuedFromPriorLine: priorLineContinuation && !directIntent, group, kind, matchIndex, path });
 			previousGroup = group;
 			previousKind = kind;
 			previousPathEnd = end;
@@ -139,16 +156,29 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 				}
 			}
 		}
+		const lineArtifactIndexes: number[] = [];
 		for (const candidate of candidates) {
 			const required = candidate.kind === "screenshot" || groupOptional.get(candidate.group) !== true;
 			const key = `${candidate.kind}:${candidate.path}`;
-			if (!seen.has(key)) {
-				seen.add(key);
+			let artifactIndex = seen.get(key);
+			if (artifactIndex === undefined) {
+				artifactIndex = artifacts.length;
+				seen.set(key, artifactIndex);
 				artifacts.push({ kind: candidate.kind, path: candidate.path, required });
 			}
-			if (candidate.matchIndex === pathMatches.length - 1) listContinuation = { kind: candidate.kind, required };
+			lineArtifactIndexes.push(artifactIndex);
 		}
-		if (!isPathList || candidates.at(-1)?.matchIndex !== pathMatches.length - 1) listContinuation = undefined;
+		const lastCandidate = candidates.at(-1);
+		if (isPathList && lastCandidate?.matchIndex === pathMatches.length - 1) {
+			const lastArtifact = artifacts[lineArtifactIndexes.at(-1)!]!;
+			listContinuation = { kind: lastArtifact.kind, required: lastArtifact.required };
+			listArtifactIndexes = candidates[0]?.continuedFromPriorLine
+				? [...listArtifactIndexes, ...lineArtifactIndexes]
+				: lineArtifactIndexes;
+		} else {
+			listArtifactIndexes = [];
+			listContinuation = undefined;
+		}
 	}
 	return artifacts;
 }

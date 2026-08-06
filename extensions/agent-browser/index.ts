@@ -827,10 +827,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		}
 		if (restoredState.active) {
 			trackOwnedManagedSession(ownedManagedSessions, restoredState.sessionName, ctx.cwd, {
-			branchOwned: true,
-			headedManagedAutosaveDisabled: managedSessionHeadedAutosaveDisabled,
-			namespace: restoredState.namespace,
-		});
+				branchOwned: true,
+				headedManagedAutosaveDisabled: managedSessionHeadedAutosaveDisabled,
+				namespace: restoredState.namespace,
+			});
 		}
 		mergeActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords, {
 			branchOwnedLaunchIds: branchOwnedElectronLaunchIds,

@@ -138,9 +138,15 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 			const prompts = [
 				"Take a screenshot like the reference at /tmp/input.png",
 				"Take the screenshot at /tmp/input.png and compare",
+				"Take the screenshot at /tmp/input.png — tell me what is broken",
 				"No need to save a screenshot at /tmp/input.png",
+				"I can't save a screenshot to /tmp/input.png",
+				"I cannot save a screenshot to /tmp/input.png",
+				"You may not save a screenshot to /tmp/input.png",
 				"You should not accidentally save a screenshot to /tmp/input.png",
 				"Don’t save a screenshot to /tmp/input.png",
+				"Optionally save a recording to /tmp/input.webm",
+				"Save a screenshot to /var/folders/xx/T/pi-clipboard-input.png",
 			];
 			for (const prompt of prompts) {
 				const harness = createExtensionHarness({ cwd: tempDir, prompt });

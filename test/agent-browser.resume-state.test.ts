@@ -1035,6 +1035,88 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	}
 });
 
+test("agentBrowserExtension honors an explicit autosave interval after headed session resume", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-explicit-resume-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+const command = args.find((arg) => ["close", "get", "open"].includes(arg));
+const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+  : command === "close" ? { closed: true }
+  : { title: "Headed", url: "https://example.com/headed" };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	);
+
+	try {
+		let branch: unknown[] = [];
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"] });
+			assert.equal(open.isError, false, JSON.stringify(open));
+			assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
+			branch = [createToolBranchEntry({ details: open.details ?? {}, isError: open.isError })];
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+		});
+
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000", PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(followUp.isError, false, JSON.stringify(followUp));
+			assert.equal(followUp.details?.managedSessionHeadedAutosaveDisabled, undefined);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+		});
+
+		const invocations = await readInvocationLog(logPath);
+		const resumedGet = invocations.find((entry) => entry.args.includes("get") && entry.args.includes("url"));
+		const resumedClose = invocations.find((entry) => entry.args.at(-1) === "close");
+		assert.equal(resumedGet?.autosave, "1000", JSON.stringify(invocations));
+		assert.equal(resumedClose?.autosave, "1000", JSON.stringify(invocations));
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension omits headed autosave detail when a failed fresh launch is abandoned", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-abandoned-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: false } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: false, error: "intentional fresh launch failure" }));
+  process.exit(1);
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const failedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--headed", "open", "https://fail.example"],
+				sessionMode: "fresh",
+			});
+			assert.equal(failedOpen.isError, true, JSON.stringify(failedOpen));
+			assert.equal((failedOpen.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, false);
+			assert.equal((failedOpen.details?.managedSessionOutcome as { status?: string } | undefined)?.status, "abandoned");
+			assert.equal(failedOpen.details?.managedSessionHeadedAutosaveDisabled, undefined);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension retains headed autosave policy for an older owned session after replacement close fails", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-replaced-"));
 	const logPath = join(tempDir, "invocations.log");

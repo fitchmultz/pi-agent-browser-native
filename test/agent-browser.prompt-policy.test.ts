@@ -71,6 +71,7 @@ test("buildPromptPolicy keeps recording paths distinct when prompts are collapse
 test("buildPromptPolicy does not treat inbound media descriptions as requested output artifacts", () => {
 	for (const prompt of [
 		"/var/folders/xx/T/pi-clipboard-0d4ba22f-adae-471c-9c31-99186a57e2bc.png",
+		"Save a screenshot to /var/folders/xx/T/pi-clipboard-0d4ba22f-adae-471c-9c31-99186a57e2bc.png",
 		"/tmp/screenshot.png",
 		"/tmp/screen-recording.mp4",
 		"Review this screenshot: /tmp/input.png",
@@ -93,6 +94,8 @@ test("buildPromptPolicy scans large path lists linearly", () => {
 
 	assert.deepEqual(buildPromptPolicy(`Review these screenshots: ${inbound}`).requestedArtifacts, []);
 	assert.equal(buildPromptPolicy(`Capture screenshots at ${output}`).requestedArtifacts.length, 10_000);
+	const multiline = Array.from({ length: 4_000 }, (_, index) => `- /tmp/multiline-${index}.png`).join("\n");
+	assert.equal(buildPromptPolicy(`${"Context ".repeat(2_000)}Capture screenshots at:\n${multiline}`).requestedArtifacts.length, 4_000);
 });
 
 test("buildPromptPolicy detects requested artifact paths on the following line", () => {
@@ -138,6 +141,15 @@ test("buildPromptPolicy scopes optional recording qualifiers to their artifact l
 /tmp/optional-second.webm
 Save a recording to /tmp/trailing.webm if recording is available
 Save recordings at /tmp/list-first.webm and /tmp/list-second.webm if recordings are available
+Save recordings here:
+- /tmp/item-qualified-first.webm if recording is available
+- /tmp/item-qualified-second.webm
+Save recordings here:
+- /tmp/following-qualified-first.webm
+- /tmp/following-qualified-second.webm
+If recording is available.
+Optionally save a recording to /tmp/explicitly-optional.webm
+Save a screenshot to /tmp/optional-screenshot.png if possible
 Save a recording to /tmp/required.webm`);
 
 	assert.deepEqual(policy.requestedArtifacts, [
@@ -146,6 +158,10 @@ Save a recording to /tmp/required.webm`);
 		{ kind: "recording", path: "/tmp/trailing.webm", required: false },
 		{ kind: "recording", path: "/tmp/list-first.webm", required: false },
 		{ kind: "recording", path: "/tmp/list-second.webm", required: false },
+		{ kind: "recording", path: "/tmp/item-qualified-first.webm", required: false },
+		{ kind: "recording", path: "/tmp/item-qualified-second.webm", required: false },
+		{ kind: "recording", path: "/tmp/following-qualified-first.webm", required: false },
+		{ kind: "recording", path: "/tmp/following-qualified-second.webm", required: false },
 		{ kind: "recording", path: "/tmp/required.webm", required: true },
 	]);
 });
@@ -159,6 +175,9 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 	assert.deepEqual(buildPromptPolicy("Do not screenshot the page at /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("Do not try to save a screenshot at /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("Do not accidentally save a screenshot at /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("I can't save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("I cannot save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("You may not save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("You should not save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("You should not accidentally save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("Don’t save a screenshot to /tmp/input.png").requestedArtifacts, []);
@@ -206,7 +225,16 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 		buildPromptPolicy("Save a screenshot to (/tmp/parenthesized.png).").requestedArtifacts,
 		[{ kind: "screenshot", path: "/tmp/parenthesized.png", required: true }],
 	);
-	assert.deepEqual(buildPromptPolicy("Take the screenshot at /tmp/baseline.png and compare").requestedArtifacts, []);
+	for (const prompt of [
+		"Take the screenshot at /tmp/baseline.png",
+		"Take the screenshot at /tmp/baseline.png and compare",
+		"Take the screenshot at /tmp/baseline.png, then compare it",
+		"Take the screenshot at /tmp/baseline.png; review it",
+		"Take the screenshot at /tmp/baseline.png — tell me what is broken",
+		"Take the screenshot at /tmp/baseline.png (reference)",
+	]) {
+		assert.deepEqual(buildPromptPolicy(prompt).requestedArtifacts, []);
+	}
 	assert.deepEqual(
 		buildPromptPolicy("Save a screenshot here:\n/tmp/output.png\n/var/folders/xx/T/pi-clipboard-input.png").requestedArtifacts,
 		[{ kind: "screenshot", path: "/tmp/output.png", required: true }],
