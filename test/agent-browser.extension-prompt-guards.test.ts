@@ -83,7 +83,7 @@ if (args.includes("screenshot")) {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({
 				cwd: tempDir,
-				prompt: `Capture screenshots at:\n- ${firstScreenshotPath}!\n- ${secondScreenshotPath}?`,
+				prompt: `Then please capture screenshots at:\n- ${firstScreenshotPath}!\n- ${secondScreenshotPath}?`,
 			});
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -145,6 +145,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 				"You may not save a screenshot to /tmp/input.png",
 				"You may save a screenshot to /tmp/input.png",
 				"You might save a screenshot to /tmp/input.png",
+				"If you want, save a screenshot to /tmp/input.png",
+				"The docs say, save a screenshot to /tmp/input.png",
+				"If the page errors, save a screenshot to /tmp/input.png",
 				"If needed, save a screenshot to /tmp/input.png",
 				"Rather than save a screenshot to /tmp/input.png, continue",
 				"Save a screenshot to /tmp/input.png if desired",

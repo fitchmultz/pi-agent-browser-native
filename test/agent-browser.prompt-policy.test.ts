@@ -96,6 +96,11 @@ test("buildPromptPolicy scans large path lists linearly", () => {
 	assert.equal(buildPromptPolicy(`Capture screenshots at ${output}`).requestedArtifacts.length, 10_000);
 	const multiline = Array.from({ length: 4_000 }, (_, index) => `- /tmp/multiline-${index}.png`).join("\n");
 	assert.equal(buildPromptPolicy(`${"Context ".repeat(2_000)}. Capture screenshots at:\n${multiline}`).requestedArtifacts.length, 4_000);
+	const repeatedIntents = Array.from({ length: 4_000 }, (_, index) => `save a screenshot to /tmp/repeated-${index}.png`).join(". ");
+	assert.equal(buildPromptPolicy(repeatedIntents).requestedArtifacts.length, 4_000);
+	const slashHeavyStartedAt = performance.now();
+	assert.deepEqual(buildPromptPolicy(`see a${"/a".repeat(26)}!`).requestedArtifacts, []);
+	assert.ok(performance.now() - slashHeavyStartedAt < 500, "slash-heavy non-path token should not trigger pathological backtracking");
 });
 
 test("buildPromptPolicy detects requested artifact paths on the following line", () => {
@@ -188,6 +193,9 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 	assert.deepEqual(buildPromptPolicy("You may save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("You might save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("You are allowed to save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("If you want, save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("The docs say, save a screenshot to /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("If the page errors, save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("If needed, save a screenshot to /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("Rather than save a screenshot to /tmp/input.png, continue").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("Save a screenshot to /tmp/input.png if desired").requestedArtifacts, []);
@@ -249,6 +257,18 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 	assert.deepEqual(
 		buildPromptPolicy("I need you to save a screenshot to /tmp/needed.png").requestedArtifacts,
 		[{ kind: "screenshot", path: "/tmp/needed.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Then please save a screenshot to /tmp/then-please.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/then-please.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("And please save a screenshot to /tmp/and-please.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/and-please.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Make sure to save a screenshot to /tmp/make-sure.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/make-sure.png", required: true }],
 	);
 	for (const prompt of [
 		"Take the screenshot at /tmp/baseline.png",

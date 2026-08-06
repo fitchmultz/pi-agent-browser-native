@@ -852,11 +852,24 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 			assert.equal(status.isError, false, JSON.stringify(status));
 			const probe = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId: electronRecord.launchId } });
 			assert.equal(probe.isError, false, JSON.stringify(probe));
-			const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });
+			assert.equal(probe.details?.managedSessionHeadedAutosaveDisabled, true, JSON.stringify(probe.details));
+
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({ details: electronDetails, isError: false }),
+					createToolBranchEntry({ details: replacementDetails, isError: false }),
+					createToolBranchEntry({ details: probe.details, isError: false }),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+			const resumedProbe = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { electron: { action: "probe", launchId: electronRecord.launchId } });
+			assert.equal(resumedProbe.isError, false, JSON.stringify(resumedProbe));
+			const cleanup = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });
 			assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
 
 			const invocations = await readInvocationLog(logPath);
-			assert.ok(invocations.length >= 7, JSON.stringify(invocations));
+			assert.ok(invocations.length >= 13, JSON.stringify(invocations));
 			assert.equal(invocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
 			assert.equal(pidIsAlive(child?.pid), false);
 		});

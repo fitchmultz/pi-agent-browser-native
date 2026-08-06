@@ -25,11 +25,12 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
 ];
 
-const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?=[\s"'`),;.!?]|$)/gi;
+const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;\\/]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?=[\s"'`),;.!?]|$)/gi;
 const PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s*:\s*$/i;
 const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s+(?:directly\s+)?(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it\s+)?(?:at|as|to)\s*[:=-]?\s*$/i;
 const PROMPT_ARTIFACT_UNSAFE_OUTPUT_PREFIX_PATTERN = /n['’]t\b|\b(?:cannot|disallowed|forbidden|maybe|needed|never|no|not|optional(?:ly)?|perhaps|prohibited|rather|refrain|unable|without)\b|\b(?:he|i|it|she|they|we|you)\s+(?:can|could|may|might)\b/i;
-const PROMPT_ARTIFACT_AFFIRMATIVE_PREFIX_PATTERN = /^(?:and(?:\s+then)?|then|please|you|(?:can|could|will|would)\s+you(?:\s+please)?|(?:i|we)\s+(?:need|want)\s+you\s+to|you\s+(?:must|should))$/i;
+const PROMPT_ARTIFACT_AFFIRMATIVE_PREFIX_PATTERN = /^(?:(?:and(?:\s+then)?|then)(?:\s+please)?|please|you|(?:be|make)\s+sure\s+to|(?:can|could|will|would)\s+you(?:\s+please)?|(?:i|we)\s+(?:need|want)\s+you\s+to|you\s+(?:must|should))$/i;
+const PROMPT_ARTIFACT_AFFIRMATIVE_LEAD_IN_PATTERN = /^(?:please\s+)?(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\b.*(?:[,\-:–—]|\b(?:and|then))\s*$/i;
 const PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN = /^[\s"'`()\[\]{},;:.*!?\/&+>-]*(?:(?:and|or)[\s"'`()\[\]{},;:.*!?\/&+>-]*)?$/i;
 const PROMPT_ARTIFACT_LIST_PREFIX_PATTERN = /^\s*(?:(?:[-*+]|\d+[.)])\s*)/;
 const PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN = /\b(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available\b/i;
@@ -63,8 +64,7 @@ function hasPromptArtifactOutputIntent(context: string): boolean {
 	const normalizedPrefix = governingPrefix.trim();
 	return normalizedPrefix.length === 0
 		|| PROMPT_ARTIFACT_AFFIRMATIVE_PREFIX_PATTERN.test(normalizedPrefix)
-		|| /\b(?:and|then)\s*$/i.test(normalizedPrefix)
-		|| /[,\-:–—]\s*$/.test(governingPrefix);
+		|| PROMPT_ARTIFACT_AFFIRMATIVE_LEAD_IN_PATTERN.test(governingPrefix);
 }
 
 function stripPromptArtifactListPrefix(context: string): string {
@@ -144,9 +144,10 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 				groupOptional.set(group, listContinuation?.required === false);
 			}
 			const referenceReading = directIntent && PROMPT_ARTIFACT_REFERENCE_INTENT_PATTERN.test(getPromptArtifactIntentClause(intentContext));
+			const trailingContext = getPromptArtifactTrailingClause(line.slice(end, pathMatches[matchIndex + 1]?.start ?? line.length));
 			const explicitlyOptional = directIntent && (
 				PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN.test(getPromptArtifactIntentClause(intentContext))
-				|| PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN.test(getPromptArtifactTrailingClause(line.slice(end)))
+				|| PROMPT_ARTIFACT_EXPLICIT_OPTIONAL_PATTERN.test(trailingContext)
 			);
 			if (!kind || group === undefined || referenceReading || explicitlyOptional || isLikelyInboundPromptArtifact(path)) {
 				previousGroup = undefined;

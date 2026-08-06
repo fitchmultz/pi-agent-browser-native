@@ -667,6 +667,7 @@ function formatElectronProbeVisibleText(options: {
 
 function buildElectronProbeResult(options: {
 	compiledElectron: CompiledAgentBrowserElectron;
+	headedManagedAutosaveDisabled?: boolean;
 	mismatch?: ElectronSessionMismatch;
 	namespace?: string;
 	probe: ElectronProbeResult;
@@ -700,6 +701,7 @@ function buildElectronProbeResult(options: {
 		},
 		nextActions: nextActions.length > 0 ? nextActions : undefined,
 		...buildAgentBrowserResultCategoryDetails({ args: [], succeeded: true }),
+		managedSessionHeadedAutosaveDisabled: options.headedManagedAutosaveDisabled === true ? true : undefined,
 		namespace: options.namespace,
 		refSnapshot: options.probe.refSnapshot,
 		sessionName: options.probe.sessionName,
@@ -903,11 +905,12 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 				pageUrlUnknown: currentPageState.tabTargetUnknown === true,
 			});
 			if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
+			const headedManagedAutosaveDisabled = ownedManagedSessions.get(pageStateKey)?.headedManagedAutosaveDisabled === true;
 			const probe = await withOwnedElectronManagedSessionPolicy(
 				{
 					args: ["snapshot", "-i"],
 					cwd,
-					headedManagedAutosaveDisabled: ownedManagedSessions.get(pageStateKey)?.headedManagedAutosaveDisabled,
+					headedManagedAutosaveDisabled,
 					namespace: probeNamespace,
 					restoreState: managedSessionRestoreState,
 					sessionName: probeSessionName,
@@ -953,6 +956,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 			}
 			return buildElectronProbeResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,
+				headedManagedAutosaveDisabled,
 				mismatch: sessionMismatch,
 				namespace: probeNamespace,
 				probe,
