@@ -98,7 +98,7 @@ Each required target runs `platform-build` and `browser-dogfood-smoke` on one Cr
 4. Run `npm pack`.
 5. Create a clean target-local Pi project.
 6. Install the packed tarball with `npm install --no-save`.
-7. Run `pi install -l --approve ./node_modules/pi-agent-browser-native` from the clean project so Pi 0.79+ trusts the generated project-local settings for that command.
+7. Run `pi install -l --approve ./node_modules/pi-agent-browser-native` from the clean project so Pi 0.84.0+ trusts the generated project-local settings for that command.
 8. Run `pi list --approve` and assert the package is registered under project packages from the packed install.
 9. Assert the release proof did not use `pi -e .` or `pi --extension .`.
 

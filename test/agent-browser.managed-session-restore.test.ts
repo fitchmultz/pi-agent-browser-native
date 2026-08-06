@@ -193,11 +193,11 @@ test("checkout-generation marker creation converges across processes", async () 
 			const stderr: Buffer[] = [];
 			child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
 			child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-			return { child, getStdout: () => stdout, stderr };
+			return { exit: once(child, "exit"), getStdout: () => stdout, stderr };
 		});
 		const keys: string[] = [];
 		for (const result of children) {
-			const [code] = await once(result.child, "exit") as [number | null];
+			const [code] = await result.exit as [number | null];
 			assert.equal(code, 0, Buffer.concat(result.stderr).toString("utf8"));
 			keys.push(result.getStdout());
 		}

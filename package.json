@@ -1,6 +1,6 @@
 {
   "name": "pi-agent-browser-native",
-  "version": "0.2.78",
+  "version": "0.3.0",
   "description": "pi extension that exposes agent-browser as a native tool for browser automation",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
@@ -63,9 +63,9 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.80.9",
-    "@earendil-works/pi-coding-agent": "^0.80.9",
-    "@earendil-works/pi-tui": "^0.80.9",
+    "@earendil-works/pi-ai": "0.84.0",
+    "@earendil-works/pi-coding-agent": "0.84.0",
+    "@earendil-works/pi-tui": "0.84.0",
     "@types/node": "^25.9.3",
     "tsx": "^4.21.0",
     "typebox": "^1.1.38",
@@ -74,7 +74,7 @@
   "overrides": {
     "basic-ftp": "6.0.1",
     "esbuild": "0.28.1",
-    "protobufjs": "7.6.4"
+    "protobufjs": "7.6.5"
   },
   "scripts": {
     "docs": "node ./scripts/project.mjs docs",
