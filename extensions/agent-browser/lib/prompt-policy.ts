@@ -25,11 +25,12 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
 ];
 
-const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?:[\s"'`),;.]|$)/gi;
-const PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|screenshots?|screen|video|recording)\s*:\s*$/i;
-const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|screenshots?|screen|video|recording)\s+(?:directly\s+)?(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it\s+)?(?:at|as|to)\s*[:=-]?\s*$/i;
-const PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN = /\b(?:do\s+not|don't|never|no\s+need\s+to|need\s+not)\b[^,;.!?\n]{0,80}\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\b/i;
+const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?=[\s"'`),;.]|$)/gi;
+const PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s*:\s*$/i;
+const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s+(?:directly\s+)?(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it\s+)?(?:at|as|to)\s*[:=-]?\s*$/i;
+const PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN = /\b(?:do\s+not|don't|never|no\s+need\s+to|need\s+not)\s+(?:(?:actually|also|ever)\s+)*(?:(?:need|try)\s+to\s+)?(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\b/i;
 const PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN = /^[\s"'`()\[\]{},;:.*\/&+>-]*(?:(?:and|or)[\s"'`()\[\]{},;:.*\/&+>-]*)?$/i;
+const PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN = /\b(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available\b/i;
 
 function getPromptArtifactKind(path: string): PromptRequestedArtifact["kind"] | undefined {
 	const lowerPath = path.toLowerCase();
@@ -48,38 +49,52 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 	const artifacts: PromptRequestedArtifact[] = [];
 	const seen = new Set<string>();
 	const lines = prompt.split(/\r?\n/);
+	let listContinuation: { kind: PromptRequestedArtifact["kind"]; required: boolean } | undefined;
 	for (let index = 0; index < lines.length; index += 1) {
 		const line = lines[index] ?? "";
 		let previousKind: PromptRequestedArtifact["kind"] | undefined;
+		let previousRequired: boolean | undefined;
 		let previousPathEnd = 0;
+		let lastListArtifact: typeof listContinuation;
 		PROMPT_ARTIFACT_PATH_PATTERN.lastIndex = 0;
 		const pathMatches: Array<{ path: string; start: number }> = [];
 		for (const match of line.matchAll(PROMPT_ARTIFACT_PATH_PATTERN)) {
 			const path = match[1]?.trim();
 			if (path) pathMatches.push({ path, start: (match.index ?? 0) + match[0].indexOf(path) });
 		}
-		const remainder = line.replace(PROMPT_ARTIFACT_PATH_PATTERN, "").replace(/[\s"'`()\[\],;:.*>-]+/g, "").toLowerCase();
-		const recordingRequired = !/\b(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available\b/i.test(`${lines[index - 1] ?? ""}\n${line}`);
+		const pathlessLine = line.replace(PROMPT_ARTIFACT_PATH_PATTERN, "");
+		const remainder = pathlessLine.replace(/[\s"'`()\[\],;:.*>-]+/g, "").toLowerCase();
+		const isPathList = pathMatches.length > 0 && PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN.test(pathlessLine);
 		for (const { path, start: pathStart } of pathMatches) {
 			const localContext = line.slice(previousPathEnd, pathStart);
-			const intentContext = !remainder || ["file", "output", "path"].includes(remainder)
+			const intentContext = isPathList || !remainder || ["file", "output", "path"].includes(remainder)
 				? `${lines[index - 1] ?? ""}\n${localContext}`
 				: localContext;
 			const kind = getPromptArtifactKind(path);
-			const hasIntent = hasPromptArtifactOutputIntent(intentContext)
-				|| (kind === previousKind && PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN.test(localContext));
-			previousKind = hasIntent ? kind : undefined;
+			const directIntent = hasPromptArtifactOutputIntent(intentContext);
+			const sameLineContinuation = kind === previousKind && PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN.test(localContext);
+			const priorLineContinuation = isPathList && kind === listContinuation?.kind && PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN.test(localContext);
+			const hasIntent = directIntent || sameLineContinuation || priorLineContinuation;
 			previousPathEnd = pathStart + path.length;
-			if (!kind || !hasIntent) continue;
+			if (!kind || !hasIntent) {
+				previousKind = undefined;
+				previousRequired = undefined;
+				continue;
+			}
+			const required = kind === "screenshot" || (directIntent
+				? !PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN.test(intentContext)
+				: sameLineContinuation
+					? previousRequired !== false
+					: listContinuation?.required !== false);
+			previousKind = kind;
+			previousRequired = required;
+			lastListArtifact = { kind, required };
 			const key = `${kind}:${path}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
-			artifacts.push({
-				kind,
-				path,
-				required: kind === "screenshot" || recordingRequired,
-			});
+			artifacts.push({ kind, path, required });
 		}
+		listContinuation = isPathList ? lastListArtifact : undefined;
 	}
 	return artifacts;
 }

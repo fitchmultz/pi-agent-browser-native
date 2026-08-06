@@ -60,7 +60,8 @@ if (args.includes("snapshot")) {
 test("agentBrowserExtension blocks close until required prompt screenshot artifacts are saved", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-required-artifact-"));
 	const logPath = join(tempDir, "invocations.log");
-	const screenshotPath = join(tempDir, "release-smoke.png");
+	const firstScreenshotPath = join(tempDir, "release-smoke-first.png");
+	const secondScreenshotPath = join(tempDir, "release-smoke-second.png");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -80,17 +81,34 @@ if (args.includes("screenshot")) {
 
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir, prompt: `Save a screenshot here: ${screenshotPath}` });
+			const harness = createExtensionHarness({
+				cwd: tempDir,
+				prompt: `Capture screenshots at:\n${firstScreenshotPath}\n${secondScreenshotPath}`,
+			});
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const blockedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
 			assert.equal(blockedClose.isError, true);
-			assert.match((blockedClose.content[0] as { text: string }).text, /requested artifact path is missing or unverified/);
-			assert.equal((blockedClose.details?.promptGuard as { missingArtifacts?: Array<{ path?: string }> } | undefined)?.missingArtifacts?.[0]?.path, screenshotPath);
+			assert.match((blockedClose.content[0] as { text: string }).text, /requested artifact paths are missing or unverified/);
+			assert.deepEqual(
+				(blockedClose.details?.promptGuard as { missingArtifacts?: Array<{ path?: string }> } | undefined)?.missingArtifacts?.map((artifact) => artifact.path),
+				[firstScreenshotPath, secondScreenshotPath],
+			);
 
-			const screenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", screenshotPath] });
-			assert.equal(screenshot.isError, false, JSON.stringify(screenshot));
-			assert.equal((await stat(screenshotPath)).isFile(), true);
+			const firstScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", firstScreenshotPath] });
+			assert.equal(firstScreenshot.isError, false, JSON.stringify(firstScreenshot));
+			assert.equal((await stat(firstScreenshotPath)).isFile(), true);
+
+			const stillBlockedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(stillBlockedClose.isError, true);
+			assert.deepEqual(
+				(stillBlockedClose.details?.promptGuard as { missingArtifacts?: Array<{ path?: string }> } | undefined)?.missingArtifacts?.map((artifact) => artifact.path),
+				[secondScreenshotPath],
+			);
+
+			const secondScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", secondScreenshotPath] });
+			assert.equal(secondScreenshot.isError, false, JSON.stringify(secondScreenshot));
+			assert.equal((await stat(secondScreenshotPath)).isFile(), true);
 
 			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
 			assert.equal(close.isError, false, JSON.stringify(close));

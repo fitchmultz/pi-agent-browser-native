@@ -491,7 +491,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
 	const targetsCurrentManagedSession = state.managedSessionActive
 		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
-	const headedManagedAutosaveDisabled = (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true)
+	const headedManagedAutosaveDisabled = recordedOwnedSession?.headedManagedAutosaveDisabled === true
+		|| (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true)
 		|| (process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS === undefined
 			&& (getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(process.env.AGENT_BROWSER_HEADED)));
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({

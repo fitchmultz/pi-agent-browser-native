@@ -1014,10 +1014,76 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(restoredFollowUp.isError, false, JSON.stringify(restoredFollowUp));
 			assert.equal(restoredFollowUp.details?.managedSessionHeadedAutosaveDisabled, true);
 
+			const sessionlessDoctor = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["doctor"] });
+			assert.equal(sessionlessDoctor.isError, false, JSON.stringify(sessionlessDoctor));
+			assert.equal(sessionlessDoctor.details?.managedSessionHeadedAutosaveDisabled, undefined);
+
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 			const invocations = await readInvocationLog(logPath);
-			assert.ok(invocations.length >= 4);
-			assert.equal(invocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
+			const doctorInvocation = invocations.find((entry) => entry.args.includes("doctor"));
+			const managedInvocations = invocations.filter((entry) => !entry.args.includes("doctor"));
+			assert.ok(managedInvocations.length >= 4);
+			assert.equal(managedInvocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
+			assert.equal(doctorInvocation?.autosave, null);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension retains headed autosave policy for an older owned session after replacement close fails", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-replaced-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
+const command = args.find((arg) => ["close", "get", "open"].includes(arg));
+if (command === "close") {
+  process.stdout.write(JSON.stringify({ success: false, error: "forced close failure" }));
+  process.exit(1);
+} else {
+  const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+    : { title: "Headed", url: args[args.length - 1] };
+  process.stdout.write(JSON.stringify({ success: true, data }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, AGENT_BROWSER_HEADED: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const headedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--headed", "open", "https://example.com/headed"],
+			});
+			assert.equal(headedOpen.isError, false, JSON.stringify(headedOpen));
+			assert.equal(headedOpen.details?.managedSessionHeadedAutosaveDisabled, true);
+			const headedSessionName = headedOpen.details?.sessionName;
+			assertIsString(headedSessionName);
+
+			const replacement = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/replacement"],
+				sessionMode: "fresh",
+			});
+			assert.equal(replacement.isError, false, JSON.stringify(replacement));
+			assert.notEqual(replacement.details?.sessionName, headedSessionName);
+			assert.equal(replacement.details?.managedSessionHeadedAutosaveDisabled, undefined);
+
+			const oldSessionFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", headedSessionName, "get", "url"],
+			});
+			assert.equal(oldSessionFollowUp.isError, false, JSON.stringify(oldSessionFollowUp));
+			assert.equal(oldSessionFollowUp.details?.managedSessionHeadedAutosaveDisabled, true);
+
+			const invocations = await readInvocationLog(logPath);
+			const replacementOpen = invocations.find((entry) => entry.args.includes("https://example.com/replacement"));
+			const explicitOldSessionFollowUp = [...invocations].reverse().find((entry) =>
+				entry.args.includes(headedSessionName) && entry.args.includes("get") && entry.args.includes("url"),
+			);
+			assert.equal(replacementOpen?.autosave, null, JSON.stringify(invocations));
+			assert.equal(explicitOldSessionFollowUp?.autosave, "0", JSON.stringify(invocations));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

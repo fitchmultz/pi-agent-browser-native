@@ -894,6 +894,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				electronChildProcesses,
 				electronLaunchRecords: electronRecordsToCleanup,
 				managedSessionRestoreState,
+				ownedManagedSessions,
 				timeoutMs: implicitSessionCloseTimeoutMs,
 			});
 			preservedElectronProfileDirs = [...new Set([
@@ -1031,6 +1032,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					managedSessionName,
 					managedSessionNamespace,
 					managedSessionRestoreState,
+					ownedManagedSessions,
 					redactedCompiledElectron,
 					sessionPageState,
 					signal,

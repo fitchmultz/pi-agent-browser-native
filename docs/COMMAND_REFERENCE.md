@@ -189,7 +189,7 @@ Use upstream's global `--headed` flag on the first launch when the user needs to
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
-`--headed` is launch-scoped, including explicit `false`, so changing an active managed session between headed and headless requires `sessionMode: "fresh"`. Wrapper-owned headed launches default `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` to `0` to avoid upstream 0.33.2's visible temporary storage-collector tabs and related daemon-policy delays, and reapply that value to every helper/follow-up subprocess plus reload/resume so daemon configuration remains stable. Native close still saves, but direct window close can lose newer state because headed browsers are exempt from idle shutdown; set an explicit interval when periodic preservation matters.
+`--headed` is launch-scoped, including explicit `false`, so changing an active managed session between headed and headless requires `sessionMode: "fresh"`. Wrapper-owned headed launches default `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` to `0` to avoid upstream 0.33.2's visible temporary storage-collector tabs and related daemon-policy delays, and reapply that value to every helper/follow-up subprocess, still-owned off-current session, Electron cleanup close, and reload/resume so daemon configuration remains stable. Native close still saves, but direct window close can lose newer state because headed browsers are exempt from idle shutdown; set an explicit interval when periodic preservation matters.
 
 For a WebGPU page, enable the launch preset before the first navigation. Treat it as local-launch-only and use a fresh managed session when changing an existing browser:
 

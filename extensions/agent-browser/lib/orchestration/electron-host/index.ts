@@ -32,7 +32,7 @@ import {
 	getLiveElectronRendererTargets,
 	runSessionCommandData,
 } from "../browser-run/session-state.js";
-import type { AgentBrowserToolResult, ElectronManagedSessionTarget, ElectronSessionMismatch } from "../browser-run/types.js";
+import type { AgentBrowserToolResult, ElectronManagedSessionTarget, ElectronSessionMismatch, OwnedManagedSessionReference } from "../browser-run/types.js";
 
 export type { ElectronLaunchRecord } from "../../electron/launch.js";
 
@@ -716,6 +716,7 @@ interface ElectronHostLaunchCleanupState {
 	electronChildProcesses: Map<string, ChildProcess>;
 	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
 	managedSessionRestoreState: ManagedSessionRestoreState;
+	ownedManagedSessions: ReadonlyMap<string, OwnedManagedSessionReference>;
 }
 
 export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLaunchCleanupState & {
@@ -725,8 +726,10 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 }): Promise<ElectronCleanupResult[]> {
 	const results: ElectronCleanupResult[] = [];
 	for (const record of options.records) {
+		const sessionKey = getSessionPageStateKey(record.sessionName) ?? record.sessionName;
+		const managedSessionOwner = sessionKey ? options.ownedManagedSessions.get(sessionKey) : undefined;
 		const managedSessionCloseError = record.sessionName
-			? await closeManagedSession({ cwd: options.cwd, preserveAttachedBrowserSession: options.attachedSessionKeys.has(getSessionPageStateKey(record.sessionName) ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
+			? await closeManagedSession({ cwd: options.cwd, headedManagedAutosaveDisabled: managedSessionOwner?.headedManagedAutosaveDisabled, preserveAttachedBrowserSession: options.attachedSessionKeys.has(sessionKey ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
 			: undefined;
 		const managedSessionStep = record.sessionName
 			? managedSessionCloseError
@@ -783,6 +786,7 @@ export async function handleElectronHostInput(options: {
 	managedSessionName: string;
 	managedSessionNamespace?: string;
 	managedSessionRestoreState: ManagedSessionRestoreState;
+	ownedManagedSessions: ReadonlyMap<string, OwnedManagedSessionReference>;
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
 	sessionPageState: SessionPageState;
 	signal?: AbortSignal;
@@ -805,6 +809,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 		managedSessionName,
 		managedSessionNamespace,
 		managedSessionRestoreState,
+		ownedManagedSessions,
 		redactedCompiledElectron,
 		sessionPageState,
 		signal,
@@ -960,7 +965,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 	if (compiledElectron?.action === "cleanup") {
 		const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);
 		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
-		const cleanupResults = await cleanupTrackedElectronHostLaunches({ attachedSessionKeys, cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
+		const cleanupResults = await cleanupTrackedElectronHostLaunches({ attachedSessionKeys, cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, ownedManagedSessions, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
 		return buildElectronCleanupResult(redactedCompiledElectron ?? compiledElectron, cleanupResults);
 	}
 	return undefined;

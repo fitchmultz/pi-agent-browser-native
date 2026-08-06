@@ -104,6 +104,37 @@ test("buildPromptPolicy detects requested artifact paths on the following line",
 	]);
 });
 
+test("buildPromptPolicy carries output intent across contiguous artifact path lists", () => {
+	const policy = buildPromptPolicy(`Capture screenshots at:
+/tmp/first.png
+/tmp/second.png
+Capture screenshots at:
+/tmp/third.png and /tmp/fourth.png
+Capture screenshots at /tmp/fifth.png /tmp/sixth.png`);
+
+	assert.deepEqual(policy.requestedArtifacts, [
+		{ kind: "screenshot", path: "/tmp/first.png", required: true },
+		{ kind: "screenshot", path: "/tmp/second.png", required: true },
+		{ kind: "screenshot", path: "/tmp/third.png", required: true },
+		{ kind: "screenshot", path: "/tmp/fourth.png", required: true },
+		{ kind: "screenshot", path: "/tmp/fifth.png", required: true },
+		{ kind: "screenshot", path: "/tmp/sixth.png", required: true },
+	]);
+});
+
+test("buildPromptPolicy scopes optional recording qualifiers to their artifact list", () => {
+	const policy = buildPromptPolicy(`Save recordings here if recording is available:
+/tmp/optional-first.webm
+/tmp/optional-second.webm
+Save a recording to /tmp/required.webm`);
+
+	assert.deepEqual(policy.requestedArtifacts, [
+		{ kind: "recording", path: "/tmp/optional-first.webm", required: false },
+		{ kind: "recording", path: "/tmp/optional-second.webm", required: false },
+		{ kind: "recording", path: "/tmp/required.webm", required: true },
+	]);
+});
+
 test("buildPromptPolicy associates output intent with its path and rejects negated intent", () => {
 	assert.deepEqual(
 		buildPromptPolicy("Review /tmp/input.png and save a screenshot to /tmp/output.png").requestedArtifacts,
@@ -111,6 +142,15 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 	);
 	assert.deepEqual(buildPromptPolicy("Do not save this screenshot: /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(buildPromptPolicy("Do not screenshot the page at /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("Do not try to save a screenshot at /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(
+		buildPromptPolicy("Do not close the browser until you save a screenshot to /tmp/output.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/output.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Don't finish until you save a screenshot to /tmp/finish.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/finish.png", required: true }],
+	);
 	assert.deepEqual(buildPromptPolicy("Take a look at this screenshot: /tmp/input.png").requestedArtifacts, []);
 	assert.deepEqual(
 		buildPromptPolicy("Take a screenshot of the checkout page. Save it at /tmp/checkout.png").requestedArtifacts,

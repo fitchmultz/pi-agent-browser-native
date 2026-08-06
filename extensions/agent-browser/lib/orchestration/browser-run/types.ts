@@ -57,6 +57,7 @@ export interface BrowserRunInputFields {
 
 export interface OwnedManagedSessionReference {
 	cwd: string;
+	headedManagedAutosaveDisabled?: boolean;
 	namespace?: string;
 	sessionName: string;
 }
