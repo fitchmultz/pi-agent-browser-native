@@ -1022,7 +1022,7 @@ test("runAgentBrowserProcess suppresses visible restore autosave tabs for headed
 			await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: parentAutosave, HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 				const args = [...launchArgs, "--session", sessionName, "open", "https://example.com"];
 				const restoreState = new ManagedSessionRestoreState();
-				const context = buildOwnedManagedSessionRestoreContext({ args, cwd: tempDir, headedManagedAutosaveDisabled: retainedHeadedDefault, managedSessionName: sessionName, restoreState, sessionName });
+				const context = buildOwnedManagedSessionRestoreContext({ args, cwd: tempDir, headedManagedAutosaveDisabled: retainedHeadedDefault, headedManagedAutosaveInterval: retainedHeadedDefault ? "0" : undefined, managedSessionName: sessionName, restoreState, sessionName });
 				const run = () => runAgentBrowserProcess({ args, cwd: tempDir, env, managedSessionRestoreState: restoreState, ownedManagedSession });
 				const result = context && ownedManagedSession ? await withOwnedManagedSessionContext(context, run) : await run();
 				const parsed = await parseAgentBrowserEnvelope(result.stdout);

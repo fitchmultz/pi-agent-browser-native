@@ -23,6 +23,7 @@ import {
 	getOwnedManagedSessionNamespaceEnv,
 	ManagedSessionRestoreState,
 	pruneOwnedManagedSessionRestoreSnapshots,
+	resolveExplicitAutosaveInterval,
 	resolveOwnedManagedSessionContext,
 	withOwnedManagedSessionContext,
 } from "../extensions/agent-browser/lib/managed-session-restore.js";
@@ -45,6 +46,16 @@ const getAndCommitManagedSessionRestoreEnv = (options: Parameters<typeof getMana
 	commitManagedSessionRestoreSuppression(options);
 	return env;
 };
+test("resolveExplicitAutosaveInterval mirrors the upstream u64 fallback", () => {
+	assert.equal(resolveExplicitAutosaveInterval(undefined), undefined);
+	assert.equal(resolveExplicitAutosaveInterval("0"), "0");
+	assert.equal(resolveExplicitAutosaveInterval("001000"), "1000");
+	assert.equal(resolveExplicitAutosaveInterval("+1000"), "1000");
+	assert.equal(resolveExplicitAutosaveInterval(" 1000 "), "30000");
+	assert.equal(resolveExplicitAutosaveInterval("invalid"), "30000");
+	assert.equal(resolveExplicitAutosaveInterval("18446744073709551616"), "30000");
+});
+
 test.after(() => {
 	rmSync(isolatedHome, { recursive: true, force: true });
 	rmSync(isolatedProject, { recursive: true, force: true });

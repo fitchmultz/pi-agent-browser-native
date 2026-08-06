@@ -484,17 +484,19 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	args: string[];
 	cwd: string;
 	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	namespace?: string;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
 	signal?: AbortSignal;
 }, run: () => Promise<T>): Promise<T> {
-	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(options.headedManagedAutosaveDisabled);
+	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(options.headedManagedAutosaveInterval);
 	if (autosavePolicyChangeError) throw new ElectronManagedSessionPolicyError(autosavePolicyChangeError);
 	const context = buildOwnedManagedSessionRestoreContext({
 		args: ["--namespace", options.namespace ?? "", "--session", options.sessionName, ...options.args],
 		cwd: options.cwd,
 		headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
+		headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
 		managedSessionName: options.sessionName,
 		namespace: options.namespace,
 		restoreState: options.restoreState,
@@ -518,6 +520,7 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 async function collectOwnedElectronManagedSessionTarget(options: {
 	cwd: string;
 	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	namespace?: string;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
@@ -670,6 +673,7 @@ function formatElectronProbeVisibleText(options: {
 function buildElectronProbeResult(options: {
 	compiledElectron: CompiledAgentBrowserElectron;
 	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	mismatch?: ElectronSessionMismatch;
 	namespace?: string;
 	probe: ElectronProbeResult;
@@ -704,6 +708,7 @@ function buildElectronProbeResult(options: {
 		nextActions: nextActions.length > 0 ? nextActions : undefined,
 		...buildAgentBrowserResultCategoryDetails({ args: [], succeeded: true }),
 		managedSessionHeadedAutosaveDisabled: options.headedManagedAutosaveDisabled === true ? true : undefined,
+		managedSessionHeadedAutosaveInterval: options.headedManagedAutosaveInterval,
 		namespace: options.namespace,
 		refSnapshot: options.probe.refSnapshot,
 		sessionName: options.probe.sessionName,
@@ -736,7 +741,7 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 		const sessionKey = getSessionPageStateKey(record.sessionName) ?? record.sessionName;
 		const managedSessionOwner = sessionKey ? options.ownedManagedSessions.get(sessionKey) : undefined;
 		const managedSessionCloseError = record.sessionName
-			? await closeManagedSession({ cwd: options.cwd, headedManagedAutosaveDisabled: managedSessionOwner?.headedManagedAutosaveDisabled, preserveAttachedBrowserSession: options.attachedSessionKeys.has(sessionKey ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
+			? await closeManagedSession({ cwd: options.cwd, headedManagedAutosaveInterval: managedSessionOwner?.headedManagedAutosaveInterval, preserveAttachedBrowserSession: options.attachedSessionKeys.has(sessionKey ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
 			: undefined;
 		const managedSessionStep = record.sessionName
 			? managedSessionCloseError
@@ -841,6 +846,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 				return collectOwnedElectronManagedSessionTarget({
 					cwd,
 					headedManagedAutosaveDisabled: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveDisabled,
+					headedManagedAutosaveInterval: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveInterval,
 					restoreState: managedSessionRestoreState,
 					sessionName: record.sessionName,
 					signal,
@@ -907,12 +913,15 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 				pageUrlUnknown: currentPageState.tabTargetUnknown === true,
 			});
 			if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
-			const headedManagedAutosaveDisabled = ownedManagedSessions.get(pageStateKey)?.headedManagedAutosaveDisabled === true;
+			const managedSessionOwner = ownedManagedSessions.get(pageStateKey);
+			const headedManagedAutosaveDisabled = managedSessionOwner?.headedManagedAutosaveDisabled === true;
+			const headedManagedAutosaveInterval = managedSessionOwner?.headedManagedAutosaveInterval;
 			const probe = await withOwnedElectronManagedSessionPolicy(
 				{
 					args: ["snapshot", "-i"],
 					cwd,
 					headedManagedAutosaveDisabled,
+					headedManagedAutosaveInterval,
 					namespace: probeNamespace,
 					restoreState: managedSessionRestoreState,
 					sessionName: probeSessionName,
@@ -959,6 +968,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 			return buildElectronProbeResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,
 				headedManagedAutosaveDisabled,
+				headedManagedAutosaveInterval,
 				mismatch: sessionMismatch,
 				namespace: probeNamespace,
 				probe,

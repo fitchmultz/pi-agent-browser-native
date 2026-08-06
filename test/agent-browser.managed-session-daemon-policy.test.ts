@@ -9,15 +9,18 @@ import { withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-bro
 
 test("getRunningHeadedAutosavePolicyChangeError rejects live timer changes but allows close", { concurrency: false }, async () => {
 	await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined }, async () => {
-		assert.equal(getRunningHeadedAutosavePolicyChangeError(true), undefined);
+		assert.equal(getRunningHeadedAutosavePolicyChangeError("0"), undefined);
 	});
 	await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" }, async () => {
-		assert.equal(getRunningHeadedAutosavePolicyChangeError(true), undefined);
+		assert.equal(getRunningHeadedAutosavePolicyChangeError("0"), undefined);
 	});
 	await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000" }, async () => {
-		assert.match(String(getRunningHeadedAutosavePolicyChangeError(true)), /cannot change a running wrapper-owned headed session/);
-		assert.equal(getRunningHeadedAutosavePolicyChangeError(true, true), undefined);
-		assert.equal(getRunningHeadedAutosavePolicyChangeError(false), undefined);
+		assert.match(String(getRunningHeadedAutosavePolicyChangeError("0")), /cannot change a running wrapper-owned headed session/);
+		assert.equal(getRunningHeadedAutosavePolicyChangeError("0", true), undefined);
+		assert.equal(getRunningHeadedAutosavePolicyChangeError(undefined), undefined);
+	});
+	await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" }, async () => {
+		assert.match(String(getRunningHeadedAutosavePolicyChangeError("1000")), /cannot change a running wrapper-owned headed session/);
 	});
 });
 

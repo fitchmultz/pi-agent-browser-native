@@ -104,6 +104,7 @@ export class ManagedSessionRestoreState {
 export type OwnedManagedSessionContext = {
 	compatibilityUserAgent?: string;
 	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	cwd?: string;
 	expectedDaemonRestoreKey?: string | null;
 	namespace?: string;
@@ -273,15 +274,32 @@ export function getOwnedManagedSessionNamespaceEnv(options: ManagedSessionRestor
 	return owned ? { AGENT_BROWSER_NAMESPACE: ownedContext?.namespace ?? namespace ?? "" } : {};
 }
 
+const DEFAULT_AUTOSAVE_INTERVAL_MS = "30000";
+const MAX_U64 = 18_446_744_073_709_551_615n;
+
+export function resolveExplicitAutosaveInterval(value: string | undefined): string | undefined {
+	if (value === undefined) return undefined;
+	if (!/^\+?\d+$/.test(value)) return DEFAULT_AUTOSAVE_INTERVAL_MS;
+	try {
+		const parsed = BigInt(value);
+		return parsed <= MAX_U64 ? parsed.toString() : DEFAULT_AUTOSAVE_INTERVAL_MS;
+	} catch {
+		return DEFAULT_AUTOSAVE_INTERVAL_MS;
+	}
+}
+
 export function getOwnedManagedSessionCompatibilityEnv(options: ManagedSessionRestoreEnvOptions): NodeJS.ProcessEnv {
 	const { owned, ownedContext } = resolveManagedSessionRestorePolicy(options);
 	if (!owned || !ownedContext) return {};
 	const parentEnv = options.parentEnv ?? process.env;
-	const autosaveIntervalIsExplicit = Object.hasOwn(options.env ?? {}, "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS")
-		|| parentEnv.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS !== undefined;
+	const callEnv = options.env ?? {};
+	const explicitRawInterval = Object.hasOwn(callEnv, "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS")
+		? callEnv.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS
+		: parentEnv.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS;
+	const explicitIntervalMatches = resolveExplicitAutosaveInterval(explicitRawInterval) === ownedContext.headedManagedAutosaveInterval;
 	return {
 		...(ownedContext.compatibilityUserAgent ? { AGENT_BROWSER_USER_AGENT: ownedContext.compatibilityUserAgent } : {}),
-		...(ownedContext.headedManagedAutosaveDisabled && !autosaveIntervalIsExplicit ? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" } : {}),
+		...(ownedContext.headedManagedAutosaveInterval !== undefined && !explicitIntervalMatches ? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: ownedContext.headedManagedAutosaveInterval } : {}),
 	};
 }
 
@@ -426,6 +444,7 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 	args: string[];
 	compatibilityUserAgent?: string;
 	headedManagedAutosaveDisabled?: boolean;
+	headedManagedAutosaveInterval?: string;
 	cwd: string;
 	currentManagedSessionName?: string;
 	currentManagedSessionNamespace?: string;
@@ -460,6 +479,7 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 		...owned,
 		compatibilityUserAgent: options.compatibilityUserAgent,
 		headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
+		headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
 		expectedDaemonRestoreKey: enabled ? restoreKey : extractRequestedRestoreKey(options.args, owned.sessionName, effectiveEnv[AGENT_BROWSER_RESTORE_ENV]),
 		protectedStorageEnv: enabled ? getManagedSessionRestoreProtectedStorageEnv(true, effectiveEnv) : undefined,
 		restoreDecision: optedOut ? "opted-out" : incompatible ? "incompatible" : "enabled",
