@@ -13,6 +13,14 @@ import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../resul
 import { redactInvocationArgs } from "../../runtime.js";
 
 const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 35_000;
+const RUNNING_HEADED_AUTOSAVE_POLICY_CHANGE_ERROR = "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS cannot change a running wrapper-owned headed session whose periodic autosave was disabled at launch. Close that session first, then retry with sessionMode: \"fresh\" so the new daemon starts with the explicit interval.";
+
+export function getRunningHeadedAutosavePolicyChangeError(disabled: boolean | undefined, closeCommand = false): string | undefined {
+	const explicitInterval = process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS;
+	return disabled && !closeCommand && explicitInterval !== undefined && explicitInterval.trim() !== "0"
+		? RUNNING_HEADED_AUTOSAVE_POLICY_CHANGE_ERROR
+		: undefined;
+}
 
 function getHeadedManagedAutosaveEnv(disabled: boolean | undefined): NodeJS.ProcessEnv | undefined {
 	return disabled && process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS === undefined

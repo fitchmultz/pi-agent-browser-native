@@ -275,6 +275,7 @@ export interface ManagedSessionOutcome {
 	currentSessionName: string;
 	currentSessionNamespace?: string;
 	previousSessionName: string;
+	replacedSessionClosed?: boolean;
 	replacedSessionName?: string;
 	replacedSessionNamespace?: string;
 	sessionMode: "auto" | "fresh";

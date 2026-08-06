@@ -4,8 +4,22 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
-import { inspectManagedSessionDaemon } from "../extensions/agent-browser/lib/orchestration/browser-run/managed-session-daemon-policy.js";
+import { getRunningHeadedAutosavePolicyChangeError, inspectManagedSessionDaemon } from "../extensions/agent-browser/lib/orchestration/browser-run/managed-session-daemon-policy.js";
 import { withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-browser-harness.js";
+
+test("getRunningHeadedAutosavePolicyChangeError rejects live timer changes but allows close", { concurrency: false }, async () => {
+	await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined }, async () => {
+		assert.equal(getRunningHeadedAutosavePolicyChangeError(true), undefined);
+	});
+	await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" }, async () => {
+		assert.equal(getRunningHeadedAutosavePolicyChangeError(true), undefined);
+	});
+	await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000" }, async () => {
+		assert.match(String(getRunningHeadedAutosavePolicyChangeError(true)), /cannot change a running wrapper-owned headed session/);
+		assert.equal(getRunningHeadedAutosavePolicyChangeError(true, true), undefined);
+		assert.equal(getRunningHeadedAutosavePolicyChangeError(false), undefined);
+	});
+});
 
 test("inspectManagedSessionDaemon waits through a temporarily busy daemon", { concurrency: false, timeout: 15_000 }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-daemon-policy-"));

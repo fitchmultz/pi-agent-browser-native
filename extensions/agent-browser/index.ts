@@ -24,6 +24,7 @@ import {
 	extractCommandTokens,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
+	isRestorableManagedSessionName,
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
 	type CompatibilityWorkaround,
@@ -90,6 +91,7 @@ type OwnedManagedSession = {
 interface BranchManagedResourceEvents {
 	electronLaunchActiveRanks: Map<string, number>;
 	electronLaunchCleanupRanks: Map<string, number>;
+	managedSessionActiveIdentities: Map<string, { namespace?: string; sessionName: string }>;
 	managedSessionActiveRanks: Map<string, number>;
 	managedSessionCloseRanks: Map<string, number>;
 }
@@ -483,10 +485,18 @@ function setBranchRankForString(map: Map<string, number>, value: unknown, rank: 
 	if (typeof value === "string" && value.length > 0) map.set(value, rank);
 }
 
+function setBranchManagedSessionActive(events: BranchManagedResourceEvents, sessionName: unknown, namespace: string | undefined, rank: number): void {
+	if (typeof sessionName !== "string" || sessionName.length === 0) return;
+	const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
+	events.managedSessionActiveIdentities.set(key, { namespace, sessionName });
+	events.managedSessionActiveRanks.set(key, rank);
+}
+
 function collectBranchManagedResourceEvents(branch: unknown[]): BranchManagedResourceEvents {
 	const events: BranchManagedResourceEvents = {
 		electronLaunchActiveRanks: new Map<string, number>(),
 		electronLaunchCleanupRanks: new Map<string, number>(),
+		managedSessionActiveIdentities: new Map<string, { namespace?: string; sessionName: string }>(),
 		managedSessionActiveRanks: new Map<string, number>(),
 		managedSessionCloseRanks: new Map<string, number>(),
 	};
@@ -512,17 +522,17 @@ function collectBranchManagedResourceEvents(branch: unknown[]): BranchManagedRes
 		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
 		const outcomeAttemptedSessionName = typeof outcome?.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
 		if (outcomeSucceeded && outcome.activeAfter === true && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged")) {
-			setBranchRankForString(events.managedSessionActiveRanks, getSessionContextKey(outcomeCurrentSessionName, namespace), eventRank);
+			setBranchManagedSessionActive(events, outcomeCurrentSessionName, namespace, eventRank);
 		}
 		if (outcomeSucceeded && outcomeStatus === "closed") {
 			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(outcomeAttemptedSessionName ?? outcomeCurrentSessionName ?? sessionName, namespace), eventRank);
 		}
-		if (outcomeSucceeded && outcomeStatus === "replaced") {
+		if (outcomeSucceeded && outcomeStatus === "replaced" && outcome.replacedSessionClosed !== false) {
 			const replacedSessionNamespace = typeof outcome.replacedSessionNamespace === "string" ? outcome.replacedSessionNamespace : namespace;
 			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(typeof outcome.replacedSessionName === "string" ? outcome.replacedSessionName : undefined, replacedSessionNamespace), eventRank);
 		}
-		if (succeeded && !isCloseCommand(command) && sessionName && (usedImplicitSession || sessionMode === "fresh")) {
-			events.managedSessionActiveRanks.set(getSessionContextKey(sessionName, namespace) ?? sessionName, eventRank);
+		if (succeeded && !isCloseCommand(command) && sessionName && (usedImplicitSession || sessionMode === "fresh" || details.managedSessionHeadedAutosaveDisabled === true)) {
+			setBranchManagedSessionActive(events, sessionName, namespace, eventRank);
 		}
 		if (succeeded && isCloseCommand(command)) {
 			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(explicitSessionName ?? sessionName ?? outcomeAttemptedSessionName ?? outcomeCurrentSessionName, namespace), eventRank);
@@ -824,6 +834,17 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				branchResourceEvents.electronLaunchActiveRanks,
 				branchResourceEvents.electronLaunchCleanupRanks,
 			);
+		}
+		for (const [sessionKey, identity] of branchResourceEvents.managedSessionActiveIdentities) {
+			const activeRank = branchResourceEvents.managedSessionActiveRanks.get(sessionKey);
+			const closeRank = branchResourceEvents.managedSessionCloseRanks.get(sessionKey);
+			if (activeRank === undefined || (closeRank !== undefined && closeRank >= activeRank)) continue;
+			if (!isRestorableManagedSessionName(identity.sessionName, managedSessionBaseName)) continue;
+			trackOwnedManagedSession(ownedManagedSessions, identity.sessionName, ctx.cwd, {
+				branchOwned: true,
+				headedManagedAutosaveDisabled: restoreManagedSessionHeadedAutosaveDisabledFromBranch(branch, identity.sessionName, identity.namespace),
+				namespace: identity.namespace,
+			});
 		}
 		if (restoredState.active) {
 			trackOwnedManagedSession(ownedManagedSessions, restoredState.sessionName, ctx.cwd, {

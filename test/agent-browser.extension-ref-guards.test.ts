@@ -863,6 +863,11 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 				cwd: tempDir,
 			});
 			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+			await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000" }, async () => {
+				const blockedProbe = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { electron: { action: "probe", launchId: electronRecord.launchId } });
+				assert.equal(blockedProbe.isError, true, JSON.stringify(blockedProbe));
+				assert.match(String(blockedProbe.details?.summary), /cannot change a running wrapper-owned headed session/);
+			});
 			const resumedProbe = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { electron: { action: "probe", launchId: electronRecord.launchId } });
 			assert.equal(resumedProbe.isError, false, JSON.stringify(resumedProbe));
 			const cleanup = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { electron: { action: "cleanup", launchId: electronRecord.launchId } });

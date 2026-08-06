@@ -480,6 +480,15 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			sessionPageState.clearSession(replacedSessionStateKey ?? replacedManagedSessionName);
 			const replacedSessionKey = replacedSessionStateKey ?? replacedManagedSessionName;
 			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, headedManagedAutosaveDisabled: priorManagedSessionHeadedAutosaveDisabled, namespace: priorManagedSessionNamespace, preserveAttachedBrowserSession: state.attachedSessionKeys.has(replacedSessionKey), restoreState: state.managedSessionRestoreState, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
+			if (managedSessionOutcome) {
+				managedSessionOutcome = {
+					...managedSessionOutcome,
+					replacedSessionClosed: !replacedCloseError,
+					summary: replacedCloseError
+						? `${managedSessionOutcome.summary} Previous session ${replacedManagedSessionName} remains wrapper-owned because automatic close failed; retry an explicit close.`
+						: managedSessionOutcome.summary,
+				};
+			}
 			if (!replacedCloseError) {
 				state.attachedSessionKeys.delete(replacedSessionKey);
 				state.closedManagedSessionNames.add(replacedSessionKey);

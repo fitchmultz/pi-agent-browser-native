@@ -20,7 +20,7 @@ import { extractRefSnapshotFromData, getSessionPageStateKey, isAboutBlankUrl, no
 import { redactSensitiveText } from "../../runtime.js";
 import { collectElectronManagedSessionTarget } from "../browser-run/diagnostics.js";
 import { buildElectronHostFailureResult, formatElectronTargetLines, redactToolDetails } from "../browser-run/final-result.js";
-import { acquireOwnedManagedSessionDaemonPolicy, closeManagedSession } from "../browser-run/managed-session-daemon-policy.js";
+import { acquireOwnedManagedSessionDaemonPolicy, closeManagedSession, getRunningHeadedAutosavePolicyChangeError } from "../browser-run/managed-session-daemon-policy.js";
 import {
 	buildElectronIdentifiers,
 	buildElectronMismatchNextActions,
@@ -489,6 +489,8 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	sessionName: string;
 	signal?: AbortSignal;
 }, run: () => Promise<T>): Promise<T> {
+	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(options.headedManagedAutosaveDisabled);
+	if (autosavePolicyChangeError) throw new ElectronManagedSessionPolicyError(autosavePolicyChangeError);
 	const context = buildOwnedManagedSessionRestoreContext({
 		args: ["--namespace", options.namespace ?? "", "--session", options.sessionName, ...options.args],
 		cwd: options.cwd,

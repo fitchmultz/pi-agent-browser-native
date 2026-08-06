@@ -484,7 +484,7 @@ export function resolveManagedSessionState(options: {
 	};
 }
 
-function isRestorableManagedSessionName(sessionName: string, fallbackSessionName: string): boolean {
+export function isRestorableManagedSessionName(sessionName: string, fallbackSessionName: string): boolean {
 	return sessionName === fallbackSessionName || sessionName.startsWith(`${fallbackSessionName}-fresh-`);
 }
 

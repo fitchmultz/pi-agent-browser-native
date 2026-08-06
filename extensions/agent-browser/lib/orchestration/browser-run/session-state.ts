@@ -184,6 +184,12 @@ function formatManagedSessionOutcomeRecoveryGuidance(outcome: ManagedSessionOutc
 
 export function formatManagedSessionOutcomeText(outcome: ManagedSessionOutcome | undefined): string | undefined {
 	if (!outcome) return undefined;
+	if (outcome.replacedSessionClosed === false) {
+		return [
+			"Managed session outcome: The fresh browser became current, but automatic close of the previous wrapper-managed session failed.",
+			"The previous session remains wrapper-owned. Use details.managedSessionOutcome for its exact identity and close it explicitly when safe.",
+		].join("\n");
+	}
 	if (outcome.status === "closed" && outcome.succeeded) {
 		return [
 			"Managed session outcome: The current wrapper-managed browser session was closed.",

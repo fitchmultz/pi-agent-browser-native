@@ -38,7 +38,7 @@ import {
 	getManagedSessionStateAccessValidationError,
 	getManagedSessionTargetAccessValidationError,
 } from "../../managed-session-state-policy.js";
-import { acquireOwnedManagedSessionDaemonPolicy } from "./managed-session-daemon-policy.js";
+import { acquireOwnedManagedSessionDaemonPolicy, getRunningHeadedAutosavePolicyChangeError } from "./managed-session-daemon-policy.js";
 import {
 	applyOpenResultTabCorrection,
 	buildManagedSessionOutcome,
@@ -491,11 +491,16 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
 	const targetsCurrentManagedSession = state.managedSessionActive
 		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
-	const headedManagedAutosaveDisabled = process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS === undefined && (
-		recordedOwnedSession?.headedManagedAutosaveDisabled === true
-		|| (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true)
-		|| (getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(process.env.AGENT_BROWSER_HEADED))
-	);
+	const retainedHeadedAutosaveDisabled = recordedOwnedSession?.headedManagedAutosaveDisabled === true
+		|| (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true);
+	const explicitAutosaveInterval = process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS;
+	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(retainedHeadedAutosaveDisabled, isCloseCommand(executionPlan.commandInfo.command));
+	if (!executionPlan.validationError && autosavePolicyChangeError) {
+		executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: autosavePolicyChangeError };
+	}
+	const headedManagedAutosaveDisabled = retainedHeadedAutosaveDisabled || (explicitAutosaveInterval === undefined && (
+		getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(process.env.AGENT_BROWSER_HEADED)
+	));
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
 		cwd: recordedOwnedSession?.cwd ?? cwd,

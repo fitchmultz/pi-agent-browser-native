@@ -25,7 +25,7 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
 ];
 
-const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;\\/]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?=[\s"'`),;.!?]|$)/gi;
+const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`()[\],;:\\/]+(?:[\\/][^\s"'`()[\],;\\/]+)+|[^\s"'`()[\],;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?=[\s"'`),;.!?]|$)/gi;
 const PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s*:\s*$/i;
 const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|recordings?|screenshots?|screen|video)\s+(?:directly\s+)?(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recordings?\s+)?(?:(?:are|is)\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it\s+)?(?:at|as|to)\s*[:=-]?\s*$/i;
 const PROMPT_ARTIFACT_UNSAFE_OUTPUT_PREFIX_PATTERN = /n['’]t\b|\b(?:cannot|disallowed|forbidden|maybe|needed|never|no|not|optional(?:ly)?|perhaps|prohibited|rather|refrain|unable|without)\b|\b(?:he|i|it|she|they|we|you)\s+(?:can|could|may|might)\b/i;
@@ -55,7 +55,9 @@ function getPromptArtifactTrailingClause(context: string): string {
 }
 
 function hasPromptArtifactOutputIntent(context: string): boolean {
-	const clause = getPromptArtifactIntentClause(context).replace(/[([{\"'`]+\s*$/, "");
+	const clause = getPromptArtifactIntentClause(context)
+		.replace(/\[[^\]\r\n]*\]\(\s*$/, "")
+		.replace(/[([{\"'`]+\s*$/, "");
 	const intentMatch = clause.match(PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN) ?? clause.match(PROMPT_ARTIFACT_COLON_OUTPUT_INTENT_PATTERN);
 	if (!intentMatch) return false;
 	const prefix = clause.slice(0, intentMatch.index ?? 0);
@@ -83,11 +85,20 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 	const artifacts: PromptRequestedArtifact[] = [];
 	const seen = new Map<string, number>();
 	const lines = prompt.split(/\r?\n/);
+	let inCodeFence = false;
 	let listArtifactIndexes: number[] = [];
 	let listContinuation: { kind: PromptRequestedArtifact["kind"]; required: boolean } | undefined;
 	let pendingRecordingAvailability = false;
 	for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
 		const line = lines[lineIndex] ?? "";
+		if (/^\s*(?:`{3,}|~{3,})/.test(line)) {
+			inCodeFence = !inCodeFence;
+			listArtifactIndexes = [];
+			listContinuation = undefined;
+			pendingRecordingAvailability = false;
+			continue;
+		}
+		if (inCodeFence) continue;
 		PROMPT_ARTIFACT_PATH_PATTERN.lastIndex = 0;
 		const pathMatches: Array<{ end: number; path: string; start: number }> = [];
 		for (const match of line.matchAll(PROMPT_ARTIFACT_PATH_PATTERN)) {
@@ -160,15 +171,11 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 			previousKind = kind;
 			previousPathEnd = end;
 		}
-		const candidateByMatchIndex = new Map(candidates.map((candidate) => [candidate.matchIndex, candidate]));
 		for (const candidate of candidates) {
 			const match = pathMatches[candidate.matchIndex]!;
-			const nextCandidate = candidateByMatchIndex.get(candidate.matchIndex + 1);
-			if (nextCandidate?.group === candidate.group || candidate.matchIndex === pathMatches.length - 1) {
-				const nextStart = pathMatches[candidate.matchIndex + 1]?.start ?? line.length;
-				if (PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN.test(getPromptArtifactTrailingClause(line.slice(match.end, nextStart)))) {
-					groupOptional.set(candidate.group, true);
-				}
+			const nextStart = pathMatches[candidate.matchIndex + 1]?.start ?? line.length;
+			if (PROMPT_ARTIFACT_OPTIONAL_RECORDING_PATTERN.test(getPromptArtifactTrailingClause(line.slice(match.end, nextStart)))) {
+				groupOptional.set(candidate.group, true);
 			}
 		}
 		const lineArtifactIndexes: number[] = [];
@@ -180,6 +187,8 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 				artifactIndex = artifacts.length;
 				seen.set(key, artifactIndex);
 				artifacts.push({ kind: candidate.kind, path: candidate.path, required });
+			} else if (required) {
+				artifacts[artifactIndex]!.required = true;
 			}
 			lineArtifactIndexes.push(artifactIndex);
 		}
@@ -187,9 +196,11 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 		if (isPathList && lastCandidate?.matchIndex === pathMatches.length - 1) {
 			const lastArtifact = artifacts[lineArtifactIndexes.at(-1)!]!;
 			listContinuation = { kind: lastArtifact.kind, required: lastArtifact.required };
-			listArtifactIndexes = candidates[0]?.continuedFromPriorLine
-				? [...listArtifactIndexes, ...lineArtifactIndexes]
-				: lineArtifactIndexes;
+			if (candidates[0]?.continuedFromPriorLine) {
+				for (const artifactIndex of lineArtifactIndexes) listArtifactIndexes.push(artifactIndex);
+			} else {
+				listArtifactIndexes = lineArtifactIndexes;
+			}
 		} else {
 			listArtifactIndexes = [];
 			listContinuation = undefined;
