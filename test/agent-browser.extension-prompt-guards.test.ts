@@ -83,7 +83,7 @@ if (args.includes("screenshot")) {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({
 				cwd: tempDir,
-				prompt: `Capture screenshots at:\n${firstScreenshotPath}\n${secondScreenshotPath}`,
+				prompt: `Capture screenshots at:\n- ${firstScreenshotPath}\n- ${secondScreenshotPath}`,
 			});
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -135,10 +135,14 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			for (const prompt of [
+			const prompts = [
 				"Take a screenshot like the reference at /tmp/input.png",
+				"Take the screenshot at /tmp/input.png and compare",
 				"No need to save a screenshot at /tmp/input.png",
-			]) {
+				"You should not accidentally save a screenshot to /tmp/input.png",
+				"Don’t save a screenshot to /tmp/input.png",
+			];
+			for (const prompt of prompts) {
 				const harness = createExtensionHarness({ cwd: tempDir, prompt });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 				const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
@@ -146,7 +150,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 				assert.equal(close.details?.promptGuard, undefined);
 			}
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.filter((entry) => entry.args.includes("close")).length, 2);
+			assert.equal(invocations.filter((entry) => entry.args.includes("close")).length, prompts.length);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

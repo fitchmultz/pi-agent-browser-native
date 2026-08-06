@@ -483,6 +483,7 @@ class ElectronManagedSessionPolicyError extends Error {}
 async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	args: string[];
 	cwd: string;
+	headedManagedAutosaveDisabled?: boolean;
 	namespace?: string;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
@@ -491,6 +492,7 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	const context = buildOwnedManagedSessionRestoreContext({
 		args: ["--namespace", options.namespace ?? "", "--session", options.sessionName, ...options.args],
 		cwd: options.cwd,
+		headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
 		managedSessionName: options.sessionName,
 		namespace: options.namespace,
 		restoreState: options.restoreState,
@@ -513,6 +515,7 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 
 async function collectOwnedElectronManagedSessionTarget(options: {
 	cwd: string;
+	headedManagedAutosaveDisabled?: boolean;
 	namespace?: string;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
@@ -829,13 +832,17 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 		const statuses = await Promise.all(records.map((record) => inspectElectronLaunchStatus(record)));
 		const managedSessions = await Promise.all(records
 			.filter((record): record is ElectronLaunchRecord & { sessionName: string } => typeof record.sessionName === "string")
-			.map((record) => collectOwnedElectronManagedSessionTarget({
-				cwd,
-				restoreState: managedSessionRestoreState,
-				sessionName: record.sessionName,
-				signal,
-				timeoutMs: compiledElectron.timeoutMs,
-			})));
+			.map((record) => {
+				const sessionKey = getSessionPageStateKey(record.sessionName) ?? record.sessionName;
+				return collectOwnedElectronManagedSessionTarget({
+					cwd,
+					headedManagedAutosaveDisabled: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveDisabled,
+					restoreState: managedSessionRestoreState,
+					sessionName: record.sessionName,
+					signal,
+					timeoutMs: compiledElectron.timeoutMs,
+				});
+			}));
 		const mismatches = managedSessions
 			.map((managedSession) => {
 				const record = records.find((candidate) => candidate.sessionName === managedSession.sessionName);
@@ -900,6 +907,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 				{
 					args: ["snapshot", "-i"],
 					cwd,
+					headedManagedAutosaveDisabled: ownedManagedSessions.get(pageStateKey)?.headedManagedAutosaveDisabled,
 					namespace: probeNamespace,
 					restoreState: managedSessionRestoreState,
 					sessionName: probeSessionName,

@@ -1018,6 +1018,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(sessionlessDoctor.isError, false, JSON.stringify(sessionlessDoctor));
 			assert.equal(sessionlessDoctor.details?.managedSessionHeadedAutosaveDisabled, undefined);
 
+			const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(close.isError, false, JSON.stringify(close));
+			assert.equal(close.details?.managedSessionHeadedAutosaveDisabled, undefined);
+
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 			const invocations = await readInvocationLog(logPath);
 			const doctorInvocation = invocations.find((entry) => entry.args.includes("doctor"));

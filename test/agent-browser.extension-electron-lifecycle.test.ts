@@ -462,7 +462,7 @@ test("agentBrowserExtension retains headed autosave policy for Electron cleanup 
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const launchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				electron: { action: "launch", appPath: app.appPath, handoff: "connect" },
+				electron: { action: "launch", appPath: app.appPath, handoff: "snapshot" },
 			});
 			assert.equal(launchResult.isError, false, JSON.stringify(launchResult));
 			assert.equal(launchResult.details?.managedSessionHeadedAutosaveDisabled, true);
@@ -470,12 +470,22 @@ test("agentBrowserExtension retains headed autosave policy for Electron cleanup 
 			assert.equal(typeof launch?.launchId, "string");
 			launchedPid = launch?.pid;
 
+			await rm(upstreamLogPath, { force: true });
+			const statusResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "status", launchId: launch?.launchId },
+			});
+			assert.equal(statusResult.isError, false, JSON.stringify(statusResult));
+			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "probe", launchId: launch?.launchId },
+			});
+			assert.equal(probeResult.isError, false, JSON.stringify(probeResult));
 			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				electron: { action: "cleanup", launchId: launch?.launchId },
 			});
 			assert.equal(cleanupResult.isError, false, JSON.stringify(cleanupResult));
-			const closeInvocation = (await readInvocationLog(upstreamLogPath)).find((entry) => entry.args.at(-1) === "close");
-			assert.equal(closeInvocation?.autosave, "0");
+			const helperInvocations = await readInvocationLog(upstreamLogPath);
+			assert.ok(helperInvocations.length >= 7, JSON.stringify(helperInvocations));
+			assert.equal(helperInvocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(helperInvocations));
 			if (launch?.userDataDir) await assert.rejects(stat(launch.userDataDir));
 		});
 	} finally {
