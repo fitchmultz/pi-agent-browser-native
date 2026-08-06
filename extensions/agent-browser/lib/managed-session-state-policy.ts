@@ -14,7 +14,7 @@ import {
 	optionalGlobalValueFlagConsumesNext,
 } from "./argv-grammar.js";
 import { extractManagedSessionRestoreKeys, isWrapperManagedSessionName } from "./managed-session-capabilities.js";
-import { agentBrowserConfigIsPresent } from "./managed-session-restore.js";
+import { agentBrowserConfigIsPresent, isUpstreamEnvFlagEnabled } from "./managed-session-restore.js";
 import { createManagedSessionRestoreKey, hasManagedSessionRestoreProjectIdentity } from "./managed-session-storage.js";
 
 const BLOCKED_GLOBAL_STATE_MESSAGE = "This operation could read or modify wrapper-owned browser state outside the current checkout. Use a caller-owned state name or path instead.";
@@ -239,10 +239,6 @@ function getBrowserFileOperands(args: string[], env: NodeJS.ProcessEnv): string[
 	if (command === "diff") values.push(...getFlagValues(descriptor.commandTokens, "--baseline", true), ...getFlagValues(descriptor.commandTokens, "--output", true), ...getFlagValues(descriptor.commandTokens, "-o", true));
 	if (command === "record" && ["start", "restart"].includes(subcommand ?? "")) values.push(...positionals.slice(1));
 	return values.filter((value): value is string => typeof value === "string" && value.length > 0);
-}
-
-function isUpstreamEnvFlagEnabled(value: string | undefined): boolean {
-	return value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
 }
 
 function rawBrowserArgsEnableFileAccess(args: string[], env: NodeJS.ProcessEnv): boolean {

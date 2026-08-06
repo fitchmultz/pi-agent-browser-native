@@ -23,6 +23,7 @@ import {
 	getOwnedManagedSessionCompatibilityEnv,
 	getOwnedManagedSessionNamespaceEnv,
 	isOwnedManagedSessionTarget,
+	isUpstreamEnvFlagEnabled,
 	shouldOmitOwnedManagedSessionRestoreEnv,
 	validateManagedSessionRestoreContextForSpawn,
 	type ManagedSessionRestoreEnvOptions,
@@ -291,7 +292,7 @@ function shouldDisableHeadedManagedAutosave(args: string[], env: NodeJS.ProcessE
 	const autosaveInterval = env && Object.hasOwn(env, AGENT_BROWSER_AUTOSAVE_INTERVAL_ENV) ? env[AGENT_BROWSER_AUTOSAVE_INTERVAL_ENV] : processEnv[AGENT_BROWSER_AUTOSAVE_INTERVAL_ENV];
 	if (!ownedManagedSession || autosaveInterval !== undefined) return false;
 	const headedEnv = env && Object.hasOwn(env, AGENT_BROWSER_HEADED_ENV) ? env[AGENT_BROWSER_HEADED_ENV] : processEnv[AGENT_BROWSER_HEADED_ENV];
-	return getBooleanFlagValue(args, "--headed") ?? (headedEnv !== undefined && !["", "0", "false", "no"].includes(headedEnv.toLowerCase()));
+	return getBooleanFlagValue(args, "--headed") ?? isUpstreamEnvFlagEnabled(headedEnv);
 }
 
 export function getAgentBrowserProcessTimeoutMs(env: NodeJS.ProcessEnv = processEnv): number {

@@ -4,9 +4,9 @@
 
 ### Fixed
 
-- Headed wrapper-managed launches now disable upstream periodic restore autosave by default, preventing agent-browser 0.33.2's multi-origin storage collector from flashing temporary tabs and blocking daemon policy probes; save-on-close remains enabled, and an explicit `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` opts back in. Slow valid daemon inspections now receive the full 35-second policy budget instead of failing after five seconds.
+- Headed wrapper-managed launches now disable upstream periodic restore autosave by default, preventing agent-browser 0.33.2's multi-origin storage collector from flashing temporary tabs and blocking daemon policy probes; native close still saves, while direct window close can lose newer state because headed browsers are exempt from idle shutdown. An explicit `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` opts back in. Slow valid daemon inspections now receive the full 35-second policy budget instead of failing after five seconds.
 - `--headed` and `--headed false` are now enforced as launch-scoped choices instead of being silently sent to an already-running managed session.
-- Bare inbound image/video attachment paths no longer become requested output artifacts that block browser close.
+- Bare, review-only, and negated inbound image/video paths no longer become requested output artifacts that block browser close; output enforcement now requires a direct artifact-creation phrase with a destination, and large path lists are scanned once instead of once per path.
 
 ## 0.2.78 - 2026-08-04
 

@@ -75,9 +75,21 @@ test("buildPromptPolicy does not treat inbound media descriptions as requested o
 		"/tmp/screen-recording.mp4",
 		"Review this screenshot: /tmp/input.png",
 		"Analyze this video: /tmp/input.mp4",
+		"Save time by reviewing this screenshot: /tmp/input.png",
+		"Capture details from this screenshot: /tmp/input.png",
+		"Save this screenshot for later: /tmp/input.png",
+		"Save a screenshot here and then review this input: /tmp/input.png",
 	]) {
 		assert.deepEqual(buildPromptPolicy(prompt).requestedArtifacts, []);
 	}
+});
+
+test("buildPromptPolicy scans large path lists linearly", () => {
+	const inbound = Array.from({ length: 10_000 }, (_, index) => `/tmp/input-${index}.png`).join(" ");
+	const output = Array.from({ length: 10_000 }, (_, index) => `/tmp/output-${index}.png`).join(", ");
+
+	assert.deepEqual(buildPromptPolicy(`Review these screenshots: ${inbound}`).requestedArtifacts, []);
+	assert.equal(buildPromptPolicy(`Capture screenshots at ${output}`).requestedArtifacts.length, 10_000);
 });
 
 test("buildPromptPolicy detects requested artifact paths on the following line", () => {
@@ -95,6 +107,20 @@ test("buildPromptPolicy associates output intent with its path and rejects negat
 		[{ kind: "screenshot", path: "/tmp/output.png", required: true }],
 	);
 	assert.deepEqual(buildPromptPolicy("Do not save this screenshot: /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("Do not screenshot the page at /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(buildPromptPolicy("Take a look at this screenshot: /tmp/input.png").requestedArtifacts, []);
+	assert.deepEqual(
+		buildPromptPolicy("Take a screenshot of the checkout page. Save it at /tmp/checkout.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/checkout.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Screenshot the page at /tmp/checkout.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/checkout.png", required: true }],
+	);
+	assert.deepEqual(
+		buildPromptPolicy("Do not save the input; instead save a screenshot to /tmp/output.png").requestedArtifacts,
+		[{ kind: "screenshot", path: "/tmp/output.png", required: true }],
+	);
 	assert.deepEqual(
 		buildPromptPolicy("Capture screenshots at /tmp/first.png and /tmp/second.png").requestedArtifacts,
 		[

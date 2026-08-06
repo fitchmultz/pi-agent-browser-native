@@ -29,7 +29,7 @@ import {
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
 import { extractExplicitNamespace, extractExplicitSessionName, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
-import { cleanupManagedSessionRestoreConfig, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
+import { cleanupManagedSessionRestoreConfig, isUpstreamEnvFlagEnabled, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
 import { isCloseCommand } from "./lib/command-taxonomy.js";
@@ -178,7 +178,7 @@ function isAttachedBrowserInvocation(args: string[], env: NodeJS.ProcessEnv = pr
 		|| hasLaunchScopedFlagToken(args, "--cdp")
 		|| hasLaunchScopedFlagToken(args, "--auto-connect")
 		|| env.AGENT_BROWSER_CDP !== undefined
-		|| (autoConnectEnv !== undefined && !["", "0", "false", "no"].includes(autoConnectEnv.toLowerCase()));
+		|| isUpstreamEnvFlagEnabled(autoConnectEnv);
 }
 
 function restoreAttachedSessionKeysFromBranch(branch: unknown[]): Set<string> {

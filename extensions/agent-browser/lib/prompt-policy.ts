@@ -26,8 +26,8 @@ const LEGACY_BASH_ALLOW_PATTERNS = [
 ];
 
 const PROMPT_ARTIFACT_PATH_PATTERN = /(?:^|[\s"'`(:])((?:\/[^\s"'`),;]+|[A-Za-z]:[\\/][^\s"'`),;]+|\.{1,2}[\\/][^\s"'`),;]+|[^\s"'`),;:\\/]+(?:[\\/][^\s"'`),;]+)+|[^\s"'`),;:\\/]+)\.(?:png|jpe?g|webp|gif|webm|mp4|har|pdf|trace|json))(?:[\s"'`),;.]|$)/gi;
-const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|record|save|take)\b[^.\n]{0,60}\b(?:image|page|screen|screenshots?|video|recording)\b|\bstart\s+(?:(?:a|the)\s+)?(?:screen\s+)?recording\b|\b(?:capture|record)\s*(?:at|to|:)\s*$|\b(?:create|export|generate|output|render|save|write)\b[^.\n]{0,80}\b(?:at|as|to)\s*[:=-]?\s*$/i;
-const PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN = /\b(?:do\s+not|don't|never)\b[^,;.!?\n]{0,80}\b(?:capture|create|export|generate|output|record|render|save|start|take|write)\b/i;
+const PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN = /\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\s+(?:(?:a|an|another|the|this)\s+)?(?:short\s+)?(?:(?:full[- ]page|page|screen)\s+)?(?:image|page|screenshots?|screen|video|recording)\b[^;.!?\n]{0,60}(?:\b(?:at|as|to)\b\s*[:=-]?|\bhere\b(?:\s+(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available)?\s*[:=-]?)\s*$|\b(?:export|output|save|write)\s+(?:it|that)\s+(?:at|as|to)\s*[:=-]?\s*$/i;
+const PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN = /\b(?:do\s+not|don't|never)\b[^,;.!?\n]{0,80}\b(?:capture|create|export|generate|output|record|render|save|screenshot|start|take|write)\b/i;
 const PROMPT_ARTIFACT_LIST_CONNECTOR_PATTERN = /^[\s"'`()\[\]{},;:.*\/&+>-]*(?:(?:and|or)[\s"'`()\[\]{},;:.*\/&+>-]*)?$/i;
 
 function getPromptArtifactKind(path: string): PromptRequestedArtifact["kind"] | undefined {
@@ -38,7 +38,8 @@ function getPromptArtifactKind(path: string): PromptRequestedArtifact["kind"] | 
 }
 
 function hasPromptArtifactOutputIntent(context: string): boolean {
-	return PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN.test(context) && !PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN.test(context);
+	const clause = context.split(/(?:[;.!?]\s*|\b(?:but|instead)\b)/i).at(-1) ?? context;
+	return PROMPT_ARTIFACT_OUTPUT_INTENT_PATTERN.test(clause) && !PROMPT_ARTIFACT_NEGATED_INTENT_PATTERN.test(clause);
 }
 
 function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifact[] {
@@ -50,12 +51,15 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 		let previousKind: PromptRequestedArtifact["kind"] | undefined;
 		let previousPathEnd = 0;
 		PROMPT_ARTIFACT_PATH_PATTERN.lastIndex = 0;
+		const pathMatches: Array<{ path: string; start: number }> = [];
 		for (const match of line.matchAll(PROMPT_ARTIFACT_PATH_PATTERN)) {
 			const path = match[1]?.trim();
-			if (!path) continue;
-			const pathStart = (match.index ?? 0) + match[0].indexOf(path);
+			if (path) pathMatches.push({ path, start: (match.index ?? 0) + match[0].indexOf(path) });
+		}
+		const remainder = line.replace(PROMPT_ARTIFACT_PATH_PATTERN, "").replace(/[\s"'`()\[\],;:.*>-]+/g, "").toLowerCase();
+		const recordingRequired = !/\b(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available\b/i.test(`${lines[index - 1] ?? ""}\n${line}`);
+		for (const { path, start: pathStart } of pathMatches) {
 			const localContext = line.slice(previousPathEnd, pathStart);
-			const remainder = line.replace(path, "").replace(/[\s"'`()\[\],;:.*>-]+/g, "").toLowerCase();
 			const intentContext = !remainder || ["file", "output", "path"].includes(remainder)
 				? `${lines[index - 1] ?? ""}\n${localContext}`
 				: localContext;
@@ -71,7 +75,7 @@ function extractPromptRequestedArtifacts(prompt: string): PromptRequestedArtifac
 			artifacts.push({
 				kind,
 				path,
-				required: kind === "screenshot" || !/\b(?:if|when)\s+(?:recording\s+)?(?:is\s+)?available\b/i.test(`${lines[index - 1] ?? ""}\n${line}`),
+				required: kind === "screenshot" || recordingRequired,
 			});
 		}
 	}

@@ -46,7 +46,7 @@ function isDisabledEnvFlag(value: string | undefined): boolean {
 }
 
 /** Match upstream env_var_is_truthy exactly: lowercase only, without trimming or accepting "off". */
-function isUpstreamEnvFlagEnabled(value: string | undefined): boolean {
+export function isUpstreamEnvFlagEnabled(value: string | undefined): boolean {
 	return value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
 }
 
