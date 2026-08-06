@@ -25,7 +25,7 @@ const EXTENSION_ENTRYPOINTS = Object.freeze([
 	"dist/extensions/agent-browser/index.js",
 ]);
 const EXPECTED_VERSION = CAPABILITY_BASELINE.targetVersion;
-const MINIMUM_PI_VERSION = "0.80.6";
+const MINIMUM_PI_VERSION = "0.84.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 const THIS_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 

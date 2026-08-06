@@ -89,7 +89,7 @@ The result is optimized for agent work:
 
 ## Fastest way to try it
 
-Use Pi 0.80.6 or newer. This package keeps Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, and `pi-agent-browser-doctor` fails setup when `pi --version` is below the enforced runtime floor. The current source tree's Pi compatibility is audited and validated against the Pi 0.80.9 extension/package baseline, including Project Trust; the runtime floor remains 0.80.6 because this refresh requires no newer runtime API.
+Use Pi 0.84.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, pins its direct Pi validation dependencies to 0.84.0, and makes older hosts a setup failure through `pi-agent-browser-doctor`. Version 0.3.0 intentionally provides no compatibility shims for older Pi releases.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -125,7 +125,7 @@ For a one-off trial that does not touch your configured Pi extensions:
 pi --no-extensions -e npm:pi-agent-browser-native
 ```
 
-Pi 0.79+ may ask whether to trust the current project before loading project-local instructions, settings, or resources. This extension treats its own project-local package config as developer-trusted by default; use `--no-approve` when you intentionally want Pi and this extension to ignore project-local inputs for that run.
+Pi 0.84.0+ may ask whether to trust the current project before loading project-local instructions, settings, or resources. This extension treats its own project-local package config as developer-trusted by default; use `--no-approve` when you intentionally want Pi and this extension to ignore project-local inputs for that run.
 
 For a specific published version:
 
@@ -234,7 +234,7 @@ printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native@la
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --provider brave --global
 ```
 
-Config merges in this order: global → project → `PI_AGENT_BROWSER_CONFIG` override. Under Pi 0.79+, the globally installed or CLI-loaded extension still loads project-local `.pi/config/pi-agent-browser-native/config.json` when Pi trust allows that project layer; it skips that project layer when Pi reports the project is untrusted or when Pi is launched with `--no-approve`. `webSearch.enabled` is evaluated after the loaded layers merge. Use `web-search disable --global` for a user default, `web-search disable --project` for one repo, and a `PI_AGENT_BROWSER_CONFIG` override with `{ "webSearch": { "enabled": false } }` when web search must stay off even if project config exists. Loaded config may use plaintext, custom environment aliases, interpolation literals, malformed-or-late-bound `$` values, and `!command` credential sources; the resolved secret is passed to the provider request while tool content, details, status output, and docs examples stay redacted. `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`.
+Config merges in this order: global → project → `PI_AGENT_BROWSER_CONFIG` override. Under Pi 0.84.0+, the globally installed or CLI-loaded extension still loads project-local `.pi/config/pi-agent-browser-native/config.json` when Pi trust allows that project layer; it skips that project layer when Pi reports the project is untrusted or when Pi is launched with `--no-approve`. `webSearch.enabled` is evaluated after the loaded layers merge. Use `web-search disable --global` for a user default, `web-search disable --project` for one repo, and a `PI_AGENT_BROWSER_CONFIG` override with `{ "webSearch": { "enabled": false } }` when web search must stay off even if project config exists. Loaded config may use plaintext, custom environment aliases, interpolation literals, malformed-or-late-bound `$` values, and `!command` credential sources; the resolved secret is passed to the provider request while tool content, details, status output, and docs examples stay redacted. `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`.
 
 For Exa, the tool defaults to `searchType: "auto"` with `contents.highlights: true`. Agents may pass `searchType` (`fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`) only when the task needs that latency/depth tradeoff; structured output schemas are intentionally not exposed yet.
 
@@ -695,7 +695,7 @@ Configured-source lifecycle validation:
 npm run verify -- lifecycle
 ```
 
-The harness defaults to Pi model `zai/glm-5.2` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches Pi 0.79 with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, compiled-entrypoint pickup after process restart, persisted spill reachability, and real Pi `tool_result` failure-patch behavior.
+The harness defaults to Pi model `zai/glm-5.2` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](docs/RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches the supported Pi runtime with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, compiled-entrypoint pickup after process restart, persisted spill reachability, and real Pi `tool_result` failure-patch behavior.
 
 Use lifecycle validation when testing `/reload`, exact-session relaunch, `/resume`, managed-session continuity, or persisted artifact behavior. Branch-backed state and `session_tree` cleanup ownership are covered by focused extension harness tests. Maintainers must run the lifecycle harness before every publish; see [Pre-release checks](docs/RELEASE.md#pre-release-checks).
 
