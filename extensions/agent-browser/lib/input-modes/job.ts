@@ -301,6 +301,22 @@ export function buildQaCompactPassText(options: {
 	return lines.join("\n");
 }
 
+export function buildQaCompactFailureText(options: {
+	batchStepCount: number;
+	checks: CompiledAgentBrowserQaPreset["checks"];
+	page?: { title?: string; url?: string };
+	qaPreset: AgentBrowserQaPresetAnalysis;
+}): string {
+	const lines = [options.qaPreset.summary];
+	const pageParts = [options.page?.title, options.page?.url].filter((part): part is string => typeof part === "string" && part.length > 0);
+	if (pageParts.length > 0) lines.push(`Page: ${pageParts.join(" — ")}`);
+	if (options.qaPreset.failedChecks.length > 0) lines.push("Failed checks:", ...options.qaPreset.failedChecks.map((failure) => `- ${failure}`));
+	if (options.qaPreset.warnings.length > 0) lines.push("Warnings:", ...options.qaPreset.warnings.map((warning) => `- ${warning}`));
+	lines.push(`Checks run: ${describeQaChecksRun(options.checks)} (${options.batchStepCount} batch step${options.batchStepCount === 1 ? "" : "s"})`);
+	lines.push("Full diagnostic matrix: see details.qaPreset and details.batchSteps.");
+	return lines.join("\n");
+}
+
 const QA_VISIBLE_TEXT_TIMEOUT_MS = 5_000;
 
 function formatQaExpectedTextPreview(text: string): string {

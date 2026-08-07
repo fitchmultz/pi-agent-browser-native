@@ -391,6 +391,18 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	return nextActions.length > 0 ? nextActions : undefined;
 }
 
+function formatFailureNextActionsText(options: FinalResultInput, nextActions: AgentBrowserNextAction[] | undefined): string | undefined {
+	if (options.categoryDetails.resultCategory !== "failure" || !nextActions || nextActions.length === 0) return undefined;
+	const lines = nextActions.slice(0, 6).map((action) => {
+		const params = action.params
+			? { ...action.params, ...(action.params.stdin === undefined ? {} : { stdin: "[omitted; use details.nextActions]" }) }
+			: undefined;
+		const payload = action.artifactPath ? { artifactPath: action.artifactPath } : params;
+		return `- ${action.id}${payload ? ` ${JSON.stringify(payload)}` : ""}: ${action.reason}`;
+	});
+	return ["Next actions:", ...lines, "Use the exact redacted payloads in details.nextActions when available."].join("\n");
+}
+
 function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: AgentBrowserNextAction[] | undefined): Record<string, unknown> {
 	const publicVisibleRefFallbackDiagnostic = options.visibleRefFallbackDiagnostic ? sanitizeVisibleRefFallbackDiagnostic(options.visibleRefFallbackDiagnostic) : undefined;
 	const rawPageChangeSummary = (options.scrollNoopDiagnostic || options.comboboxFocusDiagnostic) && options.presentation.pageChangeSummary ? { ...options.presentation.pageChangeSummary, nextActionIds: nextActions?.map((action) => action.id) } : options.presentation.pageChangeSummary;
@@ -497,7 +509,8 @@ export function buildFinalAgentBrowserToolResult(options: FinalResultInput): Age
 	const artifactCleanupText = formatArtifactCleanupGuidanceText(options.artifactCleanup);
 	const timeoutPartialProgressText = options.timeoutPartialProgress ? formatTimeoutPartialProgressText(options.timeoutPartialProgress) : undefined;
 	const managedSessionOutcomeText = formatManagedSessionOutcomeText(options.managedSessionOutcome);
-	const rawAppendedDiagnosticText = [visibleRefFallbackText, richInputRecoveryText, semanticActionCandidateText, clickDispatchText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, evalResultWarningText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText].filter((item): item is string => item !== undefined).join("\n\n");
+	const failureNextActionsText = formatFailureNextActionsText(options, nextActions);
+	const rawAppendedDiagnosticText = [visibleRefFallbackText, richInputRecoveryText, semanticActionCandidateText, clickDispatchText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, evalResultWarningText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText, failureNextActionsText].filter((item): item is string => item !== undefined).join("\n\n");
 	const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, options.exactSensitiveValues));
 	const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!options.userRequestedJson || options.plainTextInspection);
 	let content = shouldAppendDiagnosticText && options.redactedContent[0]?.type === "text" ? [{ ...options.redactedContent[0], text: `${options.redactedContent[0].text}\n\n${appendedDiagnosticText}` }, ...options.redactedContent.slice(1)] : options.redactedContent;

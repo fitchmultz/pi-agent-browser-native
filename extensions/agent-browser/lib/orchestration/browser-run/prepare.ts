@@ -34,6 +34,7 @@ import {
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
 import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
+import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
 import {
 	getCallerOwnedSessionLivePageVerificationRequirement,
 	getManagedSessionStateAccessValidationError,
@@ -90,6 +91,7 @@ export function normalizeRunInput(input: BrowserRunOptions["input"]): BrowserRun
 			return { ...base, compiledSemanticAction: input.compiledSemanticAction, redactedCompiledSemanticAction: input.redactedCompiledSemanticAction };
 		case "sourceLookup":
 			return { ...base, compiledSourceLookup: input.compiledSourceLookup, redactedCompiledSourceLookup: input.redactedCompiledSourceLookup };
+		case "script":
 		case "args":
 			return base;
 	}
@@ -248,7 +250,7 @@ const LIKELY_DIALOG_TRIGGER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_DIALOG_TRIGG
 const DIALOG_TRIGGER_TEXT_PATTERN = /\b(?:alert|confirm|dialog|prompt)\b/i;
 
 function getPositiveIntegerEnv(name: string): number | undefined {
-	const value = process.env[name];
+	const value = getAgentBrowserProcessEnvironment()[name];
 	if (!value || !/^\d+$/.test(value.trim())) return undefined;
 	const parsed = Number(value.trim());
 	return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
@@ -394,6 +396,7 @@ export async function resolveSemanticActionVisibleRefArgs(options: {
 export async function prepareBrowserRun(options: BrowserRunOptions): Promise<PrepareBrowserRunResult> {
 	const { cwd, onUpdate, params, signal, state } = options;
 	const { sessionPageState, traceOwners, managedSessionBaseName, ephemeralSessionSeed } = state;
+	const agentBrowserProcessEnv = getAgentBrowserProcessEnvironment();
 	let freshSessionOrdinal = state.freshSessionOrdinal;
 	const {
 		compiledElectron,
@@ -420,6 +423,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const rawManagedStateAccessError = getManagedSessionStateAccessValidationError({
 		args: runtimeToolArgs,
 		cwd,
+		parentEnv: agentBrowserProcessEnv,
 		stdin: runtimeToolStdin,
 		trustedFirstBatchTabSelection: true,
 	});
@@ -486,6 +490,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		currentPageUrl: plannedSessionPageState.tabTarget?.url,
 		pageUrlUnknown: plannedSessionPageState.tabTargetUnknown === true,
 		cwd,
+		parentEnv: agentBrowserProcessEnv,
 		stdin: runtimeToolStdin,
 	});
 	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
@@ -496,12 +501,12 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		|| (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true);
 	const retainedHeadedAutosaveInterval = recordedOwnedSession?.headedManagedAutosaveInterval
 		?? (targetsCurrentManagedSession ? state.managedSessionHeadedAutosaveInterval : undefined);
-	const explicitAutosaveInterval = resolveExplicitAutosaveInterval(process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
+	const explicitAutosaveInterval = resolveExplicitAutosaveInterval(agentBrowserProcessEnv.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
 	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(retainedHeadedAutosaveInterval, isCloseCommand(executionPlan.commandInfo.command));
 	if (!executionPlan.validationError && autosavePolicyChangeError) {
 		executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: autosavePolicyChangeError };
 	}
-	const headedLaunch = getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(process.env.AGENT_BROWSER_HEADED);
+	const headedLaunch = getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(agentBrowserProcessEnv.AGENT_BROWSER_HEADED);
 	const headedManagedAutosaveDisabled = retainedHeadedAutosaveDisabled || (explicitAutosaveInterval === undefined && headedLaunch);
 	const headedManagedAutosaveInterval = retainedHeadedAutosaveInterval ?? (headedLaunch ? explicitAutosaveInterval ?? "0" : undefined);
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
@@ -513,6 +518,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		headedManagedAutosaveInterval,
 		managedSessionName: executionPlan.managedSessionName,
 		namespace: executionPlan.namespace,
+		parentEnv: agentBrowserProcessEnv,
 		recordedOwnedSession,
 		restoreState: state.managedSessionRestoreState,
 		sessionName: executionPlan.sessionName,
@@ -520,7 +526,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		compatibilityUserAgent: executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined,
 		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround !== undefined,
 	});
-	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined);
+	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined, agentBrowserProcessEnv);
 	if (!executionPlan.validationError && managedSessionTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedSessionTargetError };
 	if (!executionPlan.validationError && ownedManagedSession) {
 		const closeCommand = isCloseCommand(executionPlan.commandInfo.command);
@@ -592,6 +598,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				currentPageUrl: liveUrl,
 				cwd,
 				pageUrlUnknown: false,
+				parentEnv: agentBrowserProcessEnv,
 				stdin: request.stdin,
 			});
 			if (livePageValidationError) {
@@ -1014,7 +1021,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					}
 					if (pinnedBatchPlan) {
 						sessionTabCorrection = plannedSessionTabSelection;
-						processArgs = ["--json", ...(executionPlan.namespace ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
+						processArgs = ["--json", ...(executionPlan.namespace !== undefined ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
 						processStdin = JSON.stringify(pinnedBatchPlan.steps);
 						includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
 						pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;

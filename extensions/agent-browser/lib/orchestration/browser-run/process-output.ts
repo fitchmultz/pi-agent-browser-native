@@ -8,7 +8,7 @@ import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import { getAllowedDomainsViolation, parseAllowedDomainsPolicyFromArgs } from "../../navigation-policy.js";
 import { getManagedSessionResultingPageState, getObservedBrowserPageValidationError, managedSessionCommandRequiresLivePageVerification } from "../../managed-session-state-policy.js";
 import { analyzeNetworkSourceLookupResults, analyzeSourceLookupResults, redactNetworkSourceLookupAnalysis } from "../../input-modes/lookups.js";
-import { analyzeQaPresetResults, analyzeQaPresetTimeout, buildQaCompactPassText, extractQaPageContext } from "../../input-modes/job.js";
+import { analyzeQaPresetResults, analyzeQaPresetTimeout, buildQaCompactFailureText, buildQaCompactPassText, extractQaPageContext } from "../../input-modes/job.js";
 import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../../results/network-routes.js";
 import { buildToolPresentation } from "../../results/presentation.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
@@ -604,12 +604,22 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		else if (networkSourceLookup) presentation.content.unshift({ type: "text", text: networkSourceLookup.summary });
 		if (sourceLookup && presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${sourceLookup.summary}\n\n${presentation.content[0].text}` };
 		else if (sourceLookup) presentation.content.unshift({ type: "text", text: sourceLookup.summary });
-		if (qaPreset && !qaPreset.passed && presentation.failureCategory !== "artifact-missing") {
+		if (qaPreset && !qaPreset.passed && prepared.compiledQaPreset && presentation.failureCategory !== "artifact-missing") {
 			succeeded = false;
 			presentation.failureCategory = "qa-failure";
 			presentation.summary = qaPreset.summary;
-			if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${qaPreset.summary}\n\n${presentation.content[0].text}` };
-			else presentation.content.unshift({ type: "text", text: qaPreset.summary });
+			const compactText = buildQaCompactFailureText({
+				batchStepCount: presentation.batchSteps?.length ?? prepared.compiledQaPreset.steps.length,
+				checks: prepared.compiledQaPreset.checks,
+				page: extractQaPageContext({
+					attachedTarget: qaAttachedTarget,
+					batchData: presentationEnvelope?.data,
+					compiled: prepared.compiledQaPreset,
+				}),
+				qaPreset,
+			});
+			const nonTextContent = presentation.content.filter((item) => item.type !== "text");
+			presentation.content = [{ type: "text", text: compactText }, ...nonTextContent];
 		} else if (qaPreset?.passed && prepared.compiledQaPreset && succeeded) {
 			const compactText = buildQaCompactPassText({
 				artifactVerification: presentation.artifactVerification,

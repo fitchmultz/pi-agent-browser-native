@@ -24,7 +24,7 @@ function stableJson(value: unknown): string {
 
 test("agent_browser keeps every input mode in a compact model-facing schema", () => {
 	const schema = createAgentBrowserParamsSchema() as { properties?: Record<string, unknown> };
-	for (const mode of ["args", "semanticAction", "job", "qa", "sourceLookup", "networkSourceLookup", "electron"]) {
+	for (const mode of ["script", "args", "semanticAction", "job", "qa", "sourceLookup", "networkSourceLookup", "electron"]) {
 		assert.ok(schema.properties?.[mode], `missing ${mode} input mode`);
 	}
 	const bytes = Buffer.byteLength(JSON.stringify(schema));

@@ -50,6 +50,7 @@ test("agentBrowserExtension names its tools in every prompt guideline", () => {
 	for (const guideline of harness.tool.promptGuidelines) {
 		assert.match(guideline, /agent_browser/, guideline);
 	}
+	assert.match(harness.tool.promptGuidelines.find((guideline) => guideline.includes("one input mode")) ?? "", /\bscript\b/);
 	const webSearchTool = harness.getTool("agent_browser_web_search");
 	if (webSearchTool) {
 		for (const guideline of webSearchTool.promptGuidelines) {
@@ -1071,6 +1072,30 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.match(semanticActionCallText, /<accent>semanticAction<\/accent>/);
 	assert.match(semanticActionCallText, /<dim>→<\/dim> <accent>find text Definitely Missing Button click<\/accent>/);
 
+	const scriptSource = `const rows = [];\n${"rows.push('visible source'); ".repeat(12)}\n// osc-hidden line\x1B]0;\rawait browser({ args: ["get", "title"] }); //\x07\n// browser call follows\rawait browser({ args: ["get", "url"] });\u2028emit(rows);\x1B[31m\u202E\u200B`;
+	const scriptParams: AgentBrowserToolParams = { script: scriptSource };
+	const collapsedScriptCallText = renderCall(
+		scriptParams,
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: scriptParams }),
+	).render(200).join("\n");
+	assert.match(collapsedScriptCallText, /<accent>script<\/accent>/);
+	assert.match(collapsedScriptCallText, /const rows = \[\]/);
+	assert.match(collapsedScriptCallText, /↵/);
+	assert.match(collapsedScriptCallText, /\.\.\.<\/accent>/);
+	assert.doesNotMatch(collapsedScriptCallText, /emit\(rows\)/);
+	const expandedScriptCallText = renderCall(
+		scriptParams,
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: scriptParams, expanded: true }),
+	).render(200).join("\n");
+	assert.match(expandedScriptCallText, /<dim>Source:<\/dim>/);
+	assert.match(expandedScriptCallText, /\/\/ osc-hidden line[^\r\n]*\nawait browser\(\{ args: \["get", "title"\][^\S\r\n]*\}\)/);
+	assert.match(expandedScriptCallText, /\/\/ browser call follows[^\S\r\n]*\nawait browser/);
+	assert.match(expandedScriptCallText, /emit\(rows\)/);
+	assert.doesNotMatch(expandedScriptCallText, /[\r\x1B\u2028\u202E\u200B]/);
+	assert.match(expandedScriptCallText, /�/);
+
 	const maliciousParams: AgentBrowserToolParams = {
 		args: ["open", "\x1B]0;pwned\x07https://example.com/\x1B[31m"],
 		stdin: "secret stdin must not render",
@@ -1146,7 +1171,7 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.doesNotMatch(expandedText, /\.\.\. \(\d+ more lines/);
 
 	const scalarResult: AgentToolResult<unknown> = {
-		content: [{ type: "text", text: "Clicked: true\x1B[31m red\x1B[0m\nHref: https://example.com/next\x1B]0;pwned\x07\nNull\x00byte" }],
+		content: [{ type: "text", text: "Clicked: true\x1B[31m red\x1B[0m\nHref: https://example.com/next\x1B]0;pwned\x07\nNull\x00byte\nEmoji: 👩‍💻\nSeparator: left\u2028right" }],
 		details: { summary: "click completed" },
 	};
 	const scalarText = renderResult(
@@ -1160,6 +1185,8 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.doesNotMatch(scalarText, /[\x00\x07\x1B]/);
 	assert.match(scalarText, /<toolOutput>Clicked: true red<\/toolOutput>/);
 	assert.match(scalarText, /Null�byte/);
+	assert.match(scalarText, /Emoji: 👩‍💻/);
+	assert.match(scalarText, /Separator: left\u2028right/);
 
 	const fallbackResult: AgentToolResult<unknown> = {
 		content: [{ type: "text", text: "\x1B[31m\x1B[0m" }],

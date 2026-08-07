@@ -17,6 +17,7 @@ import {
 import { extractManagedSessionRestoreKeys, isWrapperManagedSessionName } from "./managed-session-capabilities.js";
 import { agentBrowserConfigIsPresent } from "./managed-session-restore.js";
 import { createManagedSessionRestoreKey, hasManagedSessionRestoreProjectIdentity } from "./managed-session-storage.js";
+import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
 
 const BLOCKED_GLOBAL_STATE_MESSAGE = "This operation could read or modify wrapper-owned browser state outside the current checkout. Use a caller-owned state name or path instead.";
 const BLOCKED_MANAGED_BROWSER_FILE_MESSAGE = "Browser access to local .agent-browser storage is blocked because state files can contain authenticated cookies and storage. Use guarded state commands instead.";
@@ -423,7 +424,7 @@ export function getCallerOwnedSessionLivePageVerificationRequirement(options: {
 		: undefined;
 }
 
-export function getManagedSessionTargetAccessValidationError(args: string[], ownedManagedSession: boolean, env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function getManagedSessionTargetAccessValidationError(args: string[], ownedManagedSession: boolean, env: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment()): string | undefined {
 	const sessionName = extractExplicitSessionName(args) ?? env.AGENT_BROWSER_SESSION;
 	return sessionName && isWrapperManagedSessionName(sessionName) && !ownedManagedSession
 		? BLOCKED_MANAGED_SESSION_MESSAGE
@@ -485,7 +486,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	trustedPinnedEmptyConfig?: boolean;
 	trustedFirstBatchTabSelection?: boolean;
 }): string | undefined {
-	const effectiveEnv = { ...(options.parentEnv ?? process.env), ...options.env };
+	const effectiveEnv = { ...(options.parentEnv ?? getAgentBrowserProcessEnvironment()), ...options.env };
 	const descriptor = parseArgvDescriptor(options.args);
 	const command = descriptor.commandInfo.command;
 	const subcommand = descriptor.commandInfo.subcommand;

@@ -70,7 +70,7 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 	assert.equal(realUpstream.every((step) => step.env?.PI_AGENT_BROWSER_REAL_UPSTREAM === "1"), true);
 
 	const dogfood = verifySteps({ mode: "dogfood", passthrough: ["--keep-artifacts"], showHelp: false });
-	assert.deepEqual(labels(dogfood), ["./scripts/verify-agent-browser-dogfood.ts --keep-artifacts"]);
+	assert.deepEqual(labels(dogfood), ["./scripts/build.mjs", "./scripts/verify-agent-browser-dogfood.ts --keep-artifacts"]);
 
 	const packagePi = verifySteps({ mode: "package-pi", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(packagePi), ["./scripts/verify-package.mjs --smoke-pi"]);

@@ -210,6 +210,7 @@ export function createToolBranchEntry(options: { details: Record<string, unknown
 }
 
 export type AgentBrowserToolParams = {
+	script?: string;
 	args?: string[];
 	semanticAction?: {
 		action: "check" | "click" | "fill" | "select";
@@ -372,6 +373,7 @@ function adaptRegisteredTool<TParams extends TSchema, TDetails, TState>(
 export function createExtensionHarness(options: {
 	branch?: unknown[];
 	cwd: string;
+	onAppendEntry?: (customType: string, data: unknown) => void;
 	projectTrusted?: boolean;
 	prompt?: string;
 	sessionDir?: string;
@@ -380,8 +382,14 @@ export function createExtensionHarness(options: {
 }) {
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 	const registeredTools = new Map<string, RegisteredTool>();
+	const appendedEntries: Array<{ customType: string; data: unknown }> = [];
 
 	agentBrowserExtension({
+		appendEntry(customType, data) {
+			appendedEntries.push({ customType, data });
+			branch.push({ type: "custom", customType, data });
+			options.onAppendEntry?.(customType, data);
+		},
 		on(event, handler) {
 			const existingHandlers = handlers.get(event) ?? [];
 			existingHandlers.push(handler as (...args: unknown[]) => unknown);
@@ -410,6 +418,7 @@ export function createExtensionHarness(options: {
 	} as const;
 
 	return {
+		appendedEntries,
 		ctx,
 		getTool(name: string) {
 			return registeredTools.get(name);

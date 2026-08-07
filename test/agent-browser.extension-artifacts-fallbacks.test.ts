@@ -239,7 +239,7 @@ process.exit(1);`,
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "download-not-verified");
 			const nextActions = result.details?.nextActions as Array<{ params?: { args: string[] } }> | undefined;
-			assert.deepEqual(nextActions?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
+			assert.deepEqual(nextActions?.[0]?.params?.args, ["--session", result.details?.sessionName, "wait", "--download", "/tmp/export.csv"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -383,11 +383,22 @@ process.exit(1);`,
 			assert.equal(result.isError, true);
 			assert.equal(result.content[0]?.type, "text");
 			const text = (result.content[0] as { text: string }).text;
-			assert.match(text, /^agent-browser --json --session \S+ open https:\/\/example\.com\/? reported failure \(exit code 1\)\.$/);
+			assert.match(text, /^agent-browser --json --session \S+ open https:\/\/example\.com\/? reported failure \(exit code 1\)\.$/m);
+			assert.match(text, /inspect-page-after-navigation-error/);
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(0, 3), ["--json", "--session", result.details?.sessionName]);
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-2), ["open", "https://example.com/"]);
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "upstream-error");
+			const implicitAction = (result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "inspect-page-after-navigation-error");
+			assert.deepEqual(implicitAction?.params?.args, ["--session", result.details?.sessionName, "get", "url"]);
+
+			const namedResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "prod" }, async () => executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", "", "--session", "named", "open", "https://example.com"],
+			}));
+			const namedAction = (namedResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "inspect-page-after-navigation-error");
+			assert.equal(namedResult.details?.namespace, "");
+			assert.deepEqual(namedResult.details?.effectiveArgs, ["--json", "--namespace", "", "--session", "named", "open", "https://example.com/"]);
+			assert.deepEqual(namedAction?.params?.args, ["--namespace", "", "--session", "named", "get", "url"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

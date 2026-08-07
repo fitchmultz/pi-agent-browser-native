@@ -905,6 +905,14 @@ test("buildExecutionPlan resolves caller-owned session namespaces from argv befo
 			sessionMode: "auto",
 		});
 		assert.equal(wrapperManaged.namespace, undefined);
+		const wrapperExplicitDefault = buildExecutionPlan(["--namespace", "", "--session", "piab-demo-123", "close"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.deepEqual(wrapperExplicitDefault.effectiveArgs, ["--json", "--namespace", "", "--session", "piab-demo-123", "close"]);
+		assert.equal(wrapperExplicitDefault.namespace, "");
 	} finally {
 		if (previousNamespace === undefined) delete process.env.AGENT_BROWSER_NAMESPACE;
 		else process.env.AGENT_BROWSER_NAMESPACE = previousNamespace;

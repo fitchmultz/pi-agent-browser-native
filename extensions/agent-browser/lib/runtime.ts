@@ -36,6 +36,7 @@ export type { CommandInfo } from "./argv-descriptor.js";
 export { extractCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo } from "./argv-descriptor.js";
 
 import { isRecord } from "./parsing.js";
+import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
 
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
 const CLOUDFLARE_HEADLESS_COMPAT_HOST = "dash.cloudflare.com";
@@ -427,7 +428,7 @@ function parseTimeoutMs(rawValue: string | undefined, minimumValue: number): num
 	return parsedValue;
 }
 
-export function getImplicitSessionIdleTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+export function getImplicitSessionIdleTimeoutMs(env: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment()): number {
 	return parseTimeoutMs(env[IMPLICIT_SESSION_IDLE_TIMEOUT_ENV], 0) ??
 		parseTimeoutMs(env[AGENT_BROWSER_IDLE_TIMEOUT_ENV], 0) ??
 		DEFAULT_IMPLICIT_SESSION_IDLE_TIMEOUT_MS;
@@ -449,7 +450,7 @@ function getUnsupportedLeadingIdentityAssignment(args: string[]): "--namespace" 
 	return undefined;
 }
 
-export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment()): number {
 	return parseTimeoutMs(env[IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV], 0) ?? DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS;
 }
 
@@ -841,7 +842,7 @@ export function getDefaultHeadlessCompatUserAgent(platform: NodeJS.Platform = pr
 	return DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM[platform] ?? FALLBACK_HEADLESS_COMPAT_USER_AGENT;
 }
 
-export function canUseHeadlessCompatibilityUserAgent(args: string[], env: NodeJS.ProcessEnv = process.env): boolean {
+export function canUseHeadlessCompatibilityUserAgent(args: string[], env: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment()): boolean {
 	if (hasFlagToken(args, "--user-agent") || hasFlagToken(args, "--args")) return false;
 	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p")) return false;
 	if (env.AGENT_BROWSER_USER_AGENT !== undefined || env.AGENT_BROWSER_ARGS !== undefined || env.AGENT_BROWSER_CDP !== undefined || env.AGENT_BROWSER_PROVIDER !== undefined) return false;
@@ -907,7 +908,7 @@ export function buildExecutionPlan(
 	const commandInfo = argvDescriptor.commandInfo;
 	const commandNeedsManagedSession = !plainTextInspection && needsManagedSession(argvDescriptor);
 	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
-	let namespace = explicitNamespace;
+	let namespace = explicitNamespacePresent ? explicitNamespace ?? "" : undefined;
 	if (plainTextInspection) {
 		return {
 			commandInfo,
@@ -958,7 +959,7 @@ export function buildExecutionPlan(
 
 	const explicitSessionName = extractExplicitSessionName(args);
 	if (explicitSessionName && !isWrapperManagedSessionName(explicitSessionName)) {
-		namespace = resolveAgentBrowserNamespace(args, process.env.AGENT_BROWSER_NAMESPACE);
+		namespace = resolveAgentBrowserNamespace(args, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE);
 	}
 	const shouldCreateFreshManagedSession =
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && !isCloseCommand(commandInfo.command);
@@ -989,8 +990,8 @@ export function buildExecutionPlan(
 				"Retry this call with `sessionMode: \"fresh\"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.",
 			].join(" ");
 		} else {
-			namespace = explicitNamespacePresent ? explicitNamespace : managedSessionNamespace;
-			if (namespace) effectiveArgs.push("--namespace", namespace);
+			namespace = explicitNamespacePresent ? explicitNamespace ?? "" : managedSessionNamespace;
+			if (namespace !== undefined) effectiveArgs.push("--namespace", namespace);
 			effectiveArgs.push("--session", options.managedSessionName);
 			if (explicitNamespacePresent) argsToAppend = stripExplicitNamespaceArgs(args);
 			managedSessionName = options.managedSessionName;
@@ -998,7 +999,7 @@ export function buildExecutionPlan(
 			usedImplicitSession = true;
 		}
 	} else if (shouldCreateFreshManagedSession && commandNeedsManagedSession) {
-		if (namespace) effectiveArgs.push("--namespace", namespace);
+		if (namespace !== undefined) effectiveArgs.push("--namespace", namespace);
 		effectiveArgs.push("--session", options.freshSessionName);
 		if (explicitNamespacePresent) argsToAppend = stripExplicitNamespaceArgs(args);
 		managedSessionName = options.freshSessionName;

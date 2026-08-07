@@ -32,6 +32,7 @@ import {
 	getManagedSessionTargetAccessValidationError,
 } from "./managed-session-state-policy.js";
 import { getImplicitSessionIdleTimeoutMs, isPlainTextInspectionArgs } from "./runtime.js";
+import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
 const MAX_BUFFERED_STDOUT_BYTES = 512 * 1_024;
@@ -442,11 +443,13 @@ export async function runAgentBrowserProcess(options: {
 	if (signal?.aborted) {
 		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
 	}
+	const parentEnv = getAgentBrowserProcessEnvironment();
 	const managedSessionRestoreOptions = {
 		args,
 		cwd,
 		env,
 		ownedManagedSession,
+		parentEnv,
 		restoreState: managedSessionRestoreState,
 		stdin,
 	};
@@ -613,7 +616,7 @@ export async function runAgentBrowserProcess(options: {
 			});
 		};
 
-		const childEnv = buildAgentBrowserProcessEnv(processEnv, effectiveEnv);
+		const childEnv = buildAgentBrowserProcessEnv(parentEnv, effectiveEnv);
 		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, childEnv, allowManagedSessionTarget, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection, managedSessionRestoreConfigEnv.AGENT_BROWSER_CONFIG !== undefined);
 		if (spawnPolicyError) {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });

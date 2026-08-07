@@ -370,6 +370,7 @@ function formatNetworkRequestLine(item: Record<string, unknown>, index: number):
 
 function formatNetworkRequestsText(data: Record<string, unknown>, commandInfo: CommandInfo): string | undefined {
 	const requests = getArrayField(data, "requests");
+	if (isClearDiagnosticCommand(commandInfo) && data.cleared === true && !requests) return "Network request buffer cleared.";
 	if (!requests) return undefined;
 	if (isClearDiagnosticCommand(commandInfo)) {
 		return requests.length === 0
@@ -615,6 +616,7 @@ export function buildStreamNextActions(commandInfo: CommandInfo, data: unknown, 
 
 function formatConsoleText(data: Record<string, unknown>, commandInfo: CommandInfo): string | undefined {
 	const messages = getArrayField(data, "messages");
+	if (isClearDiagnosticCommand(commandInfo) && data.cleared === true && !messages) return "Console buffer cleared.";
 	if (!messages) return undefined;
 	if (isClearDiagnosticCommand(commandInfo)) {
 		return messages.length === 0

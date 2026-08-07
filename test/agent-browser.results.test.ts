@@ -10,6 +10,7 @@ import {
 	alignPageChangeSummaryNextActionIds,
 	appendUniqueAgentBrowserNextActions,
 	applyNamespaceToNextActions,
+	applySessionToNextActions,
 	isStandaloneSnapshotNextAction,
 	type AgentBrowserNextAction,
 } from "../extensions/agent-browser/lib/results/next-actions.js";
@@ -63,6 +64,30 @@ test("applyNamespaceToNextActions preserves namespaced follow-up context", () =>
 	assert.deepEqual(namespaced?.[1]?.params?.networkSourceLookup, { namespace: "review", requestId: "req-1", session: "work" });
 	assert.deepEqual(namespaced?.[2]?.params, { electron: { action: "status", launchId: "l1" } });
 	assert.deepEqual(applyNamespaceToNextActions(namespaced, "review")?.[0]?.params?.args, namespaced?.[0]?.params?.args);
+
+	const defaultNamespaced = applyNamespaceToNextActions([
+		{ id: "snapshot", params: { args: ["--session", "work", "snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
+		{ id: "network-source", params: { networkSourceLookup: { requestId: "req-1", session: "work" } }, reason: "r", tool: "agent_browser" },
+	], "");
+	assert.deepEqual(defaultNamespaced?.[0]?.params?.args, ["--namespace", "", "--session", "work", "snapshot", "-i"]);
+	assert.deepEqual(defaultNamespaced?.[1]?.params?.networkSourceLookup, { namespace: "", requestId: "req-1", session: "work" });
+	assert.deepEqual(applyNamespaceToNextActions(defaultNamespaced, "")?.[0]?.params?.args, defaultNamespaced?.[0]?.params?.args);
+});
+
+test("applySessionToNextActions preserves session-scoped follow-up context", () => {
+	const sessionScoped = applySessionToNextActions([
+		{ id: "snapshot", params: { args: ["snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
+		{ id: "namespaced", params: { args: ["--namespace", "review", "snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
+		{ id: "network-source", params: { networkSourceLookup: { requestId: "req-1" } }, reason: "r", tool: "agent_browser" },
+		{ id: "status", params: { electron: { action: "status", launchId: "l1" } }, reason: "r", tool: "agent_browser" },
+	], "work");
+	assert.deepEqual(sessionScoped?.[0]?.params?.args, ["--session", "work", "snapshot", "-i"]);
+	assert.deepEqual(sessionScoped?.[1]?.params?.args, ["--namespace", "review", "--session", "work", "snapshot", "-i"]);
+	assert.deepEqual(sessionScoped?.[2]?.params?.networkSourceLookup, { requestId: "req-1" });
+	assert.deepEqual(sessionScoped?.[3]?.params, { electron: { action: "status", launchId: "l1" } });
+	const repeated = applySessionToNextActions(sessionScoped, "work");
+	assert.deepEqual(repeated?.[0]?.params?.args, sessionScoped?.[0]?.params?.args);
+	assert.deepEqual(repeated?.[1]?.params?.args, sessionScoped?.[1]?.params?.args);
 });
 
 test("appendUniqueAgentBrowserNextActions preserves order and first-id wins", () => {
@@ -81,7 +106,7 @@ test("appendUniqueAgentBrowserNextActions preserves order and first-id wins", ()
 		["a", "kept-when-not-unique"],
 	]);
 
-	const replaced = [action("snapshot", ["snapshot", "-i"]), action("session-snapshot", ["--session", "s1", "snapshot", "-i"]), action("batched-snapshot", ["batch"], JSON.stringify([["snapshot", "-i"]]))];
+	const replaced = [action("snapshot", ["snapshot", "-i"]), action("session-snapshot", ["--session", "s1", "snapshot", "-i"]), action("namespaced-snapshot", ["--namespace", "", "--session", "s1", "snapshot", "-i"]), action("batched-snapshot", ["batch"], JSON.stringify([["snapshot", "-i"]]))];
 	assert.deepEqual(replaced.filter((item) => !isStandaloneSnapshotNextAction(item)).map((item) => item.id), ["batched-snapshot"]);
 });
 
@@ -215,6 +240,10 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 		], command);
 	}
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
+	assert.equal(buildAgentBrowserNextActions({ command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.[0]?.id, "inspect-after-timeout");
+	assert.equal(buildAgentBrowserNextActions({ command: "open", resultCategory: "failure", failureCategory: "upstream-error" })?.[0]?.id, "inspect-page-after-navigation-error");
+	assert.deepEqual(buildAgentBrowserNextActions({ command: "wait", resultCategory: "failure", failureCategory: "timeout", sessionName: "named" })?.[0]?.params?.args, ["--session", "named", "snapshot", "-i"]);
+	assert.deepEqual(buildAgentBrowserNextActions({ command: "open", resultCategory: "failure", failureCategory: "upstream-error", sessionName: "named" })?.[0]?.params?.args, ["--session", "named", "get", "url"]);
 	for (const command of ["key", "keydown", "keyboard", "keyup", "scrollinto", "tap"] as const) {
 		assert.equal(buildAgentBrowserNextActions({ command, resultCategory: "success", successCategory: "completed" })?.[0]?.id, "inspect-after-mutation", command);
 	}

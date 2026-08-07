@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Run a deterministic, model-free live-browser smoke through the native agent_browser extension surface.
- * Responsibilities: Exercise top-level qa, semanticAction, job, artifact verification, and close without relying on an LLM to choose tool calls.
+ * Responsibilities: Exercise top-level script, qa, semanticAction, job, artifact verification, and close without relying on an LLM to choose tool calls.
  * Scope: Maintainer verification only; it uses a loopback HTTP fixture and the local extension harness, and it is not part of the published runtime package.
  * Usage: `npm run verify -- dogfood` or `npx tsx scripts/verify-agent-browser-dogfood.ts [--keep-artifacts] [--artifact-dir <path>] [--json]`.
  * Invariants/Assumptions: `agent-browser` is installed on PATH; the script serves a loopback fixture so platform checks do not depend on public network reachability.
@@ -113,6 +113,14 @@ function getArtifactVerification(result: Awaited<ReturnType<typeof executeRegist
 async function startDogfoodFixture(): Promise<{ close: () => Promise<void>; helpUrl: string; origin: string }> {
 	const server = createServer((request, response) => {
 		response.setHeader("content-type", "text/html; charset=utf-8");
+		if (request.url === "/script-a") {
+			response.end("<!doctype html><html lang=\"en\"><head><title>Script A</title></head><body><div role=\"dialog\"><button id=\"dismiss\" onclick=\"this.parentElement.remove()\">Dismiss</button></div><ul><li data-value=\"a1\">A1</li><li data-value=\"a2\">A2</li></ul></body></html>");
+			return;
+		}
+		if (request.url === "/script-b") {
+			response.end("<!doctype html><html lang=\"en\"><head><title>Script B</title></head><body><ul><li data-value=\"b1\">B1</li><li data-value=\"b2\">B2</li></ul></body></html>");
+			return;
+		}
 		if (request.url === "/example-domains.html") {
 			response.end("<!doctype html><html lang=\"en\"><head><title>Example Domain Help</title></head><body><h1>Example Domain Help</h1><p>Learn more target reached.</p></body></html>");
 			return;
@@ -175,7 +183,7 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 	const shouldRemoveArtifacts = !options.keepArtifacts && !options.artifactDir;
 	await mkdir(artifactDir, { recursive: true });
 	const jobScreenshotPath = join(artifactDir, "job.png");
-	const harness = createExtensionHarness({ cwd, sessionId: randomUUID() });
+	const harness = createExtensionHarness({ cwd, sessionFile: join(artifactDir, "dogfood-session.jsonl"), sessionId: randomUUID() });
 	const fixture = await startDogfoodFixture();
 	const reports: DogfoodStepReport[] = [];
 	let closed = false;
@@ -196,6 +204,25 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 				},
 			}),
 		}));
+
+		const scriptResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+			script: `const values = [];
+for (const url of ${JSON.stringify([`${fixture.origin}script-a`, `${fixture.origin}script-b`])}) {
+  const opened = await browser({ args: ["open", url] });
+  if (!opened.ok) throw new Error(opened.error);
+  const probe = await browser({ args: ["eval", "--stdin"], stdin: "({ hasBanner: Boolean(document.querySelector('[role=dialog]')), values: [...document.querySelectorAll('[data-value]')].map(node => node.getAttribute('data-value')) })" });
+  if (!probe.ok) throw new Error(probe.error);
+  if (probe.data.result.hasBanner) {
+    const dismissed = await browser({ args: ["click", "#dismiss"] });
+    if (!dismissed.ok) throw new Error(dismissed.error);
+  }
+  values.push(...probe.data.result.values);
+}
+emit(values);`,
+		});
+		assert.deepEqual(scriptResult.details?.data, ["a1", "a2", "b1", "b2"]);
+		assert.equal((scriptResult.details?.scriptSession as { cleanup?: string } | undefined)?.cleanup, "closed");
+		reports.push(await assertSuccessfulStep({ id: "script-branch-and-aggregate", result: scriptResult, textPattern: /a1/ }));
 
 		reports.push(await assertSuccessfulStep({
 			id: "open-fresh-example",

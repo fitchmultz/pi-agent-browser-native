@@ -229,14 +229,15 @@ async function buildBatchStepPresentation(options: {
 		});
 		const confirmationRequired = detectConfirmationRequired(item.error);
 		const nextActions = applyNamespaceToNextActions(mergePresentationNextActions(
+			isWaitTextAssertionCommand(command) ? [buildWaitTextAssertionFailureNextAction(sessionName)] : undefined,
 			buildAgentBrowserNextActions({
 				args: command,
 				command: command?.[0],
 				confirmationId: confirmationRequired?.id,
 				failureCategory,
 				resultCategory: "failure",
+				sessionName,
 			}),
-			isWaitTextAssertionCommand(command) ? [buildWaitTextAssertionFailureNextAction(sessionName)] : undefined,
 		), namespace);
 		const presentation: ToolPresentation = {
 			content: [{ type: "text", text: errorText }],
@@ -297,6 +298,7 @@ async function buildBatchStepPresentation(options: {
 		failureCategory: presentation.failureCategory,
 		resultCategory: stepSucceeded ? "success" : "failure",
 		savedFilePath: presentation.savedFilePath,
+		sessionName,
 		successCategory: presentation.successCategory,
 	}), namespace);
 	const pageChangeSummary = buildPageChangeSummary({
@@ -412,7 +414,7 @@ export async function buildBatchPresentation(options: {
 		: text;
 	const nextActions = batchFailure
 		? batchFailure.failedStep.nextActions
-		: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success" });
+		: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success", sessionName });
 	const changedSteps = steps.map((step) => step.details).filter((details) => details.pageChangeSummary !== undefined);
 	const pageChangeSummary = artifacts.length > 0
 		? buildPageChangeSummary({

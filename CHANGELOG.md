@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-08-07
+
+### Added
+
+- Added top-level one-shot `script` code mode for loops, conditional page branches, and multi-page aggregation. Sandboxed source uses async `browser({ args, stdin?, timeoutMs? })` plus `emit(value)`, while the parent serializes at most 25 calls through the complete ordinary native-tool executor and returns one bounded JSON value.
+- Added a permissioned separate Node child, 64 MiB heap ceiling, disabled VM string/WebAssembly code generation, empty environment, null-prototype task functions, JSON-only bounded IPC, 64 KiB source/output caps, a 120-second default/300-second maximum deadline, cascade abort, and shutdown child reaping.
+- Added unique restore-disabled `piab-script-<uuid>` browser isolation, strict model-invisible persisted cleanup leases before first spawn, finally-close, exact active-branch restart recovery, and cleanup-failure details/actions. Script mode fails closed under Pi `--no-session` and deliberately has no profile/attachment/session-control, host API/import, reusable name, registry, or persistent workflow-state surface. Uncaught source exceptions report `script-error`; compact output confirms successful cleanup and distinguishes successful, failed-envelope, and pre-dispatch-rejected inner calls.
+
+### Changed
+
+- Common browser actions, waits, close/tab-close, getter scalars, and diagnostic-buffer resets now render concise useful fields instead of lifecycle-heavy raw JSON. Failed QA presets show a bounded failure/check summary while retaining the full diagnostic matrix in `details.qaPreset` and `details.batchSteps`.
+- Failure `details.nextActions` are now mirrored into model-visible output with exact redacted payloads. Generic wait/operation timeouts and navigation-shaped upstream errors add bounded snapshot inspection actions, with text assertions retaining their specific recovery id.
+- Raw `batch` stdin shape errors now include a copyable native-tool example. Empty generated semantic role names are treated as omitted. Close cleanup guidance appears only when existing explicit artifacts remain; wrapper-managed spills no longer trigger host cleanup prose.
+
+### Fixed
+
+- Script helpers and cleanup now case-insensitively clear ambient upstream launch/profile/restore/attachment and proxy controls before reapplying wrapper-owned isolation values, so mixed-case Windows environment aliases or shell defaults cannot redirect a supposedly isolated run.
+- Final script data is compact-serialized and post-redaction byte/depth checked before presentation, preventing small deeply nested JSON from expanding into megabytes of prose or throwing during result assembly.
+- Pi branch changes now abort active scripts and await normal isolated-session cleanup before branch restoration. Missing compiled workers and malformed `browser()` / `emit()` calls return actionable structured failures, script call counters no longer overlap pre-dispatch rejections with dispatched failures, and verified-spill rehydration reserves IPC headroom with bounded summary/text plus a complete serialized-envelope guard.
+- Pi call rendering now shows a bounded terminal-safe `script` source preview with visible `↵` line-break markers while collapsed and the full terminal-safe source when expanded; ANSI/OSC payload matching cannot cross JavaScript line terminators, which remain visible newlines, and removed controls are marked visibly so approval does not hide executable lines. Generic browser recovery `nextActions` now preserve the exact originating namespace, including explicit empty namespace overrides, plus the named/managed session. Script-visible next actions strip their wrapper-owned isolated identity and are revalidated before exposure; unsupported suggestions are omitted.
+
+### Validation
+
+- Added focused script schema, sandbox-escape, quota, abort/timeout, child-shutdown/tree-change, ambient-environment isolation, inner-policy, unique-session, durable-lease, cleanup-failure/restart, spill-rehydration/headroom, full-executor, bounded deep-output, malformed bridge-call, missing-worker, no-session, expanded-source-rendering, and session-scoped-recovery tests, plus regression coverage for compact presentation and recovery guidance.
+
 ## 0.3.0 - 2026-08-06
 
 ### Changed

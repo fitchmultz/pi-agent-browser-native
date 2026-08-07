@@ -9,6 +9,7 @@ import {
 } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { isRecord } from "../../parsing.js";
+import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
 import { runAgentBrowserProcess } from "../../process.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { redactInvocationArgs } from "../../runtime.js";
@@ -17,7 +18,7 @@ const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 35_000;
 const RUNNING_HEADED_AUTOSAVE_POLICY_CHANGE_ERROR = "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS cannot change a running wrapper-owned headed session's launch-time periodic autosave interval. Close that session first, then retry with sessionMode: \"fresh\" so the new daemon starts with the requested interval.";
 
 export function getRunningHeadedAutosavePolicyChangeError(recordedInterval: string | undefined, closeCommand = false): string | undefined {
-	const explicitInterval = resolveExplicitAutosaveInterval(process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
+	const explicitInterval = resolveExplicitAutosaveInterval(getAgentBrowserProcessEnvironment().AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
 	return recordedInterval !== undefined && !closeCommand && explicitInterval !== undefined && explicitInterval !== recordedInterval
 		? RUNNING_HEADED_AUTOSAVE_POLICY_CHANGE_ERROR
 		: undefined;
@@ -145,7 +146,7 @@ export async function closeManagedSession(options: {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 	let stdoutSpillPath: string | undefined;
-	const closeArgs = [...(options.namespace ? ["--namespace", options.namespace] : []), "--session", options.sessionName, "close"];
+	const closeArgs = [...(options.namespace !== undefined ? ["--namespace", options.namespace] : []), "--session", options.sessionName, "close"];
 	const policyLock = options.policyLock ?? await acquireManagedSessionPolicyLock({
 		namespace: options.namespace,
 		sessionName: options.sessionName,

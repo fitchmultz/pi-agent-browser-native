@@ -33,7 +33,7 @@ export function compileAgentBrowserSemanticAction(input: unknown): { compiled?: 
 	const selector = input.selector;
 	const text = input.text;
 	const role = input.role;
-	const name = input.name;
+	const name = typeof input.name === "string" && input.name.trim().length === 0 ? undefined : input.name;
 	const session = input.session;
 	if (typeof action !== "string" || !AGENT_BROWSER_SEMANTIC_ACTIONS.includes(action as AgentBrowserSemanticActionName)) {
 		return { error: `semanticAction.action must be one of: ${AGENT_BROWSER_SEMANTIC_ACTIONS.join(", ")}.` };

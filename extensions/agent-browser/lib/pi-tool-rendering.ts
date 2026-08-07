@@ -10,15 +10,20 @@ import { redactInvocationArgs } from "./runtime.js";
 
 const TUI_INVOCATION_PREVIEW_MAX_CHARS = 160;
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 12;
-const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B]*(?:\x1B\\)|_[^\x1B]*(?:\x1B\\)|\^[^\x1B]*(?:\x1B\\)|[@-Z\\-_])/g;
+const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1B(?:\][^\x07\x1B\r\n\u2028\u2029]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|_[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|\^[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|[@-Z\\-_])/g;
 const JSON_TOKEN_PATTERN = /"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\],:]/g;
 const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
+const UNSAFE_DISPLAY_DIRECTIONAL_PATTERN = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+const UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN = /[\u200B-\u200D\u2060\uFEFF]/g;
 
-function sanitizeDisplayText(value: string): string {
-	return value
-		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "")
-		.replace(/\r/g, "")
-		.replace(UNSAFE_DISPLAY_CONTROL_PATTERN, "�");
+function sanitizeDisplayText(value: string, markRemovedSequences = false): string {
+	let sanitized = value
+		.replace(/\r\n?/g, "\n")
+		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, markRemovedSequences ? "�" : "")
+		.replace(UNSAFE_DISPLAY_CONTROL_PATTERN, "�")
+		.replace(UNSAFE_DISPLAY_DIRECTIONAL_PATTERN, "�");
+	if (markRemovedSequences) sanitized = sanitized.replace(/[\u2028\u2029]/g, "\n").replace(UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN, "�");
+	return sanitized;
 }
 
 function replaceTabsForDisplay(value: string): string {
@@ -97,7 +102,8 @@ function formatVisualTruncationNotice(remainingLines: number, totalLines: number
 	return truncateToWidth(notice, Math.max(0, width));
 }
 
-function getStructuredModeInvocation(input: Record<string, unknown>): { mode?: string; rawArgs: string[] } {
+function getStructuredModeInvocation(input: Record<string, unknown>): { mode?: string; rawArgs: string[]; scriptSource?: string } {
+	if (typeof input.script === "string") return { mode: "script", rawArgs: [], scriptSource: input.script };
 	if (Array.isArray(input.args)) return { rawArgs: input.args.filter((value): value is string => typeof value === "string") };
 	if (input.semanticAction !== undefined) return { mode: "semanticAction", rawArgs: compileAgentBrowserSemanticAction(input.semanticAction).compiled?.args ?? [] };
 	if (input.job !== undefined) return { mode: "job", rawArgs: compileAgentBrowserJob(input.job).compiled?.args ?? [] };
@@ -119,14 +125,27 @@ function formatInvocationPreview(rawArgs: string[]): string {
 		: invocation;
 }
 
-export function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
+function formatScriptSourceForDisplay(source: string, expanded: boolean): string {
+	const sanitizedSource = replaceTabsForDisplay(sanitizeDisplayText(source, true));
+	if (expanded) return sanitizedSource;
+	const preview = sanitizedSource.replace(/\n/g, " ↵ ").replace(/\s+/g, " ").trim();
+	return preview.length > TUI_INVOCATION_PREVIEW_MAX_CHARS
+		? `${preview.slice(0, TUI_INVOCATION_PREVIEW_MAX_CHARS - 3)}...`
+		: preview;
+}
+
+export function formatAgentBrowserRenderCall(args: unknown, theme: Theme, expanded = false): string {
 	const input = isRecord(args) ? args : {};
-	const { mode, rawArgs } = getStructuredModeInvocation(input);
-	const invocationPreview = formatInvocationPreview(rawArgs);
+	const { mode, rawArgs, scriptSource } = getStructuredModeInvocation(input);
+	const invocationPreview = scriptSource === undefined
+		? formatInvocationPreview(rawArgs)
+		: formatScriptSourceForDisplay(scriptSource, expanded);
 	let text = theme.fg("toolTitle", theme.bold("agent_browser"));
 	if (mode) {
 		text += ` ${theme.fg("accent", mode)}`;
-		if (invocationPreview.length > 0) {
+		if (scriptSource !== undefined && expanded) {
+			text += `\n${theme.fg("dim", "Source:")}\n${theme.fg("accent", invocationPreview)}`;
+		} else if (invocationPreview.length > 0) {
 			text += ` ${theme.fg("dim", "→")} ${theme.fg("accent", invocationPreview)}`;
 		}
 	} else if (invocationPreview.length > 0) {

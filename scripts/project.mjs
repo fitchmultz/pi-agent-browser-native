@@ -340,7 +340,7 @@ export function verifySteps(options) {
 				localToolStep("tsx", ["--test", "--test-force-exit", "--test-name-pattern", "contract suite matches", "test/agent-browser.real-upstream-contract.test.ts"], { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" }),
 			];
 		case "dogfood":
-			return [localToolStep("tsx", ["./scripts/verify-agent-browser-dogfood.ts", ...options.passthrough])];
+			return [buildStep(), localToolStep("tsx", ["./scripts/verify-agent-browser-dogfood.ts", ...options.passthrough])];
 		case "package":
 			return [scriptStep(["./scripts/verify-package.mjs", ...options.passthrough])];
 		case "package-pi":

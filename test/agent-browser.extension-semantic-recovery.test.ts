@@ -42,7 +42,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguous.isError, true);
-			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
+			assert.match((ambiguous.content[0] as { text: string }).text, /Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 			assert.equal(ambiguous.details?.resultCategory, "failure");
 			assert.equal(ambiguous.details?.failureCategory, "validation-error");
 
@@ -59,14 +59,14 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 			});
 			assert.equal(ambiguousJobArgs.isError, true);
-			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
+			assert.match((ambiguousJobArgs.content[0] as { text: string }).text, /Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const ambiguousJobSemanticAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "open", url: "https://example.test/" }] },
 				semanticAction: { action: "click", locator: "text", value: "Export" },
 			});
 			assert.equal(ambiguousJobSemanticAction.isError, true);
-			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
+			assert.match((ambiguousJobSemanticAction.content[0] as { text: string }).text, /Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const invalidJobAction = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "unknown" }] },
@@ -109,7 +109,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				sourceLookup: { componentName: "Panel" },
 			});
 			assert.equal(sourceLookupWithArgs.isError, true);
-			assert.match((sourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
+			assert.match((sourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const sourceLookupWithStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
 				sourceLookup: { componentName: "Panel" },
@@ -123,7 +123,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				networkSourceLookup: { url: "/api/fail" },
 			});
 			assert.equal(networkSourceLookupWithArgs.isError, true);
-			assert.match((networkSourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
+			assert.match((networkSourceLookupWithArgs.content[0] as { text: string }).text, /Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 
 			const networkSourceLookupWithStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
 				networkSourceLookup: { url: "/api/fail" },
@@ -327,6 +327,8 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.equal(clickMiss.details?.failureCategory, "selector-not-found");
 			assert.equal(clickMiss.details?.richInputRecovery, undefined);
 			assert.match((clickMiss.content[0] as { text: string }).text, /Agent-browser candidate fallbacks:/);
+			assert.match((clickMiss.content[0] as { text: string }).text, /Next actions:/);
+			assert.match((clickMiss.content[0] as { text: string }).text, /refresh-interactive-refs.*snapshot.*-i/);
 			assert.doesNotMatch((clickMiss.content[0] as { text: string }).text, /try-searchbox-name-candidate|try-textbox-name-candidate|try-labeled-textbox-candidate/);
 			const clickNextActions = clickMiss.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
 			assert.deepEqual(clickNextActions?.map((action) => action.id), [
