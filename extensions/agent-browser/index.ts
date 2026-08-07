@@ -1205,7 +1205,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 								ctx,
 							)) as AgentBrowserToolResult;
 							innerResults.push(innerResult);
-							return await buildScriptBrowserEnvelope(innerResult, innerParams.args);
+							return await buildScriptBrowserEnvelope(innerResult, innerParams.args, sessionName);
 						},
 						signal: scriptController.signal,
 						timeoutMs: scriptTimeoutMs,

@@ -141,7 +141,6 @@ test("script browser envelopes expose actionable rejected-call errors and emit a
 		content: [{ text: "Opened.", type: "text" }],
 		details: {
 			data: { url: "https://example.com" },
-			namespace: "",
 			nextActions: [
 				{ id: "inspect", params: { args: ["--namespace", "", "--session", sessionName, "snapshot", "-i"] }, reason: "Inspect.", tool: "agent_browser" },
 				{ id: "local", params: { args: ["--session", sessionName, "profiles"] }, reason: "Local command.", tool: "agent_browser" },
@@ -149,11 +148,10 @@ test("script browser envelopes expose actionable rejected-call errors and emit a
 				{ artifactPath: "/tmp/example.png", id: "artifact", reason: "Inspect artifact.", tool: "agent_browser" },
 			],
 			resultCategory: "success",
-			sessionName,
 			successCategory: "completed",
 			summary: "Opened.",
 		},
-	}, ["open", "https://example.com"]);
+	}, ["open", "https://example.com"], sessionName);
 	assert.deepEqual(replayableEnvelope.nextActions?.map((action) => action.id), ["inspect", "artifact"]);
 	assert.deepEqual(replayableEnvelope.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.doesNotMatch(JSON.stringify(replayableEnvelope), /piab-script-/);
@@ -493,7 +491,7 @@ test("script inner calls and cleanup clear ambient upstream launch controls", { 
 		"AGENT_BROWSER_ALLOWED_DOMAINS", "AGENT_BROWSER_ARGS", "AGENT_BROWSER_AUTO_CONNECT", "AGENT_BROWSER_CDP",
 		"AGENT_BROWSER_EXECUTABLE_PATH", "AGENT_BROWSER_HEADED", "AGENT_BROWSER_NAMESPACE", "AGENT_BROWSER_PROFILE",
 		"AGENT_BROWSER_PROVIDER", "AGENT_BROWSER_RESTORE", "AGENT_BROWSER_SESSION", "AGENT_BROWSER_STATE",
-		"AGENT_BROWSER_USER_AGENT", "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS", "HTTPS_PROXY", "https_proxy",
+		"AGENT_BROWSER_USER_AGENT", "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS", "Agent_Browser_Profile", "Agent_Browser_Provider", "HTTPS_PROXY", "https_proxy", "Https_Proxy",
 	];
 	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
 const args = process.argv.slice(2);

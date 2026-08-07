@@ -512,12 +512,9 @@ export async function getArtifactCleanupGuidance(options: { command?: string; cw
 }
 
 export function formatArtifactCleanupGuidanceText(guidance: ArtifactCleanupGuidance | undefined): string | undefined {
-	if (!guidance) return undefined;
+	if (!guidance || guidance.explicitArtifactPaths.length === 0) return undefined;
 	const explicitCount = guidance.explicitArtifactPaths.length;
-	const explicitSummary = explicitCount === 0
-		? "No existing explicit artifact paths were found in the recent manifest."
-		: `${explicitCount} explicit artifact${explicitCount === 1 ? "" : "s"} remain${explicitCount === 1 ? "s" : ""}; expand or inspect details.artifactCleanup.explicitArtifactPaths for paths.`;
-	return `Artifact lifecycle: ${explicitSummary} Browser close does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; use host file tools for cleanup.`;
+	return `Artifact lifecycle: ${explicitCount} explicit artifact${explicitCount === 1 ? "" : "s"} remain${explicitCount === 1 ? "s" : ""}; expand or inspect details.artifactCleanup.explicitArtifactPaths for paths. Browser close does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; use host file tools for cleanup.`;
 }
 
 async function collectManagedSessionCommandData(options: { allowManagedSessionTarget?: boolean; args: string[]; cwd: string; namespace?: string; sessionName: string; signal?: AbortSignal; timeoutMs?: number }): Promise<{ data?: unknown; error?: string }> {

@@ -18,10 +18,10 @@
 
 ### Fixed
 
-- Script helpers and cleanup now clear ambient upstream launch/profile/restore/attachment and proxy controls before reapplying wrapper-owned isolation values, so shell defaults cannot redirect a supposedly isolated run.
+- Script helpers and cleanup now case-insensitively clear ambient upstream launch/profile/restore/attachment and proxy controls before reapplying wrapper-owned isolation values, so mixed-case Windows environment aliases or shell defaults cannot redirect a supposedly isolated run.
 - Final script data is compact-serialized and post-redaction byte/depth checked before presentation, preventing small deeply nested JSON from expanding into megabytes of prose or throwing during result assembly.
 - Pi branch changes now abort active scripts and await normal isolated-session cleanup before branch restoration. Missing compiled workers and malformed `browser()` / `emit()` calls return actionable structured failures, script call counters no longer overlap pre-dispatch rejections with dispatched failures, and verified-spill rehydration reserves IPC headroom with bounded summary/text plus a complete serialized-envelope guard.
-- Pi call rendering now shows a bounded terminal-safe `script` source preview while collapsed and the full terminal-safe source when expanded, preserving JavaScript line terminators as visible newlines and visibly marking removed controls so approval does not change executable semantics. Generic browser recovery `nextActions` now preserve the exact originating namespace, including explicit empty namespace overrides, plus the named/managed session. Script-visible next actions strip their wrapper-owned isolated identity and are revalidated before exposure; unsupported suggestions are omitted.
+- Pi call rendering now shows a bounded terminal-safe `script` source preview with visible `↵` line-break markers while collapsed and the full terminal-safe source when expanded; ANSI/OSC payload matching cannot cross JavaScript line terminators, which remain visible newlines, and removed controls are marked visibly so approval does not hide executable lines. Generic browser recovery `nextActions` now preserve the exact originating namespace, including explicit empty namespace overrides, plus the named/managed session. Script-visible next actions strip their wrapper-owned isolated identity and are revalidated before exposure; unsupported suggestions are omitted.
 
 ### Validation
 

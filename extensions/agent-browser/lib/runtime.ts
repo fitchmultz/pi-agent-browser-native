@@ -908,7 +908,7 @@ export function buildExecutionPlan(
 	const commandInfo = argvDescriptor.commandInfo;
 	const commandNeedsManagedSession = !plainTextInspection && needsManagedSession(argvDescriptor);
 	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
-	let namespace = explicitNamespace;
+	let namespace = explicitNamespacePresent ? explicitNamespace ?? "" : undefined;
 	if (plainTextInspection) {
 		return {
 			commandInfo,
@@ -990,8 +990,8 @@ export function buildExecutionPlan(
 				"Retry this call with `sessionMode: \"fresh\"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.",
 			].join(" ");
 		} else {
-			namespace = explicitNamespacePresent ? explicitNamespace : managedSessionNamespace;
-			if (namespace) effectiveArgs.push("--namespace", namespace);
+			namespace = explicitNamespacePresent ? explicitNamespace ?? "" : managedSessionNamespace;
+			if (namespace !== undefined) effectiveArgs.push("--namespace", namespace);
 			effectiveArgs.push("--session", options.managedSessionName);
 			if (explicitNamespacePresent) argsToAppend = stripExplicitNamespaceArgs(args);
 			managedSessionName = options.managedSessionName;
@@ -999,7 +999,7 @@ export function buildExecutionPlan(
 			usedImplicitSession = true;
 		}
 	} else if (shouldCreateFreshManagedSession && commandNeedsManagedSession) {
-		if (namespace) effectiveArgs.push("--namespace", namespace);
+		if (namespace !== undefined) effectiveArgs.push("--namespace", namespace);
 		effectiveArgs.push("--session", options.freshSessionName);
 		if (explicitNamespacePresent) argsToAppend = stripExplicitNamespaceArgs(args);
 		managedSessionName = options.freshSessionName;

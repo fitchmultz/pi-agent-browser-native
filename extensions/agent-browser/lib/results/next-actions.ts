@@ -90,7 +90,8 @@ export function appendUniqueAgentBrowserNextActions(
 export function isStandaloneSnapshotNextAction(action: AgentBrowserNextAction): boolean {
 	const args = action.params?.args;
 	if (!args || action.params?.stdin) return false;
-	const commandIndex = args[0] === "--session" ? 2 : 0;
+	let commandIndex = args[0] === "--namespace" ? 2 : 0;
+	if (args[commandIndex] === "--session") commandIndex += 2;
 	return args[commandIndex] === "snapshot";
 }
 

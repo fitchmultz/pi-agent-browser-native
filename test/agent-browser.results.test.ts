@@ -106,7 +106,7 @@ test("appendUniqueAgentBrowserNextActions preserves order and first-id wins", ()
 		["a", "kept-when-not-unique"],
 	]);
 
-	const replaced = [action("snapshot", ["snapshot", "-i"]), action("session-snapshot", ["--session", "s1", "snapshot", "-i"]), action("batched-snapshot", ["batch"], JSON.stringify([["snapshot", "-i"]]))];
+	const replaced = [action("snapshot", ["snapshot", "-i"]), action("session-snapshot", ["--session", "s1", "snapshot", "-i"]), action("namespaced-snapshot", ["--namespace", "", "--session", "s1", "snapshot", "-i"]), action("batched-snapshot", ["batch"], JSON.stringify([["snapshot", "-i"]]))];
 	assert.deepEqual(replaced.filter((item) => !isStandaloneSnapshotNextAction(item)).map((item) => item.id), ["batched-snapshot"]);
 });
 

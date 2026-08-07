@@ -340,10 +340,18 @@ process.stdin.on("end", () => {
 			assert.deepEqual(sessionCompiled?.args, ["--namespace", "review", "--session", "named", "batch"]);
 			assert.deepEqual(sessionCompiled?.steps?.map((step) => step.args), [["network", "request", "req-1"]]);
 
+			const defaultNamespaceResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "prod" }, async () => executeRegisteredTool(harness.tool, harness.ctx, {
+				networkSourceLookup: { namespace: "", requestId: "req-1", session: "named" },
+			}));
+			assert.equal(defaultNamespaceResult.isError, false);
+			const defaultNamespaceCompiled = defaultNamespaceResult.details?.compiledNetworkSourceLookup as { args?: string[] } | undefined;
+			assert.deepEqual(defaultNamespaceCompiled?.args, ["--namespace", "", "--session", "named", "batch"]);
+
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
 			assert.deepEqual(invocations[2]?.args.slice(-2), ["get", "url"]);
 			assert.deepEqual(invocations[3]?.args.slice(-5), ["--namespace", "review", "--session", "named", "batch"]);
+			assert.ok(invocations.some((invocation) => JSON.stringify(invocation.args.slice(-5)) === JSON.stringify(["--namespace", "", "--session", "named", "batch"])));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

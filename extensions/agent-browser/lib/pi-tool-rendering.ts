@@ -10,19 +10,20 @@ import { redactInvocationArgs } from "./runtime.js";
 
 const TUI_INVOCATION_PREVIEW_MAX_CHARS = 160;
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 12;
-const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B]*(?:\x1B\\)|_[^\x1B]*(?:\x1B\\)|\^[^\x1B]*(?:\x1B\\)|[@-Z\\-_])/g;
+const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1B(?:\][^\x07\x1B\r\n\u2028\u2029]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|_[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|\^[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|[@-Z\\-_])/g;
 const JSON_TOKEN_PATTERN = /"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\],:]/g;
 const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
 const UNSAFE_DISPLAY_DIRECTIONAL_PATTERN = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 const UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN = /[\u200B-\u200D\u2060\uFEFF]/g;
 
 function sanitizeDisplayText(value: string, markRemovedSequences = false): string {
-	return value
+	let sanitized = value
+		.replace(/\r\n?/g, "\n")
 		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, markRemovedSequences ? "�" : "")
-		.replace(/\r\n?|[\u2028\u2029]/g, "\n")
 		.replace(UNSAFE_DISPLAY_CONTROL_PATTERN, "�")
-		.replace(UNSAFE_DISPLAY_DIRECTIONAL_PATTERN, "�")
-		.replace(UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN, "�");
+		.replace(UNSAFE_DISPLAY_DIRECTIONAL_PATTERN, "�");
+	if (markRemovedSequences) sanitized = sanitized.replace(/[\u2028\u2029]/g, "\n").replace(UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN, "�");
+	return sanitized;
 }
 
 function replaceTabsForDisplay(value: string): string {
@@ -127,7 +128,7 @@ function formatInvocationPreview(rawArgs: string[]): string {
 function formatScriptSourceForDisplay(source: string, expanded: boolean): string {
 	const sanitizedSource = replaceTabsForDisplay(sanitizeDisplayText(source, true));
 	if (expanded) return sanitizedSource;
-	const preview = sanitizedSource.replace(/\s+/g, " ").trim();
+	const preview = sanitizedSource.replace(/\n/g, " ↵ ").replace(/\s+/g, " ").trim();
 	return preview.length > TUI_INVOCATION_PREVIEW_MAX_CHARS
 		? `${preview.slice(0, TUI_INVOCATION_PREVIEW_MAX_CHARS - 3)}...`
 		: preview;

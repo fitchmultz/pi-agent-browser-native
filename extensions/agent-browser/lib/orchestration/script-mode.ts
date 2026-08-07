@@ -100,13 +100,13 @@ function getToolResultText(result: AgentBrowserToolResult): string {
 		.join("\n\n");
 }
 
-function stripOwnedScriptSessionArgs(args: string[], sessionName: unknown, namespace: unknown): string[] {
+function stripOwnedScriptSessionArgs(args: string[], sessionName: string | undefined): string[] {
 	if (!isAgentBrowserScriptSessionName(sessionName)) return args;
-	if (args[0] === "--namespace" && args[1] === namespace && args[2] === "--session" && args[3] === sessionName) return args.slice(4);
+	if (args[0] === "--namespace" && args[1] === "" && args[2] === "--session" && args[3] === sessionName) return args.slice(4);
 	return args[0] === "--session" && args[1] === sessionName ? args.slice(2) : args;
 }
 
-function getScriptCompatibleNextActions(value: unknown, sessionName: unknown, namespace: unknown): AgentBrowserNextAction[] | undefined {
+function getScriptCompatibleNextActions(value: unknown, sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
 	if (!Array.isArray(value)) return undefined;
 	const actions = value.flatMap((action): AgentBrowserNextAction[] => {
 		if (!isRecord(action)) return [];
@@ -115,7 +115,7 @@ function getScriptCompatibleNextActions(value: unknown, sessionName: unknown, na
 		if (!Array.isArray(action.params.args) || action.params.args.some((token) => typeof token !== "string")) return [];
 		if (action.params.stdin !== undefined && typeof action.params.stdin !== "string") return [];
 		const normalizedParams = {
-			args: stripOwnedScriptSessionArgs(action.params.args, sessionName, namespace),
+			args: stripOwnedScriptSessionArgs(action.params.args, sessionName),
 			...(typeof action.params.stdin === "string" ? { stdin: action.params.stdin } : {}),
 		};
 		if (!validateAgentBrowserScriptBrowserParams(normalizedParams).params) return [];
@@ -146,7 +146,7 @@ function buildOversizedScriptBrowserEnvelope(): AgentBrowserScriptBrowserEnvelop
 	};
 }
 
-export async function buildScriptBrowserEnvelope(result: AgentBrowserToolResult, args: string[]): Promise<AgentBrowserScriptBrowserEnvelope> {
+export async function buildScriptBrowserEnvelope(result: AgentBrowserToolResult, args: string[], scriptSessionName?: string): Promise<AgentBrowserScriptBrowserEnvelope> {
 	const details = isRecord(result.details) ? result.details : undefined;
 	const fullData = await readVerifiedScriptSpill(result);
 	const commandInfo = parseCommandInfo(args);
@@ -154,8 +154,8 @@ export async function buildScriptBrowserEnvelope(result: AgentBrowserToolResult,
 	const resultCategory = details?.resultCategory === "failure" || result.isError === true ? "failure" : "success";
 	const text = truncateText(redactSensitiveText(getToolResultText(result)), SCRIPT_BROWSER_TEXT_MAX_CHARS);
 	const summary = truncateText(redactSensitiveText(typeof details?.summary === "string" ? details.summary : text.split("\n", 1)[0] || "Browser call completed."), SCRIPT_BROWSER_SUMMARY_MAX_CHARS);
-	const compatibleNextActions = getScriptCompatibleNextActions(details?.nextActions, details?.sessionName, details?.namespace);
-	const redactedNextActions = redactPresentationData(commandInfo, compatibleNextActions);
+	const compatibleNextActions = getScriptCompatibleNextActions(details?.nextActions, scriptSessionName);
+	const redactedNextActions = getScriptCompatibleNextActions(redactPresentationData(commandInfo, compatibleNextActions), undefined);
 	const failureCategory = resultCategory === "failure" && typeof details?.failureCategory === "string"
 		? details.failureCategory as AgentBrowserScriptBrowserEnvelope["failureCategory"]
 		: undefined;
