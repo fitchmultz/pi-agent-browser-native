@@ -252,7 +252,7 @@ Example with a conditional branch and aggregation:
 ### `semanticAction`
 
 - type: object
-- optional; mutually exclusive with `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron` (omit all of them when using this field)
+- optional; mutually exclusive with `script`, `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron` (omit all of them when using this field)
 - top-level tool input only: `batch` stdin remains upstream argv arrays; express find steps inside batch as string arrays such as `["find","role","button","click","--name","Export"]`, not nested `semanticAction` objects
 - thin intent schema compiled by this wrapper into existing upstream commands; locator actions compile to `find`, direct selector/ref `click` / `check` / `fill` compile to the matching upstream command, and native dropdown selection compiles to `select <selector> <value...>`; behavior and locator/selector semantics stay upstream-owned
 - supported actions: `click`, `fill`, `check`, `select`
@@ -305,7 +305,7 @@ Examples:
 ### `job`
 
 - type: object with a non-empty `steps` array
-- optional; mutually exclusive with `args`, `semanticAction`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron`
+- optional; mutually exclusive with `script`, `args`, `semanticAction`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron`
 - top-level tool input only; do not nest `job` inside `batch` stdin
 - constrained orchestration only: every step compiles to existing upstream `batch` argv and the compiled plan is echoed as `details.compiledJob`
 - optional `failFast` boolean; defaults to `true`, compiling to upstream `batch --bail` so later mutating job steps do not run after an earlier required step fails. Set `failFast: false` only when you explicitly want upstream batch's continue-after-error behavior and every later step remains safe if an earlier navigation fails; otherwise the wrapper may require fail-fast behavior or split calls.
@@ -376,7 +376,7 @@ Because `job` still executes as upstream `batch` with generated stdin, the same 
 ### `qa`
 
 - type: object with either required `url` (normal URL-opening QA) or `attached: true` (current attached-session QA)
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, `sourceLookup`, `networkSourceLookup`, and `electron`
+- optional; mutually exclusive with `script`, `args`, `semanticAction`, `job`, `sourceLookup`, `networkSourceLookup`, and `electron`
 - lightweight preset built on the same batch compiler path as `job`, using `batch --bail` so missing readiness/text/selector assertions stop before slower diagnostics can burn the wrapper watchdog
 - URL form: clears enabled diagnostic buffers first (`network requests --clear`, `console --clear`, `errors --clear`), then opens `url`, waits with `wait --load <state>` using the resolved `loadState`, optionally asserts `expectedText` (string or string array, compiled to bounded visible-text `wait --fn … --timeout 5000` predicates after load) and/or `expectedSelector` (each may be omitted for a load-plus-diagnostics-only smoke), then runs enabled diagnostics: `network requests`, `console`, and `errors` only if preceding batch steps pass. Successful reset-step rows are labeled as reset output and ignored by QA failure analysis so stale pre-target rows do not fail URL QA; failed reset commands still fail the batch, and post-open diagnostic rows still count normally.
 - attached form: `qa: { attached: true, expectedText?, expectedSelector?, screenshotPath?, checkNetwork?, checkConsole?, checkErrors?, loadState? }` runs the same waits, optional assertions, diagnostics, and screenshot against the current attached managed session without opening a URL. It rejects `url` and cannot be used with `sessionMode: "fresh"`; attach first with `electron.launch` or raw `args: ["connect", "<port-or-url>"]`, then run `qa.attached`. Before spawning the diagnostic batch, the wrapper preflights the attached session: `get url` must succeed and return an `http:` or `https:` page URL. Missing URLs, read failures, and non-http(s) surfaces fail fast with `failureCategory: "validation-error"`, `details.validationError`, and recovery `nextActions` such as `list-tabs-before-qa-attached` and `snapshot-before-qa-attached` instead of running the full QA batch. Attached QA does **not** run `network requests --clear`, `console --clear`, or `errors --clear`; `details.compiledQaPreset.checks.diagnosticsResetAtStart` is `false`. Visible text warns that existing diagnostic buffers were preserved only when `checkNetwork`, `checkConsole`, or `checkErrors` is enabled, and those diagnostics may include events from before the QA check.
@@ -400,7 +400,7 @@ Use custom `job` or raw `batch` for QA flows that need custom commands, flags, a
 Workflow-oriented public guide: [`ELECTRON.md`](ELECTRON.md). This section remains the canonical field contract; the guide covers when and how to use these actions in practice.
 
 - type: object with required `action`
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`
+- optional; mutually exclusive with `script`, `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, and `networkSourceLookup`
 - top-level wrapper shorthand for Electron desktop apps; do not nest it inside `batch` stdin
 - `stdin` is rejected with `electron`; host-only actions manage their own local work and `launch` manages its own upstream `connect`
 - supported actions: `list`, `launch`, `status`, `cleanup`, and `probe`
@@ -535,7 +535,7 @@ For an app you launched manually with remote debugging enabled, skip `electron.c
 ### `sourceLookup`
 
 - type: object with at least one of `selector`, `reactFiberId`, or `componentName`
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `networkSourceLookup`, and `electron`
+- optional; mutually exclusive with `script`, `args`, `semanticAction`, `job`, `qa`, `networkSourceLookup`, and `electron`
 - **EXPERIMENTAL — candidates only:** opt-in helper for local app debugging; it reports candidate source locations with confidence and evidence instead of claiming a guaranteed DOM-to-file mapping. Do not treat output as authoritative file ownership or edit targets without verification.
 - compiles to existing upstream `batch` commands only:
   - `selector` adds `is visible <selector>` and, unless `includeDomHints: false`, adds `get html <selector>` for source-like DOM attributes (`data-source-file`, `data-file`, `data-component-file`, `data-source`, plus optional `data-source-line` / `data-line` and `data-source-column` / `data-column`) and for `.ts`/`.tsx`/`.js`/`.jsx` paths embedded in HTML text
@@ -560,7 +560,7 @@ Use raw `args` for direct upstream React inspection when you already know the ex
 ### `networkSourceLookup`
 
 - type: object with at least one of `requestId`, `filter`, or `url`, plus optional `maxWorkspaceFiles`
-- optional; mutually exclusive with `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, and `electron`
+- optional; mutually exclusive with `script`, `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, and `electron`
 - **EXPERIMENTAL — candidates only:** failed-request source-hint helper; it reports failed network requests and candidate source hints with evidence instead of assigning blame or proving root cause
 - compiles to existing upstream `batch` commands only: `network request <requestId>` when provided plus `network requests` with `--filter <filter-or-url>` when a filter or URL is provided (if both are set, `filter` wins; when only `url` is set, it becomes the `--filter` argument); optional `namespace` / `session` prepends `--namespace <name>` / `--session <name>` before that generated `batch`; exact `namespace: ""` selects the default namespace and remains explicit so an ambient namespace cannot redirect the lookup
 - detects failed requests from `status >= 400`, `failed: true`, or an `error` field

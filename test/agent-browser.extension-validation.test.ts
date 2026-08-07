@@ -50,6 +50,7 @@ test("agentBrowserExtension names its tools in every prompt guideline", () => {
 	for (const guideline of harness.tool.promptGuidelines) {
 		assert.match(guideline, /agent_browser/, guideline);
 	}
+	assert.match(harness.tool.promptGuidelines.find((guideline) => guideline.includes("one input mode")) ?? "", /\bscript\b/);
 	const webSearchTool = harness.getTool("agent_browser_web_search");
 	if (webSearchTool) {
 		for (const guideline of webSearchTool.promptGuidelines) {

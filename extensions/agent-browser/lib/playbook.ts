@@ -92,7 +92,7 @@ export const WRAPPER_TAB_RECOVERY_BEHAVIOR = [
 
 /** Tier A: always-on tool promptGuidelines (keep small; Tier B lives in SHARED_BROWSER_PLAYBOOK_GUIDELINES and docs). */
 export const RUNTIME_PROMPT_GUIDELINES = [
-	"Use agent_browser with one input mode: args, semanticAction, job, qa, sourceLookup/networkSourceLookup, or electron. stdin only for batch/eval/auth/wrapper batch; electron rejects stdin; never pass --json.",
+	"Use agent_browser with one input mode: script, args, semanticAction, job, qa, sourceLookup/networkSourceLookup, or electron. stdin is for batch/eval/auth/wrapper batch; electron rejects it; never pass --json.",
 	"For agent_browser, use open → snapshot -i → current @refs or semanticAction → re-snapshot after navigation/scroll/rerender. Batch same-snapshot forms; split before navigation/submits. Stop before order/post/purchase/submit.",
 	"Use agent_browser sessionMode=fresh for launch-scoped flags incl. --allowed-domains; never put --session-mode in args. Use requested/configured profiles only; on profile failures run profiles/doctor. Profile content is model-visible. Restores project cookies; SSO may need --headed once.",
 	"For agent_browser artifacts, use exact user paths and verify details.artifactVerification/details.artifacts before claiming success. Save details.promptGuard-required artifacts before close; record stop needs ffmpeg; close keeps files; waited:timeout is not proof.",
