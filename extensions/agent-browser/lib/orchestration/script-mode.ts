@@ -3,6 +3,7 @@ import { open } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
+	AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES,
 	AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES,
 	createAgentBrowserScriptCloseArgs,
 	isAgentBrowserScriptSessionName,
@@ -97,11 +98,11 @@ function getToolResultText(result: AgentBrowserToolResult): string {
 export async function buildScriptBrowserEnvelope(result: AgentBrowserToolResult, args: string[]): Promise<AgentBrowserScriptBrowserEnvelope> {
 	const details = isRecord(result.details) ? result.details : undefined;
 	const fullData = await readVerifiedScriptSpill(result);
-	const data = redactPresentationData(parseCommandInfo(args), fullData ?? details?.data ?? null);
+	const commandInfo = parseCommandInfo(args);
+	const data = redactPresentationData(commandInfo, fullData ?? details?.data ?? null);
 	const resultCategory = details?.resultCategory === "failure" || result.isError === true ? "failure" : "success";
 	const text = redactSensitiveText(getToolResultText(result));
 	const summary = redactSensitiveText(typeof details?.summary === "string" ? details.summary : text.split("\n", 1)[0] || "Browser call completed.");
-	const commandInfo = parseCommandInfo(args);
 	const redactedNextActions = redactPresentationData(commandInfo, details?.nextActions);
 	const failureCategory = resultCategory === "failure" && typeof details?.failureCategory === "string"
 		? details.failureCategory as AgentBrowserScriptBrowserEnvelope["failureCategory"]
@@ -185,25 +186,44 @@ export function buildScriptToolResult(options: {
 	run: AgentBrowserScriptRunResult;
 	sessionName?: string;
 }): AgentBrowserToolResult {
-	const data = redactPresentationData({ command: "script" }, options.run.data);
+	let data: unknown;
+	let serializedData: string | undefined;
+	let outputError: string | undefined;
+	try {
+		data = redactPresentationData({ command: "script" }, options.run.data);
+		serializedData = data === undefined ? undefined : JSON.stringify(data);
+		if (data !== undefined && serializedData === undefined) throw new TypeError("Script output is not JSON-serializable.");
+		if (serializedData !== undefined && Buffer.byteLength(serializedData, "utf8") > AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES) {
+			throw new RangeError(`Redacted script output exceeds ${AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES} bytes.`);
+		}
+	} catch {
+		data = undefined;
+		serializedData = undefined;
+		outputError = "Final script output could not be safely rendered as bounded JSON.";
+	}
 	const steps = options.run.steps.map((step) => ({ ...step, summary: redactSensitiveText(step.summary) }));
 	const rejectedFailureCategory = steps.find((step) => step.failureCategory === "policy-blocked")?.failureCategory
 		?? (options.run.rejectedCallCount > 0 ? "validation-error" : undefined);
-	const failureCategory = options.cleanupError ? "cleanup-failed" : options.run.failureCategory ?? rejectedFailureCategory;
+	const failureCategory = options.cleanupError
+		? "cleanup-failed"
+		: outputError ? "validation-error" : options.run.failureCategory ?? rejectedFailureCategory;
 	const failed = failureCategory !== undefined || !options.run.ok;
-	const failedCallCount = steps.filter((step) => !step.ok).length;
-	const successfulCallCount = steps.length - failedCallCount;
+	const failedStepCount = steps.filter((step) => !step.ok).length;
+	const failedCallCount = Math.max(0, failedStepCount - options.run.rejectedCallCount);
+	const successfulCallCount = steps.filter((step) => step.ok).length;
 	const cleanupSuffix = options.sessionName && !options.cleanupError ? " Isolated script session closed." : "";
 	const summary = `${options.cleanupError
 		? `Script completed, but isolated session cleanup failed: ${redactSensitiveText(options.cleanupError)}`
-		: options.run.ok
-			? rejectedFailureCategory
-				? `Script completed (${options.run.callCount} browser call${options.run.callCount === 1 ? "" : "s"}; ${options.run.rejectedCallCount} rejected before dispatch).`
-				: failedCallCount > 0
-					? `Script completed (${options.run.callCount} browser call${options.run.callCount === 1 ? "" : "s"}; ${failedCallCount} returned failure for script handling).`
-					: `Script completed (${options.run.callCount} browser call${options.run.callCount === 1 ? "" : "s"}).`
-			: `Script failed: ${redactSensitiveText(options.run.error ?? "sandbox execution failed")}`}${cleanupSuffix}`;
-	const dataText = data === undefined ? "" : `\n\n${JSON.stringify(data, null, 2)}`;
+		: outputError
+			? `Script failed: ${outputError}`
+			: options.run.ok
+				? rejectedFailureCategory
+					? `Script failed: ${options.run.rejectedCallCount} browser call${options.run.rejectedCallCount === 1 ? " was" : "s were"} rejected before dispatch.`
+					: failedCallCount > 0
+						? `Script completed (${options.run.callCount} browser call${options.run.callCount === 1 ? "" : "s"}; ${failedCallCount} returned failure for script handling).`
+						: `Script completed (${options.run.callCount} browser call${options.run.callCount === 1 ? "" : "s"}).`
+				: `Script failed: ${redactSensitiveText(options.run.error ?? "sandbox execution failed")}`}${cleanupSuffix}`;
+	const dataText = serializedData === undefined ? "" : `\n\n${serializedData}`;
 	const cleanupActionText = options.cleanupError && options.sessionName
 		? `\n\nNext action: ${JSON.stringify({ args: createAgentBrowserScriptCloseArgs(options.sessionName) })}`
 		: "";

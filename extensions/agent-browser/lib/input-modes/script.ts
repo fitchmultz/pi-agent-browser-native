@@ -34,7 +34,9 @@ function findPackageRoot(startDir: string): string {
 }
 
 function resolveScriptWorkerPath(): string {
-	return join(findPackageRoot(dirname(fileURLToPath(import.meta.url))), "dist", "extensions", "agent-browser", "script-worker.js");
+	const workerPath = join(findPackageRoot(dirname(fileURLToPath(import.meta.url))), "dist", "extensions", "agent-browser", "script-worker.js");
+	if (!existsSync(workerPath)) throw new Error("Compiled script worker is missing; run npm run build or reinstall pi-agent-browser-native.");
+	return workerPath;
 }
 
 const SCRIPT_SESSION_NAME_PATTERN = /^piab-script-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -240,8 +242,8 @@ function describeScriptError(error: { message?: unknown; name?: unknown } | unde
 function isScriptChildMessage(value: unknown): value is ScriptChildMessage {
 	if (!isRecord(value) || typeof value.type !== "string") return false;
 	if (value.type === "ready") return true;
-	if (value.type === "call") return typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0 && Object.hasOwn(value, "params");
-	if (value.type === "emit") return Object.hasOwn(value, "value");
+	if (value.type === "call") return typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0;
+	if (value.type === "emit") return true;
 	return value.type === "complete";
 }
 
@@ -290,10 +292,18 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 		return buildFailedRun({ aborted: true, callCount: 0, emitCount: 0, error: "Script execution was aborted.", failureCategory: "aborted", rejectedCallCount: 0, steps: [] });
 	}
 
+	let workerPath: string;
+	try {
+		workerPath = resolveScriptWorkerPath();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Compiled script worker is missing.";
+		return buildFailedRun({ callCount: 0, emitCount: 0, error: message, failureCategory: "missing-binary", rejectedCallCount: 0, steps: [] });
+	}
+
 	const child = spawn(process.execPath, [
 		"--permission",
 		"--max-old-space-size=64",
-		resolveScriptWorkerPath(),
+		workerPath,
 		String(AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES),
 		String(AGENT_BROWSER_SCRIPT_IPC_CUMULATIVE_MAX_BYTES),
 	], {
@@ -391,6 +401,10 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 					return;
 				}
 				if (message.type === "emit") {
+					if (!Object.hasOwn(message, "value")) {
+						await fail("emit(value) requires a JSON-serializable value; undefined and functions are not supported.", "validation-error");
+						return;
+					}
 					emissions.push(message.value);
 					continue;
 				}

@@ -16,9 +16,15 @@
 - Failure `details.nextActions` are now mirrored into model-visible output with exact redacted payloads. Generic wait/operation timeouts and navigation-shaped upstream errors add bounded snapshot inspection actions, with text assertions retaining their specific recovery id.
 - Raw `batch` stdin shape errors now include a copyable native-tool example. Empty generated semantic role names are treated as omitted. Close cleanup guidance appears only when existing explicit artifacts remain; wrapper-managed spills no longer trigger host cleanup prose.
 
+### Fixed
+
+- Script helpers and cleanup now clear ambient upstream launch/profile/restore/attachment and proxy controls before reapplying wrapper-owned isolation values, so shell defaults cannot redirect a supposedly isolated run.
+- Final script data is compact-serialized and post-redaction byte/depth checked before presentation, preventing small deeply nested JSON from expanding into megabytes of prose or throwing during result assembly.
+- Pi branch changes now abort active scripts and await normal isolated-session cleanup before branch restoration. Missing compiled workers and malformed `browser()` / `emit()` calls return actionable structured failures, and script call counters no longer overlap pre-dispatch rejections with dispatched failures.
+
 ### Validation
 
-- Added focused script schema, sandbox-escape, quota, abort/timeout, child-shutdown, inner-policy, unique-session, durable-lease, cleanup-failure/restart, spill-rehydration, full-executor, and no-session tests, plus regression coverage for compact presentation and recovery guidance.
+- Added focused script schema, sandbox-escape, quota, abort/timeout, child-shutdown/tree-change, ambient-environment isolation, inner-policy, unique-session, durable-lease, cleanup-failure/restart, spill-rehydration, full-executor, bounded deep-output, malformed bridge-call, missing-worker, and no-session tests, plus regression coverage for compact presentation and recovery guidance.
 
 ## 0.3.0 - 2026-08-06
 
