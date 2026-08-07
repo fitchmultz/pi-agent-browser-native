@@ -64,6 +64,14 @@ test("applyNamespaceToNextActions preserves namespaced follow-up context", () =>
 	assert.deepEqual(namespaced?.[1]?.params?.networkSourceLookup, { namespace: "review", requestId: "req-1", session: "work" });
 	assert.deepEqual(namespaced?.[2]?.params, { electron: { action: "status", launchId: "l1" } });
 	assert.deepEqual(applyNamespaceToNextActions(namespaced, "review")?.[0]?.params?.args, namespaced?.[0]?.params?.args);
+
+	const defaultNamespaced = applyNamespaceToNextActions([
+		{ id: "snapshot", params: { args: ["--session", "work", "snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
+		{ id: "network-source", params: { networkSourceLookup: { requestId: "req-1", session: "work" } }, reason: "r", tool: "agent_browser" },
+	], "");
+	assert.deepEqual(defaultNamespaced?.[0]?.params?.args, ["--namespace", "", "--session", "work", "snapshot", "-i"]);
+	assert.deepEqual(defaultNamespaced?.[1]?.params?.networkSourceLookup, { namespace: "", requestId: "req-1", session: "work" });
+	assert.deepEqual(applyNamespaceToNextActions(defaultNamespaced, "")?.[0]?.params?.args, defaultNamespaced?.[0]?.params?.args);
 });
 
 test("applySessionToNextActions preserves session-scoped follow-up context", () => {
@@ -75,7 +83,7 @@ test("applySessionToNextActions preserves session-scoped follow-up context", () 
 	], "work");
 	assert.deepEqual(sessionScoped?.[0]?.params?.args, ["--session", "work", "snapshot", "-i"]);
 	assert.deepEqual(sessionScoped?.[1]?.params?.args, ["--namespace", "review", "--session", "work", "snapshot", "-i"]);
-	assert.deepEqual(sessionScoped?.[2]?.params?.networkSourceLookup, { requestId: "req-1", session: "work" });
+	assert.deepEqual(sessionScoped?.[2]?.params?.networkSourceLookup, { requestId: "req-1" });
 	assert.deepEqual(sessionScoped?.[3]?.params, { electron: { action: "status", launchId: "l1" } });
 	const repeated = applySessionToNextActions(sessionScoped, "work");
 	assert.deepEqual(repeated?.[0]?.params?.args, sessionScoped?.[0]?.params?.args);

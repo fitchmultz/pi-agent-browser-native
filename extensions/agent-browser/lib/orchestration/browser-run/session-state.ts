@@ -75,7 +75,7 @@ export function buildSessionDetailFields(
 	managedSessionRestoreDisabled = false,
 ): Record<string, unknown> {
 	return {
-		...(namespace ? { namespace } : {}),
+		...(namespace !== undefined ? { namespace } : {}),
 		...(sessionName
 			? {
 				sessionName,

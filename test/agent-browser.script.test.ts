@@ -21,7 +21,7 @@ import {
 	type AgentBrowserScriptBrowserEnvelope,
 } from "../extensions/agent-browser/lib/input-modes/script.js";
 import { resolveAgentBrowserInput } from "../extensions/agent-browser/lib/orchestration/input-plan.js";
-import { buildScriptToolResult } from "../extensions/agent-browser/lib/orchestration/script-mode.js";
+import { buildScriptBrowserEnvelope, buildScriptToolResult } from "../extensions/agent-browser/lib/orchestration/script-mode.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -135,6 +135,62 @@ test("script browser envelopes expose actionable rejected-call errors and emit a
 		assert.equal(invalidEmit.failureCategory, "validation-error");
 		assert.match(invalidEmit.error ?? "", /emit\(value\) requires a JSON-serializable value/);
 	}
+
+	const sessionName = "piab-script-12345678-1234-4123-8123-123456789abc";
+	const replayableEnvelope = await buildScriptBrowserEnvelope({
+		content: [{ text: "Opened.", type: "text" }],
+		details: {
+			data: { url: "https://example.com" },
+			namespace: "",
+			nextActions: [
+				{ id: "inspect", params: { args: ["--namespace", "", "--session", sessionName, "snapshot", "-i"] }, reason: "Inspect.", tool: "agent_browser" },
+				{ id: "local", params: { args: ["--session", sessionName, "profiles"] }, reason: "Local command.", tool: "agent_browser" },
+				{ id: "lookup", params: { networkSourceLookup: { requestId: "req-1" } }, reason: "Top-level mode.", tool: "agent_browser" },
+				{ artifactPath: "/tmp/example.png", id: "artifact", reason: "Inspect artifact.", tool: "agent_browser" },
+			],
+			resultCategory: "success",
+			sessionName,
+			successCategory: "completed",
+			summary: "Opened.",
+		},
+	}, ["open", "https://example.com"]);
+	assert.deepEqual(replayableEnvelope.nextActions?.map((action) => action.id), ["inspect", "artifact"]);
+	assert.deepEqual(replayableEnvelope.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
+	assert.doesNotMatch(JSON.stringify(replayableEnvelope), /piab-script-/);
+
+	let replayDispatchCount = 0;
+	const replayed = await runAgentBrowserScript({
+		code: `const first = await browser({ args: ["open", "https://example.com"] }); const second = await browser(first.nextActions[0].params); emit(second.ok);`,
+		dispatch: async (params) => {
+			replayDispatchCount += 1;
+			if (replayDispatchCount === 1) return replayableEnvelope;
+			assert.deepEqual(params.args, ["snapshot", "-i"]);
+			return successEnvelope(null);
+		},
+	});
+	assert.equal(replayed.ok, true, replayed.error);
+	assert.equal(replayed.data, true);
+	assert.equal(replayed.rejectedCallCount, 0);
+
+	const largeText = "x".repeat(AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES);
+	const boundedEnvelope = await buildScriptBrowserEnvelope({
+		content: [{ text: largeText, type: "text" }],
+		details: { data: largeText, resultCategory: "success", summary: largeText, successCategory: "completed" },
+	}, ["get", "text", "body"]);
+	const serializedBoundedEnvelope = JSON.stringify({ envelope: boundedEnvelope, id: Number.MAX_SAFE_INTEGER, type: "response" });
+	assert.equal(boundedEnvelope.ok, true);
+	assert.ok(Buffer.byteLength(serializedBoundedEnvelope, "utf8") + 1 <= AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES);
+	assert.ok(boundedEnvelope.summary.length <= 1_024);
+	assert.ok(boundedEnvelope.text.length <= 8_192);
+
+	const escapeHeavyEnvelope = await buildScriptBrowserEnvelope({
+		content: [{ text: "oversized", type: "text" }],
+		details: { data: "\0".repeat(AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES), resultCategory: "success", successCategory: "completed" },
+	}, ["get", "text", "body"]);
+	assert.equal(escapeHeavyEnvelope.ok, false);
+	assert.equal(escapeHeavyEnvelope.failureCategory, "upstream-error");
+	assert.match(escapeHeavyEnvelope.error ?? "", /IPC response limit/);
+	assert.ok(Buffer.byteLength(JSON.stringify({ envelope: escapeHeavyEnvelope, id: Number.MAX_SAFE_INTEGER, type: "response" }), "utf8") + 1 <= AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES);
 });
 
 test("script sandbox exposes only context-native wrappers and blocks constructor escapes", async () => {
@@ -457,14 +513,15 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolat
 			const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				script: `const opened = await browser({ args: ["open", "https://example.test"] }); if (!opened.ok) throw new Error(opened.error); emit(opened.ok);`,
+				script: `const opened = await browser({ args: ["open", "https://example.test"] }); if (!opened.ok) throw new Error(opened.error); const inspected = await browser(opened.nextActions.find(action => action.id === "inspect-opened-page").params); emit(inspected.ok);`,
 			});
 			assert.equal(result.isError, false, JSON.stringify(result));
 			assert.equal(result.details?.data, true);
+			assert.equal((result.details?.scriptRun as { callCount?: number } | undefined)?.callCount, 2);
 			assert.equal(result.details?.attachedBrowserSession, undefined);
 			const sessionName = (result.details?.scriptSession as { sessionName?: string } | undefined)?.sessionName;
 			const invocations = (await readInvocationLog(logPath) as Array<{ args: string[]; config?: string | null; env?: Record<string, string | null> }>).filter((entry) => entry.args.includes(sessionName ?? "missing"));
-			assert.ok(invocations.length > 0);
+			assert.ok(invocations.some((invocation) => invocation.args.includes("snapshot")), "script should replay the policy-compatible next action");
 			for (const invocation of invocations) {
 				for (const name of ambientNames) {
 					const value = invocation.env?.[name];

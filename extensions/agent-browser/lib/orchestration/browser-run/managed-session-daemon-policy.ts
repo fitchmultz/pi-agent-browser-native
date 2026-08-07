@@ -146,7 +146,7 @@ export async function closeManagedSession(options: {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 	let stdoutSpillPath: string | undefined;
-	const closeArgs = [...(options.namespace ? ["--namespace", options.namespace] : []), "--session", options.sessionName, "close"];
+	const closeArgs = [...(options.namespace !== undefined ? ["--namespace", options.namespace] : []), "--session", options.sessionName, "close"];
 	const policyLock = options.policyLock ?? await acquireManagedSessionPolicyLock({
 		namespace: options.namespace,
 		sessionName: options.sessionName,

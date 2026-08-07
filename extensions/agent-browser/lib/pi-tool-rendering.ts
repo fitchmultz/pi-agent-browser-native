@@ -14,13 +14,15 @@ const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0
 const JSON_TOKEN_PATTERN = /"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\],:]/g;
 const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
 const UNSAFE_DISPLAY_DIRECTIONAL_PATTERN = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+const UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN = /[\u200B-\u200D\u2060\uFEFF]/g;
 
-function sanitizeDisplayText(value: string): string {
+function sanitizeDisplayText(value: string, markRemovedSequences = false): string {
 	return value
-		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "")
-		.replace(/\r/g, "")
+		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, markRemovedSequences ? "�" : "")
+		.replace(/\r\n?|[\u2028\u2029]/g, "\n")
 		.replace(UNSAFE_DISPLAY_CONTROL_PATTERN, "�")
-		.replace(UNSAFE_DISPLAY_DIRECTIONAL_PATTERN, "�");
+		.replace(UNSAFE_DISPLAY_DIRECTIONAL_PATTERN, "�")
+		.replace(UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN, "�");
 }
 
 function replaceTabsForDisplay(value: string): string {
@@ -123,7 +125,7 @@ function formatInvocationPreview(rawArgs: string[]): string {
 }
 
 function formatScriptSourceForDisplay(source: string, expanded: boolean): string {
-	const sanitizedSource = replaceTabsForDisplay(sanitizeDisplayText(source));
+	const sanitizedSource = replaceTabsForDisplay(sanitizeDisplayText(source, true));
 	if (expanded) return sanitizedSource;
 	const preview = sanitizedSource.replace(/\s+/g, " ").trim();
 	return preview.length > TUI_INVOCATION_PREVIEW_MAX_CHARS

@@ -4,20 +4,25 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
 	AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES,
+	AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES,
 	AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES,
 	createAgentBrowserScriptCloseArgs,
 	isAgentBrowserScriptSessionName,
 	type AgentBrowserScriptBrowserEnvelope,
 	type AgentBrowserScriptRunResult,
+	validateAgentBrowserScriptBrowserParams,
 } from "../input-modes/script.js";
 import { isRecord } from "../parsing.js";
 import { parseCommandInfo, redactSensitiveText } from "../runtime.js";
 import type { AgentBrowserNextAction, ArtifactVerificationSummary } from "../results/contracts.js";
 import { isSessionArtifactManifest } from "../results/artifact-manifest.js";
 import { redactPresentationData } from "../results/presentation/diagnostics.js";
+import { truncateText } from "../results/text.js";
 import type { AgentBrowserToolResult } from "./browser-run/index.js";
 
 const SCRIPT_SESSION_ENTRY_TYPE = "agent-browser-script-session";
+const SCRIPT_BROWSER_SUMMARY_MAX_CHARS = 1_024;
+const SCRIPT_BROWSER_TEXT_MAX_CHARS = 8_192;
 type ScriptSessionCleanupState = "active" | "closed" | "failed";
 
 export interface ScriptSessionLease {
@@ -79,7 +84,7 @@ async function readVerifiedScriptSpill(result: AgentBrowserToolResult): Promise<
 		try {
 			return JSON.parse(text) as unknown;
 		} catch {
-			return text;
+			return undefined;
 		}
 	} catch {
 		return undefined;
@@ -95,15 +100,62 @@ function getToolResultText(result: AgentBrowserToolResult): string {
 		.join("\n\n");
 }
 
+function stripOwnedScriptSessionArgs(args: string[], sessionName: unknown, namespace: unknown): string[] {
+	if (!isAgentBrowserScriptSessionName(sessionName)) return args;
+	if (args[0] === "--namespace" && args[1] === namespace && args[2] === "--session" && args[3] === sessionName) return args.slice(4);
+	return args[0] === "--session" && args[1] === sessionName ? args.slice(2) : args;
+}
+
+function getScriptCompatibleNextActions(value: unknown, sessionName: unknown, namespace: unknown): AgentBrowserNextAction[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const actions = value.flatMap((action): AgentBrowserNextAction[] => {
+		if (!isRecord(action)) return [];
+		if (!isRecord(action.params)) return typeof action.artifactPath === "string" ? [action as unknown as AgentBrowserNextAction] : [];
+		if (Object.keys(action.params).some((key) => key !== "args" && key !== "stdin")) return [];
+		if (!Array.isArray(action.params.args) || action.params.args.some((token) => typeof token !== "string")) return [];
+		if (action.params.stdin !== undefined && typeof action.params.stdin !== "string") return [];
+		const normalizedParams = {
+			args: stripOwnedScriptSessionArgs(action.params.args, sessionName, namespace),
+			...(typeof action.params.stdin === "string" ? { stdin: action.params.stdin } : {}),
+		};
+		if (!validateAgentBrowserScriptBrowserParams(normalizedParams).params) return [];
+		return [{ ...action, params: normalizedParams } as unknown as AgentBrowserNextAction];
+	});
+	return actions.length > 0 ? actions : undefined;
+}
+
+function scriptBrowserEnvelopeFitsIpc(envelope: AgentBrowserScriptBrowserEnvelope): boolean {
+	try {
+		return Buffer.byteLength(JSON.stringify({ envelope, id: Number.MAX_SAFE_INTEGER, type: "response" }), "utf8") + 1 <= AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES;
+	} catch {
+		return false;
+	}
+}
+
+function buildOversizedScriptBrowserEnvelope(): AgentBrowserScriptBrowserEnvelope {
+	const text = "Browser result exceeds the script IPC response limit; narrow the inner browser call output.";
+	return {
+		data: null,
+		details: { failureCategory: "upstream-error", resultCategory: "failure" },
+		error: text,
+		failureCategory: "upstream-error",
+		ok: false,
+		resultCategory: "failure",
+		summary: text,
+		text,
+	};
+}
+
 export async function buildScriptBrowserEnvelope(result: AgentBrowserToolResult, args: string[]): Promise<AgentBrowserScriptBrowserEnvelope> {
 	const details = isRecord(result.details) ? result.details : undefined;
 	const fullData = await readVerifiedScriptSpill(result);
 	const commandInfo = parseCommandInfo(args);
 	const data = redactPresentationData(commandInfo, fullData ?? details?.data ?? null);
 	const resultCategory = details?.resultCategory === "failure" || result.isError === true ? "failure" : "success";
-	const text = redactSensitiveText(getToolResultText(result));
-	const summary = redactSensitiveText(typeof details?.summary === "string" ? details.summary : text.split("\n", 1)[0] || "Browser call completed.");
-	const redactedNextActions = redactPresentationData(commandInfo, details?.nextActions);
+	const text = truncateText(redactSensitiveText(getToolResultText(result)), SCRIPT_BROWSER_TEXT_MAX_CHARS);
+	const summary = truncateText(redactSensitiveText(typeof details?.summary === "string" ? details.summary : text.split("\n", 1)[0] || "Browser call completed."), SCRIPT_BROWSER_SUMMARY_MAX_CHARS);
+	const compatibleNextActions = getScriptCompatibleNextActions(details?.nextActions, details?.sessionName, details?.namespace);
+	const redactedNextActions = redactPresentationData(commandInfo, compatibleNextActions);
 	const failureCategory = resultCategory === "failure" && typeof details?.failureCategory === "string"
 		? details.failureCategory as AgentBrowserScriptBrowserEnvelope["failureCategory"]
 		: undefined;
@@ -114,12 +166,11 @@ export async function buildScriptBrowserEnvelope(result: AgentBrowserToolResult,
 		artifactVerification: details?.artifactVerification,
 		artifacts: details?.artifacts,
 		failureCategory,
-		nextActions: redactedNextActions,
 		pageChangeSummary: details?.pageChangeSummary,
 		resultCategory,
 		successCategory,
 	});
-	return {
+	const envelope: AgentBrowserScriptBrowserEnvelope = {
 		data,
 		details: isRecord(envelopeDetails) ? envelopeDetails : { resultCategory },
 		error: resultCategory === "failure" ? summary : undefined,
@@ -131,6 +182,7 @@ export async function buildScriptBrowserEnvelope(result: AgentBrowserToolResult,
 		summary,
 		text,
 	};
+	return scriptBrowserEnvelopeFitsIpc(envelope) ? envelope : buildOversizedScriptBrowserEnvelope();
 }
 
 function collectUniqueArtifacts(results: AgentBrowserToolResult[]): Record<string, unknown>[] | undefined {

@@ -1071,7 +1071,7 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.match(semanticActionCallText, /<accent>semanticAction<\/accent>/);
 	assert.match(semanticActionCallText, /<dim>→<\/dim> <accent>find text Definitely Missing Button click<\/accent>/);
 
-	const scriptSource = `const rows = [];\n${"rows.push('visible source'); ".repeat(12)}\nemit(rows);\x1B[31m\u202E`;
+	const scriptSource = `const rows = [];\n${"rows.push('visible source'); ".repeat(12)}\n// browser call follows\rawait browser({ args: ["get", "url"] });\u2028emit(rows);\x1B[31m\u202E\u200B`;
 	const scriptParams: AgentBrowserToolParams = { script: scriptSource };
 	const collapsedScriptCallText = renderCall(
 		scriptParams,
@@ -1088,8 +1088,10 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 		createRenderContext({ args: scriptParams, expanded: true }),
 	).render(200).join("\n");
 	assert.match(expandedScriptCallText, /<dim>Source:<\/dim>/);
+	assert.match(expandedScriptCallText, /\/\/ browser call follows[^\S\r\n]*\nawait browser/);
 	assert.match(expandedScriptCallText, /emit\(rows\)/);
-	assert.doesNotMatch(expandedScriptCallText, /[\x1B\u202E]/);
+	assert.doesNotMatch(expandedScriptCallText, /[\r\x1B\u2028\u202E\u200B]/);
+	assert.match(expandedScriptCallText, /�/);
 
 	const maliciousParams: AgentBrowserToolParams = {
 		args: ["open", "\x1B]0;pwned\x07https://example.com/\x1B[31m"],

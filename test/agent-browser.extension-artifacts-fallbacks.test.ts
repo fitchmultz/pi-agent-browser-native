@@ -392,11 +392,13 @@ process.exit(1);`,
 			const implicitAction = (result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "inspect-page-after-navigation-error");
 			assert.deepEqual(implicitAction?.params?.args, ["--session", result.details?.sessionName, "get", "url"]);
 
-			const namedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "open", "https://example.com"],
-			});
+			const namedResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "prod" }, async () => executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", "", "--session", "named", "open", "https://example.com"],
+			}));
 			const namedAction = (namedResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "inspect-page-after-navigation-error");
-			assert.deepEqual(namedAction?.params?.args, ["--session", "named", "get", "url"]);
+			assert.equal(namedResult.details?.namespace, "");
+			assert.deepEqual(namedResult.details?.effectiveArgs, ["--json", "--namespace", "", "--session", "named", "open", "https://example.com/"]);
+			assert.deepEqual(namedAction?.params?.args, ["--namespace", "", "--session", "named", "get", "url"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

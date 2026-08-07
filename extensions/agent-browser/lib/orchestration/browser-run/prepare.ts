@@ -1021,7 +1021,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					}
 					if (pinnedBatchPlan) {
 						sessionTabCorrection = plannedSessionTabSelection;
-						processArgs = ["--json", ...(executionPlan.namespace ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
+						processArgs = ["--json", ...(executionPlan.namespace !== undefined ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
 						processStdin = JSON.stringify(pinnedBatchPlan.steps);
 						includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
 						pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;

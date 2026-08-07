@@ -25,7 +25,7 @@ export interface AgentBrowserNextAction {
 }
 
 export function withOptionalNamespaceArgs(namespace: string | undefined, args: string[]): string[] {
-	return namespace && args[0] !== "--namespace" ? ["--namespace", namespace, ...args] : args;
+	return namespace !== undefined && args[0] !== "--namespace" ? ["--namespace", namespace, ...args] : args;
 }
 
 export function withOptionalSessionArgs(sessionName: string | undefined, args: string[]): string[] {
@@ -35,7 +35,7 @@ export function withOptionalSessionArgs(sessionName: string | undefined, args: s
 }
 
 export function applyNamespaceToNextActions(actions: AgentBrowserNextAction[] | undefined, namespace: string | undefined): AgentBrowserNextAction[] | undefined {
-	if (!namespace || !actions) return actions;
+	if (namespace === undefined || !actions) return actions;
 	return actions.map((action) => {
 		const args = action.params?.args;
 		if (args) return { ...action, params: { ...action.params, args: withOptionalNamespaceArgs(namespace, args) } };
@@ -48,9 +48,7 @@ export function applySessionToNextActions(actions: AgentBrowserNextAction[] | un
 	if (!sessionName || !actions) return actions;
 	return actions.map((action) => {
 		const args = action.params?.args;
-		if (args) return { ...action, params: { ...action.params, args: withOptionalSessionArgs(sessionName, args) } };
-		const networkSourceLookup = action.params?.networkSourceLookup;
-		return networkSourceLookup ? { ...action, params: { ...action.params, networkSourceLookup: { ...networkSourceLookup, session: sessionName } } } : action;
+		return args ? { ...action, params: { ...action.params, args: withOptionalSessionArgs(sessionName, args) } } : action;
 	});
 }
 
