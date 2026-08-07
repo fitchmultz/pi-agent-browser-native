@@ -268,6 +268,7 @@ test("publish contract derives required packed files from package.json", async (
 	assert.equal(publishContract.requiredPackedFiles.includes("scripts/agent-browser-capability-baseline.mjs"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("docs/COMMAND_REFERENCE.md"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/index.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/script-worker.js"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/parsing.js"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/playbook.js"), true);
 	assert.equal(publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/results/snapshot.js"), true);

@@ -211,7 +211,7 @@ export function buildErrorPresentation(options: {
 	const nextActions = [
 		...(buildUnknownCommandSuggestionActions(unknownCommandSuggestions, sessionName) ?? []),
 		...(browserProfileConfigRecovery?.actions ?? []),
-		...(buildAgentBrowserNextActions({
+		...(browserProfileConfigRecovery ? [] : buildAgentBrowserNextActions({
 			args,
 			command: commandInfo.command,
 			failureCategory: categoryDetails.failureCategory,

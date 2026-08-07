@@ -90,6 +90,7 @@ export function normalizeRunInput(input: BrowserRunOptions["input"]): BrowserRun
 			return { ...base, compiledSemanticAction: input.compiledSemanticAction, redactedCompiledSemanticAction: input.redactedCompiledSemanticAction };
 		case "sourceLookup":
 			return { ...base, compiledSourceLookup: input.compiledSourceLookup, redactedCompiledSourceLookup: input.redactedCompiledSourceLookup };
+		case "script":
 		case "args":
 			return base;
 	}

@@ -357,7 +357,7 @@ test("agentBrowserExtension rejects electron mixed with other input modes and ca
 	for (const conflict of conflicts) {
 		const result = await executeRegisteredTool(harness.tool, harness.ctx, conflict.params);
 		assert.equal(result.isError, true, conflict.label);
-		assert.match(result.content[0]?.text ?? "", /Provide exactly one of args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
+		assert.match(result.content[0]?.text ?? "", /Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
 		assert.equal(result.details?.failureCategory, "validation-error");
 	}
 

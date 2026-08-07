@@ -229,6 +229,7 @@ async function buildBatchStepPresentation(options: {
 		});
 		const confirmationRequired = detectConfirmationRequired(item.error);
 		const nextActions = applyNamespaceToNextActions(mergePresentationNextActions(
+			isWaitTextAssertionCommand(command) ? [buildWaitTextAssertionFailureNextAction(sessionName)] : undefined,
 			buildAgentBrowserNextActions({
 				args: command,
 				command: command?.[0],
@@ -236,7 +237,6 @@ async function buildBatchStepPresentation(options: {
 				failureCategory,
 				resultCategory: "failure",
 			}),
-			isWaitTextAssertionCommand(command) ? [buildWaitTextAssertionFailureNextAction(sessionName)] : undefined,
 		), namespace);
 		const presentation: ToolPresentation = {
 			content: [{ type: "text", text: errorText }],

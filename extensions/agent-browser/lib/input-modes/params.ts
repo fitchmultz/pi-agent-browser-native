@@ -1,6 +1,7 @@
 import { JsonSchema, type JsonSchemaBuilder, type TSchema } from "../json-schema.js";
 import { StringEnum as localStringEnum, type StringEnumBuilder } from "../string-enum-schema.js";
 
+import { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./script.js";
 import {
 	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
 	ELECTRON_DISCOVERY_MAX_RESULTS,
@@ -39,7 +40,10 @@ export function createAgentBrowserParamsSchema(
 	StringEnum: StringEnumBuilder = localStringEnum,
 ) {
 	return Type.Object({
-
+		script: Type.Optional(Type.String({
+			description: "One-shot JavaScript orchestration with async browser({ args, stdin?, timeoutMs? }) and emit(value); isolated session and no host access.",
+			maxLength: AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES,
+		})),
 	args: Type.Optional(
 		Type.Array(Type.String(), {
 			description: "Raw agent-browser argv only: no binary, shell operators, or --json. Start with open → snapshot -i → act on current @refs; re-snapshot after page changes.",
@@ -170,7 +174,7 @@ export function createAgentBrowserParamsSchema(
 	),
 	}, {
 		additionalProperties: false,
-		description: "Choose one input mode: args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron.",
+		description: "Choose one input mode: script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron.",
 	});
 }
 

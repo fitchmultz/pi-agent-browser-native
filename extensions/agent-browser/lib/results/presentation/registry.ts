@@ -33,6 +33,42 @@ function formatConfirmationRequiredSummary(confirmation: ConfirmationRequiredPre
 	return `Confirmation required: ${confirmation.id}`;
 }
 
+const SIMPLE_ACTION_RESULTS: Record<string, { field: string; label: string }> = {
+	check: { field: "checked", label: "Checked" },
+	click: { field: "clicked", label: "Clicked" },
+	fill: { field: "filled", label: "Filled" },
+	focus: { field: "focused", label: "Focused" },
+	hover: { field: "hovered", label: "Hovered" },
+	press: { field: "pressed", label: "Pressed" },
+	select: { field: "selected", label: "Selected" },
+	type: { field: "typed", label: "Typed" },
+	uncheck: { field: "unchecked", label: "Unchecked" },
+};
+
+function formatSimpleActionResult(command: string, data: unknown): string | undefined {
+	if (!isRecord(data)) return undefined;
+	if (command === "click" && getNavigationSummary(data)) return undefined;
+	const definition = SIMPLE_ACTION_RESULTS[command];
+	if (!definition) return undefined;
+	const value = data[definition.field];
+	if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return undefined;
+	return `${definition.label}: ${redactModelFacingText(String(value))}`;
+}
+
+function formatWaitResult(data: unknown): string | undefined {
+	if (!isRecord(data)) return undefined;
+	if (data.waited === "timeout") return "Fixed wait elapsed; no page condition was verified.";
+	for (const field of ["selector", "text", "url", "state", "waited"] as const) {
+		const value = data[field];
+		if (typeof value === "string" && value.length > 0) return `Wait completed: ${redactModelFacingText(value)}`;
+	}
+	return undefined;
+}
+
+function formatCloseResult(data: unknown): string | undefined {
+	return isRecord(data) && data.closed === true ? "Browser session closed." : undefined;
+}
+
 const VITALS_METRICS = ["lcp", "fcp", "ttfb", "inp", "cls"] as const;
 
 function coerceVitalsMetricValue(value: unknown): number | undefined {
@@ -106,6 +142,14 @@ interface CommandPresenter {
 }
 
 const COMMAND_PRESENTERS: Record<string, CommandPresenter> = {
+	...Object.fromEntries(Object.keys(SIMPLE_ACTION_RESULTS).map((command) => [command, {
+		summary: (_commandInfo: CommandInfo, data: unknown) => formatSimpleActionResult(command, data),
+		text: (_commandInfo: CommandInfo, data: unknown) => formatSimpleActionResult(command, data),
+	}])),
+	close: { summary: (_commandInfo, data) => formatCloseResult(data), text: (_commandInfo, data) => formatCloseResult(data) },
+	exit: { summary: (_commandInfo, data) => formatCloseResult(data), text: (_commandInfo, data) => formatCloseResult(data) },
+	quit: { summary: (_commandInfo, data) => formatCloseResult(data), text: (_commandInfo, data) => formatCloseResult(data) },
+	wait: { summary: (_commandInfo, data) => formatWaitResult(data), text: (_commandInfo, data) => formatWaitResult(data) },
 	profiles: {
 		summary: (_commandInfo, data) => Array.isArray(data) ? `Chrome profiles: ${data.length}` : undefined,
 		text: (_commandInfo, data) => Array.isArray(data) ? formatProfilesText(data, "Chrome profiles") : undefined,
@@ -140,8 +184,12 @@ const COMMAND_PRESENTERS: Record<string, CommandPresenter> = {
 		text: (commandInfo, data) => isRecord(data) && commandInfo.subcommand === "status" ? getStreamSummary(data) : undefined,
 	},
 	tab: {
-		summary: (_commandInfo, data) => isRecord(data) && Array.isArray(data.tabs) ? `Tabs: ${data.tabs.length}` : undefined,
-		text: (_commandInfo, data) => isRecord(data) ? getTabSummary(data) : undefined,
+		summary: (_commandInfo, data) => isRecord(data) && Array.isArray(data.tabs)
+			? `Tabs: ${data.tabs.length}`
+			: isRecord(data) && data.closed === true ? "Tab closed" : undefined,
+		text: (_commandInfo, data) => isRecord(data) && data.closed === true
+			? `Tab closed${typeof data.tabId === "string" ? `: ${redactModelFacingText(data.tabId)}` : "."}`
+			: isRecord(data) ? getTabSummary(data) : undefined,
 	},
 	vitals: {
 		summary: (_commandInfo, data) => isRecord(data) ? formatVitalsSummary(data) : undefined,

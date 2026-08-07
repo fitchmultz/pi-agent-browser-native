@@ -493,8 +493,9 @@ export function formatEvalResultWarningText(warning: ReturnType<typeof getEvalRe
 }
 
 export async function getArtifactCleanupGuidance(options: { command?: string; cwd: string; manifest?: SessionArtifactManifest; succeeded: boolean }): Promise<ArtifactCleanupGuidance | undefined> {
-	if (!options.succeeded || !isCloseCommand(options.command) || !options.manifest || options.manifest.entries.length === 0) return undefined;
+	if (!options.succeeded || !isCloseCommand(options.command) || !options.manifest) return undefined;
 	const explicitEntries = options.manifest.entries.filter((entry) => entry.storageScope === "explicit-path");
+	if (explicitEntries.length === 0) return undefined;
 	const explicitArtifactPaths: string[] = [];
 	const seenPaths = new Set<string>();
 	for (const entry of explicitEntries) {
@@ -506,6 +507,7 @@ export async function getArtifactCleanupGuidance(options: { command?: string; cw
 		seenPaths.add(displayPath);
 		explicitArtifactPaths.push(displayPath);
 	}
+	if (explicitArtifactPaths.length === 0) return undefined;
 	return { explicitArtifactPaths, note: "Closing the browser session does not delete explicit screenshots, downloads, PDFs, traces, HAR files, or recordings; clean existing paths with host file tools when no longer needed.", owner: "host-file-tools", summary: formatSessionArtifactRetentionSummary(options.manifest) };
 }
 

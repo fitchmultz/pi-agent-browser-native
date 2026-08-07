@@ -237,6 +237,33 @@ export function buildAgentBrowserNextActions(options: {
 					}));
 				}
 				break;
+			case "timeout":
+				{
+					const textAssertion = options.command === "wait" && options.args?.includes("--text") === true;
+					actions.push(buildNextToolAction({
+						args: ["snapshot", "-i"],
+						id: textAssertion ? "inspect-after-text-assertion-failure" : "inspect-after-timeout",
+						reason: textAssertion
+							? "Inspect the current page after the text assertion failed before concluding the expected text is absent."
+							: options.command === "wait"
+								? "Inspect the current page after the wait condition timed out before retrying with a different selector or timeout."
+								: "Inspect the current page after the timed-out browser operation.",
+						safety: textAssertion
+							? "Read-only snapshot; use current refs or visible text from this page before retrying the assertion."
+							: "Read-only snapshot; do not assume the timed-out interaction completed.",
+					}));
+				}
+				break;
+			case "upstream-error":
+				if (isOpenNavigationCommand(options.command)) {
+					actions.push(buildNextToolAction({
+						args: ["get", "url"],
+						id: "inspect-page-after-navigation-error",
+						reason: "Check which page, if any, remains active after the navigation or network error.",
+						safety: "Read-only URL inspection; verify connectivity and the target URL before retrying navigation.",
+					}));
+				}
+				break;
 			case "tab-drift":
 				if (options.recovery?.kind === "about-blank" || options.recovery?.kind === "tab-drift") {
 					break;

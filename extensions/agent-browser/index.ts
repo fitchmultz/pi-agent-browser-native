@@ -7,6 +7,7 @@ import type {
 	AgentToolResult,
 	ExtensionAPI,
 	ExtensionContext,
+	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
@@ -27,6 +28,7 @@ import {
 	isRestorableManagedSessionName,
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
+	redactSensitiveText,
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
 import { extractExplicitNamespace, extractExplicitSessionName, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
@@ -38,8 +40,16 @@ import { hasLaunchScopedFlagToken } from "./lib/launch-scoped-flags.js";
 import { cleanupSecureTempArtifacts } from "./lib/temp.js";
 import { AGENT_BROWSER_PARAMS } from "./lib/input-modes/params.js";
 import { type CompiledAgentBrowserElectron } from "./lib/input-modes/types.js";
+import {
+	AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS,
+	AGENT_BROWSER_SCRIPT_NAMESPACE,
+	createAgentBrowserScriptSessionName,
+	isAgentBrowserScriptSessionName,
+	runAgentBrowserScript,
+	type AgentBrowserScriptRunResult,
+} from "./lib/input-modes/script.js";
 import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
-import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
+import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
 import {
@@ -52,6 +62,7 @@ import {
 } from "./lib/orchestration/electron-host/index.js";
 import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.js";
 import { applyAgentBrowserOutputPath, getAgentBrowserOutputPathValidationError } from "./lib/orchestration/output-file.js";
+import { appendScriptSessionLease, buildScriptBrowserEnvelope, buildScriptToolResult, getScriptSessionLeasesFromBranch } from "./lib/orchestration/script-mode.js";
 import type { NetworkRouteRecord, SessionArtifactManifest } from "./lib/results/contracts.js";
 import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isSessionArtifactManifest, mergeSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
 import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
@@ -781,6 +792,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const ownedManagedSessions = new Map<string, OwnedManagedSession>();
 	const managedSessionExecutionQueue = new AsyncExecutionQueue();
 	const callerOwnedSessionExecutionQueues = new KeyedAsyncExecutionQueue();
+	const activeScriptControllers = new Set<AbortController>();
+	const activeScriptRuns = new Set<Promise<AgentBrowserScriptRunResult>>();
 	let branchRestoreGeneration = 0;
 	let branchStateGeneration = 0;
 
@@ -791,7 +804,50 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		attachedSessionKeys.delete(key);
 		networkRoutesBySession = new Map(networkRoutesBySession);
 		networkRoutesBySession.delete(key);
+		traceOwners.delete(key);
 		sessionPageState.clearSession(key);
+	};
+
+	const closeScriptSessionLeaseWithinQueue = async (sessionName: string, cwd: string): Promise<string | undefined> => {
+		const closeError = await closeManagedSession({
+			cwd,
+			namespace: AGENT_BROWSER_SCRIPT_NAMESPACE,
+			restoreState: managedSessionRestoreState,
+			sessionName,
+			timeoutMs: implicitSessionCloseTimeoutMs,
+		});
+		if (closeError) {
+			try {
+				appendScriptSessionLease(pi, sessionName, "failed");
+			} catch {}
+			return redactSensitiveText(closeError);
+		}
+		try {
+			appendScriptSessionLease(pi, sessionName, "closed");
+		} catch {
+			managedSessionRestoreState.disable(sessionName);
+			return "The isolated session closed, but its durable cleanup record could not be saved.";
+		}
+		untrackOwnedManagedSession(ownedManagedSessions, sessionName);
+		managedSessionRestoreState.clear(sessionName);
+		clearSessionScopedBrowserState(sessionName);
+		return undefined;
+	};
+
+	const recoverScriptSessionLeasesWithinQueue = async (ctx: ExtensionContext): Promise<void> => {
+		const pendingSessionNames = new Set(
+			[...ownedManagedSessions.values()]
+				.map((session) => session.sessionName)
+				.filter(isAgentBrowserScriptSessionName),
+		);
+		for (const lease of getScriptSessionLeasesFromBranch(ctx.sessionManager.getBranch()).values()) {
+			if (lease.cleanup !== "closed") pendingSessionNames.add(lease.sessionName);
+		}
+		for (const sessionName of pendingSessionNames) {
+			trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd, { branchOwned: true });
+			managedSessionRestoreState.disable(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
+			await closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd);
+		}
 	};
 
 	const restoreBranchBackedState = (ctx: ExtensionContext, options: { resetRuntimeOwnership: boolean }): void => {
@@ -936,15 +992,19 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			cwd: ctx.cwd,
 			includeProjectConfig: shouldIncludeProjectConfig(ctx),
 		}));
+		await managedSessionExecutionQueue.run(() => recoverScriptSessionLeasesWithinQueue(ctx));
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		await managedSessionExecutionQueue.run(async () => {
 			restoreBranchBackedState(ctx, { resetRuntimeOwnership: false });
+			await recoverScriptSessionLeasesWithinQueue(ctx);
 		});
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		for (const controller of activeScriptControllers) controller.abort();
+		await Promise.allSettled([...activeScriptRuns]);
 		branchRestoreGeneration += 1;
 		branchStateGeneration += 1;
 		let preservedElectronProfileDirs: string[] = [];
@@ -1046,11 +1106,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 	pi.on("tool_result", async (event) => buildAgentBrowserToolResultPatch(event));
 
-	pi.registerTool({
+	const agentBrowserTool = {
 		name: "agent_browser",
 		label: "Agent Browser",
 		description:
-			"Browse and interact with websites using agent-browser. Use this for web research, reading live docs, opening pages, taking snapshots or screenshots, clicking links, filling forms, extracting page content, and authenticated/profile-based browser work. Input choice: default `args` for open → snapshot -i → click/fill @refs; `semanticAction` for stable role/text/label targets; `job` or `qa` for multi-step checks; `electron` only for desktop apps; experimental `sourceLookup` / `networkSourceLookup` for candidates only.",
+			"Browse and interact with websites using agent-browser. Use this for web research, reading live docs, opening pages, taking snapshots or screenshots, clicking links, filling forms, extracting page content, and authenticated/profile-based browser work. Input choice: `script` for one-shot JavaScript orchestration; default `args` for open → snapshot -i → click/fill @refs; `semanticAction` for stable role/text/label targets; `job` or `qa` for multi-step checks; `electron` only for desktop apps; experimental `sourceLookup` / `networkSourceLookup` for candidates only.",
 		promptSnippet:
 			"Browse websites, read live docs, click and fill pages, extract browser content, take screenshots, and automate real web workflows.",
 		promptGuidelines: toolPromptGuidelines,
@@ -1067,7 +1127,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			component.setState(formatAgentBrowserRenderResult(result, options, theme, context.isError), options.expanded, theme);
 			return component;
 		},
-		async execute(_toolCallId, params: AgentBrowserExecuteParams, signal, onUpdate, ctx) {
+		async execute(toolCallId, params: AgentBrowserExecuteParams, signal, onUpdate, ctx) {
 			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 			const outputPath = isRecord(params) && typeof params.outputPath === "string" ? params.outputPath : undefined;
 			const resolvedInput = resolveAgentBrowserInput({
@@ -1081,6 +1141,89 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const outputPathValidationError = getAgentBrowserOutputPathValidationError(outputPath, ctx.cwd);
 			if (outputPathValidationError) {
 				return buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: outputPathValidationError });
+			}
+			if (resolvedInput.kind === "script") {
+				if (!ctx.sessionManager.getSessionFile()) {
+					return buildValidationFailureResult({
+						attemptedKind: "script",
+						kind: "invalid",
+						redactedArgs: [],
+						status: "invalid",
+						toolArgs: [],
+						validationError: "script requires a persisted Pi session so its isolated browser-session cleanup lease survives restart; relaunch Pi without --no-session.",
+					});
+				}
+				const sessionName = createAgentBrowserScriptSessionName();
+				const innerResults: AgentBrowserToolResult[] = [];
+				const scriptTimeoutMs = params.timeoutMs ?? AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS;
+				const deadline = Date.now() + scriptTimeoutMs;
+				let leased = false;
+				let cleanupError: string | undefined;
+				let run: AgentBrowserScriptRunResult = {
+					callCount: 0,
+					emitCount: 0,
+					error: "Script sandbox execution failed.",
+					failureCategory: "upstream-error",
+					ok: false,
+					rejectedCallCount: 0,
+					steps: [],
+				};
+				const scriptController = new AbortController();
+				const abortScript = () => scriptController.abort();
+				signal?.addEventListener("abort", abortScript, { once: true });
+				if (signal?.aborted) scriptController.abort();
+				activeScriptControllers.add(scriptController);
+				try {
+					const pendingRun = runAgentBrowserScript({
+						beforeFirstCall() {
+							appendScriptSessionLease(pi, sessionName, "active");
+							trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd);
+							managedSessionRestoreState.disable(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
+							leased = true;
+						},
+						code: resolvedInput.compiledScript.code,
+						dispatch: async (innerParams, innerSignal) => {
+							const remainingMs = Math.max(1, deadline - Date.now());
+							const innerTimeoutMs = Math.min(innerParams.timeoutMs ?? remainingMs, remainingMs);
+							const innerResult = await agentBrowserTool.execute(
+								`${toolCallId}:script:${innerResults.length + 1}`,
+								{
+									args: ["--namespace", AGENT_BROWSER_SCRIPT_NAMESPACE, "--session", sessionName, ...innerParams.args],
+									stdin: innerParams.stdin,
+									timeoutMs: innerTimeoutMs,
+								},
+								innerSignal,
+								undefined,
+								ctx,
+							) as AgentBrowserToolResult;
+							innerResults.push(innerResult);
+							return await buildScriptBrowserEnvelope(innerResult, innerParams.args);
+						},
+						signal: scriptController.signal,
+						timeoutMs: scriptTimeoutMs,
+					});
+					activeScriptRuns.add(pendingRun);
+					try {
+						run = await pendingRun;
+					} finally {
+						activeScriptRuns.delete(pendingRun);
+					}
+				} catch {} finally {
+					activeScriptControllers.delete(scriptController);
+					signal?.removeEventListener("abort", abortScript);
+					if (leased) {
+						try {
+							cleanupError = await managedSessionExecutionQueue.run(() => closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd));
+						} catch {
+							cleanupError = "The isolated script session cleanup operation failed.";
+							try {
+								appendScriptSessionLease(pi, sessionName, "failed");
+							} catch {}
+						}
+					}
+				}
+				const scriptResult = buildScriptToolResult({ cleanupError, innerResults, run, sessionName: leased ? sessionName : undefined });
+				return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result: scriptResult });
 			}
 			const { toolArgs } = resolvedInput;
 			const compiledElectron = resolvedInput.kind === "electron" ? resolvedInput.compiledElectron : undefined;
@@ -1279,7 +1422,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				? callerOwnedSessionExecutionQueues.run(callerOwnedSessionQueueKey, runBrowserCommand)
 				: runBrowserCommand();
 		},
-	});
+	} satisfies ToolDefinition<typeof AGENT_BROWSER_PARAMS>;
+	pi.registerTool(agentBrowserTool);
 
 	registerWebSearchToolIfAvailable(agentBrowserConfig);
 }

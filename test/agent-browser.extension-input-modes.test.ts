@@ -15,6 +15,7 @@ import test from "node:test";
 import { Check } from "typebox/value";
 
 import { analyzeQaPresetResults, analyzeQaPresetTimeout, compileAgentBrowserJob, compileAgentBrowserQaPreset } from "../extensions/agent-browser/lib/input-modes/job.js";
+import { compileAgentBrowserSemanticAction } from "../extensions/agent-browser/lib/input-modes/semantic-action.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -24,6 +25,13 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+test("semanticAction treats an empty generated role name as omitted", () => {
+	assert.deepEqual(
+		compileAgentBrowserSemanticAction({ action: "fill", locator: "role", role: "textbox", name: "", text: "query" }).compiled?.args,
+		["find", "role", "textbox", "fill", "query"],
+	);
+});
 
 test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA failures", () => {
 	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/", expectedText: "Definitely Not On This Page" }).compiled;
@@ -923,6 +931,9 @@ process.stdin.on("end", () => {
 			assert.equal(failedWaitQaResult.isError, true);
 			assert.equal(failedWaitQaResult.details?.failureCategory, "qa-failure");
 			assert.match((failedWaitQaResult.content[0] as { text: string }).text, /QA preset failed/);
+			assert.match((failedWaitQaResult.content[0] as { text: string }).text, /Failed checks:/);
+			assert.match((failedWaitQaResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps/);
+			assert.doesNotMatch((failedWaitQaResult.content[0] as { text: string }).text, /Step 1 —/);
 			process.env.AGENT_BROWSER_FAKE_QA_MODE = "pass";
 
 			const missingQaScreenshotPath = join(tempDir, "missing-qa-screenshot.png");
@@ -999,7 +1010,8 @@ process.stdin.on("end", () => {
 			const qaFailureNextActions = result.details?.nextActions as Array<{ id?: string; reason?: string }> | undefined;
 			assert.equal(qaFailureNextActions?.some((action) => action.id === "run-agent-browser-doctor"), false);
 			assert.ok(qaFailureNextActions?.some((action) => action.id === "verify-current-managed-session" && /current managed session/.test(action.reason ?? "")));
-			assert.match((result.content[0] as { text: string }).text, /Step 1 —/);
+			assert.match((result.content[0] as { text: string }).text, /Failed checks:/);
+			assert.doesNotMatch((result.content[0] as { text: string }).text, /Step 1 —/);
 			assert.deepEqual((result.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, [
 				"1 actionable failed network request(s)",
 				"1 console error message(s)",

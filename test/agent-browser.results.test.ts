@@ -215,6 +215,8 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 		], command);
 	}
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
+	assert.equal(buildAgentBrowserNextActions({ command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.[0]?.id, "inspect-after-timeout");
+	assert.equal(buildAgentBrowserNextActions({ command: "open", resultCategory: "failure", failureCategory: "upstream-error" })?.[0]?.id, "inspect-page-after-navigation-error");
 	for (const command of ["key", "keydown", "keyboard", "keyup", "scrollinto", "tap"] as const) {
 		assert.equal(buildAgentBrowserNextActions({ command, resultCategory: "success", successCategory: "completed" })?.[0]?.id, "inspect-after-mutation", command);
 	}

@@ -383,7 +383,8 @@ process.exit(1);`,
 			assert.equal(result.isError, true);
 			assert.equal(result.content[0]?.type, "text");
 			const text = (result.content[0] as { text: string }).text;
-			assert.match(text, /^agent-browser --json --session \S+ open https:\/\/example\.com\/? reported failure \(exit code 1\)\.$/);
+			assert.match(text, /^agent-browser --json --session \S+ open https:\/\/example\.com\/? reported failure \(exit code 1\)\.$/m);
+			assert.match(text, /inspect-page-after-navigation-error/);
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(0, 3), ["--json", "--session", result.details?.sessionName]);
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-2), ["open", "https://example.com/"]);
 			assert.equal(result.details?.resultCategory, "failure");

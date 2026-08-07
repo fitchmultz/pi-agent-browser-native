@@ -113,9 +113,13 @@ The 0.27.3 rebaseline is an install-only compatibility update: upstream changed 
 
 ## Core mental model
 
-Input mode chooser (one per call): **`args`** for the default open → snapshot -i → click/fill `@refs` flow; **`semanticAction`** for stable role/text/label targets; **`job`** / **`qa`** for multi-step checks; **`electron`** for desktop apps only; **`sourceLookup`** / **`networkSourceLookup`** are **experimental candidates-only** helpers (not authoritative mappings). Do not pass `--json` in `args`—the wrapper injects it. Match link and button text to the latest snapshot (on `https://example.com/` the main link is `Learn more`, not legacy `More information...` copy). See [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#input-mode-chooser) for snapshot variants (`-i` vs `--compact` vs full) and batching three or more getters.
+Input mode chooser (one per call): **`script`** for one-shot loops, branches, or multi-page aggregation; **`args`** for the default open → snapshot -i → click/fill `@refs` flow; **`semanticAction`** for stable role/text/label targets; **`job`** / **`qa`** for multi-step checks; **`electron`** for desktop apps only; **`sourceLookup`** / **`networkSourceLookup`** are **experimental candidates-only** helpers (not authoritative mappings). Do not pass `--json` in `args`—the wrapper injects it. Match link and button text to the latest snapshot (on `https://example.com/` the main link is `Learn more`, not legacy `More information...` copy). See [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#input-mode-chooser) for snapshot variants (`-i` vs `--compact` vs full) and batching three or more getters.
 
-Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron`):
+Tool parameters (use exactly one of `script`, `args`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron`):
+
+```json
+{ "script": "const page = await browser({ args: ['get', 'title'] }); if (!page.ok) throw new Error(page.error); emit(page.data.title ?? page.data.result);" }
+```
 
 ```json
 { "args": ["open", "https://example.com"], "sessionMode": "auto" }
@@ -148,20 +152,39 @@ Tool parameters (use exactly one of `args`, `semanticAction`, `job`, `qa`, `sour
 { "electron": { "action": "launch", "appName": "Visual Studio Code", "handoff": "snapshot" } }
 ```
 
-- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` instead (mutually exclusive).
+- `script`: one-shot sandboxed async JavaScript with `browser({ args, stdin?, timeoutMs? })` and `emit(value)`. Use it for loops, conditional page branches, or aggregation only; every invocation gets a unique non-profile session that is closed afterward, and it has no host APIs or reusable-name/state surface.
+- `args`: exact `agent-browser` CLI tokens after the binary name. Omit when using `script`, `semanticAction`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` instead (mutually exclusive).
 - `semanticAction`: optional shorthand for common `find` flows, direct selector/ref click/check/fill, and native dropdown `select`; compiles to upstream argv and is rejected together with `args`, `job`, `qa`, `sourceLookup`, `networkSourceLookup`, or `electron` on the same call.
 - `job`: optional constrained short-workflow schema; compiles to existing upstream `batch` args/stdin, defaults to `batch --bail` (`failFast: true`), and reports the compiled plan in `details.compiledJob`. Keep stateful jobs short around navigation, click, and rerender boundaries on dynamic apps.
 - `qa`: optional lightweight QA preset; compiles to the same fail-fast batch path and reports `details.compiledQaPreset` plus `details.qaPreset` pass/fail evidence.
 - `sourceLookup`: **EXPERIMENTAL — candidates only** for local UI-to-source hints; compiles to the same `batch` path, reports `details.compiledSourceLookup` and `details.sourceLookup`, and never reclassifies a fully successful upstream batch as failed the way `qa` can (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#sourcelookup) and the longer notes below).
 - `networkSourceLookup`: **EXPERIMENTAL — candidates only** for failed request-to-source hints; compiles to generated `batch`, reports `details.compiledNetworkSourceLookup` and `details.networkSourceLookup`, and never assigns blame or edits files.
 - `electron`: optional Electron desktop-app shorthand. `list`, `status`, `cleanup`, and `probe` are wrapper-owned host/session helpers; `launch` starts a wrapper-owned isolated Electron profile and attaches through upstream `connect`.
-- `stdin`: only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other command/stdin combinations are rejected before `agent-browser` is launched. `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron` generate or manage their own input.
+- `stdin`: top-level stdin is only for `batch`, `eval --stdin`, and `auth save --password-stdin`; other combinations are rejected before `agent-browser` is launched. `script` puts inner stdin on `browser({ stdin })`; `job`, `qa`, `sourceLookup`, `networkSourceLookup`, and `electron` generate or manage their own input.
 - `outputPath`: optional wrapper-owned local file sink for successful results. Use it for durable `eval`, `get`, `snapshot`, or diagnostic outputs, not as the destination for screenshots, downloads, recordings, or other browser artifacts; if the paths resolve to the same file, the browser artifact is preserved and the result-data write fails validation. `details.outputFile` reports the saved path and byte count. If caller argv includes upstream `--json`, the visible JSON content stays parseable and the save notice is only in `details.outputFile`.
 - `timeoutMs`: optional per-call wrapper subprocess watchdog override in milliseconds for the requested browser CLI process. Managed-session policy inspection can independently consume up to 35 seconds before that process; this preflight is intentionally not shortened by `timeoutMs` because a busy but valid daemon must remain distinguishable from an unverifiable one.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
   - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags (`--allowed-domains`, `--auto-connect`, `--cdp`, `--enable`, `--executable-path`, `--webgpu`, `--init-script`, `--idle-timeout`, `--headed`, `--device`, `--namespace`, `--profile`, `--provider`, `-p`, `--restore`, `--restore-save`, `--restore-check-url`, `--restore-check-text`, `--restore-check-fn`, `--session-name`, `--state`) apply.
   - If a fresh launch fails or times out, read `details.managedSessionOutcome` for `preserved` vs `abandoned` (and related fields). A model-visible `Managed session outcome: …` line is appended for failing calls that used `sessionMode: "fresh"` and when automatic close of a replaced session fails; `"auto"` failures can still populate the struct without that extra line. If you explicitly close the current wrapper-managed session with `--session <name> close`, later default auto calls rotate to a new wrapper-generated session instead of reusing the closed name; repeated closes and branch restores keep those generated names monotonic.
+
+### One-shot code mode
+
+Use `script` when a loop, an optional page branch, or multi-page aggregation would otherwise require several top-level tool calls and artifact reads. Source runs as an async JavaScript body. Call `await browser({ args, stdin?, timeoutMs? })`, check its `{ ok, data, error?, details?, summary? }` envelope, then call `emit(value)` with the one JSON-compatible value the model needs. Inner calls still traverse the ordinary wrapper executor, including policy checks, redaction, presentation, compact-spill rehydration, artifacts, and timeouts.
+
+```json
+{
+  "script": "const titles = []; for (const url of ['https://example.com', 'https://example.org']) { const opened = await browser({ args: ['open', url] }); if (!opened.ok) throw new Error(opened.error); const title = await browser({ args: ['get', 'title'] }); if (!title.ok) throw new Error(title.error); titles.push({ url, title: title.data.title ?? title.data.result }); } emit(titles);"
+}
+```
+
+The wrapper serializes inner calls, caps them at 25, caps source/final JSON at 64 KiB, defaults the whole script to 120 seconds, and rejects more than 300 seconds. It launches a separate permissioned Node child with no imports, process, filesystem, network, timers, dynamic code generation, or host object/function references. `Promise.all` is allowed for local orchestration but does not make browser calls concurrent.
+
+A script invocation uses a unique `piab-script-<uuid>` browser identity in an empty namespace with managed restore disabled. It cannot name or attach to sessions, use profiles/providers/state/restore/raw launch mutation, issue lifecycle/sessionless/local commands, or nest `batch` or another top-level input mode. It never replaces the implicit conversation browser and always closes its isolated session. Use ordinary `args` with a requested profile/attachment for authenticated state.
+
+Pi persistence is required because the extension appends a strict model-invisible cleanup lease before the first inner browser launch. Pi quit/reload aborts and reaps the sandbox child. A failed close is retried on the active branch after restart and returns `failureCategory: "cleanup-failed"` plus exact `details.scriptSession.closeCommandArgs` / `close-script-session-after-cleanup-failure`. See [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#script) for the full schema, limits, result fields, rejected controls, and recovery semantics.
+
+Code mode remains ad hoc: there is no name, registry, imported module, persistent workflow state, or versioned recipe. Keep recurring linear flows in `job`, `qa`, raw `batch`, or docs instead of building a script catalog.
 
 ### Debug, diff, stream, dashboard, and chat families
 

@@ -31,6 +31,7 @@ export type AgentBrowserFailureCategory =
 	| "qa-failure"
 	| "selector-not-found"
 	| "selector-unsupported"
+	| "script-error"
 	| "stale-ref"
 	| "tab-drift"
 	| "timeout"
