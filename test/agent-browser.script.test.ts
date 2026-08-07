@@ -14,6 +14,7 @@ import {
 	AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES,
 	AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES,
 	AGENT_BROWSER_SCRIPT_MAX_CALLS,
+	AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES,
 	compileAgentBrowserScript,
 	runAgentBrowserScript,
 	validateAgentBrowserScriptBrowserParams,
@@ -62,6 +63,7 @@ test("script input schema and runtime validation enforce one top-level mode", ()
 		assert.match(input.validationError, expected);
 	}
 	assert.match(compileAgentBrowserScript("💥".repeat(AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES / 2)).error ?? "", /65536 bytes or less/);
+	assert.ok(AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES * 2 <= AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES, "rehydrated spills must leave room for the response envelope");
 });
 
 test("script runner supports loops, conditionals, emit, and serialized Promise.all", async () => {
@@ -224,6 +226,13 @@ test("script runner enforces call, output, IPC, timeout, and abort limits", asyn
 	});
 	assert.equal(responseLimit.ok, false);
 	assert.match(responseLimit.error ?? "", /Unable to return a browser result/);
+
+	const rehydratedSpillSizedResponse = await runAgentBrowserScript({
+		code: `const result = await browser({ args: ["get", "title"] }); emit(result.data.length);`,
+		dispatch: async () => successEnvelope("x".repeat(AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES)),
+	});
+	assert.equal(rehydratedSpillSizedResponse.ok, true, rehydratedSpillSizedResponse.error);
+	assert.equal(rehydratedSpillSizedResponse.data, AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES);
 
 	const timedOut = await runAgentBrowserScript({
 		code: "while (true) {}",

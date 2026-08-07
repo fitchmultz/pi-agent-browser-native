@@ -1071,6 +1071,26 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.match(semanticActionCallText, /<accent>semanticAction<\/accent>/);
 	assert.match(semanticActionCallText, /<dim>→<\/dim> <accent>find text Definitely Missing Button click<\/accent>/);
 
+	const scriptSource = `const rows = [];\n${"rows.push('visible source'); ".repeat(12)}\nemit(rows);\x1B[31m\u202E`;
+	const scriptParams: AgentBrowserToolParams = { script: scriptSource };
+	const collapsedScriptCallText = renderCall(
+		scriptParams,
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: scriptParams }),
+	).render(200).join("\n");
+	assert.match(collapsedScriptCallText, /<accent>script<\/accent>/);
+	assert.match(collapsedScriptCallText, /const rows = \[\]/);
+	assert.match(collapsedScriptCallText, /\.\.\.<\/accent>/);
+	assert.doesNotMatch(collapsedScriptCallText, /emit\(rows\)/);
+	const expandedScriptCallText = renderCall(
+		scriptParams,
+		PLAIN_RENDER_THEME,
+		createRenderContext({ args: scriptParams, expanded: true }),
+	).render(200).join("\n");
+	assert.match(expandedScriptCallText, /<dim>Source:<\/dim>/);
+	assert.match(expandedScriptCallText, /emit\(rows\)/);
+	assert.doesNotMatch(expandedScriptCallText, /[\x1B\u202E]/);
+
 	const maliciousParams: AgentBrowserToolParams = {
 		args: ["open", "\x1B]0;pwned\x07https://example.com/\x1B[31m"],
 		stdin: "secret stdin must not render",

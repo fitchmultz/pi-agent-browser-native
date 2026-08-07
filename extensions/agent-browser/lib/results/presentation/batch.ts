@@ -236,6 +236,7 @@ async function buildBatchStepPresentation(options: {
 				confirmationId: confirmationRequired?.id,
 				failureCategory,
 				resultCategory: "failure",
+				sessionName,
 			}),
 		), namespace);
 		const presentation: ToolPresentation = {
@@ -297,6 +298,7 @@ async function buildBatchStepPresentation(options: {
 		failureCategory: presentation.failureCategory,
 		resultCategory: stepSucceeded ? "success" : "failure",
 		savedFilePath: presentation.savedFilePath,
+		sessionName,
 		successCategory: presentation.successCategory,
 	}), namespace);
 	const pageChangeSummary = buildPageChangeSummary({
@@ -412,7 +414,7 @@ export async function buildBatchPresentation(options: {
 		: text;
 	const nextActions = batchFailure
 		? batchFailure.failedStep.nextActions
-		: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success" });
+		: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success", sessionName });
 	const changedSteps = steps.map((step) => step.details).filter((details) => details.pageChangeSummary !== undefined);
 	const pageChangeSummary = artifacts.length > 0
 		? buildPageChangeSummary({

@@ -251,7 +251,10 @@ process.exit(1);`,
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "confirmation-required");
 			const nextActions = result.details?.nextActions as Array<{ params?: { args: string[] } }> | undefined;
-			assert.deepEqual(nextActions?.map((action) => action.params?.args), [["confirm", "c_sensitive"], ["deny", "c_sensitive"]]);
+			assert.deepEqual(nextActions?.map((action) => action.params?.args), [
+				["--session", result.details?.sessionName, "confirm", "c_sensitive"],
+				["--session", result.details?.sessionName, "deny", "c_sensitive"],
+			]);
 			assert.doesNotMatch(JSON.stringify(result.content), /user:pass|raw-token|token=secret/);
 			assert.doesNotMatch(JSON.stringify(result.details), /user:pass|raw-token|token=secret/);
 		});

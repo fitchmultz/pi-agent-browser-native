@@ -21,7 +21,7 @@ export const AGENT_BROWSER_SCRIPT_MAX_CALLS = 25;
 export const AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES = 64 * 1_024;
 export const AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES = 1 * 1_024 * 1_024;
 export const AGENT_BROWSER_SCRIPT_IPC_CUMULATIVE_MAX_BYTES = 8 * 1_024 * 1_024;
-export const AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES = 1 * 1_024 * 1_024;
+export const AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES = 512 * 1_024;
 
 function findPackageRoot(startDir: string): string {
 	let currentDir = startDir;

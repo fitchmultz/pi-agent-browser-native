@@ -20,11 +20,12 @@
 
 - Script helpers and cleanup now clear ambient upstream launch/profile/restore/attachment and proxy controls before reapplying wrapper-owned isolation values, so shell defaults cannot redirect a supposedly isolated run.
 - Final script data is compact-serialized and post-redaction byte/depth checked before presentation, preventing small deeply nested JSON from expanding into megabytes of prose or throwing during result assembly.
-- Pi branch changes now abort active scripts and await normal isolated-session cleanup before branch restoration. Missing compiled workers and malformed `browser()` / `emit()` calls return actionable structured failures, and script call counters no longer overlap pre-dispatch rejections with dispatched failures.
+- Pi branch changes now abort active scripts and await normal isolated-session cleanup before branch restoration. Missing compiled workers and malformed `browser()` / `emit()` calls return actionable structured failures, script call counters no longer overlap pre-dispatch rejections with dispatched failures, and verified-spill rehydration reserves enough IPC headroom for the enclosing response.
+- Expanded Pi tool rows now show the full control-sequence-sanitized `script` source while collapsed rows keep a bounded preview, preserving operator inspection before one approval authorizes inner calls. Generic browser recovery `nextActions`, including timeout snapshots and navigation-error URL checks, now retain the originating session instead of drifting into the implicit session.
 
 ### Validation
 
-- Added focused script schema, sandbox-escape, quota, abort/timeout, child-shutdown/tree-change, ambient-environment isolation, inner-policy, unique-session, durable-lease, cleanup-failure/restart, spill-rehydration, full-executor, bounded deep-output, malformed bridge-call, missing-worker, and no-session tests, plus regression coverage for compact presentation and recovery guidance.
+- Added focused script schema, sandbox-escape, quota, abort/timeout, child-shutdown/tree-change, ambient-environment isolation, inner-policy, unique-session, durable-lease, cleanup-failure/restart, spill-rehydration/headroom, full-executor, bounded deep-output, malformed bridge-call, missing-worker, no-session, expanded-source-rendering, and session-scoped-recovery tests, plus regression coverage for compact presentation and recovery guidance.
 
 ## 0.3.0 - 2026-08-06
 

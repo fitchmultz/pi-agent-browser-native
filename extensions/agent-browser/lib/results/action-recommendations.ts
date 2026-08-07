@@ -6,7 +6,7 @@ import type {
 	AgentBrowserSuccessCategory,
 	FileArtifactMetadata,
 } from "./contracts.js";
-import { buildNextToolAction, type AgentBrowserNextAction } from "./next-actions.js";
+import { applySessionToNextActions, buildNextToolAction, type AgentBrowserNextAction } from "./next-actions.js";
 import {
 	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
 	buildRecoveryNextActions,
@@ -78,6 +78,7 @@ export function buildAgentBrowserNextActions(options: {
 	resultCategory: AgentBrowserResultCategory;
 	recovery?: AgentBrowserRecoveryContext;
 	savedFilePath?: string;
+	sessionName?: string;
 	successCategory?: AgentBrowserSuccessCategory;
 }): AgentBrowserNextAction[] | undefined {
 	const actions: AgentBrowserNextAction[] = [];
@@ -279,5 +280,5 @@ export function buildAgentBrowserNextActions(options: {
 				break;
 		}
 	}
-	return actions.length > 0 ? actions : undefined;
+	return applySessionToNextActions(actions.length > 0 ? actions : undefined, options.sessionName);
 }

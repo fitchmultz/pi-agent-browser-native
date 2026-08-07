@@ -1120,7 +1120,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		parameters: AGENT_BROWSER_PARAMS,
 		renderCall(args, theme, context) {
 			const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
-			text.setText(formatAgentBrowserRenderCall(args, theme));
+			text.setText(formatAgentBrowserRenderCall(args, theme, context.expanded));
 			return text;
 		},
 		renderResult(result, options, theme, context) {

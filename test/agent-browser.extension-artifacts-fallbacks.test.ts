@@ -239,7 +239,7 @@ process.exit(1);`,
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "download-not-verified");
 			const nextActions = result.details?.nextActions as Array<{ params?: { args: string[] } }> | undefined;
-			assert.deepEqual(nextActions?.[0]?.params?.args, ["wait", "--download", "/tmp/export.csv"]);
+			assert.deepEqual(nextActions?.[0]?.params?.args, ["--session", result.details?.sessionName, "wait", "--download", "/tmp/export.csv"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -389,6 +389,14 @@ process.exit(1);`,
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-2), ["open", "https://example.com/"]);
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "upstream-error");
+			const implicitAction = (result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "inspect-page-after-navigation-error");
+			assert.deepEqual(implicitAction?.params?.args, ["--session", result.details?.sessionName, "get", "url"]);
+
+			const namedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "open", "https://example.com"],
+			});
+			const namedAction = (namedResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "inspect-page-after-navigation-error");
+			assert.deepEqual(namedAction?.params?.args, ["--session", "named", "get", "url"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

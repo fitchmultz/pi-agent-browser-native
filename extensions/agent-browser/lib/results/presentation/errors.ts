@@ -216,6 +216,7 @@ export function buildErrorPresentation(options: {
 			command: commandInfo.command,
 			failureCategory: categoryDetails.failureCategory,
 			resultCategory: "failure",
+			sessionName,
 		}) ?? []),
 	];
 	return {
