@@ -4,7 +4,7 @@
  * Responsibilities: Check upstream agent-browser PATH/version, inspect Pi settings for duplicate package/checkout sources, and print actionable remediation.
  * Scope: Read-only package diagnostics only; upstream browser runtime health remains the responsibility of upstream `agent-browser doctor`.
  * Usage: Run via `pi-agent-browser-doctor`, `npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor`, or `npm run doctor` from this repository.
- * Invariants/Assumptions: The wrapper targets CAPABILITY_BASELINE.targetVersion, does not bundle agent-browser, and must not edit Pi settings or run fixing commands.
+ * Invariants/Assumptions: The wrapper targets TARGET_AGENT_BROWSER_VERSION, does not bundle agent-browser, and must not edit Pi settings or run fixing commands.
  */
 
 import { execFile as execFileCallback } from "node:child_process";
@@ -15,7 +15,8 @@ import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { CAPABILITY_BASELINE, CAPABILITY_BASELINE_SOURCE } from "./agent-browser-capability-baseline.mjs";
+import { CAPABILITY_BASELINE_SOURCE } from "./agent-browser-capability-baseline.mjs";
+import { TARGET_AGENT_BROWSER_SOURCE, TARGET_AGENT_BROWSER_VERSION } from "./agent-browser-target.mjs";
 
 const execFile = promisify(execFileCallback);
 const PACKAGE_NAME = "pi-agent-browser-native";
@@ -24,7 +25,7 @@ const EXTENSION_ENTRYPOINTS = Object.freeze([
 	"extensions/agent-browser/index.ts",
 	"dist/extensions/agent-browser/index.js",
 ]);
-const EXPECTED_VERSION = CAPABILITY_BASELINE.targetVersion;
+const EXPECTED_VERSION = TARGET_AGENT_BROWSER_VERSION;
 const MINIMUM_PI_VERSION = "0.84.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 const THIS_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -345,8 +346,8 @@ async function checkAgentBrowserVersion({ runAgentBrowser }) {
 				status: "fail",
 				title: `agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version || "<empty>"}.`,
 				lines: [
-					`This wrapper targets the current baseline from ${CAPABILITY_BASELINE_SOURCE} and does not provide backwards-compatibility shims.`,
-					`Update upstream agent-browser to ${EXPECTED_VERSION}, or if you intentionally re-baselined upstream, update ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, refresh docs/COMMAND_REFERENCE.md, and rerun \`npm run verify -- command-reference\` plus \`npm run verify -- real-upstream\` with test/fixtures/agent-browser-real-output-shapes.json aligned to the new target version.`,
+					`This wrapper targets the current version from ${TARGET_AGENT_BROWSER_SOURCE} and does not provide backwards-compatibility shims.`,
+					`Update upstream agent-browser to ${EXPECTED_VERSION}, or if you intentionally re-baselined upstream, update ${TARGET_AGENT_BROWSER_SOURCE} plus ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, refresh docs/COMMAND_REFERENCE.md, and rerun \`npm run verify -- command-reference\` plus \`npm run verify -- real-upstream\` with test/fixtures/agent-browser-real-output-shapes.json aligned to the new target version.`,
 				],
 			};
 		}

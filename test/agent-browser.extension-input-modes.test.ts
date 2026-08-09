@@ -60,8 +60,8 @@ test("analyzeQaPresetResults ignores reset-phase diagnostic rows for URL QA", ()
 	const analysis = analyzeQaPresetResults([
 		{ command: ["network", "requests", "--clear"], success: true, result: { requests: [{ method: "GET", status: 500, url: "https://old.example.test/api" }] } },
 		{ command: ["console", "--clear"], success: true, result: { messages: [{ text: "old console boom", type: "error" }] } },
-		{ command: ["errors"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
 		{ command: ["errors", "--clear"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
+		{ command: ["errors"], success: true, result: { errors: [] } },
 		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
 		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
 		{ command: ["wait", "--fn", compiled.steps.find((step) => step.action === "assertText")?.args[2] ?? "", "--timeout", "5000"], success: true, result: true },
@@ -79,8 +79,8 @@ test("analyzeQaPresetResults treats failed reset-phase diagnostic rows as step f
 	const analysis = analyzeQaPresetResults([
 		{ command: ["network", "requests", "--clear"], error: "clear failed", success: false, result: { requests: [{ method: "GET", status: 500, url: "https://old.example.test/api" }] } },
 		{ command: ["console", "--clear"], error: "clear failed", success: false, result: { messages: [{ text: "old console boom", type: "error" }] } },
-		{ command: ["errors"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
 		{ command: ["errors", "--clear"], error: "clear failed", success: false, result: { errors: [{ text: "old ReferenceError" }] } },
+		{ command: ["errors"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
 		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
 		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
 		{ command: ["network", "requests"], success: true, result: { requests: [] } },
@@ -97,8 +97,8 @@ test("analyzeQaPresetResults still reports post-open page errors", () => {
 	const analysis = analyzeQaPresetResults([
 		{ command: ["network", "requests", "--clear"], success: true, result: { requests: [] } },
 		{ command: ["console", "--clear"], success: true, result: { messages: [] } },
-		{ command: ["errors"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
 		{ command: ["errors", "--clear"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
+		{ command: ["errors"], success: true, result: { errors: [] } },
 		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
 		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
 		{ command: ["network", "requests"], success: true, result: { requests: [] } },
@@ -109,20 +109,36 @@ test("analyzeQaPresetResults still reports post-open page errors", () => {
 	assert.deepEqual(analysis?.failedChecks, ["1 page error(s)"]);
 });
 
-test("analyzeQaPresetResults subtracts unchanged pre-navigation page errors when upstream clear is a no-op", () => {
+test("analyzeQaPresetResults subtracts unchanged post-clear page-error residue when upstream clear is a no-op", () => {
 	const compiled = compileAgentBrowserQaPreset({ url: "https://clean.example.test/", checkConsole: false, checkNetwork: false }).compiled;
 	assert.ok(compiled);
 	const staleError = { message: "old ReferenceError", stack: "at https://old.example.test/app.js:1:1" };
 	const analysis = analyzeQaPresetResults([
-		{ command: ["errors"], success: true, result: { errors: [staleError] } },
 		{ command: ["errors", "--clear"], success: true, result: { errors: [staleError] } },
+		{ command: ["errors"], success: true, result: { errors: [staleError] } },
 		{ command: ["open", "https://clean.example.test/"], success: true, result: { url: "https://clean.example.test/" } },
 		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
 		{ command: ["errors"], success: true, result: { errors: [staleError] } },
 	], compiled);
 	assert.equal(analysis?.passed, true);
 	assert.deepEqual(analysis?.failedChecks, []);
-	assert.deepEqual(analysis?.warnings, ["1 pre-navigation page error(s) ignored as unchanged baseline"]);
+	assert.deepEqual(analysis?.warnings, ["1 post-clear page error residue row(s) ignored as unchanged"]);
+});
+
+test("analyzeQaPresetResults reports a new matching error after a successful clear", () => {
+	const compiled = compileAgentBrowserQaPreset({ url: "https://target.example.test/", checkConsole: false, checkNetwork: false }).compiled;
+	assert.ok(compiled);
+	const repeatedError = { message: "ReferenceError", stack: "at https://shared.example/app.js:1:1" };
+	const analysis = analyzeQaPresetResults([
+		{ command: ["errors", "--clear"], success: true, result: { errors: [repeatedError] } },
+		{ command: ["errors"], success: true, result: { errors: [] } },
+		{ command: ["open", "https://target.example.test/"], success: true, result: { url: "https://target.example.test/" } },
+		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+		{ command: ["wait", "150"], success: true, result: { ok: true } },
+		{ command: ["errors"], success: true, result: { errors: [repeatedError] } },
+	], compiled);
+	assert.equal(analysis?.passed, false);
+	assert.deepEqual(analysis?.failedChecks, ["1 page error(s)"]);
 });
 
 test("compileAgentBrowserJob preserves explicit assertUrl and assertText immediately after click", () => {
@@ -978,7 +994,7 @@ process.stdin.on("end", () => {
 			assert.equal(cleanResult.isError, false);
 			assert.deepEqual((cleanResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, []);
 			assert.match((cleanResult.content[0] as { text: string }).text, /QA preset passed with warnings/);
-			assert.match((cleanResult.content[0] as { text: string }).text, /pre-navigation page error/);
+			assert.match((cleanResult.content[0] as { text: string }).text, /post-clear page error residue/);
 			assert.match((cleanResult.content[0] as { text: string }).text, /Page: QA Page — https:\/\/example\.test\//);
 			assert.match((cleanResult.content[0] as { text: string }).text, /Checks run:/);
 			assert.match((cleanResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
@@ -995,9 +1011,9 @@ process.stdin.on("end", () => {
 			assert.deepEqual((benignNetworkResult.details?.qaPreset as { failedChecks?: string[]; warnings?: string[] } | undefined)?.failedChecks, []);
 			assert.deepEqual((benignNetworkResult.details?.qaPreset as { warnings?: string[] } | undefined)?.warnings, [
 				"1 benign network request failure(s) ignored",
-				"1 pre-navigation page error(s) ignored as unchanged baseline",
+				"1 post-clear page error residue row(s) ignored as unchanged",
 			]);
-			assert.match((benignNetworkResult.content[0] as { text: string }).text, /QA preset passed with warnings: 1 benign network request failure\(s\) ignored; 1 pre-navigation page error\(s\) ignored as unchanged baseline\./);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /QA preset passed with warnings: 1 benign network request failure\(s\) ignored; 1 post-clear page error residue row\(s\) ignored as unchanged\./);
 			assert.match((benignNetworkResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Network failure summary:/);
 			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Step 1 —/);
@@ -1105,8 +1121,8 @@ process.stdin.on("end", () => {
 			assert.deepEqual(compiledQaSteps.slice(0, 7), [
 				["network", "requests", "--clear"],
 				["console", "--clear"],
-				["errors"],
 				["errors", "--clear"],
+				["errors"],
 				["open", "https://fail.example.test/"],
 				["wait", "--load", "domcontentloaded"],
 				["wait", "150"],

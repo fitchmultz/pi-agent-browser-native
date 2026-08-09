@@ -14,7 +14,6 @@ import test from "node:test";
 
 import {
 	agentBrowserConfigBlocksManagedRestore,
-	agentBrowserConfigIsPresent,
 	buildOwnedManagedSessionRestoreContext,
 	commitManagedSessionRestoreSuppression,
 	createManagedSessionRestoreKey,
@@ -760,7 +759,6 @@ test("Windows passive config discovery follows USERPROFILE without blocking pinn
 	try {
 		mkdirSync(join(userProfile, ".agent-browser"));
 		writeFileSync(join(userProfile, ".agent-browser", "config.json"), "{}");
-		assert.equal(agentBrowserConfigIsPresent(cwd, { HOME: gitBashHome, USERPROFILE: userProfile }, [], "win32"), true);
 		assert.equal(agentBrowserConfigBlocksManagedRestore(cwd, { HOME: gitBashHome, USERPROFILE: userProfile }, [], "win32"), false);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });

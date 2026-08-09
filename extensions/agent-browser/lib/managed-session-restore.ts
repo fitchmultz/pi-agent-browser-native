@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { chmodSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 
 import { extractCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
 import {
@@ -166,15 +165,6 @@ export function isOwnedManagedSessionTarget(args: string[]): boolean {
 	return ownedContextMatches(extractExplicitSessionName(args), extractExplicitNamespace(args)) !== undefined;
 }
 
-function pathExistsOrIsUnreadable(path: string): boolean {
-	try {
-		lstatSync(path);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code !== "ENOENT";
-	}
-}
-
 function hasExplicitConfigArg(args: string[]): boolean {
 	return scanUpstreamGlobalFlagOccurrences(args, "--config").length > 0;
 }
@@ -188,19 +178,6 @@ export function agentBrowserExplicitConfigIsPresent(
 	args: string[] = [],
 ): boolean {
 	return hasExplicitConfigArg(args) || hasUpstreamEnvValue(parentEnv, AGENT_BROWSER_CONFIG_ENV);
-}
-
-export function agentBrowserConfigIsPresent(
-	cwd: string,
-	parentEnv: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment(),
-	args: string[] = [],
-	platform: NodeJS.Platform = process.platform,
-): boolean {
-	if (agentBrowserExplicitConfigIsPresent(parentEnv, args)) return true;
-	const paths = [join(cwd, "agent-browser.json")];
-	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
-	if (home) paths.push(join(home, ".agent-browser", "config.json"));
-	return paths.some(pathExistsOrIsUnreadable);
 }
 
 /** Explicit config overrides disable restore; passive files are ignored because every browser-backed subprocess pins a protected empty config. */

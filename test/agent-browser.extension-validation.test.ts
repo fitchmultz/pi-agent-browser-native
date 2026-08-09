@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -339,13 +339,28 @@ test("agentBrowserExtension rejects unsupported extra press/key args before upst
 test("agentBrowserExtension rejects duplicate explicit artifact destinations inside one batch", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-duplicate-artifact-"));
 	try {
+		await symlink(tempDir, join(tempDir, "alias"), process.platform === "win32" ? "junction" : "dir");
 		const harness = createExtensionHarness({ cwd: tempDir });
-		const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+		const lexicalAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
 			args: ["batch"],
 			stdin: JSON.stringify([["screenshot", "artifact.png"], ["screenshot", "./artifact.png"]]),
 		});
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /artifact\.png is already written by step 1/);
+		assert.equal(lexicalAlias.isError, true);
+		assert.match(lexicalAlias.content[0]?.text ?? "", /artifact\.png is already written by step 1/);
+
+		const symlinkAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "artifact.png"], ["screenshot", "alias/artifact.png"]]),
+		});
+		assert.equal(symlinkAlias.isError, true);
+		assert.match(symlinkAlias.content[0]?.text ?? "", /alias\/artifact\.png is already written by step 1/);
+
+		const recordingAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["record", "start", "capture.webm"], ["record", "restart", "./capture.webm"]]),
+		});
+		assert.equal(recordingAlias.isError, true);
+		assert.match(recordingAlias.content[0]?.text ?? "", /capture\.webm is already written by step 1/);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

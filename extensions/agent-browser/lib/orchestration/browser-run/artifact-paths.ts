@@ -1,4 +1,5 @@
-import { extname, isAbsolute } from "node:path";
+import { realpathSync } from "node:fs";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "../../argv-grammar.js";
 
@@ -58,6 +59,23 @@ function getFlagValue(commandTokens: string[], flag: string): string | undefined
 	return index >= 0 ? commandTokens[index + 1] : undefined;
 }
 
+export function canonicalizeExplicitArtifactDestination(cwd: string, destination: string, platform: NodeJS.Platform = process.platform): string {
+	const absolutePath = resolve(cwd, destination);
+	let cursor = absolutePath;
+	const suffix: string[] = [];
+	while (true) {
+		try {
+			const canonicalPath = join(realpathSync.native(cursor), ...suffix);
+			return platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
+		} catch {
+			const parent = dirname(cursor);
+			if (parent === cursor) return platform === "win32" ? absolutePath.toLowerCase() : absolutePath;
+			suffix.unshift(basename(cursor));
+			cursor = parent;
+		}
+	}
+}
+
 export function getExplicitArtifactDestination(commandTokens: string[]): string | undefined {
 	const command = commandTokens[0];
 	const subcommand = commandTokens[1];
@@ -71,5 +89,6 @@ export function getExplicitArtifactDestination(commandTokens: string[]): string 
 	if (command === "diff" && subcommand === "screenshot") return getFlagValue(commandTokens, "--output");
 	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") return commandTokens[3];
 	if ((command === "trace" || command === "profiler") && subcommand === "stop") return commandTokens[2];
+	if (command === "record" && (subcommand === "start" || subcommand === "restart")) return commandTokens[2];
 	return undefined;
 }

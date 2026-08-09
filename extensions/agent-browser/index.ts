@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
@@ -61,7 +61,7 @@ import {
 } from "./lib/input-modes/script.js";
 import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
 import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
-import { getExplicitArtifactDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
+import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
 import {
@@ -136,12 +136,12 @@ function getBatchPreflightValidationError(args: string[], stdin: string | undefi
 		if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
 		const artifactDestination = getExplicitArtifactDestination(step);
 		if (artifactDestination) {
-			const absoluteDestination = resolve(cwd, artifactDestination);
-			const priorStep = artifactDestinations.get(absoluteDestination);
+			const canonicalDestination = canonicalizeExplicitArtifactDestination(cwd, artifactDestination);
+			const priorStep = artifactDestinations.get(canonicalDestination);
 			if (priorStep !== undefined) {
 				return `Unsupported batch artifact destination in step ${index + 1}: ${artifactDestination} is already written by step ${priorStep + 1}. Use distinct paths or split the batch so each artifact can be verified independently.`;
 			}
-			artifactDestinations.set(absoluteDestination, index);
+			artifactDestinations.set(canonicalDestination, index);
 		}
 		if (step[0] === "screenshot" && step.includes("--annotate")) {
 			return [
@@ -1188,8 +1188,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 			const outputPath = isRecord(params) && typeof params.outputPath === "string" ? params.outputPath : undefined;
 			const resolvedInput = resolveAgentBrowserInput({
-                getBatchPreflightValidationError: (args, stdin) => getBatchPreflightValidationError(args, stdin, ctx.cwd),
-                managedSessionActive,
+				getBatchPreflightValidationError: (args, stdin) => getBatchPreflightValidationError(args, stdin, ctx.cwd),
+				managedSessionActive,
 				params,
 			});
 			if (resolvedInput.status === "invalid") {

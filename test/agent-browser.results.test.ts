@@ -738,7 +738,7 @@ test("isHttpOrHttpsUrl accepts http(s) only", async () => {
 	});
 	assert.match(compact, /Page: Example — https:\/\/example\.test\//);
 	assert.match(compact, /Checks run: load:domcontentloaded, text×1, network, console, errors, diagnostics-reset \(9 batch steps\)/);
-	assert.match(compact, /Diagnostic isolation: URL QA clears enabled network\/console buffers and snapshots the pre-navigation page-error baseline/);
+	assert.match(compact, /Diagnostic isolation: URL QA clears enabled network\/console buffers, then snapshots any page-error residue/);
 	assert.match(compact, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 });
 

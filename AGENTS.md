@@ -144,7 +144,7 @@ Product-facing behavior and rationale live in [`docs/ARCHITECTURE.md`](docs/ARCH
 
 Use this sequence when upstream ships a new `agent-browser` version or help text changes enough to break the live verifier:
 
-1. Capture real `agent-browser … --help` output from the binary you intend to target, then edit `scripts/agent-browser-capability-baseline.mjs`. That file is import-only metadata; it never shells out to `agent-browser`, so rebaselining stays an explicit maintainer decision.
+1. Capture real `agent-browser … --help` output from the binary you intend to target, then edit `scripts/agent-browser-target.mjs` for the runtime version and `scripts/agent-browser-capability-baseline.mjs` for help/doc inventory. Both files are import-only metadata and never shell out to `agent-browser`, so rebaselining stays an explicit maintainer decision.
 2. Keep `docs/COMMAND_REFERENCE.md` human prose aligned with the baseline: every inventory token the baseline expects in the doc must appear **outside** the two generated regions (`upstream-baseline`, `capability-token-baseline`). `scripts/verify-command-reference.mjs` strips those generated blocks and fails if any required token is missing from the remaining Markdown.
 3. Regenerate the HTML-comment bounded blocks with `npm run docs -- command-reference write`. If you also changed playbook source in `extensions/agent-browser/lib/playbook.ts`, refresh every generated doc fragment in one shot with `npm run docs -- write` (runs playbook drift rewrite plus command-reference rewrite).
 4. Before committing, run `npm run docs` (or `npm run docs -- command-reference check`) so checked-in blocks cannot drift from the baseline file.

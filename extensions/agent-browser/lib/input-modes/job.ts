@@ -286,7 +286,7 @@ export function buildQaCompactPassText(options: {
 	if (pageParts.length > 0) lines.push(`Page: ${pageParts.join(" — ")}`);
 	lines.push(`Checks run: ${describeQaChecksRun(options.checks)} (${options.batchStepCount} batch step${options.batchStepCount === 1 ? "" : "s"})`);
 	if (options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
-		lines.push("Diagnostic isolation: URL QA clears enabled network/console buffers and snapshots the pre-navigation page-error baseline before opening the target. Unchanged baseline errors are not counted as current-page failures because upstream page-error clear is not reliable.");
+		lines.push("Diagnostic isolation: URL QA clears enabled network/console buffers, then snapshots any page-error residue before opening the target. Only unchanged residue is ignored because upstream page-error clear is not reliable.");
 	}
 	if (options.checks.attached && !options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
 		lines.push("Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started.");
@@ -433,7 +433,7 @@ export function analyzeQaPresetResults(data: unknown, compiled?: CompiledAgentBr
 	const failedChecks: string[] = [];
 	const warnings: string[] = [];
 	const baselineErrorIndex = compiled?.checks.diagnosticsResetAtStart && compiled.checks.checkErrors
-		? compiled.steps.findIndex((step) => step.action === "wait" && step.args.length === 1 && step.args[0] === "errors")
+		? compiled.steps.findIndex((step) => step.generatedFrom === "qa.errorBaselineAfterClear")
 		: -1;
 	const baselineErrorItem = baselineErrorIndex >= 0 ? items[baselineErrorIndex] : undefined;
 	const baselineErrorResult = isRecord(baselineErrorItem?.result) ? baselineErrorItem.result : undefined;
@@ -451,7 +451,7 @@ export function analyzeQaPresetResults(data: unknown, compiled?: CompiledAgentBr
 		if (commandName === "errors" && Array.isArray(result?.errors) && result.errors.length > 0) {
 			const { ignoredCount, novelErrors } = subtractQaBaselineErrors(result.errors, baselineErrors);
 			if (novelErrors.length > 0) failedChecks.push(`${novelErrors.length} page error(s)`);
-			if (ignoredCount > 0) warnings.push(`${ignoredCount} pre-navigation page error(s) ignored as unchanged baseline`);
+			if (ignoredCount > 0) warnings.push(`${ignoredCount} post-clear page error residue row(s) ignored as unchanged`);
 		}
 		if (commandName === "console" && Array.isArray(result?.messages)) {
 			const errorCount = result.messages.filter((message) => isRecord(message) && /error/i.test(String(message.type ?? message.level ?? ""))).length;
@@ -539,8 +539,8 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 	if (diagnosticsResetAtStart && checkNetwork) steps.push({ action: "wait", args: ["network", "requests", "--clear"] });
 	if (diagnosticsResetAtStart && checkConsole) steps.push({ action: "wait", args: ["console", "--clear"] });
 	if (diagnosticsResetAtStart && checkErrors) {
-		steps.push({ action: "wait", args: ["errors"] });
 		steps.push({ action: "wait", args: ["errors", "--clear"] });
+		steps.push({ action: "wait", args: ["errors"], generatedFrom: "qa.errorBaselineAfterClear" });
 	}
 	if (!attached && normalizedUrl) steps.push({ action: "open", args: ["open", normalizedUrl] });
 	steps.push({ action: "wait", args: ["wait", "--load", loadState] });
