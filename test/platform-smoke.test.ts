@@ -106,7 +106,9 @@ const macos = buildPlatformBuildCommand("macos", "pi-agent-browser-native", 22);
 const powershell = buildPlatformBuildCommand("windows-native", "pi-agent-browser-native", 22);
 const powershellScript = readFileSync("scripts/platform-smoke/platform-build-windows.ps1", "utf8");
 const dogfoodPosix = buildBrowserDogfoodCommand("ubuntu");
+const dogfoodWarmPosix = buildBrowserDogfoodCommand("ubuntu", CAPABILITY_BASELINE.targetVersion, true);
 const dogfoodWindows = buildBrowserDogfoodCommand("windows-native");
+const dogfoodWarmWindows = buildBrowserDogfoodCommand("windows-native", CAPABILITY_BASELINE.targetVersion, true);
 const dogfoodWindowsScript = readFileSync("scripts/platform-smoke/browser-dogfood-windows.ps1", "utf8");
 const result = {
   macosPlatform: platformFor("macos") === "posix",
@@ -125,6 +127,7 @@ const result = {
   dogfoodRunsScript: dogfoodPosix.includes("verify-agent-browser-dogfood.ts"),
   dogfoodChecksBaseline: dogfoodPosix.includes("EXPECTED_AGENT_BROWSER_VERSION='agent-browser " + CAPABILITY_BASELINE.targetVersion + "'") && dogfoodPosix.includes("PLATFORM_AGENT_BROWSER_READY_EXIT"),
   dogfoodKeepsArtifacts: dogfoodPosix.includes("--artifact-dir"),
+  dogfoodWarmSkipsDuplicateInstall: dogfoodWarmPosix.includes("PLATFORM_NPM_CI_SKIPPED=1") && dogfoodWarmWindows.includes("-SkipNpmCi") && dogfoodWindowsScript.includes("$SkipNpmCi"),
   dogfoodWindowsUsesScript: dogfoodWindows.includes("browser-dogfood-windows.ps1") && dogfoodWindows.includes("-AgentBrowserVersion '" + CAPABILITY_BASELINE.targetVersion + "'"),
   dogfoodWindowsRetriesTransientOpen: dogfoodWindowsScript.includes("PLATFORM_DOGFOOD_ATTEMPT"),
   dogfoodWindowsBoundsPrewarmCommands: dogfoodWindowsScript.includes("Invoke-AgentBrowserWithTimeout") && dogfoodWindowsScript.includes("PLATFORM_AGENT_BROWSER_COMMAND_TIMEOUT") && dogfoodWindowsScript.includes("taskkill.exe"),

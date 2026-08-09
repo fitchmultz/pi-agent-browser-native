@@ -4,9 +4,34 @@
 
 ## 0.4.1 - 2026-08-09
 
+### Added
+
+- Browser-backed calls now require the exact targeted `agent-browser 0.33.2` runtime before launch, with cached cwd/PATH validation and expected/observed mismatch details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
+- `semanticAction` native select now resolves active-session role/name combobox/listbox and label locators to exactly one current visible ref before invoking upstream `select`.
+
+### Changed
+
+- Authenticated unattended/auto-approved employee flows may complete ordinary requested non-destructive submissions without a blanket stop; purchases, production control, destructive/irreversible actions, and account/security/privacy changes still require explicit authorization.
+- Passive project/user upstream config files are ignored under the wrapper's protected empty config; explicit `--config` and `AGENT_BROWSER_CONFIG` overrides remain incompatible with browser-backed native calls.
+- Flattened the Electron launch schema while retaining runtime exactly-one-target validation, and skipped duplicate platform-smoke dependency installs after a successful platform-build suite.
+
 ### Fixed
 
-- Root-run Pi hosts can select a private wrapper socket directory with `PI_AGENT_BROWSER_SOCKET_DIR`; the extension validates it and forwards only the corresponding upstream `AGENT_BROWSER_SOCKET_DIR`. Ambient upstream socket overrides remain ignored. This prevents every browser-backed call from failing when uid 0 uses the default root-owned world-writable `/tmp` ancestry.
+- Tolerated pre-upgrade transcript rows whose managed restore identity list is absent instead of throwing during branch rehydration (contributed by [@coreyallen](https://github.com/coreyallen) in [#96](https://github.com/fitchmultz/pi-agent-browser-native/pull/96)).
+- Included `scripts/build.mjs` in the published package contract so source installs can run `prepare` successfully (contributed by [@selimerunkut](https://github.com/selimerunkut) in [#100](https://github.com/fitchmultz/pi-agent-browser-native/pull/100)).
+- Scoped managed restore keys to both checkout generation and Pi transcript. Upstream 0.33.2 loads the newest `<key>-*.json` file regardless of browser-session suffix, so the former checkout-wide key let concurrent Pi chats overwrite or inherit each other's cookies/storage. Fresh rotations, reload, restart, and `/resume` of one transcript retain a private restore pool.
+- URL QA snapshots and subtracts unchanged pre-navigation page errors because upstream clear is unreliable, and adds a bounded 150 ms post-load diagnostic settle so immediate timer-driven console/page errors are observed. Stale prior-page rows no longer fail a clean target.
+- Artifact verification now rejects pre-existing output paths not updated by artifact-producing commands as `status: "stale"`; recording start/restart reports `artifact-pending` with an exact `stop-pending-recording` action. Observational `wait --download` still accepts a file that completed just before waiting began.
+- Same-page freshness checks cover batched getter refs after rerenders, preventing recycled refs from silently reading different controls.
+- Large fallback scrolls with no viewport/container movement now fail as `upstream-error`, set structured and visible `scrolled: false` / `noMovement: true`, and return exact inspection actions instead of claiming success.
+- Root-run Pi hosts can select a private wrapper socket directory with `PI_AGENT_BROWSER_SOCKET_DIR`; validation now reports the concrete permission/ownership/path-budget cause, trusts sticky root ancestry for uid 0, and fails overlong Unix launch paths before spawn with short-root remediation. Ambient upstream socket overrides remain ignored.
+- Native-Windows command-first adaptation preserves multi-token subcommands while safely omitting wrapper-owned empty namespace/raw-args argv values that PowerShell `.cmd` forwarding drops.
+- Script cleanup skips a futile close only when every inner result proves the browser subprocess never started; click-dispatch verification avoids a redundant cleanup eval after its check already removed the probe.
+- Documented macOS copied-profile encrypted-cookie limits and compatible managed-restore behavior without claiming profile selection proves authentication.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (725 tests passed, two opt-in skips; 128 packed files), `npm run verify -- real-upstream` (2/2), deterministic real-browser dogfood, packaged Pi smoke, five-sample startup profiling (69.7 ms maximum), Ubuntu Crabbox `platform-build` plus `browser-dogfood-smoke`, and rebuilt-checkout interactive tmux missions. Full release composition remained environment-blocked by isolated lifecycle model credentials, the macOS SSH probe, and unavailable Parallels `prlctl`; no npm publish is authorized.
 
 ## 0.4.0 - 2026-08-07
 

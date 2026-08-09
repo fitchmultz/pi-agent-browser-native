@@ -542,6 +542,10 @@ export async function writeFakeAgentBrowserBinary(
   if (fileAccessIndex >= 0 && process.argv[fileAccessIndex + 1] === "false") process.argv.splice(fileAccessIndex, 2);
 }
 const __piabFakeArgs = process.argv.slice(2);
+if (process.env.PI_AGENT_BROWSER_TEST_CUSTOM_VERSION !== "1" && __piabFakeArgs.includes("--version")) {
+  process.stdout.write("agent-browser 0.33.2\\n");
+  process.exit(0);
+}
 if (process.env.PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO !== "1" && __piabFakeArgs.includes("session") && __piabFakeArgs.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
   process.exit(0);

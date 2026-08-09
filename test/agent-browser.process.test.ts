@@ -17,6 +17,7 @@ import test from "node:test";
 import {
 	buildOwnedManagedSessionRestoreContext,
 	createManagedSessionRestoreKey,
+	getManagedSessionRestoreScope,
 	ManagedSessionRestoreState,
 	withOwnedManagedSessionContext,
 } from "../extensions/agent-browser/lib/managed-session-restore.js";
@@ -27,6 +28,9 @@ import {
 	ensureAgentBrowserSocketDir,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
+	getAgentBrowserSocketPathValidationError,
+	getWindowsExplicitDefaultNamespaceEnv,
+	isTrustedSocketDirAncestor,
 	isWindowsAgentBrowserCommandMissing,
 	pinAgentBrowserFileAccessDisabled,
 	reorderWindowsLeadingGlobalArgs,
@@ -143,6 +147,17 @@ test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", (
 	assert.deepEqual(
 		reorderWindowsLeadingGlobalArgs(["--hide-scrollbars", "open", "https://example.com"]),
 		["open", "--hide-scrollbars", "https://example.com"],
+	);
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--json", "--namespace", "", "--session", "managed", "session", "info"]),
+		["session", "info", "--json", "--session", "managed"],
+	);
+	assert.deepEqual(getWindowsExplicitDefaultNamespaceEnv(["--namespace", "", "open", "https://example.com"], "prod", "win32"), { AGENT_BROWSER_NAMESPACE: "" });
+	assert.deepEqual(getWindowsExplicitDefaultNamespaceEnv(["open", "https://example.com"], "prod", "win32"), {});
+	assert.deepEqual(getWindowsExplicitDefaultNamespaceEnv(["--namespace", "", "open", "https://example.com"], "prod", "darwin"), {});
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--json", "--args", "", "--allow-file-access", "false", "--session", "managed", "get", "url"]),
+		["get", "url", "--json", "--allow-file-access", "false", "--session", "managed"],
 	);
 	for (const invalid of [
 		["--json", "--body", "secret", "session", "list"],
@@ -280,6 +295,27 @@ test("process helpers clamp the upstream default operation timeout to the docume
 	assert.equal(env.UNRELATED_API_KEY, "unrelated-secret");
 });
 
+test("root-owned sticky socket ancestors remain trusted for uid 0", () => {
+	const directory = (uid: number, mode: number) => ({ uid, mode, isDirectory: () => true, isSymbolicLink: () => false });
+	assert.equal(isTrustedSocketDirAncestor(directory(0, 0o41777), 0), true);
+	assert.equal(isTrustedSocketDirAncestor(directory(0, 0o40777), 0), false);
+	assert.equal(isTrustedSocketDirAncestor(directory(501, 0o40700), 0), false);
+	assert.equal(isTrustedSocketDirAncestor(directory(501, 0o40700), 501), true);
+});
+
+test("agent-browser socket path preflight reports long configured roots before upstream spawn", () => {
+	const socketDir = `/tmp/${"deep/".repeat(20)}sockets`;
+	const error = getAgentBrowserSocketPathValidationError({
+		args: ["--namespace", "team", "--session", "managed", "open", "https://example.com"],
+		socketDir,
+	});
+	assert.match(error ?? "", /Unix socket path would be \d+ bytes \(max 103\)/);
+	assert.match(error ?? "", /PI_AGENT_BROWSER_SOCKET_DIR/);
+	assert.match(error ?? "", /retrying sessionMode "fresh" cannot shorten/);
+	assert.equal(getAgentBrowserSocketPathValidationError({ args: ["--session", "s", "open", "https://example.com"], socketDir: "/tmp/piab" }), undefined);
+	assert.equal(getAgentBrowserSocketPathValidationError({ args: ["--session", "s", "open", "https://example.com"], platform: "win32", socketDir }), undefined);
+});
+
 test("agent-browser socket storage rejects unsafe permissions, ancestry, symlinks, and ownership", async (context) => {
 	const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 	if (uid === undefined) return context.skip("POSIX ownership metadata is unavailable");
@@ -328,6 +364,7 @@ test("runAgentBrowserProcess uses the Pi-scoped socket directory without trustin
 				AGENT_BROWSER_SOCKET_DIR: join(tempDir, "ignored-upstream-value"),
 				PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
 				PI_AGENT_BROWSER_SOCKET_DIR: socketPath,
+				PI_AGENT_BROWSER_TEST_CUSTOM_VERSION: "1",
 			},
 			async () => {
 				const result = await runAgentBrowserProcess({ args: ["--version"], cwd: tempDir });
@@ -355,7 +392,7 @@ test("runAgentBrowserProcess fails before spawn for unsafe socket storage", asyn
 		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` }, async () => {
 			const result = await runAgentBrowserProcess({ args: ["--version"], cwd: tempDir, env: { AGENT_BROWSER_SOCKET_DIR: socketPath } });
 			assert.equal(result.agentBrowserStarted, false);
-			assert.match(result.spawnError?.message ?? "", /socket storage.*mode 0700/i);
+			assert.match(result.spawnError?.message ?? "", /socket storage.*symlink/i);
 			await assert.rejects(readFile(markerPath, "utf8"));
 		});
 	} finally {
@@ -768,7 +805,8 @@ if (args.includes("session") && args.includes("info")) {
 			const closeDebug = JSON.parse(await readFile(closeDebugPath, "utf8")) as { configContent: string | null; envRestore: string | null; restoreKey: string; statePath: string };
 			assert.equal(closeDebug.configContent, "{}\n");
 			assert.equal(closeDebug.envRestore, null);
-			assert.equal(closeDebug.restoreKey, createManagedSessionRestoreKey(tempDir));
+			const firstSessionName = firstOpen.details?.sessionName as string;
+			assert.equal(closeDebug.restoreKey, createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(firstSessionName)));
 			const sessions = join(tempDir, ".agent-browser", "sessions");
 			const ownershipManifest = (await readdir(sessions)).find((entry) => entry.startsWith(".pi-agent-browser-owned-snapshots-v2-"));
 			assert.ok(ownershipManifest);
@@ -857,7 +895,7 @@ test("runAgentBrowserProcess pins owned namespace and config after planning", { 
 			assert.equal(data.encryptionKey, "a".repeat(64));
 			assert.equal(data.home, await realpath(tempDir));
 			assert.equal(data.namespace, "");
-			assert.equal(data.restore, createManagedSessionRestoreKey(tempDir));
+			assert.equal(data.restore, createManagedSessionRestoreKey(tempDir, "piab-managed"));
 			assert.equal(data.configContent, "{}\n");
 			assert.ok(data.config);
 			if (process.platform !== "win32") assert.equal((await stat(data.config)).mode & 0o777, 0o400);

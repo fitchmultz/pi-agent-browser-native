@@ -250,6 +250,7 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; nam
 	const data = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeCheckScript(options.probe) });
 	const result = getEvalResultRecord(data);
 	if (!result) return undefined;
+	options.probe.cleaned = true;
 	const status = typeof result.status === "string" ? result.status : undefined;
 	if (status !== "no-native-event-observed") return undefined;
 	const nativeEventCount = typeof result.nativeEventCount === "number" ? result.nativeEventCount : 0;
@@ -269,7 +270,7 @@ export async function collectClickDispatchDiagnostic(options: { cwd: string; nam
 }
 
 export async function cleanupClickDispatchProbe(options: { cwd: string; namespace?: string; probe?: ClickDispatchProbe; sessionName?: string }): Promise<void> {
-	if (!options.probe || !options.sessionName) return;
+	if (!options.probe || options.probe.cleaned || !options.sessionName) return;
 	await runSessionCommandData({
 		args: ["eval", "--stdin"],
 		cwd: options.cwd,

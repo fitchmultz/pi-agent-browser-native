@@ -109,7 +109,10 @@ if (args.includes("eval")) {
 			assert.equal(click.details?.clickDispatch, undefined);
 
 			const invocations = await readInvocationLog(logPath);
-			const checkInvocation = invocations.find((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("native-event-observed"));
+			const evalInvocations = invocations.filter((entry) => entry.args.includes("eval"));
+			const checkInvocation = evalInvocations.find((entry) => (entry.stdin ?? "").includes("native-event-observed"));
+			assert.equal(evalInvocations.length, 2, "successful dispatch should not run a redundant cleanup eval");
+			assert.equal(evalInvocations.some((entry) => (entry.stdin ?? "").includes("cleaned-up")), false);
 			assert.ok(checkInvocation, "expected a click dispatch check eval");
 			assert.ok((checkInvocation.stdin ?? "").includes("state.cleanup"));
 			assert.ok((checkInvocation.stdin ?? "").includes("delete window[marker]"));

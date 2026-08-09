@@ -29,12 +29,22 @@ import {
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
 	redactSensitiveText,
+	isPlainTextInspectionArgs,
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
 import { extractExplicitNamespace, extractExplicitSessionName, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
+import { parseArgvDescriptor } from "./lib/argv-descriptor.js";
+import { needsManagedSession } from "./lib/command-policy.js";
 import { cleanupManagedSessionRestoreConfig, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
+import { runAgentBrowserProcess } from "./lib/process.js";
 import { getAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
+import {
+	TARGET_AGENT_BROWSER_VERSION,
+	TARGET_AGENT_BROWSER_VERSION_LABEL,
+	getAgentBrowserVersionValidationError,
+	parseAgentBrowserVersionOutput,
+} from "./lib/upstream-version.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "./lib/prompt-policy.js";
 import { isCloseCommand } from "./lib/command-taxonomy.js";
 import { hasLaunchScopedFlagToken } from "./lib/launch-scoped-flags.js";
@@ -797,6 +807,39 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const activeScriptExecutions = new Set<Promise<void>>();
 	let branchRestoreGeneration = 0;
 	let branchStateGeneration = 0;
+	const validatedUpstreamPathKeys = new Set<string>();
+
+	const validateUpstreamVersion = async (cwd: string, signal?: AbortSignal): Promise<AgentBrowserToolResult | undefined> => {
+		const processEnvironment = getAgentBrowserProcessEnvironment();
+		const pathKey = `${cwd}\0${processEnvironment.PATH ?? processEnvironment.Path ?? ""}`;
+		if (validatedUpstreamPathKeys.has(pathKey)) return undefined;
+		const probe = await runAgentBrowserProcess({ args: ["--version"], cwd, signal, timeoutMs: 5_000 });
+		if ((probe.spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT" || probe.exitCode === 127 || probe.aborted) return undefined;
+		let error: string | undefined;
+		let observedVersion: string | undefined;
+		if (probe.spawnError || probe.exitCode !== 0) {
+			const detail = redactSensitiveText(probe.spawnError?.message ?? (probe.stderr.trim() || `exit ${probe.exitCode}`));
+			error = `agent-browser --version could not be validated (${detail}). Run pi-agent-browser-doctor before browser-backed calls.`;
+		} else {
+			observedVersion = parseAgentBrowserVersionOutput(probe.stdout);
+			error = getAgentBrowserVersionValidationError(probe.stdout);
+		}
+		if (!error) {
+			validatedUpstreamPathKeys.add(pathKey);
+			return undefined;
+		}
+		return {
+			content: [{ type: "text", text: error }],
+			details: {
+				expectedVersion: TARGET_AGENT_BROWSER_VERSION,
+				failureCategory: "validation-error",
+				observedVersion,
+				resultCategory: "failure",
+				versionValidation: { expected: TARGET_AGENT_BROWSER_VERSION_LABEL, observed: observedVersion },
+			},
+			isError: true,
+		};
+	};
 
 	const clearSessionScopedBrowserState = (sessionName: string, namespace?: string): void => {
 		const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
@@ -1145,6 +1188,15 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			if (outputPathValidationError) {
 				return buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: outputPathValidationError });
 			}
+			const versionCheckCommand = extractCommandTokens(resolvedInput.toolArgs)[0];
+			const electronHostOnlyAction = resolvedInput.kind === "electron" && ["cleanup", "list", "status"].includes(resolvedInput.compiledElectron.action);
+			const browserBackedVersionCheck = needsManagedSession(parseArgvDescriptor(resolvedInput.toolArgs));
+			if (!electronHostOnlyAction && browserBackedVersionCheck && !isPlainTextInspectionArgs(resolvedInput.toolArgs) && !isCloseCommand(versionCheckCommand) && signal?.aborted !== true) {
+				const versionFailure = resolvedInput.kind === "script"
+					? await withIsolatedAgentBrowserEnvironment(() => validateUpstreamVersion(ctx.cwd, signal))
+					: await validateUpstreamVersion(ctx.cwd, signal);
+				if (versionFailure) return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result: versionFailure });
+			}
 			if (resolvedInput.kind === "script") {
 				if (!ctx.sessionManager.getSessionFile()) {
 					return buildValidationFailureResult({
@@ -1215,13 +1267,26 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					activeScriptControllers.delete(scriptController);
 					signal?.removeEventListener("abort", abortScript);
 					if (leased) {
-						try {
-							cleanupError = await managedSessionExecutionQueue.run(() => closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd));
-						} catch {
-							cleanupError = "The isolated script session cleanup operation failed.";
+						const browserDefinitelyNeverStarted = innerResults.length > 0
+							&& innerResults.every((result) => isRecord(result.details) && result.details.agentBrowserStarted === false);
+						if (browserDefinitelyNeverStarted) {
 							try {
-								appendScriptSessionLease(pi, sessionName, "failed");
-							} catch {}
+								appendScriptSessionLease(pi, sessionName, "closed");
+								untrackOwnedManagedSession(ownedManagedSessions, sessionName);
+								managedSessionRestoreState.clear(sessionName);
+								clearSessionScopedBrowserState(sessionName);
+							} catch {
+								cleanupError = "The isolated session never launched, but its durable cleanup record could not be saved.";
+							}
+						} else {
+							try {
+								cleanupError = await managedSessionExecutionQueue.run(() => closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd));
+							} catch {
+								cleanupError = "The isolated script session cleanup operation failed.";
+								try {
+									appendScriptSessionLease(pi, sessionName, "failed");
+								} catch {}
+							}
 						}
 					}
 					activeScriptExecutions.delete(scriptExecution);

@@ -95,12 +95,20 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		}
 		assert.match(guidelineText, /Use agent_browser with one input mode/);
 		assert.match(guidelineText, /For agent_browser, use open → snapshot -i/);
-		assert.match(guidelineText, /Stop before order\/post\/purchase\/submit/);
+		assert.match(guidelineText, /ordinary requested non-destructive submissions may proceed/);
+		assert.match(guidelineText, /require explicit authorization for purchases, production-control, destructive\/irreversible, or account\/security\/privacy changes/);
 		assert.equal(
-			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("Stop before order/post/purchase/submit")),
+			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("ordinary requested non-destructive submissions may proceed")),
+			true,
+		);
+		assert.equal(RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("Stop before order/post/purchase/submit")), false);
+		assert.equal(
+			SHARED_BROWSER_PLAYBOOK_GUIDELINES.some((line) => line.includes("ordinary non-destructive form submissions within the requested flow may proceed without separate confirmation")),
 			true,
 		);
 		assert.match(guidelineText, /sessionMode=fresh/);
+		assert.match(guidelineText, /macOS profile copies may omit encrypted cookies/);
+		assert.match(SHARED_BROWSER_PLAYBOOK_GUIDELINES.join("\n"), /copied Chrome profiles may omit encrypted cookies/);
 		assert.match(guidelineText, /exact user paths/);
 		assert.match(guidelineText, /requested\/configured profiles only/);
 		assert.match(guidelineText, /read <url> for docs\/text/);
@@ -376,8 +384,12 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const noopResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "down", "700"], sessionMode: "fresh" });
-			assert.equal(noopResult.isError, false);
+			assert.equal(noopResult.isError, true);
+			assert.equal(noopResult.details?.resultCategory, "failure");
+			assert.equal(noopResult.details?.failureCategory, "upstream-error");
 			assert.match(noopResult.content[0]?.text ?? "", /Scroll diagnostic: no observed scroll movement/);
+			assert.match(noopResult.content[0]?.text ?? "", /"scrolled": false/);
+			assert.doesNotMatch(noopResult.content[0]?.text ?? "", /"scrolled": true/);
 			const noopDetails = noopResult.details as {
 				data: { noMovement?: boolean; scrolled?: boolean };
 				nextActions: Array<{ id: string; params?: { args: string[] } }>;
@@ -993,6 +1005,11 @@ process.stdout.write(JSON.stringify({ success: true, data: { command, subcommand
 			await mkdir(join(tempDir, "ffmpeg"));
 			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "demo.webm"] });
 			assert.equal(missingResult.isError, false);
+			assert.equal(missingResult.details?.successCategory, "artifact-pending");
+			assert.deepEqual(
+				(missingResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "stop-pending-recording")?.params?.args?.slice(-2),
+				["record", "stop"],
+			);
 			assert.match(missingResult.content[0]?.text ?? "", /Recording dependency warning: ffmpeg not found on PATH/);
 			assert.match(missingResult.content[0]?.text ?? "", /Exists: pending until record stop/);
 			assert.match(missingResult.content[0]?.text ?? "", /Status: pending/);

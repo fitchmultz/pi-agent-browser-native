@@ -209,6 +209,7 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Download not verified: file missing", command: "download" }), "download-not-verified");
 	assert.equal(buildAgentBrowserResultCategoryDetails({ failureCategory: "artifact-missing", succeeded: false }).failureCategory, "artifact-missing");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "agent-browser is required but was not found on PATH" }), "missing-binary");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Agent-browser Unix socket path would be 140 bytes (max 103)." }), "validation-error");
 	assert.equal(classifyAgentBrowserFailureCategory({ parseError: "agent-browser returned invalid JSON" }), "parse-failure");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Confirmation required: c_demo" }), "confirmation-required");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Electron launch blocked by caller deny policy." }), "policy-blocked");
@@ -225,6 +226,7 @@ test("classifyAgentBrowserSuccessCategory locks common machine-readable success 
 	assert.equal(classifyAgentBrowserSuccessCategory({}), "completed");
 	assert.equal(classifyAgentBrowserSuccessCategory({ inspection: true }), "inspection");
 	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", exists: true, kind: "image", path: "/tmp/a.png" }] }), "artifact-saved");
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/demo.webm", command: "record", kind: "video", path: "/tmp/demo.webm", recordingState: "openRecording", status: "pending", subcommand: "start" }] }), "artifact-pending");
 	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", exists: false, kind: "image", path: "/tmp/a.png" }] }), "artifact-unverified");
 });
 
@@ -311,6 +313,16 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/page.png", kind: "image", path: "/tmp/page.png" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.artifactPath, "/tmp/page.png");
 	assert.deepEqual(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/export.csv", exists: false, kind: "download", path: "/tmp/export.csv" }], resultCategory: "success", savedFilePath: "/tmp/export.csv", successCategory: "artifact-saved" })?.map((action) => action.id), ["wait-for-download"]);
 	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/state.json", exists: false, kind: "file", path: "/tmp/state.json" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.id, "verify-artifact-path");
+	assert.deepEqual(
+		buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/demo.webm", command: "record", kind: "video", path: "/tmp/demo.webm", recordingState: "openRecording", status: "pending", subcommand: "start" }], resultCategory: "success", sessionName: "named", successCategory: "artifact-pending" })?.[0],
+		{
+			id: "stop-pending-recording",
+			params: { args: ["--session", "named", "record", "stop"] },
+			reason: "Stop the active recording so the requested video can be finalized and verified on disk.",
+			safety: "The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
+			tool: "agent_browser",
+		},
+	);
 	assert.deepEqual(
 		buildAgentBrowserNextActions({
 			electron: { launchId: "el_123", sessionName: "pi-agent-browser-electron-el_123", status: "active" },
@@ -706,7 +718,7 @@ test("isHttpOrHttpsUrl accepts http(s) only", async () => {
 	assert.equal(isHttpOrHttpsUrl("app://demo"), false);
 	assert.equal(isHttpOrHttpsUrl("not-a-url"), false);
 	const compact = buildQaCompactPassText({
-		batchStepCount: 8,
+		batchStepCount: 9,
 		checks: {
 			attached: false,
 			checkConsole: true,
@@ -725,8 +737,8 @@ test("isHttpOrHttpsUrl accepts http(s) only", async () => {
 		},
 	});
 	assert.match(compact, /Page: Example — https:\/\/example\.test\//);
-	assert.match(compact, /Checks run: load:domcontentloaded, text×1, network, console, errors, diagnostics-reset \(8 batch steps\)/);
-	assert.match(compact, /Diagnostic reset: URL QA cleared enabled network\/console\/page-error buffers before opening the target/);
+	assert.match(compact, /Checks run: load:domcontentloaded, text×1, network, console, errors, diagnostics-reset \(9 batch steps\)/);
+	assert.match(compact, /Diagnostic isolation: URL QA clears enabled network\/console buffers and snapshots the pre-navigation page-error baseline/);
 	assert.match(compact, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 });
 

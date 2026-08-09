@@ -15,16 +15,17 @@ import {
 	optionalGlobalValueFlagConsumesNext,
 } from "./argv-grammar.js";
 import { extractManagedSessionRestoreKeys, isWrapperManagedSessionName } from "./managed-session-capabilities.js";
-import { agentBrowserConfigIsPresent } from "./managed-session-restore.js";
-import { createManagedSessionRestoreKey, hasManagedSessionRestoreProjectIdentity } from "./managed-session-storage.js";
+import { agentBrowserExplicitConfigIsPresent } from "./managed-session-restore.js";
+import { hasManagedSessionRestoreProjectIdentity } from "./managed-session-storage.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
 
 const BLOCKED_GLOBAL_STATE_MESSAGE = "This operation could read or modify wrapper-owned browser state outside the current checkout. Use a caller-owned state name or path instead.";
 const BLOCKED_MANAGED_BROWSER_FILE_MESSAGE = "Browser access to local .agent-browser storage is blocked because state files can contain authenticated cookies and storage. Use guarded state commands instead.";
 const BLOCKED_MANAGED_SESSION_MESSAGE = "This session name is reserved for a browser managed by this extension instance. Use the current managed session or a caller-owned session name instead.";
 const FILE_ACCESS_FLAG_MESSAGE = "Browser file-access enablement is blocked because a local page could read and exfiltrate authenticated .agent-browser state.";
-const UPSTREAM_CONFIG_MESSAGE = "Upstream agent-browser config is blocked for browser-backed native calls because it can load protected state, profiles, extensions, or file-access settings. Remove the config and pass safe settings explicitly.";
+const UPSTREAM_CONFIG_MESSAGE = "Explicit upstream agent-browser config from --config or AGENT_BROWSER_CONFIG is blocked for browser-backed native calls because it can load protected state, profiles, extensions, or file-access settings. Remove that override and pass safe settings explicitly. Passive agent-browser.json files are ignored through the wrapper's protected empty config.";
 const UNVERIFIED_PAGE_MESSAGE = "The active page became unverified after a tab, attachment, history, script, or state-load transition. Run get url or navigate explicitly to a safe URL before page-content inspection.";
+const BATCH_UNVERIFIED_PAGE_MESSAGE = `${UNVERIFIED_PAGE_MESSAGE} In a batch, put get url after the transition before later content steps, or split the batch at that boundary.`;
 const UNSAFE_BATCH_ARGUMENT_MESSAGE = "Batch command arguments could not be safely inspected. Use batch stdin JSON command arrays instead.";
 const NESTED_BATCH_ARGUMENT_MESSAGE = "Nested batch commands are blocked by the wrapper's page-state safety policy. Flatten the batch steps instead.";
 const NON_BAIL_BATCH_NAVIGATION_MESSAGE = "Batches that navigate before page-content access must use exact batch --bail so a failed navigation cannot expose the prior page.";
@@ -419,7 +420,7 @@ export function getCallerOwnedSessionLivePageVerificationRequirement(options: {
 		trustedFirstBatchTabSelection: options.trustedFirstBatchTabSelection,
 		trustedPinnedEmptyConfig: true,
 	});
-	return validationError === UNVERIFIED_PAGE_MESSAGE || validationError === NON_BAIL_BATCH_NAVIGATION_MESSAGE
+	return validationError === UNVERIFIED_PAGE_MESSAGE || validationError === BATCH_UNVERIFIED_PAGE_MESSAGE || validationError === NON_BAIL_BATCH_NAVIGATION_MESSAGE
 		? UNVERIFIED_PAGE_MESSAGE
 		: undefined;
 }
@@ -480,6 +481,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	currentPageUrl?: string;
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
+	managedSessionRestoreKey?: string;
 	pageUrlUnknown?: boolean;
 	parentEnv?: NodeJS.ProcessEnv;
 	stdin?: string;
@@ -491,7 +493,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	const command = descriptor.commandInfo.command;
 	const subcommand = descriptor.commandInfo.subcommand;
 	if (["close", "exit", "quit"].includes(command ?? "")) return undefined;
-	if (!options.trustedPinnedEmptyConfig && needsManagedSession(descriptor) && agentBrowserConfigIsPresent(options.cwd, effectiveEnv, options.args)) return UPSTREAM_CONFIG_MESSAGE;
+	if (!options.trustedPinnedEmptyConfig && needsManagedSession(descriptor) && agentBrowserExplicitConfigIsPresent(effectiveEnv, options.args)) return UPSTREAM_CONFIG_MESSAGE;
 	if (command === "batch") {
 		const batch = getBatchCommandSteps(options.args, options.stdin);
 		if (batch.error) {
@@ -525,7 +527,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 					directError ??= error;
 				}
 			}
-			if (directError) return directError;
+			if (directError) return directError === UNVERIFIED_PAGE_MESSAGE ? BATCH_UNVERIFIED_PAGE_MESSAGE : directError;
 			if (failedNavigationHazard) return NON_BAIL_BATCH_NAVIGATION_MESSAGE;
 			const mayChangePageTarget = commandMayChangePageTarget(step, trustedBatchTabSelection);
 			const nextStates: PossibleBatchPageState[] = [];
@@ -575,7 +577,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	const referencedKeys = [...new Set(referencedValues.flatMap(extractManagedSessionRestoreKeys))];
 	if (referencedKeys.length === 0) return undefined;
 	if (command === "state" && ["rename", "save"].includes(subcommand ?? "")) return BLOCKED_GLOBAL_STATE_MESSAGE;
-	if (!hasManagedSessionRestoreProjectIdentity(options.cwd)) return BLOCKED_GLOBAL_STATE_MESSAGE;
-	const currentKey = createManagedSessionRestoreKey(options.cwd).toLowerCase();
+	if (!hasManagedSessionRestoreProjectIdentity(options.cwd) || !options.managedSessionRestoreKey) return BLOCKED_GLOBAL_STATE_MESSAGE;
+	const currentKey = options.managedSessionRestoreKey.toLowerCase();
 	return referencedKeys.every((key) => key === currentKey) ? undefined : BLOCKED_GLOBAL_STATE_MESSAGE;
 }

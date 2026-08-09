@@ -124,6 +124,10 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		triggersPostMutationSnapshot: true,
 	},
 	{
+		command: "get",
+		guardsPageRefs: true,
+	},
+	{
 		command: "hover",
 		eligibleForPageChangeSummary: true,
 		guardsPageRefs: true,

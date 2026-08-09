@@ -161,6 +161,7 @@ export type ClickDispatchProbeTarget =
 	};
 
 export interface ClickDispatchProbe {
+	cleaned?: boolean;
 	marker: string;
 	target: ClickDispatchProbeTarget;
 }
@@ -488,6 +489,7 @@ export type PrepareBrowserRunResult =
 	| { kind: "ready"; prepared: PreparedBrowserRun };
 
 export interface ProcessBrowserOutputInput extends BrowserRunOptions {
+	artifactRunStartedAtMs: number;
 	prepared: PreparedBrowserRun;
 	processResult: AgentBrowserProcessResult;
 }

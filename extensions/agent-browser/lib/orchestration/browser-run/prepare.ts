@@ -283,12 +283,11 @@ function describeRef(refSnapshot: SessionRefSnapshot | undefined, refId: string)
 }
 
 function getSamePageFreshnessPreflightFailure(options: {
-	commandTokens: string[];
 	currentSnapshot: SessionRefSnapshot;
 	previousSnapshot: SessionRefSnapshot;
+	refIds: string[];
 }): { message: string; refIds: string[] } | undefined {
-	if (options.commandTokens[0] === "batch") return undefined;
-	const refIds = getRefIdsFromDirectCommand(options.commandTokens);
+	const { refIds } = options;
 	if (refIds.length === 0) return undefined;
 	const previousUrl = options.previousSnapshot.target?.url;
 	const currentUrl = options.currentSnapshot.target?.url;
@@ -313,12 +312,14 @@ async function collectSamePageRefFreshnessPreflight(options: {
 	commandTokens: string[];
 	cwd: string;
 	currentTarget?: SessionTabTarget;
+	stdin?: string;
 	previousSnapshot?: SessionRefSnapshot;
 	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<StaleRefPreflight | undefined> {
-	if (!options.previousSnapshot || !options.sessionName || options.commandTokens[0] === "batch" || getRefIdsFromDirectCommand(options.commandTokens).length === 0) return undefined;
+	const refIds = [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin))];
+	if (!options.previousSnapshot || !options.sessionName || refIds.length === 0) return undefined;
 	const previousUrl = options.previousSnapshot.target?.url;
 	const currentTargetUrl = options.currentTarget?.url;
 	if (currentTargetUrl === "about:blank" || (previousUrl && currentTargetUrl && previousUrl !== currentTargetUrl)) return undefined;
@@ -326,7 +327,7 @@ async function collectSamePageRefFreshnessPreflight(options: {
 	const currentSnapshot = extractRefSnapshotFromData(snapshotData);
 	if (!currentSnapshot) return undefined;
 	const snapshotWithTarget = { ...currentSnapshot, target: currentSnapshot.target ?? options.currentTarget };
-	const mismatch = getSamePageFreshnessPreflightFailure({ commandTokens: options.commandTokens, currentSnapshot: snapshotWithTarget, previousSnapshot: options.previousSnapshot });
+	const mismatch = getSamePageFreshnessPreflightFailure({ currentSnapshot: snapshotWithTarget, previousSnapshot: options.previousSnapshot, refIds });
 	if (!mismatch) return undefined;
 	return { message: mismatch.message, refIds: mismatch.refIds, snapshot: snapshotWithTarget };
 }
@@ -371,7 +372,13 @@ export function validateStdinCommandContract(options: { command?: string; comman
 }
 
 function canResolveSemanticVisibleRef(compiled: CompiledAgentBrowserSemanticAction | undefined): compiled is CompiledAgentBrowserSemanticAction {
-	return compiled !== undefined && compiled.locator === "role" && ["check", "click", "fill"].includes(compiled.action);
+	if (!compiled?.locator) return false;
+	if (compiled.action === "select") return true;
+	return compiled.locator === "role" && ["check", "click", "fill"].includes(compiled.action);
+}
+
+function requiresResolvedSemanticVisibleRef(compiled: CompiledAgentBrowserSemanticAction | undefined): boolean {
+	return compiled?.action === "select" && compiled.locator !== undefined;
 }
 
 function resolveSemanticActionVisibleRefArgsFromSnapshot(compiled: CompiledAgentBrowserSemanticAction | undefined, snapshotData: unknown): SemanticActionVisibleRefResolution | undefined {
@@ -609,7 +616,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			priorSessionTabTarget ??= { url: liveUrl };
 			priorSessionTabTargetUnknown = undefined;
 		};
-		const mayResolveSemanticVisibleRef = executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction);
+		const hasPotentialLiveSemanticSession = state.managedSessionActive || priorSessionTabTarget !== undefined || isCallerOwnedExplicitSession() || options.preserveAttachedBrowserSession === true;
+		const mayResolveSemanticVisibleRef = executionPlan.managedSessionName !== freshSessionName && hasPotentialLiveSemanticSession && canResolveSemanticVisibleRef(compiledSemanticAction);
 		if (!executionPlan.validationError && mayResolveSemanticVisibleRef && requiresLivePageVerification()) {
 			await verifyLivePage({
 				args: ["snapshot", "-i"],
@@ -624,6 +632,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				sessionName: executionPlan.sessionName,
 				signal,
 			});
+		}
+		if (!executionPlan.validationError && requiresResolvedSemanticVisibleRef(compiledSemanticAction) && !semanticActionVisibleRefResolution) {
+			executionPlan = {
+				...executionPlan,
+				validationError: hasPotentialLiveSemanticSession
+					? "semanticAction select with locator could not resolve to exactly one current visible combobox/listbox ref. Run snapshot -i and retry with selector or a more specific role/name."
+					: "semanticAction select with locator requires an active browser session so the wrapper can resolve a current @ref; open a page first or pass selector plus value/values.",
+			};
 		}
 		if (semanticActionVisibleRefResolution) {
 			executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {
@@ -794,6 +810,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			cwd,
 			currentTarget: priorSessionTabTarget,
 			previousSnapshot: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotState,
+			stdin: runtimeToolStdin,
 			namespace: executionPlan.namespace,
 			sessionName: executionPlan.sessionName,
 			signal,

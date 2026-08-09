@@ -2159,7 +2159,7 @@ if (args.includes("batch")) {
 	}
 });
 
-test("agentBrowserExtension rejects refs after same-page rerender changes current snapshot identity", { concurrency: false }, async () => {
+test("agentBrowserExtension rejects batched getter refs after same-page rerender changes current snapshot identity", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-rerender-"));
 	const logPath = join(tempDir, "invocations.log");
 	const statePath = join(tempDir, "state.json");
@@ -2196,15 +2196,18 @@ if (args.includes("snapshot")) {
 			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(snapshot.isError, false);
 
-			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
-			assert.equal(staleClick.isError, true);
-			assert.equal(staleClick.details?.failureCategory, "stale-ref");
-			assert.match((staleClick.content[0] as { text: string }).text, /no longer matches the latest same-page snapshot/);
-			assert.match((staleClick.content[0] as { text: string }).text, /Old target before rerender/);
-			assert.match((staleClick.content[0] as { text: string }).text, /New target after rerender/);
+			const staleBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["get", "text", "@e1"], ["get", "html", "@e1"]]),
+			});
+			assert.equal(staleBatch.isError, true);
+			assert.equal(staleBatch.details?.failureCategory, "stale-ref");
+			assert.match((staleBatch.content[0] as { text: string }).text, /no longer matches the latest same-page snapshot/);
+			assert.match((staleBatch.content[0] as { text: string }).text, /Old target before rerender/);
+			assert.match((staleBatch.content[0] as { text: string }).text, /New target after rerender/);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
 			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
 			assert.deepEqual(invocations.map((entry) => entry.idleTimeout), ["1234", "1234"]);
 		});

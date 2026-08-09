@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -146,10 +146,10 @@ test("agentBrowserExtension preserves rich batch rendering and inline screenshot
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const imagePath = join(tempDir, "batched.png");
 	const basePath = process.env.PATH ?? "";
-	await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`process.stdout.write(JSON.stringify([
+		`require("node:fs").writeFileSync(${JSON.stringify(imagePath)}, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+process.stdout.write(JSON.stringify([
   { command: ["open", "https://example.com"], success: true, result: { title: "Example Domain", url: "https://example.com/" } },
   { command: ["screenshot"], success: true, result: { path: "batched.png" } }
 ]));`,

@@ -48,7 +48,7 @@ if (args.includes("--version")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_VERSION: "1" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Open a page and summarize it." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 

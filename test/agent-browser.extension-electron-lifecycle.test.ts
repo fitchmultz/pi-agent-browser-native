@@ -15,7 +15,7 @@ import test from "node:test";
 
 import { Check } from "typebox/value";
 
-import { createManagedSessionRestoreKey } from "../extensions/agent-browser/lib/managed-session-restore.js";
+import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getSessionPageStateKey, SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import {
 	createExtensionHarness,
@@ -101,7 +101,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: "10" } }), false);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: 1.5 } }), false);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", allow: [""] } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" } }), true);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", launchId: "launch-1" } }), false);
 
 			const listResult = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -174,6 +174,9 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.equal(missingLaunchTarget.isError, true);
 			assert.match(missingLaunchTarget.content[0]?.text ?? "", /electron\.launch requires exactly one of appPath, appName, bundleId, or executablePath/);
 			assert.equal(missingLaunchTarget.details?.failureCategory, "validation-error");
+			const ambiguousLaunchTarget = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" } });
+			assert.equal(ambiguousLaunchTarget.isError, true);
+			assert.match(ambiguousLaunchTarget.content[0]?.text ?? "", /electron\.launch requires exactly one of appPath, appName, bundleId, or executablePath/);
 
 			const reservedAppArg = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: "/Applications/Demo.app", appArgs: ["--remote-debugging-port=9222"] } });
 			assert.equal(reservedAppArg.isError, true);
@@ -521,7 +524,8 @@ test("agentBrowserExtension applies managed restore policy to every current-sess
 			assert.equal(probe.isError, false, JSON.stringify(probe));
 			const invocations = await readInvocationLog(upstreamLogPath) as Array<{ args: string[]; restore?: string | null }>;
 			assert.deepEqual(invocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
-			assert.equal(invocations.every((entry) => entry.restore === createManagedSessionRestoreKey(tempDir)), true);
+			const restoreKey = createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(opened.details?.sessionName as string));
+			assert.equal(invocations.every((entry) => entry.restore === restoreKey), true);
 
 			await writeFakeAgentBrowserBinary(tempDir, `const args = process.argv.slice(2);
 if (args.includes("session") && args.includes("info")) {

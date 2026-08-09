@@ -14,12 +14,14 @@ import test from "node:test";
 
 import {
 	agentBrowserConfigBlocksManagedRestore,
+	agentBrowserConfigIsPresent,
 	buildOwnedManagedSessionRestoreContext,
 	commitManagedSessionRestoreSuppression,
 	createManagedSessionRestoreKey,
 	ensureManagedSessionRestoreStorageIsSecure,
 	getManagedSessionRestoreEnv,
 	getManagedSessionRestoreProtectedEnv,
+	getManagedSessionRestoreScope,
 	getOwnedManagedSessionNamespaceEnv,
 	ManagedSessionRestoreState,
 	pruneOwnedManagedSessionRestoreSnapshots,
@@ -37,10 +39,13 @@ const isolatedHome = mkdtempSync(join(tmpdir(), "piab-restore-suite-home-"));
 const isolatedProject = mkdtempSync(join(tmpdir(), "piab-restore-suite-project-"));
 initializeGitProject(isolatedProject);
 const managedSessionRestoreState = new ManagedSessionRestoreState();
+const defaultManagedSession = "piab-work-abc12345-deadbeef";
 const clearManagedSessionRestoreDisabled = (sessionName?: string, namespace?: string) => managedSessionRestoreState.clear(sessionName, namespace);
 const isManagedSessionRestoreDisabled = (sessionName?: string, namespace?: string) => managedSessionRestoreState.isDisabled(sessionName, namespace);
 const markManagedSessionRestoreDisabled = (sessionName?: string, namespace?: string) => managedSessionRestoreState.disable(sessionName, namespace);
-const expectedRestoreEnv = (cwd: string) => ({ AGENT_BROWSER_RESTORE: createManagedSessionRestoreKey(cwd) });
+const expectedRestoreEnv = (cwd: string, sessionName = defaultManagedSession) => ({
+	AGENT_BROWSER_RESTORE: createManagedSessionRestoreKey(cwd, getManagedSessionRestoreScope(sessionName)),
+});
 const getAndCommitManagedSessionRestoreEnv = (options: Parameters<typeof getManagedSessionRestoreEnv>[0]) => {
 	const env = getManagedSessionRestoreEnv(options);
 	commitManagedSessionRestoreSuppression(options);
@@ -133,7 +138,7 @@ test("restore env resolution is pure and suppression commits only for a spawned 
 	assert.equal(restoreState.isDisabled(sessionName), true);
 });
 
-test("createManagedSessionRestoreKey is checkout-generation-stable across path aliases and renames", () => {
+test("createManagedSessionRestoreKey is transcript- and checkout-generation-stable", () => {
 	clearManagedSessionRestoreDisabled();
 	const root = mkdtempSync(join(tmpdir(), "piab-restore-key-"));
 	const cwd = join(root, "project");
@@ -141,7 +146,13 @@ test("createManagedSessionRestoreKey is checkout-generation-stable across path a
 	try {
 		mkdirSync(cwd);
 		initializeGitProject(cwd);
-		assert.equal(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(`${cwd}/`));
+		const firstScope = "piab-project-session-a-deadbeef";
+		const rotatedSession = `${firstScope}-fresh-0123456789`;
+		const secondScope = "piab-project-session-b-deadbeef";
+		assert.equal(getManagedSessionRestoreScope(rotatedSession), firstScope);
+		assert.equal(createManagedSessionRestoreKey(cwd, firstScope), createManagedSessionRestoreKey(cwd, getManagedSessionRestoreScope(rotatedSession)));
+		assert.equal(createManagedSessionRestoreKey(cwd, firstScope), createManagedSessionRestoreKey(`${cwd}/`, firstScope));
+		assert.notEqual(createManagedSessionRestoreKey(cwd, firstScope), createManagedSessionRestoreKey(cwd, secondScope));
 		if (process.platform !== "win32") {
 			symlinkSync(cwd, alias, "dir");
 			assert.equal(createManagedSessionRestoreKey(cwd), createManagedSessionRestoreKey(alias));
@@ -245,7 +256,7 @@ test("getManagedSessionRestoreEnv isolates ownership and blocks incompatible lau
 	const cwd = mkdtempSync(join(tmpdir(), "piab-restore-cwd-"));
 	initializeGitProject(cwd);
 	const home = mkdtempSync(join(tmpdir(), "piab-restore-home-"));
-	const session = "piab-work-abc12345-deadbeef";
+	const session = defaultManagedSession;
 	const restore = (args: string[], parentEnv: NodeJS.ProcessEnv = {}, stdin?: string) => getAndCommitManagedSessionRestoreEnv({
 		args,
 		cwd,
@@ -287,7 +298,7 @@ test("getManagedSessionRestoreEnv isolates ownership and blocks incompatible lau
 				parentEnv: { HOME: home },
 				restoreState: managedSessionRestoreState,
 			}),
-			expectedRestoreEnv(cwd),
+			expectedRestoreEnv(cwd, "custom"),
 		);
 
 		const incompatibleArgs = [
@@ -427,7 +438,7 @@ test("getManagedSessionRestoreEnv isolates ownership and blocks incompatible lau
 				["--json", "--session", session, "open", "https://app.example.com"],
 				{ AGENT_BROWSER_STATE_EXPIRE_DAYS: "7" },
 			),
-			{ AGENT_BROWSER_RESTORE: createManagedSessionRestoreKey(cwd) },
+			expectedRestoreEnv(cwd, session),
 		);
 		clearManagedSessionRestoreDisabled();
 		assert.deepEqual(
@@ -443,7 +454,7 @@ test("getManagedSessionRestoreEnv isolates ownership and blocks incompatible lau
 test("spawn-time suppression commit sticky-disables restore after an incompatible launch", () => {
 	clearManagedSessionRestoreDisabled();
 	const cwd = isolatedProject;
-	const session = "piab-work-abc12345-deadbeef";
+	const session = defaultManagedSession;
 	assert.deepEqual(
 		getAndCommitManagedSessionRestoreEnv({
 			args: ["--json", "--session", session, "--profile", "Default", "open", "https://app.example.com"],
@@ -650,7 +661,7 @@ test("wrapper-injected ChatGPT user agent remains compatible with managed restor
 	assert.equal(isManagedSessionRestoreDisabled(managed), false);
 });
 
-test("any agent-browser config blocks restore without reading caller-selected content", () => {
+test("passive agent-browser config files are ignored while explicit overrides block restore", () => {
 	clearManagedSessionRestoreDisabled();
 	const cwd = mkdtempSync(join(tmpdir(), "piab-config-"));
 	initializeGitProject(cwd);
@@ -666,9 +677,9 @@ test("any agent-browser config blocks restore without reading caller-selected co
 				restoreState: managedSessionRestoreState,
 				parentEnv: { HOME: home },
 			}),
-			{},
+			expectedRestoreEnv(cwd),
 		);
-		assert.equal(isManagedSessionRestoreDisabled(managed), true);
+		assert.equal(isManagedSessionRestoreDisabled(managed), false);
 
 		clearManagedSessionRestoreDisabled();
 		rmSync(join(cwd, "agent-browser.json"));
@@ -712,7 +723,7 @@ test("any agent-browser config blocks restore without reading caller-selected co
 		assert.equal(isManagedSessionRestoreDisabled(managed), true);
 
 		clearManagedSessionRestoreDisabled();
-		mkdirSync(join(home, ".agent-browser"));
+		mkdirSync(join(home, ".agent-browser"), { recursive: true });
 		writeFileSync(join(home, ".agent-browser", "config.json"), "{}");
 		assert.deepEqual(
 			getAndCommitManagedSessionRestoreEnv({
@@ -722,9 +733,9 @@ test("any agent-browser config blocks restore without reading caller-selected co
 				restoreState: managedSessionRestoreState,
 				parentEnv: { HOME: home },
 			}),
-			{},
+			expectedRestoreEnv(cwd),
 		);
-		assert.equal(isManagedSessionRestoreDisabled(managed), true);
+		assert.equal(isManagedSessionRestoreDisabled(managed), false);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 		rmSync(home, { recursive: true, force: true });
@@ -742,17 +753,15 @@ test("managed restore rejects relative HOME and USERPROFILE paths", () => {
 	}
 });
 
-test("Windows config discovery follows USERPROFILE instead of Git Bash HOME", () => {
+test("Windows passive config discovery follows USERPROFILE without blocking pinned restore", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "piab-windows-config-cwd-"));
 	const gitBashHome = mkdtempSync(join(tmpdir(), "piab-windows-git-home-"));
 	const userProfile = mkdtempSync(join(tmpdir(), "piab-windows-user-profile-"));
 	try {
 		mkdirSync(join(userProfile, ".agent-browser"));
 		writeFileSync(join(userProfile, ".agent-browser", "config.json"), "{}");
-		assert.equal(
-			agentBrowserConfigBlocksManagedRestore(cwd, { HOME: gitBashHome, USERPROFILE: userProfile }, [], "win32"),
-			true,
-		);
+		assert.equal(agentBrowserConfigIsPresent(cwd, { HOME: gitBashHome, USERPROFILE: userProfile }, [], "win32"), true);
+		assert.equal(agentBrowserConfigBlocksManagedRestore(cwd, { HOME: gitBashHome, USERPROFILE: userProfile }, [], "win32"), false);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 		rmSync(gitBashHome, { recursive: true, force: true });
@@ -1331,7 +1340,7 @@ test("owned managed session ALS context is isolated across concurrent calls", as
 	clearManagedSessionRestoreDisabled();
 	const cwd = isolatedProject;
 	const managed = "piab-work-abc12345-deadbeef";
-	const key = createManagedSessionRestoreKey(cwd);
+	const key = createManagedSessionRestoreKey(cwd, getManagedSessionRestoreScope(managed));
 	let ownedProbeSawRestore = false;
 	let foreignProbeSawRestore = false;
 	await Promise.all([

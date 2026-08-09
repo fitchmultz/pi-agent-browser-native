@@ -7,9 +7,54 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
+test("buildToolPresentation rejects a pre-existing artifact that the command did not update", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "piab-stale-artifact-"));
+	const artifactPath = join(cwd, "screenshot.png");
+	try {
+		await writeFile(artifactPath, "old screenshot");
+		await utimes(artifactPath, new Date(1_000), new Date(1_000));
+		const presentation = await buildToolPresentation({
+			artifactMinUpdatedAtMs: Date.now(),
+			commandInfo: { command: "screenshot", commandTokens: ["screenshot", artifactPath] },
+			cwd,
+			envelope: { success: true, data: { path: artifactPath } },
+		});
+		assert.equal(presentation.resultCategory, "failure");
+		assert.equal(presentation.failureCategory, "artifact-missing");
+		assert.equal(presentation.artifacts?.[0]?.status, "stale");
+		assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "unverified");
+		assert.match((presentation.content[0] as { text: string }).text, /existed before the command and was not updated/);
+	} finally {
+		await rm(cwd, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation accepts a completed download that wait began observing after the file arrived", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "piab-wait-download-artifact-"));
+	const artifactPath = join(cwd, "download.txt");
+	try {
+		await writeFile(artifactPath, "completed download");
+		await utimes(artifactPath, new Date(1_000), new Date(1_000));
+		const presentation = await buildToolPresentation({
+			artifactMinUpdatedAtMs: Date.now(),
+			commandInfo: { command: "wait", subcommand: "--download", commandTokens: ["wait", "--download", artifactPath] },
+			cwd,
+			envelope: { success: true, data: { path: artifactPath } },
+		});
+		assert.equal(presentation.resultCategory, "success");
+		assert.equal(presentation.artifacts?.[0]?.status, "saved");
+		assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "verified");
+	} finally {
+		await rm(cwd, { force: true, recursive: true });
+	}
+});
+
 test("buildToolPresentation formats snapshot output for the model", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "snapshot" },

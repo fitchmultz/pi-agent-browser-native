@@ -17,7 +17,7 @@ export interface AgentBrowserBatchResult {
 
 export type AgentBrowserResultCategory = "failure" | "success";
 
-export type AgentBrowserSuccessCategory = "artifact-saved" | "artifact-unverified" | "completed" | "inspection";
+export type AgentBrowserSuccessCategory = "artifact-pending" | "artifact-saved" | "artifact-unverified" | "completed" | "inspection";
 
 export type AgentBrowserFailureCategory =
 	| "aborted"
@@ -57,7 +57,7 @@ export interface AgentBrowserPageChangeSummary {
 
 export type FileArtifactKind = "download" | "file" | "har" | "image" | "pdf" | "profile" | "trace" | "video";
 
-export type FileArtifactStatus = "missing" | "pending" | "repaired-from-temp" | "saved" | "upstream-temp-only";
+export type FileArtifactStatus = "missing" | "pending" | "repaired-from-temp" | "saved" | "stale" | "upstream-temp-only";
 
 export interface FileArtifactMetadata {
 	absolutePath: string;
@@ -76,6 +76,7 @@ export interface FileArtifactMetadata {
 	status?: FileArtifactStatus;
 	subcommand?: string;
 	tempPath?: string;
+	updatedAtMs?: number;
 	willExistOnStop?: boolean;
 }
 
@@ -95,6 +96,7 @@ export interface ArtifactVerificationEntry {
 	state: ArtifactVerificationState;
 	status?: FileArtifactStatus;
 	storageScope?: ArtifactStorageScope;
+	updatedAtMs?: number;
 	willExistOnStop?: boolean;
 }
 

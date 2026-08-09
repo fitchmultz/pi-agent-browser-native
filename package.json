@@ -38,6 +38,7 @@
     "scripts/prepare.mjs",
     "scripts/build.mjs",
     "scripts/agent-browser-capability-baseline.mjs",
+    "scripts/agent-browser-target.mjs",
     "scripts/platform-smoke.mjs",
     "scripts/platform-smoke",
     "README.md",

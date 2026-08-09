@@ -19,7 +19,7 @@ import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-mo
 function initializeGitProject(cwd: string): void {
 	execFileSync("git", ["init", "-q", cwd], { stdio: "ignore" });
 }
-import { createManagedSessionRestoreKey } from "../extensions/agent-browser/lib/managed-session-restore.js";
+import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import {
 	collectTimeoutPartialProgress,
 	formatTimeoutPartialProgressText,
@@ -630,7 +630,7 @@ if (args.includes("session") && args.includes("info")) {
 			assert.match(cloudflareBrowserArgs, /^--user-agent=.*Chrome\/\d+\.0\.0\.0/);
 			assert.doesNotMatch(cloudflareBrowserArgs, /[,\r\n]/);
 			assert.match(String((cloudflareInvocation as { userAgent?: string } | undefined)?.userAgent), /Chrome\/\d+\.0\.0\.0/);
-			assert.equal((cloudflareInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
+			assert.equal((cloudflareInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(sessionName)));
 
 			const cloudflareFollowup = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(cloudflareFollowup.isError, false, JSON.stringify(cloudflareFollowup));
@@ -676,7 +676,7 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal(blocked.details?.managedSessionRestoreDisabled, undefined);
 
 			const sessionsDir = join(tempDir, ".agent-browser", "sessions");
-			const restoreKey = createManagedSessionRestoreKey(tempDir);
+			const restoreKey = createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(sessionName));
 			await mkdir(sessionsDir, { recursive: true });
 			for (const [index, suffix] of ["old", "middle", "new"].entries()) {
 				const path = join(sessionsDir, `${restoreKey}-${suffix}.json`);
@@ -1205,7 +1205,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", u
 			assert.equal(retried.isError, false, JSON.stringify(retried));
 			assert.notEqual(retried.details?.managedSessionRestoreDisabled, true);
 			const [invocation] = await readInvocationLog(logPath);
-			assert.equal((invocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
+			assert.equal((invocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(retried.details?.sessionName as string)));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1500,8 +1500,14 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
-test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async () => {
+test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async (context) => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
+	const socketDir = `/tmp/${process.pid.toString(36)}`;
+	await rm(socketDir, { force: true, recursive: true });
+	await mkdir(socketDir, { mode: 0o700 });
+	context.after(async () => {
+		await rm(socketDir, { force: true, recursive: true });
+	});
 	initializeGitProject(tempDir);
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -1519,12 +1525,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 
 	try {
 		const missingBinaryDir = await mkdtemp(join(tempDir, "missing-agent-browser-"));
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_SOCKET_DIR: socketDir }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const firstResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "previous", "open", "https://previous.test"] });
-			assert.equal(firstResult.isError, false);
+			assert.equal(firstResult.isError, false, JSON.stringify(firstResult));
 			const previousSessionName = firstResult.details?.sessionName as string;
 			assert.ok(previousSessionName);
 
@@ -1550,7 +1556,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			await withPatchedEnv({ PATH: missingBinaryDir }, async () => {
 				const missingBinaryResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "next", "open", "https://missing-binary.test"], sessionMode: "fresh" });
 				assert.equal(missingBinaryResult.isError, true);
-				assert.equal(missingBinaryResult.details?.failureCategory, "missing-binary");
+				assert.equal(missingBinaryResult.details?.failureCategory, "missing-binary", JSON.stringify(missingBinaryResult));
+			assert.equal(missingBinaryResult.details?.agentBrowserStarted, false);
 				const missingBinaryOutcome = missingBinaryResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; currentSessionName?: string; currentSessionNamespace?: string; previousSessionName?: string; sessionMode?: string; status?: string } | undefined;
 				assert.equal(missingBinaryOutcome?.status, "preserved");
 				assert.equal(missingBinaryOutcome?.activeBefore, true);

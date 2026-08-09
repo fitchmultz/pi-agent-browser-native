@@ -286,7 +286,7 @@ export function buildQaCompactPassText(options: {
 	if (pageParts.length > 0) lines.push(`Page: ${pageParts.join(" — ")}`);
 	lines.push(`Checks run: ${describeQaChecksRun(options.checks)} (${options.batchStepCount} batch step${options.batchStepCount === 1 ? "" : "s"})`);
 	if (options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
-		lines.push("Diagnostic reset: URL QA cleared enabled network/console/page-error buffers before opening the target; reset rows in details.batchSteps are not counted as current-page failures.");
+		lines.push("Diagnostic isolation: URL QA clears enabled network/console buffers and snapshots the pre-navigation page-error baseline before opening the target. Unchanged baseline errors are not counted as current-page failures because upstream page-error clear is not reliable.");
 	}
 	if (options.checks.attached && !options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
 		lines.push("Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started.");
@@ -382,6 +382,33 @@ function extractQaTextAssertionResultText(item: ReturnType<typeof getBatchResult
 	return undefined;
 }
 
+function qaErrorSignature(error: unknown): string {
+	if (typeof error === "string") return error;
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return String(error);
+	}
+}
+
+function subtractQaBaselineErrors(errors: unknown[], baselineErrors: unknown[]): { ignoredCount: number; novelErrors: unknown[] } {
+	const baselineCounts = new Map<string, number>();
+	for (const error of baselineErrors) {
+		const signature = qaErrorSignature(error);
+		baselineCounts.set(signature, (baselineCounts.get(signature) ?? 0) + 1);
+	}
+	let ignoredCount = 0;
+	const novelErrors = errors.filter((error) => {
+		const signature = qaErrorSignature(error);
+		const count = baselineCounts.get(signature) ?? 0;
+		if (count === 0) return true;
+		baselineCounts.set(signature, count - 1);
+		ignoredCount += 1;
+		return false;
+	});
+	return { ignoredCount, novelErrors };
+}
+
 function isDiagnosticResetCommand(item: Record<string, unknown>): boolean {
 	const command = item.command;
 	if (!Array.isArray(command) || !command.every((token): token is string => typeof token === "string")) return false;
@@ -405,17 +432,26 @@ export function analyzeQaPresetResults(data: unknown, compiled?: CompiledAgentBr
 	if (items.length === 0) return undefined;
 	const failedChecks: string[] = [];
 	const warnings: string[] = [];
-	for (const item of items) {
+	const baselineErrorIndex = compiled?.checks.diagnosticsResetAtStart && compiled.checks.checkErrors
+		? compiled.steps.findIndex((step) => step.action === "wait" && step.args.length === 1 && step.args[0] === "errors")
+		: -1;
+	const baselineErrorItem = baselineErrorIndex >= 0 ? items[baselineErrorIndex] : undefined;
+	const baselineErrorResult = isRecord(baselineErrorItem?.result) ? baselineErrorItem.result : undefined;
+	const baselineErrors = Array.isArray(baselineErrorResult?.errors) ? baselineErrorResult.errors : [];
+	for (const [index, item] of items.entries()) {
 		if (item.success === false) {
 			failedChecks.push(`${getCommandNameFromBatchItem(item) ?? "step"} failed`);
 		}
+		if (index === baselineErrorIndex) continue;
 		const result = isRecord(item.result) ? item.result : undefined;
 		const commandName = getCommandNameFromBatchItem(item);
 		if (compiled?.checks.diagnosticsResetAtStart && isDiagnosticResetCommand(item)) {
 			continue;
 		}
 		if (commandName === "errors" && Array.isArray(result?.errors) && result.errors.length > 0) {
-			failedChecks.push(`${result.errors.length} page error(s)`);
+			const { ignoredCount, novelErrors } = subtractQaBaselineErrors(result.errors, baselineErrors);
+			if (novelErrors.length > 0) failedChecks.push(`${novelErrors.length} page error(s)`);
+			if (ignoredCount > 0) warnings.push(`${ignoredCount} pre-navigation page error(s) ignored as unchanged baseline`);
 		}
 		if (commandName === "console" && Array.isArray(result?.messages)) {
 			const errorCount = result.messages.filter((message) => isRecord(message) && /error/i.test(String(message.type ?? message.level ?? ""))).length;
@@ -502,9 +538,13 @@ export function compileAgentBrowserQaPreset(input: unknown): { compiled?: Compil
 	const steps: CompiledAgentBrowserJobStep[] = [];
 	if (diagnosticsResetAtStart && checkNetwork) steps.push({ action: "wait", args: ["network", "requests", "--clear"] });
 	if (diagnosticsResetAtStart && checkConsole) steps.push({ action: "wait", args: ["console", "--clear"] });
-	if (diagnosticsResetAtStart && checkErrors) steps.push({ action: "wait", args: ["errors", "--clear"] });
+	if (diagnosticsResetAtStart && checkErrors) {
+		steps.push({ action: "wait", args: ["errors"] });
+		steps.push({ action: "wait", args: ["errors", "--clear"] });
+	}
 	if (!attached && normalizedUrl) steps.push({ action: "open", args: ["open", normalizedUrl] });
 	steps.push({ action: "wait", args: ["wait", "--load", loadState] });
+	if (checkConsole || checkErrors) steps.push({ action: "wait", args: ["wait", "150"], generatedFrom: "qa.diagnosticSettle" });
 	for (const text of expectedText) {
 		steps.push({ action: "assertText", args: ["wait", "--fn", buildQaVisibleTextPredicate(text), "--timeout", String(QA_VISIBLE_TEXT_TIMEOUT_MS)] });
 	}

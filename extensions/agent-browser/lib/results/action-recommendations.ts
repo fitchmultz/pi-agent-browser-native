@@ -164,6 +164,12 @@ export function buildAgentBrowserNextActions(options: {
 		}
 		for (const artifact of artifacts) {
 			if (isPendingRecordingArtifact(artifact)) {
+				actions.push(buildNextToolAction({
+					args: ["record", "stop"],
+					id: "stop-pending-recording",
+					reason: "Stop the active recording so the requested video can be finalized and verified on disk.",
+					safety: "The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
+				}));
 				continue;
 			}
 			if (artifact.exists === false) {
@@ -187,7 +193,7 @@ export function buildAgentBrowserNextActions(options: {
 		switch (options.failureCategory) {
 			case "artifact-missing":
 				for (const artifact of options.artifacts ?? []) {
-					if (isPendingRecordingArtifact(artifact) || artifact.exists !== false) continue;
+					if (isPendingRecordingArtifact(artifact) || (artifact.exists !== false && artifact.status !== "stale")) continue;
 					if (artifact.kind === "download") {
 						actions.push(buildNextToolAction({
 							args: ["wait", "--download", artifact.path],

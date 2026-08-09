@@ -1,4 +1,4 @@
-import { JsonSchema, type JsonSchemaBuilder, type TSchema } from "../json-schema.js";
+import { JsonSchema, type JsonSchemaBuilder } from "../json-schema.js";
 import { StringEnum as localStringEnum, type StringEnumBuilder } from "../string-enum-schema.js";
 
 import { AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES } from "./script.js";
@@ -19,21 +19,6 @@ import {
 } from "./types.js";
 
 // Keep descriptions terse: Pi sends this schema every turn; workflows belong in prompt guidance and docs.
-// ponytail: the four electron.launch variants differ only in their single target field
-// (appPath/appName/bundleId/executablePath); the action literal and shared launch fields
-// are identical, so this helper keeps the schema variants in sync.
-function electronLaunchVariant(Type: JsonSchemaBuilder, StringEnum: StringEnumBuilder, targetField: Record<string, TSchema>) {
-	return Type.Object({
-		action: StringEnum(["launch"] as const),
-		...targetField,
-		appArgs: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-		handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS)),
-		targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES)),
-		timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
-		allow: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-		deny: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-	}, { additionalProperties: false });
-}
 
 export function createAgentBrowserParamsSchema(
 	Type: JsonSchemaBuilder = JsonSchema,
@@ -53,9 +38,9 @@ export function createAgentBrowserParamsSchema(
 	semanticAction: Type.Optional(
 		Type.Object({
 			action: StringEnum(AGENT_BROWSER_SEMANTIC_ACTIONS),
-			locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator for check/click/fill." })),
-			value: Type.Optional(Type.String({ description: "Locator value, or one select option." })),
-			values: Type.Optional(Type.Array(Type.String(), { description: "Select options.", minItems: 1 })),
+            locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator for check/click/fill; select supports role or label." })),
+            value: Type.Optional(Type.String({ description: "Locator value or one select option; for select by label, this is the label text." })),
+            values: Type.Optional(Type.Array(Type.String(), { description: "Select options; required for select by label.", minItems: 1 })),
 			selector: Type.Optional(Type.String({ description: "Direct selector or @ref." })),
 			text: Type.Optional(Type.String({ description: "Fill text." })),
 			role: Type.Optional(Type.String({ description: "Role locator; alternative to value." })),
@@ -114,10 +99,19 @@ export function createAgentBrowserParamsSchema(
 				query: Type.Optional(Type.String({ description: "Case-insensitive app filter.", minLength: 1 })),
 				maxResults: Type.Optional(Type.Integer({ description: `Result cap; default ${ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS}, values over ${ELECTRON_DISCOVERY_MAX_RESULTS} are clamped.`, minimum: 1 })),
 			}, { additionalProperties: false }),
-			electronLaunchVariant(Type, StringEnum, { appPath: Type.String({ description: "macOS .app path.", minLength: 1 }) }),
-			electronLaunchVariant(Type, StringEnum, { appName: Type.String({ description: "Name from electron.list.", minLength: 1 }) }),
-			electronLaunchVariant(Type, StringEnum, { bundleId: Type.String({ description: "Bundle id from electron.list.", minLength: 1 }) }),
-			electronLaunchVariant(Type, StringEnum, { executablePath: Type.String({ description: "Executable path.", minLength: 1 }) }),
+			Type.Object({
+				action: StringEnum(["launch"] as const),
+				appPath: Type.Optional(Type.String({ description: "macOS .app path.", minLength: 1 })),
+				appName: Type.Optional(Type.String({ description: "Name from electron.list.", minLength: 1 })),
+				bundleId: Type.Optional(Type.String({ description: "Bundle id from electron.list.", minLength: 1 })),
+				executablePath: Type.Optional(Type.String({ description: "Executable path.", minLength: 1 })),
+				appArgs: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+				handoff: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_HANDOFFS)),
+				targetType: Type.Optional(StringEnum(AGENT_BROWSER_ELECTRON_TARGET_TYPES)),
+				timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+				allow: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+				deny: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+			}, { additionalProperties: false }),
 			Type.Object({
 				action: StringEnum(["status", "cleanup"] as const),
 				launchId: Type.String({ description: "Tracked launch id.", minLength: 1 }),

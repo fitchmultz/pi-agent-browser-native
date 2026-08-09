@@ -6,9 +6,9 @@ import {
 	createManagedSessionRestoreKey,
 	directoryContainsSymlink,
 	ensureManagedSessionRestoreStorageIsSecure,
+	hasManagedSessionRestoreProjectIdentity,
 	ensureOwnerOnlyDirectory,
 	getManagedRestoreSessionsDirectory,
-	hasManagedSessionRestoreProjectIdentity,
 	isManagedSessionRestoreKey,
 	resolveManagedSessionRestoreCheckoutRoot,
 	resolveManagedSessionRestoreHome,
@@ -321,9 +321,7 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 		}
 		if (!changed) break;
 	}
-	const protectedRestoreKey = hasManagedSessionRestoreProjectIdentity(options.cwd)
-		? createManagedSessionRestoreKey(options.cwd)
-		: restoreKey;
+	const protectedRestoreKey = restoreKey;
 	if (!lineage) return removed;
 	removed += pruneExpiredOtherRestoreKeys({
 		directory,

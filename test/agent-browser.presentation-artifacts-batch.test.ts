@@ -267,7 +267,8 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 	assert.equal(presentation.artifactVerification?.pendingCount, 1);
 	assert.equal(presentation.artifactVerification?.verified, false);
 	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "pending");
-	assert.equal(presentation.nextActions, undefined);
+	assert.equal(presentation.nextActions?.[0]?.id, "stop-pending-recording");
+	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["record", "stop"]);
 });
 
 test("buildToolPresentation renders record restart as a pending lifecycle state", async () => {

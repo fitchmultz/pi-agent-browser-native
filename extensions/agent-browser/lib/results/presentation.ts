@@ -66,6 +66,7 @@ function shouldAddAnnotatedScreenshotGuidance(commandInfo: CommandInfo, args: st
 
 export async function buildToolPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMinUpdatedAtMs?: number;
 	args?: string[];
 	artifactRequest?: ArtifactRequestContext;
 	batchArtifactRequests?: Array<ArtifactRequestContext | undefined>;
@@ -104,7 +105,7 @@ export async function buildToolPresentation(options: {
 
 	const data = enrichStreamStatusData(commandInfoWithTokens, envelope?.data);
 	const presentationData = redactPresentationData(commandInfoWithTokens, data);
-	const artifacts = await extractFileArtifacts({ artifactManifest, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, sessionName });
+	const artifacts = await extractFileArtifacts({ artifactManifest, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);
 	const summary = artifactSummary ?? formatPresentationSummary(commandInfoWithTokens, data, compiledSemanticAction);
@@ -114,6 +115,7 @@ export async function buildToolPresentation(options: {
 	if (commandInfo.command === "batch" && isAgentBrowserBatchResultArray(data)) {
 		presentation = await buildBatchPresentation({
 			artifactManifest,
+			artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs,
 			artifactRequests: options.batchArtifactRequests,
 			buildNestedToolPresentation: buildToolPresentation,
 			cwd,

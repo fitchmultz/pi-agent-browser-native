@@ -569,7 +569,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			errorText = redactClipboardPermissionEcho(prepared.executionPlan.commandInfo, errorText);
 			if (presentationEnvelope?.error !== undefined) presentationEnvelope = { ...presentationEnvelope, error: redactClipboardPermissionErrorValue(prepared.executionPlan.commandInfo, presentationEnvelope.error, clipboardWritePayloadCandidates) };
 		}
-		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, namespace: prepared.executionPlan.namespace, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
+		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactMinUpdatedAtMs: input.artifactRunStartedAtMs, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, namespace: prepared.executionPlan.namespace, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
 		if (observedPageValidationError) presentation.failureCategory = "validation-error";
 		if (electronHandoff?.error && electronHandoff.failureCategory) presentation.failureCategory = electronHandoff.failureCategory;
 		networkRoutesBySession = applyBatchNetworkRouteState({ data: presentationEnvelope?.data, routesBySession: networkRoutesBySession, sessionName: sessionStateKey, succeeded });
@@ -578,9 +578,17 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentationEnvelope = { ...(presentationEnvelope ?? {}), error: presentation.summary, success: false };
 		}
 		if (scrollNoopDiagnostic) {
+			succeeded = false;
+			presentation.resultCategory = "failure";
+			presentation.failureCategory = "upstream-error";
+			presentationEnvelope = { ...(presentationEnvelope ?? {}), error: "Scroll completed with no observed movement.", success: false };
 			presentation.summary = "Scroll completed with no observed movement.";
-			if (isRecord(presentation.data)) presentation.data = { ...presentation.data, noMovement: true, scrolled: false };
-			if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `Scroll completed with no observed movement.\n\n${presentation.content[0].text}` };
+			if (isRecord(presentation.data)) {
+				presentation.data = { ...presentation.data, noMovement: true, scrolled: false };
+				if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `Scroll completed with no observed movement.\n\n${JSON.stringify(presentation.data, null, 2)}` };
+			} else if (presentation.content[0]?.type === "text") {
+				presentation.content[0] = { ...presentation.content[0], text: `Scroll completed with no observed movement.\n\n${presentation.content[0].text}` };
+			}
 			else presentation.content.unshift({ type: "text", text: "Scroll completed with no observed movement." });
 		}
 		if (parseFailureOutput.artifactManifest) { presentation.artifactManifest = parseFailureOutput.artifactManifest; presentation.artifactRetentionSummary = parseFailureOutput.artifactRetentionSummary; }

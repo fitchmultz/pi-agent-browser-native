@@ -164,6 +164,7 @@ export interface ArtifactRequestContext {
 }
 
 async function buildFileArtifactMetadata(options: {
+	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
 	cwd: string;
@@ -181,11 +182,16 @@ async function buildFileArtifactMetadata(options: {
 	const pendingRecording = isPendingRecordingCommand(options.commandInfo.command, options.commandInfo.subcommand, kind);
 	let exists: boolean | undefined;
 	let sizeBytes: number | undefined;
+	let stale = false;
+	let updatedAtMs: number | undefined;
 	if (!pendingRecording) {
 		try {
 			const fileStats = await stat(absolutePath);
 			exists = true;
 			sizeBytes = fileStats.size;
+			updatedAtMs = fileStats.mtimeMs;
+			const commandCreatesArtifact = !(options.commandInfo.command === "wait" && options.commandInfo.subcommand === "--download");
+			stale = commandCreatesArtifact && options.artifactMinUpdatedAtMs !== undefined && updatedAtMs < options.artifactMinUpdatedAtMs - 1;
 		} catch {
 			exists = false;
 		}
@@ -205,9 +211,10 @@ async function buildFileArtifactMetadata(options: {
 		requestedPath: options.artifactRequest?.path,
 		session: options.sessionName,
 		sizeBytes,
-		status: options.artifactRequest?.status ?? (pendingRecording ? "pending" : exists === false ? "missing" : "saved"),
+		status: pendingRecording ? "pending" : exists === false ? "missing" : stale ? "stale" : options.artifactRequest?.status ?? "saved",
 		subcommand: options.commandInfo.subcommand,
 		tempPath: options.artifactRequest?.tempPath,
+		updatedAtMs,
 		willExistOnStop: pendingRecording ? true : undefined,
 	};
 }
@@ -255,6 +262,7 @@ async function buildPreviousRestartRecordingArtifact(options: {
 
 export async function extractFileArtifacts(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
 	cwd: string;
@@ -289,6 +297,7 @@ export function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMeta
 }
 
 export function isManifestFileArtifact(artifact: FileArtifactMetadata): boolean {
+	if (artifact.status === "stale") return false;
 	return artifact.kind === "video" && artifact.command === "record" ? true : !isPendingRecordingArtifact(artifact);
 }
 
@@ -311,20 +320,24 @@ function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactV
 			willExistOnStop: artifact.willExistOnStop ?? true,
 		};
 	}
-	const state = artifact.exists === true
-		? "verified"
-		: artifact.exists === false
-			? "missing"
-			: "unverified";
+	const state = artifact.status === "stale"
+		? "unverified"
+		: artifact.exists === true
+			? "verified"
+			: artifact.exists === false
+				? "missing"
+				: "unverified";
 	return {
 		absolutePath: artifact.absolutePath,
 		exists: artifact.exists,
 		kind: artifact.kind,
-		limitation: state === "missing"
-			? "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated."
-			: state === "unverified"
-				? "The wrapper could not prove local filesystem existence for this artifact."
-				: undefined,
+		limitation: artifact.status === "stale"
+			? "The reported path existed before this command and was not updated during it. Treat the artifact as stale until regenerated."
+			: state === "missing"
+				? "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated."
+				: state === "unverified"
+					? "The wrapper could not prove local filesystem existence for this artifact."
+					: undefined,
 		mediaType: artifact.mediaType,
 		path: artifact.path,
 		requestedPath: artifact.requestedPath,
@@ -333,6 +346,7 @@ function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactV
 		state,
 		status: artifact.status,
 		storageScope: "explicit-path",
+		updatedAtMs: artifact.updatedAtMs,
 	};
 }
 
@@ -391,17 +405,19 @@ export function buildArtifactVerificationSummary(
 }
 
 export function hasMissingFileArtifact(artifacts: FileArtifactMetadata[] | undefined): boolean {
-	return (artifacts ?? []).some((artifact) => !isPendingRecordingArtifact(artifact) && artifact.exists === false);
+	return (artifacts ?? []).some((artifact) => !isPendingRecordingArtifact(artifact) && (artifact.exists === false || artifact.status === "stale"));
 }
 
 export function formatMissingArtifactFailureText(artifacts: FileArtifactMetadata[] | undefined): string | undefined {
-	const missingArtifacts = (artifacts ?? []).filter((artifact) => !isPendingRecordingArtifact(artifact) && artifact.exists === false);
-	if (missingArtifacts.length === 0) return undefined;
-	if (missingArtifacts.length === 1) {
-		const artifact = missingArtifacts[0];
-		return `Artifact verification failed: requested ${artifact.kind} was not found at ${artifact.absolutePath}.`;
+	const failedArtifacts = (artifacts ?? []).filter((artifact) => !isPendingRecordingArtifact(artifact) && (artifact.exists === false || artifact.status === "stale"));
+	if (failedArtifacts.length === 0) return undefined;
+	if (failedArtifacts.length === 1) {
+		const artifact = failedArtifacts[0];
+		return artifact.status === "stale"
+			? `Artifact verification failed: requested ${artifact.kind} path ${artifact.absolutePath} existed before the command and was not updated.`
+			: `Artifact verification failed: requested ${artifact.kind} was not found at ${artifact.absolutePath}.`;
 	}
-	return `Artifact verification failed: ${missingArtifacts.length} requested artifacts were not found on disk.`;
+	return `Artifact verification failed: ${failedArtifacts.length} requested artifacts were missing or stale.`;
 }
 
 export function classifyPresentationSuccessCategory(options: {
