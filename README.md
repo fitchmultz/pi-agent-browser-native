@@ -166,6 +166,8 @@ The doctor checks:
 
 It does **not** edit Pi settings and does **not** run upstream `agent-browser doctor --fix`.
 
+Pi hosts that run as uid 0 should set `PI_AGENT_BROWSER_SOCKET_DIR` to a short absolute directory under private root-owned ancestry, create it with mode `0700`, and keep it owned by the Pi user. The extension validates that directory and forwards it as upstream `AGENT_BROWSER_SOCKET_DIR`; ambient upstream socket overrides remain ignored.
+
 ## Optional package config and web search
 
 `pi-agent-browser-native` also reads package-owned config under Pi-scoped paths:

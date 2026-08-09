@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.4.1 - 2026-08-09
+
+### Fixed
+
+- Root-run Pi hosts can select a private wrapper socket directory with `PI_AGENT_BROWSER_SOCKET_DIR`; the extension validates it and forwards only the corresponding upstream `AGENT_BROWSER_SOCKET_DIR`. Ambient upstream socket overrides remain ignored. This prevents every browser-backed call from failing when uid 0 uses the default root-owned world-writable `/tmp` ancestry.
+
 ## 0.4.0 - 2026-08-07
 
 ### Added
