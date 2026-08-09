@@ -32,6 +32,7 @@ const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
 const INLINE_IMAGE_MAX_BYTES_ENV = "PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES";
 
 const DEFAULT_INLINE_IMAGE_MAX_BYTES = 5 * 1_024 * 1_024;
+const ARTIFACT_MTIME_TOLERANCE_MS = 2_000;
 
 function getImageMimeType(filePath: string): string | undefined {
 	const extension = extname(filePath).toLowerCase();
@@ -164,6 +165,7 @@ export interface ArtifactRequestContext {
 }
 
 async function buildFileArtifactMetadata(options: {
+	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
@@ -191,7 +193,10 @@ async function buildFileArtifactMetadata(options: {
 			sizeBytes = fileStats.size;
 			updatedAtMs = fileStats.mtimeMs;
 			const commandCreatesArtifact = !(options.commandInfo.command === "wait" && options.commandInfo.subcommand === "--download");
-			stale = commandCreatesArtifact && options.artifactMinUpdatedAtMs !== undefined && updatedAtMs < options.artifactMinUpdatedAtMs - 1;
+			const outsideCommandWindow = options.artifactMinUpdatedAtMs !== undefined
+				&& (updatedAtMs < options.artifactMinUpdatedAtMs - ARTIFACT_MTIME_TOLERANCE_MS
+					|| (options.artifactMaxUpdatedAtMs !== undefined && updatedAtMs > options.artifactMaxUpdatedAtMs + ARTIFACT_MTIME_TOLERANCE_MS));
+			stale = commandCreatesArtifact && outsideCommandWindow;
 		} catch {
 			exists = false;
 		}
@@ -262,6 +267,7 @@ async function buildPreviousRestartRecordingArtifact(options: {
 
 export async function extractFileArtifacts(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
@@ -332,7 +338,7 @@ function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactV
 		exists: artifact.exists,
 		kind: artifact.kind,
 		limitation: artifact.status === "stale"
-			? "The reported path existed before this command and was not updated during it. Treat the artifact as stale until regenerated."
+			? "The reported path's modification time fell outside this command's bounded artifact window. Treat the artifact as stale until regenerated."
 			: state === "missing"
 				? "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated."
 				: state === "unverified"
@@ -414,7 +420,7 @@ export function formatMissingArtifactFailureText(artifacts: FileArtifactMetadata
 	if (failedArtifacts.length === 1) {
 		const artifact = failedArtifacts[0];
 		return artifact.status === "stale"
-			? `Artifact verification failed: requested ${artifact.kind} path ${artifact.absolutePath} existed before the command and was not updated.`
+			? `Artifact verification failed: requested ${artifact.kind} path ${artifact.absolutePath} has a modification time outside the current command window.`
 			: `Artifact verification failed: requested ${artifact.kind} was not found at ${artifact.absolutePath}.`;
 	}
 	return `Artifact verification failed: ${failedArtifacts.length} requested artifacts were missing or stale.`;

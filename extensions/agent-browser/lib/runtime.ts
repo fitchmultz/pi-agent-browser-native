@@ -685,8 +685,12 @@ export function createImplicitSessionName(
 			.replace(/^-+|-+$/g, "")
 			.slice(0, MAX_PROJECT_SLUG_LENGTH) || "project";
 	const cwdHash = createCwdHash(cwd);
-	const stableSessionId = sessionId?.replace(/-/g, "").slice(0, SESSION_NAME_SESSION_ID_LENGTH);
-	if (stableSessionId && stableSessionId.length > 0) {
+	const normalizedSessionId = sessionId?.replaceAll("-", "").toLowerCase();
+	if (normalizedSessionId) {
+		const stableSessionId = createHash("sha256")
+			.update(`session:${normalizedSessionId}`)
+			.digest("hex")
+			.slice(0, SESSION_NAME_SESSION_ID_LENGTH);
 		return `${MANAGED_SESSION_NAME_PREFIX}${slug}-${stableSessionId}-${cwdHash}`;
 	}
 

@@ -26,6 +26,7 @@ import { appendSelectorRecoveryHint, getClipboardWritePayloadCandidates, redactC
 
 export interface BuildNestedToolPresentationOptions {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	args?: string[];
@@ -203,6 +204,7 @@ function formatBatchStepsText(steps: Array<{ details: BatchStepPresentationDetai
 
 async function buildBatchStepPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	buildNestedToolPresentation: BuildNestedToolPresentation;
@@ -214,7 +216,7 @@ async function buildBatchStepPresentation(options: {
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 }): Promise<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> {
-	const { artifactManifest, artifactMinUpdatedAtMs, artifactRequest, buildNestedToolPresentation, cwd, index, item, namespace, networkRoutes, persistentArtifactStore, sessionName } = options;
+	const { artifactManifest, artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs, artifactRequest, buildNestedToolPresentation, cwd, index, item, namespace, networkRoutes, persistentArtifactStore, sessionName } = options;
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const redactedCommand = command ? redactInvocationArgs(command) : undefined;
 	const commandText = formatBatchStepCommand(hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command, index);
@@ -274,6 +276,7 @@ async function buildBatchStepPresentation(options: {
 		: undefined;
 	const presentation = await buildNestedToolPresentation({
 		artifactManifest,
+		artifactMaxUpdatedAtMs,
 		artifactMinUpdatedAtMs,
 		artifactRequest,
 		commandInfo: commandInfoWithTokens,
@@ -343,6 +346,7 @@ async function buildBatchStepPresentation(options: {
 
 export async function buildBatchPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
 	artifactRequests?: Array<ArtifactRequestContext | undefined>;
 	buildNestedToolPresentation: BuildNestedToolPresentation;
@@ -362,6 +366,7 @@ export async function buildBatchPresentation(options: {
 	for (const [index, item] of data.entries()) {
 		const step = await buildBatchStepPresentation({
 			artifactManifest: currentArtifactManifest,
+			artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs,
 			artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs,
 			artifactRequest: artifactRequests?.[index],
 			buildNestedToolPresentation,

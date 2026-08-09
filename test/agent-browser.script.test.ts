@@ -689,7 +689,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: Array.from({ len
 	}
 });
 
-test("script does not run cleanup when socket preflight proves the browser never started", { concurrency: false }, async () => {
+test("script still runs fail-closed cleanup when the main browser command never starts", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-preflight-"));
 	const logPath = join(tempDir, "invocations.log");
 	const socketDir = join(tempDir, "a".repeat(80));
@@ -713,7 +713,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "should not 
 			assert.equal((result.details?.scriptSession as { cleanup?: string } | undefined)?.cleanup, "closed");
 			assert.deepEqual(harness.appendedEntries.map((entry) => (entry.data as { cleanup?: string }).cleanup), ["active", "closed"]);
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 0, "preflight and lease retirement must not spawn the browser or a futile close");
+			assert.equal(invocations.some((entry) => entry.args.includes("open")), false);
+			assert.ok(invocations.some((entry) => entry.args.includes("close")), "cleanup must close helpers that could have started the isolated browser");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

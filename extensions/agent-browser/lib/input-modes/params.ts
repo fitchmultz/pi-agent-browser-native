@@ -38,9 +38,9 @@ export function createAgentBrowserParamsSchema(
 	semanticAction: Type.Optional(
 		Type.Object({
 			action: StringEnum(AGENT_BROWSER_SEMANTIC_ACTIONS),
-            locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator for check/click/fill; select supports role or label." })),
-            value: Type.Optional(Type.String({ description: "Locator value or one select option; for select by label, this is the label text." })),
-            values: Type.Optional(Type.Array(Type.String(), { description: "Select options; required for select by label.", minItems: 1 })),
+			locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator for check/click/fill; select supports role or label." })),
+			value: Type.Optional(Type.String({ description: "Locator value or one select option; for select by label, this is the label text." })),
+			values: Type.Optional(Type.Array(Type.String(), { description: "Select options; required for select by label.", minItems: 1 })),
 			selector: Type.Optional(Type.String({ description: "Direct selector or @ref." })),
 			text: Type.Optional(Type.String({ description: "Fill text." })),
 			role: Type.Optional(Type.String({ description: "Role locator; alternative to value." })),

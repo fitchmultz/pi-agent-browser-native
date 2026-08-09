@@ -29,7 +29,49 @@ test("buildToolPresentation rejects a pre-existing artifact that the command did
 		assert.equal(presentation.failureCategory, "artifact-missing");
 		assert.equal(presentation.artifacts?.[0]?.status, "stale");
 		assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "unverified");
-		assert.match((presentation.content[0] as { text: string }).text, /existed before the command and was not updated/);
+		assert.match((presentation.content[0] as { text: string }).text, /outside the current command window/);
+	} finally {
+		await rm(cwd, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation rejects future-dated artifacts outside the command window", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "piab-future-artifact-"));
+	const artifactPath = join(cwd, "screenshot.png");
+	try {
+		const now = Date.now();
+		await writeFile(artifactPath, "future screenshot");
+		await utimes(artifactPath, new Date(now + 60_000), new Date(now + 60_000));
+		const presentation = await buildToolPresentation({
+			artifactMaxUpdatedAtMs: now + 100,
+			artifactMinUpdatedAtMs: now,
+			commandInfo: { command: "screenshot", commandTokens: ["screenshot", artifactPath] },
+			cwd,
+			envelope: { success: true, data: { path: artifactPath } },
+		});
+		assert.equal(presentation.resultCategory, "failure");
+		assert.equal(presentation.artifacts?.[0]?.status, "stale");
+	} finally {
+		await rm(cwd, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation tolerates coarse filesystem mtimes near command start", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "piab-coarse-artifact-"));
+	const artifactPath = join(cwd, "screenshot.png");
+	try {
+		const now = Date.now();
+		await writeFile(artifactPath, "coarse screenshot");
+		await utimes(artifactPath, new Date(now - 1_000), new Date(now - 1_000));
+		const presentation = await buildToolPresentation({
+			artifactMaxUpdatedAtMs: now + 100,
+			artifactMinUpdatedAtMs: now,
+			commandInfo: { command: "screenshot", commandTokens: ["screenshot", artifactPath] },
+			cwd,
+			envelope: { success: true, data: { path: artifactPath } },
+		});
+		assert.equal(presentation.resultCategory, "success");
+		assert.equal(presentation.artifacts?.[0]?.status, "saved");
 	} finally {
 		await rm(cwd, { force: true, recursive: true });
 	}

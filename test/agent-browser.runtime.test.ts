@@ -91,7 +91,15 @@ test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const two = createImplicitSessionName(sessionId, cwd, "ignored-b");
 
 	assert.equal(one, two);
-	assert.match(one, /^piab-pi-agent-browser-123456781234-[a-f0-9]{8}$/);
+	assert.match(one, /^piab-pi-agent-browser-[a-f0-9]{12}-[a-f0-9]{8}$/);
+});
+
+test("createImplicitSessionName hashes the full Pi session id", () => {
+	const cwd = "/Users/example/Projects/pi-agent-browser";
+	const one = createImplicitSessionName("019fe81c-92dd-7000-8000-000000000001", cwd, "ignored");
+	const two = createImplicitSessionName("019fe81c-92dd-7000-8000-000000000002", cwd, "ignored");
+
+	assert.notEqual(one, two);
 });
 
 test("createImplicitSessionName includes cwd isolation for same-named checkouts", () => {
@@ -100,8 +108,8 @@ test("createImplicitSessionName includes cwd isolation for same-named checkouts"
 	const two = createImplicitSessionName(sessionId, "/tmp/bar/app", "ignored-b");
 
 	assert.notEqual(one, two);
-	assert.match(one, /^piab-app-123456781234-[a-f0-9]{8}$/);
-	assert.match(two, /^piab-app-123456781234-[a-f0-9]{8}$/);
+	assert.match(one, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
+	assert.match(two, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
 });
 
 test("getAgentBrowserSocketDir uses a short user-specific unix socket directory and skips windows", () => {

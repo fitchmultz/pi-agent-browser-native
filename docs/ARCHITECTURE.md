@@ -245,7 +245,7 @@ Upstream restore-state persistence remains upstream-owned. The wrapper passes an
 
 The extension does not ship `agent-browser`, but it does ship maintainer-owned documentation that must stay aligned when upstream help text grows. That work splits into two checks with different responsibilities:
 
-1. **Canonical baseline metadata** lives in `scripts/agent-browser-capability-baseline.mjs` (target version, which `agent-browser` help invocations to sample in live checks, and which literal tokens must appear in upstream help and in human-written `docs/COMMAND_REFERENCE.md` inventory sections). That file does not execute `agent-browser`; rebasing it is an explicit edit after comparing real `--help` output from the installed binary.
+1. **Canonical target and baseline metadata** are split deliberately: `scripts/agent-browser-target.mjs` owns the runtime target version, while `scripts/agent-browser-capability-baseline.mjs` imports it and declares which `agent-browser` help invocations to sample plus which literal tokens must appear in upstream help and human-written `docs/COMMAND_REFERENCE.md` inventory sections. Neither file executes `agent-browser`; rebasing them is an explicit edit after comparing real `--help` output from the installed binary.
 
 2. **Generated Markdown blocks** in `docs/COMMAND_REFERENCE.md` are bounded by stable HTML comments. `scripts/check-command-reference-baseline.mjs` renders those blocks from the baseline metadata only. Use `npm run docs -- command-reference check` or `npm run docs -- command-reference write` after baseline edits so checked-in blocks cannot drift silently.
 

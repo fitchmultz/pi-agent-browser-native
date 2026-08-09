@@ -336,6 +336,21 @@ test("agentBrowserExtension rejects unsupported extra press/key args before upst
 	}
 });
 
+test("agentBrowserExtension rejects duplicate explicit artifact destinations inside one batch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-duplicate-artifact-"));
+	try {
+		const harness = createExtensionHarness({ cwd: tempDir });
+		const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "artifact.png"], ["screenshot", "./artifact.png"]]),
+		});
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /artifact\.png is already written by step 1/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports no-op scroll diagnostics with recovery next actions", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-noop-scroll-"));
 	const logPath = join(tempDir, "invocations.log");

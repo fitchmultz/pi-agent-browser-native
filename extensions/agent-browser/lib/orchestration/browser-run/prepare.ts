@@ -634,11 +634,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			});
 		}
 		if (!executionPlan.validationError && requiresResolvedSemanticVisibleRef(compiledSemanticAction) && !semanticActionVisibleRefResolution) {
+			const freshLocatorError = executionPlan.managedSessionName === freshSessionName
+				? "semanticAction select with locator cannot resolve a current @ref in sessionMode fresh. Open the page first, then reuse that session, or pass selector plus value/values."
+				: undefined;
 			executionPlan = {
 				...executionPlan,
-				validationError: hasPotentialLiveSemanticSession
+				validationError: freshLocatorError ?? (hasPotentialLiveSemanticSession
 					? "semanticAction select with locator could not resolve to exactly one current visible combobox/listbox ref. Run snapshot -i and retry with selector or a more specific role/name."
-					: "semanticAction select with locator requires an active browser session so the wrapper can resolve a current @ref; open a page first or pass selector plus value/values.",
+					: "semanticAction select with locator requires an active browser session so the wrapper can resolve a current @ref; open a page first or pass selector plus value/values."),
 			};
 		}
 		if (semanticActionVisibleRefResolution) {
@@ -1108,7 +1111,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				redactedCompiledJob,
 				redactedCompiledNetworkSourceLookup,
 				redactedCompiledQaPreset,
-				redactedCompiledSemanticAction,
+				redactedCompiledSemanticAction: semanticActionVisibleRefResolution && redactedCompiledSemanticAction?.action === "select"
+					? { ...redactedCompiledSemanticAction, args: redactInvocationArgs(semanticActionVisibleRefResolution.args) }
+					: redactedCompiledSemanticAction,
 				redactedCompiledSourceLookup,
 				redactedEffectiveArgs,
 				redactedProcessArgs,

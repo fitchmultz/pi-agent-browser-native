@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
@@ -61,6 +61,7 @@ import {
 } from "./lib/input-modes/script.js";
 import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
 import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
+import { getExplicitArtifactDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
 import {
@@ -119,7 +120,7 @@ interface BranchManagedResourceEvents {
 	managedSessionCloseRanks: Map<string, number>;
 }
 
-function getBatchPreflightValidationError(args: string[], stdin: string | undefined): string | undefined {
+function getBatchPreflightValidationError(args: string[], stdin: string | undefined, cwd: string): string | undefined {
 	const commandTokens = extractCommandTokens(args);
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return undefined;
@@ -128,10 +129,20 @@ function getBatchPreflightValidationError(args: string[], stdin: string | undefi
 	if (parsed.error || parsed.steps === undefined) {
 		return undefined;
 	}
+	const artifactDestinations = new Map<string, number>();
 	for (const [index, step] of parsed.steps.entries()) {
 		if (!Array.isArray(step) || !step.every((token) => typeof token === "string") || step.length === 0) continue;
 		const stepValidationError = validateToolArgs(step);
 		if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
+		const artifactDestination = getExplicitArtifactDestination(step);
+		if (artifactDestination) {
+			const absoluteDestination = resolve(cwd, artifactDestination);
+			const priorStep = artifactDestinations.get(absoluteDestination);
+			if (priorStep !== undefined) {
+				return `Unsupported batch artifact destination in step ${index + 1}: ${artifactDestination} is already written by step ${priorStep + 1}. Use distinct paths or split the batch so each artifact can be verified independently.`;
+			}
+			artifactDestinations.set(absoluteDestination, index);
+		}
 		if (step[0] === "screenshot" && step.includes("--annotate")) {
 			return [
 				`Unsupported batch screenshot annotation in step ${index + 1}: put --annotate in top-level args, not inside the batch step.`,
@@ -1177,8 +1188,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 			const outputPath = isRecord(params) && typeof params.outputPath === "string" ? params.outputPath : undefined;
 			const resolvedInput = resolveAgentBrowserInput({
-				getBatchPreflightValidationError,
-				managedSessionActive,
+                getBatchPreflightValidationError: (args, stdin) => getBatchPreflightValidationError(args, stdin, ctx.cwd),
+                managedSessionActive,
 				params,
 			});
 			if (resolvedInput.status === "invalid") {
@@ -1267,26 +1278,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					activeScriptControllers.delete(scriptController);
 					signal?.removeEventListener("abort", abortScript);
 					if (leased) {
-						const browserDefinitelyNeverStarted = innerResults.length > 0
-							&& innerResults.every((result) => isRecord(result.details) && result.details.agentBrowserStarted === false);
-						if (browserDefinitelyNeverStarted) {
+						try {
+							cleanupError = await managedSessionExecutionQueue.run(() => closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd));
+						} catch {
+							cleanupError = "The isolated script session cleanup operation failed.";
 							try {
-								appendScriptSessionLease(pi, sessionName, "closed");
-								untrackOwnedManagedSession(ownedManagedSessions, sessionName);
-								managedSessionRestoreState.clear(sessionName);
-								clearSessionScopedBrowserState(sessionName);
-							} catch {
-								cleanupError = "The isolated session never launched, but its durable cleanup record could not be saved.";
-							}
-						} else {
-							try {
-								cleanupError = await managedSessionExecutionQueue.run(() => closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd));
-							} catch {
-								cleanupError = "The isolated script session cleanup operation failed.";
-								try {
-									appendScriptSessionLease(pi, sessionName, "failed");
-								} catch {}
-							}
+								appendScriptSessionLease(pi, sessionName, "failed");
+							} catch {}
 						}
 					}
 					activeScriptExecutions.delete(scriptExecution);

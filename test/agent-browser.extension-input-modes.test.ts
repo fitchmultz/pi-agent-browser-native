@@ -579,7 +579,7 @@ if (args.includes("open")) {
 				action: "select",
 				locator: "role",
 				values: ["chocolate"],
-				args: ["find", "role", "combobox", "select", "chocolate", "--name", "Flavor"],
+				args: ["select", "@e4", "chocolate"],
 			});
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-3), ["select", "@e4", "chocolate"]);
 			const dashOption = await executeRegisteredTool(harness.tool, harness.ctx, {

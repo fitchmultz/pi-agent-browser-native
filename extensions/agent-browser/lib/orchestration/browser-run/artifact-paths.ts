@@ -49,3 +49,27 @@ export function getScreenshotPathTokenIndex(commandTokens: string[]): number | u
 	}
 	return undefined;
 }
+
+function getFlagValue(commandTokens: string[], flag: string): string | undefined {
+	const equalsPrefix = `${flag}=`;
+	const equalsValue = commandTokens.find((token) => token.startsWith(equalsPrefix));
+	if (equalsValue) return equalsValue.slice(equalsPrefix.length) || undefined;
+	const index = commandTokens.indexOf(flag);
+	return index >= 0 ? commandTokens[index + 1] : undefined;
+}
+
+export function getExplicitArtifactDestination(commandTokens: string[]): string | undefined {
+	const command = commandTokens[0];
+	const subcommand = commandTokens[1];
+	if (command === "screenshot") {
+		const index = getScreenshotPathTokenIndex(commandTokens);
+		return index === undefined ? undefined : commandTokens[index];
+	}
+	if (command === "download") return commandTokens[2];
+	if (command === "pdf") return commandTokens[1];
+	if (command === "state" && subcommand === "save") return commandTokens[2];
+	if (command === "diff" && subcommand === "screenshot") return getFlagValue(commandTokens, "--output");
+	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") return commandTokens[3];
+	if ((command === "trace" || command === "profiler") && subcommand === "stop") return commandTokens[2];
+	return undefined;
+}

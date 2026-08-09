@@ -159,6 +159,10 @@ test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", (
 		reorderWindowsLeadingGlobalArgs(["--json", "--args", "", "--allow-file-access", "false", "--session", "managed", "get", "url"]),
 		["get", "url", "--json", "--allow-file-access", "false", "--session", "managed"],
 	);
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--json", "--session", "managed", "find", "role", "combobox", "select", "chocolate", "--name", "Flavor"]),
+		["find", "role", "--json", "--session", "managed", "combobox", "select", "chocolate", "--name", "Flavor"],
+	);
 	for (const invalid of [
 		["--json", "--body", "secret", "session", "list"],
 		["--auto-connect", "FALSE", "open", "https://example.com"],
