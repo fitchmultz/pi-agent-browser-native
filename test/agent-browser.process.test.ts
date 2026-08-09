@@ -315,6 +315,34 @@ test("agent-browser socket storage rejects unsafe permissions, ancestry, symlink
 	}
 });
 
+test("runAgentBrowserProcess uses the Pi-scoped socket directory without trusting ambient upstream configuration", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-socket-config-"));
+	const socketPath = join(tempDir, "socket");
+	try {
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`process.stdout.write(JSON.stringify({ success: true, data: { socketDir: process.env.AGENT_BROWSER_SOCKET_DIR ?? null } }));`,
+		);
+		await withPatchedEnv(
+			{
+				AGENT_BROWSER_SOCKET_DIR: join(tempDir, "ignored-upstream-value"),
+				PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
+				PI_AGENT_BROWSER_SOCKET_DIR: socketPath,
+			},
+			async () => {
+				const result = await runAgentBrowserProcess({ args: ["--version"], cwd: tempDir });
+				assert.equal(result.agentBrowserStarted, true);
+				assert.equal(result.spawnError, undefined);
+				const parsed = await parseAgentBrowserEnvelope(result.stdout);
+				assert.equal((parsed.envelope?.data as { socketDir?: string }).socketDir, socketPath);
+				assert.equal((await stat(socketPath)).mode & 0o777, 0o700);
+			},
+		);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("runAgentBrowserProcess fails before spawn for unsafe socket storage", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-socket-preflight-"));
 	const markerPath = join(tempDir, "spawned.txt");

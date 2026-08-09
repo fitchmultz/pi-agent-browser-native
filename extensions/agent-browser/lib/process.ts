@@ -44,6 +44,7 @@ const AGENT_BROWSER_ARGS_ENV = "AGENT_BROWSER_ARGS";
 const AGENT_BROWSER_DEFAULT_TIMEOUT_ENV = "AGENT_BROWSER_DEFAULT_TIMEOUT";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS";
+const PI_AGENT_BROWSER_SOCKET_DIR_ENV = "PI_AGENT_BROWSER_SOCKET_DIR";
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
 export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
@@ -495,7 +496,7 @@ export async function runAgentBrowserProcess(options: {
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
 	if (ownedManagedSessionClose) effectiveEnv = { ...effectiveEnv, AGENT_BROWSER_RESTORE: undefined };
-	const requestedSocketDir = explicitSocketDir ?? getAgentBrowserSocketDir();
+	const requestedSocketDir = explicitSocketDir ?? parentEnv[PI_AGENT_BROWSER_SOCKET_DIR_ENV] ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir !== undefined) {
 		const socketDirIsSecure = requestedSocketDir.length > 0 && await ensureAgentBrowserSocketDir(requestedSocketDir);
 		if (signal?.aborted) {
