@@ -164,6 +164,12 @@ export interface ArtifactRequestContext {
 	tempPath?: string;
 }
 
+function artifactMtimeIsOutsideCommandWindow(updatedAtMs: number, minUpdatedAtMs?: number, maxUpdatedAtMs?: number): boolean {
+	return minUpdatedAtMs !== undefined
+		&& (updatedAtMs < minUpdatedAtMs - ARTIFACT_MTIME_TOLERANCE_MS
+			|| (maxUpdatedAtMs !== undefined && updatedAtMs > maxUpdatedAtMs + ARTIFACT_MTIME_TOLERANCE_MS));
+}
+
 async function buildFileArtifactMetadata(options: {
 	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
@@ -193,10 +199,7 @@ async function buildFileArtifactMetadata(options: {
 			sizeBytes = fileStats.size;
 			updatedAtMs = fileStats.mtimeMs;
 			const commandCreatesArtifact = !(options.commandInfo.command === "wait" && options.commandInfo.subcommand === "--download");
-			const outsideCommandWindow = options.artifactMinUpdatedAtMs !== undefined
-				&& (updatedAtMs < options.artifactMinUpdatedAtMs - ARTIFACT_MTIME_TOLERANCE_MS
-					|| (options.artifactMaxUpdatedAtMs !== undefined && updatedAtMs > options.artifactMaxUpdatedAtMs + ARTIFACT_MTIME_TOLERANCE_MS));
-			stale = commandCreatesArtifact && outsideCommandWindow;
+			stale = commandCreatesArtifact && artifactMtimeIsOutsideCommandWindow(updatedAtMs, options.artifactMinUpdatedAtMs, options.artifactMaxUpdatedAtMs);
 		} catch {
 			exists = false;
 		}
@@ -226,6 +229,8 @@ async function buildFileArtifactMetadata(options: {
 
 async function buildPreviousRestartRecordingArtifact(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
+	artifactMinUpdatedAtMs?: number;
 	commandInfo: CommandInfo;
 	currentPaths: ReadonlySet<string>;
 	cwd: string;
@@ -244,6 +249,7 @@ async function buildPreviousRestartRecordingArtifact(options: {
 	const absolutePath = previousRecording.absolutePath ?? resolve(options.cwd, previousRecording.path);
 	try {
 		const fileStats = await stat(absolutePath);
+		const stale = artifactMtimeIsOutsideCommandWindow(fileStats.mtimeMs, options.artifactMinUpdatedAtMs, options.artifactMaxUpdatedAtMs);
 		return {
 			absolutePath,
 			artifactType: "video",
@@ -257,8 +263,9 @@ async function buildPreviousRestartRecordingArtifact(options: {
 			requestedPath: previousRecording.requestedPath,
 			session: previousRecording.session ?? options.sessionName,
 			sizeBytes: fileStats.size,
-			status: "saved",
+			status: stale ? "stale" : "saved",
 			subcommand: "restart-previous",
+			updatedAtMs: fileStats.mtimeMs,
 		};
 	} catch {
 		return undefined;
@@ -278,7 +285,7 @@ export async function extractFileArtifacts(options: {
 	const candidates = extractPathStrings(options.data);
 	const currentArtifacts = (await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ ...options, path })))).filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
 	const currentPaths = new Set(currentArtifacts.flatMap((artifact) => [artifact.path, artifact.absolutePath]));
-	const previousRestartRecordingArtifact = await buildPreviousRestartRecordingArtifact({ artifactManifest: options.artifactManifest, commandInfo: options.commandInfo, currentPaths, cwd: options.cwd, sessionName: options.sessionName });
+	const previousRestartRecordingArtifact = await buildPreviousRestartRecordingArtifact({ artifactManifest: options.artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, commandInfo: options.commandInfo, currentPaths, cwd: options.cwd, sessionName: options.sessionName });
 	return previousRestartRecordingArtifact ? [previousRestartRecordingArtifact, ...currentArtifacts] : currentArtifacts;
 }
 

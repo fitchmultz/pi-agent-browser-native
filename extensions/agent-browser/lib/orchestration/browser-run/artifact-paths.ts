@@ -66,10 +66,10 @@ export function canonicalizeExplicitArtifactDestination(cwd: string, destination
 	while (true) {
 		try {
 			const canonicalPath = join(realpathSync.native(cursor), ...suffix);
-			return platform === "win32" ? canonicalPath.toLowerCase() : canonicalPath;
+			return platform === "win32" || platform === "darwin" ? canonicalPath.toLowerCase() : canonicalPath;
 		} catch {
 			const parent = dirname(cursor);
-			if (parent === cursor) return platform === "win32" ? absolutePath.toLowerCase() : absolutePath;
+			if (parent === cursor) return platform === "win32" || platform === "darwin" ? absolutePath.toLowerCase() : absolutePath;
 			suffix.unshift(basename(cursor));
 			cursor = parent;
 		}

@@ -583,13 +583,13 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentation.failureCategory = "upstream-error";
 			presentationEnvelope = { ...(presentationEnvelope ?? {}), error: "Scroll completed with no observed movement.", success: false };
 			presentation.summary = "Scroll completed with no observed movement.";
-			if (isRecord(presentation.data)) {
-				presentation.data = { ...presentation.data, noMovement: true, scrolled: false };
-				if (presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `Scroll completed with no observed movement.\n\n${JSON.stringify(presentation.data, null, 2)}` };
-			} else if (presentation.content[0]?.type === "text") {
-				presentation.content[0] = { ...presentation.content[0], text: `Scroll completed with no observed movement.\n\n${presentation.content[0].text}` };
+			if (isRecord(presentation.data)) presentation.data = { ...presentation.data, noMovement: true, scrolled: false };
+			if (presentation.content[0]?.type === "text") {
+				const details = isRecord(presentation.data) ? JSON.stringify(presentation.data, null, 2) : presentation.content[0].text;
+				presentation.content[0] = { ...presentation.content[0], text: `Scroll completed with no observed movement.\n\n${details}` };
+			} else {
+				presentation.content.unshift({ type: "text", text: "Scroll completed with no observed movement." });
 			}
-			else presentation.content.unshift({ type: "text", text: "Scroll completed with no observed movement." });
 		}
 		if (parseFailureOutput.artifactManifest) { presentation.artifactManifest = parseFailureOutput.artifactManifest; presentation.artifactRetentionSummary = parseFailureOutput.artifactRetentionSummary; }
 		if (parseFailureOutput.fullOutputPath || parseFailureOutput.fullOutputUnavailable) {

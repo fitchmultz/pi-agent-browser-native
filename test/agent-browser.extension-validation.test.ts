@@ -18,6 +18,7 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
+import { canonicalizeExplicitArtifactDestination } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
 import {
 	WEB_SEARCH_PROMPT_GUIDELINE,
 	QUICK_START_GUIDELINES,
@@ -339,6 +340,10 @@ test("agentBrowserExtension rejects unsupported extra press/key args before upst
 test("agentBrowserExtension rejects duplicate explicit artifact destinations inside one batch", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-duplicate-artifact-"));
 	try {
+		assert.equal(
+			canonicalizeExplicitArtifactDestination(tempDir, "capture.png", "darwin"),
+			canonicalizeExplicitArtifactDestination(tempDir, "CAPTURE.png", "darwin"),
+		);
 		await symlink(tempDir, join(tempDir, "alias"), process.platform === "win32" ? "junction" : "dir");
 		const harness = createExtensionHarness({ cwd: tempDir });
 		const lexicalAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -354,6 +359,15 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 		});
 		assert.equal(symlinkAlias.isError, true);
 		assert.match(symlinkAlias.content[0]?.text ?? "", /alias\/artifact\.png is already written by step 1/);
+
+		if (process.platform === "darwin") {
+			const caseAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "case-artifact.png"], ["screenshot", "CASE-ARTIFACT.png"]]),
+			});
+			assert.equal(caseAlias.isError, true);
+			assert.match(caseAlias.content[0]?.text ?? "", /CASE-ARTIFACT\.png is already written by step 1/);
+		}
 
 		const recordingAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
 			args: ["batch"],

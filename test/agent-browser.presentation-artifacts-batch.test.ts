@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -319,6 +319,42 @@ test("buildToolPresentation notes the previous recording saved by record restart
 			{ exists: undefined, path: restartedPath, status: "pending", subcommand: "restart" },
 		]);
 		assert.equal(restarted.artifactVerification?.verifiedCount, 1);
+		assert.equal(restarted.artifactVerification?.pendingCount, 1);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation rejects a stale previous recording reported by record restart", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-restart-stale-"));
+	try {
+		const firstPath = join(tempDir, "first.webm");
+		const restartedPath = join(tempDir, "restarted.webm");
+		const started = await buildToolPresentation({
+			commandInfo: { command: "record", subcommand: "start" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: firstPath } },
+		});
+		await writeFile(firstPath, "stale previous recording");
+		const oldSeconds = (Date.now() - 60_000) / 1_000;
+		await utimes(firstPath, oldSeconds, oldSeconds);
+		const runStartedAtMs = Date.now();
+
+		const restarted = await buildToolPresentation({
+			artifactManifest: started.artifactManifest,
+			artifactMaxUpdatedAtMs: Date.now(),
+			artifactMinUpdatedAtMs: runStartedAtMs,
+			commandInfo: { command: "record", subcommand: "restart" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: restartedPath } },
+		});
+
+		assert.equal(restarted.resultCategory, "failure");
+		assert.equal(restarted.failureCategory, "artifact-missing");
+		assert.match(restarted.summary, /modification time outside the current command window/);
+		assert.equal(restarted.artifacts?.[0]?.status, "stale");
+		assert.equal(restarted.artifactVerification?.artifacts[0]?.state, "unverified");
+		assert.equal(restarted.artifactVerification?.verifiedCount, 0);
 		assert.equal(restarted.artifactVerification?.pendingCount, 1);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

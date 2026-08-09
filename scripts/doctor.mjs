@@ -70,7 +70,7 @@ Options:
 
 Checks:
   1. agent-browser is installed on PATH.
-  2. agent-browser --version matches the package capability baseline.
+  2. agent-browser --version matches the package target version.
   3. pi --version is at least the minimum Pi runtime version for this release.
   4. Pi settings and repo-local autoload locations do not point at multiple active pi-agent-browser-native sources.
 
