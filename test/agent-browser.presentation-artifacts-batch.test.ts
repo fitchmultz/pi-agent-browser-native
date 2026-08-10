@@ -424,6 +424,8 @@ test("buildToolPresentation coalesces a batched recording to its terminal saved 
 		assert.equal(presentation.nextActions?.some((action) => action.id === "stop-pending-recording"), false);
 		assert.equal(presentation.batchSteps?.[0]?.artifacts?.[0]?.status, "pending");
 		assert.equal(presentation.batchSteps?.[1]?.artifacts?.[0]?.status, "saved");
+		assert.equal(presentation.artifactManifest?.entries.some((entry) => entry.subcommand === "start"), false);
+		assert.equal(presentation.artifactManifest?.entries.some((entry) => entry.absolutePath === reportedStopPath && entry.subcommand === "stop"), true);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

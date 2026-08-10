@@ -86,6 +86,16 @@ export function mergeSessionArtifactManifest(options: {
 	}
 	for (const entry of options.entries ?? []) {
 		const key = getSessionArtifactManifestEntryKey(entry);
+		if (entry.command === "record" && entry.kind === "video" && !isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)) {
+			for (const [candidateKey, candidate] of byPath) {
+				if (candidateKey !== key
+					&& (candidate.session ?? "") === (entry.session ?? "")
+					&& candidate.kind === "video"
+					&& isPendingRecordingCommand(candidate.command, candidate.subcommand, candidate.kind)) {
+					byPath.delete(candidateKey);
+				}
+			}
+		}
 		const existing = byPath.get(key);
 		byPath.set(key, {
 			...existing,
