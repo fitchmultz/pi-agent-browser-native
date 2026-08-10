@@ -388,6 +388,46 @@ test("restoreManagedSessionStateFromBranch honors managedSessionOutcome replacem
 	assert.equal(restored.freshSessionOrdinal, 1);
 });
 
+test("restoreManagedSessionStateFromBranch honors a nested close outcome after an active row", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					command: "batch",
+					managedSessionOutcome: {
+						activeAfter: false,
+						activeBefore: true,
+						attemptedSessionName: "piab-demo-123",
+						previousSessionName: "piab-demo-123",
+						sessionMode: "auto",
+						status: "closed",
+						succeeded: true,
+					},
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+				isError: true,
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.closedSessionName, "piab-demo-123");
+});
+
 test("restoreManagedSessionStateFromBranch ignores stale base completions after fresh rotation", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[

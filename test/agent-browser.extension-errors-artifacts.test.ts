@@ -800,7 +800,7 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
-test("agentBrowserExtension preserves artifacts from overlapping caller-owned sessions", { concurrency: false }, async () => {
+test("agentBrowserExtension serializes caller-owned artifact writes and preserves their aggregate manifest", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-artifact-concurrent-"));
 	const startedPath = join(tempDir, "slow-started");
 	const slowPath = join(tempDir, "slow.png");
@@ -841,7 +841,7 @@ if (args.includes("get") && args.includes("url")) {
 			const fastScreenshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "fast", "screenshot", fastPath] });
 			const concurrentResults = await Promise.all([slowScreenshot, fastScreenshot]);
 			assert.equal(concurrentResults.every((result) => result.isError === false), true, JSON.stringify(concurrentResults));
-			const aggregateEntries = (concurrentResults[0]?.details?.artifactManifest as { entries?: Array<{ absolutePath?: string; path: string }> } | undefined)?.entries ?? [];
+			const aggregateEntries = (concurrentResults[1]?.details?.artifactManifest as { entries?: Array<{ absolutePath?: string; path: string }> } | undefined)?.entries ?? [];
 			assert.deepEqual(new Set(aggregateEntries.map((entry) => entry.absolutePath ?? entry.path)), new Set([slowPath, fastPath]));
 
 			harness.setBranch([concurrentResults[0], concurrentResults[1]].map((result) => ({

@@ -4,7 +4,7 @@ import test from "node:test";
 import { AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS, getAgentBrowserRichInputRecoveryNextActionId, getAgentBrowserRichInputRecoveryNextActionIds } from "../extensions/agent-browser/lib/results/recovery-actions.js";
 import { buildAgentBrowserNextActions } from "../extensions/agent-browser/lib/results/action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails, classifyAgentBrowserFailureCategory, classifyAgentBrowserSuccessCategory } from "../extensions/agent-browser/lib/results/categories.js";
-import { retirePendingRecordingManifestEntries } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
+import { mergeSessionArtifactManifest, retirePendingRecordingManifestEntries } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
@@ -39,12 +39,26 @@ test("retirePendingRecordingManifestEntries retires only the closed session reco
 		updatedAtMs: 3,
 		version: 1,
 	};
-	const retired = retirePendingRecordingManifestEntries(manifest, "a", 4);
+	const retired = retirePendingRecordingManifestEntries(manifest, "a", undefined, 4);
 	assert.deepEqual(retired.entries.map((entry) => entry.path), ["a.webm", "b.webm", "a.png"]);
 	assert.equal(retired.entries[0]?.subcommand, "close-abandoned");
 	assert.equal(retired.entries[0]?.retentionState, "missing");
 	assert.equal(retired.liveCount, 2);
 	assert.equal(retired.updatedAtMs, 4);
+});
+
+test("recording manifests keep namespace identities distinct on the same path", () => {
+	const manifest = mergeSessionArtifactManifest({
+		entries: [
+			{ absolutePath: "/tmp/shared.webm", command: "record", createdAtMs: 1, kind: "video", namespace: "one", path: "shared.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "start" },
+			{ absolutePath: "/tmp/shared.webm", command: "record", createdAtMs: 2, kind: "video", namespace: "two", path: "shared.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "start" },
+		],
+		nowMs: 3,
+	});
+	assert.equal(manifest?.entries.length, 2);
+	const retired = retirePendingRecordingManifestEntries(manifest!, "shared", "one", 4);
+	assert.equal(retired.entries.find((entry) => entry.namespace === "one")?.subcommand, "close-abandoned");
+	assert.equal(retired.entries.find((entry) => entry.namespace === "two")?.subcommand, "start");
 });
 
 test("AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS locks documented recovery action ids", () => {

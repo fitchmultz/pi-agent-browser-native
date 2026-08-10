@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { isRecord, parsePositiveInteger } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import {
@@ -176,6 +177,7 @@ async function buildFileArtifactMetadata(options: {
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
 	cwd: string;
+	namespace?: string;
 	path: string;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata | undefined> {
@@ -214,6 +216,7 @@ async function buildFileArtifactMetadata(options: {
 		extension,
 		kind,
 		mediaType: extension ? ARTIFACT_EXTENSION_TO_MEDIA_TYPE[extension] : undefined,
+		namespace: options.namespace,
 		path: displayPath,
 		recordingState: pendingRecording ? "openRecording" : undefined,
 		requestedPath: options.artifactRequest?.path,
@@ -233,14 +236,16 @@ async function buildPreviousRestartRecordingArtifact(options: {
 	artifactMinUpdatedAtMs?: number;
 	commandInfo: CommandInfo;
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata | undefined> {
 	if (options.commandInfo.command !== "record" || options.commandInfo.subcommand !== "restart") return undefined;
+	const sessionKey = options.sessionName ? getAgentBrowserSessionIdentityKey(options.sessionName, options.namespace) : undefined;
 	const previousRecording = options.artifactManifest?.entries.find((entry) => (
 		entry.command === "record" &&
 		(entry.subcommand === "start" || entry.subcommand === "restart") &&
 		entry.kind === "video" &&
-		(!options.sessionName || !entry.session || entry.session === options.sessionName)
+		(!sessionKey || (entry.session && getAgentBrowserSessionIdentityKey(entry.session, entry.namespace) === sessionKey))
 	));
 	if (!previousRecording) return undefined;
 	const absolutePath = previousRecording.absolutePath ?? resolve(options.cwd, previousRecording.path);
@@ -256,6 +261,7 @@ async function buildPreviousRestartRecordingArtifact(options: {
 			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
 			kind: "video",
 			mediaType: previousRecording.mediaType,
+			namespace: previousRecording.namespace ?? options.namespace,
 			path: previousRecording.path,
 			requestedPath: previousRecording.requestedPath,
 			session: previousRecording.session ?? options.sessionName,
@@ -274,6 +280,7 @@ async function buildPreviousRestartRecordingArtifact(options: {
 			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
 			kind: "video",
 			mediaType: previousRecording.mediaType,
+			namespace: previousRecording.namespace ?? options.namespace,
 			path: previousRecording.path,
 			requestedPath: previousRecording.requestedPath,
 			session: previousRecording.session ?? options.sessionName,
@@ -291,11 +298,12 @@ export async function extractFileArtifacts(options: {
 	commandInfo: CommandInfo;
 	cwd: string;
 	data: unknown;
+	namespace?: string;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata[]> {
 	const candidates = extractPathStrings(options.data);
 	const currentArtifacts = (await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ ...options, path })))).filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
-	const previousRestartRecordingArtifact = await buildPreviousRestartRecordingArtifact({ artifactManifest: options.artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, commandInfo: options.commandInfo, cwd: options.cwd, sessionName: options.sessionName });
+	const previousRestartRecordingArtifact = await buildPreviousRestartRecordingArtifact({ artifactManifest: options.artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, commandInfo: options.commandInfo, cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName });
 	return previousRestartRecordingArtifact ? [previousRestartRecordingArtifact, ...currentArtifacts] : currentArtifacts;
 }
 
@@ -309,6 +317,7 @@ export function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMeta
 		extension: artifact.extension,
 		kind: artifact.kind,
 		mediaType: artifact.mediaType,
+		namespace: artifact.namespace,
 		path: artifact.path,
 		requestedPath: artifact.requestedPath,
 		retentionState: artifact.exists === false || artifact.status === "stale" ? "missing" : "live",

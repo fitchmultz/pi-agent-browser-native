@@ -465,6 +465,38 @@ test("buildToolPresentation coalesces a batched recording to its terminal saved 
 	}
 });
 
+test("buildToolPresentation marks a batched recording abandoned by close as missing", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-close-"));
+	try {
+		const recordingPath = join(tempDir, "recording.webm");
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: tempDir,
+			envelope: {
+				success: true,
+				data: [
+					{ command: ["record", "start", recordingPath], result: { path: recordingPath }, success: true },
+					{ command: ["close"], result: {}, success: true },
+				],
+			},
+			namespace: "tenant",
+			sessionName: "recording-session",
+		});
+
+		assert.deepEqual(presentation.artifacts?.map((artifact) => ({ recordingState: artifact.recordingState, status: artifact.status, subcommand: artifact.subcommand, willExistOnStop: artifact.willExistOnStop })), [
+			{ recordingState: undefined, status: "missing", subcommand: "close-abandoned", willExistOnStop: undefined },
+		]);
+		assert.equal(presentation.artifactVerification?.missingCount, 1);
+		assert.equal(presentation.artifactVerification?.pendingCount, 0);
+		assert.equal(presentation.nextActions?.some((action) => action.id === "stop-pending-recording"), false);
+		assert.equal(presentation.resultCategory, "failure");
+		assert.equal(presentation.failureCategory, "artifact-missing");
+		assert.equal(presentation.batchSteps?.[0]?.artifacts?.[0]?.status, "pending");
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("buildToolPresentation keeps recording cleanup actionable after a later batch failure", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-failure-"));
 	try {

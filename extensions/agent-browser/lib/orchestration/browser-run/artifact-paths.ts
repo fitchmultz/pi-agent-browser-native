@@ -1,4 +1,4 @@
-import { realpathSync, statSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "../../argv-grammar.js";
@@ -12,11 +12,8 @@ function isImagePathToken(token: string): boolean {
 	return SCREENSHOT_IMAGE_EXTENSIONS.has(extension);
 }
 
-export function getScreenshotPathTokenIndex(commandTokens: string[]): number | undefined {
-	if (commandTokens[0] !== "screenshot") {
-		return undefined;
-	}
-
+function getScreenshotPositionalIndices(commandTokens: string[]): number[] {
+	if (commandTokens[0] !== "screenshot") return [];
 	const positionalIndices: number[] = [];
 	for (let index = 1; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
@@ -40,9 +37,17 @@ export function getScreenshotPathTokenIndex(commandTokens: string[]): number | u
 		positionalIndices.push(index);
 	}
 
-	if (positionalIndices.length === 0) {
-		return undefined;
-	}
+	return positionalIndices;
+}
+
+export function getPotentialScreenshotPathToken(commandTokens: string[]): string | undefined {
+	const positionalIndices = getScreenshotPositionalIndices(commandTokens);
+	return positionalIndices.length > 0 ? commandTokens[positionalIndices[positionalIndices.length - 1]] : undefined;
+}
+
+export function getScreenshotPathTokenIndex(commandTokens: string[]): number | undefined {
+	const positionalIndices = getScreenshotPositionalIndices(commandTokens);
+	if (positionalIndices.length === 0) return undefined;
 	const candidateIndex = positionalIndices[positionalIndices.length - 1];
 	const candidate = commandTokens[candidateIndex];
 	if (positionalIndices.length >= 2 || isImagePathToken(candidate) || isAbsolute(candidate) || candidate.startsWith("./") || candidate.startsWith("../")) {
@@ -59,8 +64,7 @@ function getFlagValue(commandTokens: string[], flag: string): string | undefined
 	return index >= 0 ? commandTokens[index + 1] : undefined;
 }
 
-export function canonicalizeExplicitArtifactDestination(cwd: string, destination: string, platform: NodeJS.Platform = process.platform): string {
-	const absolutePath = resolve(cwd, destination);
+function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platform, seenSymlinks: Set<string>): string {
 	let cursor = absolutePath;
 	const suffix: string[] = [];
 	while (true) {
@@ -74,12 +78,26 @@ export function canonicalizeExplicitArtifactDestination(cwd: string, destination
 			}
 			return platform === "win32" || platform === "darwin" ? canonicalPath.toLowerCase() : canonicalPath;
 		} catch {
+			let symlinkTarget: string | undefined;
+			try {
+				if (lstatSync(cursor).isSymbolicLink()) symlinkTarget = resolve(dirname(cursor), readlinkSync(cursor));
+			} catch {}
+			if (symlinkTarget) {
+				if (seenSymlinks.has(cursor)) throw new Error(`Artifact destination contains a symlink loop: ${absolutePath}`);
+				if (seenSymlinks.size >= 32) throw new Error(`Artifact destination has too many symlink hops: ${absolutePath}`);
+				seenSymlinks.add(cursor);
+				return canonicalizeArtifactPath(join(symlinkTarget, ...suffix), platform, seenSymlinks);
+			}
 			const parent = dirname(cursor);
 			if (parent === cursor) return platform === "win32" || platform === "darwin" ? absolutePath.toLowerCase() : absolutePath;
 			suffix.unshift(basename(cursor));
 			cursor = parent;
 		}
 	}
+}
+
+export function canonicalizeExplicitArtifactDestination(cwd: string, destination: string, platform: NodeJS.Platform = process.platform): string {
+	return canonicalizeArtifactPath(resolve(cwd, destination), platform, new Set());
 }
 
 export function getExplicitArtifactDestination(commandTokens: string[]): string | undefined {
@@ -91,6 +109,8 @@ export function getExplicitArtifactDestination(commandTokens: string[]): string 
 	}
 	if (command === "download") return commandTokens[2];
 	if (command === "pdf") return commandTokens[1];
+	if (command === "wait" && subcommand === "--download" && commandTokens[2] && !commandTokens[2].startsWith("--")) return commandTokens[2];
+	if (command === "wait" && subcommand.startsWith("--download=")) return subcommand.slice("--download=".length) || undefined;
 	if (command === "state" && subcommand === "save") return commandTokens[2];
 	if (command === "diff" && subcommand === "screenshot") return getFlagValue(commandTokens, "--output");
 	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") return commandTokens[3];

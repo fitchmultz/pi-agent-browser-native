@@ -68,6 +68,7 @@ export interface FileArtifactMetadata {
 	extension?: string;
 	kind: FileArtifactKind;
 	mediaType?: string;
+	namespace?: string;
 	path: string;
 	recordingState?: "openRecording";
 	requestedPath?: string;
@@ -131,6 +132,7 @@ export interface SessionArtifactManifestEntry {
 	extension?: string;
 	kind: FileArtifactKind | "spill";
 	mediaType?: string;
+	namespace?: string;
 	path: string;
 	requestedPath?: string;
 	retentionState: ArtifactRetentionState;

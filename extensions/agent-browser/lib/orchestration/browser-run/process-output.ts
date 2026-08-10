@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 
 import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
+import { getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
 import { isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
@@ -10,7 +11,6 @@ import { getManagedSessionResultingPageState, getObservedBrowserPageValidationEr
 import { analyzeNetworkSourceLookupResults, analyzeSourceLookupResults, redactNetworkSourceLookupAnalysis } from "../../input-modes/lookups.js";
 import { analyzeQaPresetResults, analyzeQaPresetTimeout, buildQaCompactFailureText, buildQaCompactPassText, extractQaPageContext } from "../../input-modes/job.js";
 import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../../results/network-routes.js";
-import { formatSessionArtifactRetentionSummary, retirePendingRecordingManifestEntries } from "../../results/artifact-manifest.js";
 import { buildToolPresentation } from "../../results/presentation.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { type AgentBrowserEnvelope } from "../../results/contracts.js";
@@ -33,6 +33,7 @@ import { isRecord } from "../../parsing.js";
 import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { createFreshSessionName, extractCommandTokens, resolveManagedSessionState } from "../../runtime.js";
+import { parseBatchCommandArgument, parseUserBatchStdin, type BatchCommandStep } from "../batch-stdin.js";
 import { closeManagedSession, inspectManagedSessionDaemon } from "./managed-session-daemon-policy.js";
 import {
 	applyOpenResultTabCorrection,
@@ -170,9 +171,21 @@ function applyBatchNetworkRouteState(options: { data: unknown; routesBySession: 
 	let routes = options.routesBySession.get(options.sessionName);
 	for (const item of options.data) {
 		if (!isRecord(item) || !Array.isArray(item.command) || !item.command.every((token) => typeof token === "string")) continue;
-		routes = applyNetworkRouteRecords(routes, extractCommandTokens(item.command as string[]), item.success !== false);
+		const commandTokens = extractCommandTokens(item.command as string[]);
+		const stepSucceeded = item.success !== false;
+		if (stepSucceeded && isCloseCommand(commandTokens[0])) routes = undefined;
+		else routes = applyNetworkRouteRecords(routes, commandTokens, stepSucceeded);
 	}
 	return setNetworkRouteState({ routes, routesBySession: options.routesBySession, sessionName: options.sessionName });
+}
+
+function getBatchCommandSteps(commandTokens: string[], stdin: string | undefined): BatchCommandStep[] {
+	const argumentSteps = commandTokens.slice(1).flatMap((command) => {
+		if (command === "--bail" || command.startsWith("--bail=")) return [];
+		const step = parseBatchCommandArgument(command).step;
+		return step ? [step] : [];
+	});
+	return [...argumentSteps, ...(parseUserBatchStdin(stdin).steps ?? [])];
 }
 
 export async function processBrowserOutput(input: ProcessBrowserOutputInput): Promise<BrowserProcessOutputResult> {
@@ -208,11 +221,15 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		presentationEnvelope = repairedBatchScreenshots.envelope;
 		const screenshotArtifactRequest = repairedScreenshot.request;
 		const batchScreenshotArtifactRequests = repairedBatchScreenshots.requests;
+		const nestedBatchClose = prepared.executionPlan.commandInfo.command === "batch"
+			? getSuccessfulBatchCloseLifecycle(presentationEnvelope?.data, getBatchCommandSteps(prepared.commandTokens, prepared.runtimeToolStdin))
+			: undefined;
+		const nestedBatchClosed = nestedBatchClose?.endsClosed === true;
 		const rawCloseStatePath = isCloseCommand(prepared.executionPlan.commandInfo.command)
 			&& isRecord(presentationEnvelope?.data)
 			&& typeof presentationEnvelope.data.statePath === "string"
 			? presentationEnvelope.data.statePath
-			: undefined;
+			: nestedBatchClose?.statePath;
 		if (presentationEnvelope && prepared.exactSensitiveValues.length > 0) presentationEnvelope = redactExactSensitiveValue(presentationEnvelope, prepared.exactSensitiveValues) as AgentBrowserEnvelope;
 		const parseFailureOutput: ParseFailureOutput = parseError && processResult.stdoutSpillPath
 			? { fullOutputUnavailable: "Malformed upstream output was discarded because it may contain sensitive browser data." }
@@ -227,6 +244,14 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
 		const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
 		const sessionStateKey = getSessionContextKey(prepared.executionPlan.sessionName, prepared.executionPlan.namespace);
+		if (nestedBatchClose && sessionStateKey) {
+			allowedDomainsBySession = new Map(allowedDomainsBySession);
+			allowedDomainsBySession.delete(sessionStateKey);
+			networkRoutesBySession = new Map(networkRoutesBySession);
+			networkRoutesBySession.delete(sessionStateKey);
+			sessionPageState.clearSession(sessionStateKey);
+		}
+		if (nestedBatchClosed) updateTraceOwnerState({ command: "close", sessionName: sessionStateKey, subcommand: undefined, succeeded: true, traceOwners });
 		updateTraceOwnerState({ command: prepared.executionPlan.commandInfo.command, sessionName: sessionStateKey, subcommand: prepared.executionPlan.commandInfo.subcommand, succeeded, traceOwners });
 
 		let clickDispatchDiagnostic: Awaited<ReturnType<typeof collectClickDispatchDiagnostic>>;
@@ -303,7 +328,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (appliedAboutBlankRecovery) { sessionTabCorrection = appliedAboutBlankRecovery; currentSessionTabTarget = prepared.priorSessionTabTarget; }
 			else currentSessionTabTarget = aboutBlankObservedTarget ?? normalizeSessionTabTarget({ url: "about:blank" });
 			aboutBlankSessionMismatch = { activeUrl: "about:blank", recoveryApplied: appliedAboutBlankRecovery !== undefined, recoveryHint: buildAboutBlankRecoveryHint(), targetTitle: prepared.priorSessionTabTarget.title, targetUrl: prepared.priorSessionTabTarget.url };
-			const electronRecord = findElectronLaunchRecordForSession(prepared.executionPlan.sessionName, electronLaunchRecords);
+			const electronRecord = findElectronLaunchRecordForSession(prepared.executionPlan.sessionName, electronLaunchRecords, prepared.executionPlan.namespace);
 			if (electronRecord && prepared.executionPlan.sessionName) {
 				electronStatusAfterCommand = await inspectElectronLaunchStatus(electronRecord);
 				electronSessionMismatch = buildElectronSessionMismatch({ managedSession: { sessionName: prepared.executionPlan.sessionName, title: aboutBlankObservedTarget?.title, url: aboutBlankObservedTarget?.url ?? "about:blank" }, record: electronRecord, statusTargets: electronStatusAfterCommand.targets });
@@ -329,7 +354,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentationEnvelope = { ...(presentationEnvelope ?? {}), error: allowedDomainsViolation.summary, success: false };
 		}
 
-		const electronRecordForCommand = findElectronLaunchRecordForSession(prepared.executionPlan.sessionName, electronLaunchRecords);
+		const electronRecordForCommand = findElectronLaunchRecordForSession(prepared.executionPlan.sessionName, electronLaunchRecords, prepared.executionPlan.namespace);
 		if (succeeded && electronRecordForCommand && shouldInspectElectronPostCommandHealth(prepared.executionPlan.commandInfo.command)) {
 			electronStatusAfterCommand ??= await inspectElectronLaunchStatus(electronRecordForCommand);
 			electronPostCommandHealth = buildElectronPostCommandHealthDiagnostic({ command: prepared.executionPlan.commandInfo.command, record: electronRecordForCommand, status: electronStatusAfterCommand, target: observedSessionTabTarget ?? currentSessionTabTarget });
@@ -360,7 +385,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		if (succeeded && !overlayBlockerDiagnostic && !sessionTabCorrection && !aboutBlankSessionMismatch && !electronRecordForCommand && !clickDispatchDiagnostic) overlayBlockerDiagnostic = await collectOverlayBlockerDiagnostic({ command: prepared.executionPlan.commandInfo.command, cwd, data: presentationEnvelope?.data, namespace: prepared.executionPlan.namespace, navigationSummary, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName, signal });
 		if (succeeded) {
 			selectorTextVisibilityDiagnostics = await collectSelectorTextVisibilityDiagnostics({ commandInfo: prepared.executionPlan.commandInfo, commandTokens: prepared.commandTokens, cwd, data: presentationEnvelope?.data, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal });
-			if (electronRecordForCommand) electronBroadGetTextScopeDiagnostics = collectElectronBroadGetTextScopeDiagnostics({ commandInfo: prepared.executionPlan.commandInfo, commandTokens: prepared.commandTokens, currentTarget: currentSessionTabTarget, data: presentationEnvelope?.data, electronLaunchRecords, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName });
+			if (electronRecordForCommand) electronBroadGetTextScopeDiagnostics = collectElectronBroadGetTextScopeDiagnostics({ commandInfo: prepared.executionPlan.commandInfo, commandTokens: prepared.commandTokens, currentTarget: currentSessionTabTarget, data: presentationEnvelope?.data, electronLaunchRecords, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName });
 		}
 		const activeNetworkRoutes = sessionStateKey ? networkRoutesBySession.get(sessionStateKey) : undefined;
 		const networkRouteDiagnostics = succeeded && prepared.executionPlan.commandInfo.command === "network" && prepared.executionPlan.commandInfo.subcommand === "requests" && prepared.executionPlan.sessionName
@@ -374,28 +399,32 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let currentRefSnapshotInvalidation: SessionRefSnapshotInvalidation | undefined;
 		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data) : undefined;
 		if (sessionStateKey) {
-			if (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) {
+			const sessionClosed = (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) || nestedBatchClosed;
+			if (sessionClosed) {
+				state.attachedSessionKeys.delete(sessionStateKey);
 				allowedDomainsBySession = new Map(allowedDomainsBySession);
 				allowedDomainsBySession.delete(sessionStateKey);
 				networkRoutesBySession = new Map(networkRoutesBySession);
 				networkRoutesBySession.delete(sessionStateKey);
 				sessionPageState.clearSession(sessionStateKey);
 				state.closedManagedSessionNames.add(sessionStateKey);
-			} else if (currentSessionTabTarget) {
-				const tabUpdate = sessionPageState.applyTabTarget({ sessionName: sessionStateKey, target: currentSessionTabTarget, update: sessionPageStateUpdate });
-				if (!tabUpdate.applied && succeeded) sessionPageState.markPinning(sessionStateKey, "drift");
-			} else if (processResult.agentBrowserStarted && (resultingPageState.pageUrlUnknown || resultingPageState.pageTargetMayHaveChanged)) {
-				sessionPageState.markTabTargetUnknown({ sessionName: sessionStateKey, update: sessionPageStateUpdate });
-			}
-			const refSnapshot = prepared.executionPlan.commandInfo.command === "batch" ? batchRefSnapshotState?.snapshot : succeeded ? prepared.executionPlan.commandInfo.command === "snapshot" ? extractRefSnapshotFromData(presentationEnvelope?.data) : prepared.resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot : undefined;
-			if (refSnapshot) {
-				const refUpdate = sessionPageState.applyRefSnapshot({ fallbackTarget: currentSessionTabTarget, sessionName: sessionStateKey, snapshot: refSnapshot, update: sessionPageStateUpdate });
-				currentRefSnapshot = refUpdate.refSnapshot;
-				currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
 			} else {
-				const stateView = sessionPageState.get(sessionStateKey);
-				currentRefSnapshot = stateView.refSnapshot;
-				currentRefSnapshotInvalidation = stateView.refSnapshotInvalidation;
+				if (currentSessionTabTarget) {
+					const tabUpdate = sessionPageState.applyTabTarget({ sessionName: sessionStateKey, target: currentSessionTabTarget, update: sessionPageStateUpdate });
+					if (!tabUpdate.applied && succeeded) sessionPageState.markPinning(sessionStateKey, "drift");
+				} else if (processResult.agentBrowserStarted && (resultingPageState.pageUrlUnknown || resultingPageState.pageTargetMayHaveChanged)) {
+					sessionPageState.markTabTargetUnknown({ sessionName: sessionStateKey, update: sessionPageStateUpdate });
+				}
+				const refSnapshot = prepared.executionPlan.commandInfo.command === "batch" ? batchRefSnapshotState?.snapshot : succeeded ? prepared.executionPlan.commandInfo.command === "snapshot" ? extractRefSnapshotFromData(presentationEnvelope?.data) : prepared.resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot : undefined;
+				if (refSnapshot) {
+					const refUpdate = sessionPageState.applyRefSnapshot({ fallbackTarget: currentSessionTabTarget, sessionName: sessionStateKey, snapshot: refSnapshot, update: sessionPageStateUpdate });
+					currentRefSnapshot = refUpdate.refSnapshot;
+					currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
+				} else {
+					const stateView = sessionPageState.get(sessionStateKey);
+					currentRefSnapshot = stateView.refSnapshot;
+					currentRefSnapshotInvalidation = stateView.refSnapshotInvalidation;
+				}
 			}
 		}
 
@@ -404,9 +433,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const priorManagedSessionHeadedAutosaveInterval = managedSessionHeadedAutosaveInterval;
 		const priorManagedSessionName = managedSessionName;
 		const priorManagedSessionNamespace = managedSessionNamespace;
-		const commandClosesSession = isCloseCommand(prepared.executionPlan.commandInfo.command);
+		const commandClosesSession = isCloseCommand(prepared.executionPlan.commandInfo.command) || nestedBatchClosed;
+		const closeCommandSucceeded = (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) || nestedBatchClosed;
 		const closeTargetsPriorManagedNamespace = prepared.executionPlan.namespace === priorManagedSessionNamespace;
-		const managedCloseSessionName = commandClosesSession && succeeded && prepared.executionPlan.sessionName === priorManagedSessionName && closeTargetsPriorManagedNamespace
+		const managedCloseSessionName = closeCommandSucceeded && prepared.executionPlan.sessionName === priorManagedSessionName && closeTargetsPriorManagedNamespace
 			? prepared.executionPlan.sessionName
 			: prepared.executionPlan.managedSessionName;
 		const policyBlockedFreshManagedSession = allowedDomainsViolation !== undefined && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName === prepared.executionPlan.sessionName;
@@ -430,8 +460,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		// Only a confirmed inactive daemon proves that a started fresh command did not establish browser ownership.
 		const postLaunchFreshFailure = failedFreshDaemon !== undefined && failedFreshDaemon.status !== "inactive";
-		const managedTransitionSucceeded = succeeded || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage || postLaunchFreshFailure;
-		const managedSessionState = resolveManagedSessionState({ command: prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, managedSessionNamespace: prepared.executionPlan.namespace, priorActive: priorManagedSessionActive, priorNamespace: priorManagedSessionNamespace, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
+		const managedTransitionSucceeded = succeeded || nestedBatchClosed || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage || postLaunchFreshFailure;
+		const managedSessionState = resolveManagedSessionState({ command: commandClosesSession ? "close" : prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, managedSessionNamespace: prepared.executionPlan.namespace, priorActive: priorManagedSessionActive, priorNamespace: priorManagedSessionNamespace, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
 		if (!managedTransitionSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName) {
 			state.managedSessionRestoreState.clear(prepared.executionPlan.managedSessionName, prepared.executionPlan.namespace);
 		}
@@ -451,7 +481,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			managedSessionHeadedAutosaveDisabled = prepared.ownedManagedSessionContext?.headedManagedAutosaveDisabled === true;
 			managedSessionHeadedAutosaveInterval = prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval;
 		}
-		if (commandClosesSession && succeeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
+		if (closeCommandSucceeded && managedCloseSessionName === priorManagedSessionName && !managedSessionActive) {
 			const daemonRestoreKey = state.managedSessionRestoreState.getDaemonRestoreKey(managedCloseSessionName, priorManagedSessionNamespace);
 			const ownedRestoreKey = !state.managedSessionRestoreState.isDisabled(managedCloseSessionName, priorManagedSessionNamespace)
 				&& isManagedSessionRestoreKey(daemonRestoreKey) ? daemonRestoreKey : null;
@@ -466,7 +496,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			managedSessionName = createFreshSessionName(state.managedSessionBaseName, state.ephemeralSessionSeed, freshSessionOrdinal);
 			managedSessionNamespace = undefined;
 		}
-		let managedSessionOutcome = buildManagedSessionOutcome({ activeAfter: managedSessionActive, activeBefore: priorManagedSessionActive, attemptedSessionName: managedCloseSessionName, command: prepared.executionPlan.commandInfo.command, currentSessionName: managedSessionName, currentSessionNamespace: managedSessionNamespace, previousSessionName: priorManagedSessionName, replacedSessionName: replacedManagedSessionName, replacedSessionNamespace: priorManagedSessionNamespace, sessionMode: prepared.sessionMode, succeeded: managedTransitionSucceeded });
+		let managedSessionOutcome = buildManagedSessionOutcome({ activeAfter: managedSessionActive, activeBefore: priorManagedSessionActive, attemptedSessionName: managedCloseSessionName, command: commandClosesSession ? "close" : prepared.executionPlan.commandInfo.command, currentSessionName: managedSessionName, currentSessionNamespace: managedSessionNamespace, previousSessionName: priorManagedSessionName, replacedSessionName: replacedManagedSessionName, replacedSessionNamespace: priorManagedSessionNamespace, sessionMode: prepared.sessionMode, succeeded: managedTransitionSucceeded });
 		if (prepared.executionPlan.managedSessionName && managedTransitionSucceeded && managedSessionActive) {
 			managedSessionCwd = cwd;
 			managedSessionNamespace = prepared.executionPlan.namespace;
@@ -506,7 +536,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (succeeded && prepared.executionPlan.sessionName) {
 				const electronSessionName = prepared.executionPlan.sessionName;
 				const electronSessionStateKey = sessionStateKey ?? electronSessionName;
-				electronLaunchRecord = { ...prepared.electronLaunch.record, sessionName: electronSessionName };
+				electronLaunchRecord = { ...prepared.electronLaunch.record, namespace: prepared.executionPlan.namespace, sessionName: electronSessionName };
 				const electronHandoffMode = prepared.compiledElectron?.action === "launch" ? prepared.compiledElectron.handoff : "connect";
 				try {
 					electronHandoff = await collectElectronHandoff({ cwd, handoff: electronHandoffMode, namespace: prepared.executionPlan.namespace, sessionName: electronSessionName, signal });
@@ -600,18 +630,13 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentation.content[0] = { type: "text", text: existingText.length > 0 ? `${existingText}\n\n${notice}` : notice };
 		}
 		if (presentation.artifactManifest) artifactManifest = presentation.artifactManifest;
-		if (succeeded && isCloseCommand(prepared.executionPlan.commandInfo.command) && artifactManifest) {
-			artifactManifest = retirePendingRecordingManifestEntries(artifactManifest, prepared.executionPlan.sessionName);
-			presentation.artifactManifest = artifactManifest;
-			presentation.artifactRetentionSummary = formatSessionArtifactRetentionSummary(artifactManifest);
-		}
 		const qaPreset = prepared.compiledQaPreset
 			? (processResult.timedOut ? analyzeQaPresetTimeout(prepared.compiledQaPreset) ?? analyzeQaPresetResults(presentationEnvelope?.data, prepared.compiledQaPreset) : analyzeQaPresetResults(presentationEnvelope?.data, prepared.compiledQaPreset))
 			: undefined;
 		let qaAttachedTarget = prepared.compiledQaPreset?.checks.attached
 			? await collectQaAttachedTarget({ currentTarget: currentSessionTabTarget ?? prepared.priorSessionTabTarget, cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal })
 			: undefined;
-		const sourceLookupElectronContext = prepared.compiledSourceLookup ? getSourceLookupElectronContext({ currentTarget: currentSessionTabTarget, electronLaunchRecords, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName }) : undefined;
+		const sourceLookupElectronContext = prepared.compiledSourceLookup ? getSourceLookupElectronContext({ currentTarget: currentSessionTabTarget, electronLaunchRecords, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName }) : undefined;
 		const sourceLookup = prepared.compiledSourceLookup ? await analyzeSourceLookupResults(presentationEnvelope?.data, prepared.compiledSourceLookup, cwd, { electronContext: sourceLookupElectronContext, workspaceRoot: cwd }) : undefined;
 		const networkSourceLookup = prepared.compiledNetworkSourceLookup ? redactNetworkSourceLookupAnalysis(await analyzeNetworkSourceLookupResults(presentationEnvelope?.data, prepared.compiledNetworkSourceLookup, cwd)) : undefined;
 		if (networkSourceLookup && presentation.content[0]?.type === "text") presentation.content[0] = { ...presentation.content[0], text: `${networkSourceLookup.summary}\n\n${presentation.content[0].text}` };

@@ -415,15 +415,15 @@ function isBroadGetTextSelector(selector: string | undefined): selector is strin
 	return normalized === "body" || normalized === "html" || normalized === ":root" || normalized === "*" || normalized === "main" || normalized === "div" || normalized === "section" || normalized === "article" || /^\[role=(?:"application"|'application'|application)\]$/i.test(normalized);
 }
 
-function getElectronTextScopeContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic["electronContext"] | undefined {
-	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords);
+function getElectronTextScopeContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; namespace?: string; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic["electronContext"] | undefined {
+	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords, options.namespace);
 	if (!record) return undefined;
 	const url = options.currentTarget?.url ?? options.priorTarget?.url;
 	return { launchId: record.launchId, sessionName: record.sessionName ?? options.sessionName, url };
 }
 
-export function getSourceLookupElectronContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; priorTarget?: SessionTabTarget; sessionName?: string }): AgentBrowserSourceLookupAnalysis["electronContext"] | undefined {
-	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords);
+export function getSourceLookupElectronContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; namespace?: string; priorTarget?: SessionTabTarget; sessionName?: string }): AgentBrowserSourceLookupAnalysis["electronContext"] | undefined {
+	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords, options.namespace);
 	if (!record) return undefined;
 	const url = options.currentTarget?.url ?? options.priorTarget?.url;
 	return { appName: record.appName, appPath: record.appPath, executablePath: record.executablePath, launchId: record.launchId, sessionName: record.sessionName ?? options.sessionName, url };
@@ -439,7 +439,7 @@ export function buildSourceLookupElectronNextActions(sourceLookup: AgentBrowserS
 	return actions;
 }
 
-export function collectElectronBroadGetTextScopeDiagnostics(options: { commandInfo: CommandInfo; commandTokens: string[]; currentTarget?: SessionTabTarget; data: unknown; electronLaunchRecords: Map<string, ElectronLaunchRecord>; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic[] {
+export function collectElectronBroadGetTextScopeDiagnostics(options: { commandInfo: CommandInfo; commandTokens: string[]; currentTarget?: SessionTabTarget; data: unknown; electronLaunchRecords: Map<string, ElectronLaunchRecord>; namespace?: string; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic[] {
 	const electronContext = getElectronTextScopeContext(options);
 	if (!electronContext) return [];
 	return getSuccessfulGetTextSelectors(options).filter(isBroadGetTextSelector).map((selector) => ({ electronContext, selector, summary: `Broad Electron get text selector warning: selector ${JSON.stringify(selector)} may read the entire app shell; prefer snapshot -i and a current @ref or a narrower panel selector.` }));

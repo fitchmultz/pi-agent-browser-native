@@ -540,6 +540,35 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolat
 	}
 });
 
+test("script cleanup retires its active recording reservation", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-recording-cleanup-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const args = process.argv.slice(2);
+const command = args.find((arg) => ["open", "record", "pdf", "close", "session"].includes(arg));
+const index = args.indexOf(command);
+if (command === "session") process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
+else if (command === "open") process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: args[index + 1] } }));
+else if (command === "record") process.stdout.write(JSON.stringify({ success: true, data: { path: args[index + 2] } }));
+else if (command === "pdf") process.stdout.write(JSON.stringify({ success: true, data: { path: args[index + 1] } }));
+else process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				script: `await browser({ args: ["open", "https://example.test/"] }); emit(await browser({ args: ["record", "start", "script.webm"] }));`,
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			const manifest = result.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;
+			assert.equal(manifest?.entries?.some((entry) => entry.subcommand === "start"), false);
+			const reuse = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "script.webm"] });
+			assert.doesNotMatch(reuse.content[0]?.text ?? "", /reserved by an active recording/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension injects an isolated script session, persists its lease before spawn, and closes it", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-extension-"));
 	const logPath = join(tempDir, "invocations.log");

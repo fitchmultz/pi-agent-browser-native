@@ -10,12 +10,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
+import { getSuccessfulBatchCloseLifecycle } from "../extensions/agent-browser/lib/batch-lifecycle.js";
 import {
 	SessionPageState,
 	buildNoActivePageRefSnapshotInvalidation,
 	deriveSessionTabTarget,
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
+	extractSessionTabTargetFromBatchResults,
 	extractSessionTabTargetFromCommandData,
 	getSessionPageStateKey,
 } from "../extensions/agent-browser/lib/session-page-state.js";
@@ -30,6 +32,14 @@ function toolEntry(details: Record<string, unknown>, isError = false): unknown {
 		},
 	};
 }
+
+test("getSuccessfulBatchCloseLifecycle tolerates unidentified transcript rows", () => {
+	assert.equal(getSuccessfulBatchCloseLifecycle([{ success: true }]), undefined);
+	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
+		{ command: ["close"], result: { statePath: "/tmp/state.json" }, success: true },
+		{ success: true },
+	]), { endsClosed: false, statePath: "/tmp/state.json" });
+});
 
 test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidations, and restore pinning", () => {
 	assert.equal(getSessionPageStateKey("session", "Team"), getSessionPageStateKey("session", "team"));
@@ -92,6 +102,58 @@ test("SessionPageState.fromBranch clears restored page state on upstream close a
 			tabTarget: undefined,
 		}, command);
 	}
+
+	const nestedClose = SessionPageState.fromBranch([
+		toolEntry({
+			command: "snapshot",
+			refSnapshot: { refIds: ["e1"], target: { title: "Example", url: "https://example.com/" } },
+			sessionName: "s1",
+			sessionTabTarget: { title: "Example", url: "https://example.com/" },
+		}),
+		toolEntry({
+			batchSteps: [
+				{ command: ["snapshot", "-i"], success: true },
+				{ command: ["close"], success: true },
+			],
+			command: "batch",
+			sessionName: "s1",
+		}, true),
+	]);
+	assert.deepEqual(nestedClose.get("s1"), {
+		pinningReason: undefined,
+		refSnapshot: undefined,
+		refSnapshotInvalidation: undefined,
+		tabTarget: undefined,
+	});
+
+	const closeThenRecord = SessionPageState.fromBranch([
+		toolEntry({ command: "snapshot", refSnapshot: { refIds: ["e1"] }, sessionName: "s1", sessionTabTarget: { url: "https://before.example/" } }),
+		toolEntry({
+			batchSteps: [
+				{ command: ["close"], success: true },
+				{ command: ["record", "start", "capture.webm"], success: true },
+			],
+			command: "batch",
+			sessionName: "s1",
+		}),
+	]);
+	assert.equal(closeThenRecord.get("s1").tabTarget, undefined);
+	assert.equal(closeThenRecord.get("s1").refSnapshot, undefined);
+
+	const closeThenOpen = SessionPageState.fromBranch([
+		toolEntry({ command: "snapshot", refSnapshot: { refIds: ["e1"] }, sessionName: "s1", sessionTabTarget: { url: "https://before.example/" } }),
+		toolEntry({
+			batchSteps: [
+				{ command: ["close"], success: true },
+				{ command: ["open", "https://after.example/"], success: true },
+			],
+			command: "batch",
+			sessionName: "s1",
+			sessionTabTarget: { url: "https://after.example/" },
+		}),
+	]);
+	assert.deepEqual(closeThenOpen.get("s1").tabTarget, { title: undefined, url: "https://after.example/" });
+	assert.equal(closeThenOpen.get("s1").refSnapshot, undefined);
 });
 
 test("SessionPageState restores unverified page transitions", () => {
@@ -162,6 +224,16 @@ test("deriveSessionTabTarget discards stale targets after unobserved history nav
 	assert.equal(deriveSessionTabTarget({ command: "tab", data: {}, previousTarget, subcommand: "t2" }), undefined);
 	assert.deepEqual(deriveSessionTabTarget({ command: "back", data: {}, navigationSummary: { url: "https://after.example/" }, previousTarget }), { title: undefined, url: "https://after.example/" });
 	assert.deepEqual(deriveSessionTabTarget({ command: "click", data: {}, previousTarget }), previousTarget);
+	assert.equal(extractSessionTabTargetFromBatchResults([
+		{ command: ["get", "url"], result: { url: "https://before.example/" }, success: true },
+		{ command: ["close"], result: {}, success: true },
+		{ command: ["record", "start", "capture.webm"], result: { path: "capture.webm" }, success: true },
+	]), undefined);
+	assert.deepEqual(extractSessionTabTargetFromBatchResults([
+		{ command: ["get", "url"], result: { url: "https://before.example/" }, success: true },
+		{ command: ["close"], result: {}, success: true },
+		{ command: ["open", "https://after.example/"], result: { url: "https://after.example/" }, success: true },
+	]), { title: undefined, url: "https://after.example/" });
 });
 
 test("extractRefSnapshotFromData preserves editable evidence from snapshot text", () => {
@@ -211,5 +283,20 @@ test("extractLatestRefSnapshotStateFromBatchResults records empty snapshots and 
 			{ command: ["snapshot", "-i"], error: "No active page", success: false },
 		]),
 		{ invalidation: buildNoActivePageRefSnapshotInvalidation() },
+	);
+	assert.equal(
+		extractLatestRefSnapshotStateFromBatchResults([
+			{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },
+			{ command: ["close"], result: {}, success: true },
+		]),
+		undefined,
+	);
+	assert.deepEqual(
+		extractLatestRefSnapshotStateFromBatchResults([
+			{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },
+			{ command: ["close"], result: {}, success: true },
+			{ command: ["snapshot", "-i"], result: { refs: { e2: {} }, title: "New", url: "https://example.test/" }, success: true },
+		]),
+		{ snapshot: { refIds: ["e2"], refs: { e2: { isEditable: false, name: "", role: "unknown" } }, target: { title: "New", url: "https://example.test/" } } },
 	);
 });

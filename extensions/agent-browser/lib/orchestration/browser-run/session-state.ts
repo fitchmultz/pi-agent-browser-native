@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises";
 
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
@@ -756,9 +757,10 @@ export function getActiveElectronRecords(records: Map<string, ElectronLaunchReco
 	return [...records.values()].filter((record) => record.cleanupState === "active" || record.cleanupState === "dead" || record.cleanupState === "partial" || record.cleanupState === "failed");
 }
 
-export function findElectronLaunchRecordForSession(sessionName: string | undefined, records: Map<string, ElectronLaunchRecord>): ElectronLaunchRecord | undefined {
+export function findElectronLaunchRecordForSession(sessionName: string | undefined, records: Map<string, ElectronLaunchRecord>, namespace?: string): ElectronLaunchRecord | undefined {
 	if (!sessionName) return undefined;
-	return getActiveElectronRecords(records).find((record) => record.sessionName === sessionName);
+	const sessionKey = getAgentBrowserSessionIdentityKey(sessionName, namespace);
+	return getActiveElectronRecords(records).find((record) => record.sessionName && getAgentBrowserSessionIdentityKey(record.sessionName, record.namespace) === sessionKey);
 }
 
 function buildElectronReattachNextAction(record: ElectronLaunchRecord, liveTarget?: ElectronCdpTarget): AgentBrowserNextAction {

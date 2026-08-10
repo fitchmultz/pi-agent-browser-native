@@ -327,6 +327,8 @@ else if (command === "get" && subcommand === "url") data = { result: ${JSON.stri
 else if (command === "eval") data = { result: { focusedElement: { id: "run-button", name: "Run", role: "button", tagName: "button" } } };
 else if (command === "tab" && subcommand === "list") data = { tabs: [{ active: true, index: 0, tabId: "page-1", title: ${JSON.stringify(tabTitle)}, type: "page", url: ${JSON.stringify(tabUrl)} }] };
 else if (command === "snapshot") data = { origin: ${JSON.stringify(snapshotUrl)}, title: ${JSON.stringify(snapshotTitle)}, url: ${JSON.stringify(snapshotUrl)}, refs: { e1: { role: "button", name: "Run" } }, snapshot: "- button \\\"Run\\\" [ref=e1]" };
+else if (command === "record") data = { path: args[commandIndex + 2] };
+else if (command === "pdf") data = { path: args[commandIndex + 1] };
 else if (command === "close") data = { closed: true };
 process.stdout.write(JSON.stringify({ success: true, data }));`;
 }

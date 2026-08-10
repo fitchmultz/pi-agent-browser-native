@@ -1,4 +1,5 @@
 import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
+import { getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
 import { isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
@@ -153,6 +154,11 @@ export function extractSessionTabTargetFromBatchResults(data: unknown): SessionT
 		const [name, subcommand] = extractBatchResultCommand(item);
 		const result = item.result;
 
+		if (isCloseCommand(name)) {
+			currentTarget = undefined;
+			pendingTitle = undefined;
+			continue;
+		}
 		if (name === "get" && subcommand === "title") {
 			pendingTitle = extractStringResultField(result, "title");
 			continue;
@@ -276,6 +282,10 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 	for (const item of data) {
 		if (!isRecord(item)) continue;
 		const [name] = extractBatchResultCommand(item);
+		if (item.success !== false && isCloseCommand(name)) {
+			latestState = undefined;
+			continue;
+		}
 		if (name !== "snapshot") continue;
 		if (item.success === false) {
 			if (isNoActivePageSnapshotFailure(name, getBatchResultFailureText(item))) {
@@ -395,10 +405,11 @@ export class SessionPageState {
 			if (!sessionKey) continue;
 			const command = typeof details.command === "string" ? details.command : undefined;
 			const subcommand = typeof details.subcommand === "string" ? details.subcommand : undefined;
-			if (isCloseCommand(command) && message.isError !== true) {
+			const batchCloseLifecycle = getSuccessfulBatchCloseLifecycle(details.batchSteps);
+			if ((isCloseCommand(command) && message.isError !== true) || batchCloseLifecycle) {
 				restoredOrder += 1;
 				state.clearSession(sessionKey);
-				continue;
+				if (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true) continue;
 			}
 			const tabTarget = getRestoredSessionTabTarget(details, command, subcommand);
 			const tabTargetUnknown = details.sessionTabTargetUnknown === true;

@@ -1,3 +1,4 @@
+import { getAgentBrowserSessionIdentityKey } from "../argv-grammar.js";
 import { isRecord } from "../parsing.js";
 import type { FileArtifactKind, FileArtifactMetadata, SessionArtifactManifest, SessionArtifactManifestEntry } from "./contracts.js";
 
@@ -31,6 +32,7 @@ function isManifestEntry(value: unknown): value is SessionArtifactManifestEntry 
 	if (!["evicted", "ephemeral", "live", "missing"].includes(String(value.retentionState))) return false;
 	if (!["explicit-path", "persistent-session", "process-temp"].includes(String(value.storageScope))) return false;
 	if (typeof value.kind !== "string" || value.kind.trim().length === 0) return false;
+	if (value.namespace !== undefined && typeof value.namespace !== "string") return false;
 	return true;
 }
 
@@ -70,17 +72,25 @@ export function formatSessionArtifactRetentionSummary(manifest: SessionArtifactM
 }
 
 export function getSessionArtifactManifestEntryKey(entry: SessionArtifactManifestEntry): string {
-	return entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
+	const pathKey = entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
+	const recordingSessionKey = entry.command === "record" && entry.kind === "video" && entry.session
+		? getAgentBrowserSessionIdentityKey(entry.session, entry.namespace)
+		: undefined;
+	return recordingSessionKey ? `${pathKey}\0${recordingSessionKey}` : pathKey;
 }
 
 export function retirePendingRecordingManifestEntries(
 	manifest: SessionArtifactManifest,
 	sessionName: string | undefined,
+	namespace?: string,
 	nowMs = Date.now(),
 ): SessionArtifactManifest {
 	let changed = false;
+	const sessionKey = sessionName ? getAgentBrowserSessionIdentityKey(sessionName, namespace) : undefined;
 	const entries = manifest.entries.map((entry) => {
-		if ((entry.session ?? "") !== (sessionName ?? "")
+		if (!sessionKey
+			|| !entry.session
+			|| getAgentBrowserSessionIdentityKey(entry.session, entry.namespace) !== sessionKey
 			|| entry.kind !== "video"
 			|| !isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)) return entry;
 		changed = true;
@@ -110,9 +120,13 @@ export function mergeSessionArtifactManifest(options: {
 	for (const entry of options.entries ?? []) {
 		const key = getSessionArtifactManifestEntryKey(entry);
 		if (entry.command === "record" && entry.kind === "video" && !isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)) {
+			const entrySessionKey = entry.session ? getAgentBrowserSessionIdentityKey(entry.session, entry.namespace) : undefined;
 			for (const [candidateKey, candidate] of byPath) {
+				const sameRecordingSession = entrySessionKey === undefined
+					? candidate.session === undefined
+					: candidate.session !== undefined && getAgentBrowserSessionIdentityKey(candidate.session, candidate.namespace) === entrySessionKey;
 				if (candidateKey !== key
-					&& (candidate.session ?? "") === (entry.session ?? "")
+					&& sameRecordingSession
 					&& candidate.kind === "video"
 					&& isPendingRecordingCommand(candidate.command, candidate.subcommand, candidate.kind)) {
 					byPath.delete(candidateKey);

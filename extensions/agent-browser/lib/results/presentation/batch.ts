@@ -1,4 +1,6 @@
+import { isCloseCommand } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { extractCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
@@ -35,6 +37,7 @@ export interface BuildNestedToolPresentationOptions {
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
+	namespace?: string;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 }
@@ -285,6 +288,7 @@ async function buildBatchStepPresentation(options: {
 		args: command,
 		envelope: { data: item.result, success: true },
 		networkRouteDiagnostics,
+		namespace,
 		persistentArtifactStore,
 		sessionName,
 	});
@@ -345,22 +349,43 @@ async function buildBatchStepPresentation(options: {
 	};
 }
 
-function coalesceTerminalBatchRecordingArtifacts(artifacts: FileArtifactMetadata[]): FileArtifactMetadata[] {
+function abandonedRecordingArtifact(artifact: FileArtifactMetadata): FileArtifactMetadata {
+	const { recordingState: _recordingState, willExistOnStop: _willExistOnStop, ...terminal } = artifact;
+	return { ...terminal, exists: false, status: "missing", subcommand: "close-abandoned" };
+}
+
+function coalesceTerminalBatchRecordingArtifacts(
+	steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }>,
+	sessionName?: string,
+	namespace?: string,
+): FileArtifactMetadata[] {
+	const artifacts: FileArtifactMetadata[] = [];
 	const pendingIndexesBySession = new Map<string, number[]>();
-	const terminalPendingIndexes = new Set<number>();
-	for (const [index, artifact] of artifacts.entries()) {
-		if (artifact.command !== "record" || artifact.kind !== "video") continue;
-		const session = artifact.session ?? "";
-		if (isPendingRecordingArtifact(artifact)) {
-			const pendingIndexes = pendingIndexesBySession.get(session) ?? [];
-			pendingIndexes.push(index);
-			pendingIndexesBySession.set(session, pendingIndexes);
-			continue;
+	const removedPendingIndexes = new Set<number>();
+	for (const step of steps) {
+		for (const artifact of step.presentation.artifacts ?? []) {
+			const index = artifacts.push(artifact) - 1;
+			if (artifact.command !== "record" || artifact.kind !== "video") continue;
+			const session = artifact.session ? getAgentBrowserSessionIdentityKey(artifact.session, artifact.namespace) : "";
+			if (isPendingRecordingArtifact(artifact)) {
+				const pendingIndexes = pendingIndexesBySession.get(session) ?? [];
+				pendingIndexes.push(index);
+				pendingIndexesBySession.set(session, pendingIndexes);
+				continue;
+			}
+			const pendingIndex = pendingIndexesBySession.get(session)?.pop();
+			if (pendingIndex !== undefined) removedPendingIndexes.add(pendingIndex);
 		}
-		const pendingIndex = pendingIndexesBySession.get(session)?.pop();
-		if (pendingIndex !== undefined) terminalPendingIndexes.add(pendingIndex);
+		const command = step.details.command;
+		if (step.details.success !== true || !command || !isCloseCommand(extractCommandTokens(command)[0])) continue;
+		const session = sessionName ? getAgentBrowserSessionIdentityKey(sessionName, namespace) : "";
+		for (const pendingIndex of pendingIndexesBySession.get(session) ?? []) {
+			const pending = artifacts[pendingIndex];
+			if (pending && !removedPendingIndexes.has(pendingIndex)) artifacts[pendingIndex] = abandonedRecordingArtifact(pending);
+		}
+		pendingIndexesBySession.delete(session);
 	}
-	return artifacts.filter((_, index) => !terminalPendingIndexes.has(index));
+	return artifacts.filter((_, index) => !removedPendingIndexes.has(index));
 }
 
 export async function buildBatchPresentation(options: {
@@ -410,7 +435,7 @@ export async function buildBatchPresentation(options: {
 
 	const batchFailure = getBatchFailureDetails(steps);
 	const images = steps.flatMap((step) => getPresentationImages(step.presentation));
-	const artifacts = coalesceTerminalBatchRecordingArtifacts(steps.flatMap((step) => step.presentation.artifacts ?? []));
+	const artifacts = coalesceTerminalBatchRecordingArtifacts(steps, sessionName, namespace);
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const fullOutputPaths = steps.flatMap((step) => getPresentationPaths({
 		primaryPath: step.presentation.fullOutputPath,

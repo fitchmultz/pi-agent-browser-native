@@ -139,6 +139,7 @@ function isElectronLaunchRecord(value: unknown): value is ElectronLaunchRecord {
 	if (!isRecord(value)) return false;
 	return value.version === 1 &&
 		value.launchedByWrapper === true &&
+		(value.namespace === undefined || typeof value.namespace === "string") &&
 		typeof value.launchId === "string" &&
 		typeof value.appName === "string" &&
 		typeof value.executablePath === "string" &&
@@ -156,11 +157,12 @@ export function restoreElectronLaunchRecordsFromBranch(branch: unknown[]): Map<s
 		const details = isRecord(message.details) ? message.details : undefined;
 		const electron = isRecord(details?.electron) ? details.electron : undefined;
 		if (!electron) continue;
+		const namespace = typeof details?.namespace === "string" ? details.namespace : undefined;
 		const launch = isElectronLaunchRecord(electron.launch) ? electron.launch : undefined;
-		if (launch) records.set(launch.launchId, launch);
+		if (launch) records.set(launch.launchId, { ...launch, namespace: launch.namespace ?? namespace });
 		const cleanupRecords = isRecord(electron.cleanup) && Array.isArray(electron.cleanup.records) ? electron.cleanup.records : [];
 		for (const cleanupRecord of cleanupRecords) {
-			if (isElectronLaunchRecord(cleanupRecord)) records.set(cleanupRecord.launchId, cleanupRecord);
+			if (isElectronLaunchRecord(cleanupRecord)) records.set(cleanupRecord.launchId, { ...cleanupRecord, namespace: cleanupRecord.namespace ?? namespace });
 		}
 	}
 	return records;
@@ -528,7 +530,7 @@ async function collectOwnedElectronManagedSessionTarget(options: {
 	timeoutMs?: number;
 }): Promise<ElectronManagedSessionTarget> {
 	try {
-		return await withOwnedElectronManagedSessionPolicy(
+		const target = await withOwnedElectronManagedSessionPolicy(
 			{ ...options, args: ["get", "url"] },
 			async () => await collectElectronManagedSessionTarget({
 				allowManagedSessionTarget: true,
@@ -539,8 +541,9 @@ async function collectOwnedElectronManagedSessionTarget(options: {
 				timeoutMs: options.timeoutMs,
 			}),
 		) ?? { sessionName: options.sessionName };
+		return { ...target, namespace: options.namespace };
 	} catch (error) {
-		return { error: error instanceof Error ? error.message : String(error), sessionName: options.sessionName };
+		return { error: error instanceof Error ? error.message : String(error), namespace: options.namespace, sessionName: options.sessionName };
 	}
 }
 
@@ -738,10 +741,10 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 }): Promise<ElectronCleanupResult[]> {
 	const results: ElectronCleanupResult[] = [];
 	for (const record of options.records) {
-		const sessionKey = getSessionPageStateKey(record.sessionName) ?? record.sessionName;
+		const sessionKey = getSessionPageStateKey(record.sessionName, record.namespace) ?? record.sessionName;
 		const managedSessionOwner = sessionKey ? options.ownedManagedSessions.get(sessionKey) : undefined;
 		const managedSessionCloseError = record.sessionName
-			? await closeManagedSession({ cwd: options.cwd, headedManagedAutosaveInterval: managedSessionOwner?.headedManagedAutosaveInterval, preserveAttachedBrowserSession: options.attachedSessionKeys.has(sessionKey ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
+			? await closeManagedSession({ cwd: options.cwd, headedManagedAutosaveInterval: managedSessionOwner?.headedManagedAutosaveInterval, namespace: record.namespace, preserveAttachedBrowserSession: options.attachedSessionKeys.has(sessionKey ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, timeoutMs: options.timeoutMs })
 			: undefined;
 		const managedSessionStep = record.sessionName
 			? managedSessionCloseError
@@ -842,11 +845,12 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 		const managedSessions = await Promise.all(records
 			.filter((record): record is ElectronLaunchRecord & { sessionName: string } => typeof record.sessionName === "string")
 			.map((record) => {
-				const sessionKey = getSessionPageStateKey(record.sessionName) ?? record.sessionName;
+				const sessionKey = getSessionPageStateKey(record.sessionName, record.namespace) ?? record.sessionName;
 				return collectOwnedElectronManagedSessionTarget({
 					cwd,
 					headedManagedAutosaveDisabled: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveDisabled,
 					headedManagedAutosaveInterval: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveInterval,
+					namespace: record.namespace,
 					restoreState: managedSessionRestoreState,
 					sessionName: record.sessionName,
 					signal,
@@ -855,7 +859,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 			}));
 		const mismatches = managedSessions
 			.map((managedSession) => {
-				const record = records.find((candidate) => candidate.sessionName === managedSession.sessionName);
+				const record = records.find((candidate) => candidate.sessionName === managedSession.sessionName && candidate.namespace === managedSession.namespace);
 				const status = record ? statuses.find((candidate) => candidate.launchId === record.launchId) : undefined;
 				return record && status ? buildElectronSessionMismatch({ managedSession, record, statusTargets: status.targets }) : undefined;
 			})
@@ -871,7 +875,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 	if (compiledElectron?.action === "probe") {
 		const launchRecord = compiledElectron.launchId
 			? electronLaunchRecords.get(compiledElectron.launchId)
-			: findElectronLaunchRecordForSession(managedSessionName, electronLaunchRecords);
+			: findElectronLaunchRecordForSession(managedSessionName, electronLaunchRecords, managedSessionNamespace);
 		if (compiledElectron.launchId && !launchRecord) {
 			return buildElectronHostFailureResult({
 				compiledElectron: redactedCompiledElectron ?? compiledElectron,

@@ -380,6 +380,7 @@ export interface ElectronHandoffSummary {
 
 export interface ElectronManagedSessionTarget {
 	error?: string;
+	namespace?: string;
 	sessionName: string;
 	title?: string;
 	url?: string;

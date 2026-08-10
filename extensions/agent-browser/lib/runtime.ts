@@ -603,14 +603,15 @@ export function restoreManagedSessionStateFromBranch(
 		if (details.managedSessionRestoreDisabled === true && typeof sessionName === "string") {
 			restoreDisabledIdentities.set(getAgentBrowserSessionIdentityKey(sessionName, namespace), { namespace, sessionName });
 		}
-		const managedSessionName =
+		const managedSessionName = outcomeClosedSessionName ?? (
 			!explicitSessionName &&
 			restorableDetailSessionName &&
 			(usedImplicitSession || sessionMode === "fresh")
 				? restorableDetailSessionName
 				: commandClosesSession
-					? outcomeClosedSessionName ?? explicitCloseSessionName
-					: undefined;
+					? explicitCloseSessionName
+					: undefined
+		);
 		if (!managedSessionName) {
 			continue;
 		}
@@ -630,8 +631,8 @@ export function restoreManagedSessionStateFromBranch(
 		const outcomeActiveAfter = outcome?.activeAfter === true;
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
-		if (commandClosesSession) {
-			if (succeeded) {
+		if (commandClosesSession || outcomeClosedSessionName) {
+			if (outcomeClosedSessionName || succeeded) {
 				restoreDisabledIdentities.delete(getAgentBrowserSessionIdentityKey(managedSessionName, namespace));
 				applyManagedClose(managedSessionName, namespace);
 			}

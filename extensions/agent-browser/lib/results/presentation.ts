@@ -106,7 +106,7 @@ export async function buildToolPresentation(options: {
 
 	const data = enrichStreamStatusData(commandInfoWithTokens, envelope?.data);
 	const presentationData = redactPresentationData(commandInfoWithTokens, data);
-	const artifacts = await extractFileArtifacts({ artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, sessionName });
+	const artifacts = await extractFileArtifacts({ artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, namespace, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);
 	const summary = artifactSummary ?? formatPresentationSummary(commandInfoWithTokens, data, compiledSemanticAction);

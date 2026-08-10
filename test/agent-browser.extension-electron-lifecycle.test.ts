@@ -432,14 +432,22 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(broadTextDetails.electronGetTextScopeWarning?.electronContext, { launchId: launchDetails.electron.launch.launchId, sessionName: launchDetails.electron.launch.sessionName, url: "app://demo" });
 			assert.ok(broadTextDetails.nextActions?.some((action) => action.id === "snapshot-for-electron-text-scope" && action.params?.args?.includes("snapshot")));
 
+			const recordingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "electron-cleanup.webm"] });
+			assert.equal(recordingResult.isError, false, JSON.stringify(recordingResult));
 			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				electron: { action: "cleanup", launchId: launchDetails.electron.launch.launchId },
 			});
 			assert.equal(cleanupResult.isError, false);
 			assert.match(cleanupResult.content[0]?.text ?? "", /fully cleaned/);
+			const cleanupManifest = cleanupResult.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;
+			assert.equal(cleanupManifest?.entries?.some((entry) => entry.subcommand === "start"), false);
+			const releasedRecordingPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "electron-cleanup.webm"] });
+			assert.doesNotMatch(releasedRecordingPath.content[0]?.text ?? "", /reserved by an active recording/);
 			await assert.rejects(stat(launchDetails.electron.launch.userDataDir));
 			const finalInvocations = await readInvocationLog(upstreamLogPath);
-			assert.equal(finalInvocations.some((entry) => entry.args.at(-1) === "close"), true);
+			const cleanupClose = finalInvocations.find((entry) => entry.args.at(-1) === "close");
+			assert.ok(cleanupClose);
+			assert.equal(cleanupClose.args[cleanupClose.args.indexOf("--namespace") + 1], "team");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
