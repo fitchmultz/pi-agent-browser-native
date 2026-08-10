@@ -352,10 +352,78 @@ test("buildToolPresentation rejects a stale previous recording reported by recor
 		assert.equal(restarted.resultCategory, "failure");
 		assert.equal(restarted.failureCategory, "artifact-missing");
 		assert.match(restarted.summary, /modification time outside the current command window/);
+		assert.match((restarted.content[0] as { text: string }).text, /Previous recording stale/);
+		assert.doesNotMatch((restarted.content[0] as { text: string }).text, /Previous recording saved/);
 		assert.equal(restarted.artifacts?.[0]?.status, "stale");
 		assert.equal(restarted.artifactVerification?.artifacts[0]?.state, "unverified");
 		assert.equal(restarted.artifactVerification?.verifiedCount, 0);
 		assert.equal(restarted.artifactVerification?.pendingCount, 1);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation rejects a missing previous recording reported by record restart", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-restart-missing-"));
+	try {
+		const firstPath = join(tempDir, "first.webm");
+		const restartedPath = join(tempDir, "restarted.webm");
+		const started = await buildToolPresentation({
+			commandInfo: { command: "record", subcommand: "start" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: firstPath } },
+		});
+
+		const restarted = await buildToolPresentation({
+			artifactManifest: started.artifactManifest,
+			artifactMaxUpdatedAtMs: Date.now(),
+			artifactMinUpdatedAtMs: Date.now() - 1_000,
+			commandInfo: { command: "record", subcommand: "restart" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: restartedPath } },
+		});
+
+		assert.equal(restarted.resultCategory, "failure");
+		assert.equal(restarted.failureCategory, "artifact-missing");
+		assert.match(restarted.summary, /was not found/);
+		assert.match((restarted.content[0] as { text: string }).text, /Previous recording missing/);
+		assert.doesNotMatch((restarted.content[0] as { text: string }).text, /Previous recording saved/);
+		assert.equal(restarted.artifacts?.[0]?.status, "missing");
+		assert.equal(restarted.artifactVerification?.missingCount, 1);
+		assert.equal(restarted.artifactVerification?.pendingCount, 1);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation coalesces a batched recording to its terminal saved state", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-terminal-"));
+	try {
+		const recordingPath = join(tempDir, "recording.webm");
+		const reportedStopPath = join(tempDir, "final-recording.webm");
+		await writeFile(reportedStopPath, "completed recording");
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: tempDir,
+			envelope: {
+				success: true,
+				data: [
+					{ command: ["record", "start", recordingPath], result: { path: recordingPath }, success: true },
+					{ command: ["record", "stop"], result: { frames: 3, path: reportedStopPath }, success: true },
+				],
+			},
+		});
+
+		assert.deepEqual(presentation.artifacts?.map((artifact) => ({ status: artifact.status, subcommand: artifact.subcommand })), [
+			{ status: "saved", subcommand: "stop" },
+		]);
+		assert.equal(presentation.artifacts?.[0]?.absolutePath, reportedStopPath);
+		assert.equal(presentation.artifactVerification?.pendingCount, 0);
+		assert.equal(presentation.artifactVerification?.verifiedCount, 1);
+		assert.equal(presentation.successCategory, "artifact-saved");
+		assert.equal(presentation.nextActions?.some((action) => action.id === "stop-pending-recording"), false);
+		assert.equal(presentation.batchSteps?.[0]?.artifacts?.[0]?.status, "pending");
+		assert.equal(presentation.batchSteps?.[1]?.artifacts?.[0]?.status, "saved");
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -833,7 +901,7 @@ test("buildToolPresentation preserves non-screenshot file artifacts inside batch
 	assert.match(text, /Saved recording: recording\.webm/);
 	assert.match(text, /Step 5 — network har stop network\.har/);
 	assert.match(text, /Saved HAR: network\.har/);
-	assert.deepEqual(presentation.artifacts?.map((artifact) => artifact.kind), ["trace", "profile", "video", "video", "har"]);
+	assert.deepEqual(presentation.artifacts?.map((artifact) => artifact.kind), ["trace", "profile", "video", "har"]);
 	assert.deepEqual(presentation.batchSteps?.map((step) => step.artifacts?.[0]?.kind), ["trace", "profile", "video", "video", "har"]);
 	assert.equal(presentation.imagePath, undefined);
 	assert.equal(presentation.imagePaths, undefined);

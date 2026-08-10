@@ -2,7 +2,7 @@ import { isRecord } from "../../parsing.js";
 import { extractCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
-import { formatSessionArtifactRetentionSummary } from "../artifact-manifest.js";
+import { formatSessionArtifactRetentionSummary, isPendingRecordingArtifact } from "../artifact-manifest.js";
 import { classifyAgentBrowserFailureCategory } from "../categories.js";
 import { detectConfirmationRequired } from "../confirmation.js";
 import type {
@@ -11,6 +11,7 @@ import type {
 	AgentBrowserNextAction,
 	BatchFailurePresentationDetails,
 	BatchStepPresentationDetails,
+	FileArtifactMetadata,
 	NetworkRouteDiagnostic,
 	NetworkRouteRecord,
 	SessionArtifactManifest,
@@ -344,6 +345,24 @@ async function buildBatchStepPresentation(options: {
 	};
 }
 
+function coalesceTerminalBatchRecordingArtifacts(artifacts: FileArtifactMetadata[]): FileArtifactMetadata[] {
+	const pendingIndexesBySession = new Map<string, number[]>();
+	const terminalPendingIndexes = new Set<number>();
+	for (const [index, artifact] of artifacts.entries()) {
+		if (artifact.command !== "record" || artifact.kind !== "video") continue;
+		const session = artifact.session ?? "";
+		if (isPendingRecordingArtifact(artifact)) {
+			const pendingIndexes = pendingIndexesBySession.get(session) ?? [];
+			pendingIndexes.push(index);
+			pendingIndexesBySession.set(session, pendingIndexes);
+			continue;
+		}
+		const pendingIndex = pendingIndexesBySession.get(session)?.pop();
+		if (pendingIndex !== undefined) terminalPendingIndexes.add(pendingIndex);
+	}
+	return artifacts.filter((_, index) => !terminalPendingIndexes.has(index));
+}
+
 export async function buildBatchPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
 	artifactMaxUpdatedAtMs?: number;
@@ -391,7 +410,7 @@ export async function buildBatchPresentation(options: {
 
 	const batchFailure = getBatchFailureDetails(steps);
 	const images = steps.flatMap((step) => getPresentationImages(step.presentation));
-	const artifacts = steps.flatMap((step) => step.presentation.artifacts ?? []);
+	const artifacts = coalesceTerminalBatchRecordingArtifacts(steps.flatMap((step) => step.presentation.artifacts ?? []));
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const fullOutputPaths = steps.flatMap((step) => getPresentationPaths({
 		primaryPath: step.presentation.fullOutputPath,

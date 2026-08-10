@@ -268,7 +268,21 @@ async function buildPreviousRestartRecordingArtifact(options: {
 			updatedAtMs: fileStats.mtimeMs,
 		};
 	} catch {
-		return undefined;
+		return {
+			absolutePath,
+			artifactType: "video",
+			command: "record",
+			cwd: previousRecording.cwd ?? options.cwd,
+			exists: false,
+			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
+			kind: "video",
+			mediaType: previousRecording.mediaType,
+			path: previousRecording.path,
+			requestedPath: previousRecording.requestedPath,
+			session: previousRecording.session ?? options.sessionName,
+			status: "missing",
+			subcommand: "restart-previous",
+		};
 	}
 }
 
@@ -466,7 +480,11 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 		case "trace":
 			return "Saved trace";
 		case "video":
-			if (artifact.command === "record" && artifact.subcommand === "restart-previous") return "Previous recording saved";
+			if (artifact.command === "record" && artifact.subcommand === "restart-previous") {
+				if (artifact.status === "stale") return "Previous recording stale";
+				if (artifact.exists === false) return "Previous recording missing";
+				return "Previous recording saved";
+			}
 			if (!isPendingRecordingArtifact(artifact)) return "Saved recording";
 			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started; output will be written on stop";
 	}
