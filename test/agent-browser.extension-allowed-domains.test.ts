@@ -246,8 +246,9 @@ if (args.includes("open")) {
 	}
 });
 
-test("agentBrowserExtension does not restore allowed-domain policy after electron cleanup closes the session", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-allowed-domains-cleanup-"));
+test("agentBrowserExtension does not restore namespaced allowed-domain policy after electron cleanup closes the session", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(process.platform === "win32" ? join(tmpdir(), "a-") : "/tmp/a-");
+	const socketDir = await mkdtemp(process.platform === "win32" ? join(tmpdir(), "p-") : "/tmp/p-");
 	const statePath = join(tempDir, "page-state.json");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -279,12 +280,12 @@ if (args.includes("open")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_SOCKET_DIR: socketDir }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const open = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--allowed-domains", "example.com", "open", "https://example.com"],
+				args: ["--namespace", "team", "--allowed-domains", "example.com", "open", "https://example.com"],
 				sessionMode: "fresh",
 			});
 			assert.equal(open.isError, false, JSON.stringify(open));
@@ -296,6 +297,7 @@ if (args.includes("open")) {
 						args: ["electron", "cleanup"],
 						command: "electron",
 						electron: { cleanup: { results: [{ steps: [{ resource: "managed-session", sessionName, state: "removed" }] }] } },
+						namespace: "team",
 						sessionName,
 					},
 					isError: false,
@@ -304,12 +306,15 @@ if (args.includes("open")) {
 			const reloadedHarness = createExtensionHarness({ branch, cwd: tempDir });
 			await runExtensionEvent(reloadedHarness.handlers, "session_start", { reason: "reload" }, reloadedHarness.ctx);
 
-			const noPolicyClick = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, { args: ["click", "@e2"] });
+			const noPolicyClick = await executeRegisteredTool(reloadedHarness.tool, reloadedHarness.ctx, {
+				args: ["--namespace", "team", "--session", sessionName, "click", "@e2"],
+			});
 			assert.equal(noPolicyClick.isError, false, JSON.stringify(noPolicyClick));
 			assert.equal(noPolicyClick.details?.failureCategory, undefined);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
+		await rm(socketDir, { force: true, recursive: true });
 	}
 });
 

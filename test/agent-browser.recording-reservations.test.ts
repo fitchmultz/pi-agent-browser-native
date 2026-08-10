@@ -10,7 +10,7 @@ import {
 	type ActiveRecordingReservation,
 } from "../extensions/agent-browser/lib/recording-reservations.js";
 import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
-import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
+import { isPendingRecordingCommand, mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 import type { FileArtifactMetadata, SessionArtifactManifestEntry } from "../extensions/agent-browser/lib/results/contracts.js";
 
 function pendingArtifact(session: string, namespace: string, path: string): FileArtifactMetadata {
@@ -146,9 +146,29 @@ test("recording reservation replay keeps the newest pending path authoritative",
 		["newer.webm"],
 	);
 
-	const terminalAtRestart = { ...pendingManifestEntry("shared", "scope", "z-previous.webm", 3), subcommand: "stop" };
-	const pendingAtRestart = { ...pendingManifestEntry("shared", "scope", "a-current.webm", 3), subcommand: "restart" };
-	const restartManifest = mergeSessionArtifactManifest({ entries: [pendingAtRestart, terminalAtRestart] });
+	const sameTimestampManifest = mergeSessionArtifactManifest({ entries: [
+		pendingManifestEntry("shared", "scope", "same-ms-older.webm", 3),
+		pendingManifestEntry("shared", "scope", "same-ms-newer.webm", 3),
+	] });
+	assert.deepEqual(
+		sameTimestampManifest?.entries.filter((entry) => isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)).map((entry) => entry.path),
+		["same-ms-newer.webm"],
+	);
+
+	const pendingThenStopped = pendingManifestEntry("shared", "scope", "same-ms-finished.webm", 4);
+	const stoppedAtSameTimestamp = { ...pendingThenStopped, subcommand: "stop" };
+	const stoppedManifest = mergeSessionArtifactManifest({ entries: [pendingThenStopped, stoppedAtSameTimestamp] });
+	assert.deepEqual(stoppedManifest?.entries.map((entry) => entry.subcommand), ["stop"]);
+	const stoppedReplay = restoreRecordingReservationStateFromBranch([{
+		type: "message",
+		message: { toolName: "agent_browser", details: { artifactManifest: stoppedManifest } },
+	}]);
+	assert.equal(stoppedReplay.active.size, 0);
+	assert.equal(stoppedReplay.terminal.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "same-ms-finished.webm");
+
+	const terminalAtRestart = { ...pendingManifestEntry("shared", "scope", "z-previous.webm", 5), subcommand: "restart-previous" };
+	const pendingAtRestart = { ...pendingManifestEntry("shared", "scope", "a-current.webm", 5), subcommand: "restart" };
+	const restartManifest = mergeSessionArtifactManifest({ entries: [terminalAtRestart, pendingAtRestart] });
 	const restartReplay = restoreRecordingReservationStateFromBranch([{
 		type: "message",
 		message: { toolName: "agent_browser", details: { artifactManifest: restartManifest } },

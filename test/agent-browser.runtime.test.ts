@@ -917,10 +917,10 @@ test("restoreManagedSessionStateFromBranch honors namespaced Electron cleanup ma
 							results: [{
 								launchId: "electron-demo",
 								partial: true,
-								record: { cleanupState: "partial", launchId: "electron-demo", namespace: "team", port: 9222, version: 1 },
+								record: { cleanupState: "partial", launchId: "electron-demo", namespace: "record-fallback", port: 9222, version: 1 },
 								remainingResources: ["process"],
 								steps: [
-									{ resource: "managed-session", sessionName: "piab-demo-123-fresh-electron", state: "removed" },
+									{ namespace: "team", resource: "managed-session", sessionName: "piab-demo-123-fresh-electron", state: "removed" },
 									{ resource: "process", state: "failed" },
 								],
 								summary: "Electron cleanup was partial.",

@@ -412,6 +412,13 @@ function restoreAttachedSessionKeysFromBranch(branch: unknown[]): Set<string> {
 		const args = getToolResultArgs(details);
 		const namespace = typeof details.namespace === "string" ? details.namespace : extractExplicitNamespace(args);
 		const sessionName = typeof details.sessionName === "string" ? details.sessionName : extractExplicitSessionName(args);
+		const electron = isRecord(details.electron) ? details.electron : undefined;
+		const cleanup = isRecord(electron?.cleanup) ? electron.cleanup : undefined;
+		for (const cleanupResult of Array.isArray(cleanup?.results) ? cleanup.results : []) {
+			for (const identity of getCleanupResultClosedManagedSessionIdentities(cleanupResult, namespace)) {
+				attachedSessionKeys.delete(getSessionContextKey(identity.sessionName, identity.namespace) ?? identity.sessionName);
+			}
+		}
 		if (detailsReportCloseAllApplied(details, succeeded)) {
 			deleteIdentityKeysInNamespace(attachedSessionKeys, namespace);
 			if (sessionName && details.attachedBrowserSession === true && batchCloseLifecycle?.endsClosed === false) {
@@ -467,7 +474,7 @@ function restoreAllowedDomainsBySessionFromBranch(branch: unknown[]): Map<string
 		const cleanup = isRecord(electron?.cleanup) ? electron.cleanup : undefined;
 		const cleanupResults = Array.isArray(cleanup?.results) ? cleanup.results : [];
 		for (const cleanupResult of cleanupResults) {
-			for (const identity of getCleanupResultClosedManagedSessionIdentities(cleanupResult)) {
+			for (const identity of getCleanupResultClosedManagedSessionIdentities(cleanupResult, namespace)) {
 				restoredPolicies.delete(getSessionContextKey(identity.sessionName, identity.namespace) ?? identity.sessionName);
 			}
 		}
@@ -634,7 +641,7 @@ interface ElectronClosedManagedSessionIdentity {
 	sessionName: string;
 }
 
-function getCleanupResultClosedManagedSessionIdentities(result: unknown): ElectronClosedManagedSessionIdentity[] {
+function getCleanupResultClosedManagedSessionIdentities(result: unknown, fallbackNamespace?: string): ElectronClosedManagedSessionIdentity[] {
 	if (!isRecord(result) || !Array.isArray(result.steps)) return [];
 	const identities = new Map<string, ElectronClosedManagedSessionIdentity>();
 	const record = isRecord(result.record) ? result.record : undefined;
@@ -646,7 +653,7 @@ function getCleanupResultClosedManagedSessionIdentities(result: unknown): Electr
 			: typeof record?.sessionName === "string" ? record.sessionName : undefined;
 		const namespace = typeof step.namespace === "string"
 			? step.namespace
-			: typeof record?.namespace === "string" ? record.namespace : undefined;
+			: typeof record?.namespace === "string" ? record.namespace : fallbackNamespace;
 		if (sessionName) identities.set(getSessionContextKey(sessionName, namespace) ?? sessionName, { namespace, sessionName });
 	}
 	return [...identities.values()];
@@ -874,8 +881,10 @@ class KeyedAsyncExecutionQueue {
 		entry.users += 1;
 		this.entries.set(key, entry);
 		try {
-			await barrier;
-			return await entry.queue.run(work);
+			return await entry.queue.run(async () => {
+				await barrier;
+				return await work();
+			});
 		} finally {
 			entry.users -= 1;
 			if (entry.users === 0 && this.entries.get(key) === entry) this.entries.delete(key);

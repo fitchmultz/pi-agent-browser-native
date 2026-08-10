@@ -525,7 +525,7 @@ function getElectronCleanupClosedManagedSessions(details: Record<string, unknown
 	for (const result of results) {
 		if (!isRecord(result) || !Array.isArray(result.steps)) continue;
 		const record = isRecord(result.record) ? result.record : undefined;
-		const namespace = typeof record?.namespace === "string"
+		const fallbackNamespace = typeof record?.namespace === "string"
 			? record.namespace
 			: typeof details.namespace === "string" ? details.namespace : undefined;
 		for (const step of result.steps) {
@@ -533,6 +533,7 @@ function getElectronCleanupClosedManagedSessions(details: Record<string, unknown
 			if (step.state !== "removed" && step.state !== "already-gone") continue;
 			const sessionName = getRestorableManagedSessionName(step.sessionName, fallbackSessionName)
 				?? getRestorableManagedSessionName(record?.sessionName, fallbackSessionName);
+			const namespace = typeof step.namespace === "string" ? step.namespace : fallbackNamespace;
 			if (sessionName) closedSessions.push({ namespace, sessionName });
 		}
 	}

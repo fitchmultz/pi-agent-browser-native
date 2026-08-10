@@ -17,7 +17,8 @@
 
 ### Fixed
 
-- Electron `launchId` probes retain the tracked launch namespace, and cleanup replay retires the exact namespaced managed session instead of probing or resurrecting a default-namespace peer.
+- Electron `launchId` probes retain the tracked launch namespace, and cleanup replay retires the exact namespaced managed session, attached marker, and allowed-domain policy instead of probing or resurrecting a default-namespace peer.
+- Same-millisecond recording artifacts preserve their emitted lifecycle order, so a later stop stays terminal and the last of multiple pending paths remains authoritative; namespace-exclusive close-all barriers now enqueue earlier session work before draining it.
 - Failed first-call batches that close then relaunch remain tracked for cleanup, and namespace-scoped `close --all` exclusively drains matching session work before retiring every managed, attached, page/ref, route, trace/profiler, and recording owner.
 - Tolerated pre-upgrade transcript rows whose managed restore identity list is absent instead of throwing during branch rehydration (contributed by [@coreyallen](https://github.com/coreyallen) in [#96](https://github.com/fitchmultz/pi-agent-browser-native/pull/96)).
 - Included `scripts/build.mjs` in the published package contract so source installs can run `prepare` successfully (contributed by [@selimerunkut](https://github.com/selimerunkut) in [#100](https://github.com/fitchmultz/pi-agent-browser-native/pull/100)).

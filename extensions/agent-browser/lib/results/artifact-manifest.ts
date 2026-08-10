@@ -124,9 +124,7 @@ export function mergeSessionArtifactManifest(options: {
 	}
 	const orderedEntries = (options.entries ?? [])
 		.map((entry, index) => ({ entry, index }))
-		.sort((left, right) => left.entry.createdAtMs - right.entry.createdAtMs
-			|| Number(isPendingRecordingCommand(left.entry.command, left.entry.subcommand, left.entry.kind)) - Number(isPendingRecordingCommand(right.entry.command, right.entry.subcommand, right.entry.kind))
-			|| right.index - left.index)
+		.sort((left, right) => left.entry.createdAtMs - right.entry.createdAtMs || left.index - right.index)
 		.map(({ entry }) => entry);
 	for (const entry of orderedEntries) {
 		const key = getSessionArtifactManifestEntryKey(entry);
