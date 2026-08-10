@@ -284,12 +284,12 @@ if (args.includes("open")) {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
+			const sessionName = "caller-owned-electron";
 			const open = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--namespace", "team", "--allowed-domains", "example.com", "open", "https://example.com"],
+				args: ["--namespace", "team", "--session", sessionName, "--allowed-domains", "example.com", "open", "https://example.com"],
 				sessionMode: "fresh",
 			});
 			assert.equal(open.isError, false, JSON.stringify(open));
-			const sessionName = String(open.details?.sessionName);
 			const branch = [
 				createToolBranchEntry({ details: open.details ?? {}, isError: false }),
 				createToolBranchEntry({
