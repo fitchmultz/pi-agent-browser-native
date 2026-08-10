@@ -661,7 +661,14 @@ if (!REAL_UPSTREAM_ENABLED) {
 					const restoreSessionsDirectory = join(tempDir, ".agent-browser", "sessions");
 					await writeFile(join(restoreSessionsDirectory, `${foreignRestoreKey}-newer-empty.json`), JSON.stringify({ cookies: [], origins: [] }), "utf8");
 
-					const sameExtensionRestoredOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", contractUrl] });
+					const sameExtensionRestoredOpen = await (async () => {
+						try {
+							await writeFile(lateConfigPath, JSON.stringify({ restore: foreignRestoreKey }), "utf8");
+							return await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", contractUrl] });
+						} finally {
+							await rm(lateConfigPath, { force: true });
+						}
+					})();
 					assertSuccessfulResult(sameExtensionRestoredOpen, shapes.commands.open, "reopen restored managed session after close in same extension");
 					const sameExtensionRestoreState = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["eval", "--stdin"],

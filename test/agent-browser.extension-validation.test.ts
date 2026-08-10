@@ -18,7 +18,7 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
-import { canonicalizeExplicitArtifactDestination } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
+import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
 import {
 	WEB_SEARCH_PROMPT_GUIDELINE,
 	QUICK_START_GUIDELINES,
@@ -400,6 +400,36 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 		});
 		assert.equal(recordingAlias.isError, true);
 		assert.match(recordingAlias.content[0]?.text ?? "", /capture\.webm is already written by step 1/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension handles bare wait commands through artifact preflight", { concurrency: false }, async () => {
+	assert.equal(getExplicitArtifactDestination(["wait"]), undefined);
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bare-wait-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const command = args.find((token) => token === "wait" || token === "batch");
+if (command === "batch") { fs.readFileSync(0, "utf8"); process.stdout.write("[]"); }
+else process.stdout.write(JSON.stringify({ success: true, data: { waited: true } }));`,
+	);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			for (const params of [
+				{ args: ["wait"] },
+				{ args: ["batch", "wait"] },
+				{ args: ["batch"], stdin: JSON.stringify([["wait"]]) },
+			]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+				assert.equal(result.isError, false);
+			}
+		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

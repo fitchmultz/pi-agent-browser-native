@@ -475,8 +475,8 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 	const status = typeof outcome.status === "string" ? outcome.status : undefined;
 	const currentSessionName = typeof outcome.currentSessionName === "string" ? outcome.currentSessionName : undefined;
 	const attemptedSessionName = typeof outcome.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
+	const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
 	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
-		const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
 		trackOwnedManagedSession(sessions, currentSessionName, cwd, {
 			headedManagedAutosaveDisabled: details?.managedSessionHeadedAutosaveDisabled === true,
 			headedManagedAutosaveInterval: typeof details?.managedSessionHeadedAutosaveInterval === "string" ? details.managedSessionHeadedAutosaveInterval : undefined,
@@ -484,7 +484,7 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 		});
 	}
 	if (succeeded && status === "closed") {
-		untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName);
+		untrackOwnedManagedSession(sessions, attemptedSessionName ?? currentSessionName, namespace);
 	}
 }
 
@@ -1089,10 +1089,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			managedSessionRestoreState.disable(sessionName);
 			return "The isolated session closed, but its durable cleanup record could not be saved.";
 		}
-		untrackOwnedManagedSession(ownedManagedSessions, sessionName);
-		managedSessionRestoreState.clear(sessionName);
+		untrackOwnedManagedSession(ownedManagedSessions, sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
+		managedSessionRestoreState.clear(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
 		retireRecordingSession(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
-		clearSessionScopedBrowserState(sessionName);
+		clearSessionScopedBrowserState(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
 		return undefined;
 	};
 
@@ -1106,7 +1106,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			if (lease.cleanup !== "closed") pendingSessionNames.add(lease.sessionName);
 		}
 		for (const sessionName of pendingSessionNames) {
-			trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd, { branchOwned: true });
+			trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd, { branchOwned: true, namespace: AGENT_BROWSER_SCRIPT_NAMESPACE });
 			managedSessionRestoreState.disable(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
 			await closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd);
 		}
@@ -1498,7 +1498,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const pendingRun = runAgentBrowserScript({
 						beforeFirstCall() {
 							appendScriptSessionLease(pi, sessionName, "active");
-							trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd);
+							trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd, { namespace: AGENT_BROWSER_SCRIPT_NAMESPACE });
 							managedSessionRestoreState.disable(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
 							leased = true;
 						},

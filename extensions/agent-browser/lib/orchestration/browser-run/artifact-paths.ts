@@ -110,7 +110,7 @@ export function getExplicitArtifactDestination(commandTokens: string[]): string 
 	if (command === "download") return commandTokens[2];
 	if (command === "pdf") return commandTokens[1];
 	if (command === "wait" && subcommand === "--download" && commandTokens[2] && !commandTokens[2].startsWith("--")) return commandTokens[2];
-	if (command === "wait" && subcommand.startsWith("--download=")) return subcommand.slice("--download=".length) || undefined;
+	if (command === "wait" && subcommand?.startsWith("--download=")) return subcommand.slice("--download=".length) || undefined;
 	if (command === "state" && subcommand === "save") return commandTokens[2];
 	if (command === "diff" && subcommand === "screenshot") return getFlagValue(commandTokens, "--output");
 	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") return commandTokens[3];
