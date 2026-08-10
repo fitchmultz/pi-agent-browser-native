@@ -76,7 +76,8 @@ function appendTail(text: string, addition: string, maxChars: number): string {
 }
 
 function quoteWindowsPowerShellArg(value: string): string {
-	return `'${value.replace(/'/g, "''")}'`;
+	// PowerShell drops an empty string when forwarding to a .cmd shim. Pass cmd's quoted-empty token instead.
+	return value.length === 0 ? `'""'` : `'${value.replace(/'/g, "''")}'`;
 }
 
 /** Exported for unit tests that lock Windows launcher argv ordering. */

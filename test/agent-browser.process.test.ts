@@ -209,6 +209,10 @@ test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
 			args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue; if (-not $agentBrowser) { [Console]::Error.WriteLine('PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd'); exit 127 }; & $agentBrowser.Source 'open' '--json' '--session' 'managed' 'https://example.com'"],
 		},
 	);
+	assert.match(
+		buildAgentBrowserSpawnCommand(["--args", "", "--namespace", "", "session", "info"], "win32").args.at(-1) ?? "",
+		/'session' '--args' '""' '--namespace' '""' 'info'$/,
+	);
 	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
 });
 
