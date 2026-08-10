@@ -155,7 +155,9 @@ export function mergeSessionArtifactManifest(options: {
 		.sort((left, right) => {
 			const leftTime = left.evictedAtMs ?? left.createdAtMs;
 			const rightTime = right.evictedAtMs ?? right.createdAtMs;
-			return rightTime - leftTime || left.path.localeCompare(right.path);
+			return rightTime - leftTime
+				|| Number(isPendingRecordingCommand(right.command, right.subcommand, right.kind)) - Number(isPendingRecordingCommand(left.command, left.subcommand, left.kind))
+				|| left.path.localeCompare(right.path);
 		})
 		.slice(0, maxEntries);
 	return {

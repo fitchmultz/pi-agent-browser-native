@@ -18,8 +18,9 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
-import { KeyedAsyncExecutionQueue } from "../extensions/agent-browser/index.js";
+import { KeyedAsyncExecutionQueue, mergeBrowserRunArtifactManifest } from "../extensions/agent-browser/index.js";
 import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
+import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
 import {
 	WEB_SEARCH_PROMPT_GUIDELINE,
@@ -1175,6 +1176,95 @@ test("KeyedAsyncExecutionQueue drains same-namespace work without deadlocking la
 		if (timeout) clearTimeout(timeout);
 	}
 	assert.deepEqual(events, ["first-start", "first-end", "exclusive", "late"]);
+});
+
+test("mergeBrowserRunArtifactManifest preserves restart lifecycle order across a concurrent manifest update", () => {
+	const initial = mergeSessionArtifactManifest({
+		entries: [{ command: "screenshot", createdAtMs: 1, kind: "image", path: "initial.png", retentionState: "live", storageScope: "explicit-path" }],
+		nowMs: 1,
+	});
+	assert.ok(initial);
+	const updated = mergeSessionArtifactManifest({
+		base: initial,
+		entries: [
+			{ command: "record", createdAtMs: 2, kind: "video", path: "z-previous.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "restart-previous" },
+			{ command: "record", createdAtMs: 2, kind: "video", path: "a-current.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "restart" },
+		],
+		nowMs: 2,
+	});
+	const current = mergeSessionArtifactManifest({
+		base: initial,
+		entries: [{ command: "screenshot", createdAtMs: 3, kind: "image", path: "concurrent.png", retentionState: "live", storageScope: "explicit-path" }],
+		nowMs: 3,
+	});
+	const merged = mergeBrowserRunArtifactManifest(current, initial, updated);
+	assert.equal(merged?.entries.some((entry) => entry.path === "z-previous.webm" && entry.subcommand === "restart-previous"), true);
+	assert.equal(merged?.entries.some((entry) => entry.path === "a-current.webm" && entry.subcommand === "restart"), true);
+	assert.equal(merged?.entries.some((entry) => entry.path === "concurrent.png"), true);
+});
+
+test("mergeSessionArtifactManifest retains the active restart when the recent window is one", { concurrency: false }, async () => {
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1" }, async () => {
+		const manifest = mergeSessionArtifactManifest({
+			entries: [
+				{ command: "record", createdAtMs: 1, kind: "video", path: "a-previous.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "restart-previous" },
+				{ command: "record", createdAtMs: 1, kind: "video", path: "z-current.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "restart" },
+			],
+			nowMs: 1,
+		});
+		assert.deepEqual(manifest?.entries.map((entry) => [entry.path, entry.subcommand]), [["z-current.webm", "restart"]]);
+	});
+});
+
+test("agentBrowserExtension keeps a direct restart pending through outer manifest merge and replay", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restart-manifest-"));
+	const nodeBinDir = dirname(process.execPath);
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const valueFlags = new Set(["--namespace", "--session"]);
+let commandIndex = -1;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--json") continue;
+  if (valueFlags.has(args[index])) { index += 1; continue; }
+  if (args[index].startsWith("--")) continue;
+  commandIndex = index;
+  break;
+}
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+const path = args[commandIndex + 2];
+if (command === "record" && subcommand === "restart") fs.writeFileSync(${JSON.stringify(join(tempDir, "z-previous.webm"))}, "finished recording");
+const data = command === "get" && subcommand === "url"
+  ? { result: "https://safe.example/", url: "https://safe.example/" }
+  : { command, path, subcommand };
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
+			const sessionName = "restart-session";
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Restart a browser recording." });
+			const started = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "record", "start", "z-previous.webm"] });
+			assert.equal(started.isError, false, started.content[0]?.text);
+			const restarted = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "record", "restart", "a-current.webm"] });
+			assert.equal(restarted.isError, false, restarted.content[0]?.text);
+			const manifest = restarted.details?.artifactManifest as { entries?: Array<{ path?: string; subcommand?: string }> } | undefined;
+			assert.equal(manifest?.entries?.some((entry) => entry.path === "z-previous.webm" && entry.subcommand === "restart-previous"), true);
+			assert.equal(manifest?.entries?.some((entry) => entry.path === "a-current.webm" && entry.subcommand === "restart"), true);
+
+			const replayHarness = createExtensionHarness({
+				branch: [{ type: "message", message: { details: restarted.details, isError: restarted.isError, toolName: "agent_browser" } }],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(replayHarness.handlers, "session_start", { reason: "resume" }, replayHarness.ctx);
+			const reservedAfterReplay = await executeRegisteredTool(replayHarness.tool, replayHarness.ctx, { args: ["pdf", "a-current.webm"] });
+			assert.equal(reservedAfterReplay.isError, true);
+			assert.match(reservedAfterReplay.content[0]?.text ?? "", /a-current\.webm is reserved by an active recording/);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "close"] });
+			await executeRegisteredTool(replayHarness.tool, replayHarness.ctx, { args: ["--session", sessionName, "close"] });
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
 });
 
 test("agentBrowserExtension makes close --all exclusive within its namespace", { concurrency: false }, async () => {

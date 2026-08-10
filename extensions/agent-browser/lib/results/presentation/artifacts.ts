@@ -6,6 +6,7 @@ import { isRecord, parsePositiveInteger } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import {
 	formatSessionArtifactRetentionSummary,
+	getSessionArtifactManifestEntryKey,
 	isPendingRecordingArtifact,
 	isPendingRecordingCommand,
 	mergeSessionArtifactManifest,
@@ -62,14 +63,10 @@ function shouldAppendArtifactRetentionNotice(entries: SessionArtifactManifestEnt
 	return entries.some((entry) => entry.retentionState === "evicted" || entry.storageScope !== "explicit-path");
 }
 
-function getManifestEntryKey(entry: SessionArtifactManifestEntry): string {
-	return entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
-}
-
 export function manifestHasNewNoticeWorthyEntries(base: SessionArtifactManifest | undefined, current: SessionArtifactManifest | undefined): boolean {
 	if (!current) return false;
-	const baseKeys = new Set((base?.entries ?? []).map(getManifestEntryKey));
-	return current.entries.some((entry) => !baseKeys.has(getManifestEntryKey(entry)) && (entry.retentionState === "evicted" || entry.storageScope !== "explicit-path"));
+	const baseKeys = new Set((base?.entries ?? []).map(getSessionArtifactManifestEntryKey));
+	return current.entries.some((entry) => !baseKeys.has(getSessionArtifactManifestEntryKey(entry)) && (entry.retentionState === "evicted" || entry.storageScope !== "explicit-path"));
 }
 
 export function applyArtifactManifest(presentation: ToolPresentation, baseManifest: SessionArtifactManifest | undefined, entries: SessionArtifactManifestEntry[]): ToolPresentation {

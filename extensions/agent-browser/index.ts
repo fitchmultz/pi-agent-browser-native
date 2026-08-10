@@ -77,7 +77,7 @@ import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrows
 import { applyAgentBrowserOutputPath, getAgentBrowserOutputPathValidationError, normalizeRequestedOutputPath } from "./lib/orchestration/output-file.js";
 import { appendScriptSessionLease, buildScriptBrowserEnvelope, buildScriptToolResult, getScriptSessionLeasesFromBranch } from "./lib/orchestration/script-mode.js";
 import type { FileArtifactMetadata, NetworkRouteRecord, SessionArtifactManifest } from "./lib/results/contracts.js";
-import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isSessionArtifactManifest, mergeSessionArtifactManifest, retirePendingRecordingManifestEntries } from "./lib/results/artifact-manifest.js";
+import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isPendingRecordingCommand, isSessionArtifactManifest, mergeSessionArtifactManifest, retirePendingRecordingManifestEntries } from "./lib/results/artifact-manifest.js";
 import { appendUniqueAgentBrowserNextActions, applyNamespaceToNextActions, applySessionToNextActions, buildNextToolAction, type AgentBrowserNextAction } from "./lib/results/next-actions.js";
 import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
 import {
@@ -659,10 +659,10 @@ function getCleanupResultClosedManagedSessionIdentities(result: unknown, fallbac
 	return [...identities.values()];
 }
 
-function getCleanupResultsClosedManagedSessionIdentities(cleanupResults: unknown[]): ElectronClosedManagedSessionIdentity[] {
+function getCleanupResultsClosedManagedSessionIdentities(cleanupResults: unknown[], fallbackNamespace?: string): ElectronClosedManagedSessionIdentity[] {
 	const identities = new Map<string, ElectronClosedManagedSessionIdentity>();
 	for (const result of cleanupResults) {
-		for (const identity of getCleanupResultClosedManagedSessionIdentities(result)) {
+		for (const identity of getCleanupResultClosedManagedSessionIdentities(result, fallbackNamespace)) {
 			identities.set(getSessionContextKey(identity.sessionName, identity.namespace) ?? identity.sessionName, identity);
 		}
 	}
@@ -786,7 +786,7 @@ function collectBranchManagedResourceEvents(branch: unknown[]): BranchManagedRes
 			if (isRecord(cleanupResult) && isElectronLaunchRecord(cleanupResult.record)) {
 				events.electronLaunchCleanupRanks.set(cleanupResult.record.launchId, eventRank);
 			}
-			for (const identity of getCleanupResultClosedManagedSessionIdentities(cleanupResult)) {
+			for (const identity of getCleanupResultClosedManagedSessionIdentities(cleanupResult, namespace)) {
 				events.managedSessionCloseRanks.set(getSessionContextKey(identity.sessionName, identity.namespace) ?? identity.sessionName, eventRank);
 			}
 		}
@@ -805,8 +805,8 @@ function getCleanupResultsPreservedUserDataDirs(cleanupResults: unknown[]): stri
 	return [...userDataDirs];
 }
 
-function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSession>, cleanupResults: unknown[]): void {
-	for (const identity of getCleanupResultsClosedManagedSessionIdentities(cleanupResults)) {
+function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSession>, cleanupResults: unknown[], fallbackNamespace?: string): void {
+	for (const identity of getCleanupResultsClosedManagedSessionIdentities(cleanupResults, fallbackNamespace)) {
 		untrackOwnedManagedSession(sessions, identity.sessionName, identity.namespace);
 	}
 }
@@ -926,14 +926,21 @@ function mergeBrowserRunMap<K, V>(current: Map<K, V>, initial: Map<K, V>, update
 	return merged;
 }
 
-function mergeBrowserRunArtifactManifest(
+export function mergeBrowserRunArtifactManifest(
 	current: SessionArtifactManifest | undefined,
 	initial: SessionArtifactManifest | undefined,
 	updated: SessionArtifactManifest | undefined,
 ): SessionArtifactManifest | undefined {
 	if (!updated || updated === initial) return current;
+	if (current === initial) return updated;
 	const initialEntries = new Map((initial?.entries ?? []).map((entry) => [getSessionArtifactManifestEntryKey(entry), entry]));
-	const changedEntries = updated.entries.filter((entry) => initialEntries.get(getSessionArtifactManifestEntryKey(entry)) !== entry);
+	const changedEntries = updated.entries
+		.map((entry, index) => ({ entry, index }))
+		.filter(({ entry }) => initialEntries.get(getSessionArtifactManifestEntryKey(entry)) !== entry)
+		.sort((left, right) => left.entry.createdAtMs - right.entry.createdAtMs
+			|| Number(isPendingRecordingCommand(left.entry.command, left.entry.subcommand, left.entry.kind)) - Number(isPendingRecordingCommand(right.entry.command, right.entry.subcommand, right.entry.kind))
+			|| left.index - right.index)
+		.map(({ entry }) => entry);
 	return changedEntries.length === 0
 		? current
 		: mergeSessionArtifactManifest({
@@ -1697,8 +1704,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 					replaceWithActiveElectronLaunchRecords(ownedElectronLaunchRecords, electronHostLaunchRecords, branchOwnedElectronLaunchIds, cleanedLaunchIds);
 					mergeElectronCleanupRecords(electronLaunchRecords, cleanupRecords);
-					const closedSessionIdentities = getCleanupResultsClosedManagedSessionIdentities(cleanupRecords);
-					syncElectronCleanupManagedSessions(ownedManagedSessions, cleanupRecords);
+					const cleanupNamespace = isRecord(electronHostResult.details) && typeof electronHostResult.details.namespace === "string"
+						? electronHostResult.details.namespace
+						: undefined;
+					const closedSessionIdentities = getCleanupResultsClosedManagedSessionIdentities(cleanupRecords, cleanupNamespace);
+					syncElectronCleanupManagedSessions(ownedManagedSessions, cleanupRecords, cleanupNamespace);
 					for (const identity of closedSessionIdentities) {
 						retireRecordingSession(identity.sessionName, identity.namespace);
 						const closedSessionKey = getSessionContextKey(identity.sessionName, identity.namespace) ?? identity.sessionName;
