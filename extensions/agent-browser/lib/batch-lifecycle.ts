@@ -8,6 +8,13 @@ export interface SuccessfulBatchCloseLifecycle {
 	statePath?: string;
 }
 
+function getRowBrowserLaunched(row: Record<string, unknown>): boolean | undefined {
+	const result = isRecord(row.result) ? row.result : isRecord(row.data) ? row.data : undefined;
+	const lifecycle = isRecord(result?.lifecycle) ? result.lifecycle : undefined;
+	const effectiveLaunch = isRecord(lifecycle?.effectiveLaunch) ? lifecycle.effectiveLaunch : undefined;
+	return typeof effectiveLaunch?.browserLaunched === "boolean" ? effectiveLaunch.browserLaunched : undefined;
+}
+
 export function getSuccessfulBatchCloseLifecycle(
 	rows: unknown,
 	fallbackCommands: string[][] = [],
@@ -23,8 +30,9 @@ export function getSuccessfulBatchCloseLifecycle(
 		const rowCommand = Array.isArray(row.command) && row.command.every((token) => typeof token === "string")
 			? row.command
 			: fallbackCommands[index];
+		const browserLaunched = getRowBrowserLaunched(row);
 		if (!rowCommand) {
-			if (sawClose) {
+			if (sawClose && browserLaunched !== false) {
 				endsClosed = false;
 				browserActiveAfterClose = true;
 				recordingClosedAfterBatch = false;
@@ -41,8 +49,14 @@ export function getSuccessfulBatchCloseLifecycle(
 			statePath = typeof result?.statePath === "string" ? result.statePath : undefined;
 		} else if (sawClose && command === "record") {
 			if (subcommand === "stop") recordingClosedAfterBatch = true;
-			else if (browserActiveAfterClose && (subcommand === "start" || subcommand === "restart")) recordingClosedAfterBatch = false;
-		} else if (sawClose) {
+			else if ((browserActiveAfterClose || browserLaunched === true) && (subcommand === "start" || subcommand === "restart")) {
+				if (browserLaunched === true) {
+					endsClosed = false;
+					browserActiveAfterClose = true;
+				}
+				recordingClosedAfterBatch = false;
+			}
+		} else if (sawClose && browserLaunched !== false) {
 			endsClosed = false;
 			browserActiveAfterClose = true;
 		}

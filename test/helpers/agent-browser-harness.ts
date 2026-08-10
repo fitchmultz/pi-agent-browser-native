@@ -26,6 +26,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 
 import agentBrowserExtension from "../../extensions/agent-browser/index.js";
+import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../../scripts/agent-browser-target.mjs";
 
 export const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
 export const DOWNLOAD_FIXTURE_CONTENT = "download contract fixture report\n";
@@ -543,7 +544,7 @@ export async function writeFakeAgentBrowserBinary(
 }
 const __piabFakeArgs = process.argv.slice(2);
 if (process.env.PI_AGENT_BROWSER_TEST_CUSTOM_VERSION !== "1" && __piabFakeArgs.includes("--version")) {
-  process.stdout.write("agent-browser 0.33.2\\n");
+  process.stdout.write(${JSON.stringify(`${TARGET_AGENT_BROWSER_VERSION_LABEL}\n`)});
   process.exit(0);
 }
 if (process.env.PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO !== "1" && __piabFakeArgs.includes("session") && __piabFakeArgs.includes("info")) {
