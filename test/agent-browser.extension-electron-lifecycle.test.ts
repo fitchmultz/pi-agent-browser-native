@@ -424,6 +424,16 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(restoredPageState.get(namespacedPageStateKey).refSnapshot?.refIds, ["e1"]);
 			assert.equal(restoredPageState.get(String(namespacedProbe.details?.sessionName)).refSnapshot, undefined);
 
+			await rm(upstreamLogPath, { force: true });
+			const namespacedLaunchIdProbe = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "probe", launchId: launchDetails.electron.launch.launchId },
+			});
+			assert.equal(namespacedLaunchIdProbe.isError, false, JSON.stringify(namespacedLaunchIdProbe));
+			assert.equal(namespacedLaunchIdProbe.details?.namespace, "team");
+			const namespacedLaunchIdProbeInvocations = await readInvocationLog(upstreamLogPath);
+			assert.equal(namespacedLaunchIdProbeInvocations.length, 5);
+			assert.equal(namespacedLaunchIdProbeInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === "team"), true);
+
 			const broadTextResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "body"] });
 			assert.equal(broadTextResult.isError, false);
 			assert.match(broadTextResult.content[0]?.text ?? "", /Broad Electron get text selector warning: selector "body" may read the entire app shell/);

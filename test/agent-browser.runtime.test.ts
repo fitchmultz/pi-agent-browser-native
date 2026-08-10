@@ -882,7 +882,7 @@ test("restoreManagedSessionStateFromBranch reserves auto-used generated fresh na
 	assert.equal(restored.freshSessionOrdinal, 1);
 });
 
-test("restoreManagedSessionStateFromBranch honors Electron cleanup managed-session steps", () => {
+test("restoreManagedSessionStateFromBranch honors namespaced Electron cleanup managed-session steps", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[
 			createToolBranchEntry({
@@ -901,6 +901,7 @@ test("restoreManagedSessionStateFromBranch honors Electron cleanup managed-sessi
 						succeeded: true,
 						summary: "Managed session piab-demo-123-fresh-electron is now current.",
 					},
+					namespace: "team",
 					sessionMode: "fresh",
 					sessionName: "piab-demo-123-fresh-electron",
 					usedImplicitSession: false,
@@ -916,7 +917,7 @@ test("restoreManagedSessionStateFromBranch honors Electron cleanup managed-sessi
 							results: [{
 								launchId: "electron-demo",
 								partial: true,
-								record: { cleanupState: "partial", launchId: "electron-demo", port: 9222, version: 1 },
+								record: { cleanupState: "partial", launchId: "electron-demo", namespace: "team", port: 9222, version: 1 },
 								remainingResources: ["process"],
 								steps: [
 									{ resource: "managed-session", sessionName: "piab-demo-123-fresh-electron", state: "removed" },

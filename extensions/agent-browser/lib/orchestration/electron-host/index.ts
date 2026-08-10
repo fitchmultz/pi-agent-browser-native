@@ -808,7 +808,7 @@ export async function handleElectronHostInput(options: {
 }): Promise<AgentBrowserToolResult | undefined> {
 	const currentSessionKey = getSessionPageStateKey(options.managedSessionName, options.managedSessionNamespace) ?? options.managedSessionName;
 	const preserveAttachedBrowserSession = options.attachedSessionKeys.has(currentSessionKey)
-		|| [...options.electronLaunchRecords.values()].some((record) => record.sessionName !== undefined && options.attachedSessionKeys.has(getSessionPageStateKey(record.sessionName) ?? record.sessionName));
+		|| [...options.electronLaunchRecords.values()].some((record) => record.sessionName !== undefined && options.attachedSessionKeys.has(getSessionPageStateKey(record.sessionName, record.namespace) ?? record.sessionName));
 	return await withAttachedBrowserSessionContext(preserveAttachedBrowserSession, () => handleElectronHostInputInContext(options));
 }
 
@@ -907,7 +907,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 		}
 		try {
 			const status = launchRecord ? await inspectElectronLaunchStatus(launchRecord) : undefined;
-			const probeNamespace = compiledElectron.launchId ? undefined : managedSessionNamespace;
+			const probeNamespace = compiledElectron.launchId ? launchRecord?.namespace : managedSessionNamespace;
 			const pageStateKey = getSessionPageStateKey(probeSessionName, probeNamespace) ?? probeSessionName;
 			const currentPageState = sessionPageState.get(pageStateKey);
 			const fileAccessError = getManagedSessionStateAccessValidationError({

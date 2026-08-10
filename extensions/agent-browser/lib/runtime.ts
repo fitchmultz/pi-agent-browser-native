@@ -517,23 +517,26 @@ function getRestorableManagedSessionName(value: unknown, fallbackSessionName: st
 	return typeof value === "string" && isRestorableManagedSessionName(value, fallbackSessionName) ? value : undefined;
 }
 
-function getElectronCleanupClosedManagedSessionNames(details: Record<string, unknown>, fallbackSessionName: string): string[] {
+function getElectronCleanupClosedManagedSessions(details: Record<string, unknown>, fallbackSessionName: string): Array<{ namespace?: string; sessionName: string }> {
 	const electron = isRecord(details.electron) ? details.electron : undefined;
 	const cleanup = isRecord(electron?.cleanup) ? electron.cleanup : undefined;
 	const results = Array.isArray(cleanup?.results) ? cleanup.results : [];
-	const closedSessionNames = new Set<string>();
+	const closedSessions: Array<{ namespace?: string; sessionName: string }> = [];
 	for (const result of results) {
 		if (!isRecord(result) || !Array.isArray(result.steps)) continue;
 		const record = isRecord(result.record) ? result.record : undefined;
+		const namespace = typeof record?.namespace === "string"
+			? record.namespace
+			: typeof details.namespace === "string" ? details.namespace : undefined;
 		for (const step of result.steps) {
 			if (!isRecord(step) || step.resource !== "managed-session") continue;
 			if (step.state !== "removed" && step.state !== "already-gone") continue;
 			const sessionName = getRestorableManagedSessionName(step.sessionName, fallbackSessionName)
 				?? getRestorableManagedSessionName(record?.sessionName, fallbackSessionName);
-			if (sessionName) closedSessionNames.add(sessionName);
+			if (sessionName) closedSessions.push({ namespace, sessionName });
 		}
 	}
-	return [...closedSessionNames];
+	return closedSessions;
 }
 
 export function restoreManagedSessionStateFromBranch(
@@ -579,8 +582,8 @@ export function restoreManagedSessionStateFromBranch(
 			continue;
 		}
 
-		for (const sessionName of getElectronCleanupClosedManagedSessionNames(details, fallbackSessionName)) {
-			applyManagedClose(sessionName);
+		for (const cleanupSession of getElectronCleanupClosedManagedSessions(details, fallbackSessionName)) {
+			applyManagedClose(cleanupSession.sessionName, cleanupSession.namespace);
 		}
 
 		const explicitSessionName = extractExplicitSessionName(args);
