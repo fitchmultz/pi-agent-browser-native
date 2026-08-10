@@ -871,7 +871,7 @@ class AsyncExecutionQueue {
 	}
 }
 
-class KeyedAsyncExecutionQueue {
+export class KeyedAsyncExecutionQueue {
 	private readonly barriers = new Map<string, Promise<void>>();
 	private readonly entries = new Map<string, { queue: AsyncExecutionQueue; users: number }>();
 
@@ -900,11 +900,11 @@ class KeyedAsyncExecutionQueue {
 		});
 		const barrier = previous.then(() => blocked);
 		this.barriers.set(namespaceKey, barrier);
-		const activeQueues = [...this.entries]
+		const drains = [...this.entries]
 			.filter(([key]) => isAgentBrowserSessionIdentityKeyInNamespace(key, namespace))
-			.map(([, { queue }]) => queue);
+			.map(([, { queue }]) => queue.run(async () => undefined));
 		await previous;
-		await Promise.all(activeQueues.map((queue) => queue.run(async () => undefined)));
+		await Promise.all(drains);
 		try {
 			return await work();
 		} finally {
@@ -1538,9 +1538,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				return buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: outputPathValidationError });
 			}
 			const applyUnserializedOutputPath = async (result: AgentBrowserToolResult, preserveTextContent = false): Promise<AgentBrowserToolResult> => {
-				if (!outputPath || result.isError === true || (isRecord(result.details) && result.details.resultCategory === "failure")) {
-					return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, preserveTextContent, result });
-				}
+				if (!outputPath || result.isError === true || (isRecord(result.details) && result.details.resultCategory === "failure")) return result;
 				return artifactExecutionQueue.run(async () => {
 					const reservationError = getArtifactPreflightValidationError({
 						activeRecordingReservations: activeRecordingReservations.values(),

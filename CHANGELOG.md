@@ -18,7 +18,7 @@
 ### Fixed
 
 - Electron `launchId` probes retain the tracked launch namespace, and cleanup replay retires the exact namespaced managed session, attached marker, and allowed-domain policy instead of probing or resurrecting a default-namespace peer.
-- Same-millisecond recording artifacts preserve their emitted lifecycle order, so a later stop stays terminal and the last of multiple pending paths remains authoritative; namespace-exclusive close-all barriers now enqueue earlier session work before draining it.
+- Same-millisecond recording artifacts preserve their emitted lifecycle order, so a later stop stays terminal and the last of multiple pending paths remains authoritative; namespace-exclusive close-all queues its drains before yielding so late same-session arrivals cannot deadlock or overlap it.
 - Failed first-call batches that close then relaunch remain tracked for cleanup, and namespace-scoped `close --all` exclusively drains matching session work before retiring every managed, attached, page/ref, route, trace/profiler, and recording owner.
 - Tolerated pre-upgrade transcript rows whose managed restore identity list is absent instead of throwing during branch rehydration (contributed by [@coreyallen](https://github.com/coreyallen) in [#96](https://github.com/fitchmultz/pi-agent-browser-native/pull/96)).
 - Included `scripts/build.mjs` in the published package contract so source installs can run `prepare` successfully (contributed by [@selimerunkut](https://github.com/selimerunkut) in [#100](https://github.com/fitchmultz/pi-agent-browser-native/pull/100)).
@@ -34,7 +34,7 @@
 
 ### Validation
 
-- Passed `npm run verify -- pre-pr` (756 tests passed, two opt-in skips; 130 packed files), `npm run verify -- real-upstream` (2/2), deterministic real-browser dogfood, packaged Pi smoke, five-sample startup profiling (67.7 ms median, 74.1 ms maximum; below the 250 ms budget), Ubuntu Crabbox `platform-build` plus `browser-dogfood-smoke`, and rebuilt-checkout interactive tmux missions. Full release composition remained environment-blocked by isolated lifecycle model credentials, the macOS SSH probe, and unavailable Parallels `prlctl`; no npm publish is authorized.
+- Passed `npm run verify -- pre-pr` (758 tests passed, two opt-in skips; 130 packed files), `npm run verify -- real-upstream` (2/2), deterministic real-browser dogfood, packaged Pi smoke, five-sample startup profiling (67.7 ms median, 74.1 ms maximum; below the 250 ms budget), Ubuntu Crabbox `platform-build` plus `browser-dogfood-smoke`, and rebuilt-checkout interactive tmux missions. Full release composition remained environment-blocked by isolated lifecycle model credentials, the macOS SSH probe, and unavailable Parallels `prlctl`; no npm publish is authorized.
 
 ## 0.4.0 - 2026-08-07
 

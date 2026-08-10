@@ -471,6 +471,56 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	}
 });
 
+test("agentBrowserExtension clears namespaced attachment context after Electron cleanup replay", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cleanup-attached-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: "https://safe.example/", url: "https://safe.example/" } }));`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS: "1" }, async () => {
+			const sessionName = "caller-owned-electron";
+			const namespace = "team";
+			const branch = [
+				createToolBranchEntry({
+					details: {
+						args: ["--namespace", namespace, "--session", sessionName, "connect", "9222"],
+						attachedBrowserSession: true,
+						command: "connect",
+						namespace,
+						resultCategory: "success",
+						sessionName,
+					},
+					isError: false,
+				}),
+				createToolBranchEntry({
+					details: {
+						args: [],
+						electron: { cleanup: { results: [{ steps: [{ resource: "managed-session", sessionName, state: "removed" }] }] } },
+						namespace,
+						resultCategory: "success",
+					},
+					isError: false,
+				}),
+			];
+			const harness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", namespace, "--session", sessionName, "get", "url"],
+			});
+			assert.equal(result.isError, false, result.content[0]?.text);
+			const invocation = (await readInvocationLog(logPath)).find((entry) => entry.args.includes("get") && entry.args.at(-1) === "url");
+			assert.equal(invocation?.args[invocation.args.indexOf("--args") + 1], "");
+			assert.equal(invocation?.args[invocation.args.indexOf("--allow-file-access") + 1], "false");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension keeps same-process re-owned Electron resources despite stale branch cleanup evidence", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-electron-cleanup-stale-"));
 	const logPath = join(tempDir, "invocations.log");

@@ -18,6 +18,8 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
+import { KeyedAsyncExecutionQueue } from "../extensions/agent-browser/index.js";
+import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
 import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
 import {
 	WEB_SEARCH_PROMPT_GUIDELINE,
@@ -1133,6 +1135,46 @@ if (command === "open") {
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
+});
+
+test("KeyedAsyncExecutionQueue drains same-namespace work without deadlocking late arrivals", async () => {
+	const queue = new KeyedAsyncExecutionQueue();
+	const key = getAgentBrowserSessionIdentityKey("shared", "team");
+	const events: string[] = [];
+	let releaseActive!: () => void;
+	let markActive!: () => void;
+	const active = new Promise<void>((resolve) => {
+		markActive = resolve;
+	});
+	const holdActive = new Promise<void>((resolve) => {
+		releaseActive = resolve;
+	});
+	const first = queue.run(key, "team", async () => {
+		events.push("first-start");
+		markActive();
+		await holdActive;
+		events.push("first-end");
+	});
+	await active;
+	const exclusive = queue.runExclusive("team", async () => {
+		events.push("exclusive");
+	});
+	const late = queue.run(key, "team", async () => {
+		events.push("late");
+	});
+	releaseActive();
+	let timeout: NodeJS.Timeout | undefined;
+	try {
+		await Promise.race([
+			Promise.all([first, exclusive, late]),
+			new Promise<never>((_resolve, reject) => {
+				timeout = setTimeout(() => reject(new Error("namespace-exclusive queue deadlocked")), 1_000);
+			}),
+		]);
+	} finally {
+		if (timeout) clearTimeout(timeout);
+	}
+	assert.deepEqual(events, ["first-start", "first-end", "exclusive", "late"]);
 });
 
 test("agentBrowserExtension makes close --all exclusive within its namespace", { concurrency: false }, async () => {
