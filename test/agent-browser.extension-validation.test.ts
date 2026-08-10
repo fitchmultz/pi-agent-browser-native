@@ -1067,6 +1067,10 @@ for (let i = 0; i < args.length; i += 1) {
 const command = args[commandIndex];
 const subcommand = args[commandIndex + 1];
 const path = command === "pdf" ? args[commandIndex + 1] : args[commandIndex + 2];
+if (command === "find") {
+  process.stdout.write(JSON.stringify({ success: false, error: "No element found by text 'Missing Control'" }));
+  process.exit(1);
+}
 const batchInput = command === "batch" ? fs.readFileSync(0, "utf8") : "";
 const batchSteps = batchInput
   ? JSON.parse(batchInput)
@@ -1103,6 +1107,12 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(missingVerification?.artifacts?.[0]?.state, "pending");
 			assert.equal(missingVerification?.artifacts?.[0]?.status, "pending");
 			assert.equal(missingVerification?.artifacts?.[0]?.willExistOnStop, true);
+			const failedWhileRecording = await executeRegisteredTool(harness.tool, harness.ctx, { semanticAction: { action: "click", locator: "text", value: "Missing Control" } });
+			assert.equal(failedWhileRecording.isError, true);
+			assert.equal(failedWhileRecording.details?.failureCategory, "selector-not-found");
+			const stopAfterFailure = (failedWhileRecording.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "stop-pending-recording");
+			assert.deepEqual(stopAfterFailure?.params?.args, ["--session", missingResult.details?.sessionName, "record", "stop"]);
+			assert.match(failedWhileRecording.content[0]?.text ?? "", /active recording remains open.*stop-pending-recording/is);
 			const noise = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "noise.pdf"] });
 			assert.equal(noise.isError, true);
 			const noiseManifest = noise.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;

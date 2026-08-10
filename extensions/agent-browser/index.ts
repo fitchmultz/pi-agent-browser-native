@@ -78,6 +78,7 @@ import { applyAgentBrowserOutputPath, getAgentBrowserOutputPathValidationError, 
 import { appendScriptSessionLease, buildScriptBrowserEnvelope, buildScriptToolResult, getScriptSessionLeasesFromBranch } from "./lib/orchestration/script-mode.js";
 import type { FileArtifactMetadata, NetworkRouteRecord, SessionArtifactManifest } from "./lib/results/contracts.js";
 import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isSessionArtifactManifest, mergeSessionArtifactManifest, retirePendingRecordingManifestEntries } from "./lib/results/artifact-manifest.js";
+import { appendUniqueAgentBrowserNextActions, applyNamespaceToNextActions, applySessionToNextActions, buildNextToolAction, type AgentBrowserNextAction } from "./lib/results/next-actions.js";
 import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
 import {
 	appendRecordingReservationTransition,
@@ -950,6 +951,34 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		}
 	};
 
+	const appendActiveRecordingCleanupAction = (result: AgentBrowserToolResult, reservation: ActiveRecordingReservation): AgentBrowserToolResult => {
+		if (result.isError !== true) return result;
+		const details = isRecord(result.details) ? result.details : {};
+		const nextActions = Array.isArray(details.nextActions) ? [...details.nextActions] as AgentBrowserNextAction[] : [];
+		if (nextActions.some((action) => action.id === "stop-pending-recording")) return result;
+		const stopActions = applyNamespaceToNextActions(
+			applySessionToNextActions([
+				buildNextToolAction({
+					args: ["record", "stop"],
+					id: "stop-pending-recording",
+					reason: "Stop the active recording so the requested video can be finalized and verified on disk.",
+					safety: "The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
+				}),
+			], reservation.sessionName),
+			reservation.namespace,
+		);
+		appendUniqueAgentBrowserNextActions(nextActions, stopActions);
+		const cleanupNotice = "An active recording remains open. Use the exact stop-pending-recording payload in details.nextActions before leaving this session.";
+		let noticeAppended = false;
+		const content = result.content.map((item) => {
+			if (noticeAppended || item.type !== "text") return item;
+			noticeAppended = true;
+			return { ...item, text: `${item.text}\n\n${cleanupNotice}` };
+		});
+		if (!noticeAppended) content.push({ type: "text", text: cleanupNotice });
+		return { ...result, content, details: { ...details, nextActions } };
+	};
+
 	const retireRecordingSession = (sessionName: string, namespace?: string, retireManifest = true): void => {
 		const reservation = retireRecordingReservation(activeRecordingReservations, sessionName, namespace);
 		const previousManifest = artifactManifest;
@@ -1701,6 +1730,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						if (handledBatchCloseKeys.has(closedSessionKey)) continue;
 						const reservation = activeRecordingReservations.get(closedSessionKey);
 						if (reservation) retireRecordingSession(reservation.sessionName, reservation.namespace);
+					}
+					const postSyncDetails = isRecord(result.details) ? result.details : undefined;
+					const postSyncSessionName = typeof postSyncDetails?.sessionName === "string" ? postSyncDetails.sessionName : extractExplicitSessionName(toolArgs);
+					const postSyncNamespace = typeof postSyncDetails?.namespace === "string" ? postSyncDetails.namespace : resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE);
+					if (postSyncSessionName) {
+						const reservation = activeRecordingReservations.get(getAgentBrowserSessionIdentityKey(postSyncSessionName, postSyncNamespace));
+						if (reservation) result = appendActiveRecordingCleanupAction(result, reservation);
 					}
 					if (artifactManifest) {
 						result = {
