@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -359,6 +359,21 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 		});
 		assert.equal(symlinkAlias.isError, true);
 		assert.match(symlinkAlias.content[0]?.text ?? "", /alias\/artifact\.png is already written by step 1/);
+
+		const argumentAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch", "screenshot argument.png", "screenshot ./argument.png"],
+		});
+		assert.equal(argumentAlias.isError, true);
+		assert.match(argumentAlias.content[0]?.text ?? "", /\.\/argument\.png is already written by step 1/);
+
+		await writeFile(join(tempDir, "hardlink-a.png"), "existing artifact");
+		await link(join(tempDir, "hardlink-a.png"), join(tempDir, "hardlink-b.png"));
+		const hardlinkAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "hardlink-a.png"], ["screenshot", "hardlink-b.png"]]),
+		});
+		assert.equal(hardlinkAlias.isError, true);
+		assert.match(hardlinkAlias.content[0]?.text ?? "", /hardlink-b\.png is already written by step 1/);
 
 		if (process.platform === "darwin") {
 			const caseAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1069,6 +1084,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { command, subcommand
 			assert.equal(missingVerification?.artifacts?.[0]?.state, "pending");
 			assert.equal(missingVerification?.artifacts?.[0]?.status, "pending");
 			assert.equal(missingVerification?.artifacts?.[0]?.willExistOnStop, true);
+			const restartSamePath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "restart", "demo.webm"] });
+			assert.equal(restartSamePath.isError, true);
+			assert.match(restartSamePath.content[0]?.text ?? "", /demo\.webm is reserved by the active recording/);
+
 			const missingDetails = missingResult.details as { recordingDependencyWarning?: { reason?: string; command?: string; dependency?: string } };
 			assert.deepEqual(missingDetails.recordingDependencyWarning, {
 				command: "record start",
@@ -1081,10 +1100,15 @@ process.stdout.write(JSON.stringify({ success: true, data: { command, subcommand
 				],
 			});
 
+			const closed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(closed.isError, false);
+			const closedManifest = closed.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;
+			assert.equal(closedManifest?.entries?.some((entry) => entry.subcommand === "start" || entry.subcommand === "restart"), false);
+
 			await rm(join(tempDir, "ffmpeg"), { recursive: true, force: true });
 			await writeFile(join(tempDir, "ffmpeg"), "#!/bin/sh\nexit 0\n", "utf8");
 			await chmod(join(tempDir, "ffmpeg"), 0o755);
-			const presentResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "demo.webm"] });
+			const presentResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "present.webm"], sessionMode: "fresh" });
 			assert.equal(presentResult.isError, false);
 			assert.equal((presentResult.details as { recordingDependencyWarning?: unknown }).recordingDependencyWarning, undefined);
 			assert.doesNotMatch(presentResult.content[0]?.text ?? "", /Recording dependency warning/);

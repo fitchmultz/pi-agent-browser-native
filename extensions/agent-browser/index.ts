@@ -63,7 +63,7 @@ import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./
 import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
 import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
-import { parseBatchStdinJsonArray } from "./lib/orchestration/batch-stdin.js";
+import { parseBatchCommandArgument, parseUserBatchStdin } from "./lib/orchestration/batch-stdin.js";
 import {
 	ELECTRON_POST_COMMAND_STATUS_SETTLE_MS,
 	ELECTRON_PROFILE_ISOLATION_DETAILS,
@@ -76,7 +76,7 @@ import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrows
 import { applyAgentBrowserOutputPath, getAgentBrowserOutputPathValidationError } from "./lib/orchestration/output-file.js";
 import { appendScriptSessionLease, buildScriptBrowserEnvelope, buildScriptToolResult, getScriptSessionLeasesFromBranch } from "./lib/orchestration/script-mode.js";
 import type { NetworkRouteRecord, SessionArtifactManifest } from "./lib/results/contracts.js";
-import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isSessionArtifactManifest, mergeSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
+import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isPendingRecordingCommand, isSessionArtifactManifest, mergeSessionArtifactManifest } from "./lib/results/artifact-manifest.js";
 import { canRegisterWebSearchTool, loadAgentBrowserConfigSync } from "./lib/config.js";
 import { createAgentBrowserWebSearchTool } from "./lib/web-search.js";
 import {
@@ -120,30 +120,60 @@ interface BranchManagedResourceEvents {
 	managedSessionCloseRanks: Map<string, number>;
 }
 
-function getBatchPreflightValidationError(args: string[], stdin: string | undefined, cwd: string): string | undefined {
-	const commandTokens = extractCommandTokens(args);
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
-		return undefined;
+function getArtifactPreflightValidationError(options: {
+	activeSessionName?: string;
+	args: string[];
+	artifactManifest?: SessionArtifactManifest;
+	cwd: string;
+	stdin?: string;
+}): string | undefined {
+	const commandTokens = extractCommandTokens(options.args);
+	const batch = commandTokens[0] === "batch";
+	const steps: string[][] = [];
+	if (batch) {
+		for (const command of commandTokens.slice(1)) {
+			if (command === "--bail" || command.startsWith("--bail=")) continue;
+			const parsed = parseBatchCommandArgument(command);
+			if (parsed.error || !parsed.step) return `Unsupported batch step ${steps.length + 1}: ${parsed.error ?? "command could not be parsed safely"}`;
+			steps.push(parsed.step);
+		}
+		const parsed = parseUserBatchStdin(options.stdin);
+		if (parsed.error) return parsed.error;
+		steps.push(...(parsed.steps ?? []));
+	} else if (commandTokens.length > 0) {
+		steps.push(commandTokens);
 	}
-	const parsed = parseBatchStdinJsonArray(stdin);
-	if (parsed.error || parsed.steps === undefined) {
-		return undefined;
+
+	const activeRecordingDestinations = new Set<string>();
+	if (options.activeSessionName) {
+		for (const entry of options.artifactManifest?.entries ?? []) {
+			if (entry.session !== options.activeSessionName
+				|| entry.kind !== "video"
+				|| !isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)) continue;
+			activeRecordingDestinations.add(canonicalizeExplicitArtifactDestination(entry.cwd ?? options.cwd, entry.absolutePath ?? entry.path));
+		}
 	}
+
 	const artifactDestinations = new Map<string, number>();
-	for (const [index, step] of parsed.steps.entries()) {
-		if (!Array.isArray(step) || !step.every((token) => typeof token === "string") || step.length === 0) continue;
-		const stepValidationError = validateToolArgs(step);
-		if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
+	for (const [index, step] of steps.entries()) {
+		if (batch) {
+			const stepValidationError = validateToolArgs(step);
+			if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
+		}
 		const artifactDestination = getExplicitArtifactDestination(step);
 		if (artifactDestination) {
-			const canonicalDestination = canonicalizeExplicitArtifactDestination(cwd, artifactDestination);
+			const canonicalDestination = canonicalizeExplicitArtifactDestination(options.cwd, artifactDestination);
+			if (activeRecordingDestinations.has(canonicalDestination)) {
+				const prefix = batch ? `Unsupported batch artifact destination in step ${index + 1}` : "Unsupported artifact destination";
+				return `${prefix}: ${artifactDestination} is reserved by the active recording. Stop that recording first or use a distinct path.`;
+			}
 			const priorStep = artifactDestinations.get(canonicalDestination);
 			if (priorStep !== undefined) {
 				return `Unsupported batch artifact destination in step ${index + 1}: ${artifactDestination} is already written by step ${priorStep + 1}. Use distinct paths or split the batch so each artifact can be verified independently.`;
 			}
 			artifactDestinations.set(canonicalDestination, index);
 		}
-		if (step[0] === "screenshot" && step.includes("--annotate")) {
+		if (batch && step[0] === "screenshot" && step.includes("--annotate")) {
 			return [
 				`Unsupported batch screenshot annotation in step ${index + 1}: put --annotate in top-level args, not inside the batch step.`,
 				`Use: { "args": ["--annotate", "batch"], "stdin": "[[\\"screenshot\\",\\"/path/to/image.png\\"]]" }`,
@@ -1188,7 +1218,13 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 			const outputPath = isRecord(params) && typeof params.outputPath === "string" ? params.outputPath : undefined;
 			const resolvedInput = resolveAgentBrowserInput({
-				getBatchPreflightValidationError: (args, stdin) => getBatchPreflightValidationError(args, stdin, ctx.cwd),
+				getBatchPreflightValidationError: (args, stdin) => {
+				const explicitSessionName = extractExplicitSessionName(args);
+				const activeSessionName = explicitSessionName ?? (
+					params.sessionMode !== "fresh" && managedSessionActive ? managedSessionName : undefined
+				);
+				return getArtifactPreflightValidationError({ activeSessionName, args, artifactManifest, cwd: ctx.cwd, stdin });
+			},
 				managedSessionActive,
 				params,
 			});

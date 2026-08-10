@@ -358,6 +358,10 @@ test("buildToolPresentation rejects a stale previous recording reported by recor
 		assert.equal(restarted.artifactVerification?.artifacts[0]?.state, "unverified");
 		assert.equal(restarted.artifactVerification?.verifiedCount, 0);
 		assert.equal(restarted.artifactVerification?.pendingCount, 1);
+		assert.equal(restarted.artifactManifest?.entries.some((entry) => entry.subcommand === "start"), false);
+		assert.equal(restarted.artifactManifest?.entries.some((entry) => entry.subcommand === "restart-previous" && entry.retentionState === "missing"), true);
+		assert.ok(restarted.nextActions?.some((action) => action.id === "verify-artifact-path"));
+		assert.ok(restarted.nextActions?.some((action) => action.id === "stop-pending-recording"));
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -391,6 +395,36 @@ test("buildToolPresentation rejects a missing previous recording reported by rec
 		assert.equal(restarted.artifacts?.[0]?.status, "missing");
 		assert.equal(restarted.artifactVerification?.missingCount, 1);
 		assert.equal(restarted.artifactVerification?.pendingCount, 1);
+		assert.equal(restarted.artifactManifest?.entries.some((entry) => entry.subcommand === "start"), false);
+		assert.ok(restarted.nextActions?.some((action) => action.id === "verify-artifact-path"));
+		assert.ok(restarted.nextActions?.some((action) => action.id === "stop-pending-recording"));
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation rejects same-path record restart when the prior output is missing", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-restart-same-missing-"));
+	try {
+		const recordingPath = join(tempDir, "same.webm");
+		const started = await buildToolPresentation({
+			commandInfo: { command: "record", subcommand: "start" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: recordingPath } },
+		});
+		const restarted = await buildToolPresentation({
+			artifactManifest: started.artifactManifest,
+			artifactMaxUpdatedAtMs: Date.now(),
+			artifactMinUpdatedAtMs: Date.now() - 1_000,
+			commandInfo: { command: "record", subcommand: "restart" },
+			cwd: tempDir,
+			envelope: { success: true, data: { path: recordingPath } },
+		});
+
+		assert.equal(restarted.resultCategory, "failure");
+		assert.equal(restarted.failureCategory, "artifact-missing");
+		assert.deepEqual(restarted.artifacts?.map((artifact) => artifact.subcommand), ["restart-previous", "restart"]);
+		assert.ok(restarted.nextActions?.some((action) => action.id === "stop-pending-recording"));
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -426,6 +460,37 @@ test("buildToolPresentation coalesces a batched recording to its terminal saved 
 		assert.equal(presentation.batchSteps?.[1]?.artifacts?.[0]?.status, "saved");
 		assert.equal(presentation.artifactManifest?.entries.some((entry) => entry.subcommand === "start"), false);
 		assert.equal(presentation.artifactManifest?.entries.some((entry) => entry.absolutePath === reportedStopPath && entry.subcommand === "stop"), true);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("buildToolPresentation keeps recording cleanup actionable after a later batch failure", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-failure-"));
+	try {
+		const recordingPath = join(tempDir, "recording.webm");
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: tempDir,
+			envelope: {
+				success: true,
+				data: [
+					{ command: ["record", "start", recordingPath], result: { path: recordingPath }, success: true },
+					{ command: ["find", "text", "Missing", "click"], error: "No element found: text=Missing", success: false },
+				],
+			},
+			namespace: "tenant",
+			sessionName: "recording-session",
+		});
+
+		assert.equal(presentation.resultCategory, "failure");
+		assert.equal(presentation.failureCategory, "selector-not-found");
+		assert.equal(presentation.artifactVerification?.pendingCount, 1);
+		assert.ok(presentation.nextActions?.some((action) => action.id === "refresh-interactive-refs"));
+		assert.deepEqual(
+			presentation.nextActions?.find((action) => action.id === "stop-pending-recording")?.params?.args,
+			["--namespace", "tenant", "--session", "recording-session", "record", "stop"],
+		);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

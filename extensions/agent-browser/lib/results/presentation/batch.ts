@@ -18,7 +18,7 @@ import type {
 	ToolPresentation,
 } from "../contracts.js";
 import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../network-routes.js";
-import { applyNamespaceToNextActions, withOptionalSessionArgs } from "../next-actions.js";
+import { appendUniqueAgentBrowserNextActions, applyNamespaceToNextActions, withOptionalSessionArgs } from "../next-actions.js";
 import { stringifyModelFacing } from "./common.js";
 import { buildArtifactVerificationSummary, classifyPresentationSuccessCategory, manifestHasNewNoticeWorthyEntries, type ArtifactRequestContext } from "./artifacts.js";
 import { formatBatchStepCommand, getPresentationImages, getPresentationPaths, getPresentationText, isStringArray } from "./content.js";
@@ -441,9 +441,13 @@ export async function buildBatchPresentation(options: {
 	const contentText = artifactRetentionSummary && manifestHasNewNoticeWorthyEntries(options.artifactManifest, currentArtifactManifest)
 		? `${text}\n\n${artifactRetentionSummary}`
 		: text;
+	const artifactLifecycleActions = applyNamespaceToNextActions(
+		buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: batchFailure ? "failure" : "success", sessionName }),
+		namespace,
+	);
 	const nextActions = batchFailure
-		? batchFailure.failedStep.nextActions
-		: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success", sessionName });
+		? appendUniqueAgentBrowserNextActions([...(batchFailure.failedStep.nextActions ?? [])], artifactLifecycleActions)
+		: artifactLifecycleActions;
 	const changedSteps = steps.map((step) => step.details).filter((details) => details.pageChangeSummary !== undefined);
 	const pageChangeSummary = artifacts.length > 0
 		? buildPageChangeSummary({

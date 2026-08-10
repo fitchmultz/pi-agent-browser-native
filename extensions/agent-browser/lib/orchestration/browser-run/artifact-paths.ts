@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "../../argv-grammar.js";
@@ -66,6 +66,12 @@ export function canonicalizeExplicitArtifactDestination(cwd: string, destination
 	while (true) {
 		try {
 			const canonicalPath = join(realpathSync.native(cursor), ...suffix);
+			try {
+				const stats = statSync(canonicalPath, { bigint: true });
+				if (stats.ino > 0n) return `inode:${stats.dev}:${stats.ino}`;
+			} catch {
+				// The destination does not exist yet; canonical ancestry still catches aliases.
+			}
 			return platform === "win32" || platform === "darwin" ? canonicalPath.toLowerCase() : canonicalPath;
 		} catch {
 			const parent = dirname(cursor);

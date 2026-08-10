@@ -73,6 +73,29 @@ export function getSessionArtifactManifestEntryKey(entry: SessionArtifactManifes
 	return entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
 }
 
+export function retirePendingRecordingManifestEntries(
+	manifest: SessionArtifactManifest,
+	sessionName: string | undefined,
+	nowMs = Date.now(),
+): SessionArtifactManifest {
+	let changed = false;
+	const entries = manifest.entries.map((entry) => {
+		if ((entry.session ?? "") !== (sessionName ?? "")
+			|| entry.kind !== "video"
+			|| !isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)) return entry;
+		changed = true;
+		return { ...entry, retentionState: "missing" as const, subcommand: "close-abandoned" };
+	});
+	if (!changed) return manifest;
+	return {
+		...manifest,
+		entries,
+		evictedCount: entries.filter((entry) => entry.retentionState === "evicted").length,
+		liveCount: entries.filter((entry) => entry.retentionState === "live").length,
+		updatedAtMs: nowMs,
+	};
+}
+
 export function mergeSessionArtifactManifest(options: {
 	base?: SessionArtifactManifest;
 	entries?: SessionArtifactManifestEntry[];

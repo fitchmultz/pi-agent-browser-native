@@ -10,6 +10,7 @@ import { getManagedSessionResultingPageState, getObservedBrowserPageValidationEr
 import { analyzeNetworkSourceLookupResults, analyzeSourceLookupResults, redactNetworkSourceLookupAnalysis } from "../../input-modes/lookups.js";
 import { analyzeQaPresetResults, analyzeQaPresetTimeout, buildQaCompactFailureText, buildQaCompactPassText, extractQaPageContext } from "../../input-modes/job.js";
 import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../../results/network-routes.js";
+import { formatSessionArtifactRetentionSummary, retirePendingRecordingManifestEntries } from "../../results/artifact-manifest.js";
 import { buildToolPresentation } from "../../results/presentation.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { type AgentBrowserEnvelope } from "../../results/contracts.js";
@@ -599,6 +600,11 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentation.content[0] = { type: "text", text: existingText.length > 0 ? `${existingText}\n\n${notice}` : notice };
 		}
 		if (presentation.artifactManifest) artifactManifest = presentation.artifactManifest;
+		if (succeeded && isCloseCommand(prepared.executionPlan.commandInfo.command) && artifactManifest) {
+			artifactManifest = retirePendingRecordingManifestEntries(artifactManifest, prepared.executionPlan.sessionName);
+			presentation.artifactManifest = artifactManifest;
+			presentation.artifactRetentionSummary = formatSessionArtifactRetentionSummary(artifactManifest);
+		}
 		const qaPreset = prepared.compiledQaPreset
 			? (processResult.timedOut ? analyzeQaPresetTimeout(prepared.compiledQaPreset) ?? analyzeQaPresetResults(presentationEnvelope?.data, prepared.compiledQaPreset) : analyzeQaPresetResults(presentationEnvelope?.data, prepared.compiledQaPreset))
 			: undefined;

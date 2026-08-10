@@ -4,6 +4,8 @@ import test from "node:test";
 import { AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS, getAgentBrowserRichInputRecoveryNextActionId, getAgentBrowserRichInputRecoveryNextActionIds } from "../extensions/agent-browser/lib/results/recovery-actions.js";
 import { buildAgentBrowserNextActions } from "../extensions/agent-browser/lib/results/action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails, classifyAgentBrowserFailureCategory, classifyAgentBrowserSuccessCategory } from "../extensions/agent-browser/lib/results/categories.js";
+import { retirePendingRecordingManifestEntries } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
+import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
 import {
@@ -23,6 +25,27 @@ import {
 
 const MISSING_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: missing boolean success field.";
 const NON_BOOLEAN_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: success field must be boolean.";
+
+test("retirePendingRecordingManifestEntries retires only the closed session recording", () => {
+	const manifest: SessionArtifactManifest = {
+		entries: [
+			{ command: "record", createdAtMs: 1, kind: "video", path: "a.webm", retentionState: "live", session: "a", storageScope: "explicit-path", subcommand: "start" },
+			{ command: "record", createdAtMs: 2, kind: "video", path: "b.webm", retentionState: "live", session: "b", storageScope: "explicit-path", subcommand: "restart" },
+			{ command: "screenshot", createdAtMs: 3, kind: "image", path: "a.png", retentionState: "live", session: "a", storageScope: "explicit-path" },
+		],
+		evictedCount: 0,
+		liveCount: 3,
+		maxEntries: 100,
+		updatedAtMs: 3,
+		version: 1,
+	};
+	const retired = retirePendingRecordingManifestEntries(manifest, "a", 4);
+	assert.deepEqual(retired.entries.map((entry) => entry.path), ["a.webm", "b.webm", "a.png"]);
+	assert.equal(retired.entries[0]?.subcommand, "close-abandoned");
+	assert.equal(retired.entries[0]?.retentionState, "missing");
+	assert.equal(retired.liveCount, 2);
+	assert.equal(retired.updatedAtMs, 4);
+});
 
 test("AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS locks documented recovery action ids", () => {
 	assert.deepEqual(AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, {
