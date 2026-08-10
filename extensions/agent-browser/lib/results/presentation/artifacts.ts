@@ -115,12 +115,16 @@ const ARTIFACT_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
 	...IMAGE_EXTENSION_TO_MIME_TYPE,
 };
 
+function isDownloadWaitSubcommand(subcommand: string | undefined): boolean {
+	return subcommand === "--download" || subcommand === "-d";
+}
+
 function getArtifactKind(commandInfo: CommandInfo): FileArtifactKind | undefined {
 	if (commandInfo.command === "screenshot") return "image";
 	if (commandInfo.command === "diff" && commandInfo.subcommand === "screenshot") return "image";
 	if (commandInfo.command === "pdf") return "pdf";
 	if (commandInfo.command === "download") return "download";
-	if (commandInfo.command === "wait" && commandInfo.subcommand === "--download") return "download";
+	if (commandInfo.command === "wait" && isDownloadWaitSubcommand(commandInfo.subcommand)) return "download";
 	if (commandInfo.command === "state" && commandInfo.subcommand === "save") return "file";
 	if (commandInfo.command === "trace") return "trace";
 	if (commandInfo.command === "profiler") return "profile";
@@ -200,7 +204,7 @@ async function buildFileArtifactMetadata(options: {
 			exists = true;
 			sizeBytes = fileStats.size;
 			updatedAtMs = fileStats.mtimeMs;
-			const commandCreatesArtifact = !(options.commandInfo.command === "wait" && options.commandInfo.subcommand === "--download");
+			const commandCreatesArtifact = !(options.commandInfo.command === "wait" && isDownloadWaitSubcommand(options.commandInfo.subcommand));
 			stale = commandCreatesArtifact && artifactMtimeIsOutsideCommandWindow(updatedAtMs, options.artifactMinUpdatedAtMs, options.artifactMaxUpdatedAtMs);
 		} catch {
 			exists = false;
@@ -470,9 +474,9 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 	switch (artifact.kind) {
 		case "download":
 			if (artifact.exists !== true) {
-				return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download event reported; file not verified" : "Download reported; file not verified";
+				return artifact.command === "wait" && isDownloadWaitSubcommand(artifact.subcommand) ? "Download event reported; file not verified" : "Download reported; file not verified";
 			}
-			return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download saved and verified" : "Downloaded file verified";
+			return artifact.command === "wait" && isDownloadWaitSubcommand(artifact.subcommand) ? "Download saved and verified" : "Downloaded file verified";
 		case "file":
 			return artifact.command === "state" ? "State file" : "Saved file";
 		case "har":
@@ -551,7 +555,7 @@ export function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): 
 }
 
 function isDownloadWaitCommand(commandInfo: CommandInfo): boolean {
-	return commandInfo.command === "wait" && commandInfo.subcommand === "--download";
+	return commandInfo.command === "wait" && isDownloadWaitSubcommand(commandInfo.subcommand);
 }
 
 function extractSavedFilePath(data: Record<string, unknown>): string | undefined {

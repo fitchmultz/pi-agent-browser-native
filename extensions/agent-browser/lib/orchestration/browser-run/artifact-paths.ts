@@ -1,15 +1,17 @@
 import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
-import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "../../argv-grammar.js";
+import { foldAgentBrowserFilesystemIdentity } from "../../argv-grammar.js";
+import { parseWaitCommandTokens } from "../../argv-descriptor.js";
 
 const SCREENSHOT_BOOLEAN_FLAGS = new Set(["--annotate", "--full", "-f"]);
 const SCREENSHOT_VALUE_FLAGS = new Set(["--screenshot-dir", "--screenshot-format", "--screenshot-quality"]);
-const SCREENSHOT_IMAGE_EXTENSIONS = new Set([".jpeg", ".jpg", ".png", ".webp"]);
+const SCREENSHOT_IMAGE_EXTENSIONS = [".jpeg", ".jpg", ".png", ".webp"];
 
-function isImagePathToken(token: string): boolean {
-	const extension = extname(token).toLowerCase();
-	return SCREENSHOT_IMAGE_EXTENSIONS.has(extension);
+function isSingleScreenshotPathToken(token: string): boolean {
+	const explicitlyRelative = token.startsWith("./") || token.startsWith("../");
+	if (token.startsWith("#") || token.startsWith("@") || (token.startsWith(".") && !explicitlyRelative && !token.includes("/"))) return false;
+	return explicitlyRelative || token.includes("/") || SCREENSHOT_IMAGE_EXTENSIONS.some((extension) => token.endsWith(extension));
 }
 
 function getScreenshotPositionalIndices(commandTokens: string[]): number[] {
@@ -17,57 +19,45 @@ function getScreenshotPositionalIndices(commandTokens: string[]): number[] {
 	const positionalIndices: number[] = [];
 	for (let index = 1; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
-		if (token === "--") {
-			for (let positionalIndex = index + 1; positionalIndex < commandTokens.length; positionalIndex += 1) {
-				positionalIndices.push(positionalIndex);
-			}
-			break;
+		if (SCREENSHOT_VALUE_FLAGS.has(token)) {
+			index += 1;
+			continue;
 		}
-		if (token.startsWith("-")) {
-			const normalizedToken = token.split("=", 1)[0] ?? token;
-			if ((SCREENSHOT_VALUE_FLAGS.has(normalizedToken) || VALUE_FLAGS.has(normalizedToken)) && !token.includes("=")) {
-				index += 1;
-				continue;
-			}
-			if (SCREENSHOT_BOOLEAN_FLAGS.has(normalizedToken) || GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken)) {
-				if (["true", "false"].includes(commandTokens[index + 1] ?? "")) index += 1;
-				continue;
-			}
-		}
+		if (SCREENSHOT_BOOLEAN_FLAGS.has(token)) continue;
 		positionalIndices.push(index);
 	}
 
 	return positionalIndices;
 }
 
-export function getPotentialScreenshotPathToken(commandTokens: string[]): string | undefined {
-	const positionalIndices = getScreenshotPositionalIndices(commandTokens);
-	return positionalIndices.length > 0 ? commandTokens[positionalIndices[positionalIndices.length - 1]] : undefined;
-}
-
 export function getScreenshotPathTokenIndex(commandTokens: string[]): number | undefined {
 	const positionalIndices = getScreenshotPositionalIndices(commandTokens);
 	if (positionalIndices.length === 0) return undefined;
-	const candidateIndex = positionalIndices[positionalIndices.length - 1];
+	const candidateIndex = positionalIndices.length >= 2 ? positionalIndices[1] : positionalIndices[0];
 	const candidate = commandTokens[candidateIndex];
-	if (positionalIndices.length >= 2 || isImagePathToken(candidate) || isAbsolute(candidate) || candidate.startsWith("./") || candidate.startsWith("../")) {
+	if (positionalIndices.length >= 2 || isSingleScreenshotPathToken(candidate)) {
 		return candidateIndex;
 	}
 	return undefined;
 }
 
-function getFlagValue(commandTokens: string[], flag: string): string | undefined {
-	const equalsPrefix = `${flag}=`;
-	for (let index = commandTokens.length - 1; index >= 0; index -= 1) {
+const DIFF_SCREENSHOT_VALUE_FLAGS = new Set(["-b", "--baseline", "-o", "--output", "-s", "--selector", "-t", "--threshold"]);
+
+function getDiffScreenshotOutputPath(commandTokens: string[]): string | undefined {
+	let outputPath: string | undefined;
+	for (let index = 2; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
-		if (token.startsWith(equalsPrefix)) return token.slice(equalsPrefix.length) || undefined;
-		if (token === flag) return commandTokens[index + 1];
+		if (!DIFF_SCREENSHOT_VALUE_FLAGS.has(token)) continue;
+		const value = commandTokens[index + 1];
+		if (value === undefined) return undefined;
+		if (token === "-o" || token === "--output") outputPath = value;
+		index += 1;
 	}
-	return undefined;
+	return outputPath;
 }
 
 function foldArtifactPath(path: string, platform: NodeJS.Platform): string {
-	return platform === "win32" || platform === "darwin" ? path.normalize("NFC").toLowerCase() : path;
+	return foldAgentBrowserFilesystemIdentity(path, platform);
 }
 
 function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platform, seenSymlinks: Set<string>): string {
@@ -115,10 +105,9 @@ export function getExplicitArtifactDestination(commandTokens: string[]): string 
 	}
 	if (command === "download") return commandTokens[2];
 	if (command === "pdf") return commandTokens[1];
-	if (command === "wait" && subcommand === "--download" && commandTokens[2] && !commandTokens[2].startsWith("--")) return commandTokens[2];
-	if (command === "wait" && subcommand?.startsWith("--download=")) return subcommand.slice("--download=".length) || undefined;
+	if (command === "wait") return parseWaitCommandTokens(commandTokens).downloadPath;
 	if (command === "state" && subcommand === "save") return commandTokens[2];
-	if (command === "diff" && subcommand === "screenshot") return getFlagValue(commandTokens, "--output");
+	if (command === "diff" && subcommand === "screenshot") return getDiffScreenshotOutputPath(commandTokens);
 	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") return commandTokens[3];
 	if ((command === "trace" || command === "profiler") && subcommand === "stop") return commandTokens[2];
 	if (command === "record" && (subcommand === "start" || subcommand === "restart")) return commandTokens[2];

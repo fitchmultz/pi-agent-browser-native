@@ -135,6 +135,11 @@ test("shared parsing helpers preserve boundary parsing semantics", () => {
 	assert.equal(canonicalizeAgentBrowserNamespace(" --Agent__ "), "agent");
 	assert.equal(parseArgvDescriptor(["--hide-scrollbars", "open", "https://example.com"]).commandInfo.command, "open");
 	assert.equal(parseArgvDescriptor(["--hide-scrollbars", "false", "open", "https://example.com"]).commandInfo.command, "open");
+	assert.deepEqual(parseArgvDescriptor(["pdf", "--json", "demo.pdf"]).upstreamCommandTokens, ["pdf", "demo.pdf"]);
+	assert.deepEqual(parseArgvDescriptor(["pdf", "--restore", "demo.pdf"]).upstreamCommandTokens, ["pdf", "demo.pdf"]);
+	assert.deepEqual(parseArgvDescriptor(["pdf", "--quick", "true", "demo.pdf"]).upstreamCommandTokens, ["pdf", "demo.pdf"]);
+	assert.deepEqual(parseArgvDescriptor(["record", "--json", "start", "demo.webm"]).upstreamCommandTokens, ["record", "start", "demo.webm"]);
+	assert.deepEqual(parseArgvDescriptor(["pdf", "--restore=key", "demo.pdf"]).upstreamCommandTokens, ["pdf", "demo.pdf"]);
 });
 
 test("extractRequestedRestoreKey mirrors optional values and post-command session fallback", () => {
@@ -1233,6 +1238,21 @@ test("buildExecutionPlan allows optional wait download path to be omitted", () =
 	assert.equal(plan.validationError, undefined);
 	assert.deepEqual(plan.commandInfo, { command: "wait", subcommand: "--download" });
 	assert.deepEqual(plan.effectiveArgs.slice(-4), ["wait", "--download", "--timeout", "25000"]);
+
+	const shortPlan = buildExecutionPlan(["wait", "-d", "report.csv"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(shortPlan.validationError, undefined);
+	assert.deepEqual(shortPlan.commandInfo, { command: "wait", subcommand: "-d" });
+	assert.deepEqual(parseArgvDescriptor(["wait", "--timeout", "30000", "-d", "report.csv"]).commandInfo, { command: "wait", subcommand: "-d" });
+	assert.deepEqual(parseArgvDescriptor(["wait", "--timeout", "1", "--timeout", "--download", "report.csv"]).commandInfo, { command: "wait", subcommand: "--download" });
+	assert.deepEqual(parseArgvDescriptor(["wait", "--download", "report.csv", "--url", "**/done"]).commandInfo, { command: "wait", subcommand: "--url" });
+	assert.deepEqual(parseArgvDescriptor(["wait", "-d", "report.csv", "-t", "Ready"]).commandInfo, { command: "wait", subcommand: "-t" });
+
+	assert.match(validateToolArgs(["wait", "--download=report.csv"]) ?? "", /does not support `wait --download=<path>`/);
 });
 
 test("buildExecutionPlan parses restore and namespace globals before command discovery", () => {

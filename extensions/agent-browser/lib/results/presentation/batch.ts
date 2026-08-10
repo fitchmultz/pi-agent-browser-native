@@ -1,7 +1,7 @@
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
 import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
-import { extractCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
+import { extractUpstreamCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
 import { formatSessionArtifactRetentionSummary, isPendingRecordingArtifact } from "../artifact-manifest.js";
@@ -99,7 +99,7 @@ function hasModelFacingArgRedaction(args: string[] | undefined): boolean {
 
 function getStatefulCommandSensitiveValues(command: string[] | undefined): string[] {
 	if (!command) return [];
-	const tokens = extractCommandTokens(command);
+	const tokens = extractUpstreamCommandTokens(command);
 	const values: string[] = [];
 	if (tokens[0] === "cookies" && tokens[1] === "set" && tokens[3]) values.push(tokens[3]);
 	if (tokens[0] === "storage" && ["local", "session"].includes(tokens[1] ?? "") && tokens[2] === "set" && tokens[4]) values.push(tokens[4]);
@@ -377,7 +377,7 @@ function coalesceTerminalBatchRecordingArtifacts(
 			if (pendingIndex !== undefined) removedPendingIndexes.add(pendingIndex);
 		}
 		const command = step.details.command;
-		if (step.details.success !== true || !command || !isCloseCommand(extractCommandTokens(command)[0])) continue;
+		if (step.details.success !== true || !command || !isCloseCommand(extractUpstreamCommandTokens(command)[0])) continue;
 		const session = sessionName ? getAgentBrowserSessionIdentityKey(sessionName, namespace) : "";
 		for (const pendingIndex of pendingIndexesBySession.get(session) ?? []) {
 			const pending = artifacts[pendingIndex];
@@ -424,7 +424,7 @@ export async function buildBatchPresentation(options: {
 		});
 		steps.push(step);
 		currentArtifactManifest = step.presentation.artifactManifest ?? currentArtifactManifest;
-		currentNetworkRoutes = applyNetworkRouteRecords(currentNetworkRoutes, isStringArray(item.command) ? extractCommandTokens(item.command) : undefined, item.success !== false && step.details.success);
+		currentNetworkRoutes = applyNetworkRouteRecords(currentNetworkRoutes, isStringArray(item.command) ? extractUpstreamCommandTokens(item.command) : undefined, item.success !== false && step.details.success);
 		protectedPersistentPaths.push(
 			...getPresentationPaths({
 				primaryPath: step.presentation.fullOutputPath,

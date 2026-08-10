@@ -12,7 +12,7 @@ import { formatSessionArtifactRetentionSummary } from "../../results/artifact-ma
 import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTarget, type VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import { extractRefSnapshotFromData, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
-import { redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
+import { extractUpstreamCommandTokens, parseWaitCommandTokens, redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { getManagedSessionStateAccessValidationError, isFileUrl } from "../../managed-session-state-policy.js";
 import {
@@ -715,20 +715,15 @@ function getLastPositionalToken(args: string[], startIndex = 1): string | undefi
 }
 
 function getTimeoutStepArtifactPath(args: string[]): string | undefined {
-	const [command] = args;
+	const commandArgs = extractUpstreamCommandTokens(args);
+	const [command] = commandArgs;
 	if (command === "screenshot") {
-		const index = getScreenshotPathTokenIndex(args);
-		return index === undefined ? undefined : args[index];
+		const index = getScreenshotPathTokenIndex(commandArgs);
+		return index === undefined ? undefined : commandArgs[index];
 	}
-	if (command === "pdf") return getLastPositionalToken(args);
-	if (command === "download") return getLastPositionalToken(args, 2);
-	if (command === "wait") {
-		const inlineDownload = args.find((token) => token.startsWith("--download="));
-		if (inlineDownload) return inlineDownload.slice("--download=".length) || undefined;
-		const downloadIndex = args.indexOf("--download");
-		const downloadPath = downloadIndex >= 0 ? args[downloadIndex + 1] : undefined;
-		if (downloadPath && !downloadPath.startsWith("-")) return downloadPath;
-	}
+	if (command === "pdf") return getLastPositionalToken(commandArgs);
+	if (command === "download") return getLastPositionalToken(commandArgs, 2);
+	if (command === "wait") return parseWaitCommandTokens(commandArgs).downloadPath;
 	return undefined;
 }
 

@@ -38,16 +38,16 @@ test("getSuccessfulBatchCloseLifecycle tolerates unidentified transcript rows", 
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], result: { statePath: "/tmp/state.json" }, success: true },
 		{ success: true },
-	]), { endsClosed: false, statePath: "/tmp/state.json" });
+	]), { endsClosed: false, recordingClosedAfterBatch: false, statePath: "/tmp/state.json" });
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], success: true },
 		{ command: ["record", "start", "ignored.webm"], success: true },
-	]), { endsClosed: true, statePath: undefined });
+	]), { endsClosed: true, recordingClosedAfterBatch: true, statePath: undefined });
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], success: true },
 		{ command: ["open", "https://example.test"], success: true },
 		{ command: ["record", "start", "active.webm"], success: true },
-	]), { endsClosed: false, statePath: undefined });
+	]), { endsClosed: false, recordingClosedAfterBatch: false, statePath: undefined });
 });
 
 test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidations, and restore pinning", () => {

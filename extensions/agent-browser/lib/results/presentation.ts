@@ -1,6 +1,6 @@
 import type { CompiledAgentBrowserSemanticAction } from "../input-modes/types.js";
 import { isRecord } from "../parsing.js";
-import { extractCommandTokens, type CommandInfo } from "../runtime.js";
+import { extractUpstreamCommandTokens, type CommandInfo } from "../runtime.js";
 import type { PersistentSessionArtifactStore } from "../temp.js";
 import { buildAgentBrowserNextActions } from "./action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails } from "./categories.js";
@@ -97,7 +97,7 @@ export async function buildToolPresentation(options: {
 		persistentArtifactStore,
 		sessionName,
 	} = options;
-	const commandInfoWithTokens = commandInfo.commandTokens || !args ? commandInfo : { ...commandInfo, commandTokens: extractCommandTokens(args) };
+	const commandInfoWithTokens = commandInfo.commandTokens || !args ? commandInfo : { ...commandInfo, commandTokens: extractUpstreamCommandTokens(args) };
 	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfoWithTokens, compiledSemanticAction);
 
 	if (errorText) {

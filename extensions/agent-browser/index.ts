@@ -23,7 +23,7 @@ import {
 	createEphemeralSessionSeed,
 	createFreshSessionName,
 	createImplicitSessionName,
-	extractCommandTokens,
+	extractUpstreamCommandTokens,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	isRestorableManagedSessionName,
@@ -62,7 +62,7 @@ import {
 } from "./lib/input-modes/script.js";
 import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
 import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
-import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination, getPotentialScreenshotPathToken } from "./lib/orchestration/browser-run/artifact-paths.js";
+import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchCommandArgument, parseUserBatchStdin } from "./lib/orchestration/batch-stdin.js";
 import {
@@ -130,7 +130,7 @@ interface BranchManagedResourceEvents {
 }
 
 function getArtifactCommandSteps(args: string[], stdin: string | undefined): { batch: boolean; error?: string; steps: string[][] } {
-	const commandTokens = extractCommandTokens(args);
+	const commandTokens = extractUpstreamCommandTokens(args);
 	const batch = commandTokens[0] === "batch";
 	if (!batch) return { batch, steps: commandTokens.length > 0 ? [commandTokens] : [] };
 	const steps: string[][] = [];
@@ -155,7 +155,10 @@ function getArtifactPreflightValidationError(options: {
 	if (error) return error;
 
 	const activeRecordingDestinations = new Set<string>();
-	const cleanupOnly = steps.length > 0 && steps.every((step) => isCloseCommand(step[0]) || (step[0] === "record" && step[1] === "stop"));
+	const cleanupOnly = steps.length > 0 && steps.every((step) => {
+		const [command, subcommand] = extractUpstreamCommandTokens(step);
+		return isCloseCommand(command) || (command === "record" && subcommand === "stop");
+	});
 	for (const reservation of options.activeRecordingReservations ?? []) {
 		try {
 			activeRecordingDestinations.add(canonicalizeExplicitArtifactDestination(reservation.cwd, reservation.absolutePath));
@@ -164,9 +167,11 @@ function getArtifactPreflightValidationError(options: {
 		}
 	}
 
+	let canonicalOutputPath: string | undefined;
 	if (options.outputPath) {
 		try {
-			if (activeRecordingDestinations.has(canonicalizeExplicitArtifactDestination(options.cwd, normalizeRequestedOutputPath(options.outputPath)))) {
+			canonicalOutputPath = canonicalizeExplicitArtifactDestination(options.cwd, normalizeRequestedOutputPath(options.outputPath));
+			if (activeRecordingDestinations.has(canonicalOutputPath)) {
 				return `Unsupported outputPath: ${options.outputPath} is reserved by an active recording. Stop that recording first or use a distinct path.`;
 			}
 		} catch (canonicalizationError) {
@@ -176,7 +181,7 @@ function getArtifactPreflightValidationError(options: {
 	const artifactDestinations = new Map<string, number>();
 	let sawBatchClose = false;
 	for (const [index, step] of steps.entries()) {
-		const commandStep = extractCommandTokens(step);
+		const commandStep = extractUpstreamCommandTokens(step);
 		if (batch) {
 			const stepValidationError = validateToolArgs(step);
 			if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
@@ -193,6 +198,9 @@ function getArtifactPreflightValidationError(options: {
 			} catch (canonicalizationError) {
 				return canonicalizationError instanceof Error ? canonicalizationError.message : `Artifact destination ${artifactDestination} could not be resolved safely.`;
 			}
+			if (canonicalOutputPath === canonicalDestination) {
+				return `Unsupported outputPath: ${options.outputPath} resolves to the same destination as artifact path ${artifactDestination}. Use distinct paths so the tool-result JSON cannot overwrite the browser artifact.`;
+			}
 			if (activeRecordingDestinations.has(canonicalDestination)) {
 				const prefix = batch ? `Unsupported batch artifact destination in step ${index + 1}` : "Unsupported artifact destination";
 				return `${prefix}: ${artifactDestination} is reserved by an active recording. Stop that recording first or use a distinct path.`;
@@ -202,20 +210,8 @@ function getArtifactPreflightValidationError(options: {
 				return `Unsupported batch artifact destination in step ${index + 1}: ${artifactDestination} is already written by step ${priorStep + 1}. Use distinct paths or split the batch so each artifact can be verified independently.`;
 			}
 			artifactDestinations.set(canonicalDestination, index);
-		} else if (commandStep[0] === "screenshot") {
-			const potentialDestination = getPotentialScreenshotPathToken(commandStep);
-			if (potentialDestination) {
-				try {
-					if (activeRecordingDestinations.has(canonicalizeExplicitArtifactDestination(options.cwd, potentialDestination))) {
-						const prefix = batch ? `Unsupported batch artifact destination in step ${index + 1}` : "Unsupported artifact destination";
-						return `${prefix}: ${potentialDestination} is reserved by an active recording. Stop that recording first or use a distinct path.`;
-					}
-				} catch (canonicalizationError) {
-					return canonicalizationError instanceof Error ? canonicalizationError.message : `Artifact destination ${potentialDestination} could not be resolved safely.`;
-				}
-			}
 		}
-		if (batch && commandStep[0] === "screenshot" && commandStep.includes("--annotate")) {
+		if (batch && commandStep[0] === "screenshot" && step.includes("--annotate")) {
 			return [
 				`Unsupported batch screenshot annotation in step ${index + 1}: put --annotate in top-level args, not inside the batch step.`,
 				`Use: { "args": ["--annotate", "batch"], "stdin": "[[\\"screenshot\\",\\"/path/to/image.png\\"]]" }`,
@@ -230,7 +226,7 @@ function commandTouchesArtifactLifecycle(args: string[], stdin: string | undefin
 	const parsed = getArtifactCommandSteps(args, stdin);
 	if (parsed.error) return true;
 	return parsed.steps.some((step) => {
-		const commandStep = extractCommandTokens(step);
+		const commandStep = extractUpstreamCommandTokens(step);
 		return getExplicitArtifactDestination(commandStep) !== undefined || commandStep[0] === "record" || commandStep[0] === "screenshot" || isCloseCommand(commandStep[0]);
 	});
 }
@@ -262,7 +258,7 @@ function reportsNoRecordingInProgress(value: unknown): boolean {
 
 function batchStepReportsNoRecordingInProgress(step: unknown): boolean {
 	if (!isRecord(step) || step.success !== false) return false;
-	const command = Array.isArray(step.command) && step.command.every((token) => typeof token === "string") ? extractCommandTokens(step.command) : [];
+	const command = Array.isArray(step.command) && step.command.every((token) => typeof token === "string") ? extractUpstreamCommandTokens(step.command) : [];
 	return command[0] === "record" && command[1] === "stop" && reportsNoRecordingInProgress(step);
 }
 
@@ -380,7 +376,7 @@ function getToolResultArgs(details: Record<string, unknown>): string[] {
 
 function isAttachedBrowserInvocation(args: string[], env: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment()): boolean {
 	const autoConnectEnv = env.AGENT_BROWSER_AUTO_CONNECT;
-	return extractCommandTokens(args)[0] === "connect"
+	return extractUpstreamCommandTokens(args)[0] === "connect"
 		|| hasLaunchScopedFlagToken(args, "--cdp")
 		|| hasLaunchScopedFlagToken(args, "--auto-connect")
 		|| env.AGENT_BROWSER_CDP !== undefined
@@ -405,7 +401,7 @@ function restoreAttachedSessionKeysFromBranch(branch: unknown[]): Set<string> {
 		if (!sessionName) continue;
 		const namespace = typeof details.namespace === "string" ? details.namespace : extractExplicitNamespace(args);
 		const sessionKey = getSessionContextKey(sessionName, namespace) ?? sessionName;
-		if ((succeeded && isCloseCommand(extractCommandTokens(args)[0])) || terminalBatchClose) attachedSessionKeys.delete(sessionKey);
+		if ((succeeded && isCloseCommand(extractUpstreamCommandTokens(args)[0])) || terminalBatchClose) attachedSessionKeys.delete(sessionKey);
 		else if (details.attachedBrowserSession === true || isAttachedBrowserInvocation(args, {})) attachedSessionKeys.add(sessionKey);
 	}
 	return attachedSessionKeys;
@@ -422,7 +418,7 @@ function restoreAllowedDomainsBySessionFromBranch(branch: unknown[]): Map<string
 		const succeeded = getSuccessfulToolResult(details, message);
 		const batchCloseLifecycle = getSuccessfulBatchCloseLifecycle(details.batchSteps);
 		const args = getToolResultArgs(details);
-		const command = typeof details.command === "string" ? details.command : extractCommandTokens(args)[0];
+		const command = typeof details.command === "string" ? details.command : extractUpstreamCommandTokens(args)[0];
 		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
 		const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
 		const sessionKey = getSessionContextKey(sessionName, namespace);
@@ -708,7 +704,7 @@ function collectBranchManagedResourceEvents(branch: unknown[]): BranchManagedRes
 		eventRank += 1;
 		const succeeded = getSuccessfulToolResult(details, message);
 		const args = Array.isArray(details.args) && details.args.every((arg) => typeof arg === "string") ? details.args : [];
-		const command = typeof details.command === "string" ? details.command : extractCommandTokens(args)[0];
+		const command = typeof details.command === "string" ? details.command : extractUpstreamCommandTokens(args)[0];
 		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
 		const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
 		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
@@ -1041,7 +1037,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		for (const step of batchSteps) {
 			if (!isRecord(step)) continue;
 			const command = Array.isArray(step.command) && step.command.every((token) => typeof token === "string") ? step.command : undefined;
-			const commandTokens = command ? extractCommandTokens(command) : [];
+			const commandTokens = command ? extractUpstreamCommandTokens(command) : [];
 			const commandName = commandTokens[0];
 			if (resultSessionName && batchStepReportsNoRecordingInProgress(step)) {
 				const sessionKey = getAgentBrowserSessionIdentityKey(resultSessionName, resultNamespace);
@@ -1492,7 +1488,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, preserveTextContent, result });
 				});
 			};
-			const versionCheckCommand = extractCommandTokens(resolvedInput.toolArgs)[0];
+			const versionCheckCommand = extractUpstreamCommandTokens(resolvedInput.toolArgs)[0];
 			const electronHostOnlyAction = resolvedInput.kind === "electron" && ["cleanup", "list", "status"].includes(resolvedInput.compiledElectron.action);
 			const browserBackedVersionCheck = needsManagedSession(parseArgvDescriptor(resolvedInput.toolArgs));
 			if (!electronHostOnlyAction && browserBackedVersionCheck && !isPlainTextInspectionArgs(resolvedInput.toolArgs) && !isCloseCommand(versionCheckCommand) && signal?.aborted !== true) {
@@ -1670,10 +1666,22 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				? managedSessionExecutionQueue.run(runElectronHostInput)
 				: runElectronHostInput();
 			const electronHostResult = compiledElectron?.action === "cleanup"
-				? await artifactExecutionQueue.run(runSerializedElectronHostInput)
+				? await artifactExecutionQueue.run(async () => {
+						const reservationError = outputPath ? getArtifactPreflightValidationError({
+							activeRecordingReservations: activeRecordingReservations.values(),
+							args: [],
+							cwd: ctx.cwd,
+							outputPath,
+						}) : undefined;
+						if (reservationError) {
+							return buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: reservationError });
+						}
+						const result = await runSerializedElectronHostInput();
+						return result ? applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result }) : result;
+					})
 				: await runSerializedElectronHostInput();
 			if (electronHostResult) {
-				return applyUnserializedOutputPath(electronHostResult);
+				return compiledElectron?.action === "cleanup" ? electronHostResult : applyUnserializedOutputPath(electronHostResult);
 			}
 
 			const explicitSessionName = extractExplicitSessionName(toolArgs);
@@ -1756,7 +1764,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const managedSessionOutcome = isRecord(resultDetails?.managedSessionOutcome) ? resultDetails.managedSessionOutcome : undefined;
 					const attachedSessionRemainsActive = result.isError !== true
 						|| (attachedSessionRequested && managedSessionOutcome?.activeAfter === true);
-					const closesAttachedSession = (result.isError !== true && isCloseCommand(extractCommandTokens(toolArgs)[0]))
+					const closesAttachedSession = (result.isError !== true && isCloseCommand(extractUpstreamCommandTokens(toolArgs)[0]))
 						|| resultHasTerminalSuccessfulBatchClose(result);
 					if (resultSessionKey && closesAttachedSession) attachedSessionKeys.delete(resultSessionKey);
 					else if (resultSessionKey && attachedSessionRemainsActive && (attachedSessionRequested || attachedSessionKnown)) {

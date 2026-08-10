@@ -150,7 +150,7 @@ function getPositionalOperands(commandTokens: string[]): string[] {
 
 function getExplicitNavigationTarget(args: string[]): string | undefined {
 	const descriptor = parseArgvDescriptor(args);
-	const positionals = getPositionalOperands(descriptor.commandTokens);
+	const positionals = getPositionalOperands(descriptor.upstreamCommandTokens);
 	if (EXPLICIT_NAVIGATION_COMMANDS.has(descriptor.commandInfo.command ?? "")) return positionals[0];
 	if (descriptor.commandInfo.command === "tab" && descriptor.commandInfo.subcommand === "new") return positionals[1];
 	return undefined;
@@ -176,9 +176,9 @@ function getResultingExplicitNavigationTarget(args: string[], currentPageUrl?: s
 function getBrowserContentUrlOperands(args: string[]): string[] {
 	const descriptor = parseArgvDescriptor(args);
 	const command = descriptor.commandInfo.command;
-	const positionals = getPositionalOperands(descriptor.commandTokens);
+	const positionals = getPositionalOperands(descriptor.upstreamCommandTokens);
 	if (["a11y", "read", "vitals", "web-vitals"].includes(command ?? "")) return positionals.slice(0, 1);
-	if (command === "auth" && descriptor.commandInfo.subcommand === "login") return getFlagValues(descriptor.commandTokens, "--url", true);
+	if (command === "auth" && descriptor.commandInfo.subcommand === "login") return getFlagValues(descriptor.upstreamCommandTokens, "--url", true);
 	if (command === "diff" && descriptor.commandInfo.subcommand === "url") return positionals.slice(1, 3);
 	if (command === "record" && ["start", "restart"].includes(descriptor.commandInfo.subcommand ?? "")) return positionals.slice(2, 3);
 	return [];
@@ -217,7 +217,7 @@ function getBrowserFileOperands(args: string[], env: NodeJS.ProcessEnv): string[
 	const descriptor = parseArgvDescriptor(args);
 	const command = descriptor.commandInfo.command;
 	const subcommand = descriptor.commandInfo.subcommand;
-	const positionals = getPositionalOperands(descriptor.commandTokens);
+	const positionals = getPositionalOperands(descriptor.upstreamCommandTokens);
 	const values = [
 		getExplicitNavigationTarget(args),
 		...getBrowserContentUrlOperands(args),
@@ -230,16 +230,16 @@ function getBrowserFileOperands(args: string[], env: NodeJS.ProcessEnv): string[
 	if (command === "download") values.push(...positionals.slice(1));
 	if (command === "pdf") values.push(positionals[0]);
 	if (command === "screenshot") {
-		const pathIndex = getScreenshotPathTokenIndex(descriptor.commandTokens);
-		values.push(pathIndex === undefined ? undefined : descriptor.commandTokens[pathIndex]);
+		const pathIndex = getScreenshotPathTokenIndex(descriptor.upstreamCommandTokens);
+		values.push(pathIndex === undefined ? undefined : descriptor.upstreamCommandTokens[pathIndex]);
 	}
 	if (["profiler", "trace"].includes(command ?? "") && subcommand === "stop") values.push(...positionals.slice(1));
 	if (command === "network" && subcommand === "har") values.push(...positionals.slice(2));
-	if (command === "wait") values.push(...getFlagValues(descriptor.commandTokens, "--download", true), ...getFlagValues(descriptor.commandTokens, "-d", true));
-	if (command === "cookies" && subcommand === "set") values.push(...getFlagValues(descriptor.commandTokens, "--curl", true));
+	if (command === "wait") values.push(...getFlagValues(descriptor.upstreamCommandTokens, "--download", true), ...getFlagValues(descriptor.upstreamCommandTokens, "-d", true));
+	if (command === "cookies" && subcommand === "set") values.push(...getFlagValues(descriptor.upstreamCommandTokens, "--curl", true));
 	if (command === "state" && ["load", "rename", "save", "show"].includes(subcommand ?? "")) values.push(...positionals.slice(1));
 	if (command === "diff" && subcommand === "url") values.push(...positionals.slice(1));
-	if (command === "diff") values.push(...getFlagValues(descriptor.commandTokens, "--baseline", true), ...getFlagValues(descriptor.commandTokens, "--output", true), ...getFlagValues(descriptor.commandTokens, "-o", true));
+	if (command === "diff") values.push(...getFlagValues(descriptor.upstreamCommandTokens, "--baseline", true), ...getFlagValues(descriptor.upstreamCommandTokens, "--output", true), ...getFlagValues(descriptor.upstreamCommandTokens, "-o", true));
 	if (command === "record" && ["start", "restart"].includes(subcommand ?? "")) values.push(...positionals.slice(1));
 	return values.filter((value): value is string => typeof value === "string" && value.length > 0);
 }
@@ -298,7 +298,7 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 	const descriptor = parseArgvDescriptor(args);
 	if (descriptor.commandInfo.command !== "batch") return { steps: [] };
 	const steps: BatchCommandStep[] = [];
-	for (const command of descriptor.commandTokens.slice(1)) {
+	for (const command of descriptor.upstreamCommandTokens.slice(1)) {
 		if (command === "--bail" || command.startsWith("--bail=")) continue;
 		if (decodeUrlComponent(command).toLowerCase().includes(".agent-browser")) return { error: BLOCKED_MANAGED_BROWSER_FILE_MESSAGE, steps: [] };
 		const parsed = parseBatchCommandArgument(command);
@@ -317,7 +317,7 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 
 function batchBailsOnFirstError(args: string[]): boolean {
 	const descriptor = parseArgvDescriptor(args);
-	return descriptor.commandInfo.command === "batch" && descriptor.commandTokens.slice(1).includes("--bail");
+	return descriptor.commandInfo.command === "batch" && descriptor.upstreamCommandTokens.slice(1).includes("--bail");
 }
 
 interface PossibleBatchPageState {
@@ -466,7 +466,7 @@ function getReferencedValues(args: string[], cwd: string, env: NodeJS.ProcessEnv
 		env.AGENT_BROWSER_STATE,
 	].filter((value): value is string => typeof value === "string" && value.length > 0);
 	if (descriptor.commandInfo.command === "state" && ["clear", "load", "rename", "save", "show"].includes(descriptor.commandInfo.subcommand ?? "")) {
-		values.push(...descriptor.commandTokens.slice(2));
+		values.push(...descriptor.upstreamCommandTokens.slice(2));
 	}
 	for (const value of [...values]) {
 		const realPath = resolveExistingPath(cwd, value);
@@ -564,8 +564,8 @@ export function getManagedSessionStateAccessValidationError(options: {
 	if (browserFileError) return browserFileError;
 	if (command === "state" && subcommand === "clean") return BLOCKED_GLOBAL_STATE_MESSAGE;
 	if (command === "state" && subcommand === "clear") {
-		const target = descriptor.commandTokens.slice(2).find((token) => !token.startsWith("-"));
-		if (!target || descriptor.commandTokens.includes("--all") || descriptor.commandTokens.includes("-a") || isWrapperManagedSessionName(target)) {
+		const target = descriptor.upstreamCommandTokens.slice(2).find((token) => !token.startsWith("-"));
+		if (!target || descriptor.upstreamCommandTokens.includes("--all") || descriptor.upstreamCommandTokens.includes("-a") || isWrapperManagedSessionName(target)) {
 			return BLOCKED_GLOBAL_STATE_MESSAGE;
 		}
 	}

@@ -348,7 +348,34 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 			canonicalizeExplicitArtifactDestination(tempDir, "é.png", "darwin"),
 			canonicalizeExplicitArtifactDestination(tempDir, "e\u0301.png", "darwin"),
 		);
+		assert.equal(
+			canonicalizeExplicitArtifactDestination(tempDir, "Straße.png", "darwin"),
+			canonicalizeExplicitArtifactDestination(tempDir, "STRASSE.png", "darwin"),
+		);
+		assert.equal(
+			canonicalizeExplicitArtifactDestination(tempDir, "Σ.png", "darwin"),
+			canonicalizeExplicitArtifactDestination(tempDir, "ς.png", "darwin"),
+		);
 		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "--output", "safe.png", "--output", "final.png"]), "final.png");
+		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "--output", "safe.png", "-o", "short.png"]), "short.png");
+		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "-o", "short.png", "--output", "final.png"]), "final.png");
+		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "--output", "danger.png", "--baseline", "-o"]), "danger.png");
+		assert.equal(getExplicitArtifactDestination(["network", "har", "start", "ignored.har"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["network", "har", "stop", "-capture.har"]), "-capture.har");
+		assert.equal(getExplicitArtifactDestination(["wait", "--timeout", "30000", "-d", "capture.csv"]), "capture.csv");
+		assert.equal(getExplicitArtifactDestination(["wait", "--timeout", "1", "--timeout", "--download", "capture.csv"]), "capture.csv");
+		assert.equal(getExplicitArtifactDestination(["wait", "--download", "capture.csv", "--url", "**/done"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["wait", "-d", "capture.csv", "-t", "Ready"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["screenshot", "--full=capture.png"]), "--full=capture.png");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "main", "capture.png", "ignored.png"]), "capture.png");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "--", "capture"]), "capture");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "--full", "true", "capture"]), "capture");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "dir/file"]), "dir/file");
+		assert.equal(getExplicitArtifactDestination(["screenshot", ".dogfood/run/capture.png"]), ".dogfood/run/capture.png");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "#card.png"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["screenshot", ".card.png"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["screenshot", "@e1.png"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["screenshot", "capture.PNG"]), undefined);
 		await symlink(tempDir, join(tempDir, "alias"), process.platform === "win32" ? "junction" : "dir");
 		const harness = createExtensionHarness({ cwd: tempDir });
 		const lexicalAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -357,6 +384,20 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 		});
 		assert.equal(lexicalAlias.isError, true);
 		assert.match(lexicalAlias.content[0]?.text ?? "", /artifact\.png is already written by step 1/);
+
+		const sentinelAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "--", "capture"], ["screenshot", "--", "capture"]]),
+		});
+		assert.equal(sentinelAlias.isError, true);
+		assert.match(sentinelAlias.content[0]?.text ?? "", /capture is already written by step 1/);
+
+		const slashPathAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "dir/file"], ["screenshot", "dir/file"]]),
+		});
+		assert.equal(slashPathAlias.isError, true);
+		assert.match(slashPathAlias.content[0]?.text ?? "", /dir\/file is already written by step 1/);
 
 		const symlinkAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
 			args: ["batch"],
@@ -403,6 +444,12 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 			});
 			assert.equal(unicodeAlias.isError, true);
 			assert.match(unicodeAlias.content[0]?.text ?? "", /é\.png is already written by step 1/);
+			const fullFoldAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "Straße.png"], ["screenshot", "STRASSE.png"]]),
+			});
+			assert.equal(fullFoldAlias.isError, true);
+			assert.match(fullFoldAlias.content[0]?.text ?? "", /STRASSE\.png is already written by step 1/);
 		}
 
 		const recordingAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1106,9 +1153,10 @@ for (let i = 0; i < args.length; i += 1) {
   commandIndex = i;
   break;
 }
-const command = args[commandIndex];
-const subcommand = args[commandIndex + 1];
-const path = command === "pdf" ? args[commandIndex + 1] : args[commandIndex + 2];
+const commandArgs = args.slice(commandIndex).filter((token) => token !== "--json" && token !== "--quiet");
+const command = commandArgs[0];
+const subcommand = commandArgs[1];
+const path = command === "pdf" ? commandArgs[1] : commandArgs[2];
 if (command === "record" && subcommand === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})) {
   process.stdout.write(JSON.stringify({ success: false, error: "No recording in progress" }));
   process.exit(1);
@@ -1120,7 +1168,7 @@ if (command === "find") {
 const batchInput = command === "batch" ? fs.readFileSync(0, "utf8") : "";
 const batchSteps = batchInput
   ? JSON.parse(batchInput)
-  : args.slice(commandIndex + 1).filter((value) => value !== "--bail" && !value.startsWith("--bail=")).map((value) => value.split(" "));
+  : commandArgs.slice(1).filter((value) => value !== "--bail" && !value.startsWith("--bail=")).map((value) => value.split(" "));
 const data = command === "batch"
   ? batchSteps.map((step) => step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
     ? { command: step, success: false, error: "No recording in progress" }
@@ -1133,7 +1181,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}`, PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Record a browser workflow.", sessionFile: join(tempDir, "session.jsonl") });
 			await mkdir(join(tempDir, "ffmpeg"));
-			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "demo.webm"] });
+			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "--quiet", "start", "demo.webm"] });
 			assert.equal(missingResult.isError, false);
 			assert.equal(missingResult.details?.successCategory, "artifact-pending");
 			assert.deepEqual(
@@ -1163,6 +1211,21 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.match(failedWhileRecording.content[0]?.text ?? "", /active recording remains open.*stop-pending-recording/is);
 			const noise = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "noise.pdf"] });
 			assert.equal(noise.isError, true);
+			const reservedExtraPositionalScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "main", "demo.webm", "ignored.png"] });
+			assert.equal(reservedExtraPositionalScreenshot.isError, true);
+			assert.match(reservedExtraPositionalScreenshot.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			if (process.platform !== "win32") {
+				await symlink("demo.webm", join(tempDir, "--full=demo.png"));
+				const reservedEqualsScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "--full=demo.png"] });
+				assert.equal(reservedEqualsScreenshot.isError, true);
+				assert.match(reservedEqualsScreenshot.content[0]?.text ?? "", /--full=demo\.png is reserved by an active recording/);
+			}
+			const reservedGlobalPdf = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "--json", "demo.webm"] });
+			assert.equal(reservedGlobalPdf.isError, true);
+			assert.match(reservedGlobalPdf.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedQuickPdf = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "--quick", "demo.webm"] });
+			assert.equal(reservedQuickPdf.isError, true);
+			assert.match(reservedQuickPdf.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
 			const noiseManifest = noise.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;
 			assert.equal(noiseManifest?.entries?.some((entry) => entry.subcommand === "start"), false);
 			const reservedOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"], outputPath: "demo.webm" });
@@ -1180,15 +1243,43 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const reservedWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download", "demo.webm"] });
 			assert.equal(reservedWaitDownload.isError, true);
 			assert.match(reservedWaitDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
-			const reservedInlineWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download=demo.webm"] });
-			assert.equal(reservedInlineWaitDownload.isError, true);
-			assert.match(reservedInlineWaitDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedShortWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "-d", "demo.webm"] });
+			assert.equal(reservedShortWaitDownload.isError, true);
+			assert.match(reservedShortWaitDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedReorderedWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--timeout", "30000", "--download", "demo.webm"] });
+			assert.equal(reservedReorderedWaitDownload.isError, true);
+			assert.match(reservedReorderedWaitDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedRepeatedTimeoutDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--timeout", "1", "--timeout", "--download", "demo.webm"] });
+			assert.equal(reservedRepeatedTimeoutDownload.isError, true);
+			assert.match(reservedRepeatedTimeoutDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const unsupportedInlineWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download=demo.webm"] });
+			assert.equal(unsupportedInlineWaitDownload.isError, true);
+			assert.match(unsupportedInlineWaitDownload.content[0]?.text ?? "", /does not support `wait --download=<path>`/);
 			const reservedLastOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--output", "safe.png", "--output", "demo.webm"] });
 			assert.equal(reservedLastOutput.isError, true);
 			assert.match(reservedLastOutput.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
-			const unusualScreenshotPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "demo.webm"] });
-			assert.equal(unusualScreenshotPath.isError, true);
-			assert.match(unusualScreenshotPath.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedShortOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--output", "safe.png", "-o", "demo.webm"] });
+			assert.equal(reservedShortOutput.isError, true);
+			assert.match(reservedShortOutput.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedHarStop = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "har", "stop", "demo.webm"] });
+			assert.equal(reservedHarStop.isError, true);
+			assert.match(reservedHarStop.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const sameCallOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "same-call.webm"], outputPath: "same-call.webm" });
+			assert.equal(sameCallOutput.isError, true);
+			assert.match(sameCallOutput.content[0]?.text ?? "", /same destination as artifact path same-call\.webm/);
+			if (process.platform !== "win32") {
+				await symlink("same-call-alias-target.webm", join(tempDir, "same-call-output.json"));
+				const danglingSameCallOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "same-call-alias-target.webm"], outputPath: "same-call-output.json" });
+				assert.equal(danglingSameCallOutput.isError, true);
+				assert.match(danglingSameCallOutput.content[0]?.text ?? "", /same destination as artifact path same-call-alias-target\.webm/);
+				await rm(join(tempDir, "same-call-output.json"), { force: true });
+			}
+			if (process.platform !== "win32") {
+				await symlink("demo.webm", join(tempDir, "demo.png"));
+				const screenshotAlias = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "demo.png"] });
+				assert.equal(screenshotAlias.isError, true);
+				assert.match(screenshotAlias.content[0]?.text ?? "", /demo\.png is reserved by an active recording/);
+			}
 			const restartSamePath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "restart", "demo.webm"] });
 			assert.equal(restartSamePath.isError, true);
 			assert.match(restartSamePath.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);

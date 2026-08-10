@@ -172,7 +172,8 @@ export function restoreRecordingReservationStateFromBranch(branch: unknown[]): R
 			? !message.isError
 			: typeof details.exitCode !== "number" || details.exitCode === 0;
 		const directCloseSucceeded = messageSucceeded && isCloseCommand(typeof details.command === "string" ? details.command : undefined);
-		if ((directCloseSucceeded || getSuccessfulBatchCloseLifecycle(details.batchSteps)) && typeof details.sessionName === "string") {
+		const batchRecordingClosed = getSuccessfulBatchCloseLifecycle(details.batchSteps)?.recordingClosedAfterBatch === true;
+		if ((directCloseSucceeded || batchRecordingClosed) && typeof details.sessionName === "string") {
 			const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
 			const key = getAgentBrowserSessionIdentityKey(details.sessionName, namespace);
 			const reservation = reservations.get(key);

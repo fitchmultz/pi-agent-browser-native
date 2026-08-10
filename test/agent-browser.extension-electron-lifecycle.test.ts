@@ -434,6 +434,15 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 
 			const recordingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "electron-cleanup.webm"] });
 			assert.equal(recordingResult.isError, false, JSON.stringify(recordingResult));
+			const blockedCleanup = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "cleanup", launchId: launchDetails.electron.launch.launchId },
+				outputPath: "electron-cleanup.webm",
+			});
+			assert.equal(blockedCleanup.isError, true);
+			assert.match(blockedCleanup.content[0]?.text ?? "", /electron-cleanup\.webm is reserved by an active recording/);
+			const stillActive = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", launchId: launchDetails.electron.launch.launchId } });
+			assert.equal(stillActive.isError, false);
+			assert.equal((stillActive.details?.electron as { statuses?: Array<{ portAlive?: boolean }> } | undefined)?.statuses?.[0]?.portAlive, true);
 			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				electron: { action: "cleanup", launchId: launchDetails.electron.launch.launchId },
 			});

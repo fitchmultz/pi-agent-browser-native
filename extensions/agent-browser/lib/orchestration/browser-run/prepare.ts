@@ -1,7 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { getBooleanFlagValue, isUpstreamEnvFlagEnabled } from "../../argv-grammar.js";
+import { getBooleanFlagValue, isUpstreamEnvFlagEnabled, projectUpstreamGlobalFlags } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
@@ -23,7 +23,9 @@ import {
 	buildExecutionPlan,
 	createFreshSessionName,
 	extractCommandTokens,
+	extractUpstreamCommandTokens,
 	getDefaultHeadlessCompatUserAgent,
+	parseWaitCommandTokens,
 	redactInvocationArgs,
 	type CompatibilityWorkaround,
 } from "../../runtime.js";
@@ -106,11 +108,7 @@ function getArtifactParentPathTokenIndex(commandTokens: string[]): number | unde
 	if (commandTokens[0] === "download" && commandTokens.length >= 3) return 2;
 	if (commandTokens[0] === "pdf" && commandTokens.length >= 2) return 1;
 	if (commandTokens[0] === "state" && commandTokens[1] === "save" && commandTokens.length >= 3) return 2;
-	if (commandTokens[0] === "wait") {
-		const downloadIndex = commandTokens.findIndex((token) => token === "--download");
-		const pathIndex = downloadIndex >= 0 ? downloadIndex + 1 : -1;
-		if (pathIndex > 0 && typeof commandTokens[pathIndex] === "string" && !commandTokens[pathIndex].startsWith("-")) return pathIndex;
-	}
+	if (commandTokens[0] === "wait") return parseWaitCommandTokens(commandTokens).downloadPathIndex;
 	return undefined;
 }
 
@@ -126,11 +124,14 @@ async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: str
 	request?: ScreenshotPathRequest;
 	tokens: string[];
 }> {
-	const screenshotPathTokenIndex = getScreenshotPathTokenIndex(commandTokens);
-	if (screenshotPathTokenIndex === undefined) {
+	const scopedCommandTokens = extractCommandTokens(commandTokens);
+	const projection = projectUpstreamGlobalFlags(scopedCommandTokens);
+	const projectedPathTokenIndex = getScreenshotPathTokenIndex(projection.tokens);
+	const scopedPathTokenIndex = projectedPathTokenIndex === undefined ? undefined : projection.indices[projectedPathTokenIndex];
+	if (scopedPathTokenIndex === undefined) {
 		return { tokens: commandTokens };
 	}
-
+	const screenshotPathTokenIndex = commandTokens.length - scopedCommandTokens.length + scopedPathTokenIndex;
 	const requestedPath = commandTokens[screenshotPathTokenIndex];
 	const absolutePath = resolve(cwd, requestedPath);
 	await mkdir(dirname(absolutePath), { recursive: true });
@@ -152,7 +153,7 @@ async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: str
 }
 
 async function prepareBatchScreenshotPaths(args: string[], stdin: string | undefined, cwd: string): Promise<PreparedAgentBrowserArgs | undefined> {
-	const commandTokens = extractCommandTokens(args);
+	const commandTokens = extractUpstreamCommandTokens(args);
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
 		return undefined;
 	}
@@ -167,8 +168,9 @@ async function prepareBatchScreenshotPaths(args: string[], stdin: string | undef
 		if (!Array.isArray(step) || !step.every((item) => typeof item === "string")) {
 			return step;
 		}
-		await ensureArtifactParentDirectory(step, cwd);
-		if (step[0] !== "screenshot") {
+		const upstreamStep = extractUpstreamCommandTokens(step);
+		await ensureArtifactParentDirectory(upstreamStep, cwd);
+		if (upstreamStep[0] !== "screenshot") {
 			return step;
 		}
 		const normalized = await normalizeScreenshotPathInTokens(step, cwd);
@@ -195,7 +197,7 @@ export async function prepareAgentBrowserArgs(args: string[], stdin: string | un
 	}
 
 	const commandTokens = extractCommandTokens(args);
-	await ensureArtifactParentDirectory(commandTokens, cwd);
+	await ensureArtifactParentDirectory(extractUpstreamCommandTokens(args), cwd);
 	const normalized = await normalizeScreenshotPathInTokens(commandTokens, cwd);
 	if (!normalized.request) {
 		return { args };
@@ -655,7 +657,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			});
 		}
 
-		const commandTokens = semanticActionVisibleRefResolution ? extractCommandTokens(semanticActionVisibleRefResolution.args) : extractCommandTokens(preparedArgs.args);
+		const commandTokens = semanticActionVisibleRefResolution ? extractUpstreamCommandTokens(semanticActionVisibleRefResolution.args) : extractUpstreamCommandTokens(preparedArgs.args);
 		const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
 			? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
 			: undefined;

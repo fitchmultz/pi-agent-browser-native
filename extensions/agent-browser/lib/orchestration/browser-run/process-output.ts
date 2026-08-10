@@ -32,7 +32,7 @@ import {
 import { isRecord } from "../../parsing.js";
 import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
-import { createFreshSessionName, extractCommandTokens, resolveManagedSessionState } from "../../runtime.js";
+import { createFreshSessionName, extractUpstreamCommandTokens, resolveManagedSessionState } from "../../runtime.js";
 import { parseBatchCommandArgument, parseUserBatchStdin, type BatchCommandStep } from "../batch-stdin.js";
 import { closeManagedSession, inspectManagedSessionDaemon } from "./managed-session-daemon-policy.js";
 import {
@@ -171,7 +171,7 @@ function applyBatchNetworkRouteState(options: { data: unknown; routesBySession: 
 	let routes = options.routesBySession.get(options.sessionName);
 	for (const item of options.data) {
 		if (!isRecord(item) || !Array.isArray(item.command) || !item.command.every((token) => typeof token === "string")) continue;
-		const commandTokens = extractCommandTokens(item.command as string[]);
+		const commandTokens = extractUpstreamCommandTokens(item.command as string[]);
 		const stepSucceeded = item.success !== false;
 		if (stepSucceeded && isCloseCommand(commandTokens[0])) routes = undefined;
 		else routes = applyNetworkRouteRecords(routes, commandTokens, stepSucceeded);

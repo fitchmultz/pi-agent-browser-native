@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { chmodSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 
-import { extractCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
+import { extractUpstreamCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
 import {
 	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
@@ -206,7 +206,7 @@ type ManagedSessionRestorePolicyOptions = {
 };
 
 function batchHasManagedSessionRestoreConflict(args: string[], stdin: string | undefined): boolean {
-	const [command, ...commandArgs] = extractCommandTokens(args);
+	const [command, ...commandArgs] = extractUpstreamCommandTokens(args);
 	if (command !== "batch") return false;
 	if (commandArgs.some((token) => token !== "--bail")) return true;
 	const parsed = parseUserBatchStdin(stdin);

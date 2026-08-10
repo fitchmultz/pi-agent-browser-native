@@ -34,7 +34,7 @@ import {
 } from "./managed-session-restore.js";
 
 export type { CommandInfo } from "./argv-descriptor.js";
-export { extractCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo } from "./argv-descriptor.js";
+export { extractCommandTokens, extractUpstreamCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo, parseWaitCommandTokens } from "./argv-descriptor.js";
 
 import { isRecord } from "./parsing.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
@@ -713,7 +713,7 @@ export function createFreshSessionName(baseSessionName: string, ephemeralSeed: s
 }
 
 function getSingleKeyCommandValidationError(args: string[]): string | undefined {
-	const { commandInfo, commandTokens } = parseArgvDescriptor(args);
+	const { commandInfo, upstreamCommandTokens: commandTokens } = parseArgvDescriptor(args);
 	const command = commandInfo.command;
 	if (command !== "press" && command !== "key" && command !== "keydown" && command !== "keyup") return undefined;
 	if (commandTokens.length === 2) return undefined;
@@ -722,10 +722,16 @@ function getSingleKeyCommandValidationError(args: string[]): string | undefined 
 }
 
 function getBareMcpValidationError(args: string[]): string | undefined {
-	const { commandInfo, commandTokens } = parseArgvDescriptor(args);
+	const { commandInfo, upstreamCommandTokens: commandTokens } = parseArgvDescriptor(args);
 	if (commandInfo.command !== "mcp") return undefined;
 	if (commandTokens.includes("--help") || commandTokens.includes("-h")) return undefined;
 	return "agent-browser mcp starts a stdio MCP server for external MCP clients, not a one-shot native agent_browser tool workflow. Use the native agent_browser tool modes directly, or configure an MCP client to launch `agent-browser mcp`. Use `mcp --help` for help.";
+}
+
+function getUnsupportedInlineWaitDownloadError(args: string[]): string | undefined {
+	const descriptor = parseArgvDescriptor(args);
+	if (descriptor.commandInfo.command !== "wait" || !descriptor.upstreamCommandTokens.some((token) => token.startsWith("--download="))) return undefined;
+	return "agent-browser 0.33.2 does not support `wait --download=<path>`. Pass the optional path as a separate argument: `wait --download <path>` (or `wait -d <path>`).";
 }
 
 export function validateToolArgs(args: string[]): string | undefined {
@@ -743,7 +749,7 @@ export function validateToolArgs(args: string[]): string | undefined {
 		return "Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: [\"--profile\", \"Default\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
 	}
 
-	return getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args);
+	return getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args) ?? getUnsupportedInlineWaitDownloadError(args);
 }
 
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {

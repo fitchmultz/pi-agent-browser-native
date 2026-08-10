@@ -32,7 +32,12 @@ function isManifestEntry(value: unknown): value is SessionArtifactManifestEntry 
 	if (!["evicted", "ephemeral", "live", "missing"].includes(String(value.retentionState))) return false;
 	if (!["explicit-path", "persistent-session", "process-temp"].includes(String(value.storageScope))) return false;
 	if (typeof value.kind !== "string" || value.kind.trim().length === 0) return false;
-	if (value.namespace !== undefined && typeof value.namespace !== "string") return false;
+	for (const key of ["absolutePath", "command", "cwd", "extension", "mediaType", "namespace", "requestedPath", "session", "subcommand"] as const) {
+		if (value[key] !== undefined && typeof value[key] !== "string") return false;
+	}
+	if (value.evictedAtMs !== undefined && (typeof value.evictedAtMs !== "number" || !Number.isFinite(value.evictedAtMs))) return false;
+	if (value.exists !== undefined && typeof value.exists !== "boolean") return false;
+	if (value.sizeBytes !== undefined && (typeof value.sizeBytes !== "number" || !Number.isFinite(value.sizeBytes) || value.sizeBytes < 0)) return false;
 	return true;
 }
 

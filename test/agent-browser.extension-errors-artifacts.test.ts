@@ -1687,13 +1687,14 @@ if (args.includes("eval")) {
 			assert.equal(collidingOutput.isError, true);
 			assert.equal(collidingOutput.details?.resultCategory, "failure");
 			assert.equal(collidingOutput.details?.failureCategory, "validation-error");
-			assert.equal((collidingOutput.details?.outputFile as { status?: string } | undefined)?.status, "failed");
-			assert.equal((collidingOutput.details?.artifacts as Array<{ sizeBytes?: number }> | undefined)?.[0]?.sizeBytes, "browser-image".length);
-			assert.match(collidingOutput.content[0]?.text ?? "", /outputPath.*browser artifact/i);
-			assert.equal(await readFile(screenshotPath, "utf8"), "browser-image");
+			assert.equal(collidingOutput.details?.outputFile, undefined);
+			assert.equal(collidingOutput.details?.artifacts, undefined);
+			assert.match(collidingOutput.content[0]?.text ?? "", /outputPath.*same destination as artifact path/i);
+			await assert.rejects(access(screenshotPath));
 
 			const hardlinkedScreenshotPath = join(tempDir, "captures/hardlinked.png");
 			const hardlinkedOutputPath = join(tempDir, "captures/hardlinked-result.json");
+			await mkdir(join(tempDir, "captures"), { recursive: true });
 			await writeFile(hardlinkedScreenshotPath, "seed");
 			await link(hardlinkedScreenshotPath, hardlinkedOutputPath);
 			const hardlinkedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1701,7 +1702,8 @@ if (args.includes("eval")) {
 				outputPath: hardlinkedOutputPath,
 			});
 			assert.equal(hardlinkedOutput.isError, true);
-			assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "browser-image");
+			assert.match(hardlinkedOutput.content[0]?.text ?? "", /outputPath.*same destination as artifact path/i);
+			assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "seed");
 
 			const beforeProtectedOutput = (await readFile(logPath, "utf8")).trim().split("\n").length;
 			const protectedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -2049,6 +2051,15 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 			assert.deepEqual((result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.[0]?.params?.args, ["--session", result.details?.sessionName, "wait", "--download", "/tmp/export.csv"]);
 			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.changeType, "artifact");
 			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.savedFilePath, "/tmp/export.csv");
+
+			const shortResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["wait", "-d", "/tmp/export.csv"],
+			});
+			assert.equal(shortResult.isError, true);
+			assert.match(shortResult.content[0]?.text ?? "", /Download event reported; file not verified: \/tmp\/export\.csv/);
+			assert.equal(shortResult.details?.savedFilePath, "/tmp/export.csv");
+			assert.equal((shortResult.details?.savedFile as { subcommand?: string } | undefined)?.subcommand, "-d");
+			assert.equal((shortResult.details?.artifactVerification as { missingCount?: number } | undefined)?.missingCount, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

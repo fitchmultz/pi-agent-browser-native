@@ -173,6 +173,24 @@ test("recording reservation replay keeps the newest pending path authoritative",
 	assert.equal(legacyClosedReplay.active.size, 0);
 	assert.equal(legacyClosedReplay.terminal.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "ghost.webm");
 
+	const legacyReopenedReplay = restoreRecordingReservationStateFromBranch([{
+		type: "message",
+		message: {
+			toolName: "agent_browser",
+			details: {
+				artifactManifest: { entries: [pendingManifestEntry("shared", "scope", "reopened.webm", 5)], evictedCount: 0, liveCount: 1, maxEntries: 20, updatedAtMs: 5, version: 1 },
+				batchSteps: [
+					{ command: ["close"], success: true },
+					{ command: ["open", "https://example.test"], success: true },
+					{ command: ["record", "start", "reopened.webm"], success: true },
+				],
+				namespace: "scope",
+				sessionName: "shared",
+			},
+		},
+	}]);
+	assert.equal(legacyReopenedReplay.active.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "reopened.webm");
+
 	const failedCloseReplay = restoreRecordingReservationStateFromBranch([
 		{
 			type: "custom",
@@ -197,4 +215,22 @@ test("recording reservation replay keeps the newest pending path authoritative",
 		},
 	]);
 	assert.equal(failedCloseReplay.active.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "live.webm");
+
+	const malformedSessionReplay = restoreRecordingReservationStateFromBranch([{
+		type: "message",
+		message: {
+			toolName: "agent_browser",
+			details: {
+				artifactManifest: {
+					entries: [{ ...pendingManifestEntry("shared", "scope", "malformed.webm", 6), session: {} }],
+					evictedCount: 0,
+					liveCount: 1,
+					maxEntries: 20,
+					updatedAtMs: 6,
+					version: 1,
+				},
+			},
+		},
+	}]);
+	assert.equal(malformedSessionReplay.active.size, 0);
 });
