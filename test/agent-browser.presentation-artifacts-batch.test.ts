@@ -465,6 +465,38 @@ test("buildToolPresentation coalesces a batched recording to its terminal saved 
 	}
 });
 
+test("buildToolPresentation coalesces a recording saved after an intermediate close", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-close-stop-"));
+	try {
+		const recordingPath = join(tempDir, "recording.webm");
+		await writeFile(recordingPath, "completed recording");
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: tempDir,
+			envelope: {
+				success: true,
+				data: [
+					{ command: ["record", "start", recordingPath], result: { path: recordingPath }, success: true },
+					{ command: ["close"], result: {}, success: true },
+					{ command: ["record", "stop"], result: { lifecycle: { effectiveLaunch: { browserLaunched: true } }, path: recordingPath }, success: true },
+				],
+			},
+			namespace: "tenant",
+			sessionName: "recording-session",
+		});
+
+		assert.deepEqual(presentation.artifacts?.map((artifact) => ({ status: artifact.status, subcommand: artifact.subcommand })), [
+			{ status: "saved", subcommand: "stop" },
+		]);
+		assert.equal(presentation.artifactVerification?.missingCount, 0);
+		assert.equal(presentation.artifactVerification?.verifiedCount, 1);
+		assert.equal(presentation.resultCategory, "success");
+		assert.equal(presentation.successCategory, "artifact-saved");
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("buildToolPresentation marks a batched recording abandoned by close as missing", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-close-"));
 	try {

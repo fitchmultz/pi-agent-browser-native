@@ -49,6 +49,14 @@ test("getSuccessfulBatchCloseLifecycle tolerates unidentified transcript rows", 
 	]), { endsClosed: true, recordingClosedAfterBatch: true, statePath: undefined });
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], success: true },
+		{ command: ["record", "stop"], result: { lifecycle: { effectiveLaunch: { browserLaunched: true } } }, success: true },
+	]), { endsClosed: false, recordingClosedAfterBatch: true, statePath: undefined });
+	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
+		{ command: ["close"], success: true },
+		{ command: ["record", "stop"], success: true },
+	]), { endsClosed: false, recordingClosedAfterBatch: true, statePath: undefined });
+	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
+		{ command: ["close"], success: true },
 		{ command: ["open", "https://example.test"], result: { lifecycle: { effectiveLaunch: { browserLaunched: true } } }, success: true },
 		{ command: ["record", "start", "active.webm"], success: true },
 	]), { endsClosed: false, recordingClosedAfterBatch: false, statePath: undefined });

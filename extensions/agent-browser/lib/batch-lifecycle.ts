@@ -48,14 +48,12 @@ export function getSuccessfulBatchCloseLifecycle(
 			const result = isRecord(row.result) ? row.result : isRecord(row.data) ? row.data : undefined;
 			statePath = typeof result?.statePath === "string" ? result.statePath : undefined;
 		} else if (sawClose && command === "record") {
-			if (subcommand === "stop") recordingClosedAfterBatch = true;
-			else if ((browserActiveAfterClose || browserLaunched === true) && (subcommand === "start" || subcommand === "restart")) {
-				if (browserLaunched === true) {
-					endsClosed = false;
-					browserActiveAfterClose = true;
-				}
-				recordingClosedAfterBatch = false;
+			if (browserLaunched === true || (subcommand === "stop" && browserLaunched === undefined)) {
+				endsClosed = false;
+				browserActiveAfterClose = true;
 			}
+			if (subcommand === "stop") recordingClosedAfterBatch = true;
+			else if (browserActiveAfterClose && (subcommand === "start" || subcommand === "restart")) recordingClosedAfterBatch = false;
 		} else if (sawClose && browserLaunched !== false) {
 			endsClosed = false;
 			browserActiveAfterClose = true;

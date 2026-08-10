@@ -311,15 +311,18 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentationEnvelope = { error: observedPageValidationError, success: false };
 		}
 		const safeObservedSessionTabTarget = observedPageValidationError ? normalizeSessionTabTarget({ url: observedSessionTabTarget?.url }) : observedSessionTabTarget;
-		let currentSessionTabTarget = safeObservedSessionTabTarget ?? (resultingPageState.pageTargetMayHaveChanged
-			? succeeded ? normalizeSessionTabTarget({ url: resultingPageState.currentPageUrl }) : undefined
-			: deriveSessionTabTarget({ command: prepared.executionPlan.commandInfo.command, data: presentationEnvelope?.data, navigationSummary, previousTarget: prepared.priorSessionTabTarget, subcommand: prepared.executionPlan.commandInfo.subcommand }));
+		let currentSessionTabTarget = safeObservedSessionTabTarget;
+		if (!currentSessionTabTarget && nestedBatchClose === undefined) {
+			currentSessionTabTarget = resultingPageState.pageTargetMayHaveChanged
+				? succeeded ? normalizeSessionTabTarget({ url: resultingPageState.currentPageUrl }) : undefined
+				: deriveSessionTabTarget({ command: prepared.executionPlan.commandInfo.command, data: presentationEnvelope?.data, navigationSummary, previousTarget: prepared.priorSessionTabTarget, subcommand: prepared.executionPlan.commandInfo.subcommand });
+		}
 		let aboutBlankSessionMismatch: AboutBlankSessionMismatch | undefined;
 		let electronPostCommandHealth: ReturnType<typeof buildElectronPostCommandHealthDiagnostic>;
 		let electronRefFreshnessDiagnostic: ReturnType<typeof buildElectronRefFreshnessDiagnostic>;
 		let electronSessionMismatch: ReturnType<typeof buildElectronSessionMismatch>;
 		let electronStatusAfterCommand: Awaited<ReturnType<typeof inspectElectronLaunchStatus>> | undefined;
-		const shouldTreatAboutBlankAsMismatch = succeeded && prepared.priorSessionTabTarget !== undefined && !isAboutBlankSessionTabTarget(prepared.priorSessionTabTarget) && isAboutBlankSessionTabTarget(observedSessionTabTarget ?? currentSessionTabTarget) && !commandExplicitlyTargetsAboutBlank(prepared.commandTokens);
+		const shouldTreatAboutBlankAsMismatch = succeeded && nestedBatchClose === undefined && prepared.priorSessionTabTarget !== undefined && !isAboutBlankSessionTabTarget(prepared.priorSessionTabTarget) && isAboutBlankSessionTabTarget(observedSessionTabTarget ?? currentSessionTabTarget) && !commandExplicitlyTargetsAboutBlank(prepared.commandTokens);
 		let sessionTabCorrection = prepared.sessionTabCorrection;
 		if (shouldTreatAboutBlankAsMismatch && prepared.priorSessionTabTarget) {
 			const aboutBlankObservedTarget = observedSessionTabTarget ?? currentSessionTabTarget;

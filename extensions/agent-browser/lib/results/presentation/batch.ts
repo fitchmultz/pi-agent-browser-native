@@ -383,7 +383,6 @@ function coalesceTerminalBatchRecordingArtifacts(
 			const pending = artifacts[pendingIndex];
 			if (pending && !removedPendingIndexes.has(pendingIndex)) artifacts[pendingIndex] = abandonedRecordingArtifact(pending);
 		}
-		pendingIndexesBySession.delete(session);
 	}
 	return artifacts.filter((_, index) => !removedPendingIndexes.has(index));
 }

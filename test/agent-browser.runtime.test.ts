@@ -501,6 +501,41 @@ test("restoreManagedSessionStateFromBranch preserves a terminal batch close thro
 	assert.equal(restored.closedSessionName, "piab-demo-123");
 });
 
+test("restoreManagedSessionStateFromBranch keeps a lifecycle-proven post-close record stop active", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					batchSteps: [
+						{ command: ["close"], success: true },
+						{ command: ["record", "stop"], data: { lifecycle: { effectiveLaunch: { browserLaunched: true } } }, success: true },
+					],
+					command: "batch",
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.sessionName, "piab-demo-123");
+	assert.equal(restored.closedSessionName, undefined);
+});
+
 test("restoreManagedSessionStateFromBranch ignores stale base completions after fresh rotation", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[

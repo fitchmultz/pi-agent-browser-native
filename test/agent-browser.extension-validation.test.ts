@@ -1169,16 +1169,22 @@ const batchInput = command === "batch" ? fs.readFileSync(0, "utf8") : "";
 const batchSteps = batchInput
   ? JSON.parse(batchInput)
   : commandArgs.slice(1).filter((value) => value !== "--bail" && !value.startsWith("--bail=")).map((value) => value.split(" "));
+const closeStepIndex = batchSteps.findIndex((step) => step[0] === "close");
+const postCloseStopIndex = batchSteps.findIndex((step, index) => index > closeStepIndex && step[0] === "record" && step[1] === "stop");
+const postCloseStopPath = ${JSON.stringify(join(tempDir, "post-close-stop.webm"))};
+if (postCloseStopIndex >= 0 && !fs.existsSync(${JSON.stringify(noRecordingMarker)})) fs.writeFileSync(postCloseStopPath, "recording");
 const data = command === "batch"
-  ? batchSteps.map((step) => step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
+  ? batchSteps.map((step, index) => step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
     ? { command: step, success: false, error: "No recording in progress" }
     : { command: step, success: true, result: {
       command: step[0],
-      path: step[2],
+      path: index === postCloseStopIndex ? postCloseStopPath : step[2],
       subcommand: step[1],
-      ...(step[0] === "stream" && step[1] === "status"
-        ? { lifecycle: { effectiveLaunch: { browserLaunched: false } } }
-        : {}),
+      ...(index === postCloseStopIndex
+        ? { lifecycle: { effectiveLaunch: { browserLaunched: true } } }
+        : step[0] === "stream" && step[1] === "status"
+          ? { lifecycle: { effectiveLaunch: { browserLaunched: false } } }
+          : {}),
     } })
   : { command, subcommand, path };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
@@ -1329,7 +1335,16 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const releasedAfterDiagnosticClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "batch-close-stream.webm"] });
 			assert.doesNotMatch(releasedAfterDiagnosticClose.content[0]?.text ?? "", /reserved by an active recording/);
 			assert.notEqual(releasedAfterDiagnosticClose.details?.sessionName, diagnosticBatchRecording.details?.sessionName);
+			const postCloseStop = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["close"], ["record", "stop"]]),
+			});
+			assert.equal(postCloseStop.isError, false, postCloseStop.content[0]?.text);
+			assert.equal((postCloseStop.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, true);
+			assert.equal((postCloseStop.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.status, "unchanged");
+			assert.equal(postCloseStop.details?.sessionName, releasedAfterDiagnosticClose.details?.sessionName);
 			const activeBeforeCombined = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"] });
+			assert.equal(activeBeforeCombined.details?.sessionName, postCloseStop.details?.sessionName);
 			assert.equal(activeBeforeCombined.isError, false, activeBeforeCombined.content[0]?.text);
 			assert.equal((activeBeforeCombined.details?.managedSessionOutcome as { activeAfter?: boolean } | undefined)?.activeAfter, true);
 			const combinedStartClose = await executeRegisteredTool(harness.tool, harness.ctx, {
