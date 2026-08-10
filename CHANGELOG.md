@@ -31,7 +31,7 @@
 
 ### Validation
 
-- Passed `npm run verify -- pre-pr` (749 tests passed, two opt-in skips; 130 packed files), `npm run verify -- real-upstream` (2/2), deterministic real-browser dogfood, packaged Pi smoke, five-sample startup profiling (69.7 ms maximum), Ubuntu Crabbox `platform-build` plus `browser-dogfood-smoke`, and rebuilt-checkout interactive tmux missions. Full release composition remained environment-blocked by isolated lifecycle model credentials, the macOS SSH probe, and unavailable Parallels `prlctl`; no npm publish is authorized.
+- Passed `npm run verify -- pre-pr` (750 tests passed, two opt-in skips; 130 packed files), `npm run verify -- real-upstream` (2/2), deterministic real-browser dogfood, packaged Pi smoke, five-sample startup profiling (69.4 ms median, 154.7 ms maximum; below the 250 ms budget), Ubuntu Crabbox `platform-build` plus `browser-dogfood-smoke`, and rebuilt-checkout interactive tmux missions. Full release composition remained environment-blocked by isolated lifecycle model credentials, the macOS SSH probe, and unavailable Parallels `prlctl`; no npm publish is authorized.
 
 ## 0.4.0 - 2026-08-07
 
