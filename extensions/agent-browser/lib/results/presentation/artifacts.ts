@@ -494,7 +494,7 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 				return "Previous recording saved";
 			}
 			if (!isPendingRecordingArtifact(artifact)) return "Saved recording";
-			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started; output will be written on stop";
+			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started in a fresh active page; output will be written on stop";
 	}
 }
 
@@ -526,6 +526,7 @@ export function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): 
 				`Status: ${artifact.status ?? "pending"}`,
 				`Recording state: ${artifact.recordingState ?? "openRecording"}`,
 				`Will exist on stop: ${artifact.willExistOnStop !== false}`,
+				artifact.subcommand === "start" ? "Page state: record start uses a fresh active page for video capture; prior in-page DOM and JavaScript state does not carry over. Take a fresh snapshot before continuing." : undefined,
 				artifact.session ? `Session: ${artifact.session}` : undefined,
 				artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
 				`Machine data: details.artifacts[${index}]`,
