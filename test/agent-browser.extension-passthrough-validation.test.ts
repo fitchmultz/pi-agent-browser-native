@@ -1265,9 +1265,19 @@ test("agentBrowserExtension guards wrapper-known trace and profiler ownership", 
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`const args = process.argv.slice(2);
-const data = args.includes("get") && args.includes("url") ? { url: "https://safe.example/" } : { started: true };
-process.stdout.write(JSON.stringify({ success: true, data, error: null }));`,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("batch")) {
+  const steps = JSON.parse(fs.readFileSync(0, "utf8") || "[]");
+  process.stdout.write(JSON.stringify({ success: true, data: steps.map((step) => ({
+    command: step,
+    success: true,
+    result: { lifecycle: { effectiveLaunch: { browserLaunched: step[0] !== "close" } } }
+  })) }));
+} else {
+  const data = args.includes("get") && args.includes("url") ? { url: "https://safe.example/" } : { started: true };
+  process.stdout.write(JSON.stringify({ success: true, data, error: null }));
+}`,
 	);
 
 	try {
@@ -1284,6 +1294,53 @@ process.stdout.write(JSON.stringify({ success: true, data, error: null }));`,
 			});
 			assert.equal(profilerStart.isError, true);
 			assert.match(profilerStart.content[0]?.type === "text" ? profilerStart.content[0].text ?? "" : "", /Wrapper believes trace tracing is active/);
+
+			const directClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "close"],
+			});
+			assert.equal(directClose.isError, false);
+			const profilerAfterClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "profiler", "start"],
+			});
+			assert.equal(profilerAfterClose.isError, false);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "debug-session", "close"] });
+			const traceBeforeBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "trace", "start"],
+			});
+			assert.equal(traceBeforeBatchClose.isError, false);
+			const closeThenRelaunch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "batch"],
+				stdin: JSON.stringify([["close"], ["open", "https://safe.example/"]]),
+			});
+			assert.equal(closeThenRelaunch.isError, false);
+			const verifiedAfterBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "get", "url"],
+			});
+			assert.equal(verifiedAfterBatchClose.isError, false);
+			const profilerAfterBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "profiler", "start"],
+			});
+			assert.equal(profilerAfterBatchClose.isError, false, JSON.stringify({ closeThenRelaunch: closeThenRelaunch.details, profilerAfterBatchClose: profilerAfterBatchClose.details }));
+
+			const otherNamespaceTrace = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", "other", "--session", "other-a", "trace", "start"],
+			});
+			assert.equal(otherNamespaceTrace.isError, false);
+			const traceA = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "all-a", "trace", "start"] });
+			const profilerB = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "all-b", "profiler", "start"] });
+			assert.equal(traceA.isError, false);
+			assert.equal(profilerB.isError, false);
+			const closeAll = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close", "--all"] });
+			assert.equal(closeAll.isError, false);
+			assert.equal(closeAll.details?.closeAllApplied, true);
+			const profilerAAfterCloseAll = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "all-a", "profiler", "start"] });
+			assert.equal(profilerAAfterCloseAll.isError, false);
+			const profilerOtherAfterCloseAll = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", "other", "--session", "other-a", "profiler", "start"],
+			});
+			assert.equal(profilerOtherAfterCloseAll.isError, true);
+			assert.match(profilerOtherAfterCloseAll.content[0]?.type === "text" ? profilerOtherAfterCloseAll.content[0].text ?? "" : "", /Wrapper believes trace tracing is active/);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "--session", "other-a", "close"] });
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

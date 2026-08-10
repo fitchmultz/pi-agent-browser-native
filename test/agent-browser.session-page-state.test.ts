@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
-import { getSuccessfulBatchCloseLifecycle } from "../extensions/agent-browser/lib/batch-lifecycle.js";
+import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../extensions/agent-browser/lib/batch-lifecycle.js";
 import {
 	SessionPageState,
 	buildNoActivePageRefSnapshotInvalidation,
@@ -34,6 +34,8 @@ function toolEntry(details: Record<string, unknown>, isError = false): unknown {
 }
 
 test("getSuccessfulBatchCloseLifecycle tolerates unidentified transcript rows", () => {
+	assert.equal(batchHasSuccessfulCloseAll([{ command: ["quit", "--all"], success: true }]), true);
+	assert.equal(batchHasSuccessfulCloseAll([{ command: ["close", "--all"], success: false }]), false);
 	assert.equal(getSuccessfulBatchCloseLifecycle([{ success: true }]), undefined);
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], result: { statePath: "/tmp/state.json" }, success: true },
@@ -55,6 +57,18 @@ test("getSuccessfulBatchCloseLifecycle tolerates unidentified transcript rows", 
 		{ command: ["close"], success: true },
 		{ command: ["record", "stop"], success: true },
 	]), { endsClosed: false, recordingClosedAfterBatch: true, statePath: undefined });
+	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
+		{ command: ["close"], success: true },
+		{ command: ["open", "https://example.test"], lifecycle: { effectiveLaunch: { browserLaunched: true } }, success: false },
+	]), { endsClosed: false, recordingClosedAfterBatch: true, statePath: undefined });
+	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
+		{ command: ["close"], success: true },
+		{ command: ["open", "https://example.test"], success: false },
+	]), { endsClosed: false, recordingClosedAfterBatch: true, statePath: undefined });
+	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
+		{ command: ["close"], success: true },
+		{ command: ["open", "https://example.test"], lifecycle: { effectiveLaunch: { browserLaunched: false } }, success: false },
+	]), { endsClosed: true, recordingClosedAfterBatch: true, statePath: undefined });
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], success: true },
 		{ command: ["open", "https://example.test"], result: { lifecycle: { effectiveLaunch: { browserLaunched: true } } }, success: true },
@@ -175,6 +189,16 @@ test("SessionPageState.fromBranch clears restored page state on upstream close a
 	]);
 	assert.deepEqual(closeThenOpen.get("s1").tabTarget, { title: undefined, url: "https://after.example/" });
 	assert.equal(closeThenOpen.get("s1").refSnapshot, undefined);
+
+	const closeAll = SessionPageState.fromBranch([
+		toolEntry({ command: "snapshot", refSnapshot: { refIds: ["e1"] }, sessionName: "s1", sessionTabTarget: { url: "https://one.example/" } }),
+		toolEntry({ command: "snapshot", refSnapshot: { refIds: ["e2"] }, sessionName: "s2", sessionTabTarget: { url: "https://two.example/" } }),
+		toolEntry({ command: "snapshot", namespace: "other", refSnapshot: { refIds: ["e3"] }, sessionName: "s3", sessionTabTarget: { url: "https://three.example/" } }),
+		toolEntry({ args: ["--session", "s1", "close", "--all"], closeAllApplied: true, command: "close", sessionName: "s1" }),
+	]);
+	assert.equal(closeAll.get("s1").tabTarget, undefined);
+	assert.equal(closeAll.get("s2").tabTarget, undefined);
+	assert.deepEqual(closeAll.get(getAgentBrowserSessionIdentityKey("s3", "other")).tabTarget, { title: undefined, url: "https://three.example/" });
 });
 
 test("SessionPageState restores unverified page transitions", () => {

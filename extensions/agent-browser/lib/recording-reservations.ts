@@ -1,8 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
-import { getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
-import { isCloseCommand } from "./command-taxonomy.js";
+import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
+import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
+import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { isCloseAllCommand, isCloseCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { isPendingRecordingArtifact, isPendingRecordingCommand, isSessionArtifactManifest } from "./results/artifact-manifest.js";
 import type { FileArtifactMetadata } from "./results/contracts.js";
@@ -171,10 +172,22 @@ export function restoreRecordingReservationStateFromBranch(branch: unknown[]): R
 		const messageSucceeded = typeof message?.isError === "boolean"
 			? !message.isError
 			: typeof details.exitCode !== "number" || details.exitCode === 0;
+		const args = Array.isArray(details.args) && details.args.every((arg) => typeof arg === "string") ? details.args : [];
+		const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
+		const closeAllApplied = details.closeAllApplied === true
+			|| (messageSucceeded && isCloseAllCommand(extractUpstreamCommandTokens(args)))
+			|| batchHasSuccessfulCloseAll(details.batchSteps);
+		if (closeAllApplied) {
+			for (const [key, reservation] of reservations) {
+				if (!isAgentBrowserSessionIdentityKeyInNamespace(key, namespace)) continue;
+				terminal.set(key, reservation);
+				reservations.delete(key);
+			}
+			continue;
+		}
 		const directCloseSucceeded = messageSucceeded && isCloseCommand(typeof details.command === "string" ? details.command : undefined);
 		const batchRecordingClosed = getSuccessfulBatchCloseLifecycle(details.batchSteps)?.recordingClosedAfterBatch === true;
 		if ((directCloseSucceeded || batchRecordingClosed) && typeof details.sessionName === "string") {
-			const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
 			const key = getAgentBrowserSessionIdentityKey(details.sessionName, namespace);
 			const reservation = reservations.get(key);
 			if (reservation) terminal.set(key, reservation);

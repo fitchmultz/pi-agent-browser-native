@@ -224,6 +224,7 @@ async function buildBatchStepPresentation(options: {
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const redactedCommand = command ? redactInvocationArgs(command) : undefined;
 	const commandText = formatBatchStepCommand(hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command, index);
+	const lifecycle = extractBatchStepLifecycle(item.result);
 
 	if (item.success === false) {
 		const redactedErrorData = command?.[0] === "clipboard"
@@ -263,6 +264,7 @@ async function buildBatchStepPresentation(options: {
 				data: redactedErrorData,
 				failureCategory,
 				index,
+				lifecycle,
 				nextActions,
 				resultCategory: "failure",
 				success: false,
@@ -334,6 +336,7 @@ async function buildBatchStepPresentation(options: {
 			imagePath: imagePaths[0],
 			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
 			index,
+			lifecycle,
 			networkRouteDiagnostics: presentation.networkRouteDiagnostics,
 			nextActions,
 			pageChangeSummary,
@@ -347,6 +350,12 @@ async function buildBatchStepPresentation(options: {
 		},
 		presentation,
 	};
+}
+
+function extractBatchStepLifecycle(result: unknown): BatchStepPresentationDetails["lifecycle"] {
+	if (!isRecord(result) || !isRecord(result.lifecycle) || !isRecord(result.lifecycle.effectiveLaunch)) return undefined;
+	const browserLaunched = result.lifecycle.effectiveLaunch.browserLaunched;
+	return typeof browserLaunched === "boolean" ? { effectiveLaunch: { browserLaunched } } : undefined;
 }
 
 function abandonedRecordingArtifact(artifact: FileArtifactMetadata): FileArtifactMetadata {

@@ -312,6 +312,10 @@ export function isCloseCommand(command: string | undefined): boolean {
 	return hasCommandCapability(command, "closesSession");
 }
 
+export function isCloseAllCommand(commandTokens: readonly string[]): boolean {
+	return isCloseCommand(commandTokens[0]) && commandTokens.slice(1).includes("--all");
+}
+
 export function isOpenNavigationCommand(command: string | undefined): boolean {
 	return hasCommandCapability(command, "openNavigation");
 }

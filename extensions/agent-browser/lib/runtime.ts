@@ -2,12 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
 import {
+	extractUpstreamCommandTokens,
 	findCommandStartIndex,
 	parseArgvDescriptor,
 	parseCommandInfo,
 	type CommandInfo,
 } from "./argv-descriptor.js";
-import { getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
 import {
 	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
@@ -15,6 +16,7 @@ import {
 	getAgentBrowserSessionIdentityKey,
 	getBooleanFlagValue,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
+	isAgentBrowserSessionIdentityKeyInNamespace,
 	isUpstreamEnvFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
 	resolveAgentBrowserNamespace,
@@ -22,7 +24,7 @@ import {
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isWrapperManagedSessionName, redactManagedSessionRestoreKeys } from "./managed-session-capabilities.js";
-import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
 import {
 	hasLaunchScopedFlagToken,
 	LAUNCH_SCOPED_FLAG_DEFINITIONS,
@@ -586,8 +588,14 @@ export function restoreManagedSessionStateFromBranch(
 		const namespace = canonicalizeAgentBrowserNamespace(typeof details.namespace === "string" ? details.namespace : undefined);
 		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
 		const usedImplicitSession = details.usedImplicitSession === true;
+		const commandTokens = extractUpstreamCommandTokens(args);
 		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
-		const nestedBatchEndsClosed = getSuccessfulBatchCloseLifecycle(details.batchSteps)?.endsClosed === true;
+		const batchCloseLifecycle = getSuccessfulBatchCloseLifecycle(details.batchSteps);
+		const nestedBatchEndsClosed = batchCloseLifecycle?.endsClosed === true;
+		const nestedBatchRemainsActive = batchCloseLifecycle?.endsClosed === false;
+		const closeAllApplied = details.closeAllApplied === true
+			|| (message.isError !== true && isCloseAllCommand(commandTokens))
+			|| batchHasSuccessfulCloseAll(details.batchSteps);
 		const commandClosesSession = isCloseCommand(command) || nestedBatchEndsClosed;
 		const outcome = typeof details.managedSessionOutcome === "object" && details.managedSessionOutcome !== null ? details.managedSessionOutcome as Record<string, unknown> : undefined;
 		const outcomeStatus = typeof outcome?.status === "string" ? outcome.status : undefined;
@@ -597,6 +605,14 @@ export function restoreManagedSessionStateFromBranch(
 			? outcomeAttemptedSessionName ?? getRestorableManagedSessionName(outcomeCurrentSessionName, fallbackSessionName) ?? getRestorableManagedSessionName(sessionName, fallbackSessionName)
 			: undefined;
 		const restorableDetailSessionName = getRestorableManagedSessionName(sessionName, fallbackSessionName);
+		if (closeAllApplied && restoredState.active) {
+			const restoredKey = getAgentBrowserSessionIdentityKey(restoredState.sessionName, restoredState.namespace);
+			const resultKey = restorableDetailSessionName ? getAgentBrowserSessionIdentityKey(restorableDetailSessionName, namespace) : undefined;
+			const retainsCurrentSession = nestedBatchRemainsActive && resultKey === restoredKey;
+			if (isAgentBrowserSessionIdentityKeyInNamespace(restoredKey, namespace) && !retainsCurrentSession) {
+				applyManagedClose(restoredState.sessionName, restoredState.namespace);
+			}
+		}
 		const explicitCloseSessionName = commandClosesSession && explicitSessionName && restorableDetailSessionName === explicitSessionName
 			? restorableDetailSessionName
 			: undefined;
@@ -632,7 +648,9 @@ export function restoreManagedSessionStateFromBranch(
 		const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
 		const outcomeActiveAfter = outcome?.activeAfter === true;
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
-		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
+		const succeeded = outcomeRepresentsActiveCurrentSession || nestedBatchRemainsActive
+			? true
+			: messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
 		if (commandClosesSession || outcomeClosedSessionName) {
 			if (nestedBatchEndsClosed || outcomeClosedSessionName || succeeded) {
 				restoreDisabledIdentities.delete(getAgentBrowserSessionIdentityKey(managedSessionName, namespace));

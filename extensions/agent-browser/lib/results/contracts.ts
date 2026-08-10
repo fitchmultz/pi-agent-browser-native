@@ -163,6 +163,7 @@ export interface BatchStepPresentationDetails {
 	imagePath?: string;
 	imagePaths?: string[];
 	index: number;
+	lifecycle?: { effectiveLaunch: { browserLaunched: boolean } };
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	nextActions?: AgentBrowserNextAction[];
 	pageChangeSummary?: AgentBrowserPageChangeSummary;

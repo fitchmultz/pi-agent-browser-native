@@ -196,8 +196,13 @@ test("recording reservation replay keeps the newest pending path authoritative",
 			type: "custom",
 			customType: RECORDING_RESERVATION_ENTRY_TYPE,
 			data: {
-				reservation: { absolutePath: "/tmp/live.webm", cwd: "/tmp", namespace: "scope", path: "live.webm", sessionName: "shared" },
+				absolutePath: "/tmp/live.webm",
+				cwd: "/tmp",
+				namespace: "scope",
+				path: "live.webm",
+				sessionName: "shared",
 				state: "active",
+				version: 1,
 			},
 		},
 		{
@@ -215,6 +220,30 @@ test("recording reservation replay keeps the newest pending path authoritative",
 		},
 	]);
 	assert.equal(failedCloseReplay.active.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "live.webm");
+
+	const closeAllReplay = restoreRecordingReservationStateFromBranch([
+		...[
+			{ namespace: undefined, path: "one.webm", sessionName: "one" },
+			{ namespace: undefined, path: "two.webm", sessionName: "two" },
+			{ namespace: "other", path: "other.webm", sessionName: "three" },
+		].map(({ namespace, path, sessionName }) => ({
+			customType: RECORDING_RESERVATION_ENTRY_TYPE,
+			data: { absolutePath: `/tmp/${path}`, cwd: "/tmp", namespace, path, sessionName, state: "active", version: 1 },
+			type: "custom",
+		})),
+		{
+			type: "message",
+			message: {
+				isError: true,
+				toolName: "agent_browser",
+				details: { args: ["close", "--all"], closeAllApplied: true, command: "close" },
+			},
+		},
+	]);
+	assert.equal(closeAllReplay.active.has(getAgentBrowserSessionIdentityKey("one")), false);
+	assert.equal(closeAllReplay.active.has(getAgentBrowserSessionIdentityKey("two")), false);
+	assert.equal(closeAllReplay.terminal.has(getAgentBrowserSessionIdentityKey("one")), true);
+	assert.equal(closeAllReplay.active.get(getAgentBrowserSessionIdentityKey("three", "other"))?.path, "other.webm");
 
 	const malformedSessionReplay = restoreRecordingReservationStateFromBranch([{
 		type: "message",

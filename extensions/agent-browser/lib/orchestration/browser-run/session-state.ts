@@ -275,10 +275,13 @@ export function updateTraceOwnerState(options: {
 	succeeded: boolean;
 	traceOwners: Map<string, TraceOwner>;
 }): void {
-	const owner = getTraceOwner(options.command);
-	if (!owner || !options.sessionName || !options.succeeded) {
+	if (!options.sessionName || !options.succeeded) return;
+	if (isCloseCommand(options.command)) {
+		options.traceOwners.delete(options.sessionName);
 		return;
 	}
+	const owner = getTraceOwner(options.command);
+	if (!owner) return;
 	if (options.subcommand === "start") {
 		options.traceOwners.set(options.sessionName, owner);
 	}

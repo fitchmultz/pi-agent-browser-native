@@ -173,6 +173,11 @@ export function getAgentBrowserSessionIdentityKey(sessionName: string, namespace
 	return identityNamespace ? `${identityNamespace}\0${canonicalSessionName}` : canonicalSessionName;
 }
 
+export function isAgentBrowserSessionIdentityKeyInNamespace(identityKey: string, namespace?: string): boolean {
+	const prefix = getAgentBrowserSessionIdentityKey("", namespace);
+	return prefix ? identityKey.startsWith(prefix) : !identityKey.includes("\0");
+}
+
 /** Mirror upstream 0.33.2 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
 export function scanUpstreamGlobalFlagOccurrences(args: string[], targetFlag: string): UpstreamGlobalFlagOccurrence[] {
 	const occurrences: UpstreamGlobalFlagOccurrence[] = [];

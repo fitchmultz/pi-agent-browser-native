@@ -1,8 +1,8 @@
 import { rm } from "node:fs/promises";
 
-import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
-import { getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
-import { isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand } from "../../command-taxonomy.js";
+import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
+import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
+import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -151,6 +151,16 @@ function batchStartedManagedBrowser(data: unknown): boolean {
 	});
 }
 
+function withoutNamespaceEntries<T>(entries: ReadonlyMap<string, T>, namespace?: string): Map<string, T> {
+	return new Map([...entries].filter(([key]) => !isAgentBrowserSessionIdentityKeyInNamespace(key, namespace)));
+}
+
+function deleteNamespaceEntries(entries: Set<string> | Map<string, unknown>, namespace?: string): void {
+	for (const key of entries.keys()) {
+		if (isAgentBrowserSessionIdentityKeyInNamespace(key, namespace)) entries.delete(key);
+	}
+}
+
 function setNetworkRouteState(options: { routes?: NetworkRouteRecord[]; routesBySession: Map<string, NetworkRouteRecord[]>; sessionName: string | undefined }): Map<string, NetworkRouteRecord[]> {
 	if (!options.sessionName) return options.routesBySession;
 	const previousRoutes = options.routesBySession.get(options.sessionName);
@@ -221,10 +231,17 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		presentationEnvelope = repairedBatchScreenshots.envelope;
 		const screenshotArtifactRequest = repairedScreenshot.request;
 		const batchScreenshotArtifactRequests = repairedBatchScreenshots.requests;
+		const batchCommandSteps = prepared.executionPlan.commandInfo.command === "batch"
+			? getBatchCommandSteps(prepared.commandTokens, prepared.runtimeToolStdin)
+			: [];
 		const nestedBatchClose = prepared.executionPlan.commandInfo.command === "batch"
-			? getSuccessfulBatchCloseLifecycle(presentationEnvelope?.data, getBatchCommandSteps(prepared.commandTokens, prepared.runtimeToolStdin))
+			? getSuccessfulBatchCloseLifecycle(presentationEnvelope?.data, batchCommandSteps)
 			: undefined;
 		const nestedBatchClosed = nestedBatchClose?.endsClosed === true;
+		const nestedBatchRemainsActive = nestedBatchClose?.endsClosed === false;
+		const nestedBatchClosesAll = prepared.executionPlan.commandInfo.command === "batch"
+			&& batchHasSuccessfulCloseAll(presentationEnvelope?.data, batchCommandSteps);
+		const directCloseAllRequested = isCloseAllCommand(extractUpstreamCommandTokens(prepared.commandTokens));
 		const rawCloseStatePath = isCloseCommand(prepared.executionPlan.commandInfo.command)
 			&& isRecord(presentationEnvelope?.data)
 			&& typeof presentationEnvelope.data.statePath === "string"
@@ -244,15 +261,39 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let succeeded = processSucceeded && parseSucceeded && envelopeSuccess;
 		const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
 		const sessionStateKey = getSessionContextKey(prepared.executionPlan.sessionName, prepared.executionPlan.namespace);
-		if (nestedBatchClose && sessionStateKey) {
+		const closeAllApplied = nestedBatchClosesAll || (directCloseAllRequested && succeeded);
+		if (closeAllApplied) {
+			allowedDomainsBySession = withoutNamespaceEntries(allowedDomainsBySession, prepared.executionPlan.namespace);
+			networkRoutesBySession = withoutNamespaceEntries(networkRoutesBySession, prepared.executionPlan.namespace);
+			deleteNamespaceEntries(state.attachedSessionKeys, prepared.executionPlan.namespace);
+			deleteNamespaceEntries(traceOwners, prepared.executionPlan.namespace);
+			sessionPageState.clearNamespace(prepared.executionPlan.namespace);
+			const retainedSessionKey = nestedBatchRemainsActive ? sessionStateKey : undefined;
+			for (const [key, owner] of state.ownedManagedSessions) {
+				if (!isAgentBrowserSessionIdentityKeyInNamespace(key, prepared.executionPlan.namespace) || key === retainedSessionKey) continue;
+				state.closedManagedSessionNames.add(key);
+				state.managedSessionRestoreState.clear(owner.sessionName, owner.namespace);
+			}
+		} else if (nestedBatchClose && sessionStateKey) {
 			allowedDomainsBySession = new Map(allowedDomainsBySession);
 			allowedDomainsBySession.delete(sessionStateKey);
 			networkRoutesBySession = new Map(networkRoutesBySession);
 			networkRoutesBySession.delete(sessionStateKey);
 			sessionPageState.clearSession(sessionStateKey);
 		}
-		if (nestedBatchClosed) updateTraceOwnerState({ command: "close", sessionName: sessionStateKey, subcommand: undefined, succeeded: true, traceOwners });
-		updateTraceOwnerState({ command: prepared.executionPlan.commandInfo.command, sessionName: sessionStateKey, subcommand: prepared.executionPlan.commandInfo.subcommand, succeeded, traceOwners });
+		if (prepared.executionPlan.commandInfo.command === "batch" && Array.isArray(presentationEnvelope?.data)) {
+			for (const [index, row] of presentationEnvelope.data.entries()) {
+				if (!isRecord(row)) continue;
+				const rowCommand = Array.isArray(row.command) && row.command.every((token) => typeof token === "string")
+					? row.command as string[]
+					: batchCommandSteps[index];
+				if (!rowCommand) continue;
+				const [command, subcommand] = extractUpstreamCommandTokens(rowCommand);
+				updateTraceOwnerState({ command, sessionName: sessionStateKey, subcommand, succeeded: row.success === true, traceOwners });
+			}
+		} else {
+			updateTraceOwnerState({ command: prepared.executionPlan.commandInfo.command, sessionName: sessionStateKey, subcommand: prepared.executionPlan.commandInfo.subcommand, succeeded, traceOwners });
+		}
 
 		let clickDispatchDiagnostic: Awaited<ReturnType<typeof collectClickDispatchDiagnostic>>;
 		if (succeeded && prepared.clickDispatchProbe) {
@@ -436,12 +477,22 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const priorManagedSessionHeadedAutosaveInterval = managedSessionHeadedAutosaveInterval;
 		const priorManagedSessionName = managedSessionName;
 		const priorManagedSessionNamespace = managedSessionNamespace;
-		const commandClosesSession = isCloseCommand(prepared.executionPlan.commandInfo.command) || nestedBatchClosed;
-		const closeCommandSucceeded = (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) || nestedBatchClosed;
+		const priorManagedSessionKey = getSessionContextKey(priorManagedSessionName, priorManagedSessionNamespace) ?? priorManagedSessionName;
+		const closeAllTargetsPriorManagedSession = closeAllApplied
+			&& priorManagedSessionActive
+			&& isAgentBrowserSessionIdentityKeyInNamespace(priorManagedSessionKey, prepared.executionPlan.namespace);
+		const closeAllRetainsPriorManagedSession = closeAllTargetsPriorManagedSession
+			&& nestedBatchRemainsActive
+			&& sessionStateKey === priorManagedSessionKey;
+		const closeAllClosesPriorManagedSession = closeAllTargetsPriorManagedSession && !closeAllRetainsPriorManagedSession;
+		const commandClosesSession = isCloseCommand(prepared.executionPlan.commandInfo.command) || nestedBatchClosed || closeAllClosesPriorManagedSession;
+		const closeCommandSucceeded = (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) || nestedBatchClosed || closeAllClosesPriorManagedSession;
 		const closeTargetsPriorManagedNamespace = prepared.executionPlan.namespace === priorManagedSessionNamespace;
-		const managedCloseSessionName = closeCommandSucceeded && prepared.executionPlan.sessionName === priorManagedSessionName && closeTargetsPriorManagedNamespace
-			? prepared.executionPlan.sessionName
-			: prepared.executionPlan.managedSessionName;
+		const managedCloseSessionName = closeAllClosesPriorManagedSession
+			? priorManagedSessionName
+			: closeCommandSucceeded && prepared.executionPlan.sessionName === priorManagedSessionName && closeTargetsPriorManagedNamespace
+				? prepared.executionPlan.sessionName
+				: prepared.executionPlan.managedSessionName;
 		const policyBlockedFreshManagedSession = allowedDomainsViolation !== undefined && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName === prepared.executionPlan.sessionName;
 		const postLaunchBatchFailure = !succeeded && processSucceeded && parseSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && batchStartedManagedBrowser(presentationEnvelope?.data);
 		const postLaunchTimeoutWithPage = !succeeded && processResult.timedOut && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && timeoutPartialProgress?.liveUrlRecovered === true;
@@ -463,7 +514,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		// Only a confirmed inactive daemon proves that a started fresh command did not establish browser ownership.
 		const postLaunchFreshFailure = failedFreshDaemon !== undefined && failedFreshDaemon.status !== "inactive";
-		const managedTransitionSucceeded = succeeded || nestedBatchClosed || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage || postLaunchFreshFailure;
+		const managedTransitionSucceeded = succeeded || nestedBatchClosed || nestedBatchRemainsActive || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage || postLaunchFreshFailure;
 		const managedSessionState = resolveManagedSessionState({ command: commandClosesSession ? "close" : prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, managedSessionNamespace: prepared.executionPlan.namespace, priorActive: priorManagedSessionActive, priorNamespace: priorManagedSessionNamespace, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
 		if (!managedTransitionSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName) {
 			state.managedSessionRestoreState.clear(prepared.executionPlan.managedSessionName, prepared.executionPlan.namespace);
@@ -713,8 +764,11 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			? prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval
 			: undefined;
 		const result = buildFinalAgentBrowserToolResult({ aboutBlankSessionMismatch, artifactCleanup, categoryDetails: finalRecoveryState.categoryDetails, clickDispatchDiagnostic, commandTokens: prepared.commandTokens, comboboxFocusDiagnostic, compiledNetworkSourceLookup: prepared.compiledNetworkSourceLookup, compiledSemanticAction: prepared.compiledSemanticAction, compatibilityWorkaround: prepared.compatibilityWorkaround, currentRefSnapshot, currentRefSnapshotInvalidation, currentSessionTabTarget, currentSessionTabTargetUnknown, electronBroadGetTextScopeDiagnostics, electronFailedConnectCleanup, electronHandoff, electronLaunch: prepared.electronLaunch, electronLaunchRecord, electronLaunchRecords, electronPostCommandHealth, electronProfileIsolationDetails: input.electronProfileIsolationDetails, electronRefFreshnessDiagnostic, electronSessionMismatch, errorText, evalResultWarning, evalStdinHint, exactSensitiveValues: prepared.exactSensitiveValues, executionPlan: prepared.executionPlan, fillVerificationDiagnostic, inspectionText, managedSessionHeadedAutosaveDisabled: resultHeadedManagedAutosaveDisabled || undefined, managedSessionHeadedAutosaveInterval: resultHeadedManagedAutosaveInterval, managedSessionOutcome, managedSessionRestoreDisabled: state.managedSessionRestoreState.isDisabled(prepared.executionPlan.sessionName, prepared.executionPlan.namespace), navigationSummary, networkSourceLookup, noActivePageSnapshotFailure: finalRecoveryState.noActivePageSnapshotFailure, openResultTabCorrection, overlayBlockerDiagnostic, parseError, parseFailureOutput, parseSucceeded, plainTextInspection, presentation, presentationEnvelope, priorSessionTabTarget: prepared.priorSessionTabTarget, processResult, qaAttachedTarget, qaPreset, recordingDependencyWarning, redactedArgs: prepared.redactedArgs, redactedCompiledElectron: prepared.redactedCompiledElectron, redactedCompiledJob: prepared.redactedCompiledJob, redactedCompiledNetworkSourceLookup: prepared.redactedCompiledNetworkSourceLookup, redactedCompiledQaPreset: prepared.redactedCompiledQaPreset, redactedCompiledSemanticAction: prepared.redactedCompiledSemanticAction, redactedCompiledSourceLookup: prepared.redactedCompiledSourceLookup, redactedContent, redactedProcessArgs: prepared.redactedProcessArgs, redactedRecoveryHint: prepared.redactedRecoveryHint, resultArtifactManifest, richInputRecoveryDiagnostic: finalRecoveryState.richInputRecoveryDiagnostic, scrollNoopDiagnostic, selectorTextVisibilityDiagnostics, sessionMode: prepared.sessionMode, sessionTabCorrection, sourceLookup, succeeded, timeoutPartialProgress, userRequestedJson: prepared.userRequestedJson, visibleRefFallbackDiagnostic: finalRecoveryState.visibleRefFallbackDiagnostic, visibleRefFallbackSessionName: finalRecoveryState.visibleRefFallbackSessionName });
+		const resultWithCloseAll = closeAllApplied
+			? { ...result, details: { ...(isRecord(result.details) ? result.details : {}), closeAllApplied: true } }
+			: result;
 		const statePatch: BrowserRunStatePatch = { allowedDomainsBySession, artifactManifest, freshSessionOrdinal, managedSessionActive, managedSessionCompatibilityWorkaround, managedSessionHeadedAutosaveDisabled, managedSessionHeadedAutosaveInterval, managedSessionCwd, managedSessionName, managedSessionNamespace, networkRoutesBySession };
-		return { result, statePatch };
+		return { result: resultWithCloseAll, statePatch };
 	} finally {
 		if (processResult.stdoutSpillPath) await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
 	}

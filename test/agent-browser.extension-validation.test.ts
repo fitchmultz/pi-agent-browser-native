@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1135,6 +1135,63 @@ if (command === "open") {
 	}
 });
 
+test("agentBrowserExtension makes close --all exclusive within its namespace", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-close-all-queue-"));
+	const logPath = join(tempDir, "events.log");
+	const nodeBinDir = dirname(process.execPath);
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const valueFlags = new Set(["--allow-file-access", "--args", "--namespace", "--session"]);
+let commandIndex = -1;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--json") continue;
+  if (valueFlags.has(args[index])) { index += 1; continue; }
+  if (args[index].startsWith("--")) continue;
+  commandIndex = index;
+  break;
+}
+const commandArgs = args.slice(commandIndex);
+const command = commandArgs[0];
+const namespaceIndex = args.indexOf("--namespace");
+const namespace = namespaceIndex >= 0 ? args[namespaceIndex + 1] : "default";
+const writeEvent = (event) => fs.appendFileSync(${JSON.stringify(logPath)}, event + "\\n");
+const output = () => process.stdout.write(JSON.stringify({ success: true, data: command === "get" ? { url: "https://safe.example/" } : command === "tab" ? { tabs: [] } : { url: "https://safe.example/" } }));
+if (command === "close" && commandArgs.includes("--all")) {
+  writeEvent("close-start");
+  setTimeout(() => { writeEvent("close-end"); output(); }, 150);
+} else {
+  writeEvent(namespace + ":" + command + "-start");
+  output();
+}`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise global close ordering." });
+			const first = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example/"] });
+			assert.equal(first.isError, false, first.content[0]?.text);
+			await writeFile(logPath, "");
+
+			const closeAll = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "caller-owned", "close", "--all"] });
+			await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+			const otherNamespace = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "--session", "other-session", "tab", "list"] });
+			const overlappingCaller = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "same-namespace", "tab", "list"] });
+			const overlappingManaged = executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			const [closeResult, otherResult, callerResult, overlapResult] = await Promise.all([closeAll, otherNamespace, overlappingCaller, overlappingManaged]);
+			assert.equal(closeResult.details?.closeAllApplied, true);
+			assert.equal(otherResult.isError, false, otherResult.content[0]?.text);
+			assert.equal(callerResult.isError, false, callerResult.content[0]?.text);
+			assert.equal(overlapResult.isError, false, overlapResult.content[0]?.text);
+			const events = (await readFile(logPath, "utf8")).trim().split("\n");
+			assert.ok(events.indexOf("other:tab-start") < events.indexOf("close-end"), events.join(","));
+			assert.ok(events.indexOf("close-end") < events.indexOf("default:tab-start"), events.join(","));
+			assert.ok(events.indexOf("close-end") < events.indexOf("default:get-start"), events.join(","));
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension warns after record start when ffmpeg is missing", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-recording-ffmpeg-"));
 	const noRecordingMarker = join(tempDir, "no-recording");
@@ -1143,7 +1200,7 @@ test("agentBrowserExtension warns after record start when ffmpeg is missing", { 
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-const valueFlags = new Set(["--session"]);
+const valueFlags = new Set(["--namespace", "--session"]);
 let commandIndex = -1;
 for (let i = 0; i < args.length; i += 1) {
   const token = args[i];
@@ -1173,27 +1230,69 @@ const closeStepIndex = batchSteps.findIndex((step) => step[0] === "close");
 const postCloseStopIndex = batchSteps.findIndex((step, index) => index > closeStepIndex && step[0] === "record" && step[1] === "stop");
 const postCloseStopPath = ${JSON.stringify(join(tempDir, "post-close-stop.webm"))};
 if (postCloseStopIndex >= 0 && !fs.existsSync(${JSON.stringify(noRecordingMarker)})) fs.writeFileSync(postCloseStopPath, "recording");
+const firstCallFailure = command === "batch" && batchSteps.some((step) => step[0] === "click" && step[1] === "#missing-after-close");
 const data = command === "batch"
-  ? batchSteps.map((step, index) => step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
-    ? { command: step, success: false, error: "No recording in progress" }
-    : { command: step, success: true, result: {
+  ? batchSteps.map((step, index) => step[0] === "click" && step[1] === "#missing-after-close"
+    ? { command: step, success: false, error: "Element not found after browser launch" }
+    : step[0] === "open" && step[1] === "fail-after-close"
+      ? { command: step, success: false, error: "Navigation failed after browser launch", result: { lifecycle: { effectiveLaunch: { browserLaunched: true } } } }
+    : step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
+      ? { command: step, success: false, error: "No recording in progress" }
+      : { command: step, success: true, result: {
       command: step[0],
       path: index === postCloseStopIndex ? postCloseStopPath : step[2],
       subcommand: step[1],
-      ...(index === postCloseStopIndex
-        ? { lifecycle: { effectiveLaunch: { browserLaunched: true } } }
-        : step[0] === "stream" && step[1] === "status"
-          ? { lifecycle: { effectiveLaunch: { browserLaunched: false } } }
-          : {}),
-    } })
-  : { command, subcommand, path };
-process.stdout.write(JSON.stringify({ success: true, data }));`,
+        ...(index === postCloseStopIndex
+          ? { lifecycle: { effectiveLaunch: { browserLaunched: true } } }
+          : step[0] === "stream" && step[1] === "status"
+            ? { lifecycle: { effectiveLaunch: { browserLaunched: false } } }
+            : {}),
+      } })
+  : command === "get" && subcommand === "url"
+    ? { command, subcommand, url: "https://safe.example/" }
+    : { command, subcommand, path };
+process.stdout.write(JSON.stringify({ success: !firstCallFailure, data }));
+if (firstCallFailure) process.exit(1);`,
 	);
 
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}`, PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1" }, async () => {
+			const firstCallHarness = createExtensionHarness({ cwd: tempDir, prompt: "Test failed post-close launch ownership.", sessionFile: join(tempDir, "first-call-session.jsonl") });
+			const failedFirstCall = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["close"], ["click", "#missing-after-close"]]),
+			});
+			assert.equal(failedFirstCall.isError, true, failedFirstCall.content[0]?.text);
+			assert.equal((failedFirstCall.details?.managedSessionOutcome as { activeAfter?: boolean } | undefined)?.activeAfter, true);
+			assert.equal(typeof failedFirstCall.details?.sessionName, "string");
+			const recoveredFirstCall = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, { args: ["get", "url"] });
+			assert.equal(recoveredFirstCall.isError, false, recoveredFirstCall.content[0]?.text);
+			assert.equal(recoveredFirstCall.details?.sessionName, failedFirstCall.details?.sessionName);
+			const closeAllFirstCall = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, { args: ["--session", "caller-owned", "close", "--all"] });
+			assert.equal(closeAllFirstCall.details?.closeAllApplied, true);
+			assert.equal((closeAllFirstCall.details?.managedSessionOutcome as { activeAfter?: boolean } | undefined)?.activeAfter, false);
+			const rotatedAfterCloseAll = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, { args: ["get", "url"] });
+			assert.notEqual(rotatedAfterCloseAll.details?.sessionName, failedFirstCall.details?.sessionName);
+			await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, { args: ["close"] });
+
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Record a browser workflow.", sessionFile: join(tempDir, "session.jsonl") });
 			await mkdir(join(tempDir, "ffmpeg"));
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "global-one", "record", "start", "global-one.webm"] });
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "global-two", "record", "start", "global-two.webm"] });
+			const otherNamespaceRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "--session", "global-three", "record", "start", "global-three.webm"] });
+			assert.equal(otherNamespaceRecording.isError, false, otherNamespaceRecording.content[0]?.text);
+			assert.equal(otherNamespaceRecording.details?.namespace, "other");
+			const globalClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close", "--all"] });
+			assert.equal(globalClose.details?.closeAllApplied, true);
+			assert.equal(globalClose.details?.namespace, undefined);
+			const releasedGlobalOne = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "global-one.webm"] });
+			const releasedGlobalTwo = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "global-two.webm"] });
+			assert.doesNotMatch(releasedGlobalOne.content[0]?.text ?? "", /reserved by an active recording/);
+			assert.doesNotMatch(releasedGlobalTwo.content[0]?.text ?? "", /reserved by an active recording/);
+			const retainedOtherNamespace = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "global-three.webm"] });
+			assert.match(retainedOtherNamespace.content[0]?.text ?? "", /reserved by an active recording/);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "close", "--all"] });
+
 			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "--quiet", "start", "demo.webm"] });
 			assert.equal(missingResult.isError, false);
 			assert.equal(missingResult.details?.successCategory, "artifact-pending");
@@ -1343,7 +1442,16 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal((postCloseStop.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, true);
 			assert.equal((postCloseStop.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.status, "unchanged");
 			assert.equal(postCloseStop.details?.sessionName, releasedAfterDiagnosticClose.details?.sessionName);
-			const activeBeforeCombined = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"] });
+			const failedPostCloseLaunch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["close"], ["open", "fail-after-close"]]),
+			});
+			assert.equal(failedPostCloseLaunch.isError, true, failedPostCloseLaunch.content[0]?.text);
+			assert.equal((failedPostCloseLaunch.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, true);
+			assert.equal((failedPostCloseLaunch.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.status, "unchanged");
+			assert.equal(failedPostCloseLaunch.details?.sessionName, postCloseStop.details?.sessionName);
+			assert.deepEqual((failedPostCloseLaunch.details?.batchFailure as { failedStep?: { lifecycle?: unknown } } | undefined)?.failedStep?.lifecycle, { effectiveLaunch: { browserLaunched: true } });
+			const activeBeforeCombined = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
 			assert.equal(activeBeforeCombined.details?.sessionName, postCloseStop.details?.sessionName);
 			assert.equal(activeBeforeCombined.isError, false, activeBeforeCombined.content[0]?.text);
 			assert.equal((activeBeforeCombined.details?.managedSessionOutcome as { activeAfter?: boolean } | undefined)?.activeAfter, true);

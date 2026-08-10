@@ -736,7 +736,7 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 			success: false,
 			data: [
 				{ command: ["open", "https://example.com"], success: true, result: { title: "Example Domain", url: "https://example.com/" } },
-				{ command: ["click", "@zzz"], success: false, error: "Unknown ref: zzz" },
+				{ command: ["click", "@zzz"], success: false, error: "Unknown ref: zzz", result: { lifecycle: { effectiveLaunch: { browserLaunched: true } } } },
 			],
 		},
 	});
@@ -757,6 +757,7 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 	assert.equal(presentation.batchFailure?.failedStep.commandText, "click @zzz");
 	assert.equal(presentation.batchFailure?.failedStep.resultCategory, "failure");
 	assert.equal(presentation.batchFailure?.failedStep.failureCategory, "stale-ref");
+	assert.deepEqual(presentation.batchFailure?.failedStep.lifecycle, { effectiveLaunch: { browserLaunched: true } });
 	assert.deepEqual(presentation.batchFailure?.failedStep.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.equal(presentation.batchFailure?.failureCount, 1);

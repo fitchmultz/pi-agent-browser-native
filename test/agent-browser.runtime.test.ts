@@ -536,6 +536,71 @@ test("restoreManagedSessionStateFromBranch keeps a lifecycle-proven post-close r
 	assert.equal(restored.closedSessionName, undefined);
 });
 
+test("restoreManagedSessionStateFromBranch keeps a first-call failed post-close launch active", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					batchSteps: [
+						{ command: ["close"], success: true },
+						{ command: ["click", "#missing"], success: false },
+					],
+					command: "batch",
+					managedSessionOutcome: {
+						activeAfter: false,
+						activeBefore: false,
+						attemptedSessionName: "piab-demo-123",
+						status: "abandoned",
+						succeeded: false,
+					},
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+				isError: true,
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.sessionName, "piab-demo-123");
+	assert.equal(restored.closedSessionName, undefined);
+});
+
+test("restoreManagedSessionStateFromBranch applies close --all to the active namespace", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--session", "caller-owned", "close", "--all"],
+					closeAllApplied: true,
+					command: "close",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "caller-owned",
+					usedImplicitSession: false,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.closedSessionName, "piab-demo-123");
+});
+
 test("restoreManagedSessionStateFromBranch ignores stale base completions after fresh rotation", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[

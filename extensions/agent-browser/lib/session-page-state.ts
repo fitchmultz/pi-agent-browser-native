@@ -1,6 +1,7 @@
-import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
-import { getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
-import { isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
+import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
+import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
+import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
 import { enrichSnapshotRefEntries, getSnapshotRefEntries } from "./results/snapshot-refs.js";
@@ -402,11 +403,21 @@ export class SessionPageState {
 			const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
 			const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
 			const sessionKey = getSessionPageStateKey(sessionName, namespace);
-			if (!sessionKey) continue;
-			const command = typeof details.command === "string" ? details.command : undefined;
-			const subcommand = typeof details.subcommand === "string" ? details.subcommand : undefined;
+			const args = Array.isArray(details.args) && details.args.every((arg) => typeof arg === "string") ? details.args : [];
+			const commandTokens = extractUpstreamCommandTokens(args);
+			const command = typeof details.command === "string" ? details.command : commandTokens[0];
+			const subcommand = typeof details.subcommand === "string" ? details.subcommand : commandTokens[1];
 			const batchCloseLifecycle = getSuccessfulBatchCloseLifecycle(details.batchSteps);
-			if ((isCloseCommand(command) && message.isError !== true) || batchCloseLifecycle) {
+			const closeAllApplied = details.closeAllApplied === true
+				|| (message.isError !== true && isCloseAllCommand(commandTokens))
+				|| batchHasSuccessfulCloseAll(details.batchSteps);
+			if (closeAllApplied) {
+				restoredOrder += 1;
+				state.clearNamespace(namespace);
+				if (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true) continue;
+			}
+			if (!sessionKey) continue;
+			if (!closeAllApplied && ((isCloseCommand(command) && message.isError !== true) || batchCloseLifecycle)) {
 				restoredOrder += 1;
 				state.clearSession(sessionKey);
 				if (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true) continue;
@@ -537,6 +548,19 @@ export class SessionPageState {
 		this.tabPinningReasons.delete(sessionName);
 		this.tabTargetUnknownOrders.delete(sessionName);
 		this.tabTargets.delete(sessionName);
+	}
+
+	clearNamespace(namespace?: string): void {
+		const sessionKeys = new Set([
+			...this.refSnapshotInvalidations.keys(),
+			...this.refSnapshots.keys(),
+			...this.tabPinningReasons.keys(),
+			...this.tabTargetUnknownOrders.keys(),
+			...this.tabTargets.keys(),
+		]);
+		for (const sessionKey of sessionKeys) {
+			if (isAgentBrowserSessionIdentityKeyInNamespace(sessionKey, namespace)) this.clearSession(sessionKey);
+		}
 	}
 
 	markPinning(sessionName: string, reason: SessionTabPinningReason): void {
