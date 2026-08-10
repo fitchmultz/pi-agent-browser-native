@@ -634,6 +634,16 @@ if (!REAL_UPSTREAM_ENABLED) {
 						assert.match(String(blockedBatch.details?.validationError ?? ""), /does not match the requested managed-restore policy|active page became unverified/);
 						assert.equal(blockedBatch.details?.exitCode, undefined, "nested batch attachment must fail before upstream spawn");
 					}
+					for (const subcommand of ["start", "restart"]) {
+						const blockedRecordingAfterClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["batch"],
+							stdin: JSON.stringify([["close"], ["record", subcommand, join(tempDir, `after-close-${subcommand}.webm`)]]),
+						});
+						assert.equal(blockedRecordingAfterClose.isError, true);
+						assert.equal(blockedRecordingAfterClose.details?.failureCategory, "validation-error");
+						assert.match(blockedRecordingAfterClose.content[0]?.text ?? "", new RegExp(`record ${subcommand} cannot follow close`));
+						assert.equal(blockedRecordingAfterClose.details?.exitCode, undefined, "recording after close must fail before upstream spawn");
+					}
 					const lateConfigPath = join(tempDir, "agent-browser.json");
 					await writeFile(lateConfigPath, JSON.stringify({ restore: "replacement-close-key" }), "utf8");
 					const firstClose = await (async () => {

@@ -24,13 +24,13 @@ export function getSuccessfulBatchCloseLifecycle(
 			if (sawClose) endsClosed = false;
 			continue;
 		}
-		const command = extractCommandTokens(rowCommand)[0];
+		const [command] = extractCommandTokens(rowCommand);
 		if (isCloseCommand(command)) {
 			sawClose = true;
 			endsClosed = true;
 			const result = isRecord(row.result) ? row.result : isRecord(row.data) ? row.data : undefined;
 			statePath = typeof result?.statePath === "string" ? result.statePath : undefined;
-		} else if (sawClose) {
+		} else if (sawClose && command !== "record") {
 			endsClosed = false;
 		}
 	}

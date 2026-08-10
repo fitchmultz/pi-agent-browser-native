@@ -174,12 +174,18 @@ function getArtifactPreflightValidationError(options: {
 		}
 	}
 	const artifactDestinations = new Map<string, number>();
+	let sawBatchClose = false;
 	for (const [index, step] of steps.entries()) {
+		const commandStep = extractCommandTokens(step);
 		if (batch) {
 			const stepValidationError = validateToolArgs(step);
 			if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
+			if (sawBatchClose && commandStep[0] === "record" && (commandStep[1] === "start" || commandStep[1] === "restart")) {
+				return `Unsupported batch step ${index + 1}: record ${commandStep[1]} cannot follow close, quit, or exit in one upstream batch because upstream can report success without starting a recording. Split the close and recording into separate agent_browser calls.`;
+			}
+			if (isCloseCommand(commandStep[0])) sawBatchClose = true;
 		}
-		const artifactDestination = getExplicitArtifactDestination(step);
+		const artifactDestination = getExplicitArtifactDestination(commandStep);
 		if (artifactDestination) {
 			let canonicalDestination: string;
 			try {
@@ -196,8 +202,8 @@ function getArtifactPreflightValidationError(options: {
 				return `Unsupported batch artifact destination in step ${index + 1}: ${artifactDestination} is already written by step ${priorStep + 1}. Use distinct paths or split the batch so each artifact can be verified independently.`;
 			}
 			artifactDestinations.set(canonicalDestination, index);
-		} else if (step[0] === "screenshot") {
-			const potentialDestination = getPotentialScreenshotPathToken(step);
+		} else if (commandStep[0] === "screenshot") {
+			const potentialDestination = getPotentialScreenshotPathToken(commandStep);
 			if (potentialDestination) {
 				try {
 					if (activeRecordingDestinations.has(canonicalizeExplicitArtifactDestination(options.cwd, potentialDestination))) {
@@ -209,7 +215,7 @@ function getArtifactPreflightValidationError(options: {
 				}
 			}
 		}
-		if (batch && step[0] === "screenshot" && step.includes("--annotate")) {
+		if (batch && commandStep[0] === "screenshot" && commandStep.includes("--annotate")) {
 			return [
 				`Unsupported batch screenshot annotation in step ${index + 1}: put --annotate in top-level args, not inside the batch step.`,
 				`Use: { "args": ["--annotate", "batch"], "stdin": "[[\\"screenshot\\",\\"/path/to/image.png\\"]]" }`,
@@ -223,7 +229,10 @@ function commandTouchesArtifactLifecycle(args: string[], stdin: string | undefin
 	if (outputPath) return true;
 	const parsed = getArtifactCommandSteps(args, stdin);
 	if (parsed.error) return true;
-	return parsed.steps.some((step) => getExplicitArtifactDestination(step) !== undefined || step[0] === "record" || step[0] === "screenshot" || isCloseCommand(step[0]));
+	return parsed.steps.some((step) => {
+		const commandStep = extractCommandTokens(step);
+		return getExplicitArtifactDestination(commandStep) !== undefined || commandStep[0] === "record" || commandStep[0] === "screenshot" || isCloseCommand(commandStep[0]);
+	});
 }
 
 function isResultFileArtifact(artifact: unknown): artifact is FileArtifactMetadata {
@@ -241,6 +250,26 @@ function getResultFileArtifacts(result: AgentBrowserToolResult): FileArtifactMet
 function resultHasTerminalSuccessfulBatchClose(result: AgentBrowserToolResult): boolean {
 	const details = isRecord(result.details) ? result.details : undefined;
 	return getSuccessfulBatchCloseLifecycle(details?.batchSteps)?.endsClosed === true;
+}
+
+function reportsNoRecordingInProgress(value: unknown): boolean {
+	try {
+		return /no recording in progress/i.test(JSON.stringify(value));
+	} catch {
+		return false;
+	}
+}
+
+function batchStepReportsNoRecordingInProgress(step: unknown): boolean {
+	if (!isRecord(step) || step.success !== false) return false;
+	const command = Array.isArray(step.command) && step.command.every((token) => typeof token === "string") ? extractCommandTokens(step.command) : [];
+	return command[0] === "record" && command[1] === "stop" && reportsNoRecordingInProgress(step);
+}
+
+function resultReportsNoRecordingInProgress(result: AgentBrowserToolResult): boolean {
+	if (result.isError !== true) return false;
+	const details = isRecord(result.details) ? result.details : undefined;
+	return details?.command === "record" && details.subcommand === "stop" && reportsNoRecordingInProgress(result.content);
 }
 
 function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactManifest | undefined {
@@ -985,8 +1014,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		if (retireManifest && artifactManifest) artifactManifest = retirePendingRecordingManifestEntries(artifactManifest, sessionName, namespace);
 		if (!reservation && artifactManifest === previousManifest) return;
 		const terminalReservation = reservation ?? { absolutePath: "", cwd: managedSessionCwd, namespace, path: "", sessionName };
-		recordingSessionTombstones.set(getAgentBrowserSessionIdentityKey(sessionName, namespace), terminalReservation);
 		const terminalKey = getAgentBrowserSessionIdentityKey(sessionName, namespace);
+		recordingSessionTombstones.set(terminalKey, terminalReservation);
 		try {
 			appendRecordingReservationTransition(pi, {
 				reservation: terminalReservation,
@@ -1008,15 +1037,29 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			appendRecordingTransitions(applyRecordingArtifactsToReservations(activeRecordingReservations, getResultFileArtifacts(result)));
 			return handledClosedSessionKeys;
 		}
+		let sessionClosed = false;
 		for (const step of batchSteps) {
 			if (!isRecord(step)) continue;
+			const command = Array.isArray(step.command) && step.command.every((token) => typeof token === "string") ? step.command : undefined;
+			const commandTokens = command ? extractCommandTokens(command) : [];
+			const commandName = commandTokens[0];
+			if (resultSessionName && batchStepReportsNoRecordingInProgress(step)) {
+				const sessionKey = getAgentBrowserSessionIdentityKey(resultSessionName, resultNamespace);
+				retireRecordingSession(resultSessionName, resultNamespace, false);
+				handledClosedSessionKeys.add(sessionKey);
+				continue;
+			}
+			if (step.success === true && commandName && isCloseCommand(commandName) && resultSessionName) {
+				const sessionKey = getAgentBrowserSessionIdentityKey(resultSessionName, resultNamespace);
+				retireRecordingSession(resultSessionName, resultNamespace, false);
+				handledClosedSessionKeys.add(sessionKey);
+				sessionClosed = true;
+				continue;
+			}
+			if (sessionClosed && commandName === "record") continue;
+			if (step.success === true && sessionClosed) sessionClosed = false;
 			const artifacts = Array.isArray(step.artifacts) ? step.artifacts.filter(isResultFileArtifact) : [];
 			appendRecordingTransitions(applyRecordingArtifactsToReservations(activeRecordingReservations, artifacts));
-			const command = Array.isArray(step.command) && step.command.every((token) => typeof token === "string") ? step.command : undefined;
-			if (step.success !== true || !command || !isCloseCommand(extractCommandTokens(command)[0]) || !resultSessionName) continue;
-			const sessionKey = getAgentBrowserSessionIdentityKey(resultSessionName, resultNamespace);
-			retireRecordingSession(resultSessionName, resultNamespace, false);
-			handledClosedSessionKeys.add(sessionKey);
 		}
 		for (const sessionKey of handledClosedSessionKeys) {
 			if (!activeRecordingReservations.has(sessionKey) && artifactManifest && resultSessionName) {
@@ -1734,6 +1777,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					const postSyncDetails = isRecord(result.details) ? result.details : undefined;
 					const postSyncSessionName = typeof postSyncDetails?.sessionName === "string" ? postSyncDetails.sessionName : extractExplicitSessionName(toolArgs);
 					const postSyncNamespace = typeof postSyncDetails?.namespace === "string" ? postSyncDetails.namespace : resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE);
+					if (postSyncSessionName && resultReportsNoRecordingInProgress(result)) {
+						retireRecordingSession(postSyncSessionName, postSyncNamespace);
+					}
 					if (postSyncSessionName) {
 						const reservation = activeRecordingReservations.get(getAgentBrowserSessionIdentityKey(postSyncSessionName, postSyncNamespace));
 						if (reservation) result = appendActiveRecordingCleanupAction(result, reservation);
@@ -1767,10 +1813,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						branchOwnedLaunchIds: branchOwnedElectronLaunchIds,
 						touchedLaunchIds: !result.isError
 							? getTouchedElectronLaunchIds(
-							explicitSessionName ?? browserRunState.managedSessionName,
-							electronLaunchRecords,
-							explicitSessionName ? resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE) : browserRunState.managedSessionNamespace,
-						)
+								explicitSessionName ?? browserRunState.managedSessionName,
+								electronLaunchRecords,
+								explicitSessionName ? resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE) : browserRunState.managedSessionNamespace,
+							)
 							: undefined,
 					});
 					if (serializeBrowserCommand) branchStateGeneration += 1;

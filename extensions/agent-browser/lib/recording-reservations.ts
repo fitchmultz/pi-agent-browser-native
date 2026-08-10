@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
+import { getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { isCloseCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { isPendingRecordingArtifact, isPendingRecordingCommand, isSessionArtifactManifest } from "./results/artifact-manifest.js";
 import type { FileArtifactMetadata } from "./results/contracts.js";
@@ -139,38 +141,44 @@ export function restoreRecordingReservationStateFromBranch(branch: unknown[]): R
 		if (entry.type !== "message") continue;
 		const message = isRecord(entry.message) ? entry.message : undefined;
 		const details = message?.toolName === "agent_browser" && isRecord(message.details) ? message.details : undefined;
-		if (!isSessionArtifactManifest(details?.artifactManifest)) continue;
-		const artifacts: FileArtifactMetadata[] = details.artifactManifest.entries
-			.filter((manifestEntry) => manifestEntry.command === "record" && manifestEntry.kind === "video" && manifestEntry.session)
-			.map((manifestEntry) => ({
-				absolutePath: manifestEntry.absolutePath ?? manifestEntry.path,
-				command: manifestEntry.command,
-				cwd: manifestEntry.cwd,
-				kind: "video",
-				namespace: manifestEntry.namespace,
-				path: manifestEntry.path,
-				session: manifestEntry.session,
-				status: isPendingRecordingCommand(manifestEntry.command, manifestEntry.subcommand, "video") ? "pending" : "saved",
-				subcommand: manifestEntry.subcommand,
-			}));
-		const pendingKeys = new Set<string>();
-		const terminalArtifacts = new Map<string, ActiveRecordingReservation>();
-		for (const artifact of artifacts) {
-			const reservation = getArtifactReservation(artifact);
-			if (!reservation) continue;
-			const key = getReservationKey(reservation);
-			if (isPendingRecordingArtifact(artifact)) pendingKeys.add(key);
-			else terminalArtifacts.set(key, reservation);
+		if (!details) continue;
+		if (isSessionArtifactManifest(details.artifactManifest)) {
+			const artifacts: FileArtifactMetadata[] = [...details.artifactManifest.entries]
+				.sort((left, right) => left.createdAtMs - right.createdAtMs
+					|| Number(isPendingRecordingCommand(left.command, left.subcommand, left.kind)) - Number(isPendingRecordingCommand(right.command, right.subcommand, right.kind))
+					|| left.path.localeCompare(right.path))
+				.filter((manifestEntry) => manifestEntry.command === "record" && manifestEntry.kind === "video" && manifestEntry.session)
+				.map((manifestEntry) => ({
+					absolutePath: manifestEntry.absolutePath ?? manifestEntry.path,
+					command: manifestEntry.command,
+					cwd: manifestEntry.cwd,
+					kind: "video",
+					namespace: manifestEntry.namespace,
+					path: manifestEntry.path,
+					session: manifestEntry.session,
+					status: isPendingRecordingCommand(manifestEntry.command, manifestEntry.subcommand, "video") ? "pending" : "saved",
+					subcommand: manifestEntry.subcommand,
+				}));
+			for (const artifact of artifacts) {
+				const reservation = getArtifactReservation(artifact);
+				if (!reservation) continue;
+				const key = getReservationKey(reservation);
+				applyRecordingArtifactsToReservations(reservations, [artifact]);
+				if (isPendingRecordingArtifact(artifact)) terminal.delete(key);
+				else terminal.set(key, reservation);
+			}
 		}
-		applyRecordingArtifactsToReservations(reservations, artifacts);
-		for (const key of pendingKeys) terminal.delete(key);
-		for (const [key, reservation] of terminalArtifacts) {
-			if (!pendingKeys.has(key)) terminal.set(key, reservation);
+		const messageSucceeded = typeof message?.isError === "boolean"
+			? !message.isError
+			: typeof details.exitCode !== "number" || details.exitCode === 0;
+		const directCloseSucceeded = messageSucceeded && isCloseCommand(typeof details.command === "string" ? details.command : undefined);
+		if ((directCloseSucceeded || getSuccessfulBatchCloseLifecycle(details.batchSteps)) && typeof details.sessionName === "string") {
+			const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
+			const key = getAgentBrowserSessionIdentityKey(details.sessionName, namespace);
+			const reservation = reservations.get(key);
+			if (reservation) terminal.set(key, reservation);
+			reservations.delete(key);
 		}
 	}
 	return { active: reservations, terminal };
-}
-
-export function restoreActiveRecordingReservationsFromBranch(branch: unknown[]): Map<string, ActiveRecordingReservation> {
-	return restoreRecordingReservationStateFromBranch(branch).active;
 }

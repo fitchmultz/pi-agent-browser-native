@@ -7,6 +7,7 @@ import {
 	parseCommandInfo,
 	type CommandInfo,
 } from "./argv-descriptor.js";
+import { getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
 import {
 	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
@@ -586,7 +587,8 @@ export function restoreManagedSessionStateFromBranch(
 		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
 		const usedImplicitSession = details.usedImplicitSession === true;
 		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
-		const commandClosesSession = isCloseCommand(command);
+		const nestedBatchEndsClosed = getSuccessfulBatchCloseLifecycle(details.batchSteps)?.endsClosed === true;
+		const commandClosesSession = isCloseCommand(command) || nestedBatchEndsClosed;
 		const outcome = typeof details.managedSessionOutcome === "object" && details.managedSessionOutcome !== null ? details.managedSessionOutcome as Record<string, unknown> : undefined;
 		const outcomeStatus = typeof outcome?.status === "string" ? outcome.status : undefined;
 		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
@@ -632,7 +634,7 @@ export function restoreManagedSessionStateFromBranch(
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
 		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
 		if (commandClosesSession || outcomeClosedSessionName) {
-			if (outcomeClosedSessionName || succeeded) {
+			if (nestedBatchEndsClosed || outcomeClosedSessionName || succeeded) {
 				restoreDisabledIdentities.delete(getAgentBrowserSessionIdentityKey(managedSessionName, namespace));
 				applyManagedClose(managedSessionName, namespace);
 			}

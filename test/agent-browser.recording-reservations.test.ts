@@ -5,13 +5,13 @@ import {
 	RECORDING_RESERVATION_ENTRY_TYPE,
 	appendRecordingReservationTransition,
 	applyRecordingArtifactsToReservations,
-	restoreActiveRecordingReservationsFromBranch,
 	restoreRecordingReservationStateFromBranch,
 	retireRecordingReservation,
 	type ActiveRecordingReservation,
 } from "../extensions/agent-browser/lib/recording-reservations.js";
 import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
-import type { FileArtifactMetadata } from "../extensions/agent-browser/lib/results/contracts.js";
+import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
+import type { FileArtifactMetadata, SessionArtifactManifestEntry } from "../extensions/agent-browser/lib/results/contracts.js";
 
 function pendingArtifact(session: string, namespace: string, path: string): FileArtifactMetadata {
 	return {
@@ -26,6 +26,22 @@ function pendingArtifact(session: string, namespace: string, path: string): File
 		status: "pending",
 		subcommand: "start",
 		willExistOnStop: true,
+	};
+}
+
+function pendingManifestEntry(session: string, namespace: string, path: string, createdAtMs: number): SessionArtifactManifestEntry {
+	return {
+		absolutePath: `/tmp/${path}`,
+		command: "record",
+		createdAtMs,
+		cwd: "/tmp",
+		kind: "video",
+		namespace,
+		path,
+		retentionState: "live",
+		session,
+		storageScope: "explicit-path",
+		subcommand: "start",
 	};
 }
 
@@ -79,9 +95,106 @@ test("recording reservation branch entries survive bounded manifest eviction and
 		{ type: "custom", ...appended[2] },
 	];
 	const restoredState = restoreRecordingReservationStateFromBranch(branch);
-	const restored = restoreActiveRecordingReservationsFromBranch(branch);
-	assert.equal(restored.size, 1);
-	assert.equal(restored.get(getAgentBrowserSessionIdentityKey("shared", "beta"))?.path, "beta.webm");
+	assert.equal(restoredState.active.size, 1);
+	assert.equal(restoredState.active.get(getAgentBrowserSessionIdentityKey("shared", "beta"))?.path, "beta.webm");
 	assert.equal(restoredState.terminal.has(getAgentBrowserSessionIdentityKey("shared", "alpha")), true);
 	assert.equal(appended.every((entry) => entry.customType === RECORDING_RESERVATION_ENTRY_TYPE), true);
+});
+
+test("recording reservation replay keeps the newest pending path authoritative", () => {
+	const appended: Array<{ customType: string; data: unknown }> = [];
+	const appendEntry = (customType: string, data: unknown) => appended.push({ customType, data });
+	const older = pendingArtifact("shared", "scope", "older.webm");
+	const newer = pendingArtifact("shared", "scope", "newer.webm");
+	appendRecordingReservationTransition({ appendEntry } as never, {
+		reservation: { absolutePath: older.absolutePath, cwd: older.cwd ?? "/tmp", namespace: older.namespace, path: older.path, sessionName: older.session ?? "" },
+		state: "closed",
+	});
+	appendRecordingReservationTransition({ appendEntry } as never, {
+		reservation: { absolutePath: newer.absolutePath, cwd: newer.cwd ?? "/tmp", namespace: newer.namespace, path: newer.path, sessionName: newer.session ?? "" },
+		state: "active",
+	});
+	const newestFirstEntries = [
+		pendingManifestEntry("shared", "scope", "newer.webm", 2),
+		pendingManifestEntry("shared", "scope", "older.webm", 1),
+	];
+	const branch = [
+		...appended.map((entry) => ({ type: "custom", ...entry })),
+		{
+			type: "message",
+			message: {
+				toolName: "agent_browser",
+				details: {
+					artifactManifest: { entries: newestFirstEntries, evictedCount: 0, liveCount: 2, maxEntries: 20, updatedAtMs: 2, version: 1 },
+				},
+			},
+		},
+	];
+	const restored = restoreRecordingReservationStateFromBranch(branch);
+	assert.equal(restored.active.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "newer.webm");
+	assert.equal(restored.terminal.size, 0);
+
+	const firstManifest = mergeSessionArtifactManifest({ entries: [newestFirstEntries[1]] });
+	const mergedManifest = mergeSessionArtifactManifest({ base: firstManifest, entries: [newestFirstEntries[0]] });
+	assert.deepEqual(
+		mergedManifest?.entries.filter((entry) => entry.command === "record" && entry.subcommand === "start").map((entry) => entry.path),
+		["newer.webm"],
+	);
+	const mergedNewestFirst = mergeSessionArtifactManifest({ entries: newestFirstEntries });
+	assert.deepEqual(
+		mergedNewestFirst?.entries.filter((entry) => entry.command === "record" && entry.subcommand === "start").map((entry) => entry.path),
+		["newer.webm"],
+	);
+
+	const terminalAtRestart = { ...pendingManifestEntry("shared", "scope", "z-previous.webm", 3), subcommand: "stop" };
+	const pendingAtRestart = { ...pendingManifestEntry("shared", "scope", "a-current.webm", 3), subcommand: "restart" };
+	const restartManifest = mergeSessionArtifactManifest({ entries: [pendingAtRestart, terminalAtRestart] });
+	const restartReplay = restoreRecordingReservationStateFromBranch([{
+		type: "message",
+		message: { toolName: "agent_browser", details: { artifactManifest: restartManifest } },
+	}]);
+	assert.equal(restartReplay.active.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "a-current.webm");
+
+	const legacyClosedReplay = restoreRecordingReservationStateFromBranch([{
+		type: "message",
+		message: {
+			toolName: "agent_browser",
+			details: {
+				artifactManifest: { entries: [pendingManifestEntry("shared", "scope", "ghost.webm", 4)], evictedCount: 0, liveCount: 1, maxEntries: 20, updatedAtMs: 4, version: 1 },
+				batchSteps: [
+					{ command: ["close"], success: true },
+					{ command: ["record", "start", "ghost.webm"], success: true },
+				],
+				namespace: "scope",
+				sessionName: "shared",
+			},
+		},
+	}]);
+	assert.equal(legacyClosedReplay.active.size, 0);
+	assert.equal(legacyClosedReplay.terminal.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "ghost.webm");
+
+	const failedCloseReplay = restoreRecordingReservationStateFromBranch([
+		{
+			type: "custom",
+			customType: RECORDING_RESERVATION_ENTRY_TYPE,
+			data: {
+				reservation: { absolutePath: "/tmp/live.webm", cwd: "/tmp", namespace: "scope", path: "live.webm", sessionName: "shared" },
+				state: "active",
+			},
+		},
+		{
+			type: "message",
+			message: {
+				isError: true,
+				toolName: "agent_browser",
+				details: {
+					artifactManifest: { entries: [pendingManifestEntry("shared", "scope", "live.webm", 5)], evictedCount: 0, liveCount: 1, maxEntries: 20, updatedAtMs: 5, version: 1 },
+					command: "close",
+					namespace: "scope",
+					sessionName: "shared",
+				},
+			},
+		},
+	]);
+	assert.equal(failedCloseReplay.active.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path, "live.webm");
 });

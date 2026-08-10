@@ -58,10 +58,16 @@ export function getScreenshotPathTokenIndex(commandTokens: string[]): number | u
 
 function getFlagValue(commandTokens: string[], flag: string): string | undefined {
 	const equalsPrefix = `${flag}=`;
-	const equalsValue = commandTokens.find((token) => token.startsWith(equalsPrefix));
-	if (equalsValue) return equalsValue.slice(equalsPrefix.length) || undefined;
-	const index = commandTokens.indexOf(flag);
-	return index >= 0 ? commandTokens[index + 1] : undefined;
+	for (let index = commandTokens.length - 1; index >= 0; index -= 1) {
+		const token = commandTokens[index];
+		if (token.startsWith(equalsPrefix)) return token.slice(equalsPrefix.length) || undefined;
+		if (token === flag) return commandTokens[index + 1];
+	}
+	return undefined;
+}
+
+function foldArtifactPath(path: string, platform: NodeJS.Platform): string {
+	return platform === "win32" || platform === "darwin" ? path.normalize("NFC").toLowerCase() : path;
 }
 
 function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platform, seenSymlinks: Set<string>): string {
@@ -76,7 +82,7 @@ function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platfor
 			} catch {
 				// The destination does not exist yet; canonical ancestry still catches aliases.
 			}
-			return platform === "win32" || platform === "darwin" ? canonicalPath.toLowerCase() : canonicalPath;
+			return foldArtifactPath(canonicalPath, platform);
 		} catch {
 			let symlinkTarget: string | undefined;
 			try {
@@ -89,7 +95,7 @@ function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platfor
 				return canonicalizeArtifactPath(join(symlinkTarget, ...suffix), platform, seenSymlinks);
 			}
 			const parent = dirname(cursor);
-			if (parent === cursor) return platform === "win32" || platform === "darwin" ? absolutePath.toLowerCase() : absolutePath;
+			if (parent === cursor) return foldArtifactPath(absolutePath, platform);
 			suffix.unshift(basename(cursor));
 			cursor = parent;
 		}

@@ -344,6 +344,11 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 			canonicalizeExplicitArtifactDestination(tempDir, "capture.png", "darwin"),
 			canonicalizeExplicitArtifactDestination(tempDir, "CAPTURE.png", "darwin"),
 		);
+		assert.equal(
+			canonicalizeExplicitArtifactDestination(tempDir, "é.png", "darwin"),
+			canonicalizeExplicitArtifactDestination(tempDir, "e\u0301.png", "darwin"),
+		);
+		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "--output", "safe.png", "--output", "final.png"]), "final.png");
 		await symlink(tempDir, join(tempDir, "alias"), process.platform === "win32" ? "junction" : "dir");
 		const harness = createExtensionHarness({ cwd: tempDir });
 		const lexicalAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -392,6 +397,12 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 			});
 			assert.equal(caseAlias.isError, true);
 			assert.match(caseAlias.content[0]?.text ?? "", /CASE-ARTIFACT\.png is already written by step 1/);
+			const unicodeAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "é.png"], ["screenshot", "e\u0301.png"]]),
+			});
+			assert.equal(unicodeAlias.isError, true);
+			assert.match(unicodeAlias.content[0]?.text ?? "", /é\.png is already written by step 1/);
 		}
 
 		const recordingAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1079,6 +1090,7 @@ if (command === "open") {
 
 test("agentBrowserExtension warns after record start when ffmpeg is missing", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-recording-ffmpeg-"));
+	const noRecordingMarker = join(tempDir, "no-recording");
 	const nodeBinDir = dirname(process.execPath);
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -1097,6 +1109,10 @@ for (let i = 0; i < args.length; i += 1) {
 const command = args[commandIndex];
 const subcommand = args[commandIndex + 1];
 const path = command === "pdf" ? args[commandIndex + 1] : args[commandIndex + 2];
+if (command === "record" && subcommand === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})) {
+  process.stdout.write(JSON.stringify({ success: false, error: "No recording in progress" }));
+  process.exit(1);
+}
 if (command === "find") {
   process.stdout.write(JSON.stringify({ success: false, error: "No element found by text 'Missing Control'" }));
   process.exit(1);
@@ -1106,7 +1122,9 @@ const batchSteps = batchInput
   ? JSON.parse(batchInput)
   : args.slice(commandIndex + 1).filter((value) => value !== "--bail" && !value.startsWith("--bail=")).map((value) => value.split(" "));
 const data = command === "batch"
-  ? batchSteps.map((step) => ({ command: step, success: true, result: { command: step[0], path: step[2], subcommand: step[1] } }))
+  ? batchSteps.map((step) => step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
+    ? { command: step, success: false, error: "No recording in progress" }
+    : { command: step, success: true, result: { command: step[0], path: step[2], subcommand: step[1] } })
   : { command, subcommand, path };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
@@ -1165,6 +1183,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const reservedInlineWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download=demo.webm"] });
 			assert.equal(reservedInlineWaitDownload.isError, true);
 			assert.match(reservedInlineWaitDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedLastOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--output", "safe.png", "--output", "demo.webm"] });
+			assert.equal(reservedLastOutput.isError, true);
+			assert.match(reservedLastOutput.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
 			const unusualScreenshotPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "demo.webm"] });
 			assert.equal(unusualScreenshotPath.isError, true);
 			assert.match(unusualScreenshotPath.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
@@ -1227,16 +1248,56 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const replayFreshLaunch = await executeRegisteredTool(replayHarness.tool, replayHarness.ctx, { args: ["--headed", "open", "https://example.test/"] });
 			assert.doesNotMatch(replayFreshLaunch.content[0]?.text ?? "", /launch-scoped flags would be ignored/i);
 
-			const closeThenStart = await executeRegisteredTool(harness.tool, harness.ctx, {
+			for (const subcommand of ["start", "restart"]) {
+				const closeThenRecord = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([["close"], ["record", subcommand, `batch-close-${subcommand}.webm`]]),
+				});
+				assert.equal(closeThenRecord.isError, true, closeThenRecord.content[0]?.text);
+				assert.equal(closeThenRecord.details?.failureCategory, "validation-error");
+				assert.match(closeThenRecord.content[0]?.text ?? "", new RegExp(`record ${subcommand} cannot follow close.*Split the close and recording`, "s"));
+			}
+
+			const staleRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "stale-recording.webm"] });
+			assert.equal(staleRecording.isError, false);
+			await writeFile(noRecordingMarker, "1", "utf8");
+			const staleStop = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "stop"] });
+			assert.equal(staleStop.isError, true);
+			assert.match(staleStop.content[0]?.text ?? "", /No recording in progress/);
+			assert.equal((staleStop.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "stop-pending-recording") ?? false, false);
+			await rm(noRecordingMarker, { force: true });
+			const releasedAfterDefinitiveStopFailure = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "stale-recording.webm"] });
+			assert.doesNotMatch(releasedAfterDefinitiveStopFailure.content[0]?.text ?? "", /reserved by an active recording/);
+
+			const staleBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "stale-batch-recording.webm"] });
+			assert.equal(staleBatchRecording.isError, false);
+			await writeFile(noRecordingMarker, "1", "utf8");
+			const staleBatchStop = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch"], stdin: JSON.stringify([["record", "stop"]]) });
+			assert.equal(staleBatchStop.isError, true);
+			assert.match(staleBatchStop.content[0]?.text ?? "", /No recording in progress/);
+			assert.equal((staleBatchStop.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "stop-pending-recording") ?? false, false);
+			await rm(noRecordingMarker, { force: true });
+			const releasedAfterDefinitiveBatchStopFailure = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "stale-batch-recording.webm"] });
+			assert.doesNotMatch(releasedAfterDefinitiveBatchStopFailure.content[0]?.text ?? "", /reserved by an active recording/);
+
+			const orderedBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "ordered-old.webm"] });
+			assert.equal(orderedBatchRecording.isError, false);
+			await writeFile(noRecordingMarker, "1", "utf8");
+			const orderedBatchRestart = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
-				stdin: JSON.stringify([["close"], ["record", "start", "batch-close-start.webm"]]),
+				stdin: JSON.stringify([["record", "stop"], ["record", "start", "ordered-new.webm"]]),
 			});
-			assert.equal(closeThenStart.isError, false, closeThenStart.content[0]?.text);
-			assert.equal((closeThenStart.details?.managedSessionOutcome as { activeAfter?: boolean } | undefined)?.activeAfter, true);
-			const stillActiveAfterNestedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "batch-close-start.webm"] });
-			assert.equal(stillActiveAfterNestedClose.isError, true);
-			assert.match(stillActiveAfterNestedClose.content[0]?.text ?? "", /reserved by an active recording/);
-			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] })).isError, false);
+			assert.equal(orderedBatchRestart.isError, true);
+			assert.equal((orderedBatchRestart.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "stop-pending-recording"), true);
+			const orderedManifest = orderedBatchRestart.details?.artifactManifest as { entries?: Array<{ path?: string; subcommand?: string }> } | undefined;
+			assert.equal(orderedManifest?.entries?.some((entry) => entry.path === "ordered-new.webm" && entry.subcommand === "start"), true);
+			assert.equal(orderedManifest?.entries?.some((entry) => entry.path === "ordered-new.webm" && entry.subcommand === "close-abandoned"), false);
+			await rm(noRecordingMarker, { force: true });
+			const releasedOrderedOld = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "ordered-old.webm"] });
+			assert.doesNotMatch(releasedOrderedOld.content[0]?.text ?? "", /reserved by an active recording/);
+			const reservedOrderedNew = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "ordered-new.webm"] });
+			assert.match(reservedOrderedNew.content[0]?.text ?? "", /ordered-new\.webm is reserved by an active recording/);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
 
 			const argumentBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "batch-argument-close.webm"] });
 			assert.equal(argumentBatchRecording.isError, false);

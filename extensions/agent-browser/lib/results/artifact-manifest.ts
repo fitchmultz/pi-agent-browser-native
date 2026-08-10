@@ -2,7 +2,7 @@ import { getAgentBrowserSessionIdentityKey } from "../argv-grammar.js";
 import { isRecord } from "../parsing.js";
 import type { FileArtifactKind, FileArtifactMetadata, SessionArtifactManifest, SessionArtifactManifestEntry } from "./contracts.js";
 
-export function isPendingRecordingCommand(command: string | undefined, subcommand: string | undefined, kind: FileArtifactKind | undefined): boolean {
+export function isPendingRecordingCommand(command: string | undefined, subcommand: string | undefined, kind: FileArtifactKind | "spill" | undefined): boolean {
 	return command === "record" && (subcommand === "start" || subcommand === "restart") && kind === "video";
 }
 
@@ -117,9 +117,15 @@ export function mergeSessionArtifactManifest(options: {
 	for (const entry of options.base?.entries ?? []) {
 		byPath.set(getSessionArtifactManifestEntryKey(entry), entry);
 	}
-	for (const entry of options.entries ?? []) {
+	const orderedEntries = (options.entries ?? [])
+		.map((entry, index) => ({ entry, index }))
+		.sort((left, right) => left.entry.createdAtMs - right.entry.createdAtMs
+			|| Number(isPendingRecordingCommand(left.entry.command, left.entry.subcommand, left.entry.kind)) - Number(isPendingRecordingCommand(right.entry.command, right.entry.subcommand, right.entry.kind))
+			|| right.index - left.index)
+		.map(({ entry }) => entry);
+	for (const entry of orderedEntries) {
 		const key = getSessionArtifactManifestEntryKey(entry);
-		if (entry.command === "record" && entry.kind === "video" && !isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)) {
+		if (entry.command === "record" && entry.kind === "video") {
 			const entrySessionKey = entry.session ? getAgentBrowserSessionIdentityKey(entry.session, entry.namespace) : undefined;
 			for (const [candidateKey, candidate] of byPath) {
 				const sameRecordingSession = entrySessionKey === undefined
@@ -137,7 +143,7 @@ export function mergeSessionArtifactManifest(options: {
 		byPath.set(key, {
 			...existing,
 			...entry,
-			createdAtMs: existing?.createdAtMs ?? entry.createdAtMs,
+			createdAtMs: entry.command === "record" && entry.kind === "video" ? entry.createdAtMs : existing?.createdAtMs ?? entry.createdAtMs,
 			evictedAtMs: entry.retentionState === "evicted" ? (entry.evictedAtMs ?? nowMs) : entry.evictedAtMs,
 		});
 	}
