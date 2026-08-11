@@ -30,7 +30,7 @@ import {
 } from "../../command-taxonomy.js";
 import { chooseOpenResultTabCorrection, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
-import { parseUserBatchStdin } from "../batch-stdin.js";
+import { getUpstreamEffectiveBatchSteps, parseUserBatchStdin } from "../batch-stdin.js";
 import type { AboutBlankSessionMismatch,
 	BatchCommandStep,
 	BrowserRunState,
@@ -362,7 +362,7 @@ function isNonSelectorValueFlagToken(token: string | undefined): boolean {
 	return VALUE_FLAGS.has(token) || SHORT_VALUE_FLAG_TOKENS.has(token);
 }
 
-function collectRefsFromTokens(tokens: string[]): string[] {
+function collectRefsFromTokens(tokens: readonly string[]): string[] {
 	const refs: string[] = [];
 	for (const [index, token] of tokens.entries()) {
 		if (!/^@e\d+\b/.test(token)) continue;
@@ -373,16 +373,13 @@ function collectRefsFromTokens(tokens: string[]): string[] {
 }
 
 export function getGuardedRefUsage(commandTokens: string[], stdin?: string, options: { includeRefsAfterBatchSnapshot?: boolean } = {}): string[] {
-	const collectFromStep = (step: string[]) => isRefGuardedCommand(step[0]) ? collectRefsFromTokens(step) : [];
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
+	const collectFromStep = (step: readonly string[]) => isRefGuardedCommand(step[0]) ? collectRefsFromTokens(step) : [];
+	if (commandTokens[0] !== "batch") {
 		return collectFromStep(commandTokens);
 	}
-	const parsed = parseUserBatchStdin(stdin);
-	if (parsed.error || parsed.steps === undefined) {
-		return collectFromStep(commandTokens);
-	}
+	const steps = getUpstreamEffectiveBatchSteps(commandTokens, stdin);
 	const refsBeforeInBatchSnapshot: string[] = [];
-	for (const step of parsed.steps) {
+	for (const step of steps) {
 		if (!options.includeRefsAfterBatchSnapshot && (step[0] ?? "") === "snapshot") break;
 		refsBeforeInBatchSnapshot.push(...collectFromStep(step));
 	}
@@ -406,11 +403,9 @@ function isSafeSameSnapshotFormBatchStep(step: string[], refSnapshot: SessionRef
 }
 
 function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string, refSnapshot?: SessionRefSnapshot): string | undefined {
-	if (commandTokens[0] !== "batch" || stdin === undefined) return undefined;
-	const parsed = parseUserBatchStdin(stdin);
-	if (parsed.error || parsed.steps === undefined) return undefined;
+	if (commandTokens[0] !== "batch") return undefined;
 	let priorStepInvalidatesRefs = false;
-	for (const step of parsed.steps) {
+	for (const step of getUpstreamEffectiveBatchSteps(commandTokens, stdin)) {
 		if ((step[0] ?? "") === "snapshot") {
 			priorStepInvalidatesRefs = false;
 		}

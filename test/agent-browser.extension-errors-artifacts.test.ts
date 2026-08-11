@@ -404,15 +404,17 @@ if (args.includes("get") && args.includes("url")) {
 			const contentPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "caller-race", "get", "html", "body"],
 			});
+			// Spawn-visibility wait matching the sibling contention test's budget; the queue contract is
+			// asserted below, not by this latency window.
 			for (let attempt = 0; attempt < 100; attempt += 1) {
 				try {
 					await access(liveProbePath);
 					break;
 				} catch {
-					await new Promise((resolve) => setTimeout(resolve, 5));
+					if (attempt === 99) assert.fail("live probe did not reach the fake upstream process");
+					await new Promise((resolve) => setTimeout(resolve, 10));
 				}
 			}
-			await access(liveProbePath);
 			const tabPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--namespace", "review-space", "--session", "caller-race", "tab", "t2"],
 			});

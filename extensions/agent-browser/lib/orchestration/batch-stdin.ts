@@ -88,6 +88,21 @@ export function parseUserBatchStdin(stdin: string | undefined): { error?: string
 	return { steps };
 }
 
+/**
+ * The batch steps upstream will actually execute: run_batch uses raw batch
+ * arguments exclusively when any exist and reads stdin only otherwise.
+ */
+export function getUpstreamEffectiveBatchSteps(commandTokens: readonly string[], stdin: string | undefined): BatchCommandStep[] {
+	if (commandTokens[0] !== "batch") return [];
+	const argumentSteps = commandTokens.slice(1).flatMap((command) => {
+		if (command === "--bail" || command.startsWith("--bail=")) return [];
+		const step = parseBatchCommandArgument(command).step;
+		return step ? [step] : [];
+	});
+	if (argumentSteps.length > 0) return argumentSteps;
+	return parseUserBatchStdin(stdin).steps ?? [];
+}
+
 export function parseValidBatchStepEntries(stdin: string | undefined): Array<{ index: number; step: BatchCommandStep }> {
 	const parsed = parseBatchStdinJsonArray(stdin);
 	if (parsed.error || parsed.steps === undefined) return [];

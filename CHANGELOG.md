@@ -4,6 +4,10 @@
 
 ## 0.4.1 - 2026-08-10
 
+### Fixed
+
+- The page-scoped stale-ref preflight and the intra-batch ref-invalidation latch now scan the batch steps upstream actually executes via shared `getUpstreamEffectiveBatchSteps` (raw batch argument strings exclusively when any exist, stdin steps only otherwise): raw argument-mode batches such as `batch "click @e1"` are guarded after a recording page swap, raw-argv `record start` steps latch later ref reuse in the same batch, and stdin refs are no longer falsely rejected when upstream would ignore that stdin because raw arguments exist. The pre-spawn state-policy validator keeps unioning both step sources as a deliberate fail-closed superset. Regressions in [`test/agent-browser.extension-ref-guards.test.ts`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/test/agent-browser.extension-ref-guards.test.ts).
+
 ### Added
 
 - Browser-backed calls now require the exact targeted `agent-browser 0.33.2` runtime before launch, with cached cwd/PATH validation and expected/observed mismatch details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.

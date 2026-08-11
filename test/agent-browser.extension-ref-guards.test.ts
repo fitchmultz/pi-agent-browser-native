@@ -2089,8 +2089,33 @@ if (args.includes("snapshot")) {
 			assert.equal(guardedDiffSelector.isError, true, JSON.stringify(guardedDiffSelector));
 			assert.equal(guardedDiffSelector.details?.failureCategory, "stale-ref", JSON.stringify(guardedDiffSelector));
 
+			// Raw argument-mode batch steps are what upstream executes, so the stale-ref
+			// preflight must scan them exactly like stdin steps.
+			const rawArgvBatch = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch", "click @e1"] });
+			assert.equal(rawArgvBatch.isError, true, JSON.stringify(rawArgvBatch));
+			assert.equal(rawArgvBatch.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvBatch));
+			const rawArgvBooleanFlagBatch = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch", "click --new-tab @e1"] });
+			assert.equal(rawArgvBooleanFlagBatch.isError, true, JSON.stringify(rawArgvBooleanFlagBatch));
+			assert.equal(rawArgvBooleanFlagBatch.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvBooleanFlagBatch));
+			// Upstream ignores stdin whenever raw batch arguments exist, so stdin refs
+			// must not be falsely rejected in that shape.
+			const rawArgvIgnoredStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "wait 100"],
+				stdin: JSON.stringify([["click", "@e1"]]),
+			});
+			assert.equal(rawArgvIgnoredStdin.isError, false, JSON.stringify(rawArgvIgnoredStdin));
+
+			const latchRecoverySnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(latchRecoverySnapshot.isError, false, JSON.stringify(latchRecoverySnapshot));
+			const rawArgvLatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", `record start ${join(tempDir, "latch2.webm")}`, "click @e1"],
+			});
+			assert.equal(rawArgvLatch.isError, true, JSON.stringify(rawArgvLatch));
+			assert.equal(rawArgvLatch.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvLatch));
+			assert.match(rawArgvLatch.content[0]?.text ?? "", /after an earlier batch step can navigate or mutate/);
+
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 2);
 			assert.equal(invocations.filter((entry) => entry.args.includes("click") && !entry.args.includes("find")).length, 1);
 			assert.equal(invocations.filter((entry) => entry.args.includes("is")).length, 0);
 			assert.equal(invocations.filter((entry) => entry.args.includes("screenshot") && !entry.args.includes("diff")).length, 0);
@@ -2099,7 +2124,7 @@ if (args.includes("snapshot")) {
 			assert.equal(invocations.filter((entry) => entry.args.includes("diff")).length, 1);
 			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("start")).length, 2);
 			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("restart")).length, 1);
-			assert.ok(invocations.filter((entry) => entry.args.includes("snapshot")).length >= 3);
+			assert.ok(invocations.filter((entry) => entry.args.includes("snapshot")).length >= 4);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

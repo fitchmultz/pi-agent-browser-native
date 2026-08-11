@@ -34,7 +34,7 @@ import { isRecord } from "../../parsing.js";
 import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { createFreshSessionName, extractUpstreamCommandTokens, resolveManagedSessionState } from "../../runtime.js";
-import { parseBatchCommandArgument, parseUserBatchStdin, type BatchCommandStep } from "../batch-stdin.js";
+import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
 import { closeManagedSession, inspectManagedSessionDaemon } from "./managed-session-daemon-policy.js";
 import {
 	applyOpenResultTabCorrection,
@@ -190,17 +190,6 @@ function applyBatchNetworkRouteState(options: { data: unknown; routesBySession: 
 	return setNetworkRouteState({ routes, routesBySession: options.routesBySession, sessionName: options.sessionName });
 }
 
-function getBatchCommandSteps(commandTokens: string[], stdin: string | undefined): BatchCommandStep[] {
-	const argumentSteps = commandTokens.slice(1).flatMap((command) => {
-		if (command === "--bail" || command.startsWith("--bail=")) return [];
-		const step = parseBatchCommandArgument(command).step;
-		return step ? [step] : [];
-	});
-	// Upstream run_batch uses raw batch arguments exclusively when any exist and reads stdin only otherwise.
-	if (argumentSteps.length > 0) return argumentSteps;
-	return parseUserBatchStdin(stdin).steps ?? [];
-}
-
 export async function processBrowserOutput(input: ProcessBrowserOutputInput): Promise<BrowserProcessOutputResult> {
 	const { ctx, cwd, electronPostCommandStatusSettleMs, implicitSessionCloseTimeoutMs, sessionPageStateUpdate, signal, state } = input;
 	const { prepared, processResult } = input;
@@ -235,7 +224,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const screenshotArtifactRequest = repairedScreenshot.request;
 		const batchScreenshotArtifactRequests = repairedBatchScreenshots.requests;
 		const batchCommandSteps = prepared.executionPlan.commandInfo.command === "batch"
-			? getBatchCommandSteps(prepared.commandTokens, prepared.runtimeToolStdin)
+			? getUpstreamEffectiveBatchSteps(prepared.commandTokens, prepared.runtimeToolStdin)
 			: [];
 		const nestedBatchClose = prepared.executionPlan.commandInfo.command === "batch"
 			? getSuccessfulBatchCloseLifecycle(presentationEnvelope?.data, batchCommandSteps)
