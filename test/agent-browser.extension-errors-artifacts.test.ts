@@ -420,8 +420,10 @@ if (args.includes("get") && args.includes("url")) {
 				args: ["--session", "caller-other", "open", "https://other.example"],
 			});
 			let beforeRelease = await readInvocationLog(logPath);
+			// Spawn-visibility wait matching the sibling contention test's budget; the queue contract is
+			// asserted below, not by this latency window.
 			for (let attempt = 0; attempt < 100 && !beforeRelease.some((entry) => entry.args.includes("caller-other")); attempt += 1) {
-				await new Promise((resolve) => setTimeout(resolve, 5));
+				await new Promise((resolve) => setTimeout(resolve, 10));
 				beforeRelease = await readInvocationLog(logPath);
 			}
 			assert.equal(beforeRelease.some((entry) => entry.args.includes("caller-other")), true);
