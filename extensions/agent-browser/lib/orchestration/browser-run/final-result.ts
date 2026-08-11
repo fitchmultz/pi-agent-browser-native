@@ -285,7 +285,7 @@ export async function prepareFinalResultRecoveryState(options: {
 		}
 	}
 	const richInputRecoveryDiagnostic = buildRichInputRecoveryDiagnostic(visibleRefFallbackDiagnostic);
-	const noActivePageSnapshotFailure = categoryDetails.resultCategory === "failure" && (isNoActivePageSnapshotFailure(options.executionPlan.commandInfo.command, options.errorText ?? options.presentation.summary) || options.batchRefSnapshotState?.invalidation !== undefined);
+	const noActivePageSnapshotFailure = categoryDetails.resultCategory === "failure" && (isNoActivePageSnapshotFailure(options.executionPlan.commandInfo.command, options.errorText ?? options.presentation.summary) || options.batchRefSnapshotState?.invalidation?.reason === "no-active-page");
 	const executionSessionKey = getSessionContextKey(options.executionPlan.sessionName, options.executionPlan.namespace);
 	if (noActivePageSnapshotFailure && executionSessionKey) {
 		const refUpdate = options.sessionPageState.applyRefSnapshotInvalidation({ invalidation: buildNoActivePageRefSnapshotInvalidation(), sessionName: executionSessionKey, update: options.sessionPageStateUpdate });

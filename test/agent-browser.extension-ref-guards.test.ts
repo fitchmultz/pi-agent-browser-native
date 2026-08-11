@@ -1939,6 +1939,75 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension invalidates direct and batched refs when record start opens a fresh page", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-start-refs-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://record.example/",
+    title: "Record fixture",
+    url: "https://record.example/",
+    refs: { e1: { role: "link", name: "Old target" } },
+    snapshot: '- link "Old target" [ref=e1]'
+  } }));
+} else if (args.includes("record") && args.includes("start")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { path: args.at(-1) } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+			assert.deepEqual((initialSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const staleBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "start", join(tempDir, "batch.webm")], ["click", "@e1"]]),
+			});
+			assert.equal(staleBatch.isError, true, JSON.stringify(staleBatch));
+			assert.equal(staleBatch.details?.failureCategory, "stale-ref", JSON.stringify(staleBatch));
+			assert.match(staleBatch.content[0]?.text ?? "", /after an earlier batch step can navigate or mutate/);
+
+			const recordStart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", join(tempDir, "direct.webm")] });
+			assert.equal(recordStart.isError, false, JSON.stringify(recordStart));
+			assert.equal((recordStart.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+			assert.equal(recordStart.details?.refSnapshot, undefined);
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
+			assert.equal(staleClick.details?.failureCategory, "stale-ref", JSON.stringify(staleClick));
+			assert.match(staleClick.content[0]?.text ?? "", /record start switched this session to a fresh active page/);
+
+			const freshSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(freshSnapshot.isError, false, JSON.stringify(freshSnapshot));
+			assert.equal(freshSnapshot.details?.refSnapshotInvalidation, undefined);
+			assert.deepEqual((freshSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("start")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension allows same-snapshot form fills before a batch click", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-form-fills-"));
 	const logPath = join(tempDir, "invocations.log");

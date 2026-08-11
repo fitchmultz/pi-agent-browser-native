@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand } from "../../command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand, isRecordStartPageTransition } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -18,6 +18,7 @@ import type { NetworkRouteRecord } from "../../results/contracts.js";
 import { getClipboardWritePayloadCandidates, redactClipboardPermissionEcho, redactClipboardPermissionErrorValue } from "../../results/presentation/errors.js";
 import { shouldCaptureSemanticActionNavigationSummary } from "../../results/presentation/semantic-action.js";
 import {
+	buildPageTransitionRefSnapshotInvalidation,
 	commandExplicitlyTargetsAboutBlank,
 	deriveSessionTabTarget,
 	extractLatestRefSnapshotStateFromBatchResults,
@@ -341,6 +342,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (plannedTabCorrection) openResultTabCorrection = await applyOpenResultTabCorrection({ correction: plannedTabCorrection, cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal });
 		}
 
+		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data) : undefined;
 		const verifiesCurrentUrl = prepared.executionPlan.commandInfo.command === "get" && prepared.executionPlan.commandInfo.subcommand === "url";
 		const trustsReportedPageTarget = !resultingPageState.pageUrlUnknown || verifiesCurrentUrl;
 		const observedSessionTabTarget = normalizeSessionTabTarget(navigationSummary)
@@ -441,7 +443,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const scrollNoopDiagnostic = succeeded && prepared.shouldProbeScrollNoop ? buildScrollNoopDiagnostic(prepared.scrollPositionBefore, await collectScrollPositionSnapshot({ cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal })) : undefined;
 		let currentRefSnapshot: SessionRefSnapshot | undefined;
 		let currentRefSnapshotInvalidation: SessionRefSnapshotInvalidation | undefined;
-		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data) : undefined;
 		if (sessionStateKey) {
 			const sessionClosed = (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) || nestedBatchClosed;
 			if (sessionClosed) {
@@ -453,6 +454,11 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				sessionPageState.clearSession(sessionStateKey);
 				state.closedManagedSessionNames.add(sessionStateKey);
 			} else {
+				const pageTransitionInvalidation = succeeded && isRecordStartPageTransition(prepared.executionPlan.commandInfo.command, prepared.executionPlan.commandInfo.subcommand)
+					? buildPageTransitionRefSnapshotInvalidation()
+					: batchRefSnapshotState?.invalidation?.reason === "page-transition"
+						? batchRefSnapshotState.invalidation
+						: undefined;
 				if (currentSessionTabTarget) {
 					const tabUpdate = sessionPageState.applyTabTarget({ sessionName: sessionStateKey, target: currentSessionTabTarget, update: sessionPageStateUpdate });
 					if (!tabUpdate.applied && succeeded) sessionPageState.markPinning(sessionStateKey, "drift");
@@ -462,6 +468,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				const refSnapshot = prepared.executionPlan.commandInfo.command === "batch" ? batchRefSnapshotState?.snapshot : succeeded ? prepared.executionPlan.commandInfo.command === "snapshot" ? extractRefSnapshotFromData(presentationEnvelope?.data) : prepared.resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot : undefined;
 				if (refSnapshot) {
 					const refUpdate = sessionPageState.applyRefSnapshot({ fallbackTarget: currentSessionTabTarget, sessionName: sessionStateKey, snapshot: refSnapshot, update: sessionPageStateUpdate });
+					currentRefSnapshot = refUpdate.refSnapshot;
+					currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
+				} else if (pageTransitionInvalidation) {
+					const refUpdate = sessionPageState.applyRefSnapshotInvalidation({ invalidation: pageTransitionInvalidation, sessionName: sessionStateKey, update: sessionPageStateUpdate });
 					currentRefSnapshot = refUpdate.refSnapshot;
 					currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
 				} else {

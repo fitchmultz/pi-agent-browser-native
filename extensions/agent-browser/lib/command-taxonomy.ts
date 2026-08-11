@@ -332,8 +332,12 @@ export function isSessionTabPostCommandCorrectionExcludedCommand(command: string
 	return hasCommandCapability(command, "excludedFromPostCommandCorrection");
 }
 
-export function isRefInvalidatingBatchCommand(command: string | undefined): boolean {
-	return hasCommandCapability(command, "invalidatesBatchRefs");
+export function isRecordStartPageTransition(command: string | undefined, subcommand?: string): boolean {
+	return command === "record" && subcommand === "start";
+}
+
+export function isRefInvalidatingBatchCommand(command: string | undefined, subcommand?: string): boolean {
+	return hasCommandCapability(command, "invalidatesBatchRefs") || isRecordStartPageTransition(command, subcommand);
 }
 
 export function isRefGuardedCommand(command: string | undefined): boolean {

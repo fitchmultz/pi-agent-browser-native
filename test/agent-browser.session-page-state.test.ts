@@ -14,6 +14,7 @@ import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "..
 import {
 	SessionPageState,
 	buildNoActivePageRefSnapshotInvalidation,
+	buildPageTransitionRefSnapshotInvalidation,
 	deriveSessionTabTarget,
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
@@ -213,6 +214,18 @@ test("SessionPageState restores unverified page transitions", () => {
 		tabTargetUnknown: true,
 		tabTarget: undefined,
 	});
+
+	const recordStart = SessionPageState.fromBranch([
+		toolEntry({ command: "snapshot", refSnapshot: { refIds: ["e1"] }, sessionName: "s1", sessionTabTarget: { url: "https://example.com/" } }),
+		toolEntry({ command: "record", refSnapshotInvalidation: buildPageTransitionRefSnapshotInvalidation(), sessionName: "s1", sessionTabTargetUnknown: true, subcommand: "start" }),
+	]);
+	assert.deepEqual(recordStart.get("s1"), {
+		pinningReason: undefined,
+		refSnapshot: undefined,
+		refSnapshotInvalidation: buildPageTransitionRefSnapshotInvalidation(),
+		tabTargetUnknown: true,
+		tabTarget: undefined,
+	});
 });
 
 test("SessionPageState clears tab targets, refs, invalidations, and pinning together", () => {
@@ -315,7 +328,7 @@ test("SessionPageState invalidation replaces snapshots and later snapshots clear
 	assert.equal(restored.refSnapshotInvalidation, undefined);
 });
 
-test("extractLatestRefSnapshotStateFromBatchResults records empty snapshots and no-active-page invalidations", () => {
+test("extractLatestRefSnapshotStateFromBatchResults records empty snapshots and page invalidations", () => {
 	assert.deepEqual(
 		extractLatestRefSnapshotStateFromBatchResults([
 			{ command: ["snapshot", "-i"], result: { refs: {}, title: "Empty", url: "https://example.com/" }, success: true },
@@ -328,6 +341,13 @@ test("extractLatestRefSnapshotStateFromBatchResults records empty snapshots and 
 			{ command: ["snapshot", "-i"], error: "No active page", success: false },
 		]),
 		{ invalidation: buildNoActivePageRefSnapshotInvalidation() },
+	);
+	assert.deepEqual(
+		extractLatestRefSnapshotStateFromBatchResults([
+			{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },
+			{ command: ["record", "start", "capture.webm"], result: { path: "capture.webm" }, success: true },
+		]),
+		{ invalidation: buildPageTransitionRefSnapshotInvalidation() },
 	);
 	assert.equal(
 		extractLatestRefSnapshotStateFromBatchResults([
