@@ -161,6 +161,7 @@ export type ClickDispatchProbeTarget =
 	};
 
 export interface ClickDispatchProbe {
+	cleaned?: boolean;
 	marker: string;
 	target: ClickDispatchProbeTarget;
 }
@@ -379,6 +380,7 @@ export interface ElectronHandoffSummary {
 
 export interface ElectronManagedSessionTarget {
 	error?: string;
+	namespace?: string;
 	sessionName: string;
 	title?: string;
 	url?: string;
@@ -488,6 +490,7 @@ export type PrepareBrowserRunResult =
 	| { kind: "ready"; prepared: PreparedBrowserRun };
 
 export interface ProcessBrowserOutputInput extends BrowserRunOptions {
+	artifactRunStartedAtMs: number;
 	prepared: PreparedBrowserRun;
 	processResult: AgentBrowserProcessResult;
 }

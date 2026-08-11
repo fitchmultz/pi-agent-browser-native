@@ -12,7 +12,7 @@ import { formatSessionArtifactRetentionSummary } from "../../results/artifact-ma
 import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTarget, type VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import { extractRefSnapshotFromData, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
-import { redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
+import { extractUpstreamCommandTokens, parseWaitCommandTokens, redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { getManagedSessionStateAccessValidationError, isFileUrl } from "../../managed-session-state-policy.js";
 import {
@@ -415,15 +415,15 @@ function isBroadGetTextSelector(selector: string | undefined): selector is strin
 	return normalized === "body" || normalized === "html" || normalized === ":root" || normalized === "*" || normalized === "main" || normalized === "div" || normalized === "section" || normalized === "article" || /^\[role=(?:"application"|'application'|application)\]$/i.test(normalized);
 }
 
-function getElectronTextScopeContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic["electronContext"] | undefined {
-	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords);
+function getElectronTextScopeContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; namespace?: string; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic["electronContext"] | undefined {
+	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords, options.namespace);
 	if (!record) return undefined;
 	const url = options.currentTarget?.url ?? options.priorTarget?.url;
 	return { launchId: record.launchId, sessionName: record.sessionName ?? options.sessionName, url };
 }
 
-export function getSourceLookupElectronContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; priorTarget?: SessionTabTarget; sessionName?: string }): AgentBrowserSourceLookupAnalysis["electronContext"] | undefined {
-	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords);
+export function getSourceLookupElectronContext(options: { currentTarget?: SessionTabTarget; electronLaunchRecords: Map<string, ElectronLaunchRecord>; namespace?: string; priorTarget?: SessionTabTarget; sessionName?: string }): AgentBrowserSourceLookupAnalysis["electronContext"] | undefined {
+	const record = findElectronLaunchRecordForSession(options.sessionName, options.electronLaunchRecords, options.namespace);
 	if (!record) return undefined;
 	const url = options.currentTarget?.url ?? options.priorTarget?.url;
 	return { appName: record.appName, appPath: record.appPath, executablePath: record.executablePath, launchId: record.launchId, sessionName: record.sessionName ?? options.sessionName, url };
@@ -439,7 +439,7 @@ export function buildSourceLookupElectronNextActions(sourceLookup: AgentBrowserS
 	return actions;
 }
 
-export function collectElectronBroadGetTextScopeDiagnostics(options: { commandInfo: CommandInfo; commandTokens: string[]; currentTarget?: SessionTabTarget; data: unknown; electronLaunchRecords: Map<string, ElectronLaunchRecord>; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic[] {
+export function collectElectronBroadGetTextScopeDiagnostics(options: { commandInfo: CommandInfo; commandTokens: string[]; currentTarget?: SessionTabTarget; data: unknown; electronLaunchRecords: Map<string, ElectronLaunchRecord>; namespace?: string; priorTarget?: SessionTabTarget; sessionName?: string }): ElectronBroadGetTextScopeDiagnostic[] {
 	const electronContext = getElectronTextScopeContext(options);
 	if (!electronContext) return [];
 	return getSuccessfulGetTextSelectors(options).filter(isBroadGetTextSelector).map((selector) => ({ electronContext, selector, summary: `Broad Electron get text selector warning: selector ${JSON.stringify(selector)} may read the entire app shell; prefer snapshot -i and a current @ref or a narrower panel selector.` }));
@@ -715,20 +715,15 @@ function getLastPositionalToken(args: string[], startIndex = 1): string | undefi
 }
 
 function getTimeoutStepArtifactPath(args: string[]): string | undefined {
-	const [command] = args;
+	const commandArgs = extractUpstreamCommandTokens(args);
+	const [command] = commandArgs;
 	if (command === "screenshot") {
-		const index = getScreenshotPathTokenIndex(args);
-		return index === undefined ? undefined : args[index];
+		const index = getScreenshotPathTokenIndex(commandArgs);
+		return index === undefined ? undefined : commandArgs[index];
 	}
-	if (command === "pdf") return getLastPositionalToken(args);
-	if (command === "download") return getLastPositionalToken(args, 2);
-	if (command === "wait") {
-		const inlineDownload = args.find((token) => token.startsWith("--download="));
-		if (inlineDownload) return inlineDownload.slice("--download=".length) || undefined;
-		const downloadIndex = args.indexOf("--download");
-		const downloadPath = downloadIndex >= 0 ? args[downloadIndex + 1] : undefined;
-		if (downloadPath && !downloadPath.startsWith("-")) return downloadPath;
-	}
+	if (command === "pdf") return getLastPositionalToken(commandArgs);
+	if (command === "download") return getLastPositionalToken(commandArgs, 2);
+	if (command === "wait") return parseWaitCommandTokens(commandArgs).downloadPath;
 	return undefined;
 }
 

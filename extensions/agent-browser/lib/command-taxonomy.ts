@@ -81,6 +81,10 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		triggersPostMutationSnapshot: true,
 	},
 	{
+		command: "diff",
+		guardsPageRefs: true,
+	},
+	{
 		command: "download",
 		eligibleForPageChangeSummary: true,
 		guardsPageRefs: true,
@@ -112,6 +116,10 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		eligibleForElectronHealthProbe: true,
 	},
 	{
+		command: "frame",
+		guardsPageRefs: true,
+	},
+	{
 		command: "focus",
 		guardsPageRefs: true,
 	},
@@ -124,11 +132,23 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		triggersPostMutationSnapshot: true,
 	},
 	{
+		command: "get",
+		guardsPageRefs: true,
+	},
+	{
+		command: "highlight",
+		guardsPageRefs: true,
+	},
+	{
 		command: "hover",
 		eligibleForPageChangeSummary: true,
 		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
 		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "is",
+		guardsPageRefs: true,
 	},
 	{
 		command: "keydown",
@@ -204,10 +224,12 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
 		command: "screenshot",
 		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
 	},
 	{
 		command: "scroll",
 		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
 		triggersPostMutationSnapshot: true,
 	},
@@ -308,6 +330,10 @@ export function isCloseCommand(command: string | undefined): boolean {
 	return hasCommandCapability(command, "closesSession");
 }
 
+export function isCloseAllCommand(commandTokens: readonly string[]): boolean {
+	return isCloseCommand(commandTokens[0]) && commandTokens.slice(1).includes("--all");
+}
+
 export function isOpenNavigationCommand(command: string | undefined): boolean {
 	return hasCommandCapability(command, "openNavigation");
 }
@@ -324,8 +350,15 @@ export function isSessionTabPostCommandCorrectionExcludedCommand(command: string
 	return hasCommandCapability(command, "excludedFromPostCommandCorrection");
 }
 
-export function isRefInvalidatingBatchCommand(command: string | undefined): boolean {
-	return hasCommandCapability(command, "invalidatesBatchRefs");
+/** Upstream 0.33.2 record start swaps to a fresh active page before its already-active check, so even a failed start can replace the page; record restart navigates the current page only when a URL operand (any fourth token, mirroring upstream's positional slot) is present. */
+export function isRecordPageTransitionCommand(tokens: readonly string[]): boolean {
+	if (tokens[0] !== "record") return false;
+	if (tokens[1] === "start") return true;
+	return tokens[1] === "restart" && tokens.length >= 4;
+}
+
+export function isRefInvalidatingBatchCommand(step: readonly string[]): boolean {
+	return hasCommandCapability(step[0], "invalidatesBatchRefs") || isRecordPageTransitionCommand(step);
 }
 
 export function isRefGuardedCommand(command: string | undefined): boolean {

@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
+import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import { CAPABILITY_BASELINE, expectedVersionLabel } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
@@ -305,6 +306,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 				},
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 					const contractUrl = `${fixtureServer?.baseUrl}/contract`;
 
 					const version = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--version"] });
@@ -632,6 +634,16 @@ if (!REAL_UPSTREAM_ENABLED) {
 						assert.match(String(blockedBatch.details?.validationError ?? ""), /does not match the requested managed-restore policy|active page became unverified/);
 						assert.equal(blockedBatch.details?.exitCode, undefined, "nested batch attachment must fail before upstream spawn");
 					}
+					for (const subcommand of ["start", "restart"]) {
+						const blockedRecordingAfterClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["batch"],
+							stdin: JSON.stringify([["close"], ["record", subcommand, join(tempDir, `after-close-${subcommand}.webm`)]]),
+						});
+						assert.equal(blockedRecordingAfterClose.isError, true);
+						assert.equal(blockedRecordingAfterClose.details?.failureCategory, "validation-error");
+						assert.match(blockedRecordingAfterClose.content[0]?.text ?? "", new RegExp(`record ${subcommand} cannot follow close`));
+						assert.equal(blockedRecordingAfterClose.details?.exitCode, undefined, "recording after close must fail before upstream spawn");
+					}
 					const lateConfigPath = join(tempDir, "agent-browser.json");
 					await writeFile(lateConfigPath, JSON.stringify({ restore: "replacement-close-key" }), "utf8");
 					const firstClose = await (async () => {
@@ -652,7 +664,36 @@ if (!REAL_UPSTREAM_ENABLED) {
 					});
 					assert.equal((JSON.parse(closedInfo.stdout) as { data?: { active?: boolean } }).data?.active, false, "owned close must override a redirecting namespace environment");
 
+					const restoreScope = getManagedSessionRestoreScope(managedSessionName ?? "");
+					const managedRestoreKey = createManagedSessionRestoreKey(tempDir, restoreScope);
+					const foreignRestoreKey = createManagedSessionRestoreKey(tempDir, `${restoreScope}-foreign-chat`);
+					assert.notEqual(foreignRestoreKey, managedRestoreKey, "concurrent Pi chats must not share an upstream newest-file-wins restore pool");
+					const restoreSessionsDirectory = join(tempDir, ".agent-browser", "sessions");
+					await writeFile(join(restoreSessionsDirectory, `${foreignRestoreKey}-newer-empty.json`), JSON.stringify({ cookies: [], origins: [] }), "utf8");
+
+					const sameExtensionRestoredOpen = await (async () => {
+						try {
+							await writeFile(lateConfigPath, JSON.stringify({ restore: foreignRestoreKey }), "utf8");
+							return await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", contractUrl] });
+						} finally {
+							await rm(lateConfigPath, { force: true });
+						}
+					})();
+					assertSuccessfulResult(sameExtensionRestoredOpen, shapes.commands.open, "reopen restored managed session after close in same extension");
+					const sameExtensionRestoreState = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["eval", "--stdin"],
+						stdin: `JSON.stringify({ cookiePresent: document.cookie.includes("piab_restore_cookie=${restoreMarker}"), local: localStorage.getItem("piab-restore-local"), session: sessionStorage.getItem("piab-restore-session") })`,
+					});
+					const sameExtensionRestoreDetails = assertSuccessfulResult(sameExtensionRestoreState, shapes.commands.eval, "read same-extension restored managed state");
+					const sameExtensionRestoredValue = JSON.parse(String((sameExtensionRestoreDetails.data as { result?: string }).result ?? "{}")) as { cookiePresent?: boolean; local?: string; session?: string };
+					assert.equal(sameExtensionRestoredValue.cookiePresent, true);
+					assert.equal(sameExtensionRestoredValue.local, restoreMarker);
+					assert.equal(sameExtensionRestoredValue.session, restoreMarker);
+					const sameExtensionRestoredClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+					assert.equal(sameExtensionRestoredClose.isError, false, `same-extension restored managed close should succeed: ${sameExtensionRestoredClose.content[0]?.text ?? ""}`);
+
 					const restoredHarness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(restoredHarness.handlers, "session_start", { reason: "resume" }, restoredHarness.ctx);
 					let restoredValueText: string | undefined;
 					try {
 						const restoredOpen = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, { args: ["open", contractUrl] });
@@ -671,6 +712,27 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(restoredValue.cookiePresent, true);
 					assert.equal(restoredValue.local, restoreMarker);
 					assert.equal(restoredValue.session, restoreMarker);
+
+					const isolatedHarness = createExtensionHarness({ cwd: tempDir, sessionId: "87654321876543218765432187654321" });
+					await runExtensionEvent(isolatedHarness.handlers, "session_start", { reason: "new" }, isolatedHarness.ctx);
+					let isolatedValueText: string | undefined;
+					try {
+						const isolatedOpen = await executeRegisteredTool(isolatedHarness.tool, isolatedHarness.ctx, { args: ["open", contractUrl] });
+						assertSuccessfulResult(isolatedOpen, shapes.commands.open, "open distinct-transcript managed session");
+						const isolatedState = await executeRegisteredTool(isolatedHarness.tool, isolatedHarness.ctx, {
+							args: ["eval", "--stdin"],
+							stdin: `JSON.stringify({ cookiePresent: document.cookie.includes("piab_restore_cookie=${restoreMarker}"), local: localStorage.getItem("piab-restore-local"), session: sessionStorage.getItem("piab-restore-session") })`,
+						});
+						const isolatedDetails = assertSuccessfulResult(isolatedState, shapes.commands.eval, "read distinct-transcript managed state");
+						isolatedValueText = String((isolatedDetails.data as { result?: string }).result);
+					} finally {
+						const isolatedClose = await executeRegisteredTool(isolatedHarness.tool, isolatedHarness.ctx, { args: ["close"] });
+						assert.equal(isolatedClose.isError, false, `distinct-transcript managed close should succeed: ${isolatedClose.content[0]?.text ?? ""}`);
+					}
+					const isolatedValue = JSON.parse(isolatedValueText ?? "{}") as { cookiePresent?: boolean; local?: string | null; session?: string | null };
+					assert.equal(isolatedValue.cookiePresent, false);
+					assert.equal(isolatedValue.local, null);
+					assert.equal(isolatedValue.session, null);
 
 					const reactWithoutReactApp = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["open", "--enable", "react-devtools", contractUrl],

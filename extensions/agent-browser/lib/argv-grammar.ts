@@ -93,6 +93,9 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 	"--ignore-https-errors",
 	"--json",
 	"--no-auto-dialog",
+	"--offline",
+	"--quick",
+	"--fix",
 	"--quiet",
 	"-q",
 	"--verbose",
@@ -157,7 +160,7 @@ export function canonicalizeAgentBrowserNamespace(value: string | undefined): st
 	return normalized.replace(/[-_]+$/u, "") || undefined;
 }
 
-function foldAgentBrowserFilesystemIdentity(value: string, platform: NodeJS.Platform): string {
+export function foldAgentBrowserFilesystemIdentity(value: string, platform: NodeJS.Platform): string {
 	if (platform !== "darwin" && platform !== "win32") return value;
 	// APFS aliases include full Unicode folds such as ß/SS and ς/Σ, not just ASCII case.
 	return value.normalize("NFC").toLowerCase().toUpperCase().toLowerCase().normalize("NFC");
@@ -168,6 +171,11 @@ export function getAgentBrowserSessionIdentityKey(sessionName: string, namespace
 	const identityNamespace = canonicalNamespace ? foldAgentBrowserFilesystemIdentity(canonicalNamespace, platform) : undefined;
 	const canonicalSessionName = foldAgentBrowserFilesystemIdentity(sessionName, platform);
 	return identityNamespace ? `${identityNamespace}\0${canonicalSessionName}` : canonicalSessionName;
+}
+
+export function isAgentBrowserSessionIdentityKeyInNamespace(identityKey: string, namespace?: string): boolean {
+	const prefix = getAgentBrowserSessionIdentityKey("", namespace);
+	return prefix ? identityKey.startsWith(prefix) : !identityKey.includes("\0");
 }
 
 /** Mirror upstream 0.33.2 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
@@ -269,6 +277,37 @@ export function hasOnlyOptionFlags(
 export function optionalGlobalValueFlagConsumesNext(flag: string, nextToken: string | undefined): boolean {
 	if (!OPTIONAL_GLOBAL_VALUE_FLAGS.has(flag) || nextToken === undefined || nextToken.startsWith("-")) return false;
 	return !isKnownCommandToken(nextToken);
+}
+
+export function projectUpstreamGlobalFlags(args: readonly string[]): { indices: number[]; tokens: string[] } {
+	const indices: number[] = [];
+	const tokens: string[] = [];
+	let seenCommand = false;
+	for (let index = 0; index < args.length; index += 1) {
+		const token = args[index];
+		if (token.startsWith("--restore=")) continue;
+		if (token === "--restore") {
+			if (!seenCommand && optionalGlobalValueFlagConsumesNext(token, args[index + 1])) index += 1;
+			continue;
+		}
+		if (PREVALIDATED_VALUE_FLAGS.has(token)) {
+			index += 1;
+			continue;
+		}
+		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token)) {
+			if (["true", "false"].includes(args[index + 1] ?? "")) index += 1;
+			continue;
+		}
+		tokens.push(token);
+		indices.push(index);
+		if (isKnownCommandToken(token)) seenCommand = true;
+	}
+	return { indices, tokens };
+}
+
+/** Mirror upstream 0.33.2 clean_args: remove global flags wherever they appear before command parsing. */
+export function stripUpstreamGlobalFlags(args: readonly string[]): string[] {
+	return projectUpstreamGlobalFlags(args).tokens;
 }
 
 export function stripSessionlessShapeGlobalFlags(commandTokens: readonly string[]): string[] {

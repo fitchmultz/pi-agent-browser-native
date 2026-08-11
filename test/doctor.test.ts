@@ -71,7 +71,7 @@ test("doctor reports missing agent-browser with actionable install guidance", as
 	assert.match(text, /https:\/\/github\.com\/vercel-labs\/agent-browser/);
 });
 
-test("doctor reports version drift from the canonical baseline", async () => {
+test("doctor reports version drift from the canonical target", async () => {
 	const report = await evaluateDoctorWithPi({
 		runAgentBrowser: async () => "agent-browser 0.25.0\n",
 		skipSourceCheck: true,
@@ -83,6 +83,7 @@ test("doctor reports version drift from the canonical baseline", async () => {
 	assert.match(text, new RegExp(`expected ${CAPABILITY_BASELINE.targetVersion}`));
 	assert.match(text, /found 0\.25\.0/);
 	assert.match(text, /backwards-compatibility shims/);
+	assert.match(text, /scripts\/agent-browser-target\.mjs/);
 	assert.match(text, /scripts\/agent-browser-capability-baseline\.mjs/);
 	assert.match(text, /npm run docs -- command-reference write/);
 	assert.match(text, /npm run verify -- command-reference/);

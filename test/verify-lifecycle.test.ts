@@ -7,8 +7,17 @@
  */
 
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import test from "node:test";
+
+import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../scripts/agent-browser-target.mjs";
+
+const execFile = promisify(execFileCallback);
 
 const lifecycleModule = (await import("../scripts/verify-lifecycle.mjs") as unknown) as {
 	agentBrowserResults: (entries: unknown[]) => Array<{
@@ -29,6 +38,7 @@ const lifecycleModule = (await import("../scripts/verify-lifecycle.mjs") as unkn
 	};
 	collectFullOutputPaths: (results: unknown[]) => string[];
 	createLifecycleSessionId: (pid?: number) => string;
+	fakeAgentBrowserScript: () => string;
 	injectLifecycleSentinelSource: (source: string, token: string) => string;
 	isDirectRun: (metaUrl: string, argv?: string[]) => boolean;
 	paneLooksReady: (pane: string) => boolean;
@@ -88,6 +98,18 @@ test("parseCliArgs rejects invalid lifecycle options", () => {
 	assert.throws(() => parseCliArgs(["--timeout-ms"]), /requires/);
 	assert.throws(() => parseCliArgs(["--timeout-ms", "0"]), /positive integer/);
 	assert.throws(() => parseCliArgs(["--timeout-ms", "1.5"]), /positive integer/);
+});
+
+test("fake lifecycle agent-browser reports the canonical upstream version without runtime state", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "piab-lifecycle-fake-version-"));
+	const scriptPath = join(directory, "agent-browser");
+	try {
+		await writeFile(scriptPath, lifecycleModule.fakeAgentBrowserScript(), "utf8");
+		const { stdout } = await execFile(process.execPath, [scriptPath, "--version"], { env: {} });
+		assert.equal(stdout, TARGET_AGENT_BROWSER_VERSION_LABEL);
+	} finally {
+		await rm(directory, { force: true, recursive: true });
+	}
 });
 
 test("createLifecycleSessionId returns an exact-session-safe id", () => {

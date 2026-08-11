@@ -4,6 +4,8 @@ import test from "node:test";
 import { AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS, getAgentBrowserRichInputRecoveryNextActionId, getAgentBrowserRichInputRecoveryNextActionIds } from "../extensions/agent-browser/lib/results/recovery-actions.js";
 import { buildAgentBrowserNextActions } from "../extensions/agent-browser/lib/results/action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails, classifyAgentBrowserFailureCategory, classifyAgentBrowserSuccessCategory } from "../extensions/agent-browser/lib/results/categories.js";
+import { mergeSessionArtifactManifest, retirePendingRecordingManifestEntries } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
+import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
 import {
@@ -23,6 +25,41 @@ import {
 
 const MISSING_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: missing boolean success field.";
 const NON_BOOLEAN_SUCCESS_PARSE_ERROR = "agent-browser returned an invalid JSON envelope: success field must be boolean.";
+
+test("retirePendingRecordingManifestEntries retires only the closed session recording", () => {
+	const manifest: SessionArtifactManifest = {
+		entries: [
+			{ command: "record", createdAtMs: 1, kind: "video", path: "a.webm", retentionState: "live", session: "a", storageScope: "explicit-path", subcommand: "start" },
+			{ command: "record", createdAtMs: 2, kind: "video", path: "b.webm", retentionState: "live", session: "b", storageScope: "explicit-path", subcommand: "restart" },
+			{ command: "screenshot", createdAtMs: 3, kind: "image", path: "a.png", retentionState: "live", session: "a", storageScope: "explicit-path" },
+		],
+		evictedCount: 0,
+		liveCount: 3,
+		maxEntries: 100,
+		updatedAtMs: 3,
+		version: 1,
+	};
+	const retired = retirePendingRecordingManifestEntries(manifest, "a", undefined, 4);
+	assert.deepEqual(retired.entries.map((entry) => entry.path), ["a.webm", "b.webm", "a.png"]);
+	assert.equal(retired.entries[0]?.subcommand, "close-abandoned");
+	assert.equal(retired.entries[0]?.retentionState, "missing");
+	assert.equal(retired.liveCount, 2);
+	assert.equal(retired.updatedAtMs, 4);
+});
+
+test("recording manifests keep namespace identities distinct on the same path", () => {
+	const manifest = mergeSessionArtifactManifest({
+		entries: [
+			{ absolutePath: "/tmp/shared.webm", command: "record", createdAtMs: 1, kind: "video", namespace: "one", path: "shared.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "start" },
+			{ absolutePath: "/tmp/shared.webm", command: "record", createdAtMs: 2, kind: "video", namespace: "two", path: "shared.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "start" },
+		],
+		nowMs: 3,
+	});
+	assert.equal(manifest?.entries.length, 2);
+	const retired = retirePendingRecordingManifestEntries(manifest!, "shared", "one", 4);
+	assert.equal(retired.entries.find((entry) => entry.namespace === "one")?.subcommand, "close-abandoned");
+	assert.equal(retired.entries.find((entry) => entry.namespace === "two")?.subcommand, "start");
+});
 
 test("AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS locks documented recovery action ids", () => {
 	assert.deepEqual(AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, {
@@ -209,6 +246,7 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Download not verified: file missing", command: "download" }), "download-not-verified");
 	assert.equal(buildAgentBrowserResultCategoryDetails({ failureCategory: "artifact-missing", succeeded: false }).failureCategory, "artifact-missing");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "agent-browser is required but was not found on PATH" }), "missing-binary");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Agent-browser Unix socket path would be 140 bytes (max 103)." }), "validation-error");
 	assert.equal(classifyAgentBrowserFailureCategory({ parseError: "agent-browser returned invalid JSON" }), "parse-failure");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Confirmation required: c_demo" }), "confirmation-required");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Electron launch blocked by caller deny policy." }), "policy-blocked");
@@ -225,6 +263,7 @@ test("classifyAgentBrowserSuccessCategory locks common machine-readable success 
 	assert.equal(classifyAgentBrowserSuccessCategory({}), "completed");
 	assert.equal(classifyAgentBrowserSuccessCategory({ inspection: true }), "inspection");
 	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", exists: true, kind: "image", path: "/tmp/a.png" }] }), "artifact-saved");
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/demo.webm", command: "record", kind: "video", path: "/tmp/demo.webm", recordingState: "openRecording", status: "pending", subcommand: "start" }] }), "artifact-pending");
 	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", exists: false, kind: "image", path: "/tmp/a.png" }] }), "artifact-unverified");
 });
 
@@ -311,6 +350,16 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/page.png", kind: "image", path: "/tmp/page.png" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.artifactPath, "/tmp/page.png");
 	assert.deepEqual(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/export.csv", exists: false, kind: "download", path: "/tmp/export.csv" }], resultCategory: "success", savedFilePath: "/tmp/export.csv", successCategory: "artifact-saved" })?.map((action) => action.id), ["wait-for-download"]);
 	assert.equal(buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/state.json", exists: false, kind: "file", path: "/tmp/state.json" }], resultCategory: "success", successCategory: "artifact-saved" })?.[0]?.id, "verify-artifact-path");
+	assert.deepEqual(
+		buildAgentBrowserNextActions({ artifacts: [{ absolutePath: "/tmp/demo.webm", command: "record", kind: "video", path: "/tmp/demo.webm", recordingState: "openRecording", status: "pending", subcommand: "start" }], resultCategory: "success", sessionName: "named", successCategory: "artifact-pending" })?.[0],
+		{
+			id: "stop-pending-recording",
+			params: { args: ["--session", "named", "record", "stop"] },
+			reason: "Stop the active recording so the requested video can be finalized and verified on disk.",
+			safety: "The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
+			tool: "agent_browser",
+		},
+	);
 	assert.deepEqual(
 		buildAgentBrowserNextActions({
 			electron: { launchId: "el_123", sessionName: "pi-agent-browser-electron-el_123", status: "active" },
@@ -706,7 +755,7 @@ test("isHttpOrHttpsUrl accepts http(s) only", async () => {
 	assert.equal(isHttpOrHttpsUrl("app://demo"), false);
 	assert.equal(isHttpOrHttpsUrl("not-a-url"), false);
 	const compact = buildQaCompactPassText({
-		batchStepCount: 8,
+		batchStepCount: 9,
 		checks: {
 			attached: false,
 			checkConsole: true,
@@ -725,8 +774,8 @@ test("isHttpOrHttpsUrl accepts http(s) only", async () => {
 		},
 	});
 	assert.match(compact, /Page: Example — https:\/\/example\.test\//);
-	assert.match(compact, /Checks run: load:domcontentloaded, text×1, network, console, errors, diagnostics-reset \(8 batch steps\)/);
-	assert.match(compact, /Diagnostic reset: URL QA cleared enabled network\/console\/page-error buffers before opening the target/);
+	assert.match(compact, /Checks run: load:domcontentloaded, text×1, network, console, errors, diagnostics-reset \(9 batch steps\)/);
+	assert.match(compact, /Diagnostic isolation: URL QA clears enabled network\/console buffers, then snapshots any page-error residue/);
 	assert.match(compact, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 });
 

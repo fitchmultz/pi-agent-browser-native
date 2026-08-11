@@ -23,7 +23,15 @@ function initializeGitProject(path: string): void {
 }
 
 function validate(cwd: string, args: string[], env?: NodeJS.ProcessEnv, stdin?: string, currentPageUrl?: string): string | undefined {
-	return getManagedSessionStateAccessValidationError({ args, currentPageUrl, cwd, env, parentEnv: {}, stdin });
+	return getManagedSessionStateAccessValidationError({
+		args,
+		currentPageUrl,
+		cwd,
+		env,
+		managedSessionRestoreKey: createManagedSessionRestoreKey(cwd),
+		parentEnv: {},
+		stdin,
+	});
 }
 
 test("managed session targets require typed ownership", () => {
@@ -128,7 +136,7 @@ test("managed state policy blocks browser navigation into local agent-browser st
 			["--profile", protectedPath, "open", "https://example.com"],
 			["--screenshot-dir", join(tempDir, ".agent-browser", "screenshots"), "open", "https://example.com"],
 		]) {
-			assert.match(validate(tempDir, args) ?? "", /authenticated cookies and storage|Upstream agent-browser config is blocked/, args.join(" "));
+			assert.match(validate(tempDir, args) ?? "", /authenticated cookies and storage|Explicit upstream agent-browser config/, args.join(" "));
 		}
 		if (process.platform !== "win32") {
 			const aliasPath = join(tempDir, "state-alias.json");
@@ -181,7 +189,7 @@ test("managed state policy blocks browser navigation into local agent-browser st
 			"AGENT_BROWSER_SOCKET_DIR",
 			"AGENT_BROWSER_STATE",
 		]) {
-			assert.match(validate(tempDir, ["open", "https://example.com"], { [name]: `\u0085${protectedPath}` }) ?? "", /authenticated cookies and storage|Upstream agent-browser config is blocked/, name);
+			assert.match(validate(tempDir, ["open", "https://example.com"], { [name]: `\u0085${protectedPath}` }) ?? "", /authenticated cookies and storage|Explicit upstream agent-browser config/, name);
 		}
 		for (const name of ["AGENT_BROWSER_EXTENSIONS", "AGENT_BROWSER_INIT_SCRIPTS"]) {
 			assert.match(validate(tempDir, ["open", "https://example.com"], { [name]: `safe.js,\u0085${protectedPath}` }) ?? "", /authenticated cookies and storage/, name);
@@ -207,7 +215,9 @@ test("managed state policy blocks browser navigation into local agent-browser st
 		assert.match(validate(tempDir, ["batch", `screenshot --screenshot-quality 80 ${join(tempDir, ".agent-browser", "batch-arg.png")}`]) ?? "", /authenticated cookies and storage/);
 		assert.equal(validate(tempDir, ["batch", "'unterminated"]), undefined);
 		assert.equal(validate(tempDir, ["batch", "open https://example.com", "snapshot -i"]), undefined);
-		assert.match(validate(tempDir, ["batch"], undefined, JSON.stringify([["eval", "location.href='file:///tmp/local.html'"], ["snapshot", "-i"]])) ?? "", /active page became unverified/);
+		const unverifiedEvalBatchError = validate(tempDir, ["batch"], undefined, JSON.stringify([["eval", "location.href='file:///tmp/local.html'"], ["snapshot", "-i"]])) ?? "";
+		assert.match(unverifiedEvalBatchError, /active page became unverified/);
+		assert.match(unverifiedEvalBatchError, /put get url after the transition.*or split the batch/);
 		assert.equal(validate(tempDir, ["open", "--headed", "https://example.com"], undefined, undefined, protectedUrl), undefined);
 		assert.equal(validate(tempDir, ["close"], undefined, undefined, protectedUrl), undefined);
 		assert.equal(validate(tempDir, ["close"], { AGENT_BROWSER_STATE: protectedPath }), undefined);
@@ -274,12 +284,15 @@ test("managed state policy blocks browser navigation into local agent-browser st
 			cwd: tempDir,
 			stdin: navigationThenContentBatch,
 		}), undefined);
+		// Upstream keeps --bail=false as a raw command row (only the exact --bail
+		// token is a flag), so the validator scans it as a step and still rejects
+		// the continuation hazard fail-closed.
 		assert.match(getManagedSessionStateAccessValidationError({
 			args: ["--session", "external", "batch", "--bail=false"],
 			currentPageUrl: protectedUrl,
 			cwd: tempDir,
 			stdin: navigationThenContentBatch,
-		}) ?? "", /--bail/);
+		}) ?? "", /is blocked/);
 		assert.match(getManagedSessionStateAccessValidationError({
 			args: ["--session", "external", "batch", "open https://safe.example/", "get html body"],
 			currentPageUrl: protectedUrl,
@@ -314,10 +327,10 @@ test("managed state policy blocks browser navigation into local agent-browser st
 			trustedFirstBatchTabSelection: true,
 		}), undefined);
 
-		assert.match(validate(tempDir, ["--config", "safe-config.json", "open", "https://example.com"]) ?? "", /Upstream agent-browser config is blocked/);
-		assert.match(validate(tempDir, ["open", "https://example.com"], { AGENT_BROWSER_CONFIG: "safe-config.json" }) ?? "", /Upstream agent-browser config is blocked/);
+		assert.match(validate(tempDir, ["--config", "safe-config.json", "open", "https://example.com"]) ?? "", /Explicit upstream agent-browser config/);
+		assert.match(validate(tempDir, ["open", "https://example.com"], { AGENT_BROWSER_CONFIG: "safe-config.json" }) ?? "", /Explicit upstream agent-browser config/);
 		await writeFile(join(tempDir, "agent-browser.json"), JSON.stringify({ state: protectedPath }));
-		assert.match(validate(tempDir, ["open", "https://example.com"]) ?? "", /Upstream agent-browser config is blocked/);
+		assert.equal(validate(tempDir, ["open", "https://example.com"]), undefined);
 		assert.equal(validate(tempDir, ["doctor"]), undefined);
 		assert.equal(validate(tempDir, ["close"]), undefined);
 	} finally {

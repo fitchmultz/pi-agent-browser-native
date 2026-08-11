@@ -8,16 +8,19 @@ import { parseArgvDescriptor } from "./argv-descriptor.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isKnownCommandToken } from "./command-taxonomy.js";
 import {
+	extractExplicitSessionName,
 	getFlagName,
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
 	GLOBAL_VALUE_FLAGS,
 	optionalGlobalValueFlagConsumesNext,
+	resolveAgentBrowserNamespace,
 } from "./argv-grammar.js";
 import {
 	canonicalizeOwnedManagedSessionCloseArgs,
 	commitManagedSessionRestoreSuppression,
 	getManagedSessionRestoreConfigEnv,
 	getManagedSessionRestoreEnv,
+	getOwnedManagedSessionRestoreKey,
 	getManagedSessionRestoreProtectedEnv,
 	getOwnedManagedSessionCompatibilityEnv,
 	getOwnedManagedSessionNamespaceEnv,
@@ -52,9 +55,24 @@ const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 const EXIT_STDIO_GRACE_MS = 100;
 const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd";
 const attachedBrowserSessionContext = new AsyncLocalStorage<boolean>();
+const WINDOWS_COMMANDS_WITH_ADJACENT_SUBCOMMAND = new Set([
+	"auth", "clipboard", "cookies", "dashboard", "device", "dialog", "diff", "find", "get", "is", "keyboard",
+	"mouse", "network", "plugin", "profiler", "react", "record", "session", "set", "skills", "state", "storage",
+	"stream", "tab", "trace", "window",
+]);
 
 export function withAttachedBrowserSessionContext<T>(preserve: boolean, run: () => Promise<T>): Promise<T> {
 	return attachedBrowserSessionContext.run(preserve || attachedBrowserSessionContext.getStore() === true, run);
+}
+
+export function getWindowsExplicitDefaultNamespaceEnv(
+	args: string[],
+	parentNamespace: string | undefined,
+	platform: NodeJS.Platform = processPlatform,
+): NodeJS.ProcessEnv {
+	return platform === "win32" && resolveAgentBrowserNamespace(args, parentNamespace) === ""
+		? { AGENT_BROWSER_NAMESPACE: "" }
+		: {};
 }
 
 export interface ProcessRunResult {
@@ -85,7 +103,11 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index] as string;
 		if (isKnownCommandToken(token)) {
-			return index === 0 ? args : [token, ...leadingGlobals, ...args.slice(index + 1)];
+			if (index === 0) return args;
+			const firstPositional = args[index + 1];
+			return WINDOWS_COMMANDS_WITH_ADJACENT_SUBCOMMAND.has(token) && firstPositional && !firstPositional.startsWith("-")
+				? [token, firstPositional, ...leadingGlobals, ...args.slice(index + 2)]
+				: [token, ...leadingGlobals, ...args.slice(index + 1)];
 		}
 		if (!token.startsWith("-")) return args;
 		if (token.startsWith("--restore=")) {
@@ -115,6 +137,13 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 		if (GLOBAL_VALUE_FLAGS.includes(flag as typeof GLOBAL_VALUE_FLAGS[number])) {
 			const value = args[index + 1];
 			if (value === undefined) return args;
+			// PowerShell -> .cmd drops empty argv values. These two wrapper-owned
+			// defaults mean the same thing when omitted, so never let the next flag
+			// become their accidental value on native Windows.
+			if (value === "" && (flag === "--args" || flag === "--namespace")) {
+				index += 1;
+				continue;
+			}
 			leadingGlobals.push(token, value);
 			index += 1;
 			continue;
@@ -301,22 +330,20 @@ export function getAgentBrowserSocketDir(
 	return `${prefix}${typeof uid === "number" ? `-${uid}` : ""}`;
 }
 
+export function isTrustedSocketDirAncestor(
+	metadata: { isDirectory(): boolean; isSymbolicLink(): boolean; mode: number; uid: number },
+	uid: number,
+): boolean {
+	if (metadata.isSymbolicLink()) return metadata.uid === 0;
+	if (!metadata.isDirectory()) return false;
+	const mode = metadata.mode & 0o7777;
+	if (metadata.uid === uid && uid !== 0) return (mode & 0o022) === 0;
+	return metadata.uid === 0 && ((mode & 0o022) === 0 || (mode & 0o1000) !== 0);
+}
+
 async function hasTrustedSocketDirAncestry(socketDir: string, uid: number): Promise<boolean> {
 	for (let current = dirname(socketDir);;) {
-		const metadata = await lstat(current);
-		if (metadata.isSymbolicLink()) {
-			if (metadata.uid !== 0) return false;
-		} else if (!metadata.isDirectory()) {
-			return false;
-		}
-		if (!metadata.isSymbolicLink()) {
-			const mode = metadata.mode & 0o7777;
-			if (metadata.uid === uid) {
-				if ((mode & 0o022) !== 0) return false;
-			} else if (metadata.uid !== 0 || ((mode & 0o022) !== 0 && (mode & 0o1000) === 0)) {
-				return false;
-			}
-		}
+		if (!isTrustedSocketDirAncestor(await lstat(current), uid)) return false;
 		const parent = dirname(current);
 		if (parent === current) return true;
 		current = parent;
@@ -342,24 +369,60 @@ async function socketDirEntriesAreOwned(socketDir: string, uid: number, visited 
 	return true;
 }
 
+export async function getAgentBrowserSocketDirValidationError(
+	socketDir: string,
+	uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
+): Promise<string | undefined> {
+	if (!isAbsolute(socketDir)) return "the path is not absolute";
+	if (typeof uid !== "number") return "POSIX ownership metadata is unavailable";
+	try {
+		if (!await hasTrustedSocketDirAncestry(socketDir, uid)) return "an ancestor is writable, foreign-owned, a non-directory, or an untrusted symlink";
+		try {
+			await mkdir(socketDir, { mode: 0o700 });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") return `the directory could not be created (${(error as NodeJS.ErrnoException).code ?? "unknown error"})`;
+		}
+		const metadata = await lstat(socketDir);
+		if (!metadata.isDirectory()) return "the path is not a directory";
+		if (metadata.isSymbolicLink()) return "the directory is a symlink";
+		if (metadata.uid !== uid) return `the directory is owned by uid ${metadata.uid}, not uid ${uid}`;
+		if ((metadata.mode & 0o777) !== 0o700) return `the directory mode is ${(metadata.mode & 0o777).toString(8)}, not 700`;
+		if (!await hasTrustedSocketDirAncestry(socketDir, uid)) return "an ancestor became untrusted during validation";
+		if (!await socketDirEntriesAreOwned(socketDir, uid)) return "the directory contains a foreign-owned, symlink, special, or excessively deep entry";
+		return undefined;
+	} catch (error) {
+		return `the directory could not be inspected (${(error as NodeJS.ErrnoException).code ?? "unknown error"})`;
+	}
+}
+
 export async function ensureAgentBrowserSocketDir(
 	socketDir: string,
 	uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
 ): Promise<boolean> {
-	if (!isAbsolute(socketDir) || typeof uid !== "number") return false;
-	try {
-		if (!await hasTrustedSocketDirAncestry(socketDir, uid)) return false;
-		try {
-			await mkdir(socketDir, { mode: 0o700 });
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
-		}
-		const metadata = await lstat(socketDir);
-		if (!metadata.isDirectory() || metadata.isSymbolicLink() || metadata.uid !== uid || (metadata.mode & 0o777) !== 0o700) return false;
-		return await hasTrustedSocketDirAncestry(socketDir, uid) && await socketDirEntriesAreOwned(socketDir, uid);
-	} catch {
-		return false;
-	}
+	return await getAgentBrowserSocketDirValidationError(socketDir, uid) === undefined;
+}
+
+export function getAgentBrowserSocketPathValidationError(options: {
+	args: string[];
+	env?: NodeJS.ProcessEnv;
+	platform?: NodeJS.Platform;
+	socketDir: string;
+}): string | undefined {
+	if ((options.platform ?? processPlatform) === "win32") return undefined;
+	const descriptor = parseArgvDescriptor(options.args);
+	const { command } = descriptor.commandInfo;
+	// Preflight commands that can start or navigate a browser. Follow-up reads and
+	// cleanup may target a daemon created by an earlier wrapper version, so let
+	// upstream inspect those identities instead of rejecting them from path math.
+	if (!command || !["batch", "connect", "goto", "navigate", "open", "visit"].includes(command)) return undefined;
+	const sessionName = extractExplicitSessionName(options.args);
+	if (!sessionName) return undefined;
+	const namespace = resolveAgentBrowserNamespace(options.args, options.env?.AGENT_BROWSER_NAMESPACE);
+	const socketRoot = namespace ? join(options.socketDir, "namespaces", namespace, "run") : options.socketDir;
+	const socketPath = join(socketRoot, `${sessionName}.sock`);
+	const pathBytes = Buffer.byteLength(socketPath);
+	if (pathBytes <= 103) return undefined;
+	return `Agent-browser Unix socket path would be ${pathBytes} bytes (max 103) for session ${JSON.stringify(sessionName)} under ${JSON.stringify(options.socketDir)}. Set PI_AGENT_BROWSER_SOCKET_DIR to a shorter absolute private directory such as /tmp/piab-<uid> with mode 0700; retrying sessionMode \"fresh\" cannot shorten this configured root.`;
 }
 
 export function buildAgentBrowserProcessEnv(
@@ -406,6 +469,7 @@ function getManagedPreSpawnPolicyError(
 		currentPageUrl,
 		cwd: options.cwd,
 		env: effectiveEnv ?? options.env,
+		managedSessionRestoreKey: getOwnedManagedSessionRestoreKey(),
 		pageUrlUnknown,
 		parentEnv: effectiveEnv ? {} : options.parentEnv ?? processEnv,
 		stdin: options.stdin,
@@ -489,6 +553,7 @@ export async function runAgentBrowserProcess(options: {
 		...managedSessionRestoreConfigEnv,
 		...getManagedSessionRestoreProtectedEnv(managedSessionRestoreOptions, managedSessionRestoreEnv),
 		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
+		...getWindowsExplicitDefaultNamespaceEnv(args, parentEnv.AGENT_BROWSER_NAMESPACE),
 		...ownedManagedSessionCompatibilityEnv,
 		AGENT_BROWSER_ALLOW_FILE_ACCESS: undefined,
 		[AGENT_BROWSER_ARGS_ENV]: undefined,
@@ -498,16 +563,19 @@ export async function runAgentBrowserProcess(options: {
 	if (ownedManagedSessionClose) effectiveEnv = { ...effectiveEnv, AGENT_BROWSER_RESTORE: undefined };
 	const requestedSocketDir = explicitSocketDir ?? parentEnv[PI_AGENT_BROWSER_SOCKET_DIR_ENV] ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir !== undefined) {
-		const socketDirIsSecure = requestedSocketDir.length > 0 && await ensureAgentBrowserSocketDir(requestedSocketDir);
+		const socketDirError = requestedSocketDir.length > 0
+			? await getAgentBrowserSocketDirValidationError(requestedSocketDir)
+			: "the configured path is empty";
 		if (signal?.aborted) {
 			return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
 		}
-		if (!socketDirIsSecure) {
+		const socketPathError = socketDirError ? undefined : getAgentBrowserSocketPathValidationError({ args, env: effectiveEnv, socketDir: requestedSocketDir });
+		if (socketDirError || socketPathError) {
 			return {
 				aborted: false,
 				agentBrowserStarted: false,
 				exitCode: 1,
-				spawnError: new Error("Agent-browser socket storage must be an absolute, non-symlink directory owned by the current user with mode 0700."),
+				spawnError: new Error(socketPathError ?? `Agent-browser socket storage ${JSON.stringify(requestedSocketDir)} is unusable: ${socketDirError}. Use an absolute directory owned by the current uid with mode 0700 and remove foreign, symlink, or special entries.`),
 				stderr: "",
 				stdout: "",
 				timedOut: false,

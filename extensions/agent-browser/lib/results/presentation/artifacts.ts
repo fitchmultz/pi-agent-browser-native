@@ -1,10 +1,12 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { isRecord, parsePositiveInteger } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import {
 	formatSessionArtifactRetentionSummary,
+	getSessionArtifactManifestEntryKey,
 	isPendingRecordingArtifact,
 	isPendingRecordingCommand,
 	mergeSessionArtifactManifest,
@@ -32,6 +34,7 @@ const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
 const INLINE_IMAGE_MAX_BYTES_ENV = "PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES";
 
 const DEFAULT_INLINE_IMAGE_MAX_BYTES = 5 * 1_024 * 1_024;
+const ARTIFACT_MTIME_TOLERANCE_MS = 2_000;
 
 function getImageMimeType(filePath: string): string | undefined {
 	const extension = extname(filePath).toLowerCase();
@@ -60,14 +63,10 @@ function shouldAppendArtifactRetentionNotice(entries: SessionArtifactManifestEnt
 	return entries.some((entry) => entry.retentionState === "evicted" || entry.storageScope !== "explicit-path");
 }
 
-function getManifestEntryKey(entry: SessionArtifactManifestEntry): string {
-	return entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
-}
-
 export function manifestHasNewNoticeWorthyEntries(base: SessionArtifactManifest | undefined, current: SessionArtifactManifest | undefined): boolean {
 	if (!current) return false;
-	const baseKeys = new Set((base?.entries ?? []).map(getManifestEntryKey));
-	return current.entries.some((entry) => !baseKeys.has(getManifestEntryKey(entry)) && (entry.retentionState === "evicted" || entry.storageScope !== "explicit-path"));
+	const baseKeys = new Set((base?.entries ?? []).map(getSessionArtifactManifestEntryKey));
+	return current.entries.some((entry) => !baseKeys.has(getSessionArtifactManifestEntryKey(entry)) && (entry.retentionState === "evicted" || entry.storageScope !== "explicit-path"));
 }
 
 export function applyArtifactManifest(presentation: ToolPresentation, baseManifest: SessionArtifactManifest | undefined, entries: SessionArtifactManifestEntry[]): ToolPresentation {
@@ -113,12 +112,16 @@ const ARTIFACT_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
 	...IMAGE_EXTENSION_TO_MIME_TYPE,
 };
 
+function isDownloadWaitSubcommand(subcommand: string | undefined): boolean {
+	return subcommand === "--download" || subcommand === "-d";
+}
+
 function getArtifactKind(commandInfo: CommandInfo): FileArtifactKind | undefined {
 	if (commandInfo.command === "screenshot") return "image";
 	if (commandInfo.command === "diff" && commandInfo.subcommand === "screenshot") return "image";
 	if (commandInfo.command === "pdf") return "pdf";
 	if (commandInfo.command === "download") return "download";
-	if (commandInfo.command === "wait" && commandInfo.subcommand === "--download") return "download";
+	if (commandInfo.command === "wait" && isDownloadWaitSubcommand(commandInfo.subcommand)) return "download";
 	if (commandInfo.command === "state" && commandInfo.subcommand === "save") return "file";
 	if (commandInfo.command === "trace") return "trace";
 	if (commandInfo.command === "profiler") return "profile";
@@ -163,10 +166,19 @@ export interface ArtifactRequestContext {
 	tempPath?: string;
 }
 
+function artifactMtimeIsOutsideCommandWindow(updatedAtMs: number, minUpdatedAtMs?: number, maxUpdatedAtMs?: number): boolean {
+	return minUpdatedAtMs !== undefined
+		&& (updatedAtMs < minUpdatedAtMs - ARTIFACT_MTIME_TOLERANCE_MS
+			|| (maxUpdatedAtMs !== undefined && updatedAtMs > maxUpdatedAtMs + ARTIFACT_MTIME_TOLERANCE_MS));
+}
+
 async function buildFileArtifactMetadata(options: {
+	artifactMaxUpdatedAtMs?: number;
+	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
 	cwd: string;
+	namespace?: string;
 	path: string;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata | undefined> {
@@ -181,11 +193,16 @@ async function buildFileArtifactMetadata(options: {
 	const pendingRecording = isPendingRecordingCommand(options.commandInfo.command, options.commandInfo.subcommand, kind);
 	let exists: boolean | undefined;
 	let sizeBytes: number | undefined;
+	let stale = false;
+	let updatedAtMs: number | undefined;
 	if (!pendingRecording) {
 		try {
 			const fileStats = await stat(absolutePath);
 			exists = true;
 			sizeBytes = fileStats.size;
+			updatedAtMs = fileStats.mtimeMs;
+			const commandCreatesArtifact = !(options.commandInfo.command === "wait" && isDownloadWaitSubcommand(options.commandInfo.subcommand));
+			stale = commandCreatesArtifact && artifactMtimeIsOutsideCommandWindow(updatedAtMs, options.artifactMinUpdatedAtMs, options.artifactMaxUpdatedAtMs);
 		} catch {
 			exists = false;
 		}
@@ -200,38 +217,42 @@ async function buildFileArtifactMetadata(options: {
 		extension,
 		kind,
 		mediaType: extension ? ARTIFACT_EXTENSION_TO_MEDIA_TYPE[extension] : undefined,
+		namespace: options.namespace,
 		path: displayPath,
 		recordingState: pendingRecording ? "openRecording" : undefined,
 		requestedPath: options.artifactRequest?.path,
 		session: options.sessionName,
 		sizeBytes,
-		status: options.artifactRequest?.status ?? (pendingRecording ? "pending" : exists === false ? "missing" : "saved"),
+		status: pendingRecording ? "pending" : exists === false ? "missing" : stale ? "stale" : options.artifactRequest?.status ?? "saved",
 		subcommand: options.commandInfo.subcommand,
 		tempPath: options.artifactRequest?.tempPath,
+		updatedAtMs,
 		willExistOnStop: pendingRecording ? true : undefined,
 	};
 }
 
 async function buildPreviousRestartRecordingArtifact(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
+	artifactMinUpdatedAtMs?: number;
 	commandInfo: CommandInfo;
-	currentPaths: ReadonlySet<string>;
 	cwd: string;
+	namespace?: string;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata | undefined> {
 	if (options.commandInfo.command !== "record" || options.commandInfo.subcommand !== "restart") return undefined;
+	const sessionKey = options.sessionName ? getAgentBrowserSessionIdentityKey(options.sessionName, options.namespace) : undefined;
 	const previousRecording = options.artifactManifest?.entries.find((entry) => (
 		entry.command === "record" &&
 		(entry.subcommand === "start" || entry.subcommand === "restart") &&
 		entry.kind === "video" &&
-		(!options.sessionName || !entry.session || entry.session === options.sessionName) &&
-		!options.currentPaths.has(entry.path) &&
-		(!entry.absolutePath || !options.currentPaths.has(entry.absolutePath))
+		(!sessionKey || (entry.session && getAgentBrowserSessionIdentityKey(entry.session, entry.namespace) === sessionKey))
 	));
 	if (!previousRecording) return undefined;
 	const absolutePath = previousRecording.absolutePath ?? resolve(options.cwd, previousRecording.path);
 	try {
 		const fileStats = await stat(absolutePath);
+		const stale = artifactMtimeIsOutsideCommandWindow(fileStats.mtimeMs, options.artifactMinUpdatedAtMs, options.artifactMaxUpdatedAtMs);
 		return {
 			absolutePath,
 			artifactType: "video",
@@ -241,30 +262,49 @@ async function buildPreviousRestartRecordingArtifact(options: {
 			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
 			kind: "video",
 			mediaType: previousRecording.mediaType,
+			namespace: previousRecording.namespace ?? options.namespace,
 			path: previousRecording.path,
 			requestedPath: previousRecording.requestedPath,
 			session: previousRecording.session ?? options.sessionName,
 			sizeBytes: fileStats.size,
-			status: "saved",
+			status: stale ? "stale" : "saved",
 			subcommand: "restart-previous",
+			updatedAtMs: fileStats.mtimeMs,
 		};
 	} catch {
-		return undefined;
+		return {
+			absolutePath,
+			artifactType: "video",
+			command: "record",
+			cwd: previousRecording.cwd ?? options.cwd,
+			exists: false,
+			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
+			kind: "video",
+			mediaType: previousRecording.mediaType,
+			namespace: previousRecording.namespace ?? options.namespace,
+			path: previousRecording.path,
+			requestedPath: previousRecording.requestedPath,
+			session: previousRecording.session ?? options.sessionName,
+			status: "missing",
+			subcommand: "restart-previous",
+		};
 	}
 }
 
 export async function extractFileArtifacts(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
+	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
 	cwd: string;
 	data: unknown;
+	namespace?: string;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata[]> {
 	const candidates = extractPathStrings(options.data);
 	const currentArtifacts = (await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ ...options, path })))).filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
-	const currentPaths = new Set(currentArtifacts.flatMap((artifact) => [artifact.path, artifact.absolutePath]));
-	const previousRestartRecordingArtifact = await buildPreviousRestartRecordingArtifact({ artifactManifest: options.artifactManifest, commandInfo: options.commandInfo, currentPaths, cwd: options.cwd, sessionName: options.sessionName });
+	const previousRestartRecordingArtifact = await buildPreviousRestartRecordingArtifact({ artifactManifest: options.artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, commandInfo: options.commandInfo, cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName });
 	return previousRestartRecordingArtifact ? [previousRestartRecordingArtifact, ...currentArtifacts] : currentArtifacts;
 }
 
@@ -278,9 +318,10 @@ export function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMeta
 		extension: artifact.extension,
 		kind: artifact.kind,
 		mediaType: artifact.mediaType,
+		namespace: artifact.namespace,
 		path: artifact.path,
 		requestedPath: artifact.requestedPath,
-		retentionState: artifact.exists === false ? "missing" : "live",
+		retentionState: artifact.exists === false || artifact.status === "stale" ? "missing" : "live",
 		session: artifact.session,
 		sizeBytes: artifact.sizeBytes,
 		storageScope: "explicit-path",
@@ -289,6 +330,9 @@ export function buildManifestEntriesForFileArtifacts(artifacts: FileArtifactMeta
 }
 
 export function isManifestFileArtifact(artifact: FileArtifactMetadata): boolean {
+	if (artifact.status === "stale") {
+		return artifact.kind === "video" && artifact.command === "record" && artifact.subcommand === "restart-previous";
+	}
 	return artifact.kind === "video" && artifact.command === "record" ? true : !isPendingRecordingArtifact(artifact);
 }
 
@@ -311,20 +355,24 @@ function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactV
 			willExistOnStop: artifact.willExistOnStop ?? true,
 		};
 	}
-	const state = artifact.exists === true
-		? "verified"
-		: artifact.exists === false
-			? "missing"
-			: "unverified";
+	const state = artifact.status === "stale"
+		? "unverified"
+		: artifact.exists === true
+			? "verified"
+			: artifact.exists === false
+				? "missing"
+				: "unverified";
 	return {
 		absolutePath: artifact.absolutePath,
 		exists: artifact.exists,
 		kind: artifact.kind,
-		limitation: state === "missing"
-			? "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated."
-			: state === "unverified"
-				? "The wrapper could not prove local filesystem existence for this artifact."
-				: undefined,
+		limitation: artifact.status === "stale"
+			? "The reported path's modification time fell outside this command's bounded artifact window. Treat the artifact as stale until regenerated."
+			: state === "missing"
+				? "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated."
+				: state === "unverified"
+					? "The wrapper could not prove local filesystem existence for this artifact."
+					: undefined,
 		mediaType: artifact.mediaType,
 		path: artifact.path,
 		requestedPath: artifact.requestedPath,
@@ -333,6 +381,7 @@ function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactV
 		state,
 		status: artifact.status,
 		storageScope: "explicit-path",
+		updatedAtMs: artifact.updatedAtMs,
 	};
 }
 
@@ -391,17 +440,19 @@ export function buildArtifactVerificationSummary(
 }
 
 export function hasMissingFileArtifact(artifacts: FileArtifactMetadata[] | undefined): boolean {
-	return (artifacts ?? []).some((artifact) => !isPendingRecordingArtifact(artifact) && artifact.exists === false);
+	return (artifacts ?? []).some((artifact) => !isPendingRecordingArtifact(artifact) && (artifact.exists === false || artifact.status === "stale"));
 }
 
 export function formatMissingArtifactFailureText(artifacts: FileArtifactMetadata[] | undefined): string | undefined {
-	const missingArtifacts = (artifacts ?? []).filter((artifact) => !isPendingRecordingArtifact(artifact) && artifact.exists === false);
-	if (missingArtifacts.length === 0) return undefined;
-	if (missingArtifacts.length === 1) {
-		const artifact = missingArtifacts[0];
-		return `Artifact verification failed: requested ${artifact.kind} was not found at ${artifact.absolutePath}.`;
+	const failedArtifacts = (artifacts ?? []).filter((artifact) => !isPendingRecordingArtifact(artifact) && (artifact.exists === false || artifact.status === "stale"));
+	if (failedArtifacts.length === 0) return undefined;
+	if (failedArtifacts.length === 1) {
+		const artifact = failedArtifacts[0];
+		return artifact.status === "stale"
+			? `Artifact verification failed: requested ${artifact.kind} path ${artifact.absolutePath} has a modification time outside the current command window.`
+			: `Artifact verification failed: requested ${artifact.kind} was not found at ${artifact.absolutePath}.`;
 	}
-	return `Artifact verification failed: ${missingArtifacts.length} requested artifacts were not found on disk.`;
+	return `Artifact verification failed: ${failedArtifacts.length} requested artifacts were missing or stale.`;
 }
 
 export function classifyPresentationSuccessCategory(options: {
@@ -420,9 +471,9 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 	switch (artifact.kind) {
 		case "download":
 			if (artifact.exists !== true) {
-				return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download event reported; file not verified" : "Download reported; file not verified";
+				return artifact.command === "wait" && isDownloadWaitSubcommand(artifact.subcommand) ? "Download event reported; file not verified" : "Download reported; file not verified";
 			}
-			return artifact.command === "wait" && artifact.subcommand === "--download" ? "Download saved and verified" : "Downloaded file verified";
+			return artifact.command === "wait" && isDownloadWaitSubcommand(artifact.subcommand) ? "Download saved and verified" : "Downloaded file verified";
 		case "file":
 			return artifact.command === "state" ? "State file" : "Saved file";
 		case "har":
@@ -437,9 +488,13 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 		case "trace":
 			return "Saved trace";
 		case "video":
-			if (artifact.command === "record" && artifact.subcommand === "restart-previous") return "Previous recording saved";
+			if (artifact.command === "record" && artifact.subcommand === "restart-previous") {
+				if (artifact.status === "stale") return "Previous recording stale";
+				if (artifact.exists === false) return "Previous recording missing";
+				return "Previous recording saved";
+			}
 			if (!isPendingRecordingArtifact(artifact)) return "Saved recording";
-			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started; output will be written on stop";
+			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started in a fresh active page; output will be written on stop";
 	}
 }
 
@@ -471,6 +526,7 @@ export function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): 
 				`Status: ${artifact.status ?? "pending"}`,
 				`Recording state: ${artifact.recordingState ?? "openRecording"}`,
 				`Will exist on stop: ${artifact.willExistOnStop !== false}`,
+				artifact.subcommand === "start" ? "Page state: record start uses a fresh active page for video capture; prior in-page DOM and JavaScript state does not carry over. Take a fresh snapshot before continuing." : undefined,
 				artifact.session ? `Session: ${artifact.session}` : undefined,
 				artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
 				`Machine data: details.artifacts[${index}]`,
@@ -497,7 +553,7 @@ export function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): 
 }
 
 function isDownloadWaitCommand(commandInfo: CommandInfo): boolean {
-	return commandInfo.command === "wait" && commandInfo.subcommand === "--download";
+	return commandInfo.command === "wait" && isDownloadWaitSubcommand(commandInfo.subcommand);
 }
 
 function extractSavedFilePath(data: Record<string, unknown>): string | undefined {

@@ -78,5 +78,5 @@ function isSessionlessCommand(commandTokens: readonly string[]): boolean {
 }
 
 export function needsManagedSession(descriptor: ArgvDescriptor): boolean {
-	return !isSessionlessCommand(descriptor.commandTokens);
+	return !isSessionlessCommand(descriptor.upstreamCommandTokens);
 }

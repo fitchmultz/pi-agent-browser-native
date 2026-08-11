@@ -2,11 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 
 import {
+	extractUpstreamCommandTokens,
 	findCommandStartIndex,
 	parseArgvDescriptor,
 	parseCommandInfo,
 	type CommandInfo,
 } from "./argv-descriptor.js";
+import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
 import {
 	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
@@ -14,6 +16,7 @@ import {
 	getAgentBrowserSessionIdentityKey,
 	getBooleanFlagValue,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
+	isAgentBrowserSessionIdentityKeyInNamespace,
 	isUpstreamEnvFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
 	resolveAgentBrowserNamespace,
@@ -21,7 +24,7 @@ import {
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isWrapperManagedSessionName, redactManagedSessionRestoreKeys } from "./managed-session-capabilities.js";
-import { isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
 import {
 	hasLaunchScopedFlagToken,
 	LAUNCH_SCOPED_FLAG_DEFINITIONS,
@@ -33,7 +36,7 @@ import {
 } from "./managed-session-restore.js";
 
 export type { CommandInfo } from "./argv-descriptor.js";
-export { extractCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo } from "./argv-descriptor.js";
+export { extractCommandTokens, extractUpstreamCommandTokens, findCommandStartIndex, parseArgvDescriptor, parseCommandInfo, parseWaitCommandTokens } from "./argv-descriptor.js";
 
 import { isRecord } from "./parsing.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
@@ -514,23 +517,27 @@ function getRestorableManagedSessionName(value: unknown, fallbackSessionName: st
 	return typeof value === "string" && isRestorableManagedSessionName(value, fallbackSessionName) ? value : undefined;
 }
 
-function getElectronCleanupClosedManagedSessionNames(details: Record<string, unknown>, fallbackSessionName: string): string[] {
+function getElectronCleanupClosedManagedSessions(details: Record<string, unknown>, fallbackSessionName: string): Array<{ namespace?: string; sessionName: string }> {
 	const electron = isRecord(details.electron) ? details.electron : undefined;
 	const cleanup = isRecord(electron?.cleanup) ? electron.cleanup : undefined;
 	const results = Array.isArray(cleanup?.results) ? cleanup.results : [];
-	const closedSessionNames = new Set<string>();
+	const closedSessions: Array<{ namespace?: string; sessionName: string }> = [];
 	for (const result of results) {
 		if (!isRecord(result) || !Array.isArray(result.steps)) continue;
 		const record = isRecord(result.record) ? result.record : undefined;
+		const fallbackNamespace = typeof record?.namespace === "string"
+			? record.namespace
+			: typeof details.namespace === "string" ? details.namespace : undefined;
 		for (const step of result.steps) {
 			if (!isRecord(step) || step.resource !== "managed-session") continue;
 			if (step.state !== "removed" && step.state !== "already-gone") continue;
 			const sessionName = getRestorableManagedSessionName(step.sessionName, fallbackSessionName)
 				?? getRestorableManagedSessionName(record?.sessionName, fallbackSessionName);
-			if (sessionName) closedSessionNames.add(sessionName);
+			const namespace = typeof step.namespace === "string" ? step.namespace : fallbackNamespace;
+			if (sessionName) closedSessions.push({ namespace, sessionName });
 		}
 	}
-	return [...closedSessionNames];
+	return closedSessions;
 }
 
 export function restoreManagedSessionStateFromBranch(
@@ -576,8 +583,8 @@ export function restoreManagedSessionStateFromBranch(
 			continue;
 		}
 
-		for (const sessionName of getElectronCleanupClosedManagedSessionNames(details, fallbackSessionName)) {
-			applyManagedClose(sessionName);
+		for (const cleanupSession of getElectronCleanupClosedManagedSessions(details, fallbackSessionName)) {
+			applyManagedClose(cleanupSession.sessionName, cleanupSession.namespace);
 		}
 
 		const explicitSessionName = extractExplicitSessionName(args);
@@ -585,8 +592,15 @@ export function restoreManagedSessionStateFromBranch(
 		const namespace = canonicalizeAgentBrowserNamespace(typeof details.namespace === "string" ? details.namespace : undefined);
 		const sessionMode = details.sessionMode === "fresh" || details.sessionMode === "auto" ? details.sessionMode : undefined;
 		const usedImplicitSession = details.usedImplicitSession === true;
+		const commandTokens = extractUpstreamCommandTokens(args);
 		const command = typeof details.command === "string" ? details.command : parseCommandInfo(args).command;
-		const commandClosesSession = isCloseCommand(command);
+		const batchCloseLifecycle = getSuccessfulBatchCloseLifecycle(details.batchSteps);
+		const nestedBatchEndsClosed = batchCloseLifecycle?.endsClosed === true;
+		const nestedBatchRemainsActive = batchCloseLifecycle?.endsClosed === false;
+		const closeAllApplied = details.closeAllApplied === true
+			|| (message.isError !== true && isCloseAllCommand(commandTokens))
+			|| batchHasSuccessfulCloseAll(details.batchSteps);
+		const commandClosesSession = isCloseCommand(command) || nestedBatchEndsClosed;
 		const outcome = typeof details.managedSessionOutcome === "object" && details.managedSessionOutcome !== null ? details.managedSessionOutcome as Record<string, unknown> : undefined;
 		const outcomeStatus = typeof outcome?.status === "string" ? outcome.status : undefined;
 		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
@@ -595,6 +609,14 @@ export function restoreManagedSessionStateFromBranch(
 			? outcomeAttemptedSessionName ?? getRestorableManagedSessionName(outcomeCurrentSessionName, fallbackSessionName) ?? getRestorableManagedSessionName(sessionName, fallbackSessionName)
 			: undefined;
 		const restorableDetailSessionName = getRestorableManagedSessionName(sessionName, fallbackSessionName);
+		if (closeAllApplied && restoredState.active) {
+			const restoredKey = getAgentBrowserSessionIdentityKey(restoredState.sessionName, restoredState.namespace);
+			const resultKey = restorableDetailSessionName ? getAgentBrowserSessionIdentityKey(restorableDetailSessionName, namespace) : undefined;
+			const retainsCurrentSession = nestedBatchRemainsActive && resultKey === restoredKey;
+			if (isAgentBrowserSessionIdentityKeyInNamespace(restoredKey, namespace) && !retainsCurrentSession) {
+				applyManagedClose(restoredState.sessionName, restoredState.namespace);
+			}
+		}
 		const explicitCloseSessionName = commandClosesSession && explicitSessionName && restorableDetailSessionName === explicitSessionName
 			? restorableDetailSessionName
 			: undefined;
@@ -603,14 +625,15 @@ export function restoreManagedSessionStateFromBranch(
 		if (details.managedSessionRestoreDisabled === true && typeof sessionName === "string") {
 			restoreDisabledIdentities.set(getAgentBrowserSessionIdentityKey(sessionName, namespace), { namespace, sessionName });
 		}
-		const managedSessionName =
+		const managedSessionName = outcomeClosedSessionName ?? (
 			!explicitSessionName &&
 			restorableDetailSessionName &&
 			(usedImplicitSession || sessionMode === "fresh")
 				? restorableDetailSessionName
 				: commandClosesSession
-					? outcomeClosedSessionName ?? explicitCloseSessionName
-					: undefined;
+					? explicitCloseSessionName
+					: undefined
+		);
 		if (!managedSessionName) {
 			continue;
 		}
@@ -629,9 +652,11 @@ export function restoreManagedSessionStateFromBranch(
 		const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
 		const outcomeActiveAfter = outcome?.activeAfter === true;
 		const outcomeRepresentsActiveCurrentSession = outcomeActiveAfter && outcomeCurrentSessionName === managedSessionName && (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged");
-		const succeeded = outcomeRepresentsActiveCurrentSession ? true : messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
-		if (commandClosesSession) {
-			if (succeeded) {
+		const succeeded = outcomeRepresentsActiveCurrentSession || nestedBatchRemainsActive
+			? true
+			: messageIsError === undefined ? exitCode === undefined || exitCode === 0 : !messageIsError;
+		if (commandClosesSession || outcomeClosedSessionName) {
+			if (nestedBatchEndsClosed || outcomeClosedSessionName || succeeded) {
 				restoreDisabledIdentities.delete(getAgentBrowserSessionIdentityKey(managedSessionName, namespace));
 				applyManagedClose(managedSessionName, namespace);
 			}
@@ -685,8 +710,12 @@ export function createImplicitSessionName(
 			.replace(/^-+|-+$/g, "")
 			.slice(0, MAX_PROJECT_SLUG_LENGTH) || "project";
 	const cwdHash = createCwdHash(cwd);
-	const stableSessionId = sessionId?.replace(/-/g, "").slice(0, SESSION_NAME_SESSION_ID_LENGTH);
-	if (stableSessionId && stableSessionId.length > 0) {
+	const normalizedSessionId = sessionId?.replaceAll("-", "").toLowerCase();
+	if (normalizedSessionId) {
+		const stableSessionId = createHash("sha256")
+			.update(`session:${normalizedSessionId}`)
+			.digest("hex")
+			.slice(0, SESSION_NAME_SESSION_ID_LENGTH);
 		return `${MANAGED_SESSION_NAME_PREFIX}${slug}-${stableSessionId}-${cwdHash}`;
 	}
 
@@ -706,7 +735,7 @@ export function createFreshSessionName(baseSessionName: string, ephemeralSeed: s
 }
 
 function getSingleKeyCommandValidationError(args: string[]): string | undefined {
-	const { commandInfo, commandTokens } = parseArgvDescriptor(args);
+	const { commandInfo, upstreamCommandTokens: commandTokens } = parseArgvDescriptor(args);
 	const command = commandInfo.command;
 	if (command !== "press" && command !== "key" && command !== "keydown" && command !== "keyup") return undefined;
 	if (commandTokens.length === 2) return undefined;
@@ -715,10 +744,16 @@ function getSingleKeyCommandValidationError(args: string[]): string | undefined 
 }
 
 function getBareMcpValidationError(args: string[]): string | undefined {
-	const { commandInfo, commandTokens } = parseArgvDescriptor(args);
+	const { commandInfo, upstreamCommandTokens: commandTokens } = parseArgvDescriptor(args);
 	if (commandInfo.command !== "mcp") return undefined;
 	if (commandTokens.includes("--help") || commandTokens.includes("-h")) return undefined;
 	return "agent-browser mcp starts a stdio MCP server for external MCP clients, not a one-shot native agent_browser tool workflow. Use the native agent_browser tool modes directly, or configure an MCP client to launch `agent-browser mcp`. Use `mcp --help` for help.";
+}
+
+function getUnsupportedInlineWaitDownloadError(args: string[]): string | undefined {
+	const descriptor = parseArgvDescriptor(args);
+	if (descriptor.commandInfo.command !== "wait" || !descriptor.upstreamCommandTokens.some((token) => token.startsWith("--download="))) return undefined;
+	return "agent-browser 0.33.2 does not support `wait --download=<path>`. Pass the optional path as a separate argument: `wait --download <path>` (or `wait -d <path>`).";
 }
 
 export function validateToolArgs(args: string[]): string | undefined {
@@ -736,7 +771,7 @@ export function validateToolArgs(args: string[]): string | undefined {
 		return "Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: [\"--profile\", \"Default\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
 	}
 
-	return getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args);
+	return getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args) ?? getUnsupportedInlineWaitDownloadError(args);
 }
 
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {

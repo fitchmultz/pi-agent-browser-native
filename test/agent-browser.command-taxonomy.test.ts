@@ -12,6 +12,7 @@ import {
 	isOpenNavigationCommand,
 	isPageChangeSummaryCommand,
 	isPageMutationCommand,
+	isRecordPageTransitionCommand,
 	isRefGuardedCommand,
 	isRefInvalidatingBatchCommand,
 	normalizeCommandName,
@@ -34,15 +35,39 @@ test("command taxonomy keeps independent capability dimensions explicit", () => 
 	assert.equal(isRefGuardedCommand("fill"), true);
 	assert.equal(isPageMutationCommand("fill"), true);
 	assert.equal(isPageChangeSummaryCommand("fill"), true);
-	assert.equal(isRefInvalidatingBatchCommand("fill"), false);
+	assert.equal(isRefInvalidatingBatchCommand(["fill"]), false);
 
 	assert.equal(isRefGuardedCommand("download"), true);
 	assert.equal(isPageMutationCommand("download"), false);
 	assert.equal(isPageChangeSummaryCommand("download"), true);
-	assert.equal(isRefInvalidatingBatchCommand("download"), false);
+	assert.equal(isRefInvalidatingBatchCommand(["download"]), false);
 
 	assert.equal(isRefGuardedCommand("scrollintoview"), true);
 	assert.equal(isPageMutationCommand("scrollintoview"), true);
 	assert.equal(isPageChangeSummaryCommand("scrollintoview"), true);
-	assert.equal(isRefInvalidatingBatchCommand("scrollintoview"), true);
+	assert.equal(isRefInvalidatingBatchCommand(["scrollintoview"]), true);
+});
+
+test("command taxonomy guards exactly the upstream ref-resolving selector commands", () => {
+	// diff guarding is deliberately command-level: diff screenshot resolves refs while diff snapshot's
+	// selector is CSS-only, but the wrapper's stale-ref guidance is a clearer failure than upstream's
+	// invalid-selector error and subcommand precision buys nothing observable.
+	for (const command of ["diff", "frame", "highlight", "is", "screenshot", "scroll"]) {
+		assert.equal(isRefGuardedCommand(command), true, command);
+	}
+	// Upstream passes these selectors/operands through literally and never resolves @e refs for them,
+	// so guarding would falsely reject literal tokens such as `wait --text @e1` or `find text @e1 click`.
+	for (const command of ["a11y", "find", "wait"]) {
+		assert.equal(isRefGuardedCommand(command), false, command);
+	}
+});
+
+test("record page transitions cover failed starts and navigating restarts", () => {
+	assert.equal(isRecordPageTransitionCommand(["record", "start", "out.webm"]), true);
+	assert.equal(isRecordPageTransitionCommand(["record", "restart", "out.webm"]), false);
+	assert.equal(isRecordPageTransitionCommand(["record", "restart", "out.webm", "https://example.com"]), true);
+	assert.equal(isRecordPageTransitionCommand(["record", "stop"]), false);
+	assert.equal(isRefInvalidatingBatchCommand(["record", "start", "out.webm"]), true);
+	assert.equal(isRefInvalidatingBatchCommand(["record", "restart", "out.webm"]), false);
+	assert.equal(isRefInvalidatingBatchCommand(["record", "restart", "out.webm", "example.com"]), true);
 });

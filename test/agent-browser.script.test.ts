@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -468,6 +468,12 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Tree p
 			});
 			for (let index = 0; index < 100 && !harness.appendedEntries.some((entry) => (entry.data as { cleanup?: string }).cleanup === "active"); index += 1) await delay(10);
 			assert.ok(harness.appendedEntries.some((entry) => (entry.data as { cleanup?: string }).cleanup === "active"));
+			for (let index = 0; index < 100; index += 1) {
+				const invocations = await readInvocationLog(logPath);
+				if (invocations.some((entry) => entry.args.includes("get") && entry.args.includes("title"))) break;
+				await delay(10);
+			}
+			assert.ok((await readInvocationLog(logPath)).some((entry) => entry.args.includes("get") && entry.args.includes("title")), "browser subprocess should start before branch abort");
 			const startedAt = Date.now();
 			await runExtensionEvent(harness.handlers, "session_tree", { reason: "switch" }, harness.ctx);
 			const result = await pendingResult;
@@ -528,6 +534,35 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolat
 				}
 				assert.notEqual(invocation.config, join(tempDir, "ambient-agent-browser.json"));
 			}
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("script cleanup retires its active recording reservation", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-recording-cleanup-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const args = process.argv.slice(2);
+const command = args.find((arg) => ["open", "record", "pdf", "close", "session"].includes(arg));
+const index = args.indexOf(command);
+if (command === "session") process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
+else if (command === "open") process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: args[index + 1] } }));
+else if (command === "record") process.stdout.write(JSON.stringify({ success: true, data: { path: args[index + 2] } }));
+else if (command === "pdf") process.stdout.write(JSON.stringify({ success: true, data: { path: args[index + 1] } }));
+else process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				script: `await browser({ args: ["open", "https://example.test/"] }); emit(await browser({ args: ["record", "start", "script.webm"] }));`,
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			const manifest = result.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;
+			assert.equal(manifest?.entries?.some((entry) => entry.subcommand === "start"), false);
+			const reuse = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "script.webm"] });
+			assert.doesNotMatch(reuse.content[0]?.text ?? "", /reserved by an active recording/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -677,6 +712,38 @@ else process.stdout.write(JSON.stringify({ success: true, data: Array.from({ len
 			assert.deepEqual(result.details?.data, { length: 700, last: 699 });
 			assert.ok((result.details?.artifactManifest as { entries?: Array<{ kind?: string }> } | undefined)?.entries?.some((entry) => entry.kind === "spill"));
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("script still runs fail-closed cleanup when the main browser command never starts", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-preflight-"));
+	const logPath = join(tempDir, "invocations.log");
+	const socketDir = join(tempDir, "a".repeat(80));
+	const basePath = process.env.PATH ?? "";
+	await mkdir(socketDir, { recursive: true });
+	await chmod(socketDir, 0o700);
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { title: "should not run" } }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_SOCKET_DIR: socketDir }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				script: `emit(await browser({ args: ["open", "https://example.test/"] }));`,
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.equal((result.details?.data as { ok?: boolean } | undefined)?.ok, false);
+			assert.equal((result.details?.data as { failureCategory?: string } | undefined)?.failureCategory, "validation-error");
+			assert.match((result.details?.data as { error?: string } | undefined)?.error ?? "", /Unix socket path would be/);
+			assert.equal((result.details?.scriptSession as { cleanup?: string } | undefined)?.cleanup, "closed");
+			assert.deepEqual(harness.appendedEntries.map((entry) => (entry.data as { cleanup?: string }).cleanup), ["active", "closed"]);
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.some((entry) => entry.args.includes("open")), false);
+			assert.ok(invocations.some((entry) => entry.args.includes("close")), "cleanup must close helpers that could have started the isolated browser");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

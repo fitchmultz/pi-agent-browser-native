@@ -1,5 +1,7 @@
-import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
-import { isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
+import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
+import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
+import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
 import { enrichSnapshotRefEntries, getSnapshotRefEntries } from "./results/snapshot-refs.js";
@@ -26,7 +28,7 @@ interface OrderedSessionRefSnapshot extends SessionRefSnapshot {
 }
 
 export interface SessionRefSnapshotInvalidation {
-	reason: "no-active-page";
+	reason: "no-active-page" | "page-transition";
 	summary: string;
 }
 
@@ -153,6 +155,11 @@ export function extractSessionTabTargetFromBatchResults(data: unknown): SessionT
 		const [name, subcommand] = extractBatchResultCommand(item);
 		const result = item.result;
 
+		if (isCloseCommand(name)) {
+			currentTarget = undefined;
+			pendingTitle = undefined;
+			continue;
+		}
 		if (name === "get" && subcommand === "title") {
 			pendingTitle = extractStringResultField(result, "title");
 			continue;
@@ -266,6 +273,13 @@ export function buildNoActivePageRefSnapshotInvalidation(): SessionRefSnapshotIn
 	};
 }
 
+export function buildPageTransitionRefSnapshotInvalidation(): SessionRefSnapshotInvalidation {
+	return {
+		reason: "page-transition",
+		summary: "A recording command replaced or navigated the active page and invalidated the prior snapshot. Run snapshot -i before using page-scoped refs.",
+	};
+}
+
 export function isNoActivePageSnapshotFailure(command: string | undefined, text: string | undefined): boolean {
 	return command === "snapshot" && /\bno active page\b/i.test(text ?? "");
 }
@@ -275,7 +289,16 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 	let latestState: BatchRefSnapshotState | undefined;
 	for (const item of data) {
 		if (!isRecord(item)) continue;
-		const [name] = extractBatchResultCommand(item);
+		const commandTokens = extractBatchResultCommand(item);
+		const [name] = commandTokens;
+		if (item.success !== false && isCloseCommand(name)) {
+			latestState = undefined;
+			continue;
+		}
+		if (isRecordPageTransitionCommand(commandTokens)) {
+			latestState = { invalidation: buildPageTransitionRefSnapshotInvalidation() };
+			continue;
+		}
 		if (name !== "snapshot") continue;
 		if (item.success === false) {
 			if (isNoActivePageSnapshotFailure(name, getBatchResultFailureText(item))) {
@@ -293,9 +316,8 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 
 function getRestoredRefSnapshotInvalidation(details: Record<string, unknown>, command: string | undefined): SessionRefSnapshotInvalidation | undefined {
 	const invalidation = isRecord(details.refSnapshotInvalidation) ? details.refSnapshotInvalidation : undefined;
-	if (invalidation && invalidation.reason === "no-active-page") {
-		return buildNoActivePageRefSnapshotInvalidation();
-	}
+	if (invalidation?.reason === "no-active-page") return buildNoActivePageRefSnapshotInvalidation();
+	if (invalidation?.reason === "page-transition") return buildPageTransitionRefSnapshotInvalidation();
 	const errorText = typeof details.error === "string"
 		? details.error
 		: typeof details.summary === "string"
@@ -392,13 +414,24 @@ export class SessionPageState {
 			const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
 			const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
 			const sessionKey = getSessionPageStateKey(sessionName, namespace);
+			const args = Array.isArray(details.args) && details.args.every((arg) => typeof arg === "string") ? details.args : [];
+			const commandTokens = extractUpstreamCommandTokens(args);
+			const command = typeof details.command === "string" ? details.command : commandTokens[0];
+			const subcommand = typeof details.subcommand === "string" ? details.subcommand : commandTokens[1];
+			const batchCloseLifecycle = getSuccessfulBatchCloseLifecycle(details.batchSteps);
+			const closeAllApplied = details.closeAllApplied === true
+				|| (message.isError !== true && isCloseAllCommand(commandTokens))
+				|| batchHasSuccessfulCloseAll(details.batchSteps);
+			if (closeAllApplied) {
+				restoredOrder += 1;
+				state.clearNamespace(namespace);
+				if (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true) continue;
+			}
 			if (!sessionKey) continue;
-			const command = typeof details.command === "string" ? details.command : undefined;
-			const subcommand = typeof details.subcommand === "string" ? details.subcommand : undefined;
-			if (isCloseCommand(command) && message.isError !== true) {
+			if (!closeAllApplied && ((isCloseCommand(command) && message.isError !== true) || batchCloseLifecycle)) {
 				restoredOrder += 1;
 				state.clearSession(sessionKey);
-				continue;
+				if (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true) continue;
 			}
 			const tabTarget = getRestoredSessionTabTarget(details, command, subcommand);
 			const tabTargetUnknown = details.sessionTabTargetUnknown === true;
@@ -407,8 +440,9 @@ export class SessionPageState {
 			if (!tabTarget && !tabTargetUnknown && !refSnapshotInvalidation && !refSnapshot) continue;
 			restoredOrder += 1;
 			if (tabTargetUnknown) {
-				state.refSnapshotInvalidations.delete(sessionKey);
 				state.refSnapshots.delete(sessionKey);
+				if (refSnapshotInvalidation) state.refSnapshotInvalidations.set(sessionKey, { ...refSnapshotInvalidation, order: restoredOrder });
+				else state.refSnapshotInvalidations.delete(sessionKey);
 				state.tabTargets.delete(sessionKey);
 				state.tabTargetUnknownOrders.set(sessionKey, restoredOrder);
 				continue;
@@ -526,6 +560,19 @@ export class SessionPageState {
 		this.tabPinningReasons.delete(sessionName);
 		this.tabTargetUnknownOrders.delete(sessionName);
 		this.tabTargets.delete(sessionName);
+	}
+
+	clearNamespace(namespace?: string): void {
+		const sessionKeys = new Set([
+			...this.refSnapshotInvalidations.keys(),
+			...this.refSnapshots.keys(),
+			...this.tabPinningReasons.keys(),
+			...this.tabTargetUnknownOrders.keys(),
+			...this.tabTargets.keys(),
+		]);
+		for (const sessionKey of sessionKeys) {
+			if (isAgentBrowserSessionIdentityKeyInNamespace(sessionKey, namespace)) this.clearSession(sessionKey);
+		}
 	}
 
 	markPinning(sessionName: string, reason: SessionTabPinningReason): void {

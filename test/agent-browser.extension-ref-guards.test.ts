@@ -471,6 +471,56 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	}
 });
 
+test("agentBrowserExtension clears namespaced attachment context after Electron cleanup replay", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cleanup-attached-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: "https://safe.example/", url: "https://safe.example/" } }));`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS: "1" }, async () => {
+			const sessionName = "caller-owned-electron";
+			const namespace = "team";
+			const branch = [
+				createToolBranchEntry({
+					details: {
+						args: ["--namespace", namespace, "--session", sessionName, "connect", "9222"],
+						attachedBrowserSession: true,
+						command: "connect",
+						namespace,
+						resultCategory: "success",
+						sessionName,
+					},
+					isError: false,
+				}),
+				createToolBranchEntry({
+					details: {
+						args: [],
+						electron: { cleanup: { results: [{ steps: [{ resource: "managed-session", sessionName, state: "removed" }] }] } },
+						namespace,
+						resultCategory: "success",
+					},
+					isError: false,
+				}),
+			];
+			const harness = createExtensionHarness({ branch, cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", namespace, "--session", sessionName, "get", "url"],
+			});
+			assert.equal(result.isError, false, result.content[0]?.text);
+			const invocation = (await readInvocationLog(logPath)).find((entry) => entry.args.includes("get") && entry.args.at(-1) === "url");
+			assert.equal(invocation?.args[invocation.args.indexOf("--args") + 1], "");
+			assert.equal(invocation?.args[invocation.args.indexOf("--allow-file-access") + 1], "false");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension keeps same-process re-owned Electron resources despite stale branch cleanup evidence", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-electron-cleanup-stale-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -1889,6 +1939,274 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension invalidates direct and batched refs when record start opens a fresh page", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-start-refs-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+// Mirror upstream restart finalizing the previous recording so its mtime stays inside the
+// wrapper's artifact freshness window regardless of suite timing.
+const refreshRecordings = () => {
+  for (const entry of fs.readdirSync(${JSON.stringify(tempDir)})) {
+    if (entry.endsWith(".webm")) fs.writeFileSync(require("node:path").join(${JSON.stringify(tempDir)}, entry), "webm");
+  }
+};
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://record.example/",
+    title: "Record fixture",
+    url: "https://record.example/",
+    refs: { e1: { role: "link", name: "Old target" } },
+    snapshot: '- link "Old target" [ref=e1]'
+  } }));
+} else if (args.includes("record") && args.includes("start")) {
+  if (args.some((arg) => arg.includes("already-active"))) {
+    process.stdout.write(JSON.stringify({ success: false, error: "Recording already active" }));
+  } else {
+    const startPath = args[args.indexOf("start") + 1];
+    fs.writeFileSync(startPath, "webm");
+    process.stdout.write(JSON.stringify({ success: true, data: { path: startPath } }));
+  }
+} else if (args.includes("batch")) {
+  const batchRestartPath = require("node:path").join(${JSON.stringify(tempDir)}, "plain.webm");
+  refreshRecordings();
+  fs.writeFileSync(batchRestartPath, "webm");
+  process.stdout.write(JSON.stringify({ success: true, data: [
+    { command: ["record", "restart", batchRestartPath], success: true, data: { restarted: true, path: batchRestartPath } },
+    { command: ["click", "@e1"], success: true, data: { clicked: "@e1" } }
+  ] }));
+} else if (args.includes("record") && args.includes("restart")) {
+  const restartPath = args[args.indexOf("restart") + 1];
+  refreshRecordings();
+  fs.writeFileSync(restartPath, "webm");
+  process.stdout.write(JSON.stringify({ success: true, data: { restarted: true, path: restartPath } }));
+} else if (args.includes("diff")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { match: true } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+			assert.deepEqual((initialSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const staleBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "start", join(tempDir, "batch.webm")], ["click", "@e1"]]),
+			});
+			assert.equal(staleBatch.isError, true, JSON.stringify(staleBatch));
+			assert.equal(staleBatch.details?.failureCategory, "stale-ref", JSON.stringify(staleBatch));
+			assert.match(staleBatch.content[0]?.text ?? "", /after an earlier batch step can navigate or mutate/);
+
+			const recordStart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", join(tempDir, "direct.webm")] });
+			assert.equal(recordStart.isError, false, JSON.stringify(recordStart));
+			assert.equal((recordStart.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+			assert.equal(recordStart.details?.refSnapshot, undefined);
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
+			assert.equal(staleClick.details?.failureCategory, "stale-ref", JSON.stringify(staleClick));
+			assert.match(staleClick.content[0]?.text ?? "", /a recording command \(record start, or record restart with a URL\) replaced or navigated the active page/);
+
+			const staleGuardedRead = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["is", "visible", "@e1"] });
+			assert.equal(staleGuardedRead.isError, true, JSON.stringify(staleGuardedRead));
+			assert.equal(staleGuardedRead.details?.failureCategory, "stale-ref", JSON.stringify(staleGuardedRead));
+
+			const staleScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "@e1", join(tempDir, "stale.png")] });
+			assert.equal(staleScreenshot.isError, true, JSON.stringify(staleScreenshot));
+			assert.equal(staleScreenshot.details?.failureCategory, "stale-ref", JSON.stringify(staleScreenshot));
+
+			const freshSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(freshSnapshot.isError, false, JSON.stringify(freshSnapshot));
+			assert.equal(freshSnapshot.details?.refSnapshotInvalidation, undefined);
+			assert.deepEqual((freshSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const plainRestartBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "restart", join(tempDir, "plain.webm")], ["click", "@e1"]]),
+			});
+			assert.equal(plainRestartBatch.isError, false, JSON.stringify(plainRestartBatch));
+			assert.equal(plainRestartBatch.details?.refSnapshotInvalidation, undefined);
+
+			const plainRestartClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(plainRestartClick.isError, false, JSON.stringify(plainRestartClick));
+
+			const navigatingRestart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "restart", join(tempDir, "nav.webm"), "https://record.example/next"] });
+			assert.equal(navigatingRestart.isError, false, JSON.stringify(navigatingRestart));
+			assert.equal((navigatingRestart.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+
+			const staleAfterRestart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleAfterRestart.isError, true, JSON.stringify(staleAfterRestart));
+			assert.equal(staleAfterRestart.details?.failureCategory, "stale-ref", JSON.stringify(staleAfterRestart));
+
+			const recoverySnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(recoverySnapshot.isError, false, JSON.stringify(recoverySnapshot));
+
+			const failedStart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", join(tempDir, "already-active.webm")] });
+			assert.equal(failedStart.isError, true, JSON.stringify(failedStart));
+			assert.equal((failedStart.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+
+			const staleAfterFailedStart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleAfterFailedStart.isError, true, JSON.stringify(staleAfterFailedStart));
+			assert.equal(staleAfterFailedStart.details?.failureCategory, "stale-ref", JSON.stringify(staleAfterFailedStart));
+
+			// Boolean flags do not consume the following token, so a ref after them is a positional
+			// selector that upstream resolves; the guard must keep rejecting these while invalidated.
+			const booleanFlagClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "--new-tab", "@e1"] });
+			assert.equal(booleanFlagClick.isError, true, JSON.stringify(booleanFlagClick));
+			assert.equal(booleanFlagClick.details?.failureCategory, "stale-ref", JSON.stringify(booleanFlagClick));
+			const booleanFlagScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "--full", "@e1", join(tempDir, "full.png")] });
+			assert.equal(booleanFlagScreenshot.isError, true, JSON.stringify(booleanFlagScreenshot));
+			assert.equal(booleanFlagScreenshot.details?.failureCategory, "stale-ref", JSON.stringify(booleanFlagScreenshot));
+			const booleanFlagBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "start", join(tempDir, "latch.webm")], ["click", "--new-tab", "@e1"]]),
+			});
+			assert.equal(booleanFlagBatch.isError, true, JSON.stringify(booleanFlagBatch));
+			assert.equal(booleanFlagBatch.details?.failureCategory, "stale-ref", JSON.stringify(booleanFlagBatch));
+
+			// Upstream treats these @e-looking operands as literal text, fill content, or paths, so the
+			// stale-ref guard must not reject them even while the snapshot state is invalidated.
+			const literalWaitText = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--text", "@e1"] });
+			assert.equal(literalWaitText.isError, false, JSON.stringify(literalWaitText));
+			const literalFindText = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["find", "text", "@e1", "click"] });
+			assert.equal(literalFindText.isError, false, JSON.stringify(literalFindText));
+			const literalBaselinePath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--baseline", "@e1.png"] });
+			assert.equal(literalBaselinePath.isError, false, JSON.stringify(literalBaselinePath));
+			const guardedDiffSelector = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "snapshot", "--selector", "@e1"] });
+			assert.equal(guardedDiffSelector.isError, true, JSON.stringify(guardedDiffSelector));
+			assert.equal(guardedDiffSelector.details?.failureCategory, "stale-ref", JSON.stringify(guardedDiffSelector));
+
+			// Raw argument-mode batch steps are what upstream executes, so the stale-ref
+			// preflight must scan them exactly like stdin steps.
+			const rawArgvBatch = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch", "click @e1"] });
+			assert.equal(rawArgvBatch.isError, true, JSON.stringify(rawArgvBatch));
+			assert.equal(rawArgvBatch.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvBatch));
+			const rawArgvBooleanFlagBatch = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch", "click --new-tab @e1"] });
+			assert.equal(rawArgvBooleanFlagBatch.isError, true, JSON.stringify(rawArgvBooleanFlagBatch));
+			assert.equal(rawArgvBooleanFlagBatch.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvBooleanFlagBatch));
+			// Upstream ignores stdin whenever raw batch arguments exist, so stdin refs
+			// must not be falsely rejected in that shape.
+			const rawArgvIgnoredStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "wait 100"],
+				stdin: JSON.stringify([["click", "@e1"]]),
+			});
+			assert.equal(rawArgvIgnoredStdin.isError, false, JSON.stringify(rawArgvIgnoredStdin));
+
+			const latchRecoverySnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(latchRecoverySnapshot.isError, false, JSON.stringify(latchRecoverySnapshot));
+			const rawArgvLatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", `record start ${join(tempDir, "latch2.webm")}`, "click @e1"],
+			});
+			assert.equal(rawArgvLatch.isError, true, JSON.stringify(rawArgvLatch));
+			assert.equal(rawArgvLatch.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvLatch));
+			assert.match(rawArgvLatch.content[0]?.text ?? "", /after an earlier batch step can navigate or mutate/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 2);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click") && !entry.args.includes("find")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("is")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("screenshot") && !entry.args.includes("diff")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("wait")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("find")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("diff")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("start")).length, 2);
+			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("restart")).length, 1);
+			assert.ok(invocations.filter((entry) => entry.args.includes("snapshot")).length >= 4);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension invalidates refs when a batch recording start times out before returning rows", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-timeout-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://record.example/",
+    title: "Record fixture",
+    url: "https://record.example/",
+    refs: { e1: { role: "link", name: "Old target" } },
+    snapshot: '- link "Old target" [ref=e1]'
+  } }));
+} else if (args.includes("batch")) {
+  // Simulate upstream buffering batch rows past the wrapper timeout.
+  setTimeout(() => {
+    process.stdout.write(JSON.stringify({ success: true, data: [] }));
+    process.exit(0);
+  }, 4000);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+			assert.deepEqual((initialSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const timedOutBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "start", join(tempDir, "swap.webm")], ["wait", "3000"]]),
+				timeoutMs: 900,
+			});
+			assert.equal(timedOutBatch.isError, true, JSON.stringify(timedOutBatch));
+			assert.equal(timedOutBatch.details?.timedOut, true, JSON.stringify(timedOutBatch));
+			assert.equal((timedOutBatch.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition", JSON.stringify(timedOutBatch));
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
+			assert.equal(staleClick.details?.failureCategory, "stale-ref", JSON.stringify(staleClick));
+
+			const freshSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(freshSnapshot.isError, false, JSON.stringify(freshSnapshot));
+			assert.deepEqual((freshSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			// Upstream uses raw batch arguments exclusively when any exist, so a stdin-only record step
+			// cannot execute and must not invalidate refs when such a batch times out.
+			const argvExclusiveTimeout = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "wait 500"],
+				stdin: JSON.stringify([["record", "start", join(tempDir, "ignored.webm")]]),
+				timeoutMs: 900,
+			});
+			assert.equal(argvExclusiveTimeout.isError, true, JSON.stringify(argvExclusiveTimeout));
+			assert.equal(argvExclusiveTimeout.details?.timedOut, true, JSON.stringify(argvExclusiveTimeout));
+			assert.equal(argvExclusiveTimeout.details?.refSnapshotInvalidation, undefined, JSON.stringify(argvExclusiveTimeout.details?.refSnapshotInvalidation));
+
+			const clickAfterArgvTimeout = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(clickAfterArgvTimeout.isError, false, JSON.stringify(clickAfterArgvTimeout));
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension allows same-snapshot form fills before a batch click", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-batch-form-fills-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -2159,7 +2477,7 @@ if (args.includes("batch")) {
 	}
 });
 
-test("agentBrowserExtension rejects refs after same-page rerender changes current snapshot identity", { concurrency: false }, async () => {
+test("agentBrowserExtension rejects batched getter refs after same-page rerender changes current snapshot identity", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ref-rerender-"));
 	const logPath = join(tempDir, "invocations.log");
 	const statePath = join(tempDir, "state.json");
@@ -2196,15 +2514,18 @@ if (args.includes("snapshot")) {
 			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(snapshot.isError, false);
 
-			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
-			assert.equal(staleClick.isError, true);
-			assert.equal(staleClick.details?.failureCategory, "stale-ref");
-			assert.match((staleClick.content[0] as { text: string }).text, /no longer matches the latest same-page snapshot/);
-			assert.match((staleClick.content[0] as { text: string }).text, /Old target before rerender/);
-			assert.match((staleClick.content[0] as { text: string }).text, /New target after rerender/);
+			const staleBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["get", "text", "@e1"], ["get", "html", "@e1"]]),
+			});
+			assert.equal(staleBatch.isError, true);
+			assert.equal(staleBatch.details?.failureCategory, "stale-ref");
+			assert.match((staleBatch.content[0] as { text: string }).text, /no longer matches the latest same-page snapshot/);
+			assert.match((staleBatch.content[0] as { text: string }).text, /Old target before rerender/);
+			assert.match((staleBatch.content[0] as { text: string }).text, /New target after rerender/);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
 			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
 			assert.deepEqual(invocations.map((entry) => entry.idleTimeout), ["1234", "1234"]);
 		});
@@ -2250,6 +2571,194 @@ if (args.includes("snapshot")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension pins raw argument batch steps and guards their refs under restore pinning", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-pinned-raw-argv-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+let stdin = "";
+try { stdin = fs.readFileSync(0, "utf8"); } catch {}
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/" } }));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
+    { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
+    { tabId: "t2", title: "Other", url: "https://other.example/", active: true }
+  ] } }));
+} else if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["tab", "t1"], success: true, data: { tabId: "t1" } },
+    { command: ["wait", "100"], success: true, data: {} }
+  ]));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: {} }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const savedTarget = { title: "Example Domain", url: "https://example.com/" };
+			const harness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({
+						details: {
+							args: ["--session", "named", "snapshot", "-i"],
+							command: "snapshot",
+							refSnapshot: { refIds: ["e4"], refs: { e4: { name: "Old", role: "button" } }, target: savedTarget },
+							sessionName: "named",
+							sessionTabTarget: savedTarget,
+						},
+						isError: false,
+					}),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+			// Raw argv steps are what upstream executes: the pinned rewrite must dispatch
+			// them and ignore caller stdin instead of resurrecting unguarded stdin refs.
+			const rawArgvPinned = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "batch", "wait 100"],
+				stdin: JSON.stringify([["click", "@e4"]]),
+			});
+			assert.equal(rawArgvPinned.isError, false, JSON.stringify(rawArgvPinned));
+			const batchInvocations = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch"));
+			assert.equal(batchInvocations.length, 1, JSON.stringify(batchInvocations));
+			const dispatched = JSON.parse((batchInvocations[0] as { stdin?: string }).stdin ?? "[]") as string[][];
+			assert.deepEqual(dispatched, [["tab", "t1"], ["wait", "100"]], JSON.stringify(dispatched));
+
+			// The inverse shape keeps guarded argv refs guarded before any pinned dispatch.
+			const rawArgvStaleRef = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "batch", "click @e9"],
+				stdin: JSON.stringify([["wait", "100"]]),
+			});
+			assert.equal(rawArgvStaleRef.isError, true, JSON.stringify(rawArgvStaleRef));
+			assert.equal(rawArgvStaleRef.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvStaleRef));
+			const batchAfterStale = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch"));
+			assert.equal(batchAfterStale.length, 1, JSON.stringify(batchAfterStale));
+
+			// The pinned rewrite must keep the caller's exact --bail fail-fast flag in
+			// both argv mode and stdin (job/qa failFast) mode.
+			const pinnedRawBail = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "batch", "--bail", "wait 100"],
+				stdin: JSON.stringify([["click", "@e4"]]),
+			});
+			assert.equal(pinnedRawBail.isError, false, JSON.stringify(pinnedRawBail));
+			const pinnedStdinBail = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "batch", "--bail"],
+				stdin: JSON.stringify([["wait", "100"]]),
+			});
+			assert.equal(pinnedStdinBail.isError, false, JSON.stringify(pinnedStdinBail));
+			const bailBatches = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch")).slice(1);
+			assert.equal(bailBatches.length, 2, JSON.stringify(bailBatches));
+			for (const invocation of bailBatches) {
+				assert.equal(invocation.args.includes("--bail"), true, JSON.stringify(invocation));
+				const bailDispatched = JSON.parse((invocation as { stdin?: string }).stdin ?? "[]") as string[][];
+				assert.deepEqual(bailDispatched, [["tab", "t1"], ["wait", "100"]], JSON.stringify(bailDispatched));
+			}
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension keeps upstream-ignored batch stdin out of artifact and screenshot preflights", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ignored-stdin-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://record.example/",
+    title: "Record fixture",
+    url: "https://record.example/",
+    refs: { e1: { role: "link", name: "Old target" } },
+    snapshot: '- link "Old target" [ref=e1]'
+  } }));
+} else if (args.includes("record") && args.includes("start")) {
+  const startPath = args[args.indexOf("start") + 1];
+  fs.writeFileSync(startPath, "webm");
+  process.stdout.write(JSON.stringify({ success: true, data: { path: startPath } }));
+} else if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["wait", "10"], success: true, data: {} }
+  ]));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: {} }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+			const recordStart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", join(tempDir, "swap.webm")] });
+			assert.equal(recordStart.isError, false, JSON.stringify(recordStart));
+
+			// Upstream keeps --bail=true as a raw command (unknown-command row) and ignores
+			// stdin, so the guard must not scan the ignored stdin refs.
+			const bailEquals = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "--bail=true"],
+				stdin: JSON.stringify([["click", "@e1"]]),
+			});
+			assert.notEqual(bailEquals.details?.failureCategory, "stale-ref", JSON.stringify(bailEquals));
+			assert.equal((await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch")).length, 1);
+
+			// Malformed ignored stdin must not fail artifact preflight for a valid raw-argv call.
+			const malformedIgnoredStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "wait 10"],
+				stdin: "not json",
+			});
+			assert.equal(malformedIgnoredStdin.isError, false, JSON.stringify(malformedIgnoredStdin));
+
+			// A close-then-record sequence in ignored stdin must not trigger the batch
+			// close/record preflight rejection.
+			const ignoredCloseRecord = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "wait 10"],
+				stdin: JSON.stringify([["close"], ["record", "start", join(tempDir, "never.webm")]]),
+			});
+			assert.equal(ignoredCloseRecord.isError, false, JSON.stringify(ignoredCloseRecord));
+
+			// Ignored stdin screenshot rows must not create host parent directories.
+			const ignoredScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "wait 10"],
+				stdin: JSON.stringify([["screenshot", join(tempDir, "sub", "dir", "shot.png")]]),
+			});
+			assert.equal(ignoredScreenshot.isError, false, JSON.stringify(ignoredScreenshot));
+			assert.equal(await directoryExists(join(tempDir, "sub")), false);
+
+			// The equals form is a raw command upstream, so malformed ignored stdin must
+			// not be fatal for it either (state-policy exact --bail parity).
+			const bailEqualsMalformed = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "--bail=true"],
+				stdin: "not json",
+			});
+			assert.equal(bailEqualsMalformed.isError, false, JSON.stringify(bailEqualsMalformed));
+
+			// Upstream-effective raw artifact rows get parent directories prepared.
+			const rawScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", `screenshot ${join(tempDir, "raw", "dir", "shot.png")}`, "wait 10"],
+			});
+			assert.equal(rawScreenshot.isError, false, JSON.stringify(rawScreenshot));
+			assert.equal(await directoryExists(join(tempDir, "raw", "dir")), true);
+			assert.equal(await directoryExists(join(tempDir, "sub")), false);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

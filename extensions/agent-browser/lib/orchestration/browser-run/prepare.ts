@@ -1,7 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { getBooleanFlagValue, isUpstreamEnvFlagEnabled } from "../../argv-grammar.js";
+import { getBooleanFlagValue, isUpstreamEnvFlagEnabled, projectUpstreamGlobalFlags } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
@@ -23,7 +23,9 @@ import {
 	buildExecutionPlan,
 	createFreshSessionName,
 	extractCommandTokens,
+	extractUpstreamCommandTokens,
 	getDefaultHeadlessCompatUserAgent,
+	parseWaitCommandTokens,
 	redactInvocationArgs,
 	type CompatibilityWorkaround,
 } from "../../runtime.js";
@@ -56,7 +58,7 @@ import {
 	runSessionCommandData,
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
-import { parseBatchStdinJsonArray } from "../batch-stdin.js";
+import { getUpstreamEffectiveBatchSteps, parseBatchStdinJsonArray } from "../batch-stdin.js";
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
 import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
@@ -106,11 +108,7 @@ function getArtifactParentPathTokenIndex(commandTokens: string[]): number | unde
 	if (commandTokens[0] === "download" && commandTokens.length >= 3) return 2;
 	if (commandTokens[0] === "pdf" && commandTokens.length >= 2) return 1;
 	if (commandTokens[0] === "state" && commandTokens[1] === "save" && commandTokens.length >= 3) return 2;
-	if (commandTokens[0] === "wait") {
-		const downloadIndex = commandTokens.findIndex((token) => token === "--download");
-		const pathIndex = downloadIndex >= 0 ? downloadIndex + 1 : -1;
-		if (pathIndex > 0 && typeof commandTokens[pathIndex] === "string" && !commandTokens[pathIndex].startsWith("-")) return pathIndex;
-	}
+	if (commandTokens[0] === "wait") return parseWaitCommandTokens(commandTokens).downloadPathIndex;
 	return undefined;
 }
 
@@ -126,11 +124,14 @@ async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: str
 	request?: ScreenshotPathRequest;
 	tokens: string[];
 }> {
-	const screenshotPathTokenIndex = getScreenshotPathTokenIndex(commandTokens);
-	if (screenshotPathTokenIndex === undefined) {
+	const scopedCommandTokens = extractCommandTokens(commandTokens);
+	const projection = projectUpstreamGlobalFlags(scopedCommandTokens);
+	const projectedPathTokenIndex = getScreenshotPathTokenIndex(projection.tokens);
+	const scopedPathTokenIndex = projectedPathTokenIndex === undefined ? undefined : projection.indices[projectedPathTokenIndex];
+	if (scopedPathTokenIndex === undefined) {
 		return { tokens: commandTokens };
 	}
-
+	const screenshotPathTokenIndex = commandTokens.length - scopedCommandTokens.length + scopedPathTokenIndex;
 	const requestedPath = commandTokens[screenshotPathTokenIndex];
 	const absolutePath = resolve(cwd, requestedPath);
 	await mkdir(dirname(absolutePath), { recursive: true });
@@ -152,8 +153,28 @@ async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: str
 }
 
 async function prepareBatchScreenshotPaths(args: string[], stdin: string | undefined, cwd: string): Promise<PreparedAgentBrowserArgs | undefined> {
-	const commandTokens = extractCommandTokens(args);
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
+	const commandTokens = extractUpstreamCommandTokens(args);
+	if (commandTokens[0] !== "batch") {
+		return undefined;
+	}
+	const argumentSteps = getUpstreamEffectiveBatchSteps(commandTokens, undefined);
+	if (argumentSteps.length > 0) {
+		// Upstream executes raw argument steps exclusively and ignores stdin, so
+		// prepare parent directories for the rows that will run and skip stdin
+		// preparation (no directories for never-executed rows).
+		for (const step of argumentSteps) {
+			const stepTokens = extractUpstreamCommandTokens(step);
+			await ensureArtifactParentDirectory(stepTokens, cwd);
+			if (stepTokens[0] === "screenshot") {
+				// Reuse the screenshot path resolution for its parent-directory side
+				// effect only: raw strings are never rewritten, so the normalized
+				// tokens and path request are deliberately discarded.
+				await normalizeScreenshotPathInTokens(step, cwd);
+			}
+		}
+		return undefined;
+	}
+	if (stdin === undefined) {
 		return undefined;
 	}
 	const parsed = parseBatchStdinJsonArray(stdin);
@@ -167,8 +188,9 @@ async function prepareBatchScreenshotPaths(args: string[], stdin: string | undef
 		if (!Array.isArray(step) || !step.every((item) => typeof item === "string")) {
 			return step;
 		}
-		await ensureArtifactParentDirectory(step, cwd);
-		if (step[0] !== "screenshot") {
+		const upstreamStep = extractUpstreamCommandTokens(step);
+		await ensureArtifactParentDirectory(upstreamStep, cwd);
+		if (upstreamStep[0] !== "screenshot") {
 			return step;
 		}
 		const normalized = await normalizeScreenshotPathInTokens(step, cwd);
@@ -195,7 +217,7 @@ export async function prepareAgentBrowserArgs(args: string[], stdin: string | un
 	}
 
 	const commandTokens = extractCommandTokens(args);
-	await ensureArtifactParentDirectory(commandTokens, cwd);
+	await ensureArtifactParentDirectory(extractUpstreamCommandTokens(args), cwd);
 	const normalized = await normalizeScreenshotPathInTokens(commandTokens, cwd);
 	if (!normalized.request) {
 		return { args };
@@ -283,12 +305,11 @@ function describeRef(refSnapshot: SessionRefSnapshot | undefined, refId: string)
 }
 
 function getSamePageFreshnessPreflightFailure(options: {
-	commandTokens: string[];
 	currentSnapshot: SessionRefSnapshot;
 	previousSnapshot: SessionRefSnapshot;
+	refIds: string[];
 }): { message: string; refIds: string[] } | undefined {
-	if (options.commandTokens[0] === "batch") return undefined;
-	const refIds = getRefIdsFromDirectCommand(options.commandTokens);
+	const { refIds } = options;
 	if (refIds.length === 0) return undefined;
 	const previousUrl = options.previousSnapshot.target?.url;
 	const currentUrl = options.currentSnapshot.target?.url;
@@ -313,12 +334,14 @@ async function collectSamePageRefFreshnessPreflight(options: {
 	commandTokens: string[];
 	cwd: string;
 	currentTarget?: SessionTabTarget;
+	stdin?: string;
 	previousSnapshot?: SessionRefSnapshot;
 	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<StaleRefPreflight | undefined> {
-	if (!options.previousSnapshot || !options.sessionName || options.commandTokens[0] === "batch" || getRefIdsFromDirectCommand(options.commandTokens).length === 0) return undefined;
+	const refIds = [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin))];
+	if (!options.previousSnapshot || !options.sessionName || refIds.length === 0) return undefined;
 	const previousUrl = options.previousSnapshot.target?.url;
 	const currentTargetUrl = options.currentTarget?.url;
 	if (currentTargetUrl === "about:blank" || (previousUrl && currentTargetUrl && previousUrl !== currentTargetUrl)) return undefined;
@@ -326,7 +349,7 @@ async function collectSamePageRefFreshnessPreflight(options: {
 	const currentSnapshot = extractRefSnapshotFromData(snapshotData);
 	if (!currentSnapshot) return undefined;
 	const snapshotWithTarget = { ...currentSnapshot, target: currentSnapshot.target ?? options.currentTarget };
-	const mismatch = getSamePageFreshnessPreflightFailure({ commandTokens: options.commandTokens, currentSnapshot: snapshotWithTarget, previousSnapshot: options.previousSnapshot });
+	const mismatch = getSamePageFreshnessPreflightFailure({ currentSnapshot: snapshotWithTarget, previousSnapshot: options.previousSnapshot, refIds });
 	if (!mismatch) return undefined;
 	return { message: mismatch.message, refIds: mismatch.refIds, snapshot: snapshotWithTarget };
 }
@@ -371,7 +394,13 @@ export function validateStdinCommandContract(options: { command?: string; comman
 }
 
 function canResolveSemanticVisibleRef(compiled: CompiledAgentBrowserSemanticAction | undefined): compiled is CompiledAgentBrowserSemanticAction {
-	return compiled !== undefined && compiled.locator === "role" && ["check", "click", "fill"].includes(compiled.action);
+	if (!compiled?.locator) return false;
+	if (compiled.action === "select") return true;
+	return compiled.locator === "role" && ["check", "click", "fill"].includes(compiled.action);
+}
+
+function requiresResolvedSemanticVisibleRef(compiled: CompiledAgentBrowserSemanticAction | undefined): boolean {
+	return compiled?.action === "select" && compiled.locator !== undefined;
 }
 
 function resolveSemanticActionVisibleRefArgsFromSnapshot(compiled: CompiledAgentBrowserSemanticAction | undefined, snapshotData: unknown): SemanticActionVisibleRefResolution | undefined {
@@ -609,7 +638,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			priorSessionTabTarget ??= { url: liveUrl };
 			priorSessionTabTargetUnknown = undefined;
 		};
-		const mayResolveSemanticVisibleRef = executionPlan.managedSessionName !== freshSessionName && canResolveSemanticVisibleRef(compiledSemanticAction);
+		const hasPotentialLiveSemanticSession = state.managedSessionActive || priorSessionTabTarget !== undefined || isCallerOwnedExplicitSession() || options.preserveAttachedBrowserSession === true;
+		const mayResolveSemanticVisibleRef = executionPlan.managedSessionName !== freshSessionName && hasPotentialLiveSemanticSession && canResolveSemanticVisibleRef(compiledSemanticAction);
 		if (!executionPlan.validationError && mayResolveSemanticVisibleRef && requiresLivePageVerification()) {
 			await verifyLivePage({
 				args: ["snapshot", "-i"],
@@ -625,6 +655,17 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				signal,
 			});
 		}
+		if (!executionPlan.validationError && requiresResolvedSemanticVisibleRef(compiledSemanticAction) && !semanticActionVisibleRefResolution) {
+			const freshLocatorError = executionPlan.managedSessionName === freshSessionName
+				? "semanticAction select with locator cannot resolve a current @ref in sessionMode fresh. Open the page first, then reuse that session, or pass selector plus value/values."
+				: undefined;
+			executionPlan = {
+				...executionPlan,
+				validationError: freshLocatorError ?? (hasPotentialLiveSemanticSession
+					? "semanticAction select with locator could not resolve to exactly one current visible combobox/listbox ref. Run snapshot -i and retry with selector or a more specific role/name."
+					: "semanticAction select with locator requires an active browser session so the wrapper can resolve a current @ref; open a page first or pass selector plus value/values."),
+			};
+		}
 		if (semanticActionVisibleRefResolution) {
 			executionPlan = buildExecutionPlan(semanticActionVisibleRefResolution.args, {
 				freshSessionName,
@@ -636,7 +677,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			});
 		}
 
-		const commandTokens = semanticActionVisibleRefResolution ? extractCommandTokens(semanticActionVisibleRefResolution.args) : extractCommandTokens(preparedArgs.args);
+		const commandTokens = semanticActionVisibleRefResolution ? extractUpstreamCommandTokens(semanticActionVisibleRefResolution.args) : extractUpstreamCommandTokens(preparedArgs.args);
 		const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
 			? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
 			: undefined;
@@ -794,6 +835,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			cwd,
 			currentTarget: priorSessionTabTarget,
 			previousSnapshot: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotState,
+			stdin: runtimeToolStdin,
 			namespace: executionPlan.namespace,
 			sessionName: executionPlan.sessionName,
 			signal,
@@ -1021,7 +1063,11 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					}
 					if (pinnedBatchPlan) {
 						sessionTabCorrection = plannedSessionTabSelection;
-						processArgs = ["--json", ...(executionPlan.namespace !== undefined ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
+						// The rewritten batch must keep the caller's fail-fast semantics:
+						// upstream reads only the exact --bail token, so re-emit it whenever
+						// the original batch tokens carried it (argv or stdin/job/qa mode).
+						const pinnedBailArgs = commandTokens.includes("--bail") ? ["--bail"] : [];
+						processArgs = ["--json", ...(executionPlan.namespace !== undefined ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch", ...pinnedBailArgs];
 						processStdin = JSON.stringify(pinnedBatchPlan.steps);
 						includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
 						pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;
@@ -1091,7 +1137,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				redactedCompiledJob,
 				redactedCompiledNetworkSourceLookup,
 				redactedCompiledQaPreset,
-				redactedCompiledSemanticAction,
+				redactedCompiledSemanticAction: semanticActionVisibleRefResolution && redactedCompiledSemanticAction?.action === "select"
+					? { ...redactedCompiledSemanticAction, args: redactInvocationArgs(semanticActionVisibleRefResolution.args) }
+					: redactedCompiledSemanticAction,
 				redactedCompiledSourceLookup,
 				redactedEffectiveArgs,
 				redactedProcessArgs,

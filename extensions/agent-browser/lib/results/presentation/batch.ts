@@ -1,8 +1,10 @@
+import { isCloseCommand } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
-import { extractCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
+import { extractUpstreamCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
-import { formatSessionArtifactRetentionSummary } from "../artifact-manifest.js";
+import { formatSessionArtifactRetentionSummary, isPendingRecordingArtifact } from "../artifact-manifest.js";
 import { classifyAgentBrowserFailureCategory } from "../categories.js";
 import { detectConfirmationRequired } from "../confirmation.js";
 import type {
@@ -11,13 +13,14 @@ import type {
 	AgentBrowserNextAction,
 	BatchFailurePresentationDetails,
 	BatchStepPresentationDetails,
+	FileArtifactMetadata,
 	NetworkRouteDiagnostic,
 	NetworkRouteRecord,
 	SessionArtifactManifest,
 	ToolPresentation,
 } from "../contracts.js";
 import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../network-routes.js";
-import { applyNamespaceToNextActions, withOptionalSessionArgs } from "../next-actions.js";
+import { appendUniqueAgentBrowserNextActions, applyNamespaceToNextActions, withOptionalSessionArgs } from "../next-actions.js";
 import { stringifyModelFacing } from "./common.js";
 import { buildArtifactVerificationSummary, classifyPresentationSuccessCategory, manifestHasNewNoticeWorthyEntries, type ArtifactRequestContext } from "./artifacts.js";
 import { formatBatchStepCommand, getPresentationImages, getPresentationPaths, getPresentationText, isStringArray } from "./content.js";
@@ -26,12 +29,15 @@ import { appendSelectorRecoveryHint, getClipboardWritePayloadCandidates, redactC
 
 export interface BuildNestedToolPresentationOptions {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
+	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	args?: string[];
 	commandInfo: CommandInfo;
 	cwd: string;
 	envelope?: AgentBrowserEnvelope;
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
+	namespace?: string;
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 }
@@ -93,7 +99,7 @@ function hasModelFacingArgRedaction(args: string[] | undefined): boolean {
 
 function getStatefulCommandSensitiveValues(command: string[] | undefined): string[] {
 	if (!command) return [];
-	const tokens = extractCommandTokens(command);
+	const tokens = extractUpstreamCommandTokens(command);
 	const values: string[] = [];
 	if (tokens[0] === "cookies" && tokens[1] === "set" && tokens[3]) values.push(tokens[3]);
 	if (tokens[0] === "storage" && ["local", "session"].includes(tokens[1] ?? "") && tokens[2] === "set" && tokens[4]) values.push(tokens[4]);
@@ -202,6 +208,8 @@ function formatBatchStepsText(steps: Array<{ details: BatchStepPresentationDetai
 
 async function buildBatchStepPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
+	artifactMinUpdatedAtMs?: number;
 	artifactRequest?: ArtifactRequestContext;
 	buildNestedToolPresentation: BuildNestedToolPresentation;
 	cwd: string;
@@ -212,10 +220,11 @@ async function buildBatchStepPresentation(options: {
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	sessionName?: string;
 }): Promise<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }> {
-	const { artifactManifest, artifactRequest, buildNestedToolPresentation, cwd, index, item, namespace, networkRoutes, persistentArtifactStore, sessionName } = options;
+	const { artifactManifest, artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs, artifactRequest, buildNestedToolPresentation, cwd, index, item, namespace, networkRoutes, persistentArtifactStore, sessionName } = options;
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const redactedCommand = command ? redactInvocationArgs(command) : undefined;
 	const commandText = formatBatchStepCommand(hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command, index);
+	const lifecycle = extractBatchStepLifecycle(item.result);
 
 	if (item.success === false) {
 		const redactedErrorData = command?.[0] === "clipboard"
@@ -255,6 +264,7 @@ async function buildBatchStepPresentation(options: {
 				data: redactedErrorData,
 				failureCategory,
 				index,
+				lifecycle,
 				nextActions,
 				resultCategory: "failure",
 				success: false,
@@ -272,12 +282,15 @@ async function buildBatchStepPresentation(options: {
 		: undefined;
 	const presentation = await buildNestedToolPresentation({
 		artifactManifest,
+		artifactMaxUpdatedAtMs,
+		artifactMinUpdatedAtMs,
 		artifactRequest,
 		commandInfo: commandInfoWithTokens,
 		cwd,
 		args: command,
 		envelope: { data: item.result, success: true },
 		networkRouteDiagnostics,
+		namespace,
 		persistentArtifactStore,
 		sessionName,
 	});
@@ -323,6 +336,7 @@ async function buildBatchStepPresentation(options: {
 			imagePath: imagePaths[0],
 			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
 			index,
+			lifecycle,
 			networkRouteDiagnostics: presentation.networkRouteDiagnostics,
 			nextActions,
 			pageChangeSummary,
@@ -338,8 +352,54 @@ async function buildBatchStepPresentation(options: {
 	};
 }
 
+function extractBatchStepLifecycle(result: unknown): BatchStepPresentationDetails["lifecycle"] {
+	if (!isRecord(result) || !isRecord(result.lifecycle) || !isRecord(result.lifecycle.effectiveLaunch)) return undefined;
+	const browserLaunched = result.lifecycle.effectiveLaunch.browserLaunched;
+	return typeof browserLaunched === "boolean" ? { effectiveLaunch: { browserLaunched } } : undefined;
+}
+
+function abandonedRecordingArtifact(artifact: FileArtifactMetadata): FileArtifactMetadata {
+	const { recordingState: _recordingState, willExistOnStop: _willExistOnStop, ...terminal } = artifact;
+	return { ...terminal, exists: false, status: "missing", subcommand: "close-abandoned" };
+}
+
+function coalesceTerminalBatchRecordingArtifacts(
+	steps: Array<{ details: BatchStepPresentationDetails; presentation: ToolPresentation }>,
+	sessionName?: string,
+	namespace?: string,
+): FileArtifactMetadata[] {
+	const artifacts: FileArtifactMetadata[] = [];
+	const pendingIndexesBySession = new Map<string, number[]>();
+	const removedPendingIndexes = new Set<number>();
+	for (const step of steps) {
+		for (const artifact of step.presentation.artifacts ?? []) {
+			const index = artifacts.push(artifact) - 1;
+			if (artifact.command !== "record" || artifact.kind !== "video") continue;
+			const session = artifact.session ? getAgentBrowserSessionIdentityKey(artifact.session, artifact.namespace) : "";
+			if (isPendingRecordingArtifact(artifact)) {
+				const pendingIndexes = pendingIndexesBySession.get(session) ?? [];
+				pendingIndexes.push(index);
+				pendingIndexesBySession.set(session, pendingIndexes);
+				continue;
+			}
+			const pendingIndex = pendingIndexesBySession.get(session)?.pop();
+			if (pendingIndex !== undefined) removedPendingIndexes.add(pendingIndex);
+		}
+		const command = step.details.command;
+		if (step.details.success !== true || !command || !isCloseCommand(extractUpstreamCommandTokens(command)[0])) continue;
+		const session = sessionName ? getAgentBrowserSessionIdentityKey(sessionName, namespace) : "";
+		for (const pendingIndex of pendingIndexesBySession.get(session) ?? []) {
+			const pending = artifacts[pendingIndex];
+			if (pending && !removedPendingIndexes.has(pendingIndex)) artifacts[pendingIndex] = abandonedRecordingArtifact(pending);
+		}
+	}
+	return artifacts.filter((_, index) => !removedPendingIndexes.has(index));
+}
+
 export async function buildBatchPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
+	artifactMaxUpdatedAtMs?: number;
+	artifactMinUpdatedAtMs?: number;
 	artifactRequests?: Array<ArtifactRequestContext | undefined>;
 	buildNestedToolPresentation: BuildNestedToolPresentation;
 	cwd: string;
@@ -358,6 +418,8 @@ export async function buildBatchPresentation(options: {
 	for (const [index, item] of data.entries()) {
 		const step = await buildBatchStepPresentation({
 			artifactManifest: currentArtifactManifest,
+			artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs,
+			artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs,
 			artifactRequest: artifactRequests?.[index],
 			buildNestedToolPresentation,
 			cwd,
@@ -370,7 +432,7 @@ export async function buildBatchPresentation(options: {
 		});
 		steps.push(step);
 		currentArtifactManifest = step.presentation.artifactManifest ?? currentArtifactManifest;
-		currentNetworkRoutes = applyNetworkRouteRecords(currentNetworkRoutes, isStringArray(item.command) ? extractCommandTokens(item.command) : undefined, item.success !== false && step.details.success);
+		currentNetworkRoutes = applyNetworkRouteRecords(currentNetworkRoutes, isStringArray(item.command) ? extractUpstreamCommandTokens(item.command) : undefined, item.success !== false && step.details.success);
 		protectedPersistentPaths.push(
 			...getPresentationPaths({
 				primaryPath: step.presentation.fullOutputPath,
@@ -381,7 +443,7 @@ export async function buildBatchPresentation(options: {
 
 	const batchFailure = getBatchFailureDetails(steps);
 	const images = steps.flatMap((step) => getPresentationImages(step.presentation));
-	const artifacts = steps.flatMap((step) => step.presentation.artifacts ?? []);
+	const artifacts = coalesceTerminalBatchRecordingArtifacts(steps, sessionName, namespace);
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const fullOutputPaths = steps.flatMap((step) => getPresentationPaths({
 		primaryPath: step.presentation.fullOutputPath,
@@ -412,9 +474,13 @@ export async function buildBatchPresentation(options: {
 	const contentText = artifactRetentionSummary && manifestHasNewNoticeWorthyEntries(options.artifactManifest, currentArtifactManifest)
 		? `${text}\n\n${artifactRetentionSummary}`
 		: text;
+	const artifactLifecycleActions = applyNamespaceToNextActions(
+		buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: batchFailure ? "failure" : "success", sessionName }),
+		namespace,
+	);
 	const nextActions = batchFailure
-		? batchFailure.failedStep.nextActions
-		: buildAgentBrowserNextActions({ artifacts, command: "batch", resultCategory: "success", sessionName });
+		? appendUniqueAgentBrowserNextActions([...(batchFailure.failedStep.nextActions ?? [])], artifactLifecycleActions)
+		: artifactLifecycleActions;
 	const changedSteps = steps.map((step) => step.details).filter((details) => details.pageChangeSummary !== undefined);
 	const pageChangeSummary = artifacts.length > 0
 		? buildPageChangeSummary({

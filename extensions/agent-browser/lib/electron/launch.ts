@@ -70,6 +70,7 @@ export interface ElectronLaunchRecord {
 	executablePath: string;
 	launchId: string;
 	launchedByWrapper: true;
+	namespace?: string;
 	packageSource?: string;
 	pid?: number;
 	platform?: string;

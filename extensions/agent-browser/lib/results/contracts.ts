@@ -17,7 +17,7 @@ export interface AgentBrowserBatchResult {
 
 export type AgentBrowserResultCategory = "failure" | "success";
 
-export type AgentBrowserSuccessCategory = "artifact-saved" | "artifact-unverified" | "completed" | "inspection";
+export type AgentBrowserSuccessCategory = "artifact-pending" | "artifact-saved" | "artifact-unverified" | "completed" | "inspection";
 
 export type AgentBrowserFailureCategory =
 	| "aborted"
@@ -57,7 +57,7 @@ export interface AgentBrowserPageChangeSummary {
 
 export type FileArtifactKind = "download" | "file" | "har" | "image" | "pdf" | "profile" | "trace" | "video";
 
-export type FileArtifactStatus = "missing" | "pending" | "repaired-from-temp" | "saved" | "upstream-temp-only";
+export type FileArtifactStatus = "missing" | "pending" | "repaired-from-temp" | "saved" | "stale" | "upstream-temp-only";
 
 export interface FileArtifactMetadata {
 	absolutePath: string;
@@ -68,6 +68,7 @@ export interface FileArtifactMetadata {
 	extension?: string;
 	kind: FileArtifactKind;
 	mediaType?: string;
+	namespace?: string;
 	path: string;
 	recordingState?: "openRecording";
 	requestedPath?: string;
@@ -76,6 +77,7 @@ export interface FileArtifactMetadata {
 	status?: FileArtifactStatus;
 	subcommand?: string;
 	tempPath?: string;
+	updatedAtMs?: number;
 	willExistOnStop?: boolean;
 }
 
@@ -95,6 +97,7 @@ export interface ArtifactVerificationEntry {
 	state: ArtifactVerificationState;
 	status?: FileArtifactStatus;
 	storageScope?: ArtifactStorageScope;
+	updatedAtMs?: number;
 	willExistOnStop?: boolean;
 }
 
@@ -129,6 +132,7 @@ export interface SessionArtifactManifestEntry {
 	extension?: string;
 	kind: FileArtifactKind | "spill";
 	mediaType?: string;
+	namespace?: string;
 	path: string;
 	requestedPath?: string;
 	retentionState: ArtifactRetentionState;
@@ -159,6 +163,7 @@ export interface BatchStepPresentationDetails {
 	imagePath?: string;
 	imagePaths?: string[];
 	index: number;
+	lifecycle?: { effectiveLaunch: { browserLaunched: boolean } };
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	nextActions?: AgentBrowserNextAction[];
 	pageChangeSummary?: AgentBrowserPageChangeSummary;

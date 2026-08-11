@@ -1,5 +1,6 @@
 param(
-  [Parameter(Mandatory=$true)][string]$AgentBrowserVersion
+  [Parameter(Mandatory=$true)][string]$AgentBrowserVersion,
+  [switch]$SkipNpmCi
 )
 
 $ErrorActionPreference = "Continue"
@@ -90,8 +91,13 @@ Write-Output "PLATFORM_DOGFOOD_ARTIFACT_DIR=$DogfoodArtifactDir"
 $NodeVersion = (& node --version 2>$null)
 Write-Output "PLATFORM_NODE_VERSION=$NodeVersion"
 
-& npm ci 2>&1
-$NpmCiExit = $LASTEXITCODE
+if ($SkipNpmCi -and (Test-Path (Join-Path $SourceRoot "node_modules"))) {
+  Write-Output "PLATFORM_NPM_CI_SKIPPED=1"
+  $NpmCiExit = 0
+} else {
+  & npm ci 2>&1
+  $NpmCiExit = $LASTEXITCODE
+}
 Write-Output "PLATFORM_NPM_CI_EXIT=$NpmCiExit"
 
 $AgentBrowserPath = Get-AgentBrowserCommandPath

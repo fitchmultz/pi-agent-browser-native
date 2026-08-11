@@ -305,9 +305,9 @@ export function buildPlatformBuildCommand(targetName, packageName = "pi-agent-br
 	return lines.join("\n");
 }
 
-export function buildBrowserDogfoodCommand(targetName, agentBrowserVersion = CAPABILITY_BASELINE.targetVersion) {
+export function buildBrowserDogfoodCommand(targetName, agentBrowserVersion = CAPABILITY_BASELINE.targetVersion, dependenciesReady = false) {
 	if (platformFor(targetName) === "powershell") {
-		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\browser-dogfood-windows.ps1 -AgentBrowserVersion ${psSingleQuote(agentBrowserVersion)}`;
+		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\browser-dogfood-windows.ps1 -AgentBrowserVersion ${psSingleQuote(agentBrowserVersion)}${dependenciesReady ? " -SkipNpmCi" : ""}`;
 	}
 
 	const lines = [];
@@ -329,8 +329,12 @@ export function buildBrowserDogfoodCommand(targetName, agentBrowserVersion = CAP
 	lines.push(`echo "PLATFORM_AGENT_BROWSER_VERSION=$AGENT_BROWSER_VERSION_OUTPUT"`);
 	lines.push(`if [ "$AGENT_BROWSER_VERSION_COMMAND_EXIT" -eq 0 ] && [ "$AGENT_BROWSER_VERSION_OUTPUT" = "$EXPECTED_AGENT_BROWSER_VERSION" ]; then AGENT_BROWSER_READY_EXIT=0; else AGENT_BROWSER_READY_EXIT=1; fi`);
 	lines.push(`echo "PLATFORM_AGENT_BROWSER_READY_EXIT=$AGENT_BROWSER_READY_EXIT"`);
-	lines.push(`npm ci 2>&1`);
-	lines.push(`NPM_CI_EXIT=$?`);
+	if (dependenciesReady) {
+		lines.push(`if [ -d node_modules ]; then echo "PLATFORM_NPM_CI_SKIPPED=1"; NPM_CI_EXIT=0; else npm ci 2>&1; NPM_CI_EXIT=$?; fi`);
+	} else {
+		lines.push(`npm ci 2>&1`);
+		lines.push(`NPM_CI_EXIT=$?`);
+	}
 	lines.push(`echo "PLATFORM_NPM_CI_EXIT=$NPM_CI_EXIT"`);
 	lines.push(`TSX_CLI="$SOURCE_ROOT/node_modules/.bin/tsx"`);
 	lines.push(`if [ ! -x "$TSX_CLI" ]; then TSX_CLI="$(command -v tsx || true)"; fi`);
@@ -349,7 +353,7 @@ async function runBrowserDogfoodSuite(config, targetName, suiteName, leaseSessio
 	const startedAt = Date.now();
 	const platform = platformFor(targetName);
 	const slug = `${config.packageName}-${targetName}`;
-	const command = buildBrowserDogfoodCommand(targetName, config.agentBrowserVersion);
+	const command = buildBrowserDogfoodCommand(targetName, config.agentBrowserVersion, leaseSession?.dependenciesReady === true);
 	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify(targetEvidence(config, targetName, runId, slug), null, 2));
 	writeFileSync(resolve(suiteDir, "suite.json"), JSON.stringify({ suiteName, modelCalls: 0, realBrowser: true }, null, 2));
 	writeCommand(suiteDir, command);
@@ -496,12 +500,14 @@ export async function runTargetSuites(config, targetName, suiteNames) {
 	let staleCleanupResult;
 	try {
 		let sync = true;
+		let dependenciesReady = false;
 		for (const suiteName of suiteNames) {
 			console.log(`  Suite: ${suiteName}`);
-			const result = await runTargetSuite(config, targetName, suiteName, { ...lease, sync }, runId);
+			const result = await runTargetSuite(config, targetName, suiteName, { ...lease, dependenciesReady, sync }, runId);
 			results.push(result);
 			console.log(`  ${result.ok ? "PASS" : "FAIL"} ${suiteName} on ${targetName}`);
 			sync = false;
+			if (result.ok && suiteName === "platform-build") dependenciesReady = true;
 			if (!result.ok) break;
 		}
 	} finally {

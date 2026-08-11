@@ -48,7 +48,7 @@ if (args.includes("--version")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_VERSION: "1" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Open a page and summarize it." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -373,13 +373,28 @@ if (process.env.PI_AGENT_BROWSER_TEST_FAIL_ATTACHED_GET_URL === "1" && command =
 }
 const currentUrl = fs.existsSync(${JSON.stringify(unsafeTargetPath)}) ? "file:///tmp/private.html" : "https://dash.cloudflare.com/";
 const sessionActive = sessionName === "cloudflare-live" || fs.existsSync(${JSON.stringify(failedDaemonPath)});
-const data = command === "session" && subcommand === "info"
+const batchInput = command === "batch" ? fs.readFileSync(0, "utf8") : "";
+const data = command === "batch"
+  ? JSON.parse(batchInput).map((step) => ({
+      command: step,
+      result: step[0] === "open"
+        ? { url: step[1] }
+        : step[0] === "snapshot"
+          ? { refs: { e1: {} }, snapshot: "- heading \\"Cloudflare Dashboard\\" [ref=e1]", title: "Cloudflare Dashboard", url: currentUrl }
+          : step[0] === "network" && step[1] === "route"
+            ? { routed: step[2] }
+            : {},
+      success: true,
+    }))
+  : command === "session" && subcommand === "info"
   ? { active: sessionActive, runtime: sessionActive ? { restoreKey: null } : null }
   : command === "get" && subcommand === "url"
   ? { result: currentUrl, url: currentUrl }
   : command === "snapshot"
     ? { snapshot: "- heading \\"Cloudflare Dashboard\\" [ref=e1]" }
-    : { connected: command === "connect" };
+    : command === "network" && subcommand === "requests"
+      ? { requests: [{ method: "GET", requestId: "after-close", resourceType: "fetch", url: "https://dash.cloudflare.com/api/test" }] }
+      : { connected: command === "connect" };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
@@ -395,17 +410,56 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const connect = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "cloudflare-live", "connect", "9222"] });
 			const url = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "cloudflare-live", "get", "url"] });
 			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "cloudflare-live", "snapshot", "-i"] });
+			const attachedCloseThenOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "cloudflare-live", "batch"],
+				stdin: JSON.stringify([["close"], ["open", "https://dash.cloudflare.com/"]]),
+			});
+			const snapshotAfterNestedClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "cloudflare-live", "snapshot", "-i"] });
 			const freshLabeledUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "cloudflare-live", "get", "url"], sessionMode: "fresh" });
 
 			assert.equal(connect.isError, false, connect.content[0]?.type === "text" ? connect.content[0].text : "connect failed");
 			assert.equal(url.isError, false, url.content[0]?.type === "text" ? url.content[0].text : "get url failed");
 			assert.equal(snapshot.isError, false, snapshot.content[0]?.type === "text" ? snapshot.content[0].text : "snapshot failed");
+			assert.equal(attachedCloseThenOpen.isError, false, attachedCloseThenOpen.content[0]?.type === "text" ? attachedCloseThenOpen.content[0].text : "close/open batch failed");
+			assert.equal(snapshotAfterNestedClose.isError, false, snapshotAfterNestedClose.content[0]?.type === "text" ? snapshotAfterNestedClose.content[0].text : "post-batch snapshot failed");
+			assert.equal(snapshotAfterNestedClose.details?.attachedBrowserSession, true);
 			assert.equal(freshLabeledUrl.isError, false, freshLabeledUrl.content[0]?.type === "text" ? freshLabeledUrl.content[0].text : "fresh-labeled get url failed");
 			const attachedInvocations = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("cloudflare-live"));
 			assert.ok(attachedInvocations.some((entry) => entry.args.includes("connect")));
 			assert.ok(attachedInvocations.some((entry) => entry.args.includes("snapshot")));
 			assert.ok(attachedInvocations.some((entry) => entry.args.includes("get") && entry.args.includes("url")));
 			assert.ok(attachedInvocations.every((entry) => !entry.args.includes("--args") && !entry.args.includes("--allow-file-access")));
+
+			const terminalCloseInvocationCount = (await readInvocationLog(logPath)).length;
+			const attachedTerminalClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "cloudflare-live", "batch"],
+				stdin: JSON.stringify([
+					["network", "route", "**/api/**", "--body", "{}"],
+					["snapshot", "-i"],
+					["close"],
+				]),
+			});
+			assert.equal(attachedTerminalClose.isError, false, attachedTerminalClose.content[0]?.type === "text" ? attachedTerminalClose.content[0].text : "terminal close batch failed");
+			assert.equal(attachedTerminalClose.details?.refSnapshot, undefined);
+			const requestsAfterTerminalClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "cloudflare-live", "network", "requests"] });
+			assert.equal(requestsAfterTerminalClose.isError, false, requestsAfterTerminalClose.content[0]?.type === "text" ? requestsAfterTerminalClose.content[0].text : "post-close requests failed");
+			assert.equal(requestsAfterTerminalClose.details?.attachedBrowserSession, undefined);
+			assert.equal(requestsAfterTerminalClose.details?.networkRouteDiagnostics, undefined);
+			const postCloseInvocations = (await readInvocationLog(logPath)).slice(terminalCloseInvocationCount);
+			assert.ok(postCloseInvocations.some((entry) => entry.args.includes("network") && entry.args.includes("requests") && entry.args.includes("--args")));
+
+			const terminalResumeInvocationCount = (await readInvocationLog(logPath)).length;
+			const terminalResumeHarness = createExtensionHarness({
+				branch: [connect, url, snapshot, attachedTerminalClose].map((result) => createToolBranchEntry({ details: result.details ?? {}, isError: result.isError })),
+				cwd: tempDir,
+				prompt: "Resume after the attached session was closed by a batch.",
+			});
+			await runExtensionEvent(terminalResumeHarness.handlers, "session_start", { reason: "resume" }, terminalResumeHarness.ctx);
+			const requestsAfterTerminalResume = await executeRegisteredTool(terminalResumeHarness.tool, terminalResumeHarness.ctx, { args: ["--session", "cloudflare-live", "network", "requests"] });
+			assert.equal(requestsAfterTerminalResume.isError, false, requestsAfterTerminalResume.content[0]?.type === "text" ? requestsAfterTerminalResume.content[0].text : "post-resume requests failed");
+			assert.equal(requestsAfterTerminalResume.details?.attachedBrowserSession, undefined);
+			assert.equal(requestsAfterTerminalResume.details?.networkRouteDiagnostics, undefined);
+			assert.ok((await readInvocationLog(logPath)).slice(terminalResumeInvocationCount).some((entry) => entry.args.includes("network") && entry.args.includes("requests") && entry.args.includes("--args")));
 
 			const invocationCount = (await readInvocationLog(logPath)).length;
 			const resumedHarness = createExtensionHarness({
@@ -1211,9 +1265,19 @@ test("agentBrowserExtension guards wrapper-known trace and profiler ownership", 
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`const args = process.argv.slice(2);
-const data = args.includes("get") && args.includes("url") ? { url: "https://safe.example/" } : { started: true };
-process.stdout.write(JSON.stringify({ success: true, data, error: null }));`,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("batch")) {
+  const steps = JSON.parse(fs.readFileSync(0, "utf8") || "[]");
+  process.stdout.write(JSON.stringify({ success: true, data: steps.map((step) => ({
+    command: step,
+    success: true,
+    result: { lifecycle: { effectiveLaunch: { browserLaunched: step[0] !== "close" } } }
+  })) }));
+} else {
+  const data = args.includes("get") && args.includes("url") ? { url: "https://safe.example/" } : { started: true };
+  process.stdout.write(JSON.stringify({ success: true, data, error: null }));
+}`,
 	);
 
 	try {
@@ -1230,6 +1294,53 @@ process.stdout.write(JSON.stringify({ success: true, data, error: null }));`,
 			});
 			assert.equal(profilerStart.isError, true);
 			assert.match(profilerStart.content[0]?.type === "text" ? profilerStart.content[0].text ?? "" : "", /Wrapper believes trace tracing is active/);
+
+			const directClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "close"],
+			});
+			assert.equal(directClose.isError, false);
+			const profilerAfterClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "profiler", "start"],
+			});
+			assert.equal(profilerAfterClose.isError, false);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "debug-session", "close"] });
+			const traceBeforeBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "trace", "start"],
+			});
+			assert.equal(traceBeforeBatchClose.isError, false);
+			const closeThenRelaunch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "batch"],
+				stdin: JSON.stringify([["close"], ["open", "https://safe.example/"]]),
+			});
+			assert.equal(closeThenRelaunch.isError, false);
+			const verifiedAfterBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "get", "url"],
+			});
+			assert.equal(verifiedAfterBatchClose.isError, false);
+			const profilerAfterBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "debug-session", "profiler", "start"],
+			});
+			assert.equal(profilerAfterBatchClose.isError, false, JSON.stringify({ closeThenRelaunch: closeThenRelaunch.details, profilerAfterBatchClose: profilerAfterBatchClose.details }));
+
+			const otherNamespaceTrace = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", "other", "--session", "other-a", "trace", "start"],
+			});
+			assert.equal(otherNamespaceTrace.isError, false);
+			const traceA = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "all-a", "trace", "start"] });
+			const profilerB = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "all-b", "profiler", "start"] });
+			assert.equal(traceA.isError, false);
+			assert.equal(profilerB.isError, false);
+			const closeAll = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close", "--all"] });
+			assert.equal(closeAll.isError, false);
+			assert.equal(closeAll.details?.closeAllApplied, true);
+			const profilerAAfterCloseAll = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "all-a", "profiler", "start"] });
+			assert.equal(profilerAAfterCloseAll.isError, false);
+			const profilerOtherAfterCloseAll = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", "other", "--session", "other-a", "profiler", "start"],
+			});
+			assert.equal(profilerOtherAfterCloseAll.isError, true);
+			assert.match(profilerOtherAfterCloseAll.content[0]?.type === "text" ? profilerOtherAfterCloseAll.content[0].text ?? "" : "", /Wrapper believes trace tracing is active/);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "--session", "other-a", "close"] });
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

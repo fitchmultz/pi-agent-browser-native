@@ -19,7 +19,7 @@ test("parseCommandInfo recognizes representative current command families", () =
 		{ args: ["cookies", "set", "--curl", "/tmp/cookies.txt", "--domain", "example.com"], expected: { command: "cookies", subcommand: "set" } },
 		{ args: ["auth", "save", "demo", "--password-stdin"], expected: { command: "auth", subcommand: "save" } },
 		{ args: ["dashboard", "start", "--port", "4567"], expected: { command: "dashboard", subcommand: "start" } },
-		{ args: ["doctor", "--offline", "--quick"], expected: { command: "doctor", subcommand: "--offline" } },
+		{ args: ["doctor", "--offline", "--quick"], expected: { command: "doctor", subcommand: undefined } },
 		{ args: ["install", "--with-deps"], expected: { command: "install", subcommand: "--with-deps" } },
 		{ args: ["upgrade"], expected: { command: "upgrade", subcommand: undefined } },
 		{ args: ["chat", "Summarize", "--model", "gpt-5.1"], expected: { command: "chat", subcommand: "Summarize" } },

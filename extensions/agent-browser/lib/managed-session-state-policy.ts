@@ -15,16 +15,17 @@ import {
 	optionalGlobalValueFlagConsumesNext,
 } from "./argv-grammar.js";
 import { extractManagedSessionRestoreKeys, isWrapperManagedSessionName } from "./managed-session-capabilities.js";
-import { agentBrowserConfigIsPresent } from "./managed-session-restore.js";
-import { createManagedSessionRestoreKey, hasManagedSessionRestoreProjectIdentity } from "./managed-session-storage.js";
+import { agentBrowserExplicitConfigIsPresent } from "./managed-session-restore.js";
+import { hasManagedSessionRestoreProjectIdentity } from "./managed-session-storage.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
 
 const BLOCKED_GLOBAL_STATE_MESSAGE = "This operation could read or modify wrapper-owned browser state outside the current checkout. Use a caller-owned state name or path instead.";
 const BLOCKED_MANAGED_BROWSER_FILE_MESSAGE = "Browser access to local .agent-browser storage is blocked because state files can contain authenticated cookies and storage. Use guarded state commands instead.";
 const BLOCKED_MANAGED_SESSION_MESSAGE = "This session name is reserved for a browser managed by this extension instance. Use the current managed session or a caller-owned session name instead.";
 const FILE_ACCESS_FLAG_MESSAGE = "Browser file-access enablement is blocked because a local page could read and exfiltrate authenticated .agent-browser state.";
-const UPSTREAM_CONFIG_MESSAGE = "Upstream agent-browser config is blocked for browser-backed native calls because it can load protected state, profiles, extensions, or file-access settings. Remove the config and pass safe settings explicitly.";
+const UPSTREAM_CONFIG_MESSAGE = "Explicit upstream agent-browser config from --config or AGENT_BROWSER_CONFIG is blocked for browser-backed native calls because it can load protected state, profiles, extensions, or file-access settings. Remove that override and pass safe settings explicitly. Passive agent-browser.json files are ignored through the wrapper's protected empty config.";
 const UNVERIFIED_PAGE_MESSAGE = "The active page became unverified after a tab, attachment, history, script, or state-load transition. Run get url or navigate explicitly to a safe URL before page-content inspection.";
+const BATCH_UNVERIFIED_PAGE_MESSAGE = `${UNVERIFIED_PAGE_MESSAGE} In a batch, put get url after the transition before later content steps, or split the batch at that boundary.`;
 const UNSAFE_BATCH_ARGUMENT_MESSAGE = "Batch command arguments could not be safely inspected. Use batch stdin JSON command arrays instead.";
 const NESTED_BATCH_ARGUMENT_MESSAGE = "Nested batch commands are blocked by the wrapper's page-state safety policy. Flatten the batch steps instead.";
 const NON_BAIL_BATCH_NAVIGATION_MESSAGE = "Batches that navigate before page-content access must use exact batch --bail so a failed navigation cannot expose the prior page.";
@@ -149,7 +150,7 @@ function getPositionalOperands(commandTokens: string[]): string[] {
 
 function getExplicitNavigationTarget(args: string[]): string | undefined {
 	const descriptor = parseArgvDescriptor(args);
-	const positionals = getPositionalOperands(descriptor.commandTokens);
+	const positionals = getPositionalOperands(descriptor.upstreamCommandTokens);
 	if (EXPLICIT_NAVIGATION_COMMANDS.has(descriptor.commandInfo.command ?? "")) return positionals[0];
 	if (descriptor.commandInfo.command === "tab" && descriptor.commandInfo.subcommand === "new") return positionals[1];
 	return undefined;
@@ -175,9 +176,9 @@ function getResultingExplicitNavigationTarget(args: string[], currentPageUrl?: s
 function getBrowserContentUrlOperands(args: string[]): string[] {
 	const descriptor = parseArgvDescriptor(args);
 	const command = descriptor.commandInfo.command;
-	const positionals = getPositionalOperands(descriptor.commandTokens);
+	const positionals = getPositionalOperands(descriptor.upstreamCommandTokens);
 	if (["a11y", "read", "vitals", "web-vitals"].includes(command ?? "")) return positionals.slice(0, 1);
-	if (command === "auth" && descriptor.commandInfo.subcommand === "login") return getFlagValues(descriptor.commandTokens, "--url", true);
+	if (command === "auth" && descriptor.commandInfo.subcommand === "login") return getFlagValues(descriptor.upstreamCommandTokens, "--url", true);
 	if (command === "diff" && descriptor.commandInfo.subcommand === "url") return positionals.slice(1, 3);
 	if (command === "record" && ["start", "restart"].includes(descriptor.commandInfo.subcommand ?? "")) return positionals.slice(2, 3);
 	return [];
@@ -216,7 +217,7 @@ function getBrowserFileOperands(args: string[], env: NodeJS.ProcessEnv): string[
 	const descriptor = parseArgvDescriptor(args);
 	const command = descriptor.commandInfo.command;
 	const subcommand = descriptor.commandInfo.subcommand;
-	const positionals = getPositionalOperands(descriptor.commandTokens);
+	const positionals = getPositionalOperands(descriptor.upstreamCommandTokens);
 	const values = [
 		getExplicitNavigationTarget(args),
 		...getBrowserContentUrlOperands(args),
@@ -229,16 +230,16 @@ function getBrowserFileOperands(args: string[], env: NodeJS.ProcessEnv): string[
 	if (command === "download") values.push(...positionals.slice(1));
 	if (command === "pdf") values.push(positionals[0]);
 	if (command === "screenshot") {
-		const pathIndex = getScreenshotPathTokenIndex(descriptor.commandTokens);
-		values.push(pathIndex === undefined ? undefined : descriptor.commandTokens[pathIndex]);
+		const pathIndex = getScreenshotPathTokenIndex(descriptor.upstreamCommandTokens);
+		values.push(pathIndex === undefined ? undefined : descriptor.upstreamCommandTokens[pathIndex]);
 	}
 	if (["profiler", "trace"].includes(command ?? "") && subcommand === "stop") values.push(...positionals.slice(1));
 	if (command === "network" && subcommand === "har") values.push(...positionals.slice(2));
-	if (command === "wait") values.push(...getFlagValues(descriptor.commandTokens, "--download", true), ...getFlagValues(descriptor.commandTokens, "-d", true));
-	if (command === "cookies" && subcommand === "set") values.push(...getFlagValues(descriptor.commandTokens, "--curl", true));
+	if (command === "wait") values.push(...getFlagValues(descriptor.upstreamCommandTokens, "--download", true), ...getFlagValues(descriptor.upstreamCommandTokens, "-d", true));
+	if (command === "cookies" && subcommand === "set") values.push(...getFlagValues(descriptor.upstreamCommandTokens, "--curl", true));
 	if (command === "state" && ["load", "rename", "save", "show"].includes(subcommand ?? "")) values.push(...positionals.slice(1));
 	if (command === "diff" && subcommand === "url") values.push(...positionals.slice(1));
-	if (command === "diff") values.push(...getFlagValues(descriptor.commandTokens, "--baseline", true), ...getFlagValues(descriptor.commandTokens, "--output", true), ...getFlagValues(descriptor.commandTokens, "-o", true));
+	if (command === "diff") values.push(...getFlagValues(descriptor.upstreamCommandTokens, "--baseline", true), ...getFlagValues(descriptor.upstreamCommandTokens, "--output", true), ...getFlagValues(descriptor.upstreamCommandTokens, "-o", true));
 	if (command === "record" && ["start", "restart"].includes(subcommand ?? "")) values.push(...positionals.slice(1));
 	return values.filter((value): value is string => typeof value === "string" && value.length > 0);
 }
@@ -293,12 +294,20 @@ function getManagedBrowserFileAccessValidationError(options: {
 	return undefined;
 }
 
+// Deliberately unions raw argv steps AND parseable stdin steps even though
+// upstream executes argv steps exclusively when any exist: this pre-spawn
+// validator must stay a superset of anything upstream could run, so it fails
+// closed on unsafe content in either source. Stdin parse failures are fatal
+// only when upstream would actually read stdin (no argv steps); ignored
+// unparseable stdin cannot execute and must not reject a valid raw-argv call.
+// The upstream-exact selection lives in getUpstreamEffectiveBatchSteps
+// (batch-stdin.ts) for guard/folding paths.
 function getBatchCommandSteps(args: string[], stdin?: string): { error?: string; steps: BatchCommandStep[] } {
 	const descriptor = parseArgvDescriptor(args);
 	if (descriptor.commandInfo.command !== "batch") return { steps: [] };
 	const steps: BatchCommandStep[] = [];
-	for (const command of descriptor.commandTokens.slice(1)) {
-		if (command === "--bail" || command.startsWith("--bail=")) continue;
+	for (const command of descriptor.upstreamCommandTokens.slice(1)) {
+		if (command === "--bail") continue;
 		if (decodeUrlComponent(command).toLowerCase().includes(".agent-browser")) return { error: BLOCKED_MANAGED_BROWSER_FILE_MESSAGE, steps: [] };
 		const parsed = parseBatchCommandArgument(command);
 		if (parsed.error || parsed.step === undefined) return { error: parsed.error ?? UNSAFE_BATCH_ARGUMENT_MESSAGE, steps: [] };
@@ -306,7 +315,7 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 		steps.push(parsed.step);
 	}
 	const parsedStdin = parseUserBatchStdin(stdin);
-	if (parsedStdin.error) return { error: parsedStdin.error, steps: [] };
+	if (parsedStdin.error && steps.length === 0) return { error: parsedStdin.error, steps: [] };
 	for (const step of parsedStdin.steps ?? []) {
 		if (parseArgvDescriptor(step).commandInfo.command === "batch") return { error: NESTED_BATCH_ARGUMENT_MESSAGE, steps: [] };
 		steps.push(step);
@@ -316,7 +325,7 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 
 function batchBailsOnFirstError(args: string[]): boolean {
 	const descriptor = parseArgvDescriptor(args);
-	return descriptor.commandInfo.command === "batch" && descriptor.commandTokens.slice(1).includes("--bail");
+	return descriptor.commandInfo.command === "batch" && descriptor.upstreamCommandTokens.slice(1).includes("--bail");
 }
 
 interface PossibleBatchPageState {
@@ -419,7 +428,7 @@ export function getCallerOwnedSessionLivePageVerificationRequirement(options: {
 		trustedFirstBatchTabSelection: options.trustedFirstBatchTabSelection,
 		trustedPinnedEmptyConfig: true,
 	});
-	return validationError === UNVERIFIED_PAGE_MESSAGE || validationError === NON_BAIL_BATCH_NAVIGATION_MESSAGE
+	return validationError === UNVERIFIED_PAGE_MESSAGE || validationError === BATCH_UNVERIFIED_PAGE_MESSAGE || validationError === NON_BAIL_BATCH_NAVIGATION_MESSAGE
 		? UNVERIFIED_PAGE_MESSAGE
 		: undefined;
 }
@@ -465,7 +474,7 @@ function getReferencedValues(args: string[], cwd: string, env: NodeJS.ProcessEnv
 		env.AGENT_BROWSER_STATE,
 	].filter((value): value is string => typeof value === "string" && value.length > 0);
 	if (descriptor.commandInfo.command === "state" && ["clear", "load", "rename", "save", "show"].includes(descriptor.commandInfo.subcommand ?? "")) {
-		values.push(...descriptor.commandTokens.slice(2));
+		values.push(...descriptor.upstreamCommandTokens.slice(2));
 	}
 	for (const value of [...values]) {
 		const realPath = resolveExistingPath(cwd, value);
@@ -480,6 +489,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	currentPageUrl?: string;
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
+	managedSessionRestoreKey?: string;
 	pageUrlUnknown?: boolean;
 	parentEnv?: NodeJS.ProcessEnv;
 	stdin?: string;
@@ -491,7 +501,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	const command = descriptor.commandInfo.command;
 	const subcommand = descriptor.commandInfo.subcommand;
 	if (["close", "exit", "quit"].includes(command ?? "")) return undefined;
-	if (!options.trustedPinnedEmptyConfig && needsManagedSession(descriptor) && agentBrowserConfigIsPresent(options.cwd, effectiveEnv, options.args)) return UPSTREAM_CONFIG_MESSAGE;
+	if (!options.trustedPinnedEmptyConfig && needsManagedSession(descriptor) && agentBrowserExplicitConfigIsPresent(effectiveEnv, options.args)) return UPSTREAM_CONFIG_MESSAGE;
 	if (command === "batch") {
 		const batch = getBatchCommandSteps(options.args, options.stdin);
 		if (batch.error) {
@@ -525,7 +535,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 					directError ??= error;
 				}
 			}
-			if (directError) return directError;
+			if (directError) return directError === UNVERIFIED_PAGE_MESSAGE ? BATCH_UNVERIFIED_PAGE_MESSAGE : directError;
 			if (failedNavigationHazard) return NON_BAIL_BATCH_NAVIGATION_MESSAGE;
 			const mayChangePageTarget = commandMayChangePageTarget(step, trustedBatchTabSelection);
 			const nextStates: PossibleBatchPageState[] = [];
@@ -562,8 +572,8 @@ export function getManagedSessionStateAccessValidationError(options: {
 	if (browserFileError) return browserFileError;
 	if (command === "state" && subcommand === "clean") return BLOCKED_GLOBAL_STATE_MESSAGE;
 	if (command === "state" && subcommand === "clear") {
-		const target = descriptor.commandTokens.slice(2).find((token) => !token.startsWith("-"));
-		if (!target || descriptor.commandTokens.includes("--all") || descriptor.commandTokens.includes("-a") || isWrapperManagedSessionName(target)) {
+		const target = descriptor.upstreamCommandTokens.slice(2).find((token) => !token.startsWith("-"));
+		if (!target || descriptor.upstreamCommandTokens.includes("--all") || descriptor.upstreamCommandTokens.includes("-a") || isWrapperManagedSessionName(target)) {
 			return BLOCKED_GLOBAL_STATE_MESSAGE;
 		}
 	}
@@ -575,7 +585,7 @@ export function getManagedSessionStateAccessValidationError(options: {
 	const referencedKeys = [...new Set(referencedValues.flatMap(extractManagedSessionRestoreKeys))];
 	if (referencedKeys.length === 0) return undefined;
 	if (command === "state" && ["rename", "save"].includes(subcommand ?? "")) return BLOCKED_GLOBAL_STATE_MESSAGE;
-	if (!hasManagedSessionRestoreProjectIdentity(options.cwd)) return BLOCKED_GLOBAL_STATE_MESSAGE;
-	const currentKey = createManagedSessionRestoreKey(options.cwd).toLowerCase();
+	if (!hasManagedSessionRestoreProjectIdentity(options.cwd) || !options.managedSessionRestoreKey) return BLOCKED_GLOBAL_STATE_MESSAGE;
+	const currentKey = options.managedSessionRestoreKey.toLowerCase();
 	return referencedKeys.every((key) => key === currentKey) ? undefined : BLOCKED_GLOBAL_STATE_MESSAGE;
 }

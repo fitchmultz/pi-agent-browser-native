@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,6 +18,10 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
+import { KeyedAsyncExecutionQueue, mergeBrowserRunArtifactManifest } from "../extensions/agent-browser/index.js";
+import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
+import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
+import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
 import {
 	WEB_SEARCH_PROMPT_GUIDELINE,
 	QUICK_START_GUIDELINES,
@@ -95,12 +99,20 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		}
 		assert.match(guidelineText, /Use agent_browser with one input mode/);
 		assert.match(guidelineText, /For agent_browser, use open → snapshot -i/);
-		assert.match(guidelineText, /Stop before order\/post\/purchase\/submit/);
+		assert.match(guidelineText, /ordinary requested non-destructive submissions may proceed/);
+		assert.match(guidelineText, /require explicit authorization for purchases, production-control, destructive\/irreversible, or account\/security\/privacy changes/);
 		assert.equal(
-			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("Stop before order/post/purchase/submit")),
+			RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("ordinary requested non-destructive submissions may proceed")),
+			true,
+		);
+		assert.equal(RUNTIME_PROMPT_GUIDELINES.some((line) => line.includes("Stop before order/post/purchase/submit")), false);
+		assert.equal(
+			SHARED_BROWSER_PLAYBOOK_GUIDELINES.some((line) => line.includes("ordinary non-destructive form submissions within the requested flow may proceed without separate confirmation")),
 			true,
 		);
 		assert.match(guidelineText, /sessionMode=fresh/);
+		assert.match(guidelineText, /macOS profile copies may omit encrypted cookies/);
+		assert.match(SHARED_BROWSER_PLAYBOOK_GUIDELINES.join("\n"), /copied Chrome profiles may omit encrypted cookies/);
 		assert.match(guidelineText, /exact user paths/);
 		assert.match(guidelineText, /requested\/configured profiles only/);
 		assert.match(guidelineText, /read <url> for docs\/text/);
@@ -328,6 +340,162 @@ test("agentBrowserExtension rejects unsupported extra press/key args before upst
 	}
 });
 
+test("agentBrowserExtension rejects duplicate explicit artifact destinations inside one batch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-duplicate-artifact-"));
+	try {
+		assert.equal(
+			canonicalizeExplicitArtifactDestination(tempDir, "capture.png", "darwin"),
+			canonicalizeExplicitArtifactDestination(tempDir, "CAPTURE.png", "darwin"),
+		);
+		assert.equal(
+			canonicalizeExplicitArtifactDestination(tempDir, "é.png", "darwin"),
+			canonicalizeExplicitArtifactDestination(tempDir, "e\u0301.png", "darwin"),
+		);
+		assert.equal(
+			canonicalizeExplicitArtifactDestination(tempDir, "Straße.png", "darwin"),
+			canonicalizeExplicitArtifactDestination(tempDir, "STRASSE.png", "darwin"),
+		);
+		assert.equal(
+			canonicalizeExplicitArtifactDestination(tempDir, "Σ.png", "darwin"),
+			canonicalizeExplicitArtifactDestination(tempDir, "ς.png", "darwin"),
+		);
+		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "--output", "safe.png", "--output", "final.png"]), "final.png");
+		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "--output", "safe.png", "-o", "short.png"]), "short.png");
+		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "-o", "short.png", "--output", "final.png"]), "final.png");
+		assert.equal(getExplicitArtifactDestination(["diff", "screenshot", "--output", "danger.png", "--baseline", "-o"]), "danger.png");
+		assert.equal(getExplicitArtifactDestination(["network", "har", "start", "ignored.har"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["network", "har", "stop", "-capture.har"]), "-capture.har");
+		assert.equal(getExplicitArtifactDestination(["wait", "--timeout", "30000", "-d", "capture.csv"]), "capture.csv");
+		assert.equal(getExplicitArtifactDestination(["wait", "--timeout", "1", "--timeout", "--download", "capture.csv"]), "capture.csv");
+		assert.equal(getExplicitArtifactDestination(["wait", "--download", "capture.csv", "--url", "**/done"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["wait", "-d", "capture.csv", "-t", "Ready"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["screenshot", "--full=capture.png"]), "--full=capture.png");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "main", "capture.png", "ignored.png"]), "capture.png");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "--", "capture"]), "capture");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "--full", "true", "capture"]), "capture");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "dir/file"]), "dir/file");
+		assert.equal(getExplicitArtifactDestination(["screenshot", ".dogfood/run/capture.png"]), ".dogfood/run/capture.png");
+		assert.equal(getExplicitArtifactDestination(["screenshot", "#card.png"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["screenshot", ".card.png"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["screenshot", "@e1.png"]), undefined);
+		assert.equal(getExplicitArtifactDestination(["screenshot", "capture.PNG"]), undefined);
+		await symlink(tempDir, join(tempDir, "alias"), process.platform === "win32" ? "junction" : "dir");
+		const harness = createExtensionHarness({ cwd: tempDir });
+		const lexicalAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "artifact.png"], ["screenshot", "./artifact.png"]]),
+		});
+		assert.equal(lexicalAlias.isError, true);
+		assert.match(lexicalAlias.content[0]?.text ?? "", /artifact\.png is already written by step 1/);
+
+		const sentinelAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "--", "capture"], ["screenshot", "--", "capture"]]),
+		});
+		assert.equal(sentinelAlias.isError, true);
+		assert.match(sentinelAlias.content[0]?.text ?? "", /capture is already written by step 1/);
+
+		const slashPathAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "dir/file"], ["screenshot", "dir/file"]]),
+		});
+		assert.equal(slashPathAlias.isError, true);
+		assert.match(slashPathAlias.content[0]?.text ?? "", /dir\/file is already written by step 1/);
+
+		const symlinkAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "artifact.png"], ["screenshot", "alias/artifact.png"]]),
+		});
+		assert.equal(symlinkAlias.isError, true);
+		assert.match(symlinkAlias.content[0]?.text ?? "", /alias\/artifact\.png is already written by step 1/);
+
+		if (process.platform !== "win32") {
+			await symlink("dangling-target.png", join(tempDir, "dangling-alias.png"));
+			const danglingAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "dangling-target.png"], ["screenshot", "dangling-alias.png"]]),
+			});
+			assert.equal(danglingAlias.isError, true);
+			assert.match(danglingAlias.content[0]?.text ?? "", /dangling-alias\.png is already written by step 1/);
+		}
+
+		const argumentAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch", "screenshot argument.png", "screenshot ./argument.png"],
+		});
+		assert.equal(argumentAlias.isError, true);
+		assert.match(argumentAlias.content[0]?.text ?? "", /\.\/argument\.png is already written by step 1/);
+
+		await writeFile(join(tempDir, "hardlink-a.png"), "existing artifact");
+		await link(join(tempDir, "hardlink-a.png"), join(tempDir, "hardlink-b.png"));
+		const hardlinkAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["screenshot", "hardlink-a.png"], ["screenshot", "hardlink-b.png"]]),
+		});
+		assert.equal(hardlinkAlias.isError, true);
+		assert.match(hardlinkAlias.content[0]?.text ?? "", /hardlink-b\.png is already written by step 1/);
+
+		if (process.platform === "darwin") {
+			const caseAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "case-artifact.png"], ["screenshot", "CASE-ARTIFACT.png"]]),
+			});
+			assert.equal(caseAlias.isError, true);
+			assert.match(caseAlias.content[0]?.text ?? "", /CASE-ARTIFACT\.png is already written by step 1/);
+			const unicodeAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "é.png"], ["screenshot", "e\u0301.png"]]),
+			});
+			assert.equal(unicodeAlias.isError, true);
+			assert.match(unicodeAlias.content[0]?.text ?? "", /é\.png is already written by step 1/);
+			const fullFoldAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "Straße.png"], ["screenshot", "STRASSE.png"]]),
+			});
+			assert.equal(fullFoldAlias.isError, true);
+			assert.match(fullFoldAlias.content[0]?.text ?? "", /STRASSE\.png is already written by step 1/);
+		}
+
+		const recordingAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["batch"],
+			stdin: JSON.stringify([["record", "start", "capture.webm"], ["record", "restart", "./capture.webm"]]),
+		});
+		assert.equal(recordingAlias.isError, true);
+		assert.match(recordingAlias.content[0]?.text ?? "", /capture\.webm is already written by step 1/);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension handles bare wait commands through artifact preflight", { concurrency: false }, async () => {
+	assert.equal(getExplicitArtifactDestination(["wait"]), undefined);
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bare-wait-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const command = args.find((token) => token === "wait" || token === "batch");
+if (command === "batch") { fs.readFileSync(0, "utf8"); process.stdout.write("[]"); }
+else process.stdout.write(JSON.stringify({ success: true, data: { waited: true } }));`,
+	);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			for (const params of [
+				{ args: ["wait"] },
+				{ args: ["batch", "wait"] },
+				{ args: ["batch"], stdin: JSON.stringify([["wait"]]) },
+			]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+				assert.equal(result.isError, false);
+			}
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports no-op scroll diagnostics with recovery next actions", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-noop-scroll-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -376,8 +544,12 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const noopResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scroll", "down", "700"], sessionMode: "fresh" });
-			assert.equal(noopResult.isError, false);
+			assert.equal(noopResult.isError, true);
+			assert.equal(noopResult.details?.resultCategory, "failure");
+			assert.equal(noopResult.details?.failureCategory, "upstream-error");
 			assert.match(noopResult.content[0]?.text ?? "", /Scroll diagnostic: no observed scroll movement/);
+			assert.match(noopResult.content[0]?.text ?? "", /"scrolled": false/);
+			assert.doesNotMatch(noopResult.content[0]?.text ?? "", /"scrolled": true/);
 			const noopDetails = noopResult.details as {
 				data: { noMovement?: boolean; scrolled?: boolean };
 				nextActions: Array<{ id: string; params?: { args: string[] } }>;
@@ -966,13 +1138,201 @@ if (command === "open") {
 	}
 });
 
+test("KeyedAsyncExecutionQueue drains same-namespace work without deadlocking late arrivals", async () => {
+	const queue = new KeyedAsyncExecutionQueue();
+	const key = getAgentBrowserSessionIdentityKey("shared", "team");
+	const events: string[] = [];
+	let releaseActive!: () => void;
+	let markActive!: () => void;
+	const active = new Promise<void>((resolve) => {
+		markActive = resolve;
+	});
+	const holdActive = new Promise<void>((resolve) => {
+		releaseActive = resolve;
+	});
+	const first = queue.run(key, "team", async () => {
+		events.push("first-start");
+		markActive();
+		await holdActive;
+		events.push("first-end");
+	});
+	await active;
+	const exclusive = queue.runExclusive("team", async () => {
+		events.push("exclusive");
+	});
+	const late = queue.run(key, "team", async () => {
+		events.push("late");
+	});
+	releaseActive();
+	let timeout: NodeJS.Timeout | undefined;
+	try {
+		await Promise.race([
+			Promise.all([first, exclusive, late]),
+			new Promise<never>((_resolve, reject) => {
+				timeout = setTimeout(() => reject(new Error("namespace-exclusive queue deadlocked")), 1_000);
+			}),
+		]);
+	} finally {
+		if (timeout) clearTimeout(timeout);
+	}
+	assert.deepEqual(events, ["first-start", "first-end", "exclusive", "late"]);
+});
+
+test("mergeBrowserRunArtifactManifest preserves restart lifecycle order across a concurrent manifest update", () => {
+	const initial = mergeSessionArtifactManifest({
+		entries: [{ command: "screenshot", createdAtMs: 1, kind: "image", path: "initial.png", retentionState: "live", storageScope: "explicit-path" }],
+		nowMs: 1,
+	});
+	assert.ok(initial);
+	const updated = mergeSessionArtifactManifest({
+		base: initial,
+		entries: [
+			{ command: "record", createdAtMs: 2, kind: "video", path: "z-previous.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "restart-previous" },
+			{ command: "record", createdAtMs: 2, kind: "video", path: "a-current.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "restart" },
+		],
+		nowMs: 2,
+	});
+	const current = mergeSessionArtifactManifest({
+		base: initial,
+		entries: [{ command: "screenshot", createdAtMs: 3, kind: "image", path: "concurrent.png", retentionState: "live", storageScope: "explicit-path" }],
+		nowMs: 3,
+	});
+	const merged = mergeBrowserRunArtifactManifest(current, initial, updated);
+	assert.equal(merged?.entries.some((entry) => entry.path === "z-previous.webm" && entry.subcommand === "restart-previous"), true);
+	assert.equal(merged?.entries.some((entry) => entry.path === "a-current.webm" && entry.subcommand === "restart"), true);
+	assert.equal(merged?.entries.some((entry) => entry.path === "concurrent.png"), true);
+});
+
+test("mergeSessionArtifactManifest retains the active restart when the recent window is one", { concurrency: false }, async () => {
+	await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1" }, async () => {
+		const manifest = mergeSessionArtifactManifest({
+			entries: [
+				{ command: "record", createdAtMs: 1, kind: "video", path: "a-previous.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "restart-previous" },
+				{ command: "record", createdAtMs: 1, kind: "video", path: "z-current.webm", retentionState: "live", session: "shared", storageScope: "explicit-path", subcommand: "restart" },
+			],
+			nowMs: 1,
+		});
+		assert.deepEqual(manifest?.entries.map((entry) => [entry.path, entry.subcommand]), [["z-current.webm", "restart"]]);
+	});
+});
+
+test("agentBrowserExtension keeps a direct restart pending through outer manifest merge and replay", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restart-manifest-"));
+	const nodeBinDir = dirname(process.execPath);
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const valueFlags = new Set(["--namespace", "--session"]);
+let commandIndex = -1;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--json") continue;
+  if (valueFlags.has(args[index])) { index += 1; continue; }
+  if (args[index].startsWith("--")) continue;
+  commandIndex = index;
+  break;
+}
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+const path = args[commandIndex + 2];
+if (command === "record" && subcommand === "restart") fs.writeFileSync(${JSON.stringify(join(tempDir, "z-previous.webm"))}, "finished recording");
+const data = command === "get" && subcommand === "url"
+  ? { result: "https://safe.example/", url: "https://safe.example/" }
+  : { command, path, subcommand };
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
+			const sessionName = "restart-session";
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Restart a browser recording." });
+			const started = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "record", "start", "z-previous.webm"] });
+			assert.equal(started.isError, false, started.content[0]?.text);
+			const restarted = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "record", "restart", "a-current.webm"] });
+			assert.equal(restarted.isError, false, restarted.content[0]?.text);
+			const manifest = restarted.details?.artifactManifest as { entries?: Array<{ path?: string; subcommand?: string }> } | undefined;
+			assert.equal(manifest?.entries?.some((entry) => entry.path === "z-previous.webm" && entry.subcommand === "restart-previous"), true);
+			assert.equal(manifest?.entries?.some((entry) => entry.path === "a-current.webm" && entry.subcommand === "restart"), true);
+
+			const replayHarness = createExtensionHarness({
+				branch: [{ type: "message", message: { details: restarted.details, isError: restarted.isError, toolName: "agent_browser" } }],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(replayHarness.handlers, "session_start", { reason: "resume" }, replayHarness.ctx);
+			const reservedAfterReplay = await executeRegisteredTool(replayHarness.tool, replayHarness.ctx, { args: ["pdf", "a-current.webm"] });
+			assert.equal(reservedAfterReplay.isError, true);
+			assert.match(reservedAfterReplay.content[0]?.text ?? "", /a-current\.webm is reserved by an active recording/);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "close"] });
+			await executeRegisteredTool(replayHarness.tool, replayHarness.ctx, { args: ["--session", sessionName, "close"] });
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension makes close --all exclusive within its namespace", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-close-all-queue-"));
+	const logPath = join(tempDir, "events.log");
+	const nodeBinDir = dirname(process.execPath);
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const valueFlags = new Set(["--allow-file-access", "--args", "--namespace", "--session"]);
+let commandIndex = -1;
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] === "--json") continue;
+  if (valueFlags.has(args[index])) { index += 1; continue; }
+  if (args[index].startsWith("--")) continue;
+  commandIndex = index;
+  break;
+}
+const commandArgs = args.slice(commandIndex);
+const command = commandArgs[0];
+const namespaceIndex = args.indexOf("--namespace");
+const namespace = namespaceIndex >= 0 ? args[namespaceIndex + 1] : "default";
+const writeEvent = (event) => fs.appendFileSync(${JSON.stringify(logPath)}, event + "\\n");
+const output = () => process.stdout.write(JSON.stringify({ success: true, data: command === "get" ? { url: "https://safe.example/" } : command === "tab" ? { tabs: [] } : { url: "https://safe.example/" } }));
+if (command === "close" && commandArgs.includes("--all")) {
+  writeEvent("close-start");
+  setTimeout(() => { writeEvent("close-end"); output(); }, 150);
+} else {
+  writeEvent(namespace + ":" + command + "-start");
+  output();
+}`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise global close ordering." });
+			const first = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example/"] });
+			assert.equal(first.isError, false, first.content[0]?.text);
+			await writeFile(logPath, "");
+
+			const closeAll = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "caller-owned", "close", "--all"] });
+			await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+			const otherNamespace = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "--session", "other-session", "tab", "list"] });
+			const overlappingCaller = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "same-namespace", "tab", "list"] });
+			const overlappingManaged = executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			const [closeResult, otherResult, callerResult, overlapResult] = await Promise.all([closeAll, otherNamespace, overlappingCaller, overlappingManaged]);
+			assert.equal(closeResult.details?.closeAllApplied, true);
+			assert.equal(otherResult.isError, false, otherResult.content[0]?.text);
+			assert.equal(callerResult.isError, false, callerResult.content[0]?.text);
+			assert.equal(overlapResult.isError, false, overlapResult.content[0]?.text);
+			const events = (await readFile(logPath, "utf8")).trim().split("\n");
+			assert.ok(events.indexOf("other:tab-start") < events.indexOf("close-end"), events.join(","));
+			assert.ok(events.indexOf("close-end") < events.indexOf("default:tab-start"), events.join(","));
+			assert.ok(events.indexOf("close-end") < events.indexOf("default:get-start"), events.join(","));
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension warns after record start when ffmpeg is missing", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-recording-ffmpeg-"));
+	const noRecordingMarker = join(tempDir, "no-recording");
 	const nodeBinDir = dirname(process.execPath);
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`const args = process.argv.slice(2);
-const valueFlags = new Set(["--session"]);
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const valueFlags = new Set(["--namespace", "--session"]);
 let commandIndex = -1;
 for (let i = 0; i < args.length; i += 1) {
   const token = args[i];
@@ -982,17 +1342,96 @@ for (let i = 0; i < args.length; i += 1) {
   commandIndex = i;
   break;
 }
-const command = args[commandIndex];
-const subcommand = args[commandIndex + 1];
-process.stdout.write(JSON.stringify({ success: true, data: { command, subcommand, path: args[commandIndex + 2] } }));`,
+const commandArgs = args.slice(commandIndex).filter((token) => token !== "--json" && token !== "--quiet");
+const command = commandArgs[0];
+const subcommand = commandArgs[1];
+const path = command === "pdf" ? commandArgs[1] : commandArgs[2];
+if (command === "record" && subcommand === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})) {
+  process.stdout.write(JSON.stringify({ success: false, error: "No recording in progress" }));
+  process.exit(1);
+}
+if (command === "find") {
+  process.stdout.write(JSON.stringify({ success: false, error: "No element found by text 'Missing Control'" }));
+  process.exit(1);
+}
+const batchInput = command === "batch" ? fs.readFileSync(0, "utf8") : "";
+const batchSteps = batchInput
+  ? JSON.parse(batchInput)
+  : commandArgs.slice(1).filter((value) => value !== "--bail" && !value.startsWith("--bail=")).map((value) => value.split(" "));
+const closeStepIndex = batchSteps.findIndex((step) => step[0] === "close");
+const postCloseStopIndex = batchSteps.findIndex((step, index) => index > closeStepIndex && step[0] === "record" && step[1] === "stop");
+const postCloseStopPath = ${JSON.stringify(join(tempDir, "post-close-stop.webm"))};
+if (postCloseStopIndex >= 0 && !fs.existsSync(${JSON.stringify(noRecordingMarker)})) fs.writeFileSync(postCloseStopPath, "recording");
+const firstCallFailure = command === "batch" && batchSteps.some((step) => step[0] === "click" && step[1] === "#missing-after-close");
+const data = command === "batch"
+  ? batchSteps.map((step, index) => step[0] === "click" && step[1] === "#missing-after-close"
+    ? { command: step, success: false, error: "Element not found after browser launch" }
+    : step[0] === "open" && step[1] === "fail-after-close"
+      ? { command: step, success: false, error: "Navigation failed after browser launch", result: { lifecycle: { effectiveLaunch: { browserLaunched: true } } } }
+    : step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
+      ? { command: step, success: false, error: "No recording in progress" }
+      : { command: step, success: true, result: {
+      command: step[0],
+      path: index === postCloseStopIndex ? postCloseStopPath : step[2],
+      subcommand: step[1],
+        ...(index === postCloseStopIndex
+          ? { lifecycle: { effectiveLaunch: { browserLaunched: true } } }
+          : step[0] === "stream" && step[1] === "status"
+            ? { lifecycle: { effectiveLaunch: { browserLaunched: false } } }
+            : {}),
+      } })
+  : command === "get" && subcommand === "url"
+    ? { command, subcommand, url: "https://safe.example/" }
+    : { command, subcommand, path };
+process.stdout.write(JSON.stringify({ success: !firstCallFailure, data }));
+if (firstCallFailure) process.exit(1);`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Record a browser workflow." });
+		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}`, PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1" }, async () => {
+			const firstCallHarness = createExtensionHarness({ cwd: tempDir, prompt: "Test failed post-close launch ownership.", sessionFile: join(tempDir, "first-call-session.jsonl") });
+			const failedFirstCall = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["close"], ["click", "#missing-after-close"]]),
+			});
+			assert.equal(failedFirstCall.isError, true, failedFirstCall.content[0]?.text);
+			assert.equal((failedFirstCall.details?.managedSessionOutcome as { activeAfter?: boolean } | undefined)?.activeAfter, true);
+			assert.equal(typeof failedFirstCall.details?.sessionName, "string");
+			const recoveredFirstCall = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, { args: ["get", "url"] });
+			assert.equal(recoveredFirstCall.isError, false, recoveredFirstCall.content[0]?.text);
+			assert.equal(recoveredFirstCall.details?.sessionName, failedFirstCall.details?.sessionName);
+			const closeAllFirstCall = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, { args: ["--session", "caller-owned", "close", "--all"] });
+			assert.equal(closeAllFirstCall.details?.closeAllApplied, true);
+			assert.equal((closeAllFirstCall.details?.managedSessionOutcome as { activeAfter?: boolean } | undefined)?.activeAfter, false);
+			const rotatedAfterCloseAll = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, { args: ["get", "url"] });
+			assert.notEqual(rotatedAfterCloseAll.details?.sessionName, failedFirstCall.details?.sessionName);
+			await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, { args: ["close"] });
+
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Record a browser workflow.", sessionFile: join(tempDir, "session.jsonl") });
 			await mkdir(join(tempDir, "ffmpeg"));
-			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "demo.webm"] });
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "global-one", "record", "start", "global-one.webm"] });
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "global-two", "record", "start", "global-two.webm"] });
+			const otherNamespaceRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "--session", "global-three", "record", "start", "global-three.webm"] });
+			assert.equal(otherNamespaceRecording.isError, false, otherNamespaceRecording.content[0]?.text);
+			assert.equal(otherNamespaceRecording.details?.namespace, "other");
+			const globalClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close", "--all"] });
+			assert.equal(globalClose.details?.closeAllApplied, true);
+			assert.equal(globalClose.details?.namespace, undefined);
+			const releasedGlobalOne = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "global-one.webm"] });
+			const releasedGlobalTwo = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "global-two.webm"] });
+			assert.doesNotMatch(releasedGlobalOne.content[0]?.text ?? "", /reserved by an active recording/);
+			assert.doesNotMatch(releasedGlobalTwo.content[0]?.text ?? "", /reserved by an active recording/);
+			const retainedOtherNamespace = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "global-three.webm"] });
+			assert.match(retainedOtherNamespace.content[0]?.text ?? "", /reserved by an active recording/);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "close", "--all"] });
+
+			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "--quiet", "start", "demo.webm"] });
 			assert.equal(missingResult.isError, false);
+			assert.equal(missingResult.details?.successCategory, "artifact-pending");
+			assert.deepEqual(
+				(missingResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "stop-pending-recording")?.params?.args?.slice(-2),
+				["record", "stop"],
+			);
 			assert.match(missingResult.content[0]?.text ?? "", /Recording dependency warning: ffmpeg not found on PATH/);
 			assert.match(missingResult.content[0]?.text ?? "", /Exists: pending until record stop/);
 			assert.match(missingResult.content[0]?.text ?? "", /Status: pending/);
@@ -1008,6 +1447,87 @@ process.stdout.write(JSON.stringify({ success: true, data: { command, subcommand
 			assert.equal(missingVerification?.artifacts?.[0]?.state, "pending");
 			assert.equal(missingVerification?.artifacts?.[0]?.status, "pending");
 			assert.equal(missingVerification?.artifacts?.[0]?.willExistOnStop, true);
+			const failedWhileRecording = await executeRegisteredTool(harness.tool, harness.ctx, { semanticAction: { action: "click", locator: "text", value: "Missing Control" } });
+			assert.equal(failedWhileRecording.isError, true);
+			assert.equal(failedWhileRecording.details?.failureCategory, "selector-not-found");
+			const stopAfterFailure = (failedWhileRecording.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "stop-pending-recording");
+			assert.deepEqual(stopAfterFailure?.params?.args, ["--session", missingResult.details?.sessionName, "record", "stop"]);
+			assert.match(failedWhileRecording.content[0]?.text ?? "", /active recording remains open.*stop-pending-recording/is);
+			const noise = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "noise.pdf"] });
+			assert.equal(noise.isError, true);
+			const reservedExtraPositionalScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "main", "demo.webm", "ignored.png"] });
+			assert.equal(reservedExtraPositionalScreenshot.isError, true);
+			assert.match(reservedExtraPositionalScreenshot.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			if (process.platform !== "win32") {
+				await symlink("demo.webm", join(tempDir, "--full=demo.png"));
+				const reservedEqualsScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "--full=demo.png"] });
+				assert.equal(reservedEqualsScreenshot.isError, true);
+				assert.match(reservedEqualsScreenshot.content[0]?.text ?? "", /--full=demo\.png is reserved by an active recording/);
+			}
+			const reservedGlobalPdf = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "--json", "demo.webm"] });
+			assert.equal(reservedGlobalPdf.isError, true);
+			assert.match(reservedGlobalPdf.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedQuickPdf = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "--quick", "demo.webm"] });
+			assert.equal(reservedQuickPdf.isError, true);
+			assert.match(reservedQuickPdf.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const noiseManifest = noise.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;
+			assert.equal(noiseManifest?.entries?.some((entry) => entry.subcommand === "start"), false);
+			const reservedOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"], outputPath: "demo.webm" });
+			assert.equal(reservedOutputPath.isError, true);
+			assert.match(reservedOutputPath.content[0]?.text ?? "", /Unsupported outputPath: demo\.webm is reserved by an active recording/);
+			const reservedAtOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"], outputPath: "@demo.webm" });
+			assert.equal(reservedAtOutputPath.isError, true);
+			assert.match(reservedAtOutputPath.content[0]?.text ?? "", /@demo\.webm is reserved by an active recording/);
+			const reservedScriptOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, { script: "emit({ ok: true });", outputPath: "demo.webm" });
+			assert.equal(reservedScriptOutputPath.isError, true);
+			assert.match(reservedScriptOutputPath.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedElectronOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", all: true }, outputPath: "demo.webm" });
+			assert.equal(reservedElectronOutputPath.isError, true);
+			assert.match(reservedElectronOutputPath.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download", "demo.webm"] });
+			assert.equal(reservedWaitDownload.isError, true);
+			assert.match(reservedWaitDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedShortWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "-d", "demo.webm"] });
+			assert.equal(reservedShortWaitDownload.isError, true);
+			assert.match(reservedShortWaitDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedReorderedWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--timeout", "30000", "--download", "demo.webm"] });
+			assert.equal(reservedReorderedWaitDownload.isError, true);
+			assert.match(reservedReorderedWaitDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedRepeatedTimeoutDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--timeout", "1", "--timeout", "--download", "demo.webm"] });
+			assert.equal(reservedRepeatedTimeoutDownload.isError, true);
+			assert.match(reservedRepeatedTimeoutDownload.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const unsupportedInlineWaitDownload = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--download=demo.webm"] });
+			assert.equal(unsupportedInlineWaitDownload.isError, true);
+			assert.match(unsupportedInlineWaitDownload.content[0]?.text ?? "", /does not support `wait --download=<path>`/);
+			const reservedLastOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--output", "safe.png", "--output", "demo.webm"] });
+			assert.equal(reservedLastOutput.isError, true);
+			assert.match(reservedLastOutput.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedShortOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--output", "safe.png", "-o", "demo.webm"] });
+			assert.equal(reservedShortOutput.isError, true);
+			assert.match(reservedShortOutput.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const reservedHarStop = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "har", "stop", "demo.webm"] });
+			assert.equal(reservedHarStop.isError, true);
+			assert.match(reservedHarStop.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+			const sameCallOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "same-call.webm"], outputPath: "same-call.webm" });
+			assert.equal(sameCallOutput.isError, true);
+			assert.match(sameCallOutput.content[0]?.text ?? "", /same destination as artifact path same-call\.webm/);
+			if (process.platform !== "win32") {
+				await symlink("same-call-alias-target.webm", join(tempDir, "same-call-output.json"));
+				const danglingSameCallOutput = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "same-call-alias-target.webm"], outputPath: "same-call-output.json" });
+				assert.equal(danglingSameCallOutput.isError, true);
+				assert.match(danglingSameCallOutput.content[0]?.text ?? "", /same destination as artifact path same-call-alias-target\.webm/);
+				await rm(join(tempDir, "same-call-output.json"), { force: true });
+			}
+			if (process.platform !== "win32") {
+				await symlink("demo.webm", join(tempDir, "demo.png"));
+				const screenshotAlias = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "demo.png"] });
+				assert.equal(screenshotAlias.isError, true);
+				assert.match(screenshotAlias.content[0]?.text ?? "", /demo\.png is reserved by an active recording/);
+			}
+			const restartSamePath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "restart", "demo.webm"] });
+			assert.equal(restartSamePath.isError, true);
+			assert.match(restartSamePath.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
+
 			const missingDetails = missingResult.details as { recordingDependencyWarning?: { reason?: string; command?: string; dependency?: string } };
 			assert.deepEqual(missingDetails.recordingDependencyWarning, {
 				command: "record start",
@@ -1020,13 +1540,265 @@ process.stdout.write(JSON.stringify({ success: true, data: { command, subcommand
 				],
 			});
 
+			if (process.platform !== "win32") await symlink("demo.webm", join(tempDir, "demo.webm"));
+			const closed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+			assert.equal(closed.isError, false);
+			if (process.platform !== "win32") await rm(join(tempDir, "demo.webm"), { force: true });
+			const closedManifest = closed.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;
+			assert.equal(closedManifest?.entries?.some((entry) => entry.subcommand === "start" || entry.subcommand === "restart"), false);
+
+			const batchRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "batch-close.webm"] });
+			assert.equal(batchRecording.isError, false);
+			const batchClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch"], stdin: JSON.stringify([["close"]]) });
+			assert.equal(batchClose.isError, false, batchClose.content[0]?.text);
+			const releasedAfterBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "batch-close.webm"] });
+			assert.doesNotMatch(releasedAfterBatchClose.content[0]?.text ?? "", /reserved by an active recording/);
+			assert.notEqual(releasedAfterBatchClose.details?.sessionName, batchRecording.details?.sessionName);
+			const diagnosticBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "batch-close-stream.webm"] });
+			assert.equal(diagnosticBatchRecording.isError, false);
+			const terminalDiagnosticClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["close"], ["stream", "status"]]),
+			});
+			assert.equal(terminalDiagnosticClose.isError, false, terminalDiagnosticClose.content[0]?.text);
+			assert.equal((terminalDiagnosticClose.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, false);
+			assert.equal((terminalDiagnosticClose.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.status, "closed");
+			const releasedAfterDiagnosticClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "batch-close-stream.webm"] });
+			assert.doesNotMatch(releasedAfterDiagnosticClose.content[0]?.text ?? "", /reserved by an active recording/);
+			assert.notEqual(releasedAfterDiagnosticClose.details?.sessionName, diagnosticBatchRecording.details?.sessionName);
+			const postCloseStop = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["close"], ["record", "stop"]]),
+			});
+			assert.equal(postCloseStop.isError, false, postCloseStop.content[0]?.text);
+			assert.equal((postCloseStop.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, true);
+			assert.equal((postCloseStop.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.status, "unchanged");
+			assert.equal(postCloseStop.details?.sessionName, releasedAfterDiagnosticClose.details?.sessionName);
+			const failedPostCloseLaunch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["close"], ["open", "fail-after-close"]]),
+			});
+			assert.equal(failedPostCloseLaunch.isError, true, failedPostCloseLaunch.content[0]?.text);
+			assert.equal((failedPostCloseLaunch.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, true);
+			assert.equal((failedPostCloseLaunch.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.status, "unchanged");
+			assert.equal(failedPostCloseLaunch.details?.sessionName, postCloseStop.details?.sessionName);
+			assert.deepEqual((failedPostCloseLaunch.details?.batchFailure as { failedStep?: { lifecycle?: unknown } } | undefined)?.failedStep?.lifecycle, { effectiveLaunch: { browserLaunched: true } });
+			const activeBeforeCombined = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(activeBeforeCombined.details?.sessionName, postCloseStop.details?.sessionName);
+			assert.equal(activeBeforeCombined.isError, false, activeBeforeCombined.content[0]?.text);
+			assert.equal((activeBeforeCombined.details?.managedSessionOutcome as { activeAfter?: boolean } | undefined)?.activeAfter, true);
+			const combinedStartClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "start", "batch-start-close.webm"], ["close"]]),
+			});
+			assert.equal(combinedStartClose.isError, true, combinedStartClose.content[0]?.text);
+			assert.equal(combinedStartClose.details?.failureCategory, "artifact-missing");
+			const releasedAfterCombinedStartClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "batch-start-close.webm"] });
+			assert.doesNotMatch(releasedAfterCombinedStartClose.content[0]?.text ?? "", /reserved by an active recording/);
+			const combinedManifest = combinedStartClose.details?.artifactManifest as { entries?: Array<{ path?: string; subcommand?: string }> } | undefined;
+			assert.equal(combinedManifest?.entries?.some((entry) => entry.path === "batch-start-close.webm" && entry.subcommand === "start"), false);
+			const combinedArtifacts = combinedStartClose.details?.artifacts as Array<{ path?: string; recordingState?: string; status?: string; subcommand?: string; willExistOnStop?: boolean }> | undefined;
+			assert.deepEqual(combinedArtifacts?.map((artifact) => ({ path: artifact.path, recordingState: artifact.recordingState, status: artifact.status, subcommand: artifact.subcommand, willExistOnStop: artifact.willExistOnStop })), [{ path: "batch-start-close.webm", recordingState: undefined, status: "missing", subcommand: "close-abandoned", willExistOnStop: undefined }]);
+			const combinedVerification = combinedStartClose.details?.artifactVerification as { missingCount?: number; pendingCount?: number } | undefined;
+			assert.equal(combinedVerification?.missingCount, 1);
+			assert.equal(combinedVerification?.pendingCount, 0);
+			assert.equal((combinedStartClose.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "stop-pending-recording"), false);
+			assert.equal((combinedStartClose.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.activeAfter, false);
+			assert.equal((combinedStartClose.details?.managedSessionOutcome as { activeAfter?: boolean; status?: string } | undefined)?.status, "closed");
+			const replayHarness = createExtensionHarness({
+				branch: [activeBeforeCombined, combinedStartClose].map((result) => ({ type: "message", message: { details: result.details, isError: result.isError, toolName: "agent_browser" } })),
+				cwd: tempDir,
+			});
+			await runExtensionEvent(replayHarness.handlers, "session_start", { reason: "resume" }, replayHarness.ctx);
+			const replayFreshLaunch = await executeRegisteredTool(replayHarness.tool, replayHarness.ctx, { args: ["--headed", "open", "https://example.test/"] });
+			assert.doesNotMatch(replayFreshLaunch.content[0]?.text ?? "", /launch-scoped flags would be ignored/i);
+
+			for (const subcommand of ["start", "restart"]) {
+				const closeThenRecord = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([["close"], ["record", subcommand, `batch-close-${subcommand}.webm`]]),
+				});
+				assert.equal(closeThenRecord.isError, true, closeThenRecord.content[0]?.text);
+				assert.equal(closeThenRecord.details?.failureCategory, "validation-error");
+				assert.match(closeThenRecord.content[0]?.text ?? "", new RegExp(`record ${subcommand} cannot follow close.*Split the close and recording`, "s"));
+			}
+
+			const staleRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "stale-recording.webm"] });
+			assert.equal(staleRecording.isError, false);
+			await writeFile(noRecordingMarker, "1", "utf8");
+			const staleStop = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "stop"] });
+			assert.equal(staleStop.isError, true);
+			assert.match(staleStop.content[0]?.text ?? "", /No recording in progress/);
+			assert.equal((staleStop.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "stop-pending-recording") ?? false, false);
+			await rm(noRecordingMarker, { force: true });
+			const releasedAfterDefinitiveStopFailure = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "stale-recording.webm"] });
+			assert.doesNotMatch(releasedAfterDefinitiveStopFailure.content[0]?.text ?? "", /reserved by an active recording/);
+
+			const staleBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "stale-batch-recording.webm"] });
+			assert.equal(staleBatchRecording.isError, false);
+			await writeFile(noRecordingMarker, "1", "utf8");
+			const staleBatchStop = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch"], stdin: JSON.stringify([["record", "stop"]]) });
+			assert.equal(staleBatchStop.isError, true);
+			assert.match(staleBatchStop.content[0]?.text ?? "", /No recording in progress/);
+			assert.equal((staleBatchStop.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "stop-pending-recording") ?? false, false);
+			await rm(noRecordingMarker, { force: true });
+			const releasedAfterDefinitiveBatchStopFailure = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "stale-batch-recording.webm"] });
+			assert.doesNotMatch(releasedAfterDefinitiveBatchStopFailure.content[0]?.text ?? "", /reserved by an active recording/);
+
+			const orderedBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "ordered-old.webm"] });
+			assert.equal(orderedBatchRecording.isError, false);
+			await writeFile(noRecordingMarker, "1", "utf8");
+			const orderedBatchRestart = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "stop"], ["record", "start", "ordered-new.webm"]]),
+			});
+			assert.equal(orderedBatchRestart.isError, true);
+			assert.equal((orderedBatchRestart.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "stop-pending-recording"), true);
+			const orderedManifest = orderedBatchRestart.details?.artifactManifest as { entries?: Array<{ path?: string; subcommand?: string }> } | undefined;
+			assert.equal(orderedManifest?.entries?.some((entry) => entry.path === "ordered-new.webm" && entry.subcommand === "start"), true);
+			assert.equal(orderedManifest?.entries?.some((entry) => entry.path === "ordered-new.webm" && entry.subcommand === "close-abandoned"), false);
+			await rm(noRecordingMarker, { force: true });
+			const releasedOrderedOld = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "ordered-old.webm"] });
+			assert.doesNotMatch(releasedOrderedOld.content[0]?.text ?? "", /reserved by an active recording/);
+			const reservedOrderedNew = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "ordered-new.webm"] });
+			assert.match(reservedOrderedNew.content[0]?.text ?? "", /ordered-new\.webm is reserved by an active recording/);
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+
+			const argumentBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "batch-argument-close.webm"] });
+			assert.equal(argumentBatchRecording.isError, false);
+			const argumentBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch", "close"] });
+			assert.equal(argumentBatchClose.isError, false, argumentBatchClose.content[0]?.text);
+			const releasedAfterArgumentBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "batch-argument-close.webm"] });
+			assert.doesNotMatch(releasedAfterArgumentBatchClose.content[0]?.text ?? "", /reserved by an active recording/);
+
+			const concurrentResults = await Promise.all([
+				executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "concurrent.webm"], sessionMode: "fresh" }),
+				executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "concurrent.webm"], sessionMode: "fresh" }),
+			]);
+			assert.equal(concurrentResults.filter((result) => result.isError).length, 1);
+			assert.match(concurrentResults.find((result) => result.isError)?.content[0]?.text ?? "", /concurrent\.webm is reserved by an active recording/);
+			const replacement = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "replacement.webm"], sessionMode: "fresh" });
+			assert.equal(replacement.isError, false);
+			const releasedAfterReplacement = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "concurrent.webm"] });
+			assert.doesNotMatch(releasedAfterReplacement.content[0]?.text ?? "", /reserved by an active recording/);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] })).isError, false);
+
 			await rm(join(tempDir, "ffmpeg"), { recursive: true, force: true });
 			await writeFile(join(tempDir, "ffmpeg"), "#!/bin/sh\nexit 0\n", "utf8");
 			await chmod(join(tempDir, "ffmpeg"), 0o755);
-			const presentResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "demo.webm"] });
+			const presentResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "present.webm"], sessionMode: "fresh" });
 			assert.equal(presentResult.isError, false);
 			assert.equal((presentResult.details as { recordingDependencyWarning?: unknown }).recordingDependencyWarning, undefined);
 			assert.doesNotMatch(presentResult.content[0]?.text ?? "", /Recording dependency warning/);
+			const reservationEntryCount = harness.appendedEntries.length;
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+			assert.ok(harness.appendedEntries.slice(reservationEntryCount).some((entry) => entry.customType === "agent-browser-recording-reservation"
+				&& (entry.data as { sessionName?: string; state?: string }).sessionName === presentResult.details?.sessionName
+				&& (entry.data as { state?: string }).state === "closed"));
+			const resumedHarness = createExtensionHarness({
+				branch: harness.appendedEntries.map((entry) => ({ type: "custom", ...entry })),
+				cwd: tempDir,
+				prompt: "Resume after cleanup.",
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+			const releasedAfterResume = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["pdf", "present.webm"] });
+			assert.doesNotMatch(releasedAfterResume.content[0]?.text ?? "", /reserved by an active recording/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension retires recording reservations by namespace plus session", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-recording-namespace-"));
+	const nodeBinDir = dirname(process.execPath);
+	await writeFakeAgentBrowserBinary(tempDir, `const args = process.argv.slice(2);
+const valueFlags = new Set(["--namespace", "--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+const path = command === "pdf" ? args[commandIndex + 1] : args[commandIndex + 2];
+const data = command === "open" ? { title: "Example", url: subcommand }
+  : command === "get" && subcommand === "url" ? { result: "https://example.test/", url: "https://example.test/" }
+  : { command, subcommand, path };
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Keep recording identities isolated." });
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "one", "--session", "shared", "open", "https://example.test/"] })).isError, false);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "two", "--session", "shared", "open", "https://example.test/"] })).isError, false);
+			const one = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "one", "--session", "shared", "record", "start", "one.webm"] });
+			const two = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "two", "--session", "shared", "record", "start", "two.webm"] });
+			assert.equal(one.isError, false, one.content[0]?.text);
+			assert.equal(two.isError, false, two.content[0]?.text);
+			harness.setBranch([{ type: "message", message: { role: "user", content: [{ type: "text", text: "Switch branches." }] } }]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "other", oldLeafId: null }, harness.ctx);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "one", "--session", "shared", "close"] })).isError, false);
+			const stillReserved = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "two.webm"] });
+			assert.equal(stillReserved.isError, true);
+			assert.match(stillReserved.content[0]?.text ?? "", /two\.webm is reserved by an active recording/);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "two", "--session", "shared", "close"] })).isError, false);
+			const released = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "two.webm"] });
+			assert.doesNotMatch(released.content[0]?.text ?? "", /reserved by an active recording/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension persists cross-branch recording close tombstones across reload", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-recording-tombstone-"));
+	const nodeBinDir = dirname(process.execPath);
+	await writeFakeAgentBrowserBinary(tempDir, `const args = process.argv.slice(2);
+const valueFlags = new Set(["--session"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+const path = command === "pdf" ? subcommand : args[commandIndex + 2];
+const data = command === "open" ? { title: "Example", url: subcommand }
+  : command === "get" && subcommand === "url" ? { result: "https://example.test/", url: "https://example.test/" }
+  : { command, subcommand, path };
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Keep cross-branch recording state safe." });
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "open", "https://example.test/"] })).isError, false);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "record", "start", "branch.webm"] })).isError, false);
+			const activeEntry = harness.appendedEntries.find((entry) => entry.customType === "agent-browser-recording-reservation"
+				&& (entry.data as { state?: string }).state === "active");
+			assert.ok(activeEntry);
+			const branchA = [{ type: "custom", ...activeEntry }];
+			harness.setBranch([{ type: "message", message: { role: "user", content: [{ type: "text", text: "Branch B" }] } }]);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-b", oldLeafId: null }, harness.ctx);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "close"] })).isError, false);
+			harness.setBranch(branchA);
+			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "branch-a", oldLeafId: "branch-b" }, harness.ctx);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+			assert.ok(branchA.some((entry) => entry.customType === "agent-browser-recording-reservation"
+				&& (entry.data as { state?: string }).state === "closed"));
+
+			const resumedHarness = createExtensionHarness({ branch: branchA, cwd: tempDir, prompt: "Resume branch A." });
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+			resumedHarness.setBranch([{ type: "custom", ...activeEntry }]);
+			await runExtensionEvent(resumedHarness.handlers, "session_tree", { newLeafId: "older-active-branch", oldLeafId: "branch-a" }, resumedHarness.ctx);
+			const released = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["pdf", "branch.webm"] });
+			assert.doesNotMatch(released.content[0]?.text ?? "", /reserved by an active recording/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

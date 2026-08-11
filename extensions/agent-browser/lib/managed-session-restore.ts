@@ -1,8 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { chmodSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 
-import { extractCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
+import { extractUpstreamCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
 import {
 	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
@@ -21,6 +20,7 @@ import {
 import {
 	createManagedSessionRestoreKey,
 	ensureManagedSessionRestoreStorageIsSecure,
+	getManagedSessionRestoreScope,
 	getManagedSessionRestoreProtectedStorageEnv,
 	hasManagedSessionRestoreProjectIdentity,
 	resolveManagedSessionRestoreHome,
@@ -29,7 +29,7 @@ import { parseUserBatchStdin } from "./orchestration/batch-stdin.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
 import { writeSecureTempFile } from "./temp.js";
 
-export { createManagedSessionRestoreKey, ensureManagedSessionRestoreStorageIsSecure } from "./managed-session-storage.js";
+export { createManagedSessionRestoreKey, ensureManagedSessionRestoreStorageIsSecure, getManagedSessionRestoreScope } from "./managed-session-storage.js";
 export { pruneOwnedManagedSessionRestoreSnapshots } from "./managed-session-snapshots.js";
 
 const AGENT_BROWSER_CONFIG_ENV = "AGENT_BROWSER_CONFIG";
@@ -95,7 +95,7 @@ export class ManagedSessionRestoreState {
 		if (sessionName) this.#daemonRestoreKeys.set(getAgentBrowserSessionIdentityKey(sessionName, namespace), restoreKey);
 	}
 
-	replace(identities: ManagedSessionRestoreIdentity[], options: { preserveDaemonRestoreKeys?: boolean } = {}): void {
+	replace(identities: ManagedSessionRestoreIdentity[] = [], options: { preserveDaemonRestoreKeys?: boolean } = {}): void {
 		if (!options.preserveDaemonRestoreKeys) this.#daemonRestoreKeys.clear();
 		this.#disabled.clear();
 		for (const identity of identities) this.disable(identity.sessionName, identity.namespace);
@@ -112,6 +112,7 @@ export type OwnedManagedSessionContext = {
 	protectedStorageEnv?: NodeJS.ProcessEnv;
 	restoreDecision?: "enabled" | "incompatible" | "opted-out";
 	restoreKey?: string;
+	restoreScope?: string;
 	restoreSuppressed?: boolean;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
@@ -124,6 +125,10 @@ export async function withOwnedManagedSessionContext<T>(
 	run: () => Promise<T>,
 ): Promise<T> {
 	return await ownedManagedSessionStorage.run(context, run);
+}
+
+export function getOwnedManagedSessionRestoreKey(): string | undefined {
+	return ownedManagedSessionStorage.getStore()?.restoreKey;
 }
 
 export function resolveOwnedManagedSessionContext(options: {
@@ -160,15 +165,6 @@ export function isOwnedManagedSessionTarget(args: string[]): boolean {
 	return ownedContextMatches(extractExplicitSessionName(args), extractExplicitNamespace(args)) !== undefined;
 }
 
-function pathExistsOrIsUnreadable(path: string): boolean {
-	try {
-		lstatSync(path);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code !== "ENOENT";
-	}
-}
-
 function hasExplicitConfigArg(args: string[]): boolean {
 	return scanUpstreamGlobalFlagOccurrences(args, "--config").length > 0;
 }
@@ -177,27 +173,21 @@ function closesBrowserSession(args: string[]): boolean {
 	return ["close", "exit", "quit"].includes(parseCommandInfo(args).command ?? "");
 }
 
-export function agentBrowserConfigIsPresent(
-	cwd: string,
+export function agentBrowserExplicitConfigIsPresent(
 	parentEnv: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment(),
 	args: string[] = [],
-	platform: NodeJS.Platform = process.platform,
 ): boolean {
-	if (hasExplicitConfigArg(args) || hasUpstreamEnvValue(parentEnv, AGENT_BROWSER_CONFIG_ENV)) return true;
-	const paths = [join(cwd, "agent-browser.json")];
-	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
-	if (home) paths.push(join(home, ".agent-browser", "config.json"));
-	return paths.some(pathExistsOrIsUnreadable);
+	return hasExplicitConfigArg(args) || hasUpstreamEnvValue(parentEnv, AGENT_BROWSER_CONFIG_ENV);
 }
 
-/** Any upstream config disables automatic restore; content inspection would add parser and resource-exhaustion gaps. */
+/** Explicit config overrides disable restore; passive files are ignored because every browser-backed subprocess pins a protected empty config. */
 export function agentBrowserConfigBlocksManagedRestore(
-	cwd: string,
+	_cwd: string,
 	parentEnv: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment(),
 	args: string[] = [],
 	platform: NodeJS.Platform = process.platform,
 ): boolean {
-	return !resolveManagedSessionRestoreHome(parentEnv, platform) || agentBrowserConfigIsPresent(cwd, parentEnv, args, platform);
+	return !resolveManagedSessionRestoreHome(parentEnv, platform) || agentBrowserExplicitConfigIsPresent(parentEnv, args);
 }
 
 function omitWrapperInjectedUserAgent(args: string[], enabled: boolean | undefined): string[] {
@@ -216,7 +206,7 @@ type ManagedSessionRestorePolicyOptions = {
 };
 
 function batchHasManagedSessionRestoreConflict(args: string[], stdin: string | undefined): boolean {
-	const [command, ...commandArgs] = extractCommandTokens(args);
+	const [command, ...commandArgs] = extractUpstreamCommandTokens(args);
 	if (command !== "batch") return false;
 	if (commandArgs.some((token) => token !== "--bail")) return true;
 	const parsed = parseUserBatchStdin(stdin);
@@ -393,7 +383,7 @@ export function validateManagedSessionRestoreContextForSpawn(options: ManagedSes
 	const { namespace, ownedContext, parentEnv } = resolveManagedSessionRestorePolicy(options);
 	if (closesBrowserSession(options.args) || ownedContext?.restoreDecision !== "enabled") return true;
 	const ownedCwd = ownedContext.cwd ?? options.cwd;
-	if (!ownedContext.restoreKey || createManagedSessionRestoreKey(ownedCwd) !== ownedContext.restoreKey || !hasManagedSessionRestoreProjectIdentity(ownedCwd)) return false;
+	if (!ownedContext.restoreKey || !ownedContext.restoreScope || createManagedSessionRestoreKey(ownedCwd, ownedContext.restoreScope) !== ownedContext.restoreKey || !hasManagedSessionRestoreProjectIdentity(ownedCwd)) return false;
 	const effectiveEnv = { ...parentEnv, ...options.env };
 	if (isDisabledEnvFlag(effectiveEnv[MANAGED_SESSION_RESTORE_ENV])) return false;
 	if (MANAGED_RESTORE_INCOMPATIBLE_ENVS.some((name) => !MANAGED_SESSION_RESTORE_SPAWN_PINNED_ENVS.has(name) && hasUpstreamEnvValue(effectiveEnv, name))) return false;
@@ -416,7 +406,7 @@ export function getManagedSessionRestoreEnv(options: ManagedSessionRestoreEnvOpt
 	const policyOptions = { ...options, parentEnv };
 	if (managedSessionRestoreOptedOut(policyOptions) || ownedContext?.restoreSuppressed || isManagedSessionRestoreIncompatible(policyOptions)) return {};
 	if (restoreState.isDisabled(sessionName, namespace) || !sessionName) return {};
-	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd) };
+	return { [AGENT_BROWSER_RESTORE_ENV]: createManagedSessionRestoreKey(options.cwd, getManagedSessionRestoreScope(sessionName)) };
 }
 
 /** Commit sticky suppression only after an owned-context subprocess has actually started. */
@@ -475,7 +465,8 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 	const incompatible = !optedOut && isManagedSessionRestoreIncompatible(policyOptions);
 	const enabled = !optedOut && !incompatible;
 	const effectiveEnv = { ...(options.parentEnv ?? getAgentBrowserProcessEnvironment()), ...options.env };
-	const restoreKey = projectIdentityAvailable ? createManagedSessionRestoreKey(ownedCwd) : undefined;
+	const restoreScope = getManagedSessionRestoreScope(owned.sessionName);
+	const restoreKey = projectIdentityAvailable ? createManagedSessionRestoreKey(ownedCwd, restoreScope) : undefined;
 	return {
 		...owned,
 		compatibilityUserAgent: options.compatibilityUserAgent,
@@ -485,6 +476,7 @@ export function buildOwnedManagedSessionRestoreContext(options: {
 		protectedStorageEnv: enabled ? getManagedSessionRestoreProtectedStorageEnv(true, effectiveEnv) : undefined,
 		restoreDecision: optedOut ? "opted-out" : incompatible ? "incompatible" : "enabled",
 		restoreKey,
+		restoreScope,
 		restoreSuppressed: optedOut || incompatible,
 	};
 }

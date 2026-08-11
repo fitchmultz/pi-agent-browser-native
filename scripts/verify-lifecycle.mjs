@@ -15,6 +15,8 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "./agent-browser-target.mjs";
+
 const execFile = promisify(execFileCallback);
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_LIFECYCLE_MODEL = "zai/glm-5.2";
@@ -269,16 +271,20 @@ async function writeLifecycleSentinel({ packageDir, token }) {
 	await writeFile(indexPath, injectLifecycleSentinelSource(source, token), "utf8");
 }
 
-function fakeAgentBrowserScript() {
+export function fakeAgentBrowserScript() {
 	return `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
+const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === "--version") {
+  process.stdout.write(${JSON.stringify(TARGET_AGENT_BROWSER_VERSION_LABEL)});
+  process.exit(0);
+}
 const stateDir = process.env.AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_STATE_DIR;
 if (!stateDir) {
   console.error("AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_STATE_DIR is required");
   process.exit(64);
 }
-const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.mkdirSync(stateDir, { recursive: true });
 function valueAfter(flag) { const index = args.indexOf(flag); return index >= 0 ? args[index + 1] : undefined; }

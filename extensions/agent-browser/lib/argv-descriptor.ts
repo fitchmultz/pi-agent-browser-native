@@ -1,4 +1,4 @@
-import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS, optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
+import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS, optionalGlobalValueFlagConsumesNext, stripUpstreamGlobalFlags } from "./argv-grammar.js";
 import { isOpenNavigationCommand } from "./command-taxonomy.js";
 
 export interface CommandInfo {
@@ -10,6 +10,13 @@ export interface CommandInfo {
 export interface ArgvDescriptor {
 	commandInfo: CommandInfo;
 	commandTokens: string[];
+	upstreamCommandTokens: string[];
+}
+
+export interface WaitCommandShape {
+	downloadPath?: string;
+	downloadPathIndex?: number;
+	subcommand?: string;
 }
 
 function isBooleanLiteral(token: string | undefined): boolean {
@@ -48,6 +55,32 @@ export function extractCommandTokens(args: string[]): string[] {
 	return commandStartIndex === undefined ? [] : args.slice(commandStartIndex);
 }
 
+export function extractUpstreamCommandTokens(args: string[]): string[] {
+	return stripUpstreamGlobalFlags(extractCommandTokens(args));
+}
+
+export function parseWaitCommandTokens(commandTokens: string[]): WaitCommandShape {
+	if (commandTokens[0] !== "wait") return {};
+	const considered = commandTokens.slice(1).map((token, offset) => ({ index: offset + 1, token }));
+	const timeoutIndex = considered.findIndex((entry) => entry.token === "--timeout");
+	if (timeoutIndex >= 0) considered.splice(timeoutIndex, Math.min(2, considered.length - timeoutIndex));
+	for (const flags of [["--url", "-u"], ["--load", "-l"], ["--fn", "-f"], ["--text", "-t"]] as const) {
+		const match = considered.find((entry) => (flags as readonly string[]).includes(entry.token));
+		if (match) return { subcommand: match.token };
+	}
+	const download = considered.find((entry) => entry.token === "--download" || entry.token === "-d");
+	if (download) {
+		const downloadPathIndex = download.index + 1;
+		const candidate = commandTokens[downloadPathIndex];
+		return {
+			downloadPath: candidate && !candidate.startsWith("--") ? candidate : undefined,
+			downloadPathIndex: candidate && !candidate.startsWith("--") ? downloadPathIndex : undefined,
+			subcommand: download.token,
+		};
+	}
+	return { subcommand: considered[0]?.token };
+}
+
 function getOpenCommandTarget(commandTokens: string[]): string | undefined {
 	for (let index = 1; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
@@ -67,10 +100,13 @@ function getOpenCommandTarget(commandTokens: string[]): string | undefined {
 }
 
 export function parseCommandInfoFromTokens(commandTokens: string[]): CommandInfo {
-	const command = commandTokens[0];
+	const upstreamCommandTokens = stripUpstreamGlobalFlags(commandTokens);
+	const command = upstreamCommandTokens[0];
 	return {
 		command,
-		subcommand: isOpenNavigationCommand(command) ? getOpenCommandTarget(commandTokens) : commandTokens[1],
+		subcommand: isOpenNavigationCommand(command)
+			? getOpenCommandTarget(upstreamCommandTokens)
+			: command === "wait" ? parseWaitCommandTokens(upstreamCommandTokens).subcommand : upstreamCommandTokens[1],
 	};
 }
 
@@ -80,8 +116,10 @@ export function parseCommandInfo(args: string[]): CommandInfo {
 
 export function parseArgvDescriptor(args: string[]): ArgvDescriptor {
 	const commandTokens = extractCommandTokens(args);
+	const upstreamCommandTokens = stripUpstreamGlobalFlags(commandTokens);
 	return {
 		commandInfo: parseCommandInfoFromTokens(commandTokens),
 		commandTokens,
+		upstreamCommandTokens,
 	};
 }

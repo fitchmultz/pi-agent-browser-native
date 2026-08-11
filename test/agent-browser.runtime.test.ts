@@ -91,7 +91,15 @@ test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const two = createImplicitSessionName(sessionId, cwd, "ignored-b");
 
 	assert.equal(one, two);
-	assert.match(one, /^piab-pi-agent-browser-123456781234-[a-f0-9]{8}$/);
+	assert.match(one, /^piab-pi-agent-browser-[a-f0-9]{12}-[a-f0-9]{8}$/);
+});
+
+test("createImplicitSessionName hashes the full Pi session id", () => {
+	const cwd = "/Users/example/Projects/pi-agent-browser";
+	const one = createImplicitSessionName("019fe81c-92dd-7000-8000-000000000001", cwd, "ignored");
+	const two = createImplicitSessionName("019fe81c-92dd-7000-8000-000000000002", cwd, "ignored");
+
+	assert.notEqual(one, two);
 });
 
 test("createImplicitSessionName includes cwd isolation for same-named checkouts", () => {
@@ -100,8 +108,8 @@ test("createImplicitSessionName includes cwd isolation for same-named checkouts"
 	const two = createImplicitSessionName(sessionId, "/tmp/bar/app", "ignored-b");
 
 	assert.notEqual(one, two);
-	assert.match(one, /^piab-app-123456781234-[a-f0-9]{8}$/);
-	assert.match(two, /^piab-app-123456781234-[a-f0-9]{8}$/);
+	assert.match(one, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
+	assert.match(two, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
 });
 
 test("getAgentBrowserSocketDir uses a short user-specific unix socket directory and skips windows", () => {
@@ -127,6 +135,11 @@ test("shared parsing helpers preserve boundary parsing semantics", () => {
 	assert.equal(canonicalizeAgentBrowserNamespace(" --Agent__ "), "agent");
 	assert.equal(parseArgvDescriptor(["--hide-scrollbars", "open", "https://example.com"]).commandInfo.command, "open");
 	assert.equal(parseArgvDescriptor(["--hide-scrollbars", "false", "open", "https://example.com"]).commandInfo.command, "open");
+	assert.deepEqual(parseArgvDescriptor(["pdf", "--json", "demo.pdf"]).upstreamCommandTokens, ["pdf", "demo.pdf"]);
+	assert.deepEqual(parseArgvDescriptor(["pdf", "--restore", "demo.pdf"]).upstreamCommandTokens, ["pdf", "demo.pdf"]);
+	assert.deepEqual(parseArgvDescriptor(["pdf", "--quick", "true", "demo.pdf"]).upstreamCommandTokens, ["pdf", "demo.pdf"]);
+	assert.deepEqual(parseArgvDescriptor(["record", "--json", "start", "demo.webm"]).upstreamCommandTokens, ["record", "start", "demo.webm"]);
+	assert.deepEqual(parseArgvDescriptor(["pdf", "--restore=key", "demo.pdf"]).upstreamCommandTokens, ["pdf", "demo.pdf"]);
 });
 
 test("extractRequestedRestoreKey mirrors optional values and post-command session fallback", () => {
@@ -378,6 +391,214 @@ test("restoreManagedSessionStateFromBranch honors managedSessionOutcome replacem
 	assert.equal(restored.active, true);
 	assert.equal(restored.sessionName, "piab-demo-123-fresh-aaa");
 	assert.equal(restored.freshSessionOrdinal, 1);
+});
+
+test("restoreManagedSessionStateFromBranch honors a nested close outcome after an active row", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					command: "batch",
+					managedSessionOutcome: {
+						activeAfter: false,
+						activeBefore: true,
+						attemptedSessionName: "piab-demo-123",
+						previousSessionName: "piab-demo-123",
+						sessionMode: "auto",
+						status: "closed",
+						succeeded: true,
+					},
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+				isError: true,
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.closedSessionName, "piab-demo-123");
+});
+
+test("restoreManagedSessionStateFromBranch treats legacy terminal batch close rows as closed", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					batchSteps: [
+						{ command: ["close"], success: true },
+						{ command: ["record", "start", "ghost.webm"], success: true },
+					],
+					command: "batch",
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.closedSessionName, "piab-demo-123");
+});
+
+test("restoreManagedSessionStateFromBranch preserves a terminal batch close through a non-launching diagnostic", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					batchSteps: [
+						{ command: ["close"], success: true },
+						{ command: ["stream", "status"], data: { lifecycle: { effectiveLaunch: { browserLaunched: false } } }, success: true },
+					],
+					command: "batch",
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.closedSessionName, "piab-demo-123");
+});
+
+test("restoreManagedSessionStateFromBranch keeps a lifecycle-proven post-close record stop active", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					batchSteps: [
+						{ command: ["close"], success: true },
+						{ command: ["record", "stop"], data: { lifecycle: { effectiveLaunch: { browserLaunched: true } } }, success: true },
+					],
+					command: "batch",
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.sessionName, "piab-demo-123");
+	assert.equal(restored.closedSessionName, undefined);
+});
+
+test("restoreManagedSessionStateFromBranch keeps a first-call failed post-close launch active", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["batch"],
+					batchSteps: [
+						{ command: ["close"], success: true },
+						{ command: ["click", "#missing"], success: false },
+					],
+					command: "batch",
+					managedSessionOutcome: {
+						activeAfter: false,
+						activeBefore: false,
+						attemptedSessionName: "piab-demo-123",
+						status: "abandoned",
+						succeeded: false,
+					},
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+				isError: true,
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, true);
+	assert.equal(restored.sessionName, "piab-demo-123");
+	assert.equal(restored.closedSessionName, undefined);
+});
+
+test("restoreManagedSessionStateFromBranch applies close --all to the active namespace", () => {
+	const restored = restoreManagedSessionStateFromBranch(
+		[
+			createToolBranchEntry({
+				details: {
+					args: ["open", "https://example.com/base"],
+					command: "open",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "piab-demo-123",
+					usedImplicitSession: true,
+				},
+			}),
+			createToolBranchEntry({
+				details: {
+					args: ["--session", "caller-owned", "close", "--all"],
+					closeAllApplied: true,
+					command: "close",
+					exitCode: 0,
+					sessionMode: "auto",
+					sessionName: "caller-owned",
+					usedImplicitSession: false,
+				},
+			}),
+		],
+		"piab-demo-123",
+	);
+
+	assert.equal(restored.active, false);
+	assert.equal(restored.closedSessionName, "piab-demo-123");
 });
 
 test("restoreManagedSessionStateFromBranch ignores stale base completions after fresh rotation", () => {
@@ -661,7 +882,7 @@ test("restoreManagedSessionStateFromBranch reserves auto-used generated fresh na
 	assert.equal(restored.freshSessionOrdinal, 1);
 });
 
-test("restoreManagedSessionStateFromBranch honors Electron cleanup managed-session steps", () => {
+test("restoreManagedSessionStateFromBranch honors namespaced Electron cleanup managed-session steps", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[
 			createToolBranchEntry({
@@ -680,6 +901,7 @@ test("restoreManagedSessionStateFromBranch honors Electron cleanup managed-sessi
 						succeeded: true,
 						summary: "Managed session piab-demo-123-fresh-electron is now current.",
 					},
+					namespace: "team",
 					sessionMode: "fresh",
 					sessionName: "piab-demo-123-fresh-electron",
 					usedImplicitSession: false,
@@ -695,10 +917,10 @@ test("restoreManagedSessionStateFromBranch honors Electron cleanup managed-sessi
 							results: [{
 								launchId: "electron-demo",
 								partial: true,
-								record: { cleanupState: "partial", launchId: "electron-demo", port: 9222, version: 1 },
+								record: { cleanupState: "partial", launchId: "electron-demo", namespace: "record-fallback", port: 9222, version: 1 },
 								remainingResources: ["process"],
 								steps: [
-									{ resource: "managed-session", sessionName: "piab-demo-123-fresh-electron", state: "removed" },
+									{ namespace: "team", resource: "managed-session", sessionName: "piab-demo-123-fresh-electron", state: "removed" },
 									{ resource: "process", state: "failed" },
 								],
 								summary: "Electron cleanup was partial.",
@@ -1151,6 +1373,21 @@ test("buildExecutionPlan allows optional wait download path to be omitted", () =
 	assert.equal(plan.validationError, undefined);
 	assert.deepEqual(plan.commandInfo, { command: "wait", subcommand: "--download" });
 	assert.deepEqual(plan.effectiveArgs.slice(-4), ["wait", "--download", "--timeout", "25000"]);
+
+	const shortPlan = buildExecutionPlan(["wait", "-d", "report.csv"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.equal(shortPlan.validationError, undefined);
+	assert.deepEqual(shortPlan.commandInfo, { command: "wait", subcommand: "-d" });
+	assert.deepEqual(parseArgvDescriptor(["wait", "--timeout", "30000", "-d", "report.csv"]).commandInfo, { command: "wait", subcommand: "-d" });
+	assert.deepEqual(parseArgvDescriptor(["wait", "--timeout", "1", "--timeout", "--download", "report.csv"]).commandInfo, { command: "wait", subcommand: "--download" });
+	assert.deepEqual(parseArgvDescriptor(["wait", "--download", "report.csv", "--url", "**/done"]).commandInfo, { command: "wait", subcommand: "--url" });
+	assert.deepEqual(parseArgvDescriptor(["wait", "-d", "report.csv", "-t", "Ready"]).commandInfo, { command: "wait", subcommand: "-t" });
+
+	assert.match(validateToolArgs(["wait", "--download=report.csv"]) ?? "", /does not support `wait --download=<path>`/);
 });
 
 test("buildExecutionPlan parses restore and namespace globals before command discovery", () => {

@@ -1,7 +1,8 @@
+import { getAgentBrowserSessionIdentityKey } from "../argv-grammar.js";
 import { isRecord } from "../parsing.js";
 import type { FileArtifactKind, FileArtifactMetadata, SessionArtifactManifest, SessionArtifactManifestEntry } from "./contracts.js";
 
-export function isPendingRecordingCommand(command: string | undefined, subcommand: string | undefined, kind: FileArtifactKind | undefined): boolean {
+export function isPendingRecordingCommand(command: string | undefined, subcommand: string | undefined, kind: FileArtifactKind | "spill" | undefined): boolean {
 	return command === "record" && (subcommand === "start" || subcommand === "restart") && kind === "video";
 }
 
@@ -31,6 +32,12 @@ function isManifestEntry(value: unknown): value is SessionArtifactManifestEntry 
 	if (!["evicted", "ephemeral", "live", "missing"].includes(String(value.retentionState))) return false;
 	if (!["explicit-path", "persistent-session", "process-temp"].includes(String(value.storageScope))) return false;
 	if (typeof value.kind !== "string" || value.kind.trim().length === 0) return false;
+	for (const key of ["absolutePath", "command", "cwd", "extension", "mediaType", "namespace", "requestedPath", "session", "subcommand"] as const) {
+		if (value[key] !== undefined && typeof value[key] !== "string") return false;
+	}
+	if (value.evictedAtMs !== undefined && (typeof value.evictedAtMs !== "number" || !Number.isFinite(value.evictedAtMs))) return false;
+	if (value.exists !== undefined && typeof value.exists !== "boolean") return false;
+	if (value.sizeBytes !== undefined && (typeof value.sizeBytes !== "number" || !Number.isFinite(value.sizeBytes) || value.sizeBytes < 0)) return false;
 	return true;
 }
 
@@ -70,7 +77,38 @@ export function formatSessionArtifactRetentionSummary(manifest: SessionArtifactM
 }
 
 export function getSessionArtifactManifestEntryKey(entry: SessionArtifactManifestEntry): string {
-	return entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
+	const pathKey = entry.storageScope === "explicit-path" && entry.absolutePath ? `${entry.storageScope}:${entry.absolutePath}` : `${entry.storageScope}:${entry.path}`;
+	const recordingSessionKey = entry.command === "record" && entry.kind === "video" && entry.session
+		? getAgentBrowserSessionIdentityKey(entry.session, entry.namespace)
+		: undefined;
+	return recordingSessionKey ? `${pathKey}\0${recordingSessionKey}` : pathKey;
+}
+
+export function retirePendingRecordingManifestEntries(
+	manifest: SessionArtifactManifest,
+	sessionName: string | undefined,
+	namespace?: string,
+	nowMs = Date.now(),
+): SessionArtifactManifest {
+	let changed = false;
+	const sessionKey = sessionName ? getAgentBrowserSessionIdentityKey(sessionName, namespace) : undefined;
+	const entries = manifest.entries.map((entry) => {
+		if (!sessionKey
+			|| !entry.session
+			|| getAgentBrowserSessionIdentityKey(entry.session, entry.namespace) !== sessionKey
+			|| entry.kind !== "video"
+			|| !isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)) return entry;
+		changed = true;
+		return { ...entry, retentionState: "missing" as const, subcommand: "close-abandoned" };
+	});
+	if (!changed) return manifest;
+	return {
+		...manifest,
+		entries,
+		evictedCount: entries.filter((entry) => entry.retentionState === "evicted").length,
+		liveCount: entries.filter((entry) => entry.retentionState === "live").length,
+		updatedAtMs: nowMs,
+	};
 }
 
 export function mergeSessionArtifactManifest(options: {
@@ -84,13 +122,31 @@ export function mergeSessionArtifactManifest(options: {
 	for (const entry of options.base?.entries ?? []) {
 		byPath.set(getSessionArtifactManifestEntryKey(entry), entry);
 	}
-	for (const entry of options.entries ?? []) {
+	const orderedEntries = (options.entries ?? [])
+		.map((entry, index) => ({ entry, index }))
+		.sort((left, right) => left.entry.createdAtMs - right.entry.createdAtMs || left.index - right.index)
+		.map(({ entry }) => entry);
+	for (const entry of orderedEntries) {
 		const key = getSessionArtifactManifestEntryKey(entry);
+		if (entry.command === "record" && entry.kind === "video") {
+			const entrySessionKey = entry.session ? getAgentBrowserSessionIdentityKey(entry.session, entry.namespace) : undefined;
+			for (const [candidateKey, candidate] of byPath) {
+				const sameRecordingSession = entrySessionKey === undefined
+					? candidate.session === undefined
+					: candidate.session !== undefined && getAgentBrowserSessionIdentityKey(candidate.session, candidate.namespace) === entrySessionKey;
+				if (candidateKey !== key
+					&& sameRecordingSession
+					&& candidate.kind === "video"
+					&& isPendingRecordingCommand(candidate.command, candidate.subcommand, candidate.kind)) {
+					byPath.delete(candidateKey);
+				}
+			}
+		}
 		const existing = byPath.get(key);
 		byPath.set(key, {
 			...existing,
 			...entry,
-			createdAtMs: existing?.createdAtMs ?? entry.createdAtMs,
+			createdAtMs: entry.command === "record" && entry.kind === "video" ? entry.createdAtMs : existing?.createdAtMs ?? entry.createdAtMs,
 			evictedAtMs: entry.retentionState === "evicted" ? (entry.evictedAtMs ?? nowMs) : entry.evictedAtMs,
 		});
 	}
@@ -99,7 +155,9 @@ export function mergeSessionArtifactManifest(options: {
 		.sort((left, right) => {
 			const leftTime = left.evictedAtMs ?? left.createdAtMs;
 			const rightTime = right.evictedAtMs ?? right.createdAtMs;
-			return rightTime - leftTime || left.path.localeCompare(right.path);
+			return rightTime - leftTime
+				|| Number(isPendingRecordingCommand(right.command, right.subcommand, right.kind)) - Number(isPendingRecordingCommand(left.command, left.subcommand, left.kind))
+				|| left.path.localeCompare(right.path);
 		})
 		.slice(0, maxEntries);
 	return {

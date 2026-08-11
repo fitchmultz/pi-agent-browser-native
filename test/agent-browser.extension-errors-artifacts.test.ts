@@ -19,7 +19,7 @@ import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-mo
 function initializeGitProject(cwd: string): void {
 	execFileSync("git", ["init", "-q", cwd], { stdio: "ignore" });
 }
-import { createManagedSessionRestoreKey } from "../extensions/agent-browser/lib/managed-session-restore.js";
+import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import {
 	collectTimeoutPartialProgress,
 	formatTimeoutPartialProgressText,
@@ -404,15 +404,17 @@ if (args.includes("get") && args.includes("url")) {
 			const contentPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "caller-race", "get", "html", "body"],
 			});
+			// Spawn-visibility wait matching the sibling contention test's budget; the queue contract is
+			// asserted below, not by this latency window.
 			for (let attempt = 0; attempt < 100; attempt += 1) {
 				try {
 					await access(liveProbePath);
 					break;
 				} catch {
-					await new Promise((resolve) => setTimeout(resolve, 5));
+					if (attempt === 99) assert.fail("live probe did not reach the fake upstream process");
+					await new Promise((resolve) => setTimeout(resolve, 10));
 				}
 			}
-			await access(liveProbePath);
 			const tabPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--namespace", "review-space", "--session", "caller-race", "tab", "t2"],
 			});
@@ -420,8 +422,10 @@ if (args.includes("get") && args.includes("url")) {
 				args: ["--session", "caller-other", "open", "https://other.example"],
 			});
 			let beforeRelease = await readInvocationLog(logPath);
+			// Spawn-visibility wait matching the sibling contention test's budget; the queue contract is
+			// asserted below, not by this latency window.
 			for (let attempt = 0; attempt < 100 && !beforeRelease.some((entry) => entry.args.includes("caller-other")); attempt += 1) {
-				await new Promise((resolve) => setTimeout(resolve, 5));
+				await new Promise((resolve) => setTimeout(resolve, 10));
 				beforeRelease = await readInvocationLog(logPath);
 			}
 			assert.equal(beforeRelease.some((entry) => entry.args.includes("caller-other")), true);
@@ -630,7 +634,7 @@ if (args.includes("session") && args.includes("info")) {
 			assert.match(cloudflareBrowserArgs, /^--user-agent=.*Chrome\/\d+\.0\.0\.0/);
 			assert.doesNotMatch(cloudflareBrowserArgs, /[,\r\n]/);
 			assert.match(String((cloudflareInvocation as { userAgent?: string } | undefined)?.userAgent), /Chrome\/\d+\.0\.0\.0/);
-			assert.equal((cloudflareInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
+			assert.equal((cloudflareInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(sessionName)));
 
 			const cloudflareFollowup = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(cloudflareFollowup.isError, false, JSON.stringify(cloudflareFollowup));
@@ -676,7 +680,7 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal(blocked.details?.managedSessionRestoreDisabled, undefined);
 
 			const sessionsDir = join(tempDir, ".agent-browser", "sessions");
-			const restoreKey = createManagedSessionRestoreKey(tempDir);
+			const restoreKey = createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(sessionName));
 			await mkdir(sessionsDir, { recursive: true });
 			for (const [index, suffix] of ["old", "middle", "new"].entries()) {
 				const path = join(sessionsDir, `${restoreKey}-${suffix}.json`);
@@ -800,7 +804,7 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
-test("agentBrowserExtension preserves artifacts from overlapping caller-owned sessions", { concurrency: false }, async () => {
+test("agentBrowserExtension serializes caller-owned artifact writes and preserves their aggregate manifest", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-artifact-concurrent-"));
 	const startedPath = join(tempDir, "slow-started");
 	const slowPath = join(tempDir, "slow.png");
@@ -841,7 +845,7 @@ if (args.includes("get") && args.includes("url")) {
 			const fastScreenshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "fast", "screenshot", fastPath] });
 			const concurrentResults = await Promise.all([slowScreenshot, fastScreenshot]);
 			assert.equal(concurrentResults.every((result) => result.isError === false), true, JSON.stringify(concurrentResults));
-			const aggregateEntries = (concurrentResults[0]?.details?.artifactManifest as { entries?: Array<{ absolutePath?: string; path: string }> } | undefined)?.entries ?? [];
+			const aggregateEntries = (concurrentResults[1]?.details?.artifactManifest as { entries?: Array<{ absolutePath?: string; path: string }> } | undefined)?.entries ?? [];
 			assert.deepEqual(new Set(aggregateEntries.map((entry) => entry.absolutePath ?? entry.path)), new Set([slowPath, fastPath]));
 
 			harness.setBranch([concurrentResults[0], concurrentResults[1]].map((result) => ({
@@ -1205,7 +1209,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", u
 			assert.equal(retried.isError, false, JSON.stringify(retried));
 			assert.notEqual(retried.details?.managedSessionRestoreDisabled, true);
 			const [invocation] = await readInvocationLog(logPath);
-			assert.equal((invocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir));
+			assert.equal((invocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(retried.details?.sessionName as string)));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1500,8 +1504,14 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
-test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async () => {
+test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async (context) => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
+	const socketDir = `/tmp/${process.pid.toString(36)}`;
+	await rm(socketDir, { force: true, recursive: true });
+	await mkdir(socketDir, { mode: 0o700 });
+	context.after(async () => {
+		await rm(socketDir, { force: true, recursive: true });
+	});
 	initializeGitProject(tempDir);
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -1519,12 +1529,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 
 	try {
 		const missingBinaryDir = await mkdtemp(join(tempDir, "missing-agent-browser-"));
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_SOCKET_DIR: socketDir }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const firstResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "previous", "open", "https://previous.test"] });
-			assert.equal(firstResult.isError, false);
+			assert.equal(firstResult.isError, false, JSON.stringify(firstResult));
 			const previousSessionName = firstResult.details?.sessionName as string;
 			assert.ok(previousSessionName);
 
@@ -1550,7 +1560,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			await withPatchedEnv({ PATH: missingBinaryDir }, async () => {
 				const missingBinaryResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "next", "open", "https://missing-binary.test"], sessionMode: "fresh" });
 				assert.equal(missingBinaryResult.isError, true);
-				assert.equal(missingBinaryResult.details?.failureCategory, "missing-binary");
+				assert.equal(missingBinaryResult.details?.failureCategory, "missing-binary", JSON.stringify(missingBinaryResult));
+			assert.equal(missingBinaryResult.details?.agentBrowserStarted, false);
 				const missingBinaryOutcome = missingBinaryResult.details?.managedSessionOutcome as { activeAfter?: boolean; activeBefore?: boolean; currentSessionName?: string; currentSessionNamespace?: string; previousSessionName?: string; sessionMode?: string; status?: string } | undefined;
 				assert.equal(missingBinaryOutcome?.status, "preserved");
 				assert.equal(missingBinaryOutcome?.activeBefore, true);
@@ -1680,13 +1691,14 @@ if (args.includes("eval")) {
 			assert.equal(collidingOutput.isError, true);
 			assert.equal(collidingOutput.details?.resultCategory, "failure");
 			assert.equal(collidingOutput.details?.failureCategory, "validation-error");
-			assert.equal((collidingOutput.details?.outputFile as { status?: string } | undefined)?.status, "failed");
-			assert.equal((collidingOutput.details?.artifacts as Array<{ sizeBytes?: number }> | undefined)?.[0]?.sizeBytes, "browser-image".length);
-			assert.match(collidingOutput.content[0]?.text ?? "", /outputPath.*browser artifact/i);
-			assert.equal(await readFile(screenshotPath, "utf8"), "browser-image");
+			assert.equal(collidingOutput.details?.outputFile, undefined);
+			assert.equal(collidingOutput.details?.artifacts, undefined);
+			assert.match(collidingOutput.content[0]?.text ?? "", /outputPath.*same destination as artifact path/i);
+			await assert.rejects(access(screenshotPath));
 
 			const hardlinkedScreenshotPath = join(tempDir, "captures/hardlinked.png");
 			const hardlinkedOutputPath = join(tempDir, "captures/hardlinked-result.json");
+			await mkdir(join(tempDir, "captures"), { recursive: true });
 			await writeFile(hardlinkedScreenshotPath, "seed");
 			await link(hardlinkedScreenshotPath, hardlinkedOutputPath);
 			const hardlinkedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1694,7 +1706,8 @@ if (args.includes("eval")) {
 				outputPath: hardlinkedOutputPath,
 			});
 			assert.equal(hardlinkedOutput.isError, true);
-			assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "browser-image");
+			assert.match(hardlinkedOutput.content[0]?.text ?? "", /outputPath.*same destination as artifact path/i);
+			assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "seed");
 
 			const beforeProtectedOutput = (await readFile(logPath, "utf8")).trim().split("\n").length;
 			const protectedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -2042,6 +2055,15 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 			assert.deepEqual((result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.[0]?.params?.args, ["--session", result.details?.sessionName, "wait", "--download", "/tmp/export.csv"]);
 			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.changeType, "artifact");
 			assert.equal((result.details?.pageChangeSummary as { changeType?: string; savedFilePath?: string } | undefined)?.savedFilePath, "/tmp/export.csv");
+
+			const shortResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["wait", "-d", "/tmp/export.csv"],
+			});
+			assert.equal(shortResult.isError, true);
+			assert.match(shortResult.content[0]?.text ?? "", /Download event reported; file not verified: \/tmp\/export\.csv/);
+			assert.equal(shortResult.details?.savedFilePath, "/tmp/export.csv");
+			assert.equal((shortResult.details?.savedFile as { subcommand?: string } | undefined)?.subcommand, "-d");
+			assert.equal((shortResult.details?.artifactVerification as { missingCount?: number } | undefined)?.missingCount, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

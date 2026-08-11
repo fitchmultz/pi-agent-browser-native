@@ -8,6 +8,7 @@ import { canonicalizeAgentBrowserNamespace } from "./argv-grammar.js";
 export { isManagedSessionRestoreKey } from "./managed-session-capabilities.js";
 
 const MANAGED_SESSION_NAME_PREFIX = "piab-r2-";
+const MANAGED_SESSION_FRESH_SUFFIX_PATTERN = /-fresh-[a-f\d]{10}$/i;
 const MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH = 32;
 const PROJECT_GENERATION_MARKER_NAME = "pi-agent-browser-project-generation-v1.json";
 const PROJECT_GENERATION_MARKER_MAX_BYTES = 1_024;
@@ -220,13 +221,21 @@ export function hasManagedSessionRestoreProjectIdentity(cwd: string): boolean {
 	return resolveProjectGenerationIdentity(cwd) !== undefined;
 }
 
-/** Stable for one checkout generation; deliberately changes when a path is replaced by another checkout. */
-export function createManagedSessionRestoreKey(cwd: string): string {
+/** Keep fresh rotations from one Pi transcript in one private upstream restore pool. */
+export function getManagedSessionRestoreScope(sessionName: string): string {
+	return sessionName.replace(MANAGED_SESSION_FRESH_SUFFIX_PATTERN, "");
+}
+
+/** Stable for one Pi transcript and checkout generation; isolated from other concurrent transcripts. */
+export function createManagedSessionRestoreKey(cwd: string, restoreScope = ""): string {
 	let canonicalCwd = resolve(cwd);
 	try { canonicalCwd = realpathSync(canonicalCwd); } catch {}
 	const identity = resolveProjectGenerationIdentity(canonicalCwd);
 	const material = identity ?? `unavailable:${canonicalCwd}`;
-	const digest = createHash("sha256").update(`restore-v2:${material}`).digest("hex").slice(0, MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH);
+	const digest = createHash("sha256")
+		.update(`restore-v3:${material}:scope:${restoreScope}`)
+		.digest("hex")
+		.slice(0, MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH);
 	return `${MANAGED_SESSION_NAME_PREFIX}${digest}`;
 }
 

@@ -163,9 +163,7 @@ export function buildAgentBrowserNextActions(options: {
 			actions.push(buildArtifactAction(options.savedFilePath));
 		}
 		for (const artifact of artifacts) {
-			if (isPendingRecordingArtifact(artifact)) {
-				continue;
-			}
+			if (isPendingRecordingArtifact(artifact)) continue;
 			if (artifact.exists === false) {
 				if (artifact.kind === "download") {
 					actions.push(buildNextToolAction({
@@ -187,7 +185,7 @@ export function buildAgentBrowserNextActions(options: {
 		switch (options.failureCategory) {
 			case "artifact-missing":
 				for (const artifact of options.artifacts ?? []) {
-					if (isPendingRecordingArtifact(artifact) || artifact.exists !== false) continue;
+					if (isPendingRecordingArtifact(artifact) || (artifact.exists !== false && artifact.status !== "stale")) continue;
 					if (artifact.kind === "download") {
 						actions.push(buildNextToolAction({
 							args: ["wait", "--download", artifact.path],
@@ -279,6 +277,14 @@ export function buildAgentBrowserNextActions(options: {
 				);
 				break;
 		}
+	}
+	if ((options.artifacts ?? []).some(isPendingRecordingArtifact)) {
+		actions.push(buildNextToolAction({
+			args: ["record", "stop"],
+			id: "stop-pending-recording",
+			reason: "Stop the active recording so the requested video can be finalized and verified on disk.",
+			safety: "The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
+		}));
 	}
 	return applySessionToNextActions(actions.length > 0 ? actions : undefined, options.sessionName);
 }

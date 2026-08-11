@@ -15,7 +15,7 @@ import test from "node:test";
 
 import { Check } from "typebox/value";
 
-import { createManagedSessionRestoreKey } from "../extensions/agent-browser/lib/managed-session-restore.js";
+import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getSessionPageStateKey, SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import {
 	createExtensionHarness,
@@ -101,7 +101,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: "10" } }), false);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: 1.5 } }), false);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", allow: [""] } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" } }), false);
+			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" } }), true);
 			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", launchId: "launch-1" } }), false);
 
 			const listResult = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -174,6 +174,9 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.equal(missingLaunchTarget.isError, true);
 			assert.match(missingLaunchTarget.content[0]?.text ?? "", /electron\.launch requires exactly one of appPath, appName, bundleId, or executablePath/);
 			assert.equal(missingLaunchTarget.details?.failureCategory, "validation-error");
+			const ambiguousLaunchTarget = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" } });
+			assert.equal(ambiguousLaunchTarget.isError, true);
+			assert.match(ambiguousLaunchTarget.content[0]?.text ?? "", /electron\.launch requires exactly one of appPath, appName, bundleId, or executablePath/);
 
 			const reservedAppArg = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: "/Applications/Demo.app", appArgs: ["--remote-debugging-port=9222"] } });
 			assert.equal(reservedAppArg.isError, true);
@@ -421,6 +424,16 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(restoredPageState.get(namespacedPageStateKey).refSnapshot?.refIds, ["e1"]);
 			assert.equal(restoredPageState.get(String(namespacedProbe.details?.sessionName)).refSnapshot, undefined);
 
+			await rm(upstreamLogPath, { force: true });
+			const namespacedLaunchIdProbe = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "probe", launchId: launchDetails.electron.launch.launchId },
+			});
+			assert.equal(namespacedLaunchIdProbe.isError, false, JSON.stringify(namespacedLaunchIdProbe));
+			assert.equal(namespacedLaunchIdProbe.details?.namespace, "team");
+			const namespacedLaunchIdProbeInvocations = await readInvocationLog(upstreamLogPath);
+			assert.equal(namespacedLaunchIdProbeInvocations.length, 5);
+			assert.equal(namespacedLaunchIdProbeInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === "team"), true);
+
 			const broadTextResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "body"] });
 			assert.equal(broadTextResult.isError, false);
 			assert.match(broadTextResult.content[0]?.text ?? "", /Broad Electron get text selector warning: selector "body" may read the entire app shell/);
@@ -429,14 +442,31 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(broadTextDetails.electronGetTextScopeWarning?.electronContext, { launchId: launchDetails.electron.launch.launchId, sessionName: launchDetails.electron.launch.sessionName, url: "app://demo" });
 			assert.ok(broadTextDetails.nextActions?.some((action) => action.id === "snapshot-for-electron-text-scope" && action.params?.args?.includes("snapshot")));
 
+			const recordingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", "electron-cleanup.webm"] });
+			assert.equal(recordingResult.isError, false, JSON.stringify(recordingResult));
+			const blockedCleanup = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "cleanup", launchId: launchDetails.electron.launch.launchId },
+				outputPath: "electron-cleanup.webm",
+			});
+			assert.equal(blockedCleanup.isError, true);
+			assert.match(blockedCleanup.content[0]?.text ?? "", /electron-cleanup\.webm is reserved by an active recording/);
+			const stillActive = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", launchId: launchDetails.electron.launch.launchId } });
+			assert.equal(stillActive.isError, false);
+			assert.equal((stillActive.details?.electron as { statuses?: Array<{ portAlive?: boolean }> } | undefined)?.statuses?.[0]?.portAlive, true);
 			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				electron: { action: "cleanup", launchId: launchDetails.electron.launch.launchId },
 			});
 			assert.equal(cleanupResult.isError, false);
 			assert.match(cleanupResult.content[0]?.text ?? "", /fully cleaned/);
+			const cleanupManifest = cleanupResult.details?.artifactManifest as { entries?: Array<{ subcommand?: string }> } | undefined;
+			assert.equal(cleanupManifest?.entries?.some((entry) => entry.subcommand === "start"), false);
+			const releasedRecordingPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "electron-cleanup.webm"] });
+			assert.doesNotMatch(releasedRecordingPath.content[0]?.text ?? "", /reserved by an active recording/);
 			await assert.rejects(stat(launchDetails.electron.launch.userDataDir));
 			const finalInvocations = await readInvocationLog(upstreamLogPath);
-			assert.equal(finalInvocations.some((entry) => entry.args.at(-1) === "close"), true);
+			const cleanupClose = finalInvocations.find((entry) => entry.args.at(-1) === "close");
+			assert.ok(cleanupClose);
+			assert.equal(cleanupClose.args[cleanupClose.args.indexOf("--namespace") + 1], "team");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -521,7 +551,8 @@ test("agentBrowserExtension applies managed restore policy to every current-sess
 			assert.equal(probe.isError, false, JSON.stringify(probe));
 			const invocations = await readInvocationLog(upstreamLogPath) as Array<{ args: string[]; restore?: string | null }>;
 			assert.deepEqual(invocations.map((entry) => entry.args.at(-2)), ["get", "get", "eval", "tab", "snapshot"]);
-			assert.equal(invocations.every((entry) => entry.restore === createManagedSessionRestoreKey(tempDir)), true);
+			const restoreKey = createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(opened.details?.sessionName as string));
+			assert.equal(invocations.every((entry) => entry.restore === restoreKey), true);
 
 			await writeFakeAgentBrowserBinary(tempDir, `const args = process.argv.slice(2);
 if (args.includes("session") && args.includes("info")) {

@@ -459,6 +459,72 @@ if (args.includes("batch")) {
 	}
 });
 
+test("agentBrowserExtension accepts about:blank after a batch close reactivates the session", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-about-blank-after-close-"));
+	const statePath = join(tempDir, "relaunched");
+	const recordingPath = join(tempDir, "recording.webm");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+const relaunched = fs.existsSync(${JSON.stringify(statePath)});
+if (args.includes("batch")) {
+  const steps = JSON.parse(stdin || "[]");
+  fs.writeFileSync(${JSON.stringify(statePath)}, "1");
+  if (steps.some((step) => step[0] === "record" && step[1] === "stop")) fs.writeFileSync(${JSON.stringify(recordingPath)}, "recording");
+  process.stdout.write(JSON.stringify(steps.map((step) => ({
+    command: step,
+    success: true,
+    result: {
+      lifecycle: { effectiveLaunch: { browserLaunched: step[0] !== "close" } },
+      ...(step[0] === "record" && step[1] === "stop" ? { path: ${JSON.stringify(recordingPath)} } : {})
+    }
+  }))));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ tabId: "blank", title: "", url: "about:blank", active: true }] } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: relaunched ? "about:blank" : "https://example.com/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: relaunched ? "" : "Example Domain" } }));
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: "https://example.com/" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: {} }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com"],
+			});
+			assert.equal(opened.isError, false, JSON.stringify(opened));
+			assert.deepEqual(opened.details?.sessionTabTarget, { title: "Example Domain", url: "https://example.com/" });
+
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["close"], ["record", "stop"]]),
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.equal(result.details?.aboutBlankSessionMismatch, undefined);
+			assert.equal(result.details?.sessionTabCorrection, undefined);
+			assert.equal(result.details?.sessionTabTarget, undefined);
+			assert.doesNotMatch((result.content[0] as { text: string }).text, /^Warning:/);
+
+			const getUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(getUrl.isError, false, JSON.stringify(getUrl));
+			assert.equal(getUrl.details?.aboutBlankSessionMismatch, undefined);
+			assert.deepEqual(getUrl.details?.sessionTabTarget, { title: undefined, url: "about:blank" });
+			assert.doesNotMatch((getUrl.content[0] as { text: string }).text, /^Warning:/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension allows explicit navigation to about:blank", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-about-blank-explicit-"));
 	const logPath = join(tempDir, "invocations.log");
