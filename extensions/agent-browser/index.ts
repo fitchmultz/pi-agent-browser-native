@@ -135,13 +135,16 @@ function getArtifactCommandSteps(args: string[], stdin: string | undefined): { b
 	if (!batch) return { batch, steps: commandTokens.length > 0 ? [commandTokens] : [] };
 	const steps: string[][] = [];
 	for (const command of commandTokens.slice(1)) {
-		if (command === "--bail" || command.startsWith("--bail=")) continue;
+		if (command === "--bail") continue;
 		const parsed = parseBatchCommandArgument(command);
 		if (parsed.error || !parsed.step) return { batch, error: `Unsupported batch step ${steps.length + 1}: ${parsed.error ?? "command could not be parsed safely"}`, steps };
 		steps.push(parsed.step);
 	}
+	// Upstream executes raw argument steps exclusively when any exist, so ignored
+	// stdin must not add artifact/lifecycle steps or fail this preflight.
+	if (steps.length > 0) return { batch, steps };
 	const parsed = parseUserBatchStdin(stdin);
-	return parsed.error ? { batch, error: parsed.error, steps } : { batch, steps: [...steps, ...(parsed.steps ?? [])] };
+	return parsed.error ? { batch, error: parsed.error, steps } : { batch, steps: parsed.steps ?? [] };
 }
 
 function getArtifactPreflightValidationError(options: {

@@ -91,11 +91,14 @@ export function parseUserBatchStdin(stdin: string | undefined): { error?: string
 /**
  * The batch steps upstream will actually execute: run_batch uses raw batch
  * arguments exclusively when any exist and reads stdin only otherwise.
+ * Upstream filters only the exact `--bail` token, so an equals form such as
+ * `--bail=true` stays a raw command (an unknown-command row) and keeps stdin
+ * ignored.
  */
 export function getUpstreamEffectiveBatchSteps(commandTokens: readonly string[], stdin: string | undefined): BatchCommandStep[] {
 	if (commandTokens[0] !== "batch") return [];
 	const argumentSteps = commandTokens.slice(1).flatMap((command) => {
-		if (command === "--bail" || command.startsWith("--bail=")) return [];
+		if (command === "--bail") return [];
 		const step = parseBatchCommandArgument(command).step;
 		return step ? [step] : [];
 	});

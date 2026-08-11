@@ -340,14 +340,11 @@ function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 }
 
 export function getStaleRefArgs(commandTokens: string[], stdin?: string): string[] {
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
+	if (commandTokens[0] !== "batch") {
 		return commandTokens;
 	}
-	const parsed = parseUserBatchStdin(stdin);
-	if (parsed.error || parsed.steps === undefined) {
-		return commandTokens;
-	}
-	return parsed.steps.flatMap((step) => step);
+	const steps = getUpstreamEffectiveBatchSteps(commandTokens, stdin);
+	return steps.length > 0 ? steps.flatMap((step) => step) : commandTokens;
 }
 
 // Selector-carrying flags whose values remain page-scoped refs; values of other value-taking flags
@@ -505,11 +502,22 @@ export function buildPinnedBatchPlan(options: {
 	stdin?: string;
 }): PinnedBatchPlan | { error: string } | undefined {
 	if (options.command === "batch") {
+		const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
+		// Upstream executes raw argument steps exclusively when any exist, so the
+		// pinned rewrite must dispatch those same steps rather than resurrecting
+		// caller stdin the guard never scanned.
+		const argumentSteps = getUpstreamEffectiveBatchSteps(options.commandTokens, undefined);
+		if (argumentSteps.length > 0) {
+			return {
+				includeNavigationSummary: false,
+				steps: [tabSelectionStep, ...argumentSteps],
+				unwrapMode: "user-batch",
+			};
+		}
 		const parsed = parseUserBatchStdin(options.stdin);
 		if (parsed.error) {
 			return { error: parsed.error };
 		}
-		const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
 		return {
 			includeNavigationSummary: false,
 			steps: [tabSelectionStep, ...(parsed.steps ?? [])],

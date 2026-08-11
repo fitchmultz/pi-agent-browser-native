@@ -58,7 +58,7 @@ import {
 	runSessionCommandData,
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
-import { parseBatchStdinJsonArray } from "../batch-stdin.js";
+import { getUpstreamEffectiveBatchSteps, parseBatchStdinJsonArray } from "../batch-stdin.js";
 import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
 import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
@@ -155,6 +155,11 @@ async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: str
 async function prepareBatchScreenshotPaths(args: string[], stdin: string | undefined, cwd: string): Promise<PreparedAgentBrowserArgs | undefined> {
 	const commandTokens = extractUpstreamCommandTokens(args);
 	if (commandTokens[0] !== "batch" || stdin === undefined) {
+		return undefined;
+	}
+	// Upstream ignores stdin when raw batch argument steps exist, so skip stdin
+	// preparation (including parent-directory creation) for never-executed rows.
+	if (getUpstreamEffectiveBatchSteps(commandTokens, undefined).length > 0) {
 		return undefined;
 	}
 	const parsed = parseBatchStdinJsonArray(stdin);

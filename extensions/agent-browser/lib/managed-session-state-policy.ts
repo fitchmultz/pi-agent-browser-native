@@ -294,11 +294,14 @@ function getManagedBrowserFileAccessValidationError(options: {
 	return undefined;
 }
 
-// Deliberately unions raw argv steps AND stdin steps even though upstream
-// executes argv steps exclusively when any exist: this pre-spawn validator
-// must stay a superset of anything upstream could run, so it fails closed on
-// unsafe content in either source. The upstream-exact selection lives in
-// getUpstreamEffectiveBatchSteps (batch-stdin.ts) for guard/folding paths.
+// Deliberately unions raw argv steps AND parseable stdin steps even though
+// upstream executes argv steps exclusively when any exist: this pre-spawn
+// validator must stay a superset of anything upstream could run, so it fails
+// closed on unsafe content in either source. Stdin parse failures are fatal
+// only when upstream would actually read stdin (no argv steps); ignored
+// unparseable stdin cannot execute and must not reject a valid raw-argv call.
+// The upstream-exact selection lives in getUpstreamEffectiveBatchSteps
+// (batch-stdin.ts) for guard/folding paths.
 function getBatchCommandSteps(args: string[], stdin?: string): { error?: string; steps: BatchCommandStep[] } {
 	const descriptor = parseArgvDescriptor(args);
 	if (descriptor.commandInfo.command !== "batch") return { steps: [] };
@@ -312,7 +315,7 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 		steps.push(parsed.step);
 	}
 	const parsedStdin = parseUserBatchStdin(stdin);
-	if (parsedStdin.error) return { error: parsedStdin.error, steps: [] };
+	if (parsedStdin.error && steps.length === 0) return { error: parsedStdin.error, steps: [] };
 	for (const step of parsedStdin.steps ?? []) {
 		if (parseArgvDescriptor(step).commandInfo.command === "batch") return { error: NESTED_BATCH_ARGUMENT_MESSAGE, steps: [] };
 		steps.push(step);
