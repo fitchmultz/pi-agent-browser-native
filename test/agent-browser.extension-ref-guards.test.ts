@@ -1957,7 +1957,24 @@ if (args.includes("snapshot")) {
     snapshot: '- link "Old target" [ref=e1]'
   } }));
 } else if (args.includes("record") && args.includes("start")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { path: args.at(-1) } }));
+  if (args.some((arg) => arg.includes("already-active"))) {
+    process.stdout.write(JSON.stringify({ success: false, error: "Recording already active" }));
+  } else {
+    const startPath = args[args.indexOf("start") + 1];
+    fs.writeFileSync(startPath, "webm");
+    process.stdout.write(JSON.stringify({ success: true, data: { path: startPath } }));
+  }
+} else if (args.includes("batch")) {
+  const batchRestartPath = require("node:path").join(${JSON.stringify(tempDir)}, "plain.webm");
+  fs.writeFileSync(batchRestartPath, "webm");
+  process.stdout.write(JSON.stringify({ success: true, data: [
+    { command: ["record", "restart", batchRestartPath], success: true, data: { restarted: true, path: batchRestartPath } },
+    { command: ["click", "@e1"], success: true, data: { clicked: "@e1" } }
+  ] }));
+} else if (args.includes("record") && args.includes("restart")) {
+  const restartPath = args[args.indexOf("restart") + 1];
+  fs.writeFileSync(restartPath, "webm");
+  process.stdout.write(JSON.stringify({ success: true, data: { restarted: true, path: restartPath } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
 } else {
@@ -1990,18 +2007,58 @@ if (args.includes("snapshot")) {
 			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
 			assert.equal(staleClick.details?.failureCategory, "stale-ref", JSON.stringify(staleClick));
-			assert.match(staleClick.content[0]?.text ?? "", /record start switched this session to a fresh active page/);
+			assert.match(staleClick.content[0]?.text ?? "", /a recording command \(record start, or record restart with a URL\) replaced or navigated the active page/);
+
+			const staleGuardedRead = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["is", "visible", "@e1"] });
+			assert.equal(staleGuardedRead.isError, true, JSON.stringify(staleGuardedRead));
+			assert.equal(staleGuardedRead.details?.failureCategory, "stale-ref", JSON.stringify(staleGuardedRead));
+
+			const staleScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "@e1", join(tempDir, "stale.png")] });
+			assert.equal(staleScreenshot.isError, true, JSON.stringify(staleScreenshot));
+			assert.equal(staleScreenshot.details?.failureCategory, "stale-ref", JSON.stringify(staleScreenshot));
 
 			const freshSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(freshSnapshot.isError, false, JSON.stringify(freshSnapshot));
 			assert.equal(freshSnapshot.details?.refSnapshotInvalidation, undefined);
 			assert.deepEqual((freshSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
 
+			const plainRestartBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "restart", join(tempDir, "plain.webm")], ["click", "@e1"]]),
+			});
+			assert.equal(plainRestartBatch.isError, false, JSON.stringify(plainRestartBatch));
+			assert.equal(plainRestartBatch.details?.refSnapshotInvalidation, undefined);
+
+			const plainRestartClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(plainRestartClick.isError, false, JSON.stringify(plainRestartClick));
+
+			const navigatingRestart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "restart", join(tempDir, "nav.webm"), "https://record.example/next"] });
+			assert.equal(navigatingRestart.isError, false, JSON.stringify(navigatingRestart));
+			assert.equal((navigatingRestart.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+
+			const staleAfterRestart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleAfterRestart.isError, true, JSON.stringify(staleAfterRestart));
+			assert.equal(staleAfterRestart.details?.failureCategory, "stale-ref", JSON.stringify(staleAfterRestart));
+
+			const recoverySnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(recoverySnapshot.isError, false, JSON.stringify(recoverySnapshot));
+
+			const failedStart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "start", join(tempDir, "already-active.webm")] });
+			assert.equal(failedStart.isError, true, JSON.stringify(failedStart));
+			assert.equal((failedStart.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+
+			const staleAfterFailedStart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleAfterFailedStart.isError, true, JSON.stringify(staleAfterFailedStart));
+			assert.equal(staleAfterFailedStart.details?.failureCategory, "stale-ref", JSON.stringify(staleAfterFailedStart));
+
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
-			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
-			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("start")).length, 1);
-			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("is")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("screenshot")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("start")).length, 2);
+			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("restart")).length, 1);
+			assert.ok(invocations.filter((entry) => entry.args.includes("snapshot")).length >= 3);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

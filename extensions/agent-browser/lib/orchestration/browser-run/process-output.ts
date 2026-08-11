@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand, isRecordStartPageTransition } from "../../command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand, isRecordPageTransitionCommand } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -342,7 +342,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (plannedTabCorrection) openResultTabCorrection = await applyOpenResultTabCorrection({ correction: plannedTabCorrection, cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal });
 		}
 
-		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data) : undefined;
 		const verifiesCurrentUrl = prepared.executionPlan.commandInfo.command === "get" && prepared.executionPlan.commandInfo.subcommand === "url";
 		const trustsReportedPageTarget = !resultingPageState.pageUrlUnknown || verifiesCurrentUrl;
 		const observedSessionTabTarget = normalizeSessionTabTarget(navigationSummary)
@@ -441,6 +440,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const comboboxFocusDiagnostic = succeeded ? await collectComboboxFocusDiagnostic({ command: prepared.executionPlan.commandInfo.command, commandTokens: prepared.commandTokens, cwd, namespace: prepared.executionPlan.namespace, semanticAction: prepared.compiledSemanticAction, sessionName: prepared.executionPlan.sessionName, signal }) : undefined;
 		const recordingDependencyWarning = await collectRecordingDependencyWarning({ command: prepared.executionPlan.commandInfo.command, commandTokens: prepared.commandTokens, succeeded });
 		const scrollNoopDiagnostic = succeeded && prepared.shouldProbeScrollNoop ? buildScrollNoopDiagnostic(prepared.scrollPositionBefore, await collectScrollPositionSnapshot({ cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal })) : undefined;
+		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data) : undefined;
 		let currentRefSnapshot: SessionRefSnapshot | undefined;
 		let currentRefSnapshotInvalidation: SessionRefSnapshotInvalidation | undefined;
 		if (sessionStateKey) {
@@ -454,7 +454,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				sessionPageState.clearSession(sessionStateKey);
 				state.closedManagedSessionNames.add(sessionStateKey);
 			} else {
-				const pageTransitionInvalidation = succeeded && isRecordStartPageTransition(prepared.executionPlan.commandInfo.command, prepared.executionPlan.commandInfo.subcommand)
+				const pageTransitionInvalidation = processResult.agentBrowserStarted && isRecordPageTransitionCommand(prepared.commandTokens)
 					? buildPageTransitionRefSnapshotInvalidation()
 					: batchRefSnapshotState?.invalidation?.reason === "page-transition"
 						? batchRefSnapshotState.invalidation

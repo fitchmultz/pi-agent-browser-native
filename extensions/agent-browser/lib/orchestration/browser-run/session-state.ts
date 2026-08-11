@@ -400,7 +400,7 @@ function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string,
 		if (refIds.length > 0 && isRefGuardedCommand(step[0]) && priorStepInvalidatesRefs) {
 			return `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`;
 		}
-		if (isRefInvalidatingBatchCommand(step[0], step[1]) && !isSafeSameSnapshotFormBatchStep(step, refSnapshot)) {
+		if (isRefInvalidatingBatchCommand(step) && !isSafeSameSnapshotFormBatchStep(step, refSnapshot)) {
 			priorStepInvalidatesRefs = true;
 		}
 	}
@@ -430,7 +430,7 @@ export function buildStaleRefPreflight(options: {
 	if (options.refSnapshotInvalidation) {
 		return {
 			message: options.refSnapshotInvalidation.reason === "page-transition"
-				? `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} cannot be used because record start switched this session to a fresh active page and invalidated the prior snapshot. Run snapshot -i successfully before using page-scoped refs.`
+				? `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} cannot be used because a recording command (record start, or record restart with a URL) replaced or navigated the active page and invalidated the prior snapshot. Run snapshot -i successfully before using page-scoped refs.`
 				: `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} cannot be used because the latest snapshot for this session reported No active page. Run snapshot -i successfully before using page-scoped refs.`,
 			refIds: usedRefIds,
 			snapshotInvalidation: options.refSnapshotInvalidation,

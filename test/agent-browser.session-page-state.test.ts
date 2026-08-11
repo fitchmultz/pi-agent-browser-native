@@ -349,6 +349,27 @@ test("extractLatestRefSnapshotStateFromBatchResults records empty snapshots and 
 		]),
 		{ invalidation: buildPageTransitionRefSnapshotInvalidation() },
 	);
+	assert.deepEqual(
+		extractLatestRefSnapshotStateFromBatchResults([
+			{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },
+			{ command: ["record", "start", "capture.webm"], error: "Recording already active", success: false },
+		]),
+		{ invalidation: buildPageTransitionRefSnapshotInvalidation() },
+	);
+	assert.deepEqual(
+		extractLatestRefSnapshotStateFromBatchResults([
+			{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },
+			{ command: ["record", "restart", "capture.webm", "https://example.test/"], result: { restarted: true }, success: true },
+		]),
+		{ invalidation: buildPageTransitionRefSnapshotInvalidation() },
+	);
+	assert.deepEqual(
+		extractLatestRefSnapshotStateFromBatchResults([
+			{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },
+			{ command: ["record", "restart", "capture.webm"], result: { restarted: true }, success: true },
+		]),
+		{ snapshot: { refIds: ["e1"], refs: { e1: { isEditable: false, name: "", role: "unknown" } }, target: { title: "Old", url: "https://example.com/" } } },
+	);
 	assert.equal(
 		extractLatestRefSnapshotStateFromBatchResults([
 			{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },

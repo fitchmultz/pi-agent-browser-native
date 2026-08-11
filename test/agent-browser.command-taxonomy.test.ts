@@ -12,6 +12,7 @@ import {
 	isOpenNavigationCommand,
 	isPageChangeSummaryCommand,
 	isPageMutationCommand,
+	isRecordPageTransitionCommand,
 	isRefGuardedCommand,
 	isRefInvalidatingBatchCommand,
 	normalizeCommandName,
@@ -34,15 +35,31 @@ test("command taxonomy keeps independent capability dimensions explicit", () => 
 	assert.equal(isRefGuardedCommand("fill"), true);
 	assert.equal(isPageMutationCommand("fill"), true);
 	assert.equal(isPageChangeSummaryCommand("fill"), true);
-	assert.equal(isRefInvalidatingBatchCommand("fill"), false);
+	assert.equal(isRefInvalidatingBatchCommand(["fill"]), false);
 
 	assert.equal(isRefGuardedCommand("download"), true);
 	assert.equal(isPageMutationCommand("download"), false);
 	assert.equal(isPageChangeSummaryCommand("download"), true);
-	assert.equal(isRefInvalidatingBatchCommand("download"), false);
+	assert.equal(isRefInvalidatingBatchCommand(["download"]), false);
 
 	assert.equal(isRefGuardedCommand("scrollintoview"), true);
 	assert.equal(isPageMutationCommand("scrollintoview"), true);
 	assert.equal(isPageChangeSummaryCommand("scrollintoview"), true);
-	assert.equal(isRefInvalidatingBatchCommand("scrollintoview"), true);
+	assert.equal(isRefInvalidatingBatchCommand(["scrollintoview"]), true);
+});
+
+test("command taxonomy guards every upstream ref-resolving selector command", () => {
+	for (const command of ["a11y", "diff", "find", "frame", "highlight", "is", "screenshot", "scroll", "wait"]) {
+		assert.equal(isRefGuardedCommand(command), true, command);
+	}
+});
+
+test("record page transitions cover failed starts and navigating restarts", () => {
+	assert.equal(isRecordPageTransitionCommand(["record", "start", "out.webm"]), true);
+	assert.equal(isRecordPageTransitionCommand(["record", "restart", "out.webm"]), false);
+	assert.equal(isRecordPageTransitionCommand(["record", "restart", "out.webm", "https://example.com"]), true);
+	assert.equal(isRecordPageTransitionCommand(["record", "stop"]), false);
+	assert.equal(isRefInvalidatingBatchCommand(["record", "start", "out.webm"]), true);
+	assert.equal(isRefInvalidatingBatchCommand(["record", "restart", "out.webm"]), false);
+	assert.equal(isRefInvalidatingBatchCommand(["record", "restart", "out.webm", "example.com"]), true);
 });

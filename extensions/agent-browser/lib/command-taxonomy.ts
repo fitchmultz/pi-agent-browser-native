@@ -22,6 +22,10 @@ const ADDITIONAL_COMMAND_TOKENS = [
 
 const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
+		command: "a11y",
+		guardsPageRefs: true,
+	},
+	{
 		command: "back",
 		eligibleForElectronHealthProbe: true,
 		eligibleForPageChangeSummary: true,
@@ -81,6 +85,10 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		triggersPostMutationSnapshot: true,
 	},
 	{
+		command: "diff",
+		guardsPageRefs: true,
+	},
+	{
 		command: "download",
 		eligibleForPageChangeSummary: true,
 		guardsPageRefs: true,
@@ -110,6 +118,11 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
 		command: "find",
 		eligibleForElectronHealthProbe: true,
+		guardsPageRefs: true,
+	},
+	{
+		command: "frame",
+		guardsPageRefs: true,
 	},
 	{
 		command: "focus",
@@ -128,11 +141,19 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		guardsPageRefs: true,
 	},
 	{
+		command: "highlight",
+		guardsPageRefs: true,
+	},
+	{
 		command: "hover",
 		eligibleForPageChangeSummary: true,
 		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
 		triggersPostMutationSnapshot: true,
+	},
+	{
+		command: "is",
+		guardsPageRefs: true,
 	},
 	{
 		command: "keydown",
@@ -208,10 +229,12 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
 		command: "screenshot",
 		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
 	},
 	{
 		command: "scroll",
 		eligibleForPageChangeSummary: true,
+		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
 		triggersPostMutationSnapshot: true,
 	},
@@ -280,6 +303,10 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
 	},
+	{
+		command: "wait",
+		guardsPageRefs: true,
+	},
 ];
 
 const COMMAND_CAPABILITY_BY_NAME = new Map<string, CommandCapabilityEntry>();
@@ -332,12 +359,15 @@ export function isSessionTabPostCommandCorrectionExcludedCommand(command: string
 	return hasCommandCapability(command, "excludedFromPostCommandCorrection");
 }
 
-export function isRecordStartPageTransition(command: string | undefined, subcommand?: string): boolean {
-	return command === "record" && subcommand === "start";
+/** Upstream 0.33.2 record start swaps to a fresh active page before its already-active check, so even a failed start can replace the page; record restart navigates the current page only when a URL operand (any fourth token, mirroring upstream's positional slot) is present. */
+export function isRecordPageTransitionCommand(tokens: readonly string[]): boolean {
+	if (tokens[0] !== "record") return false;
+	if (tokens[1] === "start") return true;
+	return tokens[1] === "restart" && tokens.length >= 4;
 }
 
-export function isRefInvalidatingBatchCommand(command: string | undefined, subcommand?: string): boolean {
-	return hasCommandCapability(command, "invalidatesBatchRefs") || isRecordStartPageTransition(command, subcommand);
+export function isRefInvalidatingBatchCommand(step: readonly string[]): boolean {
+	return hasCommandCapability(step[0], "invalidatesBatchRefs") || isRecordPageTransitionCommand(step);
 }
 
 export function isRefGuardedCommand(command: string | undefined): boolean {

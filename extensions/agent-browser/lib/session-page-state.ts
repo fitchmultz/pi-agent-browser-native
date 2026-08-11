@@ -1,7 +1,7 @@
 import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordStartPageTransition, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
 import { enrichSnapshotRefEntries, getSnapshotRefEntries } from "./results/snapshot-refs.js";
@@ -276,7 +276,7 @@ export function buildNoActivePageRefSnapshotInvalidation(): SessionRefSnapshotIn
 export function buildPageTransitionRefSnapshotInvalidation(): SessionRefSnapshotInvalidation {
 	return {
 		reason: "page-transition",
-		summary: "record start switched this session to a fresh active page and invalidated the prior snapshot. Run snapshot -i before using page-scoped refs.",
+		summary: "A recording command replaced or navigated the active page and invalidated the prior snapshot. Run snapshot -i before using page-scoped refs.",
 	};
 }
 
@@ -289,12 +289,13 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 	let latestState: BatchRefSnapshotState | undefined;
 	for (const item of data) {
 		if (!isRecord(item)) continue;
-		const [name, subcommand] = extractBatchResultCommand(item);
+		const commandTokens = extractBatchResultCommand(item);
+		const [name] = commandTokens;
 		if (item.success !== false && isCloseCommand(name)) {
 			latestState = undefined;
 			continue;
 		}
-		if (item.success !== false && isRecordStartPageTransition(name, subcommand)) {
+		if (isRecordPageTransitionCommand(commandTokens)) {
 			latestState = { invalidation: buildPageTransitionRefSnapshotInvalidation() };
 			continue;
 		}
