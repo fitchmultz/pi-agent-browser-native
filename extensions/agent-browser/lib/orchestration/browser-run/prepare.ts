@@ -154,12 +154,27 @@ async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: str
 
 async function prepareBatchScreenshotPaths(args: string[], stdin: string | undefined, cwd: string): Promise<PreparedAgentBrowserArgs | undefined> {
 	const commandTokens = extractUpstreamCommandTokens(args);
-	if (commandTokens[0] !== "batch" || stdin === undefined) {
+	if (commandTokens[0] !== "batch") {
 		return undefined;
 	}
-	// Upstream ignores stdin when raw batch argument steps exist, so skip stdin
-	// preparation (including parent-directory creation) for never-executed rows.
-	if (getUpstreamEffectiveBatchSteps(commandTokens, undefined).length > 0) {
+	const argumentSteps = getUpstreamEffectiveBatchSteps(commandTokens, undefined);
+	if (argumentSteps.length > 0) {
+		// Upstream executes raw argument steps exclusively and ignores stdin, so
+		// prepare parent directories for the rows that will run and skip stdin
+		// preparation (no directories for never-executed rows).
+		for (const step of argumentSteps) {
+			const stepTokens = extractUpstreamCommandTokens(step);
+			await ensureArtifactParentDirectory(stepTokens, cwd);
+			if (stepTokens[0] === "screenshot") {
+				// Reuse the screenshot path resolution for its parent-directory side
+				// effect only: raw strings are never rewritten, so the normalized
+				// tokens and path request are deliberately discarded.
+				await normalizeScreenshotPathInTokens(step, cwd);
+			}
+		}
+		return undefined;
+	}
+	if (stdin === undefined) {
 		return undefined;
 	}
 	const parsed = parseBatchStdinJsonArray(stdin);
@@ -1048,7 +1063,11 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					}
 					if (pinnedBatchPlan) {
 						sessionTabCorrection = plannedSessionTabSelection;
-						processArgs = ["--json", ...(executionPlan.namespace !== undefined ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch"];
+						// The rewritten batch must keep the caller's fail-fast semantics:
+						// upstream reads only the exact --bail token, so re-emit it whenever
+						// the original batch tokens carried it (argv or stdin/job/qa mode).
+						const pinnedBailArgs = commandTokens.includes("--bail") ? ["--bail"] : [];
+						processArgs = ["--json", ...(executionPlan.namespace !== undefined ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch", ...pinnedBailArgs];
 						processStdin = JSON.stringify(pinnedBatchPlan.steps);
 						includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
 						pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;

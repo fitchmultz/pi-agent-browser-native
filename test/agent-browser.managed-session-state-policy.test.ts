@@ -284,12 +284,15 @@ test("managed state policy blocks browser navigation into local agent-browser st
 			cwd: tempDir,
 			stdin: navigationThenContentBatch,
 		}), undefined);
+		// Upstream keeps --bail=false as a raw command row (only the exact --bail
+		// token is a flag), so the validator scans it as a step and still rejects
+		// the continuation hazard fail-closed.
 		assert.match(getManagedSessionStateAccessValidationError({
 			args: ["--session", "external", "batch", "--bail=false"],
 			currentPageUrl: protectedUrl,
 			cwd: tempDir,
 			stdin: navigationThenContentBatch,
-		}) ?? "", /--bail/);
+		}) ?? "", /is blocked/);
 		assert.match(getManagedSessionStateAccessValidationError({
 			args: ["--session", "external", "batch", "open https://safe.example/", "get html body"],
 			currentPageUrl: protectedUrl,

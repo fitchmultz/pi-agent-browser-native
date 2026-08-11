@@ -307,7 +307,7 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 	if (descriptor.commandInfo.command !== "batch") return { steps: [] };
 	const steps: BatchCommandStep[] = [];
 	for (const command of descriptor.upstreamCommandTokens.slice(1)) {
-		if (command === "--bail" || command.startsWith("--bail=")) continue;
+		if (command === "--bail") continue;
 		if (decodeUrlComponent(command).toLowerCase().includes(".agent-browser")) return { error: BLOCKED_MANAGED_BROWSER_FILE_MESSAGE, steps: [] };
 		const parsed = parseBatchCommandArgument(command);
 		if (parsed.error || parsed.step === undefined) return { error: parsed.error ?? UNSAFE_BATCH_ARGUMENT_MESSAGE, steps: [] };

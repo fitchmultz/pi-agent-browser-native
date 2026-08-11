@@ -2646,6 +2646,26 @@ if (args.includes("get") && args.includes("url")) {
 			assert.equal(rawArgvStaleRef.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvStaleRef));
 			const batchAfterStale = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch"));
 			assert.equal(batchAfterStale.length, 1, JSON.stringify(batchAfterStale));
+
+			// The pinned rewrite must keep the caller's exact --bail fail-fast flag in
+			// both argv mode and stdin (job/qa failFast) mode.
+			const pinnedRawBail = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "batch", "--bail", "wait 100"],
+				stdin: JSON.stringify([["click", "@e4"]]),
+			});
+			assert.equal(pinnedRawBail.isError, false, JSON.stringify(pinnedRawBail));
+			const pinnedStdinBail = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "named", "batch", "--bail"],
+				stdin: JSON.stringify([["wait", "100"]]),
+			});
+			assert.equal(pinnedStdinBail.isError, false, JSON.stringify(pinnedStdinBail));
+			const bailBatches = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch")).slice(1);
+			assert.equal(bailBatches.length, 2, JSON.stringify(bailBatches));
+			for (const invocation of bailBatches) {
+				assert.equal(invocation.args.includes("--bail"), true, JSON.stringify(invocation));
+				const bailDispatched = JSON.parse((invocation as { stdin?: string }).stdin ?? "[]") as string[][];
+				assert.deepEqual(bailDispatched, [["tab", "t1"], ["wait", "100"]], JSON.stringify(bailDispatched));
+			}
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -2722,6 +2742,22 @@ if (args.includes("snapshot")) {
 				stdin: JSON.stringify([["screenshot", join(tempDir, "sub", "dir", "shot.png")]]),
 			});
 			assert.equal(ignoredScreenshot.isError, false, JSON.stringify(ignoredScreenshot));
+			assert.equal(await directoryExists(join(tempDir, "sub")), false);
+
+			// The equals form is a raw command upstream, so malformed ignored stdin must
+			// not be fatal for it either (state-policy exact --bail parity).
+			const bailEqualsMalformed = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "--bail=true"],
+				stdin: "not json",
+			});
+			assert.equal(bailEqualsMalformed.isError, false, JSON.stringify(bailEqualsMalformed));
+
+			// Upstream-effective raw artifact rows get parent directories prepared.
+			const rawScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", `screenshot ${join(tempDir, "raw", "dir", "shot.png")}`, "wait 10"],
+			});
+			assert.equal(rawScreenshot.isError, false, JSON.stringify(rawScreenshot));
+			assert.equal(await directoryExists(join(tempDir, "raw", "dir")), true);
 			assert.equal(await directoryExists(join(tempDir, "sub")), false);
 		});
 	} finally {
