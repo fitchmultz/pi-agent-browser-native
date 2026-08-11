@@ -1975,6 +1975,8 @@ if (args.includes("snapshot")) {
   const restartPath = args[args.indexOf("restart") + 1];
   fs.writeFileSync(restartPath, "webm");
   process.stdout.write(JSON.stringify({ success: true, data: { restarted: true, path: restartPath } }));
+} else if (args.includes("diff")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { match: true } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
 } else {
@@ -2051,14 +2053,91 @@ if (args.includes("snapshot")) {
 			assert.equal(staleAfterFailedStart.isError, true, JSON.stringify(staleAfterFailedStart));
 			assert.equal(staleAfterFailedStart.details?.failureCategory, "stale-ref", JSON.stringify(staleAfterFailedStart));
 
+			// Upstream treats these @e-looking operands as literal text, fill content, or paths, so the
+			// stale-ref guard must not reject them even while the snapshot state is invalidated.
+			const literalWaitText = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["wait", "--text", "@e1"] });
+			assert.equal(literalWaitText.isError, false, JSON.stringify(literalWaitText));
+			const literalFindText = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["find", "text", "@e1", "click"] });
+			assert.equal(literalFindText.isError, false, JSON.stringify(literalFindText));
+			const literalBaselinePath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--baseline", "@e1.png"] });
+			assert.equal(literalBaselinePath.isError, false, JSON.stringify(literalBaselinePath));
+			const guardedDiffSelector = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "snapshot", "--selector", "@e1"] });
+			assert.equal(guardedDiffSelector.isError, true, JSON.stringify(guardedDiffSelector));
+			assert.equal(guardedDiffSelector.details?.failureCategory, "stale-ref", JSON.stringify(guardedDiffSelector));
+
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 1);
-			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click") && !entry.args.includes("find")).length, 1);
 			assert.equal(invocations.filter((entry) => entry.args.includes("is")).length, 0);
-			assert.equal(invocations.filter((entry) => entry.args.includes("screenshot")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("screenshot") && !entry.args.includes("diff")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("wait")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("find")).length, 1);
+			assert.equal(invocations.filter((entry) => entry.args.includes("diff")).length, 1);
 			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("start")).length, 2);
 			assert.equal(invocations.filter((entry) => entry.args.includes("record") && entry.args.includes("restart")).length, 1);
 			assert.ok(invocations.filter((entry) => entry.args.includes("snapshot")).length >= 3);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension invalidates refs when a batch recording start times out before returning rows", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-timeout-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://record.example/",
+    title: "Record fixture",
+    url: "https://record.example/",
+    refs: { e1: { role: "link", name: "Old target" } },
+    snapshot: '- link "Old target" [ref=e1]'
+  } }));
+} else if (args.includes("batch")) {
+  // Simulate upstream buffering batch rows past the wrapper timeout.
+  setTimeout(() => {
+    process.stdout.write(JSON.stringify({ success: true, data: [] }));
+    process.exit(0);
+  }, 4000);
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const initialSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
+			assert.deepEqual((initialSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const timedOutBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "start", join(tempDir, "swap.webm")], ["wait", "3000"]]),
+				timeoutMs: 900,
+			});
+			assert.equal(timedOutBatch.isError, true, JSON.stringify(timedOutBatch));
+			assert.equal(timedOutBatch.details?.timedOut, true, JSON.stringify(timedOutBatch));
+			assert.equal((timedOutBatch.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition", JSON.stringify(timedOutBatch));
+
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
+			assert.equal(staleClick.details?.failureCategory, "stale-ref", JSON.stringify(staleClick));
+
+			const freshSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(freshSnapshot.isError, false, JSON.stringify(freshSnapshot));
+			assert.deepEqual((freshSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -22,10 +22,6 @@ const ADDITIONAL_COMMAND_TOKENS = [
 
 const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
-		command: "a11y",
-		guardsPageRefs: true,
-	},
-	{
 		command: "back",
 		eligibleForElectronHealthProbe: true,
 		eligibleForPageChangeSummary: true,
@@ -118,7 +114,6 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
 		command: "find",
 		eligibleForElectronHealthProbe: true,
-		guardsPageRefs: true,
 	},
 	{
 		command: "frame",
@@ -302,10 +297,6 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		command: "upload",
 		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
-	},
-	{
-		command: "wait",
-		guardsPageRefs: true,
 	},
 ];
 

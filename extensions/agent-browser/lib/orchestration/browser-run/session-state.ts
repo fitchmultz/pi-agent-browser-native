@@ -350,8 +350,19 @@ export function getStaleRefArgs(commandTokens: string[], stdin?: string): string
 	return parsed.steps.flatMap((step) => step);
 }
 
+// Selector-carrying flags whose values remain page-scoped refs; other flag values (--text, --baseline,
+// --name, and similar) are literal text or paths that may merely look like refs, per upstream parsing.
+const SELECTOR_FLAG_TOKENS = new Set(["--selector", "-s"]);
+
 function collectRefsFromTokens(tokens: string[]): string[] {
-	return tokens.filter((token) => /^@e\d+\b/.test(token)).map((token) => token.slice(1));
+	const refs: string[] = [];
+	for (const [index, token] of tokens.entries()) {
+		if (!/^@e\d+\b/.test(token)) continue;
+		const previous = index > 0 ? tokens[index - 1] : undefined;
+		if (previous !== undefined && previous.startsWith("-") && !SELECTOR_FLAG_TOKENS.has(previous)) continue;
+		refs.push(token.slice(1));
+	}
+	return refs;
 }
 
 export function getGuardedRefUsage(commandTokens: string[], stdin?: string, options: { includeRefsAfterBatchSnapshot?: boolean } = {}): string[] {

@@ -48,9 +48,14 @@ test("command taxonomy keeps independent capability dimensions explicit", () => 
 	assert.equal(isRefInvalidatingBatchCommand(["scrollintoview"]), true);
 });
 
-test("command taxonomy guards every upstream ref-resolving selector command", () => {
-	for (const command of ["a11y", "diff", "find", "frame", "highlight", "is", "screenshot", "scroll", "wait"]) {
+test("command taxonomy guards exactly the upstream ref-resolving selector commands", () => {
+	for (const command of ["diff", "frame", "highlight", "is", "screenshot", "scroll"]) {
 		assert.equal(isRefGuardedCommand(command), true, command);
+	}
+	// Upstream passes these selectors/operands through literally and never resolves @e refs for them,
+	// so guarding would falsely reject literal tokens such as `wait --text @e1` or `find text @e1 click`.
+	for (const command of ["a11y", "find", "wait"]) {
+		assert.equal(isRefGuardedCommand(command), false, command);
 	}
 });
 

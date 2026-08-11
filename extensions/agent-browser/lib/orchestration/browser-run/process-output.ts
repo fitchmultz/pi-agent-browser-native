@@ -454,7 +454,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				sessionPageState.clearSession(sessionStateKey);
 				state.closedManagedSessionNames.add(sessionStateKey);
 			} else {
-				const pageTransitionInvalidation = processResult.agentBrowserStarted && isRecordPageTransitionCommand(prepared.commandTokens)
+				// A batch that times out or returns unparseable output yields no result rows, but the daemon
+				// may already have executed a recording page swap; fall back to the planned steps then.
+				const plannedBatchRecordSwap = !Array.isArray(presentationEnvelope?.data) && batchCommandSteps.some((step) => isRecordPageTransitionCommand(step));
+				const pageTransitionInvalidation = processResult.agentBrowserStarted && (isRecordPageTransitionCommand(prepared.commandTokens) || plannedBatchRecordSwap)
 					? buildPageTransitionRefSnapshotInvalidation()
 					: batchRefSnapshotState?.invalidation?.reason === "page-transition"
 						? batchRefSnapshotState.invalidation
