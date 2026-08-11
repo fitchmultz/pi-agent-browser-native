@@ -196,7 +196,9 @@ function getBatchCommandSteps(commandTokens: string[], stdin: string | undefined
 		const step = parseBatchCommandArgument(command).step;
 		return step ? [step] : [];
 	});
-	return [...argumentSteps, ...(parseUserBatchStdin(stdin).steps ?? [])];
+	// Upstream run_batch uses raw batch arguments exclusively when any exist and reads stdin only otherwise.
+	if (argumentSteps.length > 0) return argumentSteps;
+	return parseUserBatchStdin(stdin).steps ?? [];
 }
 
 export async function processBrowserOutput(input: ProcessBrowserOutputInput): Promise<BrowserProcessOutputResult> {
@@ -455,7 +457,9 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				state.closedManagedSessionNames.add(sessionStateKey);
 			} else {
 				// A batch that times out or returns unparseable output yields no result rows, but the daemon
-				// may already have executed a recording page swap; fall back to the planned steps then.
+				// may already have executed a recording page swap; fall back to the planned steps then. This
+				// also fires for wrapper-replaced envelopes and upstream pre-loop errors where nothing ran,
+				// which only over-invalidates (one extra snapshot), never under-invalidates.
 				const plannedBatchRecordSwap = !Array.isArray(presentationEnvelope?.data) && batchCommandSteps.some((step) => isRecordPageTransitionCommand(step));
 				const pageTransitionInvalidation = processResult.agentBrowserStarted && (isRecordPageTransitionCommand(prepared.commandTokens) || plannedBatchRecordSwap)
 					? buildPageTransitionRefSnapshotInvalidation()

@@ -49,6 +49,9 @@ test("command taxonomy keeps independent capability dimensions explicit", () => 
 });
 
 test("command taxonomy guards exactly the upstream ref-resolving selector commands", () => {
+	// diff guarding is deliberately command-level: diff screenshot resolves refs while diff snapshot's
+	// selector is CSS-only, but the wrapper's stale-ref guidance is a clearer failure than upstream's
+	// invalid-selector error and subcommand precision buys nothing observable.
 	for (const command of ["diff", "frame", "highlight", "is", "screenshot", "scroll"]) {
 		assert.equal(isRefGuardedCommand(command), true, command);
 	}

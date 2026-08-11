@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 
-import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
+import { getAgentBrowserSessionIdentityKey, VALUE_FLAGS } from "../../argv-grammar.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
@@ -350,16 +350,23 @@ export function getStaleRefArgs(commandTokens: string[], stdin?: string): string
 	return parsed.steps.flatMap((step) => step);
 }
 
-// Selector-carrying flags whose values remain page-scoped refs; other flag values (--text, --baseline,
-// --name, and similar) are literal text or paths that may merely look like refs, per upstream parsing.
+// Selector-carrying flags whose values remain page-scoped refs; values of other value-taking flags
+// (--text, --baseline, --name, and similar) are literal text or paths that may merely look like refs,
+// per upstream parsing. Boolean flags such as --new-tab or --full do not consume the following token,
+// so a ref after them is a genuine positional selector and must stay guarded.
 const SELECTOR_FLAG_TOKENS = new Set(["--selector", "-s"]);
+const SHORT_VALUE_FLAG_TOKENS = new Set(["-b", "-o", "-t"]);
+
+function isNonSelectorValueFlagToken(token: string | undefined): boolean {
+	if (token === undefined || SELECTOR_FLAG_TOKENS.has(token)) return false;
+	return VALUE_FLAGS.has(token) || SHORT_VALUE_FLAG_TOKENS.has(token);
+}
 
 function collectRefsFromTokens(tokens: string[]): string[] {
 	const refs: string[] = [];
 	for (const [index, token] of tokens.entries()) {
 		if (!/^@e\d+\b/.test(token)) continue;
-		const previous = index > 0 ? tokens[index - 1] : undefined;
-		if (previous !== undefined && previous.startsWith("-") && !SELECTOR_FLAG_TOKENS.has(previous)) continue;
+		if (isNonSelectorValueFlagToken(index > 0 ? tokens[index - 1] : undefined)) continue;
 		refs.push(token.slice(1));
 	}
 	return refs;

@@ -1948,6 +1948,13 @@ test("agentBrowserExtension invalidates direct and batched refs when record star
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+// Mirror upstream restart finalizing the previous recording so its mtime stays inside the
+// wrapper's artifact freshness window regardless of suite timing.
+const refreshRecordings = () => {
+  for (const entry of fs.readdirSync(${JSON.stringify(tempDir)})) {
+    if (entry.endsWith(".webm")) fs.writeFileSync(require("node:path").join(${JSON.stringify(tempDir)}, entry), "webm");
+  }
+};
 if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://record.example/",
@@ -1966,6 +1973,7 @@ if (args.includes("snapshot")) {
   }
 } else if (args.includes("batch")) {
   const batchRestartPath = require("node:path").join(${JSON.stringify(tempDir)}, "plain.webm");
+  refreshRecordings();
   fs.writeFileSync(batchRestartPath, "webm");
   process.stdout.write(JSON.stringify({ success: true, data: [
     { command: ["record", "restart", batchRestartPath], success: true, data: { restarted: true, path: batchRestartPath } },
@@ -1973,6 +1981,7 @@ if (args.includes("snapshot")) {
   ] }));
 } else if (args.includes("record") && args.includes("restart")) {
   const restartPath = args[args.indexOf("restart") + 1];
+  refreshRecordings();
   fs.writeFileSync(restartPath, "webm");
   process.stdout.write(JSON.stringify({ success: true, data: { restarted: true, path: restartPath } }));
 } else if (args.includes("diff")) {
@@ -2052,6 +2061,21 @@ if (args.includes("snapshot")) {
 			const staleAfterFailedStart = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(staleAfterFailedStart.isError, true, JSON.stringify(staleAfterFailedStart));
 			assert.equal(staleAfterFailedStart.details?.failureCategory, "stale-ref", JSON.stringify(staleAfterFailedStart));
+
+			// Boolean flags do not consume the following token, so a ref after them is a positional
+			// selector that upstream resolves; the guard must keep rejecting these while invalidated.
+			const booleanFlagClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "--new-tab", "@e1"] });
+			assert.equal(booleanFlagClick.isError, true, JSON.stringify(booleanFlagClick));
+			assert.equal(booleanFlagClick.details?.failureCategory, "stale-ref", JSON.stringify(booleanFlagClick));
+			const booleanFlagScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "--full", "@e1", join(tempDir, "full.png")] });
+			assert.equal(booleanFlagScreenshot.isError, true, JSON.stringify(booleanFlagScreenshot));
+			assert.equal(booleanFlagScreenshot.details?.failureCategory, "stale-ref", JSON.stringify(booleanFlagScreenshot));
+			const booleanFlagBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["record", "start", join(tempDir, "latch.webm")], ["click", "--new-tab", "@e1"]]),
+			});
+			assert.equal(booleanFlagBatch.isError, true, JSON.stringify(booleanFlagBatch));
+			assert.equal(booleanFlagBatch.details?.failureCategory, "stale-ref", JSON.stringify(booleanFlagBatch));
 
 			// Upstream treats these @e-looking operands as literal text, fill content, or paths, so the
 			// stale-ref guard must not reject them even while the snapshot state is invalidated.
@@ -2136,8 +2160,22 @@ if (args.includes("snapshot")) {
 			assert.equal(freshSnapshot.isError, false, JSON.stringify(freshSnapshot));
 			assert.deepEqual((freshSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
 
+			// Upstream uses raw batch arguments exclusively when any exist, so a stdin-only record step
+			// cannot execute and must not invalidate refs when such a batch times out.
+			const argvExclusiveTimeout = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "wait 500"],
+				stdin: JSON.stringify([["record", "start", join(tempDir, "ignored.webm")]]),
+				timeoutMs: 900,
+			});
+			assert.equal(argvExclusiveTimeout.isError, true, JSON.stringify(argvExclusiveTimeout));
+			assert.equal(argvExclusiveTimeout.details?.timedOut, true, JSON.stringify(argvExclusiveTimeout));
+			assert.equal(argvExclusiveTimeout.details?.refSnapshotInvalidation, undefined, JSON.stringify(argvExclusiveTimeout.details?.refSnapshotInvalidation));
+
+			const clickAfterArgvTimeout = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(clickAfterArgvTimeout.isError, false, JSON.stringify(clickAfterArgvTimeout));
+
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
