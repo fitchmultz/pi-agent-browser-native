@@ -94,7 +94,9 @@ export function getTabSummary(data: Record<string, unknown>): string | undefined
 						? String(tab.index)
 						: String(index);
 		const labelText = label && label !== tabSelector ? ` label=${redactModelFacingText(label)}` : "";
-		return `${marker} [${tabSelector}]${labelText} ${title} — ${url}`;
+		const targetId = typeof tab.targetId === "string" && tab.targetId.trim().length > 0 ? tab.targetId.trim() : undefined;
+		const targetText = targetId && targetId !== tabSelector ? ` target=${redactModelFacingText(targetId)}` : "";
+		return `${marker} [${tabSelector}]${labelText}${targetText} ${title} — ${url}`;
 	});
 	return lines.join("\n");
 }

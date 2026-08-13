@@ -34,6 +34,7 @@ export type AgentBrowserFailureCategory =
 	| "script-error"
 	| "stale-ref"
 	| "tab-drift"
+	| "tab-gone"
 	| "timeout"
 	| "upstream-error"
 	| "validation-error";

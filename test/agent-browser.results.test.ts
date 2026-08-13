@@ -71,6 +71,8 @@ test("AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS locks documented recovery action id
 		selectIntendedTabAfterDrift: "select-intended-tab-after-drift",
 		snapshotAfterTabRecovery: "snapshot-after-tab-recovery",
 		tabDriftListTabs: "list-tabs-for-tab-drift-recovery",
+		tabGoneListTabs: "list-tabs-after-tab-gone",
+		tabGoneNewTab: "open-tab-after-tab-gone",
 	});
 });
 
@@ -252,6 +254,14 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Electron launch blocked by caller deny policy." }), "policy-blocked");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Electron cleanup partial: remaining resources detected." }), "cleanup-failed");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "agent-browser could not re-select the intended tab before running the command." }), "tab-drift");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "tab_gone: bound tab is gone (target ABC). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one" }), "tab-gone");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "tab_gone: bound tab is gone (target ABC, last url https://example.com/aborted). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one" }), "tab-gone");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "tab_gone: bound tab is gone (target ABC, last url https://example.com/policy-blocked). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one" }), "tab-gone");
+	assert.equal(classifyAgentBrowserFailureCategory({
+		errorText: "tab_gone: bound tab is gone (target ABC, last url about:blank). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
+		tabDrift: true,
+	}), "tab-gone");
+	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "eval failed: help says commands fail with a `tab_gone` error instead of adopting another tab" }), "upstream-error");
 	assert.equal(classifyAgentBrowserFailureCategory({
 		errorText: 'qa.attached requires an http(s) page URL; the current attached URL is "about:blank".',
 		validationError: 'qa.attached requires an http(s) page URL; the current attached URL is "about:blank".',
@@ -290,6 +300,13 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	assert.deepEqual(
 		buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "tab-drift" })?.map((action) => ({ id: action.id, args: action.params?.args })),
 		[{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.genericTabDriftListTabs, args: ["tab", "list"] }],
+	);
+	assert.deepEqual(
+		buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "tab-gone" })?.map((action) => ({ id: action.id, args: action.params?.args })),
+		[
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneListTabs, args: ["tab", "list"] },
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneNewTab, args: ["tab", "new"] },
+		],
 	);
 	assert.deepEqual(
 		buildAgentBrowserNextActions({ recovery: { kind: "connected-session", sessionName: "named" }, resultCategory: "success", successCategory: "completed" })?.map((action) => ({ id: action.id, args: action.params?.args })),
@@ -461,7 +478,7 @@ test("buildToolPresentation renders stable tab ids from tab list output", async 
 			success: true,
 			data: {
 				tabs: [
-					{ active: false, label: "chat", tabId: "t1", title: "ChatGPT", url: "https://chatgpt.com/" },
+					{ active: false, label: "chat", tabId: "t1", targetId: "4A0B7C4E1F2D3A4B5C6D7E8F90A1B2C3", title: "ChatGPT", url: "https://chatgpt.com/" },
 					{ active: true, label: "grok", tabId: "t2", title: "Grok", url: "https://grok.com/" },
 				],
 			},
@@ -469,9 +486,35 @@ test("buildToolPresentation renders stable tab ids from tab list output", async 
 	});
 
 	assert.equal(presentation.content[0]?.type, "text");
-	assert.match((presentation.content[0] as { text: string }).text, /- \[t1\] label=chat ChatGPT — https:\/\/chatgpt\.com\//);
+	assert.match((presentation.content[0] as { text: string }).text, /- \[t1\] label=chat target=4A0B7C4E1F2D3A4B5C6D7E8F90A1B2C3 ChatGPT — https:\/\/chatgpt\.com\//);
 	assert.match((presentation.content[0] as { text: string }).text, /\* \[t2\] label=grok Grok — https:\/\/grok\.com\//);
 	assert.equal(presentation.summary, "Tabs: 2");
+});
+
+test("buildToolPresentation classifies tab_gone envelopes and recommends tab recovery", async () => {
+	const errorText = getAgentBrowserErrorText({
+		aborted: false,
+		envelope: {
+			success: false,
+			error: "tab_gone: bound tab is gone (target ABC, last url https://example.com/aborted). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
+		},
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+	});
+	assert.match(errorText ?? "", /^tab_gone:/);
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot", subcommand: "-i" },
+		cwd: process.cwd(),
+		errorText,
+	});
+
+	assert.equal(presentation.failureCategory, "tab-gone");
+	assert.deepEqual(presentation.nextActions?.map((action) => action.id), [
+		AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneListTabs,
+		AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneNewTab,
+	]);
 });
 
 test("parseAgentBrowserEnvelope reports invalid JSON clearly", async () => {

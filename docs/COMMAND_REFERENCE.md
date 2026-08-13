@@ -18,15 +18,24 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.33.2` command/help surface, audited against vercel-labs/agent-browser@93cdda5709e8861c0c26b0b955d8d746e9fda0d7. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.34.0` command/help surface, audited against vercel-labs/agent-browser@548b159b30eef119ccf6846c8bc807d0eaa3f6f8. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.34.0 rebaseline
+
+The 0.34.0 release adds persistent session-to-tab binding for shared Chrome sessions. This package targets exactly `agent-browser 0.34.0`: before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails a mismatch with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
+
+- Named sessions on `--cdp` or `--auto-connect` remember their CDP target across commands and daemon restarts. CDP target ids from `tab list --json` are accepted as tab refs and stay stable across daemon restarts, unlike `t<N>` ids.
+- `--pin-tab` (`AGENT_BROWSER_PIN_TAB`) is sticky per session and is not launch-scoped: pass it once, including on an already-live session, so a closed bound tab fails with `tab_gone` instead of adopting a neighbor. JSON includes `code=tab_gone`, `data.targetId`, and optional sanitized `data.lastUrl`; batch exposes the same recovery object under `result`. Recover with `tab new` or `tab list`. `--no-pin-tab` turns the pin off again. Optional booleans use separated tokens (`--pin-tab false`).
+- This wrapper classifies `tab_gone` as `failureCategory: "tab-gone"` and returns `list-tabs-after-tab-gone` plus `open-tab-after-tab-gone`. `tab list` presentation includes `target=<id>` when upstream reports `data.targetId`.
+- Doctor no longer hangs on Chrome version detection. The Remote Agent Browser provider guide is upstream documentation only; this wrapper adds no new provider mode.
+
 ### Upstream 0.33.2 rebaseline
 
-The 0.33.1–0.33.2 releases harden daemon lifecycle and live streaming without new core page commands. This package targets exactly `agent-browser 0.33.2`: before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails a mismatch with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
+The 0.33.1–0.33.2 releases harden daemon lifecycle and live streaming without new core page commands. Package 0.4.1 targeted exactly `agent-browser 0.33.2`: before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails a mismatch with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
 
 - 0.33.1 ships a default daemon idle timeout of 1 hour (`AGENT_BROWSER_IDLE_TIMEOUT_MS`, default `3600000`; `0` disables). Sessions without a restore key discard transient cookies/tabs on idle shutdown. Headed, Safari/iOS WebDriver, and user-attached browsers are exempt from that default. Tab recovery also revives Memory Saver-discarded tabs on connect/switch/close and reports recovery fields such as `revived` / `dialogBlocked` / `activeTabRevived`.
 - 0.33.2 makes stream frame delivery latest-wins, prioritizes input over frame writes, adds per-client `maxFps` / ack pacing, and adds `AGENT_BROWSER_STREAM_QUALITY`, `AGENT_BROWSER_STREAM_MAX_WIDTH`, and `AGENT_BROWSER_STREAM_MAX_HEIGHT` for screencast bandwidth control.
@@ -726,8 +735,10 @@ Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `doc
 | `tab list` | List open tabs with ids and labels. |
 | `tab new [url]` | Open a new tab. |
 | `tab new --label <name> [url]` | Open a new tab with a user label. |
-| `tab <t<N>|label>` | Switch to a tab by id or label. |
-| `tab close [t<N>|label]` | Close the current tab or a referenced tab. Generic references in workflows may say `tab close [target]`; use a stable `t<N>` id or label when you have one. |
+| `tab <t<N>|label>` | Switch to a tab by id or label. CDP target ids from `tab list --json` are also accepted and stay stable across daemon restarts. |
+| `tab close [t<N>|label|target]` | Close the current tab or a referenced tab. Generic references in workflows may say `tab close [target]`; use a stable `t<N>` id, label, or CDP target id when you have one. |
+
+With `--pin-tab`, a closed bound tab fails as `tab_gone` (`data.targetId`, optional `data.lastUrl`) instead of falling back to another tab.
 
 ### Snapshot
 
@@ -913,7 +924,8 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--namespace <name>`: isolate daemon sockets and restore-state directories. Environment: `AGENT_BROWSER_NAMESPACE`. Upstream and the wrapper canonicalize namespace identity to a lowercase sanitized component (for example, `Team Name` becomes `team-name`).
 - `--session-name <name>`: legacy alias for restore persistence key. Environment: `AGENT_BROWSER_SESSION_NAME`.
 - `--state <path>`: load saved auth state from JSON. Environment: `AGENT_BROWSER_STATE`.
-- `--auto-connect`: connect to a running Chrome to reuse auth state. Environment: `AGENT_BROWSER_AUTO_CONNECT`. Optional booleans use separated tokens (`--auto-connect false`); upstream 0.33.2 does not recognize `--auto-connect=false`, so that token cannot disable an earlier bare `--auto-connect`.
+- `--auto-connect`: connect to a running Chrome to reuse auth state. Environment: `AGENT_BROWSER_AUTO_CONNECT`. Optional booleans use separated tokens (`--auto-connect false`); upstream 0.34.0 does not recognize `--auto-connect=false`, so that token cannot disable an earlier bare `--auto-connect`.
+- `--pin-tab`: pin the session to its bound tab. Environment: `AGENT_BROWSER_PIN_TAB`. Sticky per session and not launch-scoped. Commands fail with `tab_gone` instead of falling back when that tab is closed. `--no-pin-tab` disables a previously enabled pin. Optional booleans use separated tokens (`--pin-tab false`).
 - `--headers <json>`: apply HTTP headers scoped to the opened URL's origin.
 - `--init-script <path>`: register a script before first navigation; repeatable. Environment: `AGENT_BROWSER_INIT_SCRIPTS`.
 - `--enable <feature>`: enable built-in init scripts such as `react-devtools`; repeatable or comma-separated. Environment: `AGENT_BROWSER_ENABLE`.
@@ -986,6 +998,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 - After the wrapper observes tab-drift risk for a session (for example open correction, overlapping stale opens, or resumed session state), later active-tab commands best-effort pin that tab inside the same upstream invocation. Routine same-session commands are not preflighted with tab list just because a target tab or ref snapshot is known.
 - For sessions with observed tab-drift risk, after a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes. Routine same-session commands skip this post-command tab-list probe.
 - If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.
+- If upstream reports tab_gone, the pinned bound tab is gone; use details.nextActions (tab list / tab new) instead of assuming another tab is yours.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
 - Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to the upstream documented 25-second default and use a 35-second child-process watchdog (`PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides the default 35s budget; top-level `timeoutMs` overrides it per browser CLI call). Explicit `wait <ms>` or `wait --timeout <ms>` calls can exceed that default; when top-level `timeoutMs` is omitted, the wrapper derives a subprocess watchdog from the requested wait duration plus a small grace window. Dialog commands are additionally bounded to 5 seconds (`PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS`), and click/tap/find refs or tokens plus `eval --stdin` snippets that look like alert/confirm/prompt/dialog triggers are bounded to 8 seconds (`PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS`). When any watchdog fires, `details.timeoutPartialProgress` may include a planned step list with per-step status (including `generatedFrom` labels for wrapper-inserted rows such as `open.loadState`) and a `retry-timeout-step` next action only when the first incomplete step is read-only or idempotent, or `inspect-current-page-after-timeout` when the session is still inspectable but the incomplete step may be mutating and should not be blindly retried. It also includes current page URL from best-effort session `get url`, followed by `get title` only for a verified non-file URL (or a planned URL inferred from the step list when the session cannot answer), an `openedButPostOpenTimedOut` classification only when a live page URL was recovered before a later step hung, and declared artifact paths such as `screenshot`, `pdf`, `download`, or `wait --download` outputs with existence/state checks; the same evidence is appended under `Timeout partial progress` in visible text with URL/path redaction.
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result. Recent artifact metadata is bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES` (default 100); persisted spill files are separately bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` (default 32 MiB).
@@ -996,14 +1009,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.33.2</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.34.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `93cdda5709e8861c0c26b0b955d8d746e9fda0d7`
-- upstream package version: `0.33.2`
+- upstream HEAD: `548b159b30eef119ccf6846c8bc807d0eaa3f6f8`
+- upstream package version: `0.34.0`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1023,6 +1036,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/native/actions.rs`
 - inspected: `cli/src/native/a11y/mod.rs`
 - inspected: `cli/src/native/browser.rs`
+- inspected: `cli/src/native/tab_binding.rs`
 - inspected: `cli/src/native/daemon.rs`
 - inspected: `cli/src/output.rs`
 - inspected: `docs/src/app/webgpu/page.mdx`
@@ -1101,10 +1115,10 @@ This generated block is review data for maintainers. The human-authored referenc
 #### Inventory sections
 - Built-in skills: 16 human-doc token(s), 18 upstream token(s)
 - Core page, element, navigation, and extraction commands: 82 human-doc token(s), 84 upstream token(s)
-- Sessions, state, tabs, frames, dialogs, and windows: 24 human-doc token(s), 20 upstream token(s)
+- Sessions, state, tabs, frames, dialogs, and windows: 28 human-doc token(s), 25 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 49 human-doc token(s), 60 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 33 human-doc token(s), 37 upstream token(s)
-- Global flags, config, providers, policy, and environment: 142 human-doc token(s), 110 upstream token(s)
+- Global flags, config, providers, policy, and environment: 145 human-doc token(s), 113 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1229,6 +1243,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - `tab new --label <name> [url]`
 - `tab close [target]`
 - `tab <t<N>|label>`
+- `tab_gone`
+- `data.targetId`
+- `data.lastUrl`
+- `CDP target ids`
 - `frame <selector|main>`
 - `dialog accept [text]`
 - `dialog dismiss`
@@ -1344,6 +1362,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_STATE`
 - `--auto-connect`
 - `AGENT_BROWSER_AUTO_CONNECT`
+- `--pin-tab`
+- `--no-pin-tab`
+- `AGENT_BROWSER_PIN_TAB`
 - `--headers <json>`
 - `--init-script <path>`
 - `AGENT_BROWSER_INIT_SCRIPTS`
@@ -1588,8 +1609,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - state help: `clean --older-than <days>`
 - tab help: `new [url]`
 - tab help: `new --label <name> [url]`
-- tab help: `close [t<N>|label]`
+- tab help: `close [t<N>|label|target]`
 - tab help: `Stable tab ids`
+- tab help: `tab_gone`
+- tab help: `data.targetId`
+- tab help: `data.lastUrl`
+- core skill full: `--pin-tab`
+- core skill full: `tab_gone`
 - frame help: `frame <selector|main>`
 - dialog help: `dialog <accept|dismiss|status> [text]`
 - window help: `window <operation>`
@@ -1718,6 +1744,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_STATE`
 - root help: `--auto-connect`
 - root help: `AGENT_BROWSER_AUTO_CONNECT`
+- root help: `--pin-tab`
+- root help: `--no-pin-tab`
+- root help: `AGENT_BROWSER_PIN_TAB`
 - root help: `--headers <json>`
 - root help: `--init-script <path>`
 - root help: `AGENT_BROWSER_INIT_SCRIPTS`

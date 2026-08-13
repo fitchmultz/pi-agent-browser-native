@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.4.2 - 2026-08-13
+
+### Changed
+
+- Rebaselined the command/help inventory and package docs to `agent-browser 0.34.0` / vercel-labs/agent-browser@548b159b30eef119ccf6846c8bc807d0eaa3f6f8. Browser-backed calls now require that exact runtime. `--pin-tab` / `--no-pin-tab` (`AGENT_BROWSER_PIN_TAB`) are sticky optional global booleans, not launch-scoped, so they can enable or disable strict tab binding on an already-live session. Shared `--cdp` / `--auto-connect` sessions that lose their bound tab fail as `failureCategory: "tab-gone"` with `list-tabs-after-tab-gone` and `open-tab-after-tab-gone` next actions. `tab list` presentation includes each tab's CDP `targetId` when upstream reports one, and those ids are accepted as tab refs.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (768 tests passed, two opt-in skips; 130 packed files), `npm run verify -- real-upstream` (2/2), deterministic dogfood, `npm run doctor`, and isolated checkout tmux smoke on example.com. Full release composition was not rerun.
+
 ## 0.4.1 - 2026-08-10
 
 ### Fixed

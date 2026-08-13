@@ -41,6 +41,8 @@ export function classifyAgentBrowserFailureCategory(options: {
 	// Explicit confirmation flag wins. Text-derived confirmation phrases come after locator-miss detection so a
 	// missed control named "Confirmation required" still gets selector recovery.
 	if (options.confirmationRequired) return "confirmation-required";
+	// Canonical upstream prefix first: lastUrl can contain aborted / policy-blocked / about:blank.
+	if (/\btab_gone:/i.test(text)) return "tab-gone";
 	// Upstream 0.32.4+ locator misses keep detail and may echo getByRole/getByText or Names seen lists.
 	// Evaluate before text-derived timeout/confirmation so accessible-name substrings cannot suppress recovery.
 	const isUpstreamLocatorMiss =
