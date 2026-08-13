@@ -41,6 +41,8 @@ export function classifyAgentBrowserFailureCategory(options: {
 	// Explicit confirmation flag wins. Text-derived confirmation phrases come after locator-miss detection so a
 	// missed control named "Confirmation required" still gets selector recovery.
 	if (options.confirmationRequired) return "confirmation-required";
+	// Canonical upstream prefix first: lastUrl can contain aborted / policy-blocked / about:blank.
+	if (/\btab_gone:/i.test(text)) return "tab-gone";
 	// Upstream 0.32.4+ locator misses keep detail and may echo getByRole/getByText or Names seen lists.
 	// Evaluate before text-derived timeout/confirmation so accessible-name substrings cannot suppress recovery.
 	const isUpstreamLocatorMiss =
@@ -67,7 +69,6 @@ export function classifyAgentBrowserFailureCategory(options: {
 	if (/policy[- ]blocked|blocked by caller policy|caller deny policy|caller allow policy/i.test(text)) return "policy-blocked";
 	if (/cleanup failed|cleanup.*partial|partial cleanup|remaining resources/i.test(text)) return "cleanup-failed";
 	if (options.validationError || /Agent-browser Unix socket path would be|Agent-browser socket storage .* is unusable/i.test(text)) return "validation-error";
-	if (/\btab_gone\b/i.test(text)) return "tab-gone";
 	if (options.tabDrift || /could not re-select the intended tab|about:blank|selected tab looks wrong|tab drift|tab.*wrong/i.test(text)) return "tab-drift";
 	if (/\bUnknown ref\b|\bstale ref\b|@ref may be stale|\bref\b.*\b(?:not found|missing|expired)\b/i.test(text)) return "stale-ref";
 	if (usedRef && /could not locate element|element not found|no element/i.test(text)) return "stale-ref";
