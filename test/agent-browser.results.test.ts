@@ -471,8 +471,8 @@ test("buildToolPresentation renders stable tab ids from tab list output", async 
 			success: true,
 			data: {
 				tabs: [
-                    { active: false, label: "chat", tabId: "t1", targetId: "4A0B7C4E1F2D3A4B5C6D7E8F90A1B2C3", title: "ChatGPT", url: "https://chatgpt.com/" },
-                    { active: true, label: "grok", tabId: "t2", title: "Grok", url: "https://grok.com/" },
+					{ active: false, label: "chat", tabId: "t1", targetId: "4A0B7C4E1F2D3A4B5C6D7E8F90A1B2C3", title: "ChatGPT", url: "https://chatgpt.com/" },
+					{ active: true, label: "grok", tabId: "t2", title: "Grok", url: "https://grok.com/" },
 				],
 			},
 		},
