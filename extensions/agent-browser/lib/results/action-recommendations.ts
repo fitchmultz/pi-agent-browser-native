@@ -263,6 +263,22 @@ export function buildAgentBrowserNextActions(options: {
 					}));
 				}
 				break;
+			case "tab-gone":
+				actions.push(
+					buildNextToolAction({
+						args: ["tab", "list"],
+						id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneListTabs,
+						reason: "The pinned bound tab is gone; inspect remaining tabs before acting on a neighbor.",
+						safety: "Read-only. Prefer a listed tab id, label, or CDP targetId, or open a new tab to rebind.",
+					}),
+					buildNextToolAction({
+						args: ["tab", "new"],
+						id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneNewTab,
+						reason: "Bind a fresh tab after tab_gone instead of continuing on another session's page.",
+						safety: "Opens a new tab in this session and rebinds the pin; pass a URL if you know the intended page.",
+					}),
+				);
+				break;
 			case "tab-drift":
 				if (options.recovery?.kind === "about-blank" || options.recovery?.kind === "tab-drift") {
 					break;

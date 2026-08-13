@@ -40,6 +40,7 @@ export { extractCommandTokens, extractUpstreamCommandTokens, findCommandStartInd
 
 import { isRecord } from "./parsing.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
+import { TARGET_AGENT_BROWSER_VERSION } from "./upstream-version.js";
 
 const OPENAI_HEADLESS_COMPAT_HOSTS = new Set(["chat.com", "chat.openai.com", "chatgpt.com"]);
 const CLOUDFLARE_HEADLESS_COMPAT_HOST = "dash.cloudflare.com";
@@ -753,7 +754,7 @@ function getBareMcpValidationError(args: string[]): string | undefined {
 function getUnsupportedInlineWaitDownloadError(args: string[]): string | undefined {
 	const descriptor = parseArgvDescriptor(args);
 	if (descriptor.commandInfo.command !== "wait" || !descriptor.upstreamCommandTokens.some((token) => token.startsWith("--download="))) return undefined;
-	return "agent-browser 0.33.2 does not support `wait --download=<path>`. Pass the optional path as a separate argument: `wait --download <path>` (or `wait -d <path>`).";
+	return `agent-browser ${TARGET_AGENT_BROWSER_VERSION} does not support \`wait --download=<path>\`. Pass the optional path as a separate argument: \`wait --download <path>\` (or \`wait -d <path>\`).`;
 }
 
 export function validateToolArgs(args: string[]): string | undefined {
@@ -975,7 +976,7 @@ export function buildExecutionPlan(
 			startupScopedFlags: [],
 			usedImplicitSession: false,
 			validationError:
-				`${unsupportedIdentityAssignment}=... is not supported by agent-browser 0.33.2. Pass ${unsupportedIdentityAssignment} and its value as separate arguments.`,
+				`${unsupportedIdentityAssignment}=... is not supported by agent-browser ${TARGET_AGENT_BROWSER_VERSION}. Pass ${unsupportedIdentityAssignment} and its value as separate arguments.`,
 		};
 	}
 

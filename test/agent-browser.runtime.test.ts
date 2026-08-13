@@ -1559,6 +1559,28 @@ test("buildExecutionPlan only treats the last exact lowercase auto-connect false
 	assert.deepEqual(lastDisabled.startupScopedFlags, []);
 });
 
+test("buildExecutionPlan treats pin-tab as a sticky global boolean, not launch-scoped", () => {
+	const options = {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto" as const,
+	};
+	for (const args of [
+		["--pin-tab", "open", "https://example.com"],
+		["--pin-tab", "true", "open", "https://example.com"],
+		["--pin-tab", "false", "open", "https://example.com"],
+		["--no-pin-tab", "open", "https://example.com"],
+		["--no-pin-tab", "false", "open", "https://example.com"],
+	] as const) {
+		const plan = buildExecutionPlan([...args], options);
+		assert.equal(plan.validationError, undefined, args.join(" "));
+		assert.deepEqual(plan.startupScopedFlags, [], args.join(" "));
+		assert.equal(plan.usedImplicitSession, true, args.join(" "));
+		assert.deepEqual(plan.commandInfo, { command: "open", subcommand: "https://example.com" }, args.join(" "));
+	}
+});
+
 test("buildExecutionPlan treats provider and iOS device flags as launch-scoped", () => {
 	for (const args of [
 		["-p", "ios", "open", "https://example.com"],

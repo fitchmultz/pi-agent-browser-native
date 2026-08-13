@@ -19,7 +19,7 @@ import {
 test("upstream version output requires the exact capability baseline", () => {
 	assert.equal(parseAgentBrowserVersionOutput(`agent-browser ${TARGET_AGENT_BROWSER_VERSION}\n`), TARGET_AGENT_BROWSER_VERSION);
 	assert.equal(getAgentBrowserVersionValidationError(`agent-browser ${TARGET_AGENT_BROWSER_VERSION}\n`), undefined);
-	assert.match(getAgentBrowserVersionValidationError("agent-browser 0.33.20\n") ?? "", /does not match.*exact 0\.33\.2 capability baseline/);
+	assert.match(getAgentBrowserVersionValidationError("agent-browser 0.33.20\n") ?? "", new RegExp(`does not match.*exact ${TARGET_AGENT_BROWSER_VERSION} capability baseline`));
 	assert.match(getAgentBrowserVersionValidationError("v0.33.2\n") ?? "", /unrecognized value/);
 });
 
@@ -44,7 +44,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { url: "https://examp
 			assert.equal(blocked.isError, true);
 			assert.equal(blocked.details?.failureCategory, "validation-error");
 			assert.equal(blocked.details?.observedVersion, "0.33.20");
-			assert.match(blocked.content[0]?.text ?? "", /Install agent-browser 0\.33\.2/);
+			assert.match(blocked.content[0]?.text ?? "", new RegExp(`Install agent-browser ${TARGET_AGENT_BROWSER_VERSION}`));
 			await assert.rejects(readFile(logPath, "utf8"));
 
 			const inspection = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--version"] });
