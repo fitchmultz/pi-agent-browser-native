@@ -226,7 +226,9 @@ export function resolveAgentBrowserInput(options: {
 	const timeoutMsError = params.timeoutMs !== undefined && (typeof params.timeoutMs !== "number" || !Number.isSafeInteger(params.timeoutMs) || params.timeoutMs <= 0)
 		? "timeoutMs must be a positive integer when provided."
 		: compiledElectron && params.timeoutMs !== undefined
-			? "Use electron.timeoutMs for electron actions; top-level timeoutMs applies only to browser CLI subprocess calls."
+			? compiledElectron.action === "list"
+				? "electron.list does not accept a timeout; omit top-level timeoutMs."
+				: "Use electron.timeoutMs for electron actions; top-level timeoutMs applies only to browser CLI subprocess calls."
 			: compiledScript && params.timeoutMs !== undefined && params.timeoutMs > AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS
 				? `script timeoutMs must be ${AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS} or less.`
 				: undefined;

@@ -170,6 +170,12 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 			assert.equal(listWithLaunchField.isError, true);
 			assert.match(listWithLaunchField.content[0]?.text ?? "", /electron\.list only supports query and maxResults; remove electron\.appName/);
 
+			const listWithTopLevelTimeout = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "list" },
+				timeoutMs: 1_000,
+			});
+			assert.equal(listWithTopLevelTimeout.isError, true);
+			assert.match(listWithTopLevelTimeout.content[0]?.text ?? "", /electron\.list does not accept a timeout; omit top-level timeoutMs/);
 			const missingLaunchTarget = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch" } });
 			assert.equal(missingLaunchTarget.isError, true);
 			assert.match(missingLaunchTarget.content[0]?.text ?? "", /electron\.launch requires exactly one of appPath, appName, bundleId, or executablePath/);
