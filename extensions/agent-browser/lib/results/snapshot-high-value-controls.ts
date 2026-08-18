@@ -4,6 +4,8 @@ import { compareRefIds } from "./text.js";
 const SNAPSHOT_HIGH_VALUE_EDITABLE_REF_FILL_TARGET_LINES = 4;
 const SNAPSHOT_HIGH_VALUE_SURFACE_REF_FILL_TARGET_LINES = 3;
 const SNAPSHOT_HIGH_VALUE_PRIMARY_ACTION_REF_FILL_TARGET_LINES = 3;
+const SNAPSHOT_HIGH_VALUE_NAMED_LINK_REF_FILL_TARGET_LINES = 6;
+const SNAPSHOT_HIGH_VALUE_LINK_NAME_MAX_LENGTH = 80;
 
 const SNAPSHOT_HIGH_VALUE_CONTROL_ROLES = new Set([
 	"button",
@@ -40,9 +42,6 @@ const SNAPSHOT_PRIMARY_ACTION_BUTTON_NAME_PATTERNS = [
 	/^(?:add|apply|ask|confirm|connect|continue|create|launch|new|open|refresh|retry|run|save|search|send|start|submit)\b/i,
 ];
 
-const SNAPSHOT_HIGH_VALUE_LINK_NAME_PATTERNS = [
-	/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i,
-];
 
 function getHighValueControlRole(entry: SnapshotRefEntry): string {
 	return entry.isEditable === true && (entry.role === "unknown" || entry.role === "generic") ? "textbox" : entry.role;
@@ -70,7 +69,7 @@ function isPrimaryActionButtonRef(entry: SnapshotRefEntry): boolean {
 	);
 }
 
-type HighValueControlCategory = "editable" | "named-surface" | "primary-action" | "role";
+type HighValueControlCategory = "editable" | "named-surface" | "primary-action" | "named-link" | "role";
 
 interface HighValueControlCategoryRule {
 	bucketKey(entry: SnapshotRefEntry, role: string): string;
@@ -120,21 +119,28 @@ const SNAPSHOT_HIGH_VALUE_CONTROL_CATEGORY_RULES: readonly HighValueControlCateg
 		priority: 2,
 	},
 	{
+		bucketKey: () => "named-link",
+		fillTarget: SNAPSHOT_HIGH_VALUE_NAMED_LINK_REF_FILL_TARGET_LINES,
+		id: "named-link",
+		matches: (entry) => getHighValueControlRole(entry) === "link" && isNamedActionLinkRef(entry),
+		priority: 3,
+	},
+	{
 		bucketKey: (_entry, role) => role,
 		id: "role",
 		matches: () => true,
-		priority: 3,
+		priority: 4,
 	},
 ] as const;
 
-function isHighValueLinkRef(entry: SnapshotRefEntry): boolean {
-	return entry.name.length > 0 && SNAPSHOT_HIGH_VALUE_LINK_NAME_PATTERNS.some((pattern) => pattern.test(entry.name));
+function isNamedActionLinkRef(entry: SnapshotRefEntry): boolean {
+	return entry.name.length > 0 && entry.name.length <= SNAPSHOT_HIGH_VALUE_LINK_NAME_MAX_LENGTH;
 }
 
 export function isHighValueControlEntry(entry: SnapshotRefEntry): boolean {
 	const role = getHighValueControlRole(entry);
 	if (!SNAPSHOT_HIGH_VALUE_CONTROL_ROLES.has(role)) return false;
-	if (role === "link") return isHighValueLinkRef(entry);
+	if (role === "link") return isNamedActionLinkRef(entry);
 	if (entry.isEditable === false && (role === "searchbox" || role === "textbox" || role === "combobox")) return false;
 	return entry.name.length > 0 || isEditableControlRef(entry);
 }

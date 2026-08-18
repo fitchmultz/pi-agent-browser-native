@@ -695,14 +695,19 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const commandInvocations = invocations
 				.map((entry) => stripWrapperPrefix(entry.args))
 				.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin"));
+			// The navigation-summary helper reuses an already-observed title for the probed URL; this fake returns a
+			// constant URL, so only the first probe reads the title. The tab-close probe reads it again because its
+			// prior target is the other tab's URL, which has no observed title.
+			let navigationSummaryTitleObserved = false;
 			const expectedInvocations = commands.flatMap((args) => {
 				const normalizedArgs = stripWrapperPrefix([...args]);
 				const command = normalizedArgs[0];
 				if (["close", "exit", "quit"].includes(command ?? "")) return [["close"]];
-				if (command === "click" || (command === "tab" && normalizedArgs[1] === "close")) return [normalizedArgs, ["get", "url"], ["get", "title"]];
-				return command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval"
-					? [normalizedArgs, ["get", "url"], ["get", "title"]]
-					: [normalizedArgs];
+				const probesSummary = command === "click" || (command === "tab" && normalizedArgs[1] === "close") || command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval";
+				if (!probesSummary) return [normalizedArgs];
+				const titleProbe = !navigationSummaryTitleObserved || (command === "tab" && normalizedArgs[1] === "close");
+				navigationSummaryTitleObserved = true;
+				return titleProbe ? [normalizedArgs, ["get", "url"], ["get", "title"]] : [normalizedArgs, ["get", "url"]];
 			});
 			assert.deepEqual(commandInvocations, expectedInvocations);
 			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args.includes("--session")));

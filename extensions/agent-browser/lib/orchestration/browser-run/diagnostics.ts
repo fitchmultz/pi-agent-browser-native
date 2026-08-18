@@ -11,7 +11,7 @@ import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.js";
 import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTarget, type VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
-import { extractRefSnapshotFromData, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
+import { extractRefSnapshotFromData, isAboutBlankUrl, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import { extractUpstreamCommandTokens, parseWaitCommandTokens, redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import { getManagedSessionStateAccessValidationError, isFileUrl } from "../../managed-session-state-policy.js";
@@ -55,12 +55,19 @@ export function sleepMs(ms: number): Promise<void> {
 export async function collectNavigationSummary(options: {
 	cwd: string;
 	namespace?: string;
+	priorTarget?: SessionTabTarget;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<NavigationSummary | undefined> {
 	const url = extractStringResultField(await runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }), "url");
 	if (!url || !/^[a-z][a-z0-9+.-]*:/i.test(url)) return undefined;
-	if (isFileUrl(url)) return { url };
+	if (isFileUrl(url) || isAboutBlankUrl(url)) return { url };
+	// Reuse the title already observed for this exact URL instead of spending a second probe. Titles can
+	// change without a URL change on SPAs, but this summary is only a "last observed" page label; the URL
+	// stays live-probed on every call.
+	if (options.priorTarget?.title && normalizeComparableUrl(options.priorTarget.url) === normalizeComparableUrl(url)) {
+		return { title: options.priorTarget.title, url };
+	}
 	const title = extractStringResultField(await runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }), "title");
 	return { title, url };
 }

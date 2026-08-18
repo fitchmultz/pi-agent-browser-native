@@ -290,6 +290,9 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	}
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.equal(buildAgentBrowserNextActions({ command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.[0]?.id, "inspect-after-timeout");
+	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--url", "**/cart.html"], command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.map((action) => action.id), ["fresh-session-after-url-wait-timeout", "inspect-after-timeout"]);
+	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--url", "**/cart.html"], command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.[0]?.params, { args: ["snapshot", "-i"], sessionMode: "fresh" });
+	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--text", "Done"], command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.map((action) => action.id), ["inspect-after-text-assertion-failure"]);
 	assert.equal(buildAgentBrowserNextActions({ command: "open", resultCategory: "failure", failureCategory: "upstream-error" })?.[0]?.id, "inspect-page-after-navigation-error");
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "wait", resultCategory: "failure", failureCategory: "timeout", sessionName: "named" })?.[0]?.params?.args, ["--session", "named", "snapshot", "-i"]);
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "open", resultCategory: "failure", failureCategory: "upstream-error", sessionName: "named" })?.[0]?.params?.args, ["--session", "named", "get", "url"]);

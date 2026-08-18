@@ -239,6 +239,16 @@ export function buildAgentBrowserNextActions(options: {
 			case "timeout":
 				{
 					const textAssertion = options.command === "wait" && options.args?.includes("--text") === true;
+					const urlAssertion = options.command === "wait" && options.args?.includes("--url") === true;
+					if (urlAssertion) {
+						actions.push({
+							id: "fresh-session-after-url-wait-timeout",
+							params: { args: ["snapshot", "-i"], sessionMode: "fresh" },
+							reason: "If a preceding click or form submit reported success but the page never navigated, upstream click dispatch may have silently missed (observed with agent-browser 0.34 after many spaced commands); start a fresh session and replay the flow as one batch instead of retrying the wait.",
+							safety: "Abandon the current session only when page evidence shows the navigation truly did not happen; the wait target may also be wrong or slow.",
+							tool: "agent_browser",
+						});
+					}
 					actions.push(buildNextToolAction({
 						args: ["snapshot", "-i"],
 						id: textAssertion ? "inspect-after-text-assertion-failure" : "inspect-after-timeout",
