@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgvDescriptor } from "./argv-descriptor.js";
 import { needsManagedSession } from "./command-policy.js";
 import { getScreenshotPathTokenIndex } from "./orchestration/browser-run/artifact-paths.js";
-import { type BatchCommandStep, parseBatchCommandArgument, parseUserBatchStdin } from "./orchestration/batch-stdin.js";
+import { getUpstreamEffectiveBatchSteps, type BatchCommandStep, parseBatchCommandArgument, parseUserBatchStdin } from "./orchestration/batch-stdin.js";
 import { isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import {
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
@@ -321,6 +321,13 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 		steps.push(step);
 	}
 	return { steps };
+}
+
+export function invocationMayNavigateToLocalFile(args: string[], stdin?: string): boolean {
+	if (isFileUrl(getResultingExplicitNavigationTarget(args))) return true;
+	const descriptor = parseArgvDescriptor(args);
+	return getUpstreamEffectiveBatchSteps(descriptor.upstreamCommandTokens, stdin)
+		.some((step) => isFileUrl(getResultingExplicitNavigationTarget(step)));
 }
 
 function batchBailsOnFirstError(args: string[]): boolean {

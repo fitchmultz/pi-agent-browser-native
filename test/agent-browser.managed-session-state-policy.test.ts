@@ -15,6 +15,7 @@ import {
 	getManagedSessionStateAccessValidationError,
 	getManagedSessionTargetAccessValidationError,
 	getObservedBrowserPageValidationError,
+	invocationMayNavigateToLocalFile,
 } from "../extensions/agent-browser/lib/managed-session-state-policy.js";
 import { createManagedSessionRestoreKey } from "../extensions/agent-browser/lib/managed-session-storage.js";
 
@@ -33,6 +34,16 @@ function validate(cwd: string, args: string[], env?: NodeJS.ProcessEnv, stdin?: 
 		stdin,
 	});
 }
+
+test("local file navigation detection covers direct and batch calls", () => {
+	assert.equal(invocationMayNavigateToLocalFile(["open", "file:///tmp/page.html"]), true);
+	assert.equal(invocationMayNavigateToLocalFile(["tab", "new", "file:///tmp/page.html"]), true);
+	assert.equal(invocationMayNavigateToLocalFile(["batch"], JSON.stringify([["open", "file:///tmp/page.html"]])), true);
+	assert.equal(invocationMayNavigateToLocalFile(["batch", "open file:///tmp/page.html"]), true);
+	assert.equal(invocationMayNavigateToLocalFile(["batch", "open https://example.com"], JSON.stringify([["open", "file:///tmp/ignored.html"]])), false);
+	assert.equal(invocationMayNavigateToLocalFile(["open", "https://example.com"]), false);
+	assert.equal(invocationMayNavigateToLocalFile(["get", "url"]), false);
+});
 
 test("managed session targets require typed ownership", () => {
 	assert.equal(getManagedSessionTargetAccessValidationError(["--session", "caller-owned", "snapshot", "-i"], false), undefined);

@@ -1,6 +1,6 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, nested batch-attachment isolation, cross-harness restore persistence, and symlinked-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, unsafe caller-owned local-daemon blocking, nested batch-attachment isolation, cross-harness restore persistence, and symlinked-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
@@ -275,6 +276,52 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 		await assert.rejects(readdir(join(tempDir, "relative-home")));
 	} finally {
 		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
+		await rm(tempDir, { force: true, recursive: true });
+	}
+}
+
+async function assertRealUpstreamUnsafeLocalDaemonIsBlocked(): Promise<void> {
+	if (process.platform === "win32") return;
+	const tempDir = await mkdtemp("/tmp/piab-real-unsafe-");
+	const socketDir = join(tempDir, "sockets");
+	const configPath = join(tempDir, "empty.json");
+	const sessionName = `unsafe-${process.pid}`;
+	const upstreamEnv = {
+		...process.env,
+		AGENT_BROWSER_DEFAULT_TIMEOUT: "25000",
+		AGENT_BROWSER_IDLE_TIMEOUT_MS: "900000",
+		AGENT_BROWSER_SOCKET_DIR: socketDir,
+		HOME: tempDir,
+	};
+	try {
+		await mkdir(join(tempDir, ".agent-browser"), { recursive: true });
+		await mkdir(socketDir, { mode: 0o700 });
+		await writeFile(configPath, "{}\n");
+		const protectedFile = join(tempDir, ".agent-browser", "review-state.txt");
+		await writeFile(protectedFile, "fixture-value\n");
+		const fixturePath = join(tempDir, "fixture.html");
+		await writeFile(fixturePath, `<!doctype html><title>PENDING</title><script>fetch(${JSON.stringify(pathToFileURL(protectedFile).href)}).then(r => r.text()).then(() => document.title = "READABLE").catch(() => document.title = "BLOCKED");</script>`);
+		await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "--allow-file-access", "true", "open", "about:blank"], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		});
+		await withPatchedEnv({
+			AGENT_BROWSER_DEFAULT_TIMEOUT: "25000",
+			AGENT_BROWSER_IDLE_TIMEOUT_MS: "900000",
+			HOME: tempDir,
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+		}, async () => {
+			const opened = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, "open", pathToFileURL(fixturePath).href], cwd: tempDir });
+			assert.equal(opened.agentBrowserStarted, false);
+			assert.match(opened.spawnError?.message ?? "", /wrapper-managed local browser/);
+		});
+	} finally {
+		await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "close"], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		}).catch(() => undefined);
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
@@ -801,6 +848,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 			await fixtureServer?.close();
 			await rm(tempDir, { force: true, recursive: true });
 		}
+		await assertRealUpstreamUnsafeLocalDaemonIsBlocked();
 		await assertRealUpstreamUnrecordedDaemonReuseFailsClosed();
 		await assertRealUpstreamRestoreStorageSymlinkFailsClosed();
 		await assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed();

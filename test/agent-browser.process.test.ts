@@ -207,6 +207,11 @@ process.stdout.write(JSON.stringify({ success: true, data: { allowFileAccessEnv:
 			assert.match(data.config ?? "", /managed-restore-config/);
 			assert.equal(data.envArgs, null);
 		});
+		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
+			const result = await runAgentBrowserProcess({ args: ["--session", "caller-owned", "open", "file:///tmp/page.html"], cwd: tempDir });
+			assert.equal(result.agentBrowserStarted, false);
+			assert.match(result.spawnError?.message ?? "", /wrapper-managed local browser/);
+		});
 		await withPatchedEnv({ AGENT_BROWSER_ALLOW_FILE_ACCESS: "true", PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 			const result = await runAgentBrowserProcess({ args: ["--allow-file-access", "false", "get", "url"], cwd: tempDir, preserveAttachedBrowserSession: true });
 			const parsed = await parseAgentBrowserEnvelope(result.stdout);
