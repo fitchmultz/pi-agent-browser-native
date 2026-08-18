@@ -740,7 +740,7 @@ if (args.includes("open")) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
   try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: ["snapshot-finished", namespace, session] }) + "\\n");
-  process.stdout.write(JSON.stringify({ success: true, data: { snapshot: state.url.startsWith("file:") ? "SECRET LOCAL CONTENT" : "SAFE CONTENT" } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { snapshot: state.url.includes("-secret") ? "SECRET CONTENT" : "SAFE CONTENT" } }));
 }`);
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
@@ -748,22 +748,22 @@ if (args.includes("open")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const runAliasRace = async (readIdentityArgs: string[], writeIdentityArgs: string[], label: string): Promise<void> => {
 				const session = readIdentityArgs[readIdentityArgs.indexOf("--session") + 1]!;
-				const localUrl = `file:///tmp/${label}-secret.html`;
+				const nextUrl = `https://example.com/${label}-secret`;
 				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...readIdentityArgs, "open", "https://example.com/"] });
 				assert.equal(opened.isError, false, JSON.stringify(opened));
 
 				const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: [...readIdentityArgs, "snapshot", "-i"] });
 				await waitForInvocation(logPath, (entry) => entry.args.includes("snapshot") && entry.args.includes(session));
-				const localOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: [...writeIdentityArgs, "open", localUrl] });
-				const [snapshot, localOpen] = await Promise.all([snapshotPromise, localOpenPromise]);
+				const nextOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, { args: [...writeIdentityArgs, "open", nextUrl] });
+				const [snapshot, nextOpen] = await Promise.all([snapshotPromise, nextOpenPromise]);
 				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
-				assert.doesNotMatch(JSON.stringify(snapshot), /SECRET LOCAL CONTENT/);
-				assert.equal(localOpen.isError, false, JSON.stringify(localOpen));
+				assert.doesNotMatch(JSON.stringify(snapshot), /SECRET CONTENT/);
+				assert.equal(nextOpen.isError, false, JSON.stringify(nextOpen));
 
 				const invocations = await readInvocationLog(logPath);
 				const snapshotFinishedIndex = invocations.findIndex((entry) => entry.args[0] === "snapshot-finished" && entry.args[2] === session);
-				const localOpenIndex = invocations.findIndex((entry) => entry.args.includes(localUrl));
-				assert.ok(snapshotFinishedIndex >= 0 && localOpenIndex > snapshotFinishedIndex, JSON.stringify(invocations));
+				const nextOpenIndex = invocations.findIndex((entry) => entry.args.includes(nextUrl));
+				assert.ok(snapshotFinishedIndex >= 0 && nextOpenIndex > snapshotFinishedIndex, JSON.stringify(invocations));
 			};
 			await runAliasRace(["--session", "Foo"], ["--session", "foo"], "session-case");
 			await runAliasRace(["--namespace", "Straße", "--session", "namespace-sharp-s"], ["--namespace", "STRASSE", "--session", "namespace-sharp-s"], "namespace-sharp-s");
