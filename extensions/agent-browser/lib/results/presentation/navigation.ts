@@ -12,6 +12,9 @@ interface NavigationSummary {
 	url?: string;
 }
 
+const EMPTY_STRING_RESULT = "(empty string)";
+const NO_VALUE_RESULT = "null";
+
 const GET_RESULT_FIELDS: Record<string, string> = {
 	attr: "value",
 	count: "count",
@@ -23,9 +26,14 @@ const GET_RESULT_FIELDS: Record<string, string> = {
 };
 
 function getScalarExtractionResult(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
-	const result = data.result ?? (commandInfo.command === "get" && commandInfo.subcommand ? data[GET_RESULT_FIELDS[commandInfo.subcommand] ?? ""] : undefined);
-	if (typeof result === "string") return result.trim().length > 0 ? result : undefined;
+	const fallbackField = commandInfo.command === "get" && commandInfo.subcommand ? GET_RESULT_FIELDS[commandInfo.subcommand] ?? "" : "";
+	const resultField = Object.hasOwn(data, "result") ? "result" : fallbackField.length > 0 && Object.hasOwn(data, fallbackField) ? fallbackField : undefined;
+	if (resultField === undefined) return undefined;
+	const result = data[resultField];
+	if (typeof result === "string") return result.trim().length > 0 ? result : EMPTY_STRING_RESULT;
 	if (typeof result === "number" || typeof result === "boolean") return String(result);
+	if (result === null || result === undefined) return NO_VALUE_RESULT;
+	if (typeof result === "object") return JSON.stringify(result);
 	return undefined;
 }
 

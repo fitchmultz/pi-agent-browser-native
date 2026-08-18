@@ -381,6 +381,7 @@ test("buildToolPresentation redacts console and page error diagnostics", async (
 
 
 test("buildToolPresentation renders empty page titles instead of dumping raw upstream JSON", async () => {
+	// A title-less page must never surface the upstream envelope (lifecycle block included) as page content.
 	const textOf = (presentation: Awaited<ReturnType<typeof buildToolPresentation>>): string =>
 		presentation.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
 
@@ -389,7 +390,7 @@ test("buildToolPresentation renders empty page titles instead of dumping raw ups
 		cwd: process.cwd(),
 		envelope: { success: true, data: { lifecycle: { launched: false, reused: true }, title: "" } },
 	});
-	assert.equal(textOf(getTitle), "(untitled page)");
+	assert.equal(textOf(getTitle), "(empty string)");
 
 	const opened = await buildToolPresentation({
 		commandInfo: { command: "open", subcommand: "https://shop.example/blank" },
@@ -404,4 +405,27 @@ test("buildToolPresentation renders empty page titles instead of dumping raw ups
 		envelope: { success: true, data: { title: "Shop", url: "https://shop.example/" } },
 	});
 	assert.equal(textOf(titled), "Shop\nhttps://shop.example/");
+});
+
+test("buildToolPresentation renders structured and empty eval results instead of dumping raw upstream JSON", async () => {
+	const textOf = (presentation: Awaited<ReturnType<typeof buildToolPresentation>>): string =>
+		presentation.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
+	const evalPresentation = async (result: unknown) =>
+		buildToolPresentation({
+			commandInfo: { command: "eval" },
+			cwd: process.cwd(),
+			envelope: { success: true, data: { lifecycle: { launched: false, reused: true }, origin: "https://shop.example/", result } },
+		});
+
+	assert.equal(textOf(await evalPresentation([1, 2, 3])), "[\n  1,\n  2,\n  3\n]\n\nOrigin: https://shop.example/");
+	assert.equal(textOf(await evalPresentation({ a: 1 })), '{\n  "a": 1\n}\n\nOrigin: https://shop.example/');
+	assert.equal(textOf(await evalPresentation([])), "[]\n\nOrigin: https://shop.example/");
+	assert.equal(textOf(await evalPresentation(null)), "null\n\nOrigin: https://shop.example/");
+	assert.equal(textOf(await evalPresentation("")), "(empty string)\n\nOrigin: https://shop.example/");
+	assert.equal(textOf(await evalPresentation(0)), "0\n\nOrigin: https://shop.example/");
+	assert.equal(textOf(await evalPresentation(false)), "false\n\nOrigin: https://shop.example/");
+
+	for (const result of [[1, 2, 3], {}, [], null, ""]) {
+		assert.doesNotMatch(textOf(await evalPresentation(result)), /lifecycle/);
+	}
 });
