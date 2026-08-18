@@ -313,7 +313,6 @@ export function extractNavigationSummaryFromData(data: unknown): NavigationSumma
 
 export function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {
 	if (command === "eval") return true;
-	if (isRecord(data) && typeof data.clicked === "string" && !data.clicked.startsWith("@") && !data.clicked.startsWith("ref=") && typeof data.href !== "string") return false;
 	return (
 		isNavigationObservableCommandName(command) &&
 		(!isRecord(data) || (typeof data.title !== "string" && typeof data.url !== "string"))

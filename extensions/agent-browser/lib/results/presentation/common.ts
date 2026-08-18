@@ -2,6 +2,8 @@ import { containsManagedSessionRestoreKey } from "../../managed-session-capabili
 import { redactSensitiveText, redactSensitiveValue } from "../../runtime.js";
 import { stringifyUnknown, truncateText } from "../text.js";
 
+const UNTITLED_PAGE_SUMMARY = "(untitled page)";
+
 export function stringifyModelFacing(value: unknown): string {
 	return stringifyUnknown(redactSensitiveValue(value));
 }
@@ -37,6 +39,22 @@ export function getArrayField(data: Record<string, unknown>, key: string): unkno
 export function getStringField(data: Record<string, unknown>, key: string): string | undefined {
 	const value = data[key];
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+// `lifecycle` is upstream launch/reuse bookkeeping, never page content, so it must not be the
+// answer an agent reads when a command has no dedicated presenter.
+export function omitUpstreamLifecycle(data: Record<string, unknown>): Record<string, unknown> {
+	const { lifecycle: _lifecycle, ...rest } = data;
+	return rest;
+}
+
+export function getPageSummary(data: Record<string, unknown>): string | undefined {
+	const title = typeof data.title === "string" ? data.title : undefined;
+	const url = typeof data.url === "string" ? data.url : undefined;
+	if (title === undefined && url === undefined) return undefined;
+	if (title && url) return `${title}\n${url}`;
+	if (url) return url;
+	return title || UNTITLED_PAGE_SUMMARY;
 }
 
 export function formatCount(count: number, singular: string, plural = `${singular}s`): string {

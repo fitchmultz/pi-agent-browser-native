@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.4.4 - 2026-08-18
+
+### Fixed
+
+- Observed the live tab URL after href-less CSS-selector clicks. Upstream never emits `href` for those clicks, so the wrapper skipped the post-command `get url` / `get title` helper and left `sessionTabTarget` on the pre-click page. Login and SPA clicks now report the page the browser is actually on.
+- Stopped dumping the raw upstream envelope, internal `lifecycle` block included, when a page title is empty, when `eval` returns an object, array, `null`, `undefined`, or `''`, or when a command has no dedicated presenter. Structured eval results render as JSON; empty strings and nulls are stated plainly; leftover lifecycle-only results say `<command> completed`.
+
+### Changed
+
+- Documented an upstream `agent-browser` 0.34.0 site-specific click-dispatch miss on Sauce Demo under sustained per-command spacing, and the `batch` mitigation.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (777 tests, 775 pass, 2 opt-in skips) on the presentation commits. Live dogfood re-checked the four presentation/session fixes against example.com, IANA, httpbingo, react.dev, Hacker News, and Sauce Demo login; wrapper was never worse than the raw CLI on matched-cwd open/eval/box. Full Crabbox matrix and npm publish were not run.
+
 ## 0.4.3 - 2026-08-17
 
 ### Fixed

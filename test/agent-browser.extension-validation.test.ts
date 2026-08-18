@@ -534,7 +534,7 @@ const snapshot = {
   containerCount: 1,
   containers: [{ id: "0:main.dashboard", scrollTop: state.moved ? 701 : 0, scrollLeft: 0 }]
 };
-const data = command === "eval" ? { result: snapshot } : { scrolled: true };
+const data = command === "eval" ? { result: snapshot } : { lifecycle: { launched: false }, scrolled: true };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
@@ -549,6 +549,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(noopResult.details?.failureCategory, "upstream-error");
 			assert.match(noopResult.content[0]?.text ?? "", /Scroll diagnostic: no observed scroll movement/);
 			assert.match(noopResult.content[0]?.text ?? "", /"scrolled": false/);
+			assert.doesNotMatch(noopResult.content[0]?.text ?? "", /lifecycle/);
+
 			assert.doesNotMatch(noopResult.content[0]?.text ?? "", /"scrolled": true/);
 			const noopDetails = noopResult.details as {
 				data: { noMovement?: boolean; scrolled?: boolean };

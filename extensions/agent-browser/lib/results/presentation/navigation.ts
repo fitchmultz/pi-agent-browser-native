@@ -3,7 +3,7 @@ import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import { detectConfirmationRequired } from "../confirmation.js";
 import type { AgentBrowserPageChangeSummary, FileArtifactMetadata } from "../contracts.js";
-import { redactModelFacingText, stringifyModelFacing } from "./common.js";
+import { omitUpstreamLifecycle, redactModelFacingText, stringifyModelFacing } from "./common.js";
 
 const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
 
@@ -23,9 +23,14 @@ const GET_RESULT_FIELDS: Record<string, string> = {
 };
 
 function getScalarExtractionResult(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
-	const result = data.result ?? (commandInfo.command === "get" && commandInfo.subcommand ? data[GET_RESULT_FIELDS[commandInfo.subcommand] ?? ""] : undefined);
-	if (typeof result === "string") return result.trim().length > 0 ? result : undefined;
+	const fallbackField = commandInfo.command === "get" && commandInfo.subcommand ? GET_RESULT_FIELDS[commandInfo.subcommand] ?? "" : "";
+	const resultField = Object.hasOwn(data, "result") ? "result" : fallbackField.length > 0 && Object.hasOwn(data, fallbackField) ? fallbackField : undefined;
+	if (resultField === undefined) return undefined;
+	const result = data[resultField];
+	if (typeof result === "string") return result.trim().length > 0 ? result : "(empty string)";
 	if (typeof result === "number" || typeof result === "boolean") return String(result);
+	if (result === null || result === undefined) return "null";
+	if (typeof result === "object") return JSON.stringify(result);
 	return undefined;
 }
 
@@ -161,7 +166,7 @@ function stripNavigationSummary(data: Record<string, unknown>): Record<string, u
 }
 
 export function formatNavigationActionResult(data: Record<string, unknown>): string | undefined {
-	const actionData = stripNavigationSummary(data);
+	const actionData = omitUpstreamLifecycle(stripNavigationSummary(data));
 	const lines: string[] = [];
 	if (typeof actionData.clicked === "string" || typeof actionData.clicked === "boolean") {
 		lines.push(`Clicked: ${String(actionData.clicked)}`);

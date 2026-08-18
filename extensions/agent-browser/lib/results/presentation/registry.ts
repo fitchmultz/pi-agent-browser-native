@@ -3,7 +3,7 @@ import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import { detectConfirmationRequired, type ConfirmationRequiredPresentation } from "../confirmation.js";
 import { formatRawSnapshotText, formatSnapshotSummary } from "../snapshot.js";
-import { redactModelFacingText, stringifyModelFacing } from "./common.js";
+import { getPageSummary, omitUpstreamLifecycle, redactModelFacingText, stringifyModelFacing } from "./common.js";
 import { formatDiagnosticSummary, formatDiagnosticText, formatProfilesText, getStreamSummary, getTabSummary } from "./diagnostics.js";
 import { getScreenshotSummary } from "./artifacts.js";
 import { formatSkillsText } from "./skills.js";
@@ -20,14 +20,6 @@ import {
 	formatSemanticActionPresentationText,
 	resolvePresentationCommandInfo,
 } from "./semantic-action.js";
-
-function getPageSummary(data: Record<string, unknown>): string | undefined {
-	const title = typeof data.title === "string" ? data.title : undefined;
-	const url = typeof data.url === "string" ? data.url : undefined;
-	if (!title && !url) return undefined;
-	if (title && url) return `${title}\n${url}`;
-	return title ?? url;
-}
 
 function formatConfirmationRequiredSummary(confirmation: ConfirmationRequiredPresentation): string {
 	return `Confirmation required: ${confirmation.id}`;
@@ -290,5 +282,7 @@ export function formatPresentationContentText(
 	if (diagnosticText) return diagnosticText;
 	const pageSummary = getPageSummary(data);
 	if (pageSummary) return redactModelFacingText(pageSummary);
-	return stringifyModelFacing(data);
+	const { navigationSummary: _navigationSummary, ...pageData } = omitUpstreamLifecycle(data);
+	if (Object.keys(pageData).length > 0) return stringifyModelFacing(pageData);
+	return `${presentationCommandInfo.command ?? commandInfo.command ?? "agent-browser"} completed`;
 }
