@@ -1293,7 +1293,7 @@ test("buildExecutionPlan limits sessionless allowlists to documented subcommands
 });
 
 test("buildExecutionPlan rejects missing values for global value-taking flags before launching upstream", () => {
-	for (const args of [["--session"], ["--namespace"], ["--allowed-domains"], ["--profile"], ["--executable-path"], ["--session-name"], ["--restore-save"], ["--restore-check-url"], ["--restore-check-text"], ["--restore-check-fn"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
+	for (const args of [["--session"], ["--namespace"], ["--args", ""], ["--allowed-domains"], ["--profile"], ["--executable-path"], ["--session-name"], ["--restore-save"], ["--restore-check-url"], ["--restore-check-text"], ["--restore-check-fn"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -1477,6 +1477,8 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		{ args: ["open", "--enable", "react-devtools", "https://example.com"], flag: "--enable" },
 		{ args: ["open", "--init-script", "/tmp/setup.js", "https://example.com"], flag: "--init-script" },
 		{ args: ["--idle-timeout", "5000", "open", "https://example.com"], flag: "--idle-timeout" },
+		{ args: ["--args", "--disable-gpu", "open", "https://example.com"], flag: "--args" },
+		{ args: ["--user-agent", "Custom/1", "open", "https://example.com"], flag: "--user-agent" },
 		{ args: ["--headed", "open", "https://example.com"], flag: "--headed" },
 		{ args: ["--headed", "false", "open", "https://example.com"], flag: "--headed" },
 	] as const) {
@@ -1650,7 +1652,7 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 		sessionMode: "auto",
 	});
 	assert.equal(cloudflareFollowup.compatibilityWorkaround?.id, "cloudflare-headless-user-agent");
-	assert.equal(cloudflareFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 1);
+	assert.equal(cloudflareFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 0);
 
 	const explicitCloudflareFollowup = buildExecutionPlan(["--session", "piab-demo-123", "snapshot", "-i"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -1660,7 +1662,7 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 		sessionMode: "auto",
 	});
 	assert.equal(explicitCloudflareFollowup.compatibilityWorkaround?.id, "cloudflare-headless-user-agent");
-	assert.equal(explicitCloudflareFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 1);
+	assert.equal(explicitCloudflareFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 0);
 
 	const explicitUserAgentFollowup = buildExecutionPlan(["--session", "piab-demo-123", "--user-agent", "Custom/1", "snapshot", "-i"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -1670,7 +1672,17 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 		sessionMode: "auto",
 	});
 	assert.equal(explicitUserAgentFollowup.compatibilityWorkaround, undefined);
+	assert.match(explicitUserAgentFollowup.validationError ?? "", /launch-scoped flags.*--user-agent/i);
 	assert.equal(explicitUserAgentFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 1);
+
+	const compatibilityUpgrade = buildExecutionPlan(["open", "https://dash.cloudflare.com"], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: true,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.match(compatibilityUpgrade.validationError ?? "", /fresh.*compatibility user agent|compatibility user agent.*fresh/i);
+	assert.equal(compatibilityUpgrade.effectiveArgs.includes("--user-agent"), false);
 
 	const wrongNamespaceFollowup = buildExecutionPlan(["--namespace", "other", "--session", "piab-demo-123", "snapshot", "-i"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),

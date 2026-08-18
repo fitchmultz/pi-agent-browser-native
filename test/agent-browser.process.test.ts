@@ -422,11 +422,10 @@ test("runAgentBrowserProcess does not spawn already-aborted calls", async () => 
 
 	try {
 		const processResult = await runAgentBrowserProcess({
-			args: ["eval", "--stdin"],
+			args: ["--session", "caller-owned", "open", "file:///tmp/page.html"],
 			cwd: tempDir,
 			env: { PATH: `${tempDir}${delimiter}${basePath}` },
 			signal: controller.signal,
-			stdin: "console.log(1)",
 		});
 
 		assert.equal(processResult.aborted, true);

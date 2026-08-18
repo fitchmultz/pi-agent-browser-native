@@ -139,9 +139,9 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 		if (GLOBAL_VALUE_FLAGS.includes(flag as typeof GLOBAL_VALUE_FLAGS[number])) {
 			const value = args[index + 1];
 			if (value === undefined) return args;
-			// PowerShell -> .cmd drops empty argv values. These empty values mean
-			// the same thing when omitted, so never let the next flag
-			// become their accidental value on native Windows.
+			// PowerShell -> .cmd drops empty argv values. Planning rejects empty
+			// caller --args; keep this defensive skip so an unexpected empty value
+			// cannot turn the next flag into its accidental value on native Windows.
 			if (value === "" && (flag === "--args" || flag === "--namespace")) {
 				index += 1;
 				continue;
@@ -507,6 +507,9 @@ export async function runAgentBrowserProcess(options: {
 		stdin,
 	});
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
+	if (signal?.aborted) {
+		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+	}
 	if (invocationMayNavigateToLocalFile(args, stdin) && (!ownedManagedSession || preserveAttachedBrowserSession)) {
 		return {
 			aborted: false,
@@ -517,9 +520,6 @@ export async function runAgentBrowserProcess(options: {
 			stdout: "",
 			timedOut: false,
 		};
-	}
-	if (signal?.aborted) {
-		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
 	}
 	const parentEnv = getAgentBrowserProcessEnvironment();
 	const managedSessionRestoreOptions = {

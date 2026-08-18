@@ -69,7 +69,8 @@ function hasAgentBrowserPathComponent(value: string): boolean {
 
 function getFileUrlPath(value: string | undefined): string | undefined {
 	if (!value) return undefined;
-	const nestedFileUrl = /^(?:(?:blob|filesystem|view-source):)*(file:.*)$/i.exec(value)?.[1];
+	const trimmedValue = value.trim();
+	const nestedFileUrl = /^(?:(?:blob|filesystem|view-source):)*(file:.*)$/i.exec(trimmedValue)?.[1];
 	if (!nestedFileUrl) return undefined;
 	try {
 		return fileURLToPath(new URL(nestedFileUrl));
@@ -77,7 +78,7 @@ function getFileUrlPath(value: string | undefined): string | undefined {
 		try {
 			return decodeUrlComponent(new URL(nestedFileUrl).pathname);
 		} catch {
-			return value;
+			return trimmedValue;
 		}
 	}
 }

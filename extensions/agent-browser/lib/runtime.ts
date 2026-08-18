@@ -797,7 +797,7 @@ function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | u
 			continue;
 		}
 		const receivedToken = args[index + 1];
-		if (receivedToken === undefined) {
+		if (receivedToken === undefined || (normalizedToken === "--args" && receivedToken.length === 0)) {
 			return {
 				flag: normalizedToken,
 				index,
@@ -1042,14 +1042,35 @@ export function buildExecutionPlan(
 		sessionName = options.freshSessionName;
 	}
 
-	if (!compatibilityWorkaround
-		&& canUseHeadlessCompatibilityUserAgent(args)
-		&& options.managedSessionActive
+	const targetsActiveManagedSession = options.managedSessionActive
 		&& sessionName
-		&& getAgentBrowserSessionIdentityKey(sessionName, namespace) === getAgentBrowserSessionIdentityKey(options.managedSessionName, options.managedSessionNamespace)) {
-		compatibilityWorkaround = options.managedSessionCompatibilityWorkaround;
+		&& getAgentBrowserSessionIdentityKey(sessionName, namespace) === getAgentBrowserSessionIdentityKey(options.managedSessionName, options.managedSessionNamespace);
+	if (targetsActiveManagedSession && startupScopedFlags.length > 0 && !isCloseCommand(commandInfo.command) && !validationError) {
+		recoveryHint = {
+			exampleArgs: args,
+			exampleParams: { args, sessionMode: "fresh" },
+			reason: `Launch-scoped flags (${LAUNCH_SCOPED_FLAG_LABEL}) need a fresh upstream launch once the extension-managed session is already active.`,
+			recommendedSessionMode: "fresh",
+		};
+		validationError = [
+			`The current extension-managed agent-browser session is already running, so launch-scoped flags ${startupScopedFlags.join(", ")} would replace or be ignored by upstream agent-browser.`,
+			"Retry this call with `sessionMode: \"fresh\"` to force a fresh upstream launch.",
+		].join(" ");
 	}
-	if (compatibilityWorkaround) {
+	if (targetsActiveManagedSession && canUseHeadlessCompatibilityUserAgent(args)) {
+		if (requestedCompatibilityWorkaround && !options.managedSessionCompatibilityWorkaround && !validationError) {
+			recoveryHint = {
+				exampleArgs: args,
+				exampleParams: { args, sessionMode: "fresh" },
+				reason: "The requested site compatibility user agent is launch-scoped and needs a fresh browser session.",
+				recommendedSessionMode: "fresh",
+			};
+			validationError = "The current extension-managed agent-browser session is already running without the user agent required by this site. Retry this call with `sessionMode: \"fresh\"` so the compatibility user agent is applied at launch.";
+		} else {
+			compatibilityWorkaround = requestedCompatibilityWorkaround ?? options.managedSessionCompatibilityWorkaround;
+		}
+	}
+	if (compatibilityWorkaround && !targetsActiveManagedSession) {
 		effectiveArgs.push("--user-agent", getDefaultHeadlessCompatUserAgent());
 	}
 	effectiveArgs.push(...argsToAppend);

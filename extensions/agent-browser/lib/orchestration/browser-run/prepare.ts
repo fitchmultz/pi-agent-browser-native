@@ -538,6 +538,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const headedLaunch = getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(agentBrowserProcessEnv.AGENT_BROWSER_HEADED);
 	const headedManagedAutosaveDisabled = retainedHeadedAutosaveDisabled || (explicitAutosaveInterval === undefined && headedLaunch);
 	const headedManagedAutosaveInterval = retainedHeadedAutosaveInterval ?? (headedLaunch ? explicitAutosaveInterval ?? "0" : undefined);
+	const compatibilityUserAgent = executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined;
+	const compatibilityUserAgentApplied = compatibilityUserAgent !== undefined
+		&& executionPlan.effectiveArgs.some((token, index) => token === "--user-agent" && executionPlan.effectiveArgs[index + 1] === compatibilityUserAgent);
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
 		cwd: recordedOwnedSession?.cwd ?? cwd,
@@ -552,8 +555,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		restoreState: state.managedSessionRestoreState,
 		sessionName: executionPlan.sessionName,
 		stdin: runtimeToolStdin,
-		compatibilityUserAgent: executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined,
-		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround !== undefined,
+		compatibilityUserAgent: compatibilityUserAgentApplied ? compatibilityUserAgent : undefined,
+		wrapperInjectedUserAgent: compatibilityUserAgentApplied,
 	});
 	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined, agentBrowserProcessEnv);
 	if (!executionPlan.validationError && managedSessionTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedSessionTargetError };
@@ -570,6 +573,12 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				...executionPlan,
 				recoveryHint: undefined,
 				validationError: policy.error,
+			};
+		} else if (!closeCommand && policy.daemonStatus === "inactive" && compatibilityUserAgent && !compatibilityUserAgentApplied) {
+			ownedManagedSession.compatibilityUserAgent = compatibilityUserAgent;
+			executionPlan = {
+				...executionPlan,
+				effectiveArgs: ["--user-agent", compatibilityUserAgent, ...executionPlan.effectiveArgs],
 			};
 		} else if (closeCommand && managedSessionPolicyLock) {
 			executionPlan = {

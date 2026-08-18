@@ -286,6 +286,7 @@ async function assertRealUpstreamUnsafeLocalDaemonIsBlocked(): Promise<void> {
 	const socketDir = join(tempDir, "sockets");
 	const configPath = join(tempDir, "empty.json");
 	const sessionName = `unsafe-${process.pid}`;
+	const safeSessionName = `piab-safe-${process.pid}`;
 	const upstreamEnv = {
 		...process.env,
 		AGENT_BROWSER_DEFAULT_TIMEOUT: "25000",
@@ -306,6 +307,24 @@ async function assertRealUpstreamUnsafeLocalDaemonIsBlocked(): Promise<void> {
 			env: upstreamEnv,
 			timeout: 30_000,
 		});
+		await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "open", pathToFileURL(fixturePath).href], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+		const control = await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "get", "title"], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		});
+		const controlData = (JSON.parse(control.stdout) as { data?: { result?: string; title?: string } }).data;
+		assert.equal(controlData?.title ?? controlData?.result, "READABLE", "control must prove the reused unsafe daemon can read protected agent-browser storage");
+		await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "open", "about:blank"], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		});
 		await withPatchedEnv({
 			AGENT_BROWSER_DEFAULT_TIMEOUT: "25000",
 			AGENT_BROWSER_IDLE_TIMEOUT_MS: "900000",
@@ -315,13 +334,23 @@ async function assertRealUpstreamUnsafeLocalDaemonIsBlocked(): Promise<void> {
 			const opened = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, "open", pathToFileURL(fixturePath).href], cwd: tempDir });
 			assert.equal(opened.agentBrowserStarted, false);
 			assert.match(opened.spawnError?.message ?? "", /wrapper-managed local browser/);
+
+			const safeOpen = await runAgentBrowserProcess({
+				allowManagedSessionTarget: true,
+				args: ["--json", "--session", safeSessionName, "open", pathToFileURL(fixturePath).href],
+				cwd: tempDir,
+				ownedManagedSession: true,
+			});
+			assert.equal(safeOpen.exitCode, 0, safeOpen.spawnError?.message ?? safeOpen.stderr);
 		});
 	} finally {
-		await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "close"], {
-			cwd: tempDir,
-			env: upstreamEnv,
-			timeout: 30_000,
-		}).catch(() => undefined);
+		for (const name of [sessionName, safeSessionName]) {
+			await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", name, "close"], {
+				cwd: tempDir,
+				env: upstreamEnv,
+				timeout: 30_000,
+			}).catch(() => undefined);
+		}
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
@@ -362,13 +391,13 @@ if (!REAL_UPSTREAM_ENABLED) {
 						await mkdir(join(tempDir, "profile-continuity"));
 						try {
 							const profileOpen = await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, {
-								args: ["--profile", join(tempDir, "profile-continuity"), "open", contractUrl],
+								args: ["--profile", join(tempDir, "profile-continuity"), "--user-agent", "Profile Continuity/1", "open", contractUrl],
 								sessionMode: "fresh",
 							});
 							assertSuccessfulResult(profileOpen, shapes.commands.open, "profile continuity open");
 							const profileUrl = await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, { args: ["get", "url"] });
 							const profileUrlDetails = assertSuccessfulResult(profileUrl, shapes.commands.coreSubcommand, "profile continuity get url");
-							assert.equal((profileUrlDetails.data as { url?: string }).url, contractUrl, "profile launch helpers must not replace the browser with about:blank");
+							assert.equal((profileUrlDetails.data as { url?: string }).url, contractUrl, "profile and user-agent launch settings must not be re-emitted on active follow-ups");
 						} finally {
 							await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, { args: ["close"] });
 						}

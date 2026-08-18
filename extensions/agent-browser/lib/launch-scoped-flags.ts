@@ -44,6 +44,14 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "configures background browser lifecycle for the launched session",
 	},
 	{
+		flag: "--args",
+		reason: "selects raw Chrome arguments for the browser launch",
+	},
+	{
+		flag: "--user-agent",
+		reason: "selects the browser user agent at launch time",
+	},
+	{
 		flag: "--headed",
 		reason: "selects whether the launched browser has a visible window",
 	},

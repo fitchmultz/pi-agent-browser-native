@@ -37,6 +37,7 @@ function validate(cwd: string, args: string[], env?: NodeJS.ProcessEnv, stdin?: 
 
 test("local file navigation detection covers direct and batch calls", () => {
 	assert.equal(invocationMayNavigateToLocalFile(["open", "file:///tmp/page.html"]), true);
+	assert.equal(invocationMayNavigateToLocalFile(["open", "  file:///tmp/page.html\t"]), true);
 	assert.equal(invocationMayNavigateToLocalFile(["tab", "new", "file:///tmp/page.html"]), true);
 	assert.equal(invocationMayNavigateToLocalFile(["batch"], JSON.stringify([["open", "file:///tmp/page.html"]])), true);
 	assert.equal(invocationMayNavigateToLocalFile(["batch", "open file:///tmp/page.html"]), true);

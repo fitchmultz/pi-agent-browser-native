@@ -170,14 +170,14 @@ process.stdout.write(JSON.stringify(envelope));`,
 			const explicitOptOut = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
 				args: ["--session", sessionName, "--user-agent", "Custom/1", "snapshot", "-i"],
 			});
-			assert.equal(explicitOptOut.isError, false, JSON.stringify(explicitOptOut));
-			assert.equal(explicitOptOut.details?.compatibilityWorkaround, undefined);
+			assert.equal(explicitOptOut.isError, true, JSON.stringify(explicitOptOut));
+			assert.match(String(explicitOptOut.details?.validationError ?? ""), /launch-scoped flags.*--user-agent/i);
 			const afterOptOut = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(afterOptOut.isError, false, JSON.stringify(afterOptOut));
-			assert.equal(afterOptOut.details?.compatibilityWorkaround, undefined);
+			assert.equal((afterOptOut.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
 			const afterOptOutInvocation = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("snapshot")).at(-1) as { args: string[]; userAgent?: string };
-			assert.equal(afterOptOutInvocation.args.includes("--user-agent"), false);
-			assert.equal(afterOptOutInvocation.userAgent, undefined);
+			assert.ok(afterOptOutInvocation.args.includes("--user-agent"));
+			assert.match(afterOptOutInvocation.userAgent ?? "", /Chrome\/\d+\.0\.0\.0/);
 
 			const invocationCount = (await readInvocationLog(logPath)).length;
 			const blocked = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {

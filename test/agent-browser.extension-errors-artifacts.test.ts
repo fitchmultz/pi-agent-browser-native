@@ -613,7 +613,7 @@ if (args.includes("session") && args.includes("info")) {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--namespace", "Team", "open", "https://example.com"],
+				args: ["--namespace", "Team", "open", "https://dash.cloudflare.com"],
 			});
 			assert.equal(opened.isError, false, JSON.stringify(opened));
 			assert.equal(opened.details?.namespace, "team");
@@ -623,11 +623,9 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal((openInvocations[0] as { ownedMarker?: string }).ownedMarker, undefined);
 			assert.equal((openInvocations[0] as { stateExpireDays?: string }).stateExpireDays, undefined);
 
-			const cloudflareOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://dash.cloudflare.com"] });
-			assert.equal(cloudflareOpen.isError, false, JSON.stringify(cloudflareOpen));
-			assert.equal((cloudflareOpen.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
+			assert.equal((opened.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
 			const afterCloudflareOpen = await readInvocationLog(logPath);
-			assert.equal(afterCloudflareOpen.filter((entry) => entry.args.includes("session") && entry.args.includes("info")).length, 2);
+			assert.equal(afterCloudflareOpen.filter((entry) => entry.args.includes("session") && entry.args.includes("info")).length, 1);
 			const cloudflareInvocation = afterCloudflareOpen.find((entry) => entry.args.includes("https://dash.cloudflare.com"));
 			assert.ok(cloudflareInvocation?.args.includes("--user-agent"));
 			const cloudflareBrowserArgs = cloudflareInvocation?.args[cloudflareInvocation.args.indexOf("--args") + 1] ?? "";
@@ -641,9 +639,20 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal((cloudflareFollowup.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
 			const afterCloudflareFollowup = await readInvocationLog(logPath);
 			const followupInvocation = afterCloudflareFollowup.filter((entry) => entry.args.includes("snapshot")).at(-1);
-			assert.ok(followupInvocation?.args.includes("--user-agent"));
-			assert.equal(followupInvocation?.args[followupInvocation.args.indexOf("--args") + 1], cloudflareBrowserArgs);
-			assert.equal((followupInvocation as { userAgent?: string } | undefined)?.userAgent, (cloudflareInvocation as { userAgent?: string } | undefined)?.userAgent);
+			assert.equal(followupInvocation?.args.includes("--user-agent"), false);
+			assert.equal(followupInvocation?.args.includes("--args"), false);
+			assert.equal((followupInvocation as { userAgent?: string } | undefined)?.userAgent, undefined);
+
+			await writeFile(join(tempDir, "daemon-state.json"), JSON.stringify({ active: false, restoreKey: null }));
+			const relaunched = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"] });
+			assert.equal(relaunched.isError, false, JSON.stringify(relaunched));
+			const relaunchInvocation = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("get") && entry.args.includes("title")).at(-1);
+			assert.ok(relaunchInvocation?.args.includes("--user-agent"));
+			assert.match(String((relaunchInvocation as { userAgent?: string } | undefined)?.userAgent), /Chrome\/\d+\.0\.0\.0/);
+			await writeFile(join(tempDir, "daemon-state.json"), JSON.stringify({
+				active: true,
+				restoreKey: createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(sessionName)),
+			}));
 			const userInvocationCount = async () => (await readInvocationLog(logPath))
 				.filter((entry) => !(entry.args.includes("session") && entry.args.includes("info"))).length;
 			const invocationCount = await userInvocationCount();
@@ -675,7 +684,7 @@ if (args.includes("session") && args.includes("info")) {
 			});
 			assert.equal(blocked.isError, true);
 			assert.equal(blocked.details?.failureCategory, "validation-error");
-			assert.match(String(blocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+			assert.match(String(blocked.details?.validationError ?? ""), /does not match the requested managed-restore policy|launch-scoped flags/);
 			assert.equal(await userInvocationCount(), invocationCount);
 			assert.equal(blocked.details?.managedSessionRestoreDisabled, undefined);
 
@@ -1067,7 +1076,7 @@ if (args.includes("session") && args.includes("info")) {
 				args: ["--session", sessionName, "--auto-connect", "open", "https://example.com"],
 			});
 			assert.equal(blocked.isError, true);
-			assert.match(String(blocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+			assert.match(String(blocked.details?.validationError ?? ""), /does not match the requested managed-restore policy|launch-scoped flags/);
 			assert.equal((await readInvocationLog(logPath)).filter((entry) => entry.args.includes("open")).length, mainOpenCount);
 		});
 	} finally {
