@@ -212,6 +212,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let parseError = parsed.parseError;
 		let presentationEnvelope = parsed.envelope;
 		let navigationSummary = undefined as Awaited<ReturnType<typeof collectNavigationSummary>> | undefined;
+		let failedTransitionReverification = false;
 		if (prepared.pinnedBatchUnwrapMode) {
 			const pinnedBatchResult = unwrapPinnedSessionBatchEnvelope({ envelope: parsed.envelope, includeNavigationSummary: prepared.includePinnedNavigationSummary, mode: prepared.pinnedBatchUnwrapMode });
 			parseError = pinnedBatchResult.parseError ?? parseError;
@@ -337,6 +338,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			isUnverifiedPageTransitionCommand(prepared.executionPlan.commandInfo.command, prepared.executionPlan.commandInfo.subcommand)
 		) {
 			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName, signal });
+			// A failed transition command can still have mutated or replaced the document before throwing, so
+			// keeping the verified URL must not keep the prior snapshot refs (markTabTargetUnknown dropped
+			// them before this probe existed); invalidate so the next ref use requires a fresh snapshot.
+			failedTransitionReverification = navigationSummary !== undefined;
 		}
 		if (navigationSummary && presentationEnvelope && prepared.executionPlan.commandInfo.command !== "eval" && !Array.isArray(presentationEnvelope.data)) presentationEnvelope = { ...presentationEnvelope, data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary) };
 		let overlayBlockerDiagnostic: Awaited<ReturnType<typeof collectOverlayBlockerDiagnostic>>;
@@ -468,9 +473,11 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				const plannedBatchRecordSwap = !Array.isArray(presentationEnvelope?.data) && batchCommandSteps.some((step) => isRecordPageTransitionCommand(step));
 				const pageTransitionInvalidation = processResult.agentBrowserStarted && (isRecordPageTransitionCommand(prepared.commandTokens) || plannedBatchRecordSwap)
 					? buildPageTransitionRefSnapshotInvalidation()
-					: batchRefSnapshotState?.invalidation?.reason === "page-transition"
-						? batchRefSnapshotState.invalidation
-						: undefined;
+					: failedTransitionReverification
+						? buildPageTransitionRefSnapshotInvalidation("A failed eval/back/forward/reload/state-load/tab command may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
+						: batchRefSnapshotState?.invalidation?.reason === "page-transition"
+							? batchRefSnapshotState.invalidation
+							: undefined;
 				if (currentSessionTabTarget) {
 					const tabUpdate = sessionPageState.applyTabTarget({ sessionName: sessionStateKey, target: currentSessionTabTarget, update: sessionPageStateUpdate });
 					if (!tabUpdate.applied && succeeded) sessionPageState.markPinning(sessionStateKey, "drift");

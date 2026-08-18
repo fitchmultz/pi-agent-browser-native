@@ -240,15 +240,6 @@ export function buildAgentBrowserNextActions(options: {
 				{
 					const textAssertion = options.command === "wait" && options.args?.includes("--text") === true;
 					const urlAssertion = options.command === "wait" && options.args?.includes("--url") === true;
-					if (urlAssertion) {
-						actions.push({
-							id: "fresh-session-after-url-wait-timeout",
-							params: { args: ["snapshot", "-i"], sessionMode: "fresh" },
-							reason: "If a preceding click or form submit reported success but the page never navigated, upstream click dispatch may have silently missed (observed with agent-browser 0.34 after many spaced commands); start a fresh session and replay the flow as one batch instead of retrying the wait.",
-							safety: "Abandon the current session only when page evidence shows the navigation truly did not happen; the wait target may also be wrong or slow.",
-							tool: "agent_browser",
-						});
-					}
 					actions.push(buildNextToolAction({
 						args: ["snapshot", "-i"],
 						id: textAssertion ? "inspect-after-text-assertion-failure" : "inspect-after-timeout",
@@ -257,11 +248,20 @@ export function buildAgentBrowserNextActions(options: {
 							: options.command === "wait"
 								? "Inspect the current page after the wait condition timed out before retrying with a different selector or timeout."
 								: "Inspect the current page after the timed-out browser operation.",
-						safety: textAssertion
-							? "Read-only snapshot; use current refs or visible text from this page before retrying the assertion."
-							: "Read-only snapshot; do not assume the timed-out interaction completed.",
-					}));
-				}
+                        safety: textAssertion
+                            ? "Read-only snapshot; use current refs or visible text from this page before retrying the assertion."
+                            : "Read-only snapshot; do not assume the timed-out interaction completed.",
+                    }));
+                    if (urlAssertion) {
+                        actions.push(buildNextToolAction({
+                            args: ["open", "about:blank"],
+                            id: "fresh-session-after-url-wait-timeout",
+                            reason: "If a preceding click or form submit reported success but the page never navigated, upstream click dispatch may have silently missed (observed with agent-browser 0.34 after many spaced commands); replace about:blank with the target URL and replay the flow as one batch in a fresh session instead of retrying the wait.",
+                            safety: "Abandons the current browser session; capture page evidence with the inspect action first, and only abandon when the wait target is not simply wrong or slow.",
+                            sessionMode: "fresh",
+                        }));
+                    }
+                }
 				break;
 			case "upstream-error":
 				if (isOpenNavigationCommand(options.command)) {

@@ -173,6 +173,69 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension invalidates prior refs when a failed transition command keeps the page verified", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-failed-transition-refs-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://first.example/",
+    refs: { e1: { role: "button", name: "Old Search" } },
+    snapshot: '- button "Old Search" [ref=e1]'
+  } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://first.example/", url: "https://first.example/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "First", title: "First" } }));
+} else if (args.includes("eval")) {
+  process.stderr.write("SyntaxError: Identifier 'c' has already been declared");
+  process.exit(1);
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshot.isError, false);
+			assert.deepEqual((snapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const failed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "const c = 1;"] });
+			assert.equal(failed.isError, true);
+			assert.equal(failed.details?.resultCategory, "failure");
+
+			// The live probe keeps the observed http(s) page verified, but the failed eval may still have
+			// mutated the document before throwing, so the pre-change ref snapshot must be invalidated.
+			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(staleClick.isError, true);
+			assert.equal(staleClick.details?.failureCategory, "stale-ref");
+			assert.match((staleClick.content[0] as { text: string }).text, /may still have changed the page/);
+
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 0);
+			assert.ok(invocations.some((entry) => entry.args.includes("get") && entry.args.includes("url")));
+
+			const refreshed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(refreshed.isError, false);
+			const currentClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(currentClick.isError, false);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rehydrates page-scoped refs from the current tree branch", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-refs-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -2018,7 +2081,7 @@ if (args.includes("snapshot")) {
 			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
 			assert.equal(staleClick.details?.failureCategory, "stale-ref", JSON.stringify(staleClick));
-			assert.match(staleClick.content[0]?.text ?? "", /a recording command \(record start, or record restart with a URL\) replaced or navigated the active page/);
+			assert.match(staleClick.content[0]?.text ?? "", /cannot be used yet\. A recording command \(record start, or record restart with a URL\) replaced or navigated the active page/);
 
 			const staleGuardedRead = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["is", "visible", "@e1"] });
 			assert.equal(staleGuardedRead.isError, true, JSON.stringify(staleGuardedRead));

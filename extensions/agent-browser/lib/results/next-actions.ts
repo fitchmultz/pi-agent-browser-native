@@ -47,6 +47,9 @@ export function applyNamespaceToNextActions(actions: AgentBrowserNextAction[] | 
 export function applySessionToNextActions(actions: AgentBrowserNextAction[] | undefined, sessionName: string | undefined): AgentBrowserNextAction[] | undefined {
 	if (!sessionName || !actions) return actions;
 	return actions.map((action) => {
+		// Fresh-session actions deliberately target a new session; the planner ignores sessionMode when an
+		// explicit --session is present, so prefixing one here would silently downgrade them to reuse.
+		if (action.params?.sessionMode === "fresh") return action;
 		const args = action.params?.args;
 		return args ? { ...action, params: { ...action.params, args: withOptionalSessionArgs(sessionName, args) } } : action;
 	});

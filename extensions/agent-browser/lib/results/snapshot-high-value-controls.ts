@@ -42,7 +42,6 @@ const SNAPSHOT_PRIMARY_ACTION_BUTTON_NAME_PATTERNS = [
 	/^(?:add|apply|ask|confirm|connect|continue|create|launch|new|open|refresh|retry|run|save|search|send|start|submit)\b/i,
 ];
 
-
 function getHighValueControlRole(entry: SnapshotRefEntry): string {
 	return entry.isEditable === true && (entry.role === "unknown" || entry.role === "generic") ? "textbox" : entry.role;
 }
