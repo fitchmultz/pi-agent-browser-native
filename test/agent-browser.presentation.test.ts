@@ -380,36 +380,35 @@ test("buildToolPresentation redacts console and page error diagnostics", async (
 });
 
 
+function presentationText(presentation: Awaited<ReturnType<typeof buildToolPresentation>>): string {
+	return presentation.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
+}
+
 test("buildToolPresentation renders empty page titles instead of dumping raw upstream JSON", async () => {
-	// A title-less page must never surface the upstream envelope (lifecycle block included) as page content.
-	const textOf = (presentation: Awaited<ReturnType<typeof buildToolPresentation>>): string =>
-		presentation.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
 
 	const getTitle = await buildToolPresentation({
 		commandInfo: { command: "get", subcommand: "title" },
 		cwd: process.cwd(),
 		envelope: { success: true, data: { lifecycle: { launched: false, reused: true }, title: "" } },
 	});
-	assert.equal(textOf(getTitle), "(empty string)");
+	assert.equal(presentationText(getTitle), "(empty string)");
 
 	const opened = await buildToolPresentation({
 		commandInfo: { command: "open", subcommand: "https://shop.example/blank" },
 		cwd: process.cwd(),
 		envelope: { success: true, data: { lifecycle: { launched: true, reused: false }, title: "", url: "https://shop.example/blank" } },
 	});
-	assert.equal(textOf(opened), "https://shop.example/blank");
+	assert.equal(presentationText(opened), "https://shop.example/blank");
 
 	const titled = await buildToolPresentation({
 		commandInfo: { command: "open", subcommand: "https://shop.example/" },
 		cwd: process.cwd(),
 		envelope: { success: true, data: { title: "Shop", url: "https://shop.example/" } },
 	});
-	assert.equal(textOf(titled), "Shop\nhttps://shop.example/");
+	assert.equal(presentationText(titled), "Shop\nhttps://shop.example/");
 });
 
 test("buildToolPresentation renders structured and empty eval results instead of dumping raw upstream JSON", async () => {
-	const textOf = (presentation: Awaited<ReturnType<typeof buildToolPresentation>>): string =>
-		presentation.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
 	const evalPresentation = async (result: unknown) =>
 		buildToolPresentation({
 			commandInfo: { command: "eval" },
@@ -417,22 +416,20 @@ test("buildToolPresentation renders structured and empty eval results instead of
 			envelope: { success: true, data: { lifecycle: { launched: false, reused: true }, origin: "https://shop.example/", result } },
 		});
 
-	assert.equal(textOf(await evalPresentation([1, 2, 3])), "[\n  1,\n  2,\n  3\n]\n\nOrigin: https://shop.example/");
-	assert.equal(textOf(await evalPresentation({ a: 1 })), '{\n  "a": 1\n}\n\nOrigin: https://shop.example/');
-	assert.equal(textOf(await evalPresentation([])), "[]\n\nOrigin: https://shop.example/");
-	assert.equal(textOf(await evalPresentation(null)), "null\n\nOrigin: https://shop.example/");
-	assert.equal(textOf(await evalPresentation("")), "(empty string)\n\nOrigin: https://shop.example/");
-	assert.equal(textOf(await evalPresentation(0)), "0\n\nOrigin: https://shop.example/");
-	assert.equal(textOf(await evalPresentation(false)), "false\n\nOrigin: https://shop.example/");
+	assert.equal(presentationText(await evalPresentation([1, 2, 3])), "[\n  1,\n  2,\n  3\n]\n\nOrigin: https://shop.example/");
+	assert.equal(presentationText(await evalPresentation({ a: 1 })), '{\n  "a": 1\n}\n\nOrigin: https://shop.example/');
+	assert.equal(presentationText(await evalPresentation([])), "[]\n\nOrigin: https://shop.example/");
+	assert.equal(presentationText(await evalPresentation(null)), "null\n\nOrigin: https://shop.example/");
+	assert.equal(presentationText(await evalPresentation("")), "(empty string)\n\nOrigin: https://shop.example/");
+	assert.equal(presentationText(await evalPresentation(0)), "0\n\nOrigin: https://shop.example/");
+	assert.equal(presentationText(await evalPresentation(false)), "false\n\nOrigin: https://shop.example/");
 
 	for (const result of [[1, 2, 3], {}, [], null, ""]) {
-		assert.doesNotMatch(textOf(await evalPresentation(result)), /lifecycle/);
+		assert.doesNotMatch(presentationText(await evalPresentation(result)), /lifecycle/);
 	}
 });
 
 test("buildToolPresentation keeps upstream lifecycle bookkeeping out of model-facing content", async () => {
-	const textOf = (presentation: Awaited<ReturnType<typeof buildToolPresentation>>): string =>
-		presentation.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
 	const lifecycle = { effectiveLaunch: { browserLaunched: true, engine: "chrome" }, launched: false, reused: true };
 
 	const box = await buildToolPresentation({
@@ -440,23 +437,30 @@ test("buildToolPresentation keeps upstream lifecycle bookkeeping out of model-fa
 		cwd: process.cwd(),
 		envelope: { success: true, data: { height: 28, lifecycle, width: 768, x: 256, y: 94 } },
 	});
-	assert.doesNotMatch(textOf(box), /lifecycle|browserLaunched/);
-	assert.match(textOf(box), /"height": 28/);
+	assert.doesNotMatch(presentationText(box), /lifecycle|browserLaunched/);
+	assert.match(presentationText(box), /"height": 28/);
 
 	const checked = await buildToolPresentation({
 		commandInfo: { command: "is", subcommand: "checked" },
 		cwd: process.cwd(),
 		envelope: { success: true, data: { checked: false, lifecycle } },
 	});
-	assert.doesNotMatch(textOf(checked), /lifecycle/);
-	assert.match(textOf(checked), /"checked": false/);
+	assert.doesNotMatch(presentationText(checked), /lifecycle/);
+	assert.match(presentationText(checked), /"checked": false/);
 
-	// `scroll` returns lifecycle only, so stripping it must still leave a stated outcome.
 	const scroll = await buildToolPresentation({
 		commandInfo: { command: "scroll", subcommand: "down" },
 		cwd: process.cwd(),
 		envelope: { success: true, data: { lifecycle } },
 	});
-	assert.doesNotMatch(textOf(scroll), /lifecycle/);
-	assert.equal(textOf(scroll), "scroll completed");
+	assert.doesNotMatch(presentationText(scroll), /lifecycle/);
+	assert.equal(presentationText(scroll), "scroll completed");
+
+	const back = await buildToolPresentation({
+		commandInfo: { command: "back" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { lifecycle, navigationSummary: { title: "Example Domain", url: "https://example.com/" } } },
+	});
+	assert.doesNotMatch(presentationText(back), /lifecycle/);
+	assert.match(presentationText(back), /https:\/\/example.com\//);
 });

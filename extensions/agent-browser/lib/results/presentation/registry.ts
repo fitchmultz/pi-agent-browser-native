@@ -282,7 +282,7 @@ export function formatPresentationContentText(
 	if (diagnosticText) return diagnosticText;
 	const pageSummary = getPageSummary(data);
 	if (pageSummary) return redactModelFacingText(pageSummary);
-	const pageData = omitUpstreamLifecycle(data);
+	const { navigationSummary: _navigationSummary, ...pageData } = omitUpstreamLifecycle(data);
 	if (Object.keys(pageData).length > 0) return stringifyModelFacing(pageData);
 	return `${presentationCommandInfo.command ?? commandInfo.command ?? "agent-browser"} completed`;
 }

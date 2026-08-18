@@ -2,7 +2,7 @@ import { containsManagedSessionRestoreKey } from "../../managed-session-capabili
 import { redactSensitiveText, redactSensitiveValue } from "../../runtime.js";
 import { stringifyUnknown, truncateText } from "../text.js";
 
-export const UNTITLED_PAGE_SUMMARY = "(untitled page)";
+const UNTITLED_PAGE_SUMMARY = "(untitled page)";
 
 export function stringifyModelFacing(value: unknown): string {
 	return stringifyUnknown(redactSensitiveValue(value));
