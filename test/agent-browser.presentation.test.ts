@@ -379,3 +379,29 @@ test("buildToolPresentation redacts console and page error diagnostics", async (
 	assert.match(errorsText, /\[REDACTED\]/);
 });
 
+
+test("buildToolPresentation renders empty page titles instead of dumping raw upstream JSON", async () => {
+	const textOf = (presentation: Awaited<ReturnType<typeof buildToolPresentation>>): string =>
+		presentation.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
+
+	const getTitle = await buildToolPresentation({
+		commandInfo: { command: "get", subcommand: "title" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { lifecycle: { launched: false, reused: true }, title: "" } },
+	});
+	assert.equal(textOf(getTitle), "(untitled page)");
+
+	const opened = await buildToolPresentation({
+		commandInfo: { command: "open", subcommand: "https://shop.example/blank" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { lifecycle: { launched: true, reused: false }, title: "", url: "https://shop.example/blank" } },
+	});
+	assert.equal(textOf(opened), "https://shop.example/blank");
+
+	const titled = await buildToolPresentation({
+		commandInfo: { command: "open", subcommand: "https://shop.example/" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { title: "Shop", url: "https://shop.example/" } },
+	});
+	assert.equal(textOf(titled), "Shop\nhttps://shop.example/");
+});
