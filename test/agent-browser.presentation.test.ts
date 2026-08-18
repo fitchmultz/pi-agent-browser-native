@@ -429,3 +429,34 @@ test("buildToolPresentation renders structured and empty eval results instead of
 		assert.doesNotMatch(textOf(await evalPresentation(result)), /lifecycle/);
 	}
 });
+
+test("buildToolPresentation keeps upstream lifecycle bookkeeping out of model-facing content", async () => {
+	const textOf = (presentation: Awaited<ReturnType<typeof buildToolPresentation>>): string =>
+		presentation.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
+	const lifecycle = { effectiveLaunch: { browserLaunched: true, engine: "chrome" }, launched: false, reused: true };
+
+	const box = await buildToolPresentation({
+		commandInfo: { command: "get", subcommand: "box" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { height: 28, lifecycle, width: 768, x: 256, y: 94 } },
+	});
+	assert.doesNotMatch(textOf(box), /lifecycle|browserLaunched/);
+	assert.match(textOf(box), /"height": 28/);
+
+	const checked = await buildToolPresentation({
+		commandInfo: { command: "is", subcommand: "checked" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { checked: false, lifecycle } },
+	});
+	assert.doesNotMatch(textOf(checked), /lifecycle/);
+	assert.match(textOf(checked), /"checked": false/);
+
+	// `scroll` returns lifecycle only, so stripping it must still leave a stated outcome.
+	const scroll = await buildToolPresentation({
+		commandInfo: { command: "scroll", subcommand: "down" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { lifecycle } },
+	});
+	assert.doesNotMatch(textOf(scroll), /lifecycle/);
+	assert.equal(textOf(scroll), "scroll completed");
+});

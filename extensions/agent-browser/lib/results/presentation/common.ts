@@ -41,6 +41,13 @@ export function getStringField(data: Record<string, unknown>, key: string): stri
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+// `lifecycle` is upstream launch/reuse bookkeeping, never page content, so it must not be the
+// answer an agent reads when a command has no dedicated presenter.
+export function omitUpstreamLifecycle(data: Record<string, unknown>): Record<string, unknown> {
+	const { lifecycle: _lifecycle, ...rest } = data;
+	return rest;
+}
+
 export function getPageSummary(data: Record<string, unknown>): string | undefined {
 	const title = typeof data.title === "string" ? data.title : undefined;
 	const url = typeof data.url === "string" ? data.url : undefined;

@@ -3,7 +3,7 @@ import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import { detectConfirmationRequired, type ConfirmationRequiredPresentation } from "../confirmation.js";
 import { formatRawSnapshotText, formatSnapshotSummary } from "../snapshot.js";
-import { getPageSummary, redactModelFacingText, stringifyModelFacing } from "./common.js";
+import { getPageSummary, omitUpstreamLifecycle, redactModelFacingText, stringifyModelFacing } from "./common.js";
 import { formatDiagnosticSummary, formatDiagnosticText, formatProfilesText, getStreamSummary, getTabSummary } from "./diagnostics.js";
 import { getScreenshotSummary } from "./artifacts.js";
 import { formatSkillsText } from "./skills.js";
@@ -282,5 +282,7 @@ export function formatPresentationContentText(
 	if (diagnosticText) return diagnosticText;
 	const pageSummary = getPageSummary(data);
 	if (pageSummary) return redactModelFacingText(pageSummary);
-	return stringifyModelFacing(data);
+	const pageData = omitUpstreamLifecycle(data);
+	if (Object.keys(pageData).length > 0) return stringifyModelFacing(pageData);
+	return `${presentationCommandInfo.command ?? commandInfo.command ?? "agent-browser"} completed`;
 }

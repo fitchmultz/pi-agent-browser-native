@@ -15,6 +15,7 @@ import { buildToolPresentation } from "../../results/presentation.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { type AgentBrowserEnvelope } from "../../results/contracts.js";
 import type { NetworkRouteRecord } from "../../results/contracts.js";
+import { omitUpstreamLifecycle } from "../../results/presentation/common.js";
 import { getClipboardWritePayloadCandidates, redactClipboardPermissionEcho, redactClipboardPermissionErrorValue } from "../../results/presentation/errors.js";
 import { shouldCaptureSemanticActionNavigationSummary } from "../../results/presentation/semantic-action.js";
 import {
@@ -676,7 +677,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentation.summary = "Scroll completed with no observed movement.";
 			if (isRecord(presentation.data)) presentation.data = { ...presentation.data, noMovement: true, scrolled: false };
 			if (presentation.content[0]?.type === "text") {
-				const details = isRecord(presentation.data) ? JSON.stringify(presentation.data, null, 2) : presentation.content[0].text;
+				const details = isRecord(presentation.data) ? JSON.stringify(omitUpstreamLifecycle(presentation.data), null, 2) : presentation.content[0].text;
 				presentation.content[0] = { ...presentation.content[0], text: `Scroll completed with no observed movement.\n\n${details}` };
 			} else {
 				presentation.content.unshift({ type: "text", text: "Scroll completed with no observed movement." });
