@@ -21,6 +21,7 @@ import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-reco
 import { extractRefSnapshotFromData, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import {
 	buildExecutionPlan,
+	canUseHeadlessCompatibilityUserAgent,
 	createFreshSessionName,
 	extractCommandTokens,
 	extractUpstreamCommandTokens,
@@ -526,6 +527,23 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
 	const targetsCurrentManagedSession = state.managedSessionActive
 		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
+	const targetsOffCurrentOwnedSession = recordedOwnedSession !== undefined && !targetsCurrentManagedSession;
+	const offCurrentCompatibilityUpgrade = targetsOffCurrentOwnedSession
+		&& executionPlan.compatibilityWorkaround !== undefined
+		&& recordedOwnedSession.compatibilityWorkaround === undefined;
+	if (targetsOffCurrentOwnedSession && canUseHeadlessCompatibilityUserAgent(preparedArgs.args, agentBrowserProcessEnv)) {
+		const compatibilityWorkaround = executionPlan.compatibilityWorkaround ?? recordedOwnedSession.compatibilityWorkaround;
+		if (compatibilityWorkaround) {
+			const userAgentIndex = executionPlan.effectiveArgs.indexOf("--user-agent");
+			executionPlan = {
+				...executionPlan,
+				compatibilityWorkaround,
+				effectiveArgs: userAgentIndex < 0
+					? executionPlan.effectiveArgs
+					: [...executionPlan.effectiveArgs.slice(0, userAgentIndex), ...executionPlan.effectiveArgs.slice(userAgentIndex + 2)],
+			};
+		}
+	}
 	const retainedHeadedAutosaveDisabled = recordedOwnedSession?.headedManagedAutosaveDisabled === true
 		|| (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true);
 	const retainedHeadedAutosaveInterval = recordedOwnedSession?.headedManagedAutosaveInterval
@@ -573,6 +591,12 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				...executionPlan,
 				recoveryHint: undefined,
 				validationError: policy.error,
+			};
+		} else if (!closeCommand && policy.daemonStatus === "active" && offCurrentCompatibilityUpgrade) {
+			executionPlan = {
+				...executionPlan,
+				recoveryHint: undefined,
+				validationError: "This older wrapper-owned session is already running without the user agent required by this site. Close it first, or remove the explicit --session and retry with sessionMode: \"fresh\".",
 			};
 		} else if (!closeCommand && policy.daemonStatus === "inactive" && compatibilityUserAgent && !compatibilityUserAgentApplied) {
 			ownedManagedSession.compatibilityUserAgent = compatibilityUserAgent;

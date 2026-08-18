@@ -1223,6 +1223,69 @@ if (command === "close") {
 	}
 });
 
+test("agentBrowserExtension reapplies compatibility policy for an inactive older owned session", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-compat-replaced-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, userAgent: process.env.AGENT_BROWSER_USER_AGENT ?? null }) + "\\n");
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
+} else if (args.includes("close")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "forced close failure" }));
+  process.exit(1);
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://dash.cloudflare.com", url: "https://dash.cloudflare.com" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Page", url: args[args.length - 1] } }));
+}`);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const compatOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://dash.cloudflare.com"] });
+			assert.equal(compatOpen.isError, false, JSON.stringify(compatOpen));
+			assert.equal((compatOpen.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
+			const compatSessionName = String(compatOpen.details?.sessionName ?? "");
+
+			const replacement = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["open", "https://example.com/replacement"],
+				sessionMode: "fresh",
+			});
+			assert.equal(replacement.isError, false, JSON.stringify(replacement));
+			assert.equal((replacement.details?.managedSessionOutcome as { replacedSessionClosed?: boolean } | undefined)?.replacedSessionClosed, false);
+
+			const oldFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", compatSessionName, "get", "url"] });
+			assert.equal(oldFollowUp.isError, false, JSON.stringify(oldFollowUp));
+			assert.equal((oldFollowUp.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
+
+			const resumedHarness = createExtensionHarness({
+				branch: [
+					createToolBranchEntry({ details: compatOpen.details ?? {}, isError: compatOpen.isError }),
+					createToolBranchEntry({ details: replacement.details ?? {}, isError: replacement.isError }),
+					createToolBranchEntry({ details: oldFollowUp.details ?? {}, isError: oldFollowUp.isError }),
+				],
+				cwd: tempDir,
+			});
+			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
+			const resumedOldFollowUp = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["--session", compatSessionName, "get", "url"] });
+			assert.equal(resumedOldFollowUp.isError, false, JSON.stringify(resumedOldFollowUp));
+			assert.equal((resumedOldFollowUp.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
+
+			const oldFollowUps = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes(compatSessionName) && entry.args.includes("get") && entry.args.includes("url"));
+			assert.equal(oldFollowUps.length, 2);
+			assert.equal(oldFollowUps.every((entry) => {
+				const userAgent = (entry as { userAgent?: unknown }).userAgent;
+				return entry.args.includes("--user-agent") && typeof userAgent === "string" && /Chrome\/\d+\.0\.0\.0/.test(userAgent);
+			}), true, JSON.stringify(oldFollowUps));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not restore a replaced session after successful close and post-launch failure", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-replaced-close-post-launch-failure-"));
 	const logPath = join(tempDir, "invocations.log");

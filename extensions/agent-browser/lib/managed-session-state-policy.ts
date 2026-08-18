@@ -69,7 +69,7 @@ function hasAgentBrowserPathComponent(value: string): boolean {
 
 function getFileUrlPath(value: string | undefined): string | undefined {
 	if (!value) return undefined;
-	const trimmedValue = value.trim();
+	const trimmedValue = value.replaceAll(/[\t\n\r]/g, "").trim();
 	const nestedFileUrl = /^(?:(?:blob|filesystem|view-source):)*(file:.*)$/i.exec(trimmedValue)?.[1];
 	if (!nestedFileUrl) return undefined;
 	try {

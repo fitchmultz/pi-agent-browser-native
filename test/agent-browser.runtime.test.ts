@@ -1673,7 +1673,20 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 	});
 	assert.equal(explicitUserAgentFollowup.compatibilityWorkaround, undefined);
 	assert.match(explicitUserAgentFollowup.validationError ?? "", /launch-scoped flags.*--user-agent/i);
+	assert.deepEqual(explicitUserAgentFollowup.recoveryHint?.exampleParams, {
+		args: ["--user-agent", "Custom/1", "snapshot", "-i"],
+		sessionMode: "fresh",
+	});
 	assert.equal(explicitUserAgentFollowup.effectiveArgs.filter((token) => token === "--user-agent").length, 1);
+	const explicitUserAgentRetry = buildExecutionPlan(explicitUserAgentFollowup.recoveryHint?.exampleArgs ?? [], {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 2),
+		managedSessionActive: true,
+		managedSessionCompatibilityWorkaround: cloudflarePlan.compatibilityWorkaround,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "fresh",
+	});
+	assert.equal(explicitUserAgentRetry.validationError, undefined);
+	assert.equal(explicitUserAgentRetry.managedSessionName, createFreshSessionName("piab-demo-123", "seed", 2));
 
 	const compatibilityUpgrade = buildExecutionPlan(["open", "https://dash.cloudflare.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -1682,6 +1695,7 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 		sessionMode: "auto",
 	});
 	assert.match(compatibilityUpgrade.validationError ?? "", /fresh.*compatibility user agent|compatibility user agent.*fresh/i);
+	assert.equal(compatibilityUpgrade.compatibilityWorkaround, undefined);
 	assert.equal(compatibilityUpgrade.effectiveArgs.includes("--user-agent"), false);
 
 	const wrongNamespaceFollowup = buildExecutionPlan(["--namespace", "other", "--session", "piab-demo-123", "snapshot", "-i"], {
