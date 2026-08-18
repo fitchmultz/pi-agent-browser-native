@@ -362,7 +362,7 @@ test("buildToolPresentation surfaces omitted high-value controls in compact snap
 	assert.match(text, /Omitted high-value controls:/);
 	assert.match(text, /e6 tab "Package tab 6"/);
 	assert.match(text, /e9 tab "Package tab 9"/);
-	assert.deepEqual((presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds, ["e6", "e7", "e8", "e9"]);
+	assert.deepEqual((presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds, ["e6", "e17", "e7", "e8", "e18", "e19", "e20", "e21", "e22", "e9"]);
 
 	if (presentation.fullOutputPath) {
 		await rm(presentation.fullOutputPath, { force: true });
@@ -735,9 +735,56 @@ test("compact snapshots count ordinary omitted refs separately from high-value c
 
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /Omitted high-value controls:/);
-	assert.match(text, /73 additional refs omitted/);
-	assert.match(text, /6 additional high-value controls omitted/);
+	assert.doesNotMatch(text, /\d+ additional refs omitted/);
+	assert.match(text, /79 additional high-value controls omitted/);
 	assert.equal((presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds?.length, 10);
+
+	if (presentation.fullOutputPath) {
+		await rm(presentation.fullOutputPath, { force: true });
+	}
+});
+
+test("compact snapshots surface named row-action links as high-value controls", async () => {
+	const refs = Object.fromEntries(
+		Array.from({ length: 120 }, (_, index) => {
+			const id = `e${index + 1}`;
+			if (id === "e2") return [id, { name: "new", role: "link" }];
+			if (id === "e3") return [id, { name: "past", role: "link" }];
+			if (id === "e4") return [id, { name: "comments", role: "link" }];
+			if (id === "e10") return [id, { name: "Using the railway network as a flatbed scanner", role: "link" }];
+			if (id === "e11") return [id, { name: "otherayden", role: "link" }];
+			if (id === "e12") return [id, { name: "hide", role: "link" }];
+			if (id === "e13") return [id, { name: "15 comments", role: "link" }];
+			if (id === "e14") return [id, { name: "Linux 7.3 improves performance when running out of vRAM", role: "link" }];
+			if (id === "e15") return [id, { name: "84 comments", role: "link" }];
+			return [id, { name: `Row ${index + 1}`, role: "cell" }];
+		}),
+	);
+	const snapshot = [
+		'- navigation "Top" [ref=e1]',
+		'  - link "new" [ref=e2]',
+		'  - link "past" [ref=e3]',
+		'  - link "comments" [ref=e4]',
+		...Array.from({ length: 5 }, (_, index) => `  - cell "${index + 1}." [ref=e${index + 5}]`),
+		'  - link "Using the railway network as a flatbed scanner" [ref=e10]',
+		'  - link "otherayden" [ref=e11]',
+		'  - link "hide" [ref=e12]',
+		'  - link "15 comments" [ref=e13]',
+		'  - link "Linux 7.3 improves performance when running out of vRAM" [ref=e14]',
+		'  - link "84 comments" [ref=e15]',
+		...Array.from({ length: 105 }, (_, index) => `  - cell "Row ${index + 16}" [ref=e${index + 16}]`),
+	].join("\n");
+
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { origin: "https://news.ycombinator.com/", refs, snapshot } },
+	});
+
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /Omitted high-value controls:/);
+	assert.match(text, /e13 link "15 comments"/);
+	assert.ok((presentation.data as { highValueControlRefIds?: string[] }).highValueControlRefIds?.includes("e13"));
 
 	if (presentation.fullOutputPath) {
 		await rm(presentation.fullOutputPath, { force: true });

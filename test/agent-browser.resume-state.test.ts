@@ -2057,14 +2057,13 @@ if (args.includes("tab") && args.includes("list")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 6);
+			assert.equal(invocations.length, 5);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
 			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
 			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "t1"]);
 			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "eval", "--stdin"]);
 			assert.equal(invocations[3]?.stdin, "document.title");
 			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[5]?.args, ["--json", "--session", "named", "get", "title"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

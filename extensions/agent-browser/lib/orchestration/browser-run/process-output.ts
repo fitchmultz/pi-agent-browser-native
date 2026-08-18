@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand, isRecordPageTransitionCommand } from "../../command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -212,6 +212,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let parseError = parsed.parseError;
 		let presentationEnvelope = parsed.envelope;
 		let navigationSummary = undefined as Awaited<ReturnType<typeof collectNavigationSummary>> | undefined;
+		let failedTransitionReverification = false;
 		if (prepared.pinnedBatchUnwrapMode) {
 			const pinnedBatchResult = unwrapPinnedSessionBatchEnvelope({ envelope: parsed.envelope, includeNavigationSummary: prepared.includePinnedNavigationSummary, mode: prepared.pinnedBatchUnwrapMode });
 			parseError = pinnedBatchResult.parseError ?? parseError;
@@ -321,7 +322,26 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				managedSessionCommandRequiresLivePageVerification(prepared.executionPlan.effectiveArgs, prepared.runtimeToolStdin) ||
 				(prepared.executionPlan.commandInfo.command === "tab" && prepared.executionPlan.commandInfo.subcommand === "close"))
 		) {
-			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal });
+			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName, signal });
+		}
+		// A failed eval/back/forward/reload/state-load/tab would otherwise drop the page to unverified and force the
+		// agent through a manual get url round trip. Probe the live URL ourselves instead: an observed http(s) page
+		// stays verified, a file URL keeps the local-file gate closed through currentSessionTabTarget, and a failed
+		// probe preserves the existing unknown-target behavior.
+		if (
+			succeeded === false &&
+			!navigationSummary &&
+			processResult.agentBrowserStarted &&
+			!processResult.aborted &&
+			!processResult.timedOut &&
+			prepared.executionPlan.commandInfo.command !== "batch" &&
+			isUnverifiedPageTransitionCommand(prepared.executionPlan.commandInfo.command, prepared.executionPlan.commandInfo.subcommand)
+		) {
+			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName, signal });
+			// A failed transition command can still have mutated or replaced the document before throwing, so
+			// keeping the verified URL must not keep the prior snapshot refs (markTabTargetUnknown dropped
+			// them before this probe existed); invalidate so the next ref use requires a fresh snapshot.
+			failedTransitionReverification = navigationSummary !== undefined;
 		}
 		if (navigationSummary && presentationEnvelope && prepared.executionPlan.commandInfo.command !== "eval" && !Array.isArray(presentationEnvelope.data)) presentationEnvelope = { ...presentationEnvelope, data: mergeNavigationSummaryIntoData(presentationEnvelope.data, navigationSummary) };
 		let overlayBlockerDiagnostic: Awaited<ReturnType<typeof collectOverlayBlockerDiagnostic>>;
@@ -453,9 +473,11 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				const plannedBatchRecordSwap = !Array.isArray(presentationEnvelope?.data) && batchCommandSteps.some((step) => isRecordPageTransitionCommand(step));
 				const pageTransitionInvalidation = processResult.agentBrowserStarted && (isRecordPageTransitionCommand(prepared.commandTokens) || plannedBatchRecordSwap)
 					? buildPageTransitionRefSnapshotInvalidation()
-					: batchRefSnapshotState?.invalidation?.reason === "page-transition"
-						? batchRefSnapshotState.invalidation
-						: undefined;
+					: failedTransitionReverification
+						? buildPageTransitionRefSnapshotInvalidation("A failed eval/back/forward/reload/connect/state-load/tab command may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
+						: batchRefSnapshotState?.invalidation?.reason === "page-transition"
+							? batchRefSnapshotState.invalidation
+							: undefined;
 				if (currentSessionTabTarget) {
 					const tabUpdate = sessionPageState.applyTabTarget({ sessionName: sessionStateKey, target: currentSessionTabTarget, update: sessionPageStateUpdate });
 					if (!tabUpdate.applied && succeeded) sessionPageState.markPinning(sessionStateKey, "drift");

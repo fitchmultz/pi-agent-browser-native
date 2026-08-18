@@ -2061,3 +2061,121 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 	await rm(tempDir, { force: true, recursive: true });
 	await rm(packageDevDir, { force: true, recursive: true });
 });
+
+test("agentBrowserExtension keeps the page verified after a failed eval by probing the live URL", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-reverify-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+const sub = args[commandIndex + 1];
+let out;
+if (command === "open") out = { success: true, data: { title: "Example", url: "https://example.test/" } };
+else if (command === "eval") out = { success: false, error: "Evaluation error: SyntaxError: Identifier 'c' has already been declared" };
+else if (command === "get" && sub === "url") out = { success: true, data: { url: "https://example.test/" } };
+else if (command === "get" && sub === "title") out = { success: true, data: { title: "Example" } };
+process.stdout.write(JSON.stringify(out));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Iterate on page evals." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test/"] });
+			assert.equal(opened.isError, false);
+
+			const failed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "const c = 1;"] });
+			assert.equal(failed.isError, true);
+			assert.match(failed.content[0]?.text ?? "", /already been declared/);
+
+			const invocationsAfterFailure = await readInvocationLog(logPath);
+			const evalIndex = invocationsAfterFailure.findIndex((entry) => entry.args.includes("eval"));
+			assert.ok(evalIndex >= 0);
+			assert.ok(invocationsAfterFailure.some((entry, index) => index > evalIndex && entry.args.includes("get") && entry.args.includes("url")), "wrapper should probe get url after the failed eval");
+
+			const retried = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "const c = 2;"] });
+			assert.equal(retried.isError, true);
+			assert.equal((retried.details as { failureCategory?: string }).failureCategory, "upstream-error");
+			assert.doesNotMatch(retried.content[0]?.text ?? "", /became unverified/);
+			const finalInvocations = await readInvocationLog(logPath);
+			assert.equal(finalInvocations.filter((entry) => entry.args.includes("eval")).length, 2);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension skips the title probe when the live URL already has an observed title", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-title-reuse-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "nav-state.json");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device"]);
+let commandIndex = -1;
+for (let i = 0; i < args.length; i += 1) {
+  const token = args[i];
+  if (token === "--json") continue;
+  if (valueFlags.has(token)) { i += 1; continue; }
+  if (token.startsWith("--")) continue;
+  commandIndex = i;
+  break;
+}
+const command = args[commandIndex];
+const sub = args[commandIndex + 1];
+let state = { navigated: false };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+if (command === "reload") { state.navigated = true; fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state)); }
+const url = state.navigated ? "https://example.test/b" : "https://example.test/a";
+let out;
+if (command === "open") out = { success: true, data: { title: "Example A", url: "https://example.test/a" } };
+else if (command === "click") out = { success: true, data: { clicked: args[commandIndex + 1] } };
+else if (command === "reload") out = { success: true, data: { reloaded: true } };
+else if (command === "get" && sub === "url") out = { success: true, data: { url } };
+else if (command === "get" && sub === "title") out = { success: true, data: { title: state.navigated ? "Example B" : "Example A" } };
+process.stdout.write(JSON.stringify(out));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Click around a docs page." });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test/a"] });
+			assert.equal(opened.isError, false);
+
+			const clicked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "#x"] });
+			assert.equal(clicked.isError, false);
+			const afterClick = await readInvocationLog(logPath);
+			assert.ok(afterClick.some((entry) => entry.args.includes("get") && entry.args.includes("url")), "href-less click should probe get url");
+			assert.equal(afterClick.filter((entry) => entry.args.includes("get") && entry.args.includes("title")).length, 0, "same-URL probe should reuse the observed title");
+
+			const reloaded = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["reload"] });
+			assert.equal(reloaded.isError, false);
+			assert.match(reloaded.content[0]?.text ?? "", /Example B/);
+			const afterReload = await readInvocationLog(logPath);
+			assert.equal(afterReload.filter((entry) => entry.args.includes("get") && entry.args.includes("title")).length, 1, "changed-URL probe should read the title once");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});

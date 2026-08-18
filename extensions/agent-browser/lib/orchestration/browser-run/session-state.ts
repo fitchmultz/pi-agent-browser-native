@@ -439,7 +439,7 @@ export function buildStaleRefPreflight(options: {
 	if (options.refSnapshotInvalidation) {
 		return {
 			message: options.refSnapshotInvalidation.reason === "page-transition"
-				? `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} cannot be used because a recording command (record start, or record restart with a URL) replaced or navigated the active page and invalidated the prior snapshot. Run snapshot -i successfully before using page-scoped refs.`
+				? `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} cannot be used yet. ${options.refSnapshotInvalidation.summary}`
 				: `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} cannot be used because the latest snapshot for this session reported No active page. Run snapshot -i successfully before using page-scoped refs.`,
 			refIds: usedRefIds,
 			snapshotInvalidation: options.refSnapshotInvalidation,

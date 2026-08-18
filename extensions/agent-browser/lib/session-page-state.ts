@@ -273,10 +273,10 @@ export function buildNoActivePageRefSnapshotInvalidation(): SessionRefSnapshotIn
 	};
 }
 
-export function buildPageTransitionRefSnapshotInvalidation(): SessionRefSnapshotInvalidation {
+export function buildPageTransitionRefSnapshotInvalidation(summary?: string): SessionRefSnapshotInvalidation {
 	return {
 		reason: "page-transition",
-		summary: "A recording command replaced or navigated the active page and invalidated the prior snapshot. Run snapshot -i before using page-scoped refs.",
+		summary: summary ?? "A recording command (record start, or record restart with a URL) replaced or navigated the active page and invalidated the prior snapshot. Run snapshot -i before using page-scoped refs.",
 	};
 }
 
@@ -317,7 +317,7 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 function getRestoredRefSnapshotInvalidation(details: Record<string, unknown>, command: string | undefined): SessionRefSnapshotInvalidation | undefined {
 	const invalidation = isRecord(details.refSnapshotInvalidation) ? details.refSnapshotInvalidation : undefined;
 	if (invalidation?.reason === "no-active-page") return buildNoActivePageRefSnapshotInvalidation();
-	if (invalidation?.reason === "page-transition") return buildPageTransitionRefSnapshotInvalidation();
+	if (invalidation?.reason === "page-transition") return buildPageTransitionRefSnapshotInvalidation(typeof invalidation.summary === "string" ? invalidation.summary : undefined);
 	const errorText = typeof details.error === "string"
 		? details.error
 		: typeof details.summary === "string"
