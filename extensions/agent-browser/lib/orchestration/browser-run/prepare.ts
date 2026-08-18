@@ -528,6 +528,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const targetsCurrentManagedSession = state.managedSessionActive
 		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
 	const targetsOffCurrentOwnedSession = recordedOwnedSession !== undefined && !targetsCurrentManagedSession;
+	const offCurrentLaunchScopedFlags = targetsOffCurrentOwnedSession
+		? executionPlan.startupScopedFlags.filter((flag) => flag !== "--namespace")
+		: [];
 	const offCurrentCompatibilityUpgrade = targetsOffCurrentOwnedSession
 		&& executionPlan.compatibilityWorkaround !== undefined
 		&& recordedOwnedSession.compatibilityWorkaround === undefined;
@@ -591,6 +594,12 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				...executionPlan,
 				recoveryHint: undefined,
 				validationError: policy.error,
+			};
+		} else if (!closeCommand && policy.daemonStatus === "active" && offCurrentLaunchScopedFlags.length > 0) {
+			executionPlan = {
+				...executionPlan,
+				recoveryHint: undefined,
+				validationError: `This older wrapper-owned session is already running, so launch-scoped flags ${offCurrentLaunchScopedFlags.join(", ")} would replace or be ignored by upstream agent-browser. Close it first, or remove the explicit --session and retry with sessionMode: \"fresh\".`,
 			};
 		} else if (!closeCommand && policy.daemonStatus === "active" && offCurrentCompatibilityUpgrade) {
 			executionPlan = {

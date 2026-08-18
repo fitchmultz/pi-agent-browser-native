@@ -1153,13 +1153,21 @@ test("agentBrowserExtension retains headed autosave policy for an older owned se
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
-const command = args.find((arg) => ["close", "get", "open"].includes(arg));
-if (command === "close") {
+const sessionIndex = args.indexOf("--session");
+const sessionName = sessionIndex >= 0 ? args[sessionIndex + 1] : "default";
+const activePath = path.join(${JSON.stringify(tempDir)}, sessionName + ".active");
+const command = args.find((arg) => ["close", "get", "open", "session"].includes(arg));
+if (command === "session") {
+  const active = fs.existsSync(activePath);
+  process.stdout.write(JSON.stringify({ success: true, data: { active, runtime: active ? { restoreKey: null } : null } }));
+} else if (command === "close") {
   process.stdout.write(JSON.stringify({ success: false, error: "forced close failure" }));
   process.exit(1);
 } else {
+  if (command === "open") fs.writeFileSync(activePath, "active");
   const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
     : { title: "Headed", url: args[args.length - 1] };
   process.stdout.write(JSON.stringify({ success: true, data }));
@@ -1167,7 +1175,7 @@ if (command === "close") {
 	);
 
 	try {
-		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, AGENT_BROWSER_HEADED: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, AGENT_BROWSER_HEADED: undefined, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0", PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const headedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1187,6 +1195,13 @@ if (command === "close") {
 			assert.equal(replacement.details?.managedSessionHeadedAutosaveDisabled, undefined);
 			assert.equal((replacement.details?.managedSessionOutcome as { replacedSessionClosed?: boolean } | undefined)?.replacedSessionClosed, false);
 			assert.match((replacement.content[0] as { text: string }).text, /Automatic close of the previous wrapper-managed session failed/);
+
+			const blockedProfileChange = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", headedSessionName, "--profile", "Default", "open", "https://example.com/profiled"],
+			});
+			assert.equal(blockedProfileChange.isError, true, JSON.stringify(blockedProfileChange));
+			assert.match(String(blockedProfileChange.details?.validationError), /launch-scoped flags --profile/i);
+			await rm(join(tempDir, `${headedSessionName}.active`), { force: true });
 
 			const oldSessionFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", headedSessionName, "get", "url"],
@@ -1215,6 +1230,7 @@ if (command === "close") {
 				entry.args.includes(headedSessionName) && entry.args.includes("get") && entry.args.includes("url"),
 			);
 			assert.equal(replacementOpen?.autosave, null, JSON.stringify(invocations));
+			assert.equal(invocations.some((entry) => entry.args.includes("--profile")), false, JSON.stringify(invocations));
 			assert.equal(explicitOldSessionFollowUps.length, 2, JSON.stringify(invocations));
 			assert.equal(explicitOldSessionFollowUps.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
 		});
