@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Split `semanticAction` schema into `select` vs `check|click|fill` unions so model-facing params no longer expose `values` on non-select actions (reduces invalid `semanticAction.values is only supported for select actions` loops). Tightened `stdin` description to state it is never valid with open/snapshot/click/fill.
+
 ## 0.4.5 - 2026-08-18
 
 ### Fixed
