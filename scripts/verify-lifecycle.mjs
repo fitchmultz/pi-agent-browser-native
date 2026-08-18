@@ -276,7 +276,8 @@ export function fakeAgentBrowserScript() {
 const fs = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
-if (args.length === 1 && args[0] === "--version") {
+const versionArgs = args[0] === "--allow-file-access" && args[1] === "false" ? args.slice(2) : args;
+if (versionArgs.length === 1 && versionArgs[0] === "--version") {
   process.stdout.write(${JSON.stringify(TARGET_AGENT_BROWSER_VERSION_LABEL)});
   process.exit(0);
 }
