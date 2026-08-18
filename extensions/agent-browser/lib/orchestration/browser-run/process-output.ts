@@ -474,7 +474,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				const pageTransitionInvalidation = processResult.agentBrowserStarted && (isRecordPageTransitionCommand(prepared.commandTokens) || plannedBatchRecordSwap)
 					? buildPageTransitionRefSnapshotInvalidation()
 					: failedTransitionReverification
-						? buildPageTransitionRefSnapshotInvalidation("A failed eval/back/forward/reload/state-load/tab command may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
+						? buildPageTransitionRefSnapshotInvalidation("A failed eval/back/forward/reload/connect/state-load/tab command may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
 						: batchRefSnapshotState?.invalidation?.reason === "page-transition"
 							? batchRefSnapshotState.invalidation
 							: undefined;

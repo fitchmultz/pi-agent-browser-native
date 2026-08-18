@@ -317,7 +317,7 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 function getRestoredRefSnapshotInvalidation(details: Record<string, unknown>, command: string | undefined): SessionRefSnapshotInvalidation | undefined {
 	const invalidation = isRecord(details.refSnapshotInvalidation) ? details.refSnapshotInvalidation : undefined;
 	if (invalidation?.reason === "no-active-page") return buildNoActivePageRefSnapshotInvalidation();
-	if (invalidation?.reason === "page-transition") return buildPageTransitionRefSnapshotInvalidation();
+	if (invalidation?.reason === "page-transition") return buildPageTransitionRefSnapshotInvalidation(typeof invalidation.summary === "string" ? invalidation.summary : undefined);
 	const errorText = typeof details.error === "string"
 		? details.error
 		: typeof details.summary === "string"

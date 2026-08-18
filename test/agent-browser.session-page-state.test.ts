@@ -120,6 +120,18 @@ test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidat
 	});
 });
 
+test("SessionPageState.fromBranch preserves a custom page-transition invalidation summary", () => {
+	const custom = buildPageTransitionRefSnapshotInvalidation("A failed eval may still have changed the page.");
+	const state = SessionPageState.fromBranch([
+		toolEntry({
+			command: "eval",
+			refSnapshotInvalidation: custom,
+			sessionName: "s1",
+		}),
+	]);
+	assert.deepEqual(state.get("s1").refSnapshotInvalidation, custom);
+});
+
 test("SessionPageState.fromBranch clears restored page state on upstream close aliases", () => {
 	for (const command of ["close", "quit", "exit"] as const) {
 		const state = SessionPageState.fromBranch([
