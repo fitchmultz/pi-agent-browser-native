@@ -684,7 +684,7 @@ if (args.includes("session") && args.includes("info")) {
 			});
 			assert.equal(blocked.isError, true);
 			assert.equal(blocked.details?.failureCategory, "validation-error");
-			assert.match(String(blocked.details?.validationError ?? ""), /does not match the requested managed-restore policy|launch-scoped flags/);
+			assert.match(String(blocked.details?.validationError ?? ""), /launch-scoped flags/);
 			assert.equal(await userInvocationCount(), invocationCount);
 			assert.equal(blocked.details?.managedSessionRestoreDisabled, undefined);
 
@@ -1076,7 +1076,7 @@ if (args.includes("session") && args.includes("info")) {
 				args: ["--session", sessionName, "--auto-connect", "open", "https://example.com"],
 			});
 			assert.equal(blocked.isError, true);
-			assert.match(String(blocked.details?.validationError ?? ""), /does not match the requested managed-restore policy|launch-scoped flags/);
+			assert.match(String(blocked.details?.validationError ?? ""), /launch-scoped flags/);
 			assert.equal((await readInvocationLog(logPath)).filter((entry) => entry.args.includes("open")).length, mainOpenCount);
 		});
 	} finally {
