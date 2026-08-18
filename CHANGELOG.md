@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.4.3 - 2026-08-17
+
+### Fixed
+
+- Preserved profiled and other launch-configured browser sessions across native tool calls. The wrapper no longer sends an empty `--args` launch override on every local subprocess because `agent-browser 0.34.0` treats that value as a new launch configuration and replaces a profiled browser with `about:blank`. The protected empty config, cleared raw-args environment, explicit `--allow-file-access false`, and existing raw-argument validation continue to enforce the local-file boundary; the wrapper still sends a fixed non-empty Chrome argument for its narrow user-agent compatibility sessions.
+
 ## 0.4.2 - 2026-08-13
 
 ### Changed

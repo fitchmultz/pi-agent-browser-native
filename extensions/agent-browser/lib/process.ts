@@ -168,9 +168,9 @@ export function pinAgentBrowserFileAccessDisabled(args: string[], wrapperCompati
 	if (preserveAttachedBrowserSession) return filtered;
 	// Upstream's flag overrides only the active CDP target; the Chrome arg covers new tabs. Its --args parser splits commas/newlines.
 	const browserArgs = wrapperCompatibilityUserAgent
-		? `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`
-		: "";
-	return ["--args", browserArgs, "--allow-file-access", "false", ...filtered];
+		? ["--args", `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`]
+		: [];
+	return [...browserArgs, "--allow-file-access", "false", ...filtered];
 }
 
 export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {

@@ -513,7 +513,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "https://sa
 			});
 			assert.equal(result.isError, false, result.content[0]?.text);
 			const invocation = (await readInvocationLog(logPath)).find((entry) => entry.args.includes("get") && entry.args.at(-1) === "url");
-			assert.equal(invocation?.args[invocation.args.indexOf("--args") + 1], "");
+			assert.equal(invocation?.args.includes("--args"), false);
 			assert.equal(invocation?.args[invocation.args.indexOf("--allow-file-access") + 1], "false");
 		});
 	} finally {

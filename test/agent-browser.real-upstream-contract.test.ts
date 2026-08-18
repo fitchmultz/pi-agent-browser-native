@@ -309,6 +309,24 @@ if (!REAL_UPSTREAM_ENABLED) {
 					await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 					const contractUrl = `${fixtureServer?.baseUrl}/contract`;
 
+					await withPatchedEnv({ AGENT_BROWSER_DOWNLOAD_PATH: undefined, AGENT_BROWSER_SCREENSHOT_DIR: undefined }, async () => {
+						const profileHarness = createExtensionHarness({ cwd: tempDir, sessionId: "12345678123456781234567812345678" });
+						await runExtensionEvent(profileHarness.handlers, "session_start", { reason: "new" }, profileHarness.ctx);
+						await mkdir(join(tempDir, "profile-continuity"));
+						try {
+							const profileOpen = await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, {
+								args: ["--profile", join(tempDir, "profile-continuity"), "open", contractUrl],
+								sessionMode: "fresh",
+							});
+							assertSuccessfulResult(profileOpen, shapes.commands.open, "profile continuity open");
+							const profileUrl = await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, { args: ["get", "url"] });
+							const profileUrlDetails = assertSuccessfulResult(profileUrl, shapes.commands.coreSubcommand, "profile continuity get url");
+							assert.equal((profileUrlDetails.data as { url?: string }).url, contractUrl, "profile launch helpers must not replace the browser with about:blank");
+						} finally {
+							await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, { args: ["close"] });
+						}
+					});
+
 					const version = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--version"] });
 					const versionDetails = assertSuccessfulResult(version, shapes.commands.version, "--version");
 					assert.equal(versionDetails.stdout, expectedVersionLabel());
