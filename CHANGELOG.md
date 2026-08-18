@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.4.5 - 2026-08-18
+
+### Fixed
+
+- Cut agent round trips on scraping and recovery paths. A failed non-batch `eval`, `back`, `forward`, `reload`, `connect`, `state load`, or `tab` selection now re-probes the live page URL itself: an observed http(s) page stays verified instead of forcing a manual `get url` before the next read, a file page stays gated, and a failed probe keeps the prior unverified-page behavior. Because a failed transition can still have mutated the document, a successful probe also invalidates the prior page-scoped refs (matching the old unknown-target behavior), and transcript replay preserves the invalidation summary.
+- Navigation-summary probes reuse the title already observed for an unchanged URL and skip `about:blank`, halving probe cost on non-navigating clicks. URLs remain live-probed on every call.
+- `wait --url` timeouts (including compiled `job.assertUrl`) now append `fresh-session-after-url-wait-timeout`: an actionable fresh-session recovery (`open about:blank`, then replace with the target URL and replay as one batch) for silently missed upstream click dispatch, ranked after the inspect action. Fresh-session follow-ups are no longer silently downgraded to reuse the current session by a `--session` prefix.
+
+### Changed
+
+- Compact snapshots promote named action links (row/navigation links such as comment counts, docs sidebar links, and repository-style result links) to first-class high-value controls, so dense-page click targets surface inline instead of only in the spill file.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (781 tests, 779 pass, 2 opt-in skips) plus four-seat exact-head review across three waves. Extension-vs-CLI dogfood reruns: HN research flow matched CLI parity (5 calls, 0 failures), Sauce Demo checkout completed with 0 silent no-ops, react.dev navigation unchanged at CLI-parity call count. npm was not published.
+
 ## 0.4.4 - 2026-08-18
 
 ### Fixed
