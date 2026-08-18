@@ -112,6 +112,7 @@ function isBashToolCallEvent(event: unknown): event is BashToolCallLike {
 
 type OwnedManagedSession = {
 	branchOwned: boolean;
+	compatibilityWorkaround?: CompatibilityWorkaround;
 	cwd: string;
 	headedManagedAutosaveDisabled?: boolean;
 	headedManagedAutosaveInterval?: string;
@@ -285,6 +286,13 @@ function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactMa
 	return restoredManifest;
 }
 
+function getRecognizedCompatibilityWorkaround(value: unknown): CompatibilityWorkaround | undefined {
+	const workaround = isRecord(value) ? value : undefined;
+	return (workaround?.id === "chatgpt-headless-user-agent" || workaround?.id === "cloudflare-headless-user-agent") && typeof workaround.reason === "string"
+		? { id: workaround.id, reason: workaround.reason }
+		: undefined;
+}
+
 function restoreManagedSessionCompatibilityWorkaroundFromBranch(
 	branch: unknown[],
 	sessionName: string,
@@ -298,12 +306,8 @@ function restoreManagedSessionCompatibilityWorkaroundFromBranch(
 		if (!message || message.toolName !== "agent_browser") continue;
 		const details = isRecord(message.details) ? message.details : undefined;
 		if (!details) continue;
-		const workaround = isRecord(details.compatibilityWorkaround) ? details.compatibilityWorkaround : undefined;
 		if (getSessionContextKey(typeof details.sessionName === "string" ? details.sessionName : undefined, typeof details.namespace === "string" ? details.namespace : undefined) !== targetKey) continue;
-		const recognizedWorkaround: CompatibilityWorkaround | undefined =
-			(workaround?.id === "chatgpt-headless-user-agent" || workaround?.id === "cloudflare-headless-user-agent") && typeof workaround.reason === "string"
-				? { id: workaround.id, reason: workaround.reason }
-				: undefined;
+		const recognizedWorkaround = getRecognizedCompatibilityWorkaround(details.compatibilityWorkaround);
 		const succeeded = getSuccessfulToolResult(details, message);
 		const outcome = getManagedSessionOutcome(details);
 		const activeAfterFailure = recognizedWorkaround
@@ -494,15 +498,18 @@ function trackOwnedManagedSession(
 	sessions: Map<string, OwnedManagedSession>,
 	sessionName: string | undefined,
 	cwd: string,
-	options: { branchOwned?: boolean; headedManagedAutosaveDisabled?: boolean; headedManagedAutosaveInterval?: string; namespace?: string } = {},
+	options: { branchOwned?: boolean; compatibilityWorkaround?: CompatibilityWorkaround; headedManagedAutosaveDisabled?: boolean; headedManagedAutosaveInterval?: string; namespace?: string } = {},
 ): void {
 	if (!sessionName) return;
 	const key = getSessionContextKey(sessionName, options.namespace) ?? sessionName;
 	const existing = sessions.get(key);
 	const branchOwned = existing && !existing.branchOwned ? false : options.branchOwned === true;
+	const compatibilityWorkaround = Object.hasOwn(options, "compatibilityWorkaround")
+		? options.compatibilityWorkaround
+		: existing?.compatibilityWorkaround;
 	const headedManagedAutosaveDisabled = options.headedManagedAutosaveDisabled ?? existing?.headedManagedAutosaveDisabled;
 	const headedManagedAutosaveInterval = options.headedManagedAutosaveInterval ?? existing?.headedManagedAutosaveInterval;
-	sessions.set(key, { branchOwned, cwd, headedManagedAutosaveDisabled, headedManagedAutosaveInterval, namespace: options.namespace, sessionName });
+	sessions.set(key, { branchOwned, compatibilityWorkaround, cwd, headedManagedAutosaveDisabled, headedManagedAutosaveInterval, namespace: options.namespace, sessionName });
 }
 
 function untrackOwnedManagedSession(sessions: Map<string, OwnedManagedSession>, sessionName: string | undefined, namespace?: string): void {
@@ -535,6 +542,7 @@ function syncOwnedManagedSessionsFromResult(sessions: Map<string, OwnedManagedSe
 	const namespace = isRecord(details) && typeof details.namespace === "string" ? details.namespace : undefined;
 	if (outcome.activeAfter === true && (status === "created" || status === "replaced" || status === "unchanged")) {
 		trackOwnedManagedSession(sessions, currentSessionName, cwd, {
+			compatibilityWorkaround: getRecognizedCompatibilityWorkaround(details?.compatibilityWorkaround),
 			headedManagedAutosaveDisabled: details?.managedSessionHeadedAutosaveDisabled === true,
 			headedManagedAutosaveInterval: typeof details?.managedSessionHeadedAutosaveInterval === "string" ? details.managedSessionHeadedAutosaveInterval : undefined,
 			namespace,
@@ -1320,6 +1328,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			if (!isRestorableManagedSessionName(identity.sessionName, managedSessionBaseName)) continue;
 			trackOwnedManagedSession(ownedManagedSessions, identity.sessionName, ctx.cwd, {
 				branchOwned: true,
+				compatibilityWorkaround: restoreManagedSessionCompatibilityWorkaroundFromBranch(branch, identity.sessionName, identity.namespace),
 				headedManagedAutosaveDisabled: restoreManagedSessionHeadedAutosaveDisabledFromBranch(branch, identity.sessionName, identity.namespace),
 				headedManagedAutosaveInterval: restoreManagedSessionHeadedAutosaveIntervalFromBranch(branch, identity.sessionName, identity.namespace),
 				namespace: identity.namespace,
@@ -1328,6 +1337,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		if (restoredState.active) {
 			trackOwnedManagedSession(ownedManagedSessions, restoredState.sessionName, ctx.cwd, {
 				branchOwned: true,
+				compatibilityWorkaround: managedSessionCompatibilityWorkaround,
 				headedManagedAutosaveDisabled: managedSessionHeadedAutosaveDisabled,
 				headedManagedAutosaveInterval: managedSessionHeadedAutosaveInterval,
 				namespace: restoredState.namespace,

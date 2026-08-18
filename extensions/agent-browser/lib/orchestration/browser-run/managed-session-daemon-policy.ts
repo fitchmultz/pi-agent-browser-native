@@ -70,7 +70,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 	context: OwnedManagedSessionContext;
 	mode?: "close" | "reuse";
 	signal?: AbortSignal;
-}): Promise<{ error?: string; lock?: ManagedSessionPolicyLock }> {
+}): Promise<{ daemonStatus?: ManagedSessionDaemonInspection["status"]; error?: string; lock?: ManagedSessionPolicyLock }> {
 	const { context, signal } = options;
 	if (!context.cwd) return { error: "Managed-session policy validation requires the wrapper-owned session cwd." };
 	const lock = await acquireManagedSessionPolicyLock({
@@ -98,7 +98,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 		if (daemon.status === "inactive") context.restoreState.forgetDaemonRestoreKey(context.sessionName, context.namespace);
 		if (options.mode === "close") {
 			if (daemon.status === "active") context.restoreState.recordDaemonRestoreKey(context.sessionName, context.namespace, daemon.restoreKey);
-			return { lock };
+			return { daemonStatus: daemon.status, lock };
 		}
 
 		const stickyDisabled = context.restoreState.isDisabled(context.sessionName, context.namespace);
@@ -120,13 +120,14 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 		if (activePolicyMatches) context.restoreState.recordDaemonRestoreKey(context.sessionName, context.namespace, daemon.restoreKey);
 		return !["inactive", "missing-binary"].includes(daemon.status) && !activePolicyMatches
 			? {
+				daemonStatus: daemon.status,
 				error: [
 					"This wrapper-owned session's live daemon does not match the requested managed-restore policy.",
 					"Close that session first, retry with sessionMode: \"fresh\", or use a distinct explicit --session.",
 				].join(" "),
 				lock,
 			}
-			: { lock };
+			: { daemonStatus: daemon.status, lock };
 	} catch (error) {
 		await lock.release();
 		throw error;

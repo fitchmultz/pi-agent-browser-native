@@ -173,12 +173,12 @@ test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", (
 	}
 });
 
-test("pinAgentBrowserFileAccessDisabled overrides config raw args and forces the separated upstream false form", () => {
-	const pinned = ["--args", "", "--allow-file-access", "false", "open", "about:blank"];
+test("pinAgentBrowserFileAccessDisabled forces the separated upstream false form without an empty launch override", () => {
+	const pinned = ["--allow-file-access", "false", "open", "about:blank"];
 	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["open", "about:blank"]), pinned);
 	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--allow-file-access", "false", "open", "about:blank"]), pinned);
 	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--allow-file-access", "true", "--allow-file-access=false", "open", "about:blank"]), pinned);
-	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--args", "--disable-gpu", "open", "about:blank"]), ["--args", "", "--allow-file-access", "false", "--args", "--disable-gpu", "open", "about:blank"]);
+	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--args", "--disable-gpu", "open", "about:blank"]), ["--allow-file-access", "false", "--args", "--disable-gpu", "open", "about:blank"]);
 	assert.deepEqual(
 		pinAgentBrowserFileAccessDisabled(["open", "about:blank"], "Chrome, not Headless\n"),
 		["--args", "--user-agent=Chrome not Headless", "--allow-file-access", "false", "open", "about:blank"],
@@ -202,10 +202,15 @@ process.stdout.write(JSON.stringify({ success: true, data: { allowFileAccessEnv:
 			const result = await runAgentBrowserProcess({ args: ["open", "about:blank"], cwd: tempDir });
 			const parsed = await parseAgentBrowserEnvelope(result.stdout);
 			const data = parsed.envelope?.data as { allowFileAccessEnv?: string | null; args?: string[]; config?: string; configContent?: string | null; envArgs?: string | null };
-			assert.deepEqual(data.args?.slice(0, 4), ["--args", "", "--allow-file-access", "false"]);
+			assert.deepEqual(data.args?.slice(0, 2), ["--allow-file-access", "false"]);
 			assert.equal(data.configContent, "{}\n");
 			assert.match(data.config ?? "", /managed-restore-config/);
 			assert.equal(data.envArgs, null);
+		});
+		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
+			const result = await runAgentBrowserProcess({ args: ["--session", "caller-owned", "open", "file:///tmp/page.html"], cwd: tempDir });
+			assert.equal(result.agentBrowserStarted, false);
+			assert.match(result.spawnError?.message ?? "", /wrapper-managed local browser/);
 		});
 		await withPatchedEnv({ AGENT_BROWSER_ALLOW_FILE_ACCESS: "true", PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 			const result = await runAgentBrowserProcess({ args: ["--allow-file-access", "false", "get", "url"], cwd: tempDir, preserveAttachedBrowserSession: true });
@@ -417,11 +422,10 @@ test("runAgentBrowserProcess does not spawn already-aborted calls", async () => 
 
 	try {
 		const processResult = await runAgentBrowserProcess({
-			args: ["eval", "--stdin"],
+			args: ["--session", "caller-owned", "open", "file:///tmp/page.html"],
 			cwd: tempDir,
 			env: { PATH: `${tempDir}${delimiter}${basePath}` },
 			signal: controller.signal,
-			stdin: "console.log(1)",
 		});
 
 		assert.equal(processResult.aborted, true);

@@ -21,6 +21,7 @@ import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-reco
 import { extractRefSnapshotFromData, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import {
 	buildExecutionPlan,
+	canUseHeadlessCompatibilityUserAgent,
 	createFreshSessionName,
 	extractCommandTokens,
 	extractUpstreamCommandTokens,
@@ -526,6 +527,26 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
 	const targetsCurrentManagedSession = state.managedSessionActive
 		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
+	const targetsOffCurrentOwnedSession = recordedOwnedSession !== undefined && !targetsCurrentManagedSession;
+	const offCurrentLaunchScopedFlags = targetsOffCurrentOwnedSession
+		? executionPlan.startupScopedFlags.filter((flag) => flag !== "--namespace")
+		: [];
+	const offCurrentCompatibilityUpgrade = targetsOffCurrentOwnedSession
+		&& executionPlan.compatibilityWorkaround !== undefined
+		&& recordedOwnedSession.compatibilityWorkaround === undefined;
+	if (targetsOffCurrentOwnedSession && canUseHeadlessCompatibilityUserAgent(preparedArgs.args, agentBrowserProcessEnv)) {
+		const compatibilityWorkaround = executionPlan.compatibilityWorkaround ?? recordedOwnedSession.compatibilityWorkaround;
+		if (compatibilityWorkaround) {
+			const userAgentIndex = executionPlan.effectiveArgs.indexOf("--user-agent");
+			executionPlan = {
+				...executionPlan,
+				compatibilityWorkaround,
+				effectiveArgs: userAgentIndex < 0
+					? executionPlan.effectiveArgs
+					: [...executionPlan.effectiveArgs.slice(0, userAgentIndex), ...executionPlan.effectiveArgs.slice(userAgentIndex + 2)],
+			};
+		}
+	}
 	const retainedHeadedAutosaveDisabled = recordedOwnedSession?.headedManagedAutosaveDisabled === true
 		|| (targetsCurrentManagedSession && state.managedSessionHeadedAutosaveDisabled === true);
 	const retainedHeadedAutosaveInterval = recordedOwnedSession?.headedManagedAutosaveInterval
@@ -538,6 +559,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const headedLaunch = getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(agentBrowserProcessEnv.AGENT_BROWSER_HEADED);
 	const headedManagedAutosaveDisabled = retainedHeadedAutosaveDisabled || (explicitAutosaveInterval === undefined && headedLaunch);
 	const headedManagedAutosaveInterval = retainedHeadedAutosaveInterval ?? (headedLaunch ? explicitAutosaveInterval ?? "0" : undefined);
+	const compatibilityUserAgent = executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined;
+	const compatibilityUserAgentApplied = compatibilityUserAgent !== undefined
+		&& executionPlan.effectiveArgs.some((token, index) => token === "--user-agent" && executionPlan.effectiveArgs[index + 1] === compatibilityUserAgent);
 	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
 		cwd: recordedOwnedSession?.cwd ?? cwd,
@@ -552,8 +576,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		restoreState: state.managedSessionRestoreState,
 		sessionName: executionPlan.sessionName,
 		stdin: runtimeToolStdin,
-		compatibilityUserAgent: executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined,
-		wrapperInjectedUserAgent: executionPlan.compatibilityWorkaround !== undefined,
+		compatibilityUserAgent: compatibilityUserAgentApplied ? compatibilityUserAgent : undefined,
+		wrapperInjectedUserAgent: compatibilityUserAgentApplied,
 	});
 	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined, agentBrowserProcessEnv);
 	if (!executionPlan.validationError && managedSessionTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedSessionTargetError };
@@ -570,6 +594,24 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				...executionPlan,
 				recoveryHint: undefined,
 				validationError: policy.error,
+			};
+		} else if (!closeCommand && policy.daemonStatus === "active" && offCurrentLaunchScopedFlags.length > 0) {
+			executionPlan = {
+				...executionPlan,
+				recoveryHint: undefined,
+				validationError: `This older wrapper-owned session is already running, so launch-scoped flags ${offCurrentLaunchScopedFlags.join(", ")} would replace or be ignored by upstream agent-browser. Close it first, or remove the explicit --session and retry with sessionMode: \"fresh\".`,
+			};
+		} else if (!closeCommand && policy.daemonStatus === "active" && offCurrentCompatibilityUpgrade) {
+			executionPlan = {
+				...executionPlan,
+				recoveryHint: undefined,
+				validationError: "This older wrapper-owned session is already running without the user agent required by this site. Close it first, or remove the explicit --session and retry with sessionMode: \"fresh\".",
+			};
+		} else if (!closeCommand && policy.daemonStatus === "inactive" && compatibilityUserAgent && !compatibilityUserAgentApplied) {
+			ownedManagedSession.compatibilityUserAgent = compatibilityUserAgent;
+			executionPlan = {
+				...executionPlan,
+				effectiveArgs: ["--user-agent", compatibilityUserAgent, ...executionPlan.effectiveArgs],
 			};
 		} else if (closeCommand && managedSessionPolicyLock) {
 			executionPlan = {

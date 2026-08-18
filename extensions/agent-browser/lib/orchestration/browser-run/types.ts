@@ -56,6 +56,7 @@ export interface BrowserRunInputFields {
 }
 
 export interface OwnedManagedSessionReference {
+	compatibilityWorkaround?: CompatibilityWorkaround;
 	cwd: string;
 	headedManagedAutosaveDisabled?: boolean;
 	headedManagedAutosaveInterval?: string;

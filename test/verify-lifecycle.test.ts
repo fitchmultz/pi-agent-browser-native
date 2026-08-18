@@ -105,8 +105,10 @@ test("fake lifecycle agent-browser reports the canonical upstream version withou
 	const scriptPath = join(directory, "agent-browser");
 	try {
 		await writeFile(scriptPath, lifecycleModule.fakeAgentBrowserScript(), "utf8");
-		const { stdout } = await execFile(process.execPath, [scriptPath, "--version"], { env: {} });
-		assert.equal(stdout, TARGET_AGENT_BROWSER_VERSION_LABEL);
+		for (const args of [["--version"], ["--allow-file-access", "false", "--version"]]) {
+			const { stdout } = await execFile(process.execPath, [scriptPath, ...args], { env: {} });
+			assert.equal(stdout, TARGET_AGENT_BROWSER_VERSION_LABEL);
+		}
 	} finally {
 		await rm(directory, { force: true, recursive: true });
 	}

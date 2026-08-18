@@ -446,7 +446,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(requestsAfterTerminalClose.details?.attachedBrowserSession, undefined);
 			assert.equal(requestsAfterTerminalClose.details?.networkRouteDiagnostics, undefined);
 			const postCloseInvocations = (await readInvocationLog(logPath)).slice(terminalCloseInvocationCount);
-			assert.ok(postCloseInvocations.some((entry) => entry.args.includes("network") && entry.args.includes("requests") && entry.args.includes("--args")));
+			const postCloseRequests = postCloseInvocations.find((entry) => entry.args.includes("network") && entry.args.includes("requests"));
+			assert.equal(postCloseRequests?.args.includes("--args"), false);
+			assert.equal(postCloseRequests?.args[postCloseRequests.args.indexOf("--allow-file-access") + 1], "false");
 
 			const terminalResumeInvocationCount = (await readInvocationLog(logPath)).length;
 			const terminalResumeHarness = createExtensionHarness({
@@ -459,7 +461,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(requestsAfterTerminalResume.isError, false, requestsAfterTerminalResume.content[0]?.type === "text" ? requestsAfterTerminalResume.content[0].text : "post-resume requests failed");
 			assert.equal(requestsAfterTerminalResume.details?.attachedBrowserSession, undefined);
 			assert.equal(requestsAfterTerminalResume.details?.networkRouteDiagnostics, undefined);
-			assert.ok((await readInvocationLog(logPath)).slice(terminalResumeInvocationCount).some((entry) => entry.args.includes("network") && entry.args.includes("requests") && entry.args.includes("--args")));
+			const postResumeRequests = (await readInvocationLog(logPath)).slice(terminalResumeInvocationCount).find((entry) => entry.args.includes("network") && entry.args.includes("requests"));
+			assert.equal(postResumeRequests?.args.includes("--args"), false);
+			assert.equal(postResumeRequests?.args[postResumeRequests.args.indexOf("--allow-file-access") + 1], "false");
 
 			const invocationCount = (await readInvocationLog(logPath)).length;
 			const resumedHarness = createExtensionHarness({

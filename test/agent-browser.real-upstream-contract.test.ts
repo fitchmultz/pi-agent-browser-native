@@ -1,6 +1,6 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, nested batch-attachment isolation, cross-harness restore persistence, and symlinked-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, unsafe caller-owned local-daemon blocking, nested batch-attachment isolation, cross-harness restore persistence, and symlinked-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
@@ -279,6 +280,81 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 	}
 }
 
+async function assertRealUpstreamUnsafeLocalDaemonIsBlocked(): Promise<void> {
+	if (process.platform === "win32") return;
+	const tempDir = await mkdtemp("/tmp/piab-real-unsafe-");
+	const socketDir = join(tempDir, "sockets");
+	const configPath = join(tempDir, "empty.json");
+	const sessionName = `unsafe-${process.pid}`;
+	const safeSessionName = `piab-safe-${process.pid}`;
+	const upstreamEnv = {
+		...process.env,
+		AGENT_BROWSER_DEFAULT_TIMEOUT: "25000",
+		AGENT_BROWSER_IDLE_TIMEOUT_MS: "900000",
+		AGENT_BROWSER_SOCKET_DIR: socketDir,
+		HOME: tempDir,
+	};
+	try {
+		await mkdir(join(tempDir, ".agent-browser"), { recursive: true });
+		await mkdir(socketDir, { mode: 0o700 });
+		await writeFile(configPath, "{}\n");
+		const protectedFile = join(tempDir, ".agent-browser", "review-state.txt");
+		await writeFile(protectedFile, "fixture-value\n");
+		const fixturePath = join(tempDir, "fixture.html");
+		await writeFile(fixturePath, `<!doctype html><title>PENDING</title><script>fetch(${JSON.stringify(pathToFileURL(protectedFile).href)}).then(r => r.text()).then(() => document.title = "READABLE").catch(() => document.title = "BLOCKED");</script>`);
+		await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "--allow-file-access", "true", "open", "about:blank"], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		});
+		await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "open", pathToFileURL(fixturePath).href], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+		const control = await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "get", "title"], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		});
+		const controlData = (JSON.parse(control.stdout) as { data?: { result?: string; title?: string } }).data;
+		assert.equal(controlData?.title ?? controlData?.result, "READABLE", "control must prove the reused unsafe daemon can read protected agent-browser storage");
+		await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", sessionName, "open", "about:blank"], {
+			cwd: tempDir,
+			env: upstreamEnv,
+			timeout: 30_000,
+		});
+		await withPatchedEnv({
+			AGENT_BROWSER_DEFAULT_TIMEOUT: "25000",
+			AGENT_BROWSER_IDLE_TIMEOUT_MS: "900000",
+			HOME: tempDir,
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+		}, async () => {
+			const opened = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, "open", pathToFileURL(fixturePath).href], cwd: tempDir });
+			assert.equal(opened.agentBrowserStarted, false);
+			assert.match(opened.spawnError?.message ?? "", /wrapper-managed local browser/);
+
+			const safeOpen = await runAgentBrowserProcess({
+				allowManagedSessionTarget: true,
+				args: ["--json", "--session", safeSessionName, "open", pathToFileURL(fixturePath).href],
+				cwd: tempDir,
+				ownedManagedSession: true,
+			});
+			assert.equal(safeOpen.exitCode, 0, safeOpen.spawnError?.message ?? safeOpen.stderr);
+		});
+	} finally {
+		for (const name of [sessionName, safeSessionName]) {
+			await execFileAsync("agent-browser", ["--json", "--config", configPath, "--session", name, "close"], {
+				cwd: tempDir,
+				env: upstreamEnv,
+				timeout: 30_000,
+			}).catch(() => undefined);
+		}
+		await rm(tempDir, { force: true, recursive: true });
+	}
+}
+
 if (!REAL_UPSTREAM_ENABLED) {
 	test("real upstream agent-browser contract suite is opt-in", { skip: REAL_UPSTREAM_SKIP_REASON }, () => undefined);
 	test("real upstream agent-browser plugin list probe is opt-in", { skip: REAL_UPSTREAM_SKIP_REASON }, () => undefined);
@@ -308,6 +384,24 @@ if (!REAL_UPSTREAM_ENABLED) {
 					const harness = createExtensionHarness({ cwd: tempDir });
 					await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 					const contractUrl = `${fixtureServer?.baseUrl}/contract`;
+
+					await withPatchedEnv({ AGENT_BROWSER_DOWNLOAD_PATH: undefined, AGENT_BROWSER_SCREENSHOT_DIR: undefined }, async () => {
+						const profileHarness = createExtensionHarness({ cwd: tempDir, sessionId: "12345678123456781234567812345678" });
+						await runExtensionEvent(profileHarness.handlers, "session_start", { reason: "new" }, profileHarness.ctx);
+						await mkdir(join(tempDir, "profile-continuity"));
+						try {
+							const profileOpen = await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, {
+								args: ["--profile", join(tempDir, "profile-continuity"), "--user-agent", "Profile Continuity/1", "open", contractUrl],
+								sessionMode: "fresh",
+							});
+							assertSuccessfulResult(profileOpen, shapes.commands.open, "profile continuity open");
+							const profileUrl = await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, { args: ["get", "url"] });
+							const profileUrlDetails = assertSuccessfulResult(profileUrl, shapes.commands.coreSubcommand, "profile continuity get url");
+							assert.equal((profileUrlDetails.data as { url?: string }).url, contractUrl, "profile and user-agent launch settings must not be re-emitted on active follow-ups");
+						} finally {
+							await executeRegisteredTool(profileHarness.tool, profileHarness.ctx, { args: ["close"] });
+						}
+					});
 
 					const version = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--version"] });
 					const versionDetails = assertSuccessfulResult(version, shapes.commands.version, "--version");
@@ -783,6 +877,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 			await fixtureServer?.close();
 			await rm(tempDir, { force: true, recursive: true });
 		}
+		await assertRealUpstreamUnsafeLocalDaemonIsBlocked();
 		await assertRealUpstreamUnrecordedDaemonReuseFailsClosed();
 		await assertRealUpstreamRestoreStorageSymlinkFailsClosed();
 		await assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed();

@@ -33,6 +33,7 @@ import {
 import {
 	getManagedSessionStateAccessValidationError,
 	getManagedSessionTargetAccessValidationError,
+	invocationMayNavigateToLocalFile,
 } from "./managed-session-state-policy.js";
 import { getImplicitSessionIdleTimeoutMs, isPlainTextInspectionArgs } from "./runtime.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
@@ -54,6 +55,7 @@ const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
 const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd";
+const UNTRUSTED_LOCAL_FILE_SESSION_MESSAGE = "Local file navigation requires a wrapper-managed local browser because caller-owned or attached sessions can retain unsafe file-access launch flags. Omit the explicit session or attachment and retry with sessionMode fresh.";
 const attachedBrowserSessionContext = new AsyncLocalStorage<boolean>();
 const WINDOWS_COMMANDS_WITH_ADJACENT_SUBCOMMAND = new Set([
 	"auth", "clipboard", "cookies", "dashboard", "device", "dialog", "diff", "find", "get", "is", "keyboard",
@@ -137,9 +139,9 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 		if (GLOBAL_VALUE_FLAGS.includes(flag as typeof GLOBAL_VALUE_FLAGS[number])) {
 			const value = args[index + 1];
 			if (value === undefined) return args;
-			// PowerShell -> .cmd drops empty argv values. These two wrapper-owned
-			// defaults mean the same thing when omitted, so never let the next flag
-			// become their accidental value on native Windows.
+			// PowerShell -> .cmd drops empty argv values. Planning rejects empty
+			// caller --args; keep this defensive skip so an unexpected empty value
+			// cannot turn the next flag into its accidental value on native Windows.
 			if (value === "" && (flag === "--args" || flag === "--namespace")) {
 				index += 1;
 				continue;
@@ -168,9 +170,9 @@ export function pinAgentBrowserFileAccessDisabled(args: string[], wrapperCompati
 	if (preserveAttachedBrowserSession) return filtered;
 	// Upstream's flag overrides only the active CDP target; the Chrome arg covers new tabs. Its --args parser splits commas/newlines.
 	const browserArgs = wrapperCompatibilityUserAgent
-		? `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`
-		: "";
-	return ["--args", browserArgs, "--allow-file-access", "false", ...filtered];
+		? ["--args", `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`]
+		: [];
+	return [...browserArgs, "--allow-file-access", "false", ...filtered];
 }
 
 export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {
@@ -507,6 +509,17 @@ export async function runAgentBrowserProcess(options: {
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
 	if (signal?.aborted) {
 		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
+	}
+	if (invocationMayNavigateToLocalFile(args, stdin) && (!ownedManagedSession || preserveAttachedBrowserSession)) {
+		return {
+			aborted: false,
+			agentBrowserStarted: false,
+			exitCode: 1,
+			spawnError: new Error(UNTRUSTED_LOCAL_FILE_SESSION_MESSAGE),
+			stderr: "",
+			stdout: "",
+			timedOut: false,
+		};
 	}
 	const parentEnv = getAgentBrowserProcessEnvironment();
 	const managedSessionRestoreOptions = {

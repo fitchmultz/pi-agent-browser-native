@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgvDescriptor } from "./argv-descriptor.js";
 import { needsManagedSession } from "./command-policy.js";
 import { getScreenshotPathTokenIndex } from "./orchestration/browser-run/artifact-paths.js";
-import { type BatchCommandStep, parseBatchCommandArgument, parseUserBatchStdin } from "./orchestration/batch-stdin.js";
+import { getUpstreamEffectiveBatchSteps, type BatchCommandStep, parseBatchCommandArgument, parseUserBatchStdin } from "./orchestration/batch-stdin.js";
 import { isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import {
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
@@ -69,7 +69,8 @@ function hasAgentBrowserPathComponent(value: string): boolean {
 
 function getFileUrlPath(value: string | undefined): string | undefined {
 	if (!value) return undefined;
-	const nestedFileUrl = /^(?:(?:blob|filesystem|view-source):)*(file:.*)$/i.exec(value)?.[1];
+	const trimmedValue = value.replaceAll(/[\t\n\r]/g, "").trim();
+	const nestedFileUrl = /^(?:(?:blob|filesystem|view-source):)*(file:.*)$/i.exec(trimmedValue)?.[1];
 	if (!nestedFileUrl) return undefined;
 	try {
 		return fileURLToPath(new URL(nestedFileUrl));
@@ -77,7 +78,7 @@ function getFileUrlPath(value: string | undefined): string | undefined {
 		try {
 			return decodeUrlComponent(new URL(nestedFileUrl).pathname);
 		} catch {
-			return value;
+			return trimmedValue;
 		}
 	}
 }
@@ -321,6 +322,13 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 		steps.push(step);
 	}
 	return { steps };
+}
+
+export function invocationMayNavigateToLocalFile(args: string[], stdin?: string): boolean {
+	if (isFileUrl(getResultingExplicitNavigationTarget(args))) return true;
+	const descriptor = parseArgvDescriptor(args);
+	return getUpstreamEffectiveBatchSteps(descriptor.upstreamCommandTokens, stdin)
+		.some((step) => isFileUrl(getResultingExplicitNavigationTarget(step)));
 }
 
 function batchBailsOnFirstError(args: string[]): boolean {
