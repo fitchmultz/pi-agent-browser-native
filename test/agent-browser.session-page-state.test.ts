@@ -11,6 +11,7 @@ import test from "node:test";
 
 import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../extensions/agent-browser/lib/batch-lifecycle.js";
+import { shouldCaptureNavigationSummary } from "../extensions/agent-browser/lib/orchestration/browser-run/session-state.js";
 import {
 	SessionPageState,
 	buildNoActivePageRefSnapshotInvalidation,
@@ -282,6 +283,10 @@ test("deriveSessionTabTarget discards stale targets after unobserved history nav
 	assert.equal(deriveSessionTabTarget({ command: "tab", data: {}, previousTarget, subcommand: "t2" }), undefined);
 	assert.deepEqual(deriveSessionTabTarget({ command: "back", data: {}, navigationSummary: { url: "https://after.example/" }, previousTarget }), { title: undefined, url: "https://after.example/" });
 	assert.deepEqual(deriveSessionTabTarget({ command: "click", data: {}, previousTarget }), previousTarget);
+	assert.equal(shouldCaptureNavigationSummary("click", { clicked: "#login-button" }), true);
+	assert.equal(shouldCaptureNavigationSummary("click", { clicked: ".shopping_cart_link" }), true);
+	assert.equal(shouldCaptureNavigationSummary("click", { clicked: "@e1" }), true);
+	assert.equal(shouldCaptureNavigationSummary("click", { clicked: "#next", url: "https://after.example/" }), false);
 	assert.equal(extractSessionTabTargetFromBatchResults([
 		{ command: ["get", "url"], result: { url: "https://before.example/" }, success: true },
 		{ command: ["close"], result: {}, success: true },
