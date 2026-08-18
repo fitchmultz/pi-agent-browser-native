@@ -12,7 +12,6 @@ import {
 	AGENT_BROWSER_JOB_STEP_ACTIONS,
 	AGENT_BROWSER_JOB_TYPE_DELAYED_TEXT_MAX_CHARACTERS,
 	AGENT_BROWSER_QA_LOAD_STATES,
-	AGENT_BROWSER_SEMANTIC_ACTIONS,
 	AGENT_BROWSER_SEMANTIC_LOCATORS,
 	DEFAULT_SESSION_MODE,
 	SOURCE_LOOKUP_MAX_WORKSPACE_FILES,
@@ -35,18 +34,30 @@ export function createAgentBrowserParamsSchema(
 			minItems: 1,
 		}),
 	),
+	// Split select vs check/click/fill so models do not see `values` on non-select actions.
 	semanticAction: Type.Optional(
-		Type.Object({
-			action: StringEnum(AGENT_BROWSER_SEMANTIC_ACTIONS),
-			locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator for check/click/fill; select supports role or label." })),
-			value: Type.Optional(Type.String({ description: "Locator value or one select option; for select by label, this is the label text." })),
-			values: Type.Optional(Type.Array(Type.String(), { description: "Select options; required for select by label.", minItems: 1 })),
-			selector: Type.Optional(Type.String({ description: "Direct selector or @ref." })),
-			text: Type.Optional(Type.String({ description: "Fill text." })),
-			role: Type.Optional(Type.String({ description: "Role locator; alternative to value." })),
-			name: Type.Optional(Type.String({ description: "Accessible name." })),
-			session: Type.Optional(Type.String({ description: "Upstream session name." })),
-		}, { additionalProperties: false, description: "Stable locator or direct-selector action." }),
+		Type.Union([
+			Type.Object({
+				action: StringEnum(["select"]),
+				locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator for select by role or label." })),
+				value: Type.Optional(Type.String({ description: "One select option, or label text for locator=label." })),
+				values: Type.Optional(Type.Array(Type.String(), { description: "Select option values.", minItems: 1 })),
+				selector: Type.Optional(Type.String({ description: "Direct selector or @ref." })),
+				role: Type.Optional(Type.String({ description: "Role locator; alternative to value." })),
+				name: Type.Optional(Type.String({ description: "Accessible name." })),
+				session: Type.Optional(Type.String({ description: "Upstream session name." })),
+			}, { additionalProperties: false }),
+			Type.Object({
+				action: StringEnum(["check", "click", "fill"]),
+				locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator for check/click/fill." })),
+				value: Type.Optional(Type.String({ description: "Locator value." })),
+				selector: Type.Optional(Type.String({ description: "Direct selector or @ref." })),
+				text: Type.Optional(Type.String({ description: "Fill text." })),
+				role: Type.Optional(Type.String({ description: "Role locator; alternative to value." })),
+				name: Type.Optional(Type.String({ description: "Accessible name." })),
+				session: Type.Optional(Type.String({ description: "Upstream session name." })),
+			}, { additionalProperties: false }),
+		], { description: "Stable locator or direct-selector action. values only with action=select." }),
 	),
 	qa: Type.Optional(
 		Type.Union([
@@ -157,7 +168,7 @@ export function createAgentBrowserParamsSchema(
 			),
 		}, { additionalProperties: false, description: "Constrained multi-step batch." }),
 	),
-	stdin: Type.Optional(Type.String({ description: "Raw stdin for batch, eval --stdin, or auth save --password-stdin; unavailable with structured modes and electron." })),
+	stdin: Type.Optional(Type.String({ description: "Only for batch, eval --stdin, or auth save --password-stdin. Never with open/snapshot/click/fill or structured modes/electron." })),
 	outputPath: Type.Optional(Type.String({ description: "Workspace-relative or absolute result-data path; keep it distinct from screenshot, download, recording, and other browser artifact destinations.", minLength: 1 })),
 	timeoutMs: Type.Optional(Type.Integer({ description: "Wrapper timeout in ms; exceed explicit waits. Electron uses electron.timeoutMs.", minimum: 1 })),
 	sessionMode: Type.Optional(

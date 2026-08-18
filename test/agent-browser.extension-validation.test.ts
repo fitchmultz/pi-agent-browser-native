@@ -313,6 +313,8 @@ test("agentBrowserExtension rejects unsupported public schema fields", () => {
 	assert.equal(Check(schema, { args: ["open", "https://example.test/"], outputPath: "" }), false);
 	assert.equal(Check(schema, { args: ["open", "https://example.test/"], timeoutMs: 0 }), false);
 	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "role", role: "button", name: "Open" } }), true);
+	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "text", value: "Open", values: ["nope"] } }), false);
+	assert.equal(Check(schema, { semanticAction: { action: "select", selector: "#flavor", value: "chocolate" } }), true);
 	assert.equal(Check(schema, { sourceLookup: { selector: "main" } }), true);
 	assert.equal(Check(schema, { networkSourceLookup: { namespace: "review", url: "https://example.test/api" } }), true);
 	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }] } }), true);
