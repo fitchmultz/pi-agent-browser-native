@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { win32 } from "node:path";
+import { dirname, join, win32 } from "node:path";
 
 const WINDOWS_PROCESS_START_IDENTITY_PREFIX = "win32-powershell-ticks-v1:";
 const PROCESS_START_IDENTITY_TIMEOUT_MS = 1_000;
@@ -31,7 +31,7 @@ export function buildProcessStartIdentityCommand(
 		}
 		: {
 			args: ["-p", String(pid), "-o", "lstart="],
-			file: "/bin/ps",
+			file: platform === "android" ? join(dirname(process.execPath), "ps") : "/bin/ps",
 		};
 }
 
@@ -43,7 +43,7 @@ export function buildProcessStartIdentityCommands(
 	if (!primary) return [];
 	return platform === "win32"
 		? [primary]
-		: [primary, { ...primary, file: "/usr/bin/ps" }];
+		: [primary, ...(platform === "android" ? [{ ...primary, file: "/bin/ps" }, { ...primary, file: "/usr/bin/ps" }] : [{ ...primary, file: "/usr/bin/ps" }])];
 }
 
 export function normalizeProcessStartIdentity(stdout: string): string | undefined {

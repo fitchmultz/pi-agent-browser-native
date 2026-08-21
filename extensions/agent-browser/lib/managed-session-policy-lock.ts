@@ -45,7 +45,9 @@ export interface ManagedSessionPolicyLock {
 function getCoordinationDirectory(platform: NodeJS.Platform = process.platform): string {
 	if (platform !== "win32") {
 		const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
-		return `/tmp/pi-agent-browser-policy${uid === undefined ? "" : `-${uid}`}`;
+		return platform === "android"
+			? join(tmpdir(), `pi-agent-browser-policy${uid === undefined ? "" : `-${uid}`}`)
+			: `/tmp/pi-agent-browser-policy${uid === undefined ? "" : `-${uid}`}`;
 	}
 	const user = process.env.USERNAME ?? process.env.USER ?? "unknown";
 	const suffix = createHash("sha256").update(user).digest("hex").slice(0, 12);

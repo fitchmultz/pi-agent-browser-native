@@ -30,6 +30,7 @@ import {
 	getAgentBrowserSocketDir,
 	getAgentBrowserSocketPathValidationError,
 	getWindowsExplicitDefaultNamespaceEnv,
+	isTrustedAndroidAppDataRoot,
 	isTrustedSocketDirAncestor,
 	isWindowsAgentBrowserCommandMissing,
 	pinAgentBrowserFileAccessDisabled,
@@ -245,6 +246,10 @@ test("process start identity commands use absolute POSIX fallbacks and native Po
 		return command.file === "/usr/bin/ps" ? "fallback-identity" : undefined;
 	}), "fallback-identity");
 	assert.deepEqual(attempts, ["/bin/ps", "/usr/bin/ps"]);
+	assert.deepEqual(
+		buildProcessStartIdentityCommands(123, "android").map((command) => command.file),
+		[join(dirname(process.execPath), "ps"), "/bin/ps", "/usr/bin/ps"],
+	);
 	const windows = buildProcessStartIdentityCommand(123, "win32");
 	assert.match(windows?.file ?? "", /(?:^|[\\/])powershell\.exe$/i);
 	assert.equal(win32.isAbsolute(windows?.file ?? ""), true);
@@ -304,12 +309,16 @@ test("process helpers clamp the upstream default operation timeout to the docume
 	assert.equal(env.UNRELATED_API_KEY, "unrelated-secret");
 });
 
-test("root-owned sticky socket ancestors remain trusted for uid 0", () => {
-	const directory = (uid: number, mode: number) => ({ uid, mode, isDirectory: () => true, isSymbolicLink: () => false });
+test("root-owned sticky socket ancestors and private Android app roots remain trusted", () => {
+	const directory = (uid: number, mode: number) => ({ gid: uid, uid, mode, isDirectory: () => true, isSymbolicLink: () => false });
 	assert.equal(isTrustedSocketDirAncestor(directory(0, 0o41777), 0), true);
 	assert.equal(isTrustedSocketDirAncestor(directory(0, 0o40777), 0), false);
 	assert.equal(isTrustedSocketDirAncestor(directory(501, 0o40700), 0), false);
 	assert.equal(isTrustedSocketDirAncestor(directory(501, 0o40700), 501), true);
+	assert.equal(isTrustedAndroidAppDataRoot("/data/data/com.termux", directory(10_589, 0o40700), 10_589, "android"), true);
+	assert.equal(isTrustedAndroidAppDataRoot("/data/user/0/com.termux", directory(10_589, 0o40700), 10_589, "android"), true);
+	assert.equal(isTrustedAndroidAppDataRoot("/data/data/com.termux", directory(10_589, 0o40770), 10_589, "android"), false);
+	assert.equal(isTrustedAndroidAppDataRoot("/data/data/com.termux", directory(10_589, 0o40700), 10_589, "linux"), false);
 });
 
 test("agent-browser socket path preflight reports long configured roots before upstream spawn", () => {

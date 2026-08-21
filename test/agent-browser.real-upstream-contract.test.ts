@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -273,7 +273,7 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 			assert.equal(closed.isError, false, `relative-home fail-closed close should succeed: ${closed.content[0]?.text ?? ""}`);
 			sessionName = undefined;
 		});
-		await assert.rejects(readdir(join(tempDir, "relative-home")));
+		await assert.rejects(readdir(join(tempDir, "relative-home", ".agent-browser")));
 	} finally {
 		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
 		await rm(tempDir, { force: true, recursive: true });
@@ -282,7 +282,8 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 
 async function assertRealUpstreamUnsafeLocalDaemonIsBlocked(): Promise<void> {
 	if (process.platform === "win32") return;
-	const tempDir = await mkdtemp("/tmp/piab-real-unsafe-");
+	const shortTempRoot = dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab"));
+	const tempDir = await mkdtemp(join(shortTempRoot, "u-"));
 	const socketDir = join(tempDir, "sockets");
 	const configPath = join(tempDir, "empty.json");
 	const sessionName = `unsafe-${process.pid}`;

@@ -425,14 +425,16 @@ test("agentBrowserExtension rejects duplicate explicit artifact destinations ins
 		assert.equal(argumentAlias.isError, true);
 		assert.match(argumentAlias.content[0]?.text ?? "", /\.\/argument\.png is already written by step 1/);
 
-		await writeFile(join(tempDir, "hardlink-a.png"), "existing artifact");
-		await link(join(tempDir, "hardlink-a.png"), join(tempDir, "hardlink-b.png"));
-		const hardlinkAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
-			args: ["batch"],
-			stdin: JSON.stringify([["screenshot", "hardlink-a.png"], ["screenshot", "hardlink-b.png"]]),
-		});
-		assert.equal(hardlinkAlias.isError, true);
-		assert.match(hardlinkAlias.content[0]?.text ?? "", /hardlink-b\.png is already written by step 1/);
+		if (process.platform !== "android") {
+			await writeFile(join(tempDir, "hardlink-a.png"), "existing artifact");
+			await link(join(tempDir, "hardlink-a.png"), join(tempDir, "hardlink-b.png"));
+			const hardlinkAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch"],
+				stdin: JSON.stringify([["screenshot", "hardlink-a.png"], ["screenshot", "hardlink-b.png"]]),
+			});
+			assert.equal(hardlinkAlias.isError, true);
+			assert.match(hardlinkAlias.content[0]?.text ?? "", /hardlink-b\.png is already written by step 1/);
+		}
 
 		if (process.platform === "darwin") {
 			const caseAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1330,6 +1332,11 @@ test("agentBrowserExtension warns after record start when ffmpeg is missing", { 
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-recording-ffmpeg-"));
 	const noRecordingMarker = join(tempDir, "no-recording");
 	const nodeBinDir = dirname(process.execPath);
+	const missingFfmpegPath = process.platform === "android" ? join(tempDir, "node-only") : nodeBinDir;
+	if (process.platform === "android") {
+		await mkdir(missingFfmpegPath);
+		await symlink(process.execPath, join(missingFfmpegPath, "node"), "file");
+	}
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
@@ -1390,7 +1397,7 @@ if (firstCallFailure) process.exit(1);`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}`, PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1" }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${missingFfmpegPath}`, PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1" }, async () => {
 			const firstCallHarness = createExtensionHarness({ cwd: tempDir, prompt: "Test failed post-close launch ownership.", sessionFile: join(tempDir, "first-call-session.jsonl") });
 			const failedFirstCall = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, {
 				args: ["batch"],

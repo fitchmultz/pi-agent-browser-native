@@ -9,9 +9,10 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import {
 	createExtensionHarness,
 	createToolBranchEntry,
@@ -247,8 +248,9 @@ if (args.includes("open")) {
 });
 
 test("agentBrowserExtension does not restore namespaced allowed-domain policy after electron cleanup closes the session", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(process.platform === "win32" ? join(tmpdir(), "a-") : "/tmp/a-");
-	const socketDir = await mkdtemp(process.platform === "win32" ? join(tmpdir(), "p-") : "/tmp/p-");
+	const shortTempRoot = dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab"));
+	const tempDir = await mkdtemp(join(shortTempRoot, "a-"));
+	const socketDir = await mkdtemp(join(shortTempRoot, "p-"));
 	const statePath = join(tempDir, "page-state.json");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(

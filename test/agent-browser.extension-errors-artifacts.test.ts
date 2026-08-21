@@ -10,11 +10,12 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, link, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
+import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 
 function initializeGitProject(cwd: string): void {
 	execFileSync("git", ["init", "-q", cwd], { stdio: "ignore" });
@@ -1514,8 +1515,9 @@ if (args.includes("session") && args.includes("info")) {
 });
 
 test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async (context) => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-outcome-"));
-	const socketDir = `/tmp/${process.pid.toString(36)}`;
+	const shortTempRoot = dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab"));
+	const tempDir = await mkdtemp(join(shortTempRoot, "a-"));
+	const socketDir = join(shortTempRoot, `p${(process.pid % 36).toString(36)}`);
 	await rm(socketDir, { force: true, recursive: true });
 	await mkdir(socketDir, { mode: 0o700 });
 	context.after(async () => {
@@ -1705,18 +1707,20 @@ if (args.includes("eval")) {
 			assert.match(collidingOutput.content[0]?.text ?? "", /outputPath.*same destination as artifact path/i);
 			await assert.rejects(access(screenshotPath));
 
-			const hardlinkedScreenshotPath = join(tempDir, "captures/hardlinked.png");
-			const hardlinkedOutputPath = join(tempDir, "captures/hardlinked-result.json");
-			await mkdir(join(tempDir, "captures"), { recursive: true });
-			await writeFile(hardlinkedScreenshotPath, "seed");
-			await link(hardlinkedScreenshotPath, hardlinkedOutputPath);
-			const hardlinkedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["screenshot", hardlinkedScreenshotPath],
-				outputPath: hardlinkedOutputPath,
-			});
-			assert.equal(hardlinkedOutput.isError, true);
-			assert.match(hardlinkedOutput.content[0]?.text ?? "", /outputPath.*same destination as artifact path/i);
-			assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "seed");
+			if (process.platform !== "android") {
+				const hardlinkedScreenshotPath = join(tempDir, "captures/hardlinked.png");
+				const hardlinkedOutputPath = join(tempDir, "captures/hardlinked-result.json");
+				await mkdir(join(tempDir, "captures"), { recursive: true });
+				await writeFile(hardlinkedScreenshotPath, "seed");
+				await link(hardlinkedScreenshotPath, hardlinkedOutputPath);
+				const hardlinkedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["screenshot", hardlinkedScreenshotPath],
+					outputPath: hardlinkedOutputPath,
+				});
+				assert.equal(hardlinkedOutput.isError, true);
+				assert.match(hardlinkedOutput.content[0]?.text ?? "", /outputPath.*same destination as artifact path/i);
+				assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "seed");
+			}
 
 			const beforeProtectedOutput = (await readFile(logPath, "utf8")).trim().split("\n").length;
 			const protectedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {

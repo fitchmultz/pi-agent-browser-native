@@ -65,6 +65,7 @@ const DEFAULT_HEADLESS_COMPAT_USER_AGENT_BY_PLATFORM: Partial<Record<NodeJS.Plat
 const FALLBACK_HEADLESS_COMPAT_USER_AGENT =
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 const SHELL_OPERATOR_TOKENS = new Set(["&&", "||", "|", ";", ">", ">>", "<"]);
+const ANDROID_SESSION_NAME_IDENTITY_LENGTH = 20;
 const MAX_PROJECT_SLUG_LENGTH = 24;
 const SESSION_NAME_CWD_HASH_LENGTH = 8;
 const SESSION_NAME_SESSION_ID_LENGTH = 12;
@@ -703,7 +704,15 @@ export function createImplicitSessionName(
 	sessionId: string | undefined,
 	cwd: string,
 	ephemeralSeed: string,
+	platform: NodeJS.Platform = process.platform,
 ): string {
+	const normalizedSessionId = sessionId?.replaceAll("-", "").toLowerCase();
+	if (platform === "android") {
+		const identity = normalizedSessionId ? `session:${normalizedSessionId}:cwd:${cwd}` : `ephemeral:${cwd}:${ephemeralSeed}`;
+		const digest = createHash("sha256").update(identity).digest("hex").slice(0, ANDROID_SESSION_NAME_IDENTITY_LENGTH);
+		return `${MANAGED_SESSION_NAME_PREFIX}${digest}`;
+	}
+
 	const slug =
 		basename(cwd)
 			.toLowerCase()
@@ -711,7 +720,6 @@ export function createImplicitSessionName(
 			.replace(/^-+|-+$/g, "")
 			.slice(0, MAX_PROJECT_SLUG_LENGTH) || "project";
 	const cwdHash = createCwdHash(cwd);
-	const normalizedSessionId = sessionId?.replaceAll("-", "").toLowerCase();
 	if (normalizedSessionId) {
 		const stableSessionId = createHash("sha256")
 			.update(`session:${normalizedSessionId}`)

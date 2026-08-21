@@ -947,6 +947,9 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
 - `--engine <name>`: browser engine, `chrome` by default or `lightpanda`. Environment: `AGENT_BROWSER_ENGINE`.
+
+On Android/Termux, follow the README setup to install the packaged Linux-musl arm64 upstream binary, install Termux's `which`, and expose its launcher as `$PREFIX/bin/chromium`. Prefer that upstream system-browser discovery over ambient `AGENT_BROWSER_EXECUTABLE_PATH`: it survives isolated `HOME` values, works for ordinary calls and top-level `script`, and preserves the script security boundary that clears ambient launch controls and rejects inner `--executable-path` flags. Wrapper-generated Android managed identities use a compact 80-bit digest so ordinary namespaces and fresh rotations fit upstream's Unix socket path.
+
 - `--no-auto-dialog`: disable automatic dismissal of alert/beforeunload dialogs. Environment: `AGENT_BROWSER_NO_AUTO_DIALOG`.
 - `--idle-timeout <ms>`: launch-scoped background browser lifecycle setting. The wrapper already sets one stable `AGENT_BROWSER_IDLE_TIMEOUT_MS` for top-level and helper subprocesses. A per-call value must equal that configured value; otherwise the tool rejects it before launch and tells you to restart Pi with `PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=<ms>`. This prevents upstream from restarting the browser and discarding tabs/refs when later helper calls use a different launch environment.
 

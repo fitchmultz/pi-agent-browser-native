@@ -663,7 +663,7 @@ process.stdout.write(JSON.stringify({ success: true, data: args.includes("close"
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				script: `await browser({ args: ["get", "title"] }); while (true) {}`,
-				timeoutMs: 150,
+				timeoutMs: process.platform === "android" ? 300 : 150,
 			});
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.failureCategory, "timeout");

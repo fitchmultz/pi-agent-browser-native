@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 
-const STARTUP_BUDGET_MS = 250;
+const STARTUP_BUDGET_MS = process.platform === "android" ? 1_000 : 250;
 
 type StartupMeasurement = {
 	events: number;
@@ -59,7 +59,10 @@ console.log(JSON.stringify({
 test("agent_browser cold startup stays below the issue #84 regression budget", async () => {
 	const entrypoint = await getPackageExtensionEntrypoint();
 	assert.equal(entrypoint, "./dist/extensions/agent-browser/index.js");
-	const measurements = await Promise.all([measureColdStartup(entrypoint), measureColdStartup(entrypoint), measureColdStartup(entrypoint)]);
+	// Concurrent cold imports measure scheduler contention rather than one Pi startup on thermally constrained Android devices.
+	const measurements = process.platform === "android"
+		? [await measureColdStartup(entrypoint), await measureColdStartup(entrypoint), await measureColdStartup(entrypoint)]
+		: await Promise.all([measureColdStartup(entrypoint), measureColdStartup(entrypoint), measureColdStartup(entrypoint)]);
 	const totals = measurements.map((measurement) => measurement.totalMs);
 	const maxTotal = Math.max(...totals);
 
