@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-08-20
+
+### Added
+
+- Added Android 17/arm64 Termux runtime support while keeping the integration thin against `agent-browser` 0.34.0. Wrapper-owned sockets now use the private `/data/data/<package>/piab` sandbox instead of inaccessible `/tmp`, policy-lock coordination follows `os.tmpdir()`, and process identity probes use Termux's `ps` beside Node. The documented setup uses the packaged Linux-musl arm64 binary plus Termux system Chromium, `which`, and ffmpeg; upstream Android npm launcher support remains tracked in [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587).
+- Preserved managed-session restore and isolated `script` workflows on Android. App-sandbox ancestry is validated without weakening other POSIX trust rules, checkout identity uses stable device/inode evidence plus the generation UUID when Node reports mutable ctime as birth time, and generation-marker publication uses exclusive creation because Android app storage rejects hard links.
+
+### Changed
+
+- Android wrapper-managed identities use a compact 80-bit digest so ordinary namespaces and fresh rotations remain within upstream's 103-byte Unix socket limit. Desktop session naming is unchanged.
+- Platform-sensitive tests now account for Android's filesystem restrictions, Termux executable layout, and thermally constrained single-process startup timing without loosening desktop budgets.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (784 tests, 781 pass, 3 opt-in skips; 130 packed files), `npm run verify -- real-upstream` (2/2), deterministic dogfood, doctor, typecheck, docs, and live command-reference verification. Android live evidence covered managed restore, namespaced fresh sessions, exact-session restart/reuse, isolated `script`, QA, jobs, semantic actions, screenshots, WebM recording, and cleanup with no remaining browser, Chromium, tmux, socket, or test-artifact leaks.
+- The isolated configured-source lifecycle harness was environment-blocked by its missing Zai API key; the equivalent authenticated exact-session restart and reuse path passed manually. The Crabbox macOS/Ubuntu/native-Windows release matrix was not rerun for this Android-only GitHub release. npm was not published.
+
 ## 0.4.5 - 2026-08-18
 
 ### Fixed
