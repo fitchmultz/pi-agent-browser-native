@@ -31,7 +31,7 @@ function currentUid(): number | undefined {
 	return typeof process.getuid === "function" ? process.getuid() : undefined;
 }
 
-function isTrustedPosixDirectory(path: string, requireCurrentOwner: boolean): boolean {
+function isTrustedPosixDirectory(path: string, requireCurrentOwner: boolean, platform: NodeJS.Platform = process.platform): boolean {
 	const uid = currentUid();
 	if (uid === undefined) return false;
 	const root = parse(path).root;
@@ -45,10 +45,12 @@ function isTrustedPosixDirectory(path: string, requireCurrentOwner: boolean): bo
 			return false;
 		}
 		if (entry.isSymbolicLink() || !entry.isDirectory()) return false;
-		if (entry.uid !== 0 && entry.uid !== uid) return false;
+		const androidSystemAncestor = platform === "android" && (cursor === "/data" || cursor === "/data/data") && entry.uid === 1000 && (entry.mode & 0o002) === 0;
+		const androidAppDirectory = platform === "android" && entry.uid === uid && entry.gid === uid && (entry.mode & 0o002) === 0;
+		if (!androidSystemAncestor && entry.uid !== 0 && entry.uid !== uid) return false;
 		const writableByOthers = (entry.mode & 0o022) !== 0;
 		const rootOwnedStickyDirectory = entry.uid === 0 && (entry.mode & 0o1000) !== 0;
-		if (writableByOthers && !rootOwnedStickyDirectory) return false;
+		if (writableByOthers && !rootOwnedStickyDirectory && !androidSystemAncestor && !androidAppDirectory) return false;
 	}
 	try {
 		const leaf = lstatSync(path);
@@ -68,7 +70,7 @@ export function resolveManagedSessionRestoreHome(
 	if (platform === "win32") return candidate;
 	try {
 		const canonical = realpathSync(candidate);
-		return isTrustedPosixDirectory(canonical, true) ? canonical : undefined;
+		return isTrustedPosixDirectory(canonical, true, platform) ? canonical : undefined;
 	} catch {
 		return undefined;
 	}
@@ -138,12 +140,14 @@ function readProjectGenerationMarker(path: string, platform: NodeJS.Platform): s
 	}
 }
 
-function getDirectoryFilesystemIdentity(path: string): string | undefined {
+function getDirectoryFilesystemIdentity(path: string, platform: NodeJS.Platform): string | undefined {
 	try {
 		const entry = statSync(path, { bigint: true });
-		return entry.isDirectory() && entry.dev > 0n && entry.ino > 0n && entry.birthtimeNs > 0n
-			? `${entry.dev}:${entry.ino}:${entry.birthtimeNs}`
-			: undefined;
+		if (!entry.isDirectory() || entry.dev <= 0n || entry.ino <= 0n) return undefined;
+		// ponytail: Android reports mutable ctime as birthtime; use statx birthtime/inode generation when Node exposes either reliably.
+		return platform === "android"
+			? `${entry.dev}:${entry.ino}`
+			: entry.birthtimeNs > 0n ? `${entry.dev}:${entry.ino}:${entry.birthtimeNs}` : undefined;
 	} catch {
 		return undefined;
 	}
@@ -156,12 +160,12 @@ function resolveManagedSessionRestoreProjectCheckout(cwd: string, platform: Node
 } | undefined {
 	let canonicalCwd: string;
 	try { canonicalCwd = realpathSync(cwd); } catch { return undefined; }
-	if (platform !== "win32" && !isTrustedPosixDirectory(canonicalCwd, false)) return undefined;
+	if (platform !== "win32" && !isTrustedPosixDirectory(canonicalCwd, false, platform)) return undefined;
 	const checkout = resolveGitCheckout(canonicalCwd, platform);
 	if (!checkout) return undefined;
 	if (platform !== "win32" && (
-		!isTrustedPosixDirectory(checkout.worktreeDirectory, true)
-		|| !isTrustedPosixDirectory(checkout.gitDirectory, true)
+		!isTrustedPosixDirectory(checkout.worktreeDirectory, true, platform)
+		|| !isTrustedPosixDirectory(checkout.gitDirectory, true, platform)
 	)) return undefined;
 	return { canonicalCwd, ...checkout };
 }
@@ -174,8 +178,8 @@ function resolveProjectGenerationIdentity(cwd: string, platform: NodeJS.Platform
 	const checkout = resolveManagedSessionRestoreProjectCheckout(cwd, platform);
 	if (!checkout) return undefined;
 	const { canonicalCwd } = checkout;
-	const gitFilesystemIdentity = getDirectoryFilesystemIdentity(checkout.gitDirectory);
-	const worktreeFilesystemIdentity = getDirectoryFilesystemIdentity(checkout.worktreeDirectory);
+	const gitFilesystemIdentity = getDirectoryFilesystemIdentity(checkout.gitDirectory, platform);
+	const worktreeFilesystemIdentity = getDirectoryFilesystemIdentity(checkout.worktreeDirectory, platform);
 	if (!gitFilesystemIdentity || !worktreeFilesystemIdentity) return undefined;
 	const markerPath = join(checkout.gitDirectory, PROJECT_GENERATION_MARKER_NAME);
 	let marker = readProjectGenerationMarker(markerPath, platform);
@@ -190,14 +194,22 @@ function resolveProjectGenerationIdentity(cwd: string, platform: NodeJS.Platform
 	projectGenerationCache.delete(canonicalCwd);
 	try {
 		if (!marker) {
-			const candidatePath = `${markerPath}.candidate-${process.pid}-${randomUUID()}`;
-			try {
-				writeFileSync(candidatePath, JSON.stringify({ id: randomUUID(), version: 1 }), { encoding: "utf8", flag: "wx", mode: 0o600 });
-				try { linkSync(candidatePath, markerPath); } catch (error) {
+			const content = JSON.stringify({ id: randomUUID(), version: 1 });
+			if (platform === "android") {
+				// ponytail: Android denies hard links in app storage; use renameat2(RENAME_NOREPLACE) if Node exposes it.
+				try { writeFileSync(markerPath, content, { encoding: "utf8", flag: "wx", mode: 0o600 }); } catch (error) {
 					if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
 				}
-			} finally {
-				try { unlinkSync(candidatePath); } catch {}
+			} else {
+				const candidatePath = `${markerPath}.candidate-${process.pid}-${randomUUID()}`;
+				try {
+					writeFileSync(candidatePath, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+					try { linkSync(candidatePath, markerPath); } catch (error) {
+						if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
+					}
+				} finally {
+					try { unlinkSync(candidatePath); } catch {}
+				}
 			}
 			marker = readProjectGenerationMarker(markerPath, platform);
 		}
@@ -227,10 +239,10 @@ export function getManagedSessionRestoreScope(sessionName: string): string {
 }
 
 /** Stable for one Pi transcript and checkout generation; isolated from other concurrent transcripts. */
-export function createManagedSessionRestoreKey(cwd: string, restoreScope = ""): string {
+export function createManagedSessionRestoreKey(cwd: string, restoreScope = "", platform: NodeJS.Platform = process.platform): string {
 	let canonicalCwd = resolve(cwd);
 	try { canonicalCwd = realpathSync(canonicalCwd); } catch {}
-	const identity = resolveProjectGenerationIdentity(canonicalCwd);
+	const identity = resolveProjectGenerationIdentity(canonicalCwd, platform);
 	const material = identity ?? `unavailable:${canonicalCwd}`;
 	const digest = createHash("sha256")
 		.update(`restore-v3:${material}:scope:${restoreScope}`)

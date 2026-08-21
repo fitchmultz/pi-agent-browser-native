@@ -50,6 +50,7 @@ const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS";
 const PI_AGENT_BROWSER_SOCKET_DIR_ENV = "PI_AGENT_BROWSER_SOCKET_DIR";
 const DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX = "/tmp/piab";
+const TERMUX_PACKAGE_NAME_PATTERN = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
 export const SAFE_AGENT_BROWSER_OPERATION_TIMEOUT_MS = 25_000;
 const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
@@ -324,28 +325,49 @@ export function getAgentBrowserProcessTimeoutMs(env: NodeJS.ProcessEnv = process
 export function getAgentBrowserSocketDir(
 	platform: NodeJS.Platform = processPlatform,
 	uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
+	termuxPackageName: string | undefined = processEnv.TERMUX_APP__PACKAGE_NAME,
 ): string | undefined {
 	if (platform === "win32") {
 		return undefined;
 	}
-	const prefix = platform === "darwin" ? "/private/tmp/piab" : DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX;
-	return `${prefix}${typeof uid === "number" ? `-${uid}` : ""}`;
+	const termuxAppRoot = platform === "android" && termuxPackageName && TERMUX_PACKAGE_NAME_PATTERN.test(termuxPackageName);
+	const prefix = platform === "darwin"
+		? "/private/tmp/piab"
+		: termuxAppRoot
+			? `/data/data/${termuxPackageName}/piab`
+			: DEFAULT_AGENT_BROWSER_SOCKET_DIR_PREFIX;
+	return `${prefix}${!termuxAppRoot && typeof uid === "number" ? `-${uid}` : ""}`;
+}
+
+export function isTrustedAndroidAppDataRoot(
+	path: string,
+	metadata: { isDirectory(): boolean; isSymbolicLink(): boolean; mode: number; uid: number },
+	uid: number,
+	platform: NodeJS.Platform = processPlatform,
+): boolean {
+	if (platform !== "android" || metadata.uid !== uid || metadata.isSymbolicLink() || !metadata.isDirectory() || (metadata.mode & 0o777) !== 0o700) return false;
+	const parent = dirname(path);
+	return parent === "/data/data" || /^\/data\/user\/\d+$/.test(parent);
 }
 
 export function isTrustedSocketDirAncestor(
-	metadata: { isDirectory(): boolean; isSymbolicLink(): boolean; mode: number; uid: number },
+	metadata: { gid: number; isDirectory(): boolean; isSymbolicLink(): boolean; mode: number; uid: number },
 	uid: number,
+	platform: NodeJS.Platform = processPlatform,
 ): boolean {
 	if (metadata.isSymbolicLink()) return metadata.uid === 0;
 	if (!metadata.isDirectory()) return false;
 	const mode = metadata.mode & 0o7777;
+	if (platform === "android" && uid !== 0 && metadata.uid === uid && metadata.gid === uid) return (mode & 0o002) === 0;
 	if (metadata.uid === uid && uid !== 0) return (mode & 0o022) === 0;
 	return metadata.uid === 0 && ((mode & 0o022) === 0 || (mode & 0o1000) !== 0);
 }
 
 async function hasTrustedSocketDirAncestry(socketDir: string, uid: number): Promise<boolean> {
 	for (let current = dirname(socketDir);;) {
-		if (!isTrustedSocketDirAncestor(await lstat(current), uid)) return false;
+		const metadata = await lstat(current);
+		if (isTrustedAndroidAppDataRoot(current, metadata, uid)) return true;
+		if (!isTrustedSocketDirAncestor(metadata, uid)) return false;
 		const parent = dirname(current);
 		if (parent === current) return true;
 		current = parent;

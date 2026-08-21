@@ -14,7 +14,7 @@ import { canonicalizeAgentBrowserNamespace, extractRequestedRestoreKey, isBoolea
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
 import { LAUNCH_SCOPED_FLAGS } from "../extensions/agent-browser/lib/launch-scoped-flags.js";
 import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT_GUIDELINES_SUFFIX } from "../extensions/agent-browser/lib/playbook.js";
-import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
+import { getAgentBrowserSocketDir, getAgentBrowserSocketPathValidationError } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildExecutionPlan,
 	canUseHeadlessCompatibilityUserAgent,
@@ -87,8 +87,8 @@ test("buildExecutionPlan rejects ambiguous session identity flags without reject
 test("createImplicitSessionName is stable for a persisted pi session", () => {
 	const sessionId = "12345678-1234-5678-9abc-def012345678";
 	const cwd = "/Users/example/Projects/pi-agent-browser";
-	const one = createImplicitSessionName(sessionId, cwd, "ignored-a");
-	const two = createImplicitSessionName(sessionId, cwd, "ignored-b");
+	const one = createImplicitSessionName(sessionId, cwd, "ignored-a", "linux");
+	const two = createImplicitSessionName(sessionId, cwd, "ignored-b", "linux");
 
 	assert.equal(one, two);
 	assert.match(one, /^piab-pi-agent-browser-[a-f0-9]{12}-[a-f0-9]{8}$/);
@@ -96,25 +96,39 @@ test("createImplicitSessionName is stable for a persisted pi session", () => {
 
 test("createImplicitSessionName hashes the full Pi session id", () => {
 	const cwd = "/Users/example/Projects/pi-agent-browser";
-	const one = createImplicitSessionName("019fe81c-92dd-7000-8000-000000000001", cwd, "ignored");
-	const two = createImplicitSessionName("019fe81c-92dd-7000-8000-000000000002", cwd, "ignored");
+	const one = createImplicitSessionName("019fe81c-92dd-7000-8000-000000000001", cwd, "ignored", "linux");
+	const two = createImplicitSessionName("019fe81c-92dd-7000-8000-000000000002", cwd, "ignored", "linux");
 
 	assert.notEqual(one, two);
 });
 
 test("createImplicitSessionName includes cwd isolation for same-named checkouts", () => {
 	const sessionId = "12345678-1234-5678-9abc-def012345678";
-	const one = createImplicitSessionName(sessionId, "/tmp/foo/app", "ignored-a");
-	const two = createImplicitSessionName(sessionId, "/tmp/bar/app", "ignored-b");
+	const one = createImplicitSessionName(sessionId, "/tmp/foo/app", "ignored-a", "linux");
+	const two = createImplicitSessionName(sessionId, "/tmp/bar/app", "ignored-b", "linux");
 
 	assert.notEqual(one, two);
 	assert.match(one, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
 	assert.match(two, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
 });
 
+test("Android managed session names retain full identity entropy within namespaced socket limits", () => {
+	const base = createImplicitSessionName("12345678-1234-5678-9abc-def012345678", "/data/data/com.termux/files/home/project", "ignored", "android");
+	const fresh = createFreshSessionName(base, "seed", 1);
+	const socketDir = getAgentBrowserSocketDir("android", 10_589, "com.termux");
+
+	assert.match(base, /^piab-[a-f0-9]{20}$/);
+	assert.equal(
+		getAgentBrowserSocketPathValidationError({ args: ["--namespace", "termux", "--session", fresh, "open", "about:blank"], platform: "android", socketDir: String(socketDir) }),
+		undefined,
+	);
+});
+
 test("getAgentBrowserSocketDir uses a short user-specific unix socket directory and skips windows", () => {
 	assert.equal(getAgentBrowserSocketDir("darwin", 501), "/private/tmp/piab-501");
 	assert.equal(getAgentBrowserSocketDir("linux", 1000), "/tmp/piab-1000");
+	assert.equal(getAgentBrowserSocketDir("android", 10_589, "com.termux"), "/data/data/com.termux/piab");
+	assert.equal(getAgentBrowserSocketDir("android", 10_589, "../invalid"), "/tmp/piab-10589");
 	assert.equal(getAgentBrowserSocketDir("win32", undefined), undefined);
 });
 

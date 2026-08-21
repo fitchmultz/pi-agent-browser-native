@@ -39,6 +39,7 @@ const isolatedProject = mkdtempSync(join(tmpdir(), "piab-restore-suite-project-"
 initializeGitProject(isolatedProject);
 const managedSessionRestoreState = new ManagedSessionRestoreState();
 const defaultManagedSession = "piab-work-abc12345-deadbeef";
+const posixFixturePlatform: NodeJS.Platform = process.platform === "android" ? "android" : "linux";
 const clearManagedSessionRestoreDisabled = (sessionName?: string, namespace?: string) => managedSessionRestoreState.clear(sessionName, namespace);
 const isManagedSessionRestoreDisabled = (sessionName?: string, namespace?: string) => managedSessionRestoreState.isDisabled(sessionName, namespace);
 const markManagedSessionRestoreDisabled = (sessionName?: string, namespace?: string) => managedSessionRestoreState.disable(sessionName, namespace);
@@ -174,6 +175,19 @@ test("createManagedSessionRestoreKey is transcript- and checkout-generation-stab
 		assert.notEqual(createManagedSessionRestoreKey(cwd), originalKey);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("Android restore identity stays stable without hard links or reliable birth time", { skip: process.platform === "win32" }, () => {
+	const cwd = mkdtempSync(join(tmpdir(), "piab-android-restore-key-"));
+	try {
+		initializeGitProject(cwd);
+		const first = createManagedSessionRestoreKey(cwd, "android-scope", "android");
+		writeFileSync(join(cwd, ".git", "mutable-entry"), "changes directory ctime");
+		assert.equal(createManagedSessionRestoreKey(cwd, "android-scope", "android"), first);
+		assert.equal(statSync(join(cwd, ".git", "pi-agent-browser-project-generation-v1.json")).mode & 0o777, 0o600);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
 	}
 });
 
@@ -745,7 +759,7 @@ test("managed restore rejects relative HOME and USERPROFILE paths", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "piab-relative-home-cwd-"));
 	try {
 		assert.equal(agentBrowserConfigBlocksManagedRestore(cwd, { HOME: "relative-home" }), true);
-		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: "relative-home" }, "linux"), false);
+		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: "relative-home" }, posixFixturePlatform), false);
 		assert.equal(agentBrowserConfigBlocksManagedRestore(cwd, { USERPROFILE: "relative-profile" }, [], "win32"), true);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
@@ -784,7 +798,8 @@ test("managed restore validates encryption keys and secures its POSIX state dire
 	const validKey = "a".repeat(64);
 	try {
 		mkdirSync(join(insecureHome, ".agent-browser"), { mode: 0o755 });
-		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: insecureHome }, "linux"), false);
+		chmodSync(join(insecureHome, ".agent-browser"), 0o755);
+		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: insecureHome }, posixFixturePlatform), false);
 		assert.equal(statSync(join(insecureHome, ".agent-browser")).mode & 0o777, 0o755);
 
 		assert.deepEqual(
@@ -812,7 +827,7 @@ test("managed restore validates encryption keys and secures its POSIX state dire
 		);
 		assert.equal(statSync(join(home, ".agent-browser")).mode & 0o077, 0);
 		assert.equal(statSync(join(home, ".agent-browser", "sessions")).mode & 0o077, 0);
-		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: home }, "linux", "Team Name"), true);
+		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: home }, posixFixturePlatform, "Team Name"), true);
 		assert.equal(statSync(join(home, ".agent-browser", "namespaces", "team-name", "state", "sessions")).mode & 0o077, 0);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
@@ -917,7 +932,7 @@ test("managed restore rejects symlinks and files along POSIX restore state paths
 
 		mkdirSync(join(namespaceSymlinkHome, ".agent-browser"), { mode: 0o700 });
 		symlinkSync(target, join(namespaceSymlinkHome, ".agent-browser", "namespaces"), "dir");
-		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: namespaceSymlinkHome }, "linux", "Team"), false);
+		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: namespaceSymlinkHome }, posixFixturePlatform, "Team"), false);
 		assert.deepEqual(readdirSync(target), []);
 
 		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: stateFileSymlinkHome }), true);
@@ -970,7 +985,7 @@ test("owned snapshot pruning persists close-proven paths and leaves unrecorded m
 			assert.equal(pruneOwnedManagedSessionRestoreSnapshots({
 				cwd,
 				parentEnv: { HOME: home },
-				platform: "linux",
+				platform: posixFixturePlatform,
 				statePath: join(sessions, `${key}-${suffix}.json`),
 			}), index === 2 ? 1 : 0);
 		}
@@ -990,7 +1005,7 @@ test("owned snapshot pruning persists close-proven paths and leaves unrecorded m
 				cwd,
 				namespace: "Team",
 				parentEnv: { HOME: home },
-				platform: "linux",
+				platform: posixFixturePlatform,
 				statePath: join(namespaceSessions, `${key}-${suffix}.json`),
 			}), index === 2 ? 1 : 0);
 		}
@@ -1016,11 +1031,11 @@ test("owned snapshot pruning leaves independent checkout generations untouched",
 		const otherPath = join(sessions, `${otherKey}-other.json`);
 		const currentPath = join(sessions, `${currentKey}-current.json`);
 		for (const path of [otherPath, currentPath]) writeFileSync(path, "{}");
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: otherProject, parentEnv: { HOME: home }, platform: "linux", statePath: otherPath }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: otherProject, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: otherPath }), 0);
 		const oldSeconds = (Date.now() - 31 * 24 * 60 * 60 * 1_000) / 1_000;
 		utimesSync(otherPath, oldSeconds, oldSeconds);
 
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: isolatedProject, parentEnv: { HOME: home }, platform: "linux", statePath: currentPath }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: isolatedProject, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: currentPath }), 0);
 		assert.equal(existsSync(otherPath), true);
 		assert.equal(existsSync(join(sessions, `.pi-agent-browser-owned-snapshots-v2-${otherKey}`)), true);
 		assert.equal(existsSync(currentPath), true);
@@ -1044,12 +1059,12 @@ test("owned snapshot lineage follows a checkout rename", () => {
 		for (const path of paths) writeFileSync(path, "{}");
 		const oldSeconds = (Date.now() - 31 * 24 * 60 * 60 * 1_000) / 1_000;
 		utimesSync(paths[0] as string, oldSeconds, oldSeconds);
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: project, parentEnv: { HOME: home }, platform: "linux", statePath: paths[0] }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: project, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: paths[0] }), 0);
 
 		renameSync(project, renamedProject);
 		assert.equal(createManagedSessionRestoreKey(renamedProject), key);
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: renamedProject, parentEnv: { HOME: home }, platform: "linux", statePath: paths[1] }), 0);
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: renamedProject, parentEnv: { HOME: home }, platform: "linux", statePath: paths[2] }), 1);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: renamedProject, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: paths[1] }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: renamedProject, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: paths[2] }), 1);
 		assert.equal(existsSync(paths[0] as string), false);
 	} finally {
 		rmSync(project, { recursive: true, force: true });
@@ -1070,7 +1085,7 @@ test("owned snapshot pruning expires stale generations from the same checkout pa
 		const retiredPath = join(sessions, `${retiredKey}-retired.json`);
 		const unrecordedPath = join(sessions, `${retiredKey}-caller.json`);
 		for (const path of [retiredPath, unrecordedPath]) writeFileSync(path, "{}");
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: reusedProject, parentEnv: { HOME: home }, platform: "linux", statePath: retiredPath }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: reusedProject, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: retiredPath }), 0);
 		const oldSeconds = (Date.now() - 31 * 24 * 60 * 60 * 1_000) / 1_000;
 		utimesSync(retiredPath, oldSeconds, oldSeconds);
 
@@ -1080,7 +1095,7 @@ test("owned snapshot pruning expires stale generations from the same checkout pa
 		assert.notEqual(currentKey, retiredKey);
 		const currentPath = join(sessions, `${currentKey}-current.json`);
 		writeFileSync(currentPath, "{}");
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: reusedProject, parentEnv: { HOME: home }, platform: "linux", statePath: currentPath }), 1);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd: reusedProject, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: currentPath }), 1);
 		assert.equal(existsSync(retiredPath), false);
 		assert.equal(existsSync(unrecordedPath), true);
 		assert.equal(existsSync(join(sessions, `.pi-agent-browser-owned-snapshots-v2-${retiredKey}`)), false);
@@ -1104,7 +1119,7 @@ test("owned snapshot manifest self-heals malformed records without claiming unre
 		const newPath = join(sessions, `${key}-new.json`);
 		for (const path of [oldPath, middlePath, newPath]) writeFileSync(path, "{}");
 
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: oldPath }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: oldPath }), 0);
 		const manifestName = readdirSync(sessions).find((name) => name.startsWith(".pi-agent-browser-owned-snapshots-v2-"));
 		assert.ok(manifestName);
 		const manifestDirectory = join(sessions, manifestName);
@@ -1112,14 +1127,14 @@ test("owned snapshot manifest self-heals malformed records without claiming unre
 		writeFileSync(firstRecordPath, "not json");
 		chmodSync(firstRecordPath, 0o644);
 
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: middlePath }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: middlePath }), 0);
 		const middleRecordPath = join(manifestDirectory, readdirSync(manifestDirectory).find((name) => name.endsWith(".json")) as string);
 		assert.equal(statSync(middleRecordPath).mode & 0o777, 0o600);
 		assert.equal(JSON.parse(readFileSync(middleRecordPath, "utf8")), realpathSync(middlePath));
 		assert.equal(existsSync(oldPath), true);
 
 		writeFileSync(middleRecordPath, "x".repeat(16 * 1_024 + 1));
-		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: newPath }), 0);
+		assert.equal(pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: newPath }), 0);
 		const remainingRecords = readdirSync(manifestDirectory).filter((name) => name.endsWith(".json"));
 		assert.equal(remainingRecords.length, 1);
 		assert.equal(JSON.parse(readFileSync(join(manifestDirectory, remainingRecords[0] as string), "utf8")), realpathSync(newPath));
@@ -1180,11 +1195,11 @@ test("owned snapshot retention converges concurrent young closes to the newest 2
 		for (const [index, path] of paths.entries()) {
 			writeFileSync(path, "{}");
 			utimesSync(path, nowSeconds - (paths.length - index), nowSeconds - (paths.length - index));
-			if (index < 256) pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath: path });
+			if (index < 256) pruneOwnedManagedSessionRestoreSnapshots({ cwd, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath: path });
 		}
 		const moduleUrl = new URL("../extensions/agent-browser/lib/managed-session-restore.ts", import.meta.url).href;
 		const children = paths.slice(256).map((statePath) => {
-			const script = `import { pruneOwnedManagedSessionRestoreSnapshots } from ${JSON.stringify(moduleUrl)}; pruneOwnedManagedSessionRestoreSnapshots(${JSON.stringify({ cwd, parentEnv: { HOME: home }, platform: "linux", statePath })});`;
+			const script = `import { pruneOwnedManagedSessionRestoreSnapshots } from ${JSON.stringify(moduleUrl)}; pruneOwnedManagedSessionRestoreSnapshots(${JSON.stringify({ cwd, parentEnv: { HOME: home }, platform: posixFixturePlatform, statePath })});`;
 			const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { stdio: ["ignore", "pipe", "pipe"] });
 			const stderr: Buffer[] = [];
 			child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
